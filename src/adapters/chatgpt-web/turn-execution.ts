@@ -120,6 +120,7 @@ interface ChatGptTurnRuntimeBase {
   text: ChatGptTextFeed;
   /** Exact bounded request used to prepare this browser turn and report Codex usage. */
   usageInput?: CodexParsedRequest;
+  requestHandoff?: (instructionDelivered?: boolean) => void;
   cancel: () => void;
 }
 

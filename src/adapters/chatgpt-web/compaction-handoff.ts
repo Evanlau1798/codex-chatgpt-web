@@ -122,6 +122,36 @@ export function retryActiveCompactionHandoff(answer: string, attempt: number): s
 Retry the checkpoint summary now and start the response with exactly ${COMPACTION_HANDOFF_MARKER} on its own line.`;
 }
 
+export function createActiveCompactionHandoffPrompts() {
+  let requested = false;
+  let instructionDelivered = false;
+  let attempts = 0;
+  return {
+    request(delivered = false): void {
+      requested = true;
+      instructionDelivered ||= delivered;
+    },
+    retryPromptForAnswer(answer: string): string | undefined {
+      if (!requested) return undefined;
+      if (!instructionDelivered) {
+        instructionDelivered = true;
+        return HANDOFF_INSTRUCTION;
+      }
+      attempts += 1;
+      return retryActiveCompactionHandoff(answer, attempts);
+    },
+    retryPromptForError(error: unknown): string | undefined {
+      if (!requested || !retryableBrowserFailure(error)) return undefined;
+      if (!instructionDelivered) {
+        instructionDelivered = true;
+        return HANDOFF_INSTRUCTION;
+      }
+      attempts += 1;
+      return attempts < ACTIVE_HANDOFF_ATTEMPTS ? HANDOFF_INSTRUCTION : undefined;
+    },
+  };
+}
+
 function assistantFinalText(parsed: CodexParsedRequest): string | undefined {
   for (let index = parsed.context.messages.length - 1; index >= 0; index -= 1) {
     const message = parsed.context.messages[index]!;
@@ -192,19 +222,25 @@ export async function requestActiveCompactionHandoff(
 ): Promise<string | undefined> {
   const cached = session.compactionHandoff();
   if (cached) return cached;
-  if (!session.isActive() || session.runtime.mode !== "tools") return undefined;
+  if (!session.isActive()) return undefined;
   const handoffTextOffset = session.runtime.text.value().length;
   try {
-    const token = await session.runtime.token;
-    const results = codexToolResultsById(parsed, session);
-    for (const request of session.outstanding()) {
-      const result = results.get(request.callId);
-      broker.completeTool(token, request.callId, result
-        ? withHandoffInstruction(codexToolResultToBrokerResult(result))
-        : missingToolResult());
-      session.markResultDelivered(request.callId);
+    if (session.runtime.mode === "tools") {
+      const token = await session.runtime.token;
+      const results = codexToolResultsById(parsed, session);
+      for (const request of session.outstanding()) {
+        const result = results.get(request.callId);
+        broker.completeTool(token, request.callId, result
+          ? withHandoffInstruction(codexToolResultToBrokerResult(result))
+          : missingToolResult());
+        session.markResultDelivered(request.callId);
+      }
+      broker.requestHandoff(token, HANDOFF_INSTRUCTION);
+      session.runtime.requestHandoff?.(true);
+    } else {
+      if (!session.runtime.requestHandoff) return undefined;
+      session.runtime.requestHandoff(false);
     }
-    broker.requestHandoff(token, HANDOFF_INSTRUCTION);
     const outcome = await waitForBrowser(session, signal, timeoutMs);
     if (outcome.type === "error") {
       const recovered = retryableBrowserFailure(outcome.error)

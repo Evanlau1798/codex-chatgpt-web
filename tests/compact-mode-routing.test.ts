@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
 import {
   COMPACTION_HANDOFF_MARKER,
+  createActiveCompactionHandoffPrompts,
   requestActiveCompactionHandoff,
 } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
@@ -123,6 +124,45 @@ describe("compact mode routing", () => {
       session,
       broker as never,
     )).resolves.toBe("The repository state and next action were preserved.");
+  });
+
+  test("requests the beta checkpoint from the active read-only conversation", async () => {
+    let completeBrowser!: (answer: string) => void;
+    const browser = new Promise<string>(resolve => { completeBrowser = resolve; });
+    const answer = `${COMPACTION_HANDOFF_MARKER}\nThe Pro conversation preserved its active state.`;
+    let requested = false;
+    const session = new ChatGptTurnSession({
+      mode: "read-only",
+      browser,
+      trace: new ChatGptTraceFeed(),
+      text: new ChatGptTextFeed(),
+      usageInput: compactRequest(),
+      requestHandoff: () => {
+        requested = true;
+        completeBrowser(answer);
+      },
+      cancel: () => {},
+    });
+
+    await expect(requestActiveCompactionHandoff(
+      compactRequest(),
+      session,
+      {} as TurnBroker,
+    )).resolves.toBe("The Pro conversation preserved its active state.");
+    expect(requested).toBe(true);
+  });
+
+  test("retries malformed and recoverable handoff responses in the same conversation", () => {
+    const prompts = createActiveCompactionHandoffPrompts();
+    expect(prompts.retryPromptForAnswer("ordinary answer")).toBeUndefined();
+
+    prompts.request(false);
+    expect(prompts.retryPromptForAnswer("ordinary answer")).toContain("Automatic Codex context compaction");
+    expect(prompts.retryPromptForAnswer("malformed checkpoint")).toContain("checkpoint response was rejected");
+    expect(prompts.retryPromptForError(new Error("ChatGPT completed text block changed"))).toContain(
+      "Automatic Codex context compaction",
+    );
+    expect(prompts.retryPromptForAnswer("still malformed")).toBeUndefined();
   });
 
   test("routes a beta compact request through the matching active session", async () => {

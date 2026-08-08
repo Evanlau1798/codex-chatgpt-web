@@ -215,3 +215,58 @@ test("structured helper errors preserve the ChatGPT adapter failure contract", a
     retryable: true,
   });
 });
+
+test("launcher helper retries recoverable browser failures in the same turn", async () => {
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native",
+    browserHost: "launcher",
+    browserHostDescriptorPath: "/durable/launcher.json",
+    storageStatePath: "/durable/unused-state.json",
+    chromeExecutablePath: "/durable/unused-chrome",
+    turnTimeoutMs: 60_000,
+    headed: true,
+    autoApproveToolCalls: false,
+  });
+  const sent: unknown[] = [];
+  let failure = "";
+  const internal = client as unknown as {
+    child?: unknown;
+    pending: Map<string, { turn: BrowserTurn; resolve: (value: string) => void; reject: (error: Error) => void }>;
+    handleLine(child: unknown, line: string): void;
+    send(message: unknown): Promise<void>;
+  };
+  const child = {};
+  internal.child = child;
+  internal.send = async message => { sent.push(message); };
+  internal.pending.set("compact-retry-123", {
+    turn: {
+      traceId: "compact-retry-123",
+      modelId: "gpt-5.6-sol",
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+      prepare: async () => ({ text: "inspect", images: [], release() {} }),
+      onTextDelta() {},
+      retryPromptForError: error => {
+        failure = error.message;
+        return "retry checkpoint";
+      },
+    },
+    resolve() {},
+    reject() {},
+  });
+
+  internal.handleLine(child, JSON.stringify({
+    type: "event",
+    id: "compact-retry-123",
+    event: "error_retry",
+    text: "ChatGPT completed text block changed",
+    attempt: 1,
+  }));
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  expect(failure).toBe("ChatGPT completed text block changed");
+  expect(sent).toEqual([{
+    type: "answer_retry",
+    id: "compact-retry-123",
+    prompt: "retry checkpoint",
+  }]);
+});

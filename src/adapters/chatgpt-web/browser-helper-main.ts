@@ -153,6 +153,10 @@ async function run(message: RunMessage): Promise<void> {
       answerRetryWaiters.set(message.id, resolve);
       writeProtocol({ type: "event", id: message.id, event: "answer", text, attempt });
     }),
+    retryPromptForError: (error, attempt) => new Promise<string | undefined>(resolve => {
+      answerRetryWaiters.set(message.id, resolve);
+      writeProtocol({ type: "event", id: message.id, event: "error_retry", text: error.message, attempt });
+    }),
     ...(message.turn.captureLunaCheckpoint ? {
       captureLunaCheckpoint: true,
       onLunaCheckpoint: captured => writeProtocol({

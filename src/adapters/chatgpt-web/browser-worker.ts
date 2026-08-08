@@ -273,6 +273,8 @@ export interface BrowserTurn {
   onLunaCheckpoint?: (captured: CapturedChatGptLunaCheckpoint) => void;
   /** Return a corrective follow-up prompt to retry the final answer in the same chat. */
   retryPromptForAnswer?: (answer: string, attempt: number) => string | undefined | Promise<string | undefined>;
+  /** Return a corrective follow-up prompt after a recoverable response-reading failure. */
+  retryPromptForError?: (error: Error, attempt: number) => string | undefined | Promise<string | undefined>;
 }
 
 export interface ResolvedBrowserConfig {
@@ -1769,6 +1771,7 @@ export class ChatGptBrowserWorker {
       let finalText = "";
       let responsePrompt = prepared.text;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
+        try {
         await this.runStage(turn.traceId, "prompt_attachment", browserStageTimeouts.promptAttachment, () => (
           this.attachPrompt(page, responsePrompt, mode.localTools, checkpoint => diagnostics.capture(page, checkpoint))
         ));
@@ -1929,6 +1932,17 @@ export class ChatGptBrowserWorker {
           if (domError) throw new Error(domError);
         }
           await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+        }
+        } catch (error) {
+          const failure = error instanceof Error ? error : new Error(String(error));
+          const retryPrompt = await turn.retryPromptForError?.(failure, responseAttempt);
+          if (!retryPrompt) throw error;
+          if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry browser failures");
+          const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
+          if (await stop.isVisible().catch(() => false)) await stop.press("Enter").catch(() => {});
+          responsePrompt = retryPrompt;
+          console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying response failure attempt=${responseAttempt + 1}`);
+          continue;
         }
         const retryPrompt = await turn.retryPromptForAnswer?.(finalText, responseAttempt);
         if (!retryPrompt) break;
