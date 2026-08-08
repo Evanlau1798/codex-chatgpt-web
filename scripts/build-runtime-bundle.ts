@@ -9,11 +9,14 @@ const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
   packageManager?: string;
 };
 if (packageJson.version !== VERSION) throw new Error("package.json and runtime version are out of sync");
-const packageManagerMatch = /^bun@(\d+\.\d+\.\d+)$/.exec(packageJson.packageManager ?? "");
-if (!packageManagerMatch) throw new Error("package.json must pin an exact Bun packageManager version");
-const expectedBunVersion = packageManagerMatch[1];
-if (Bun.version !== expectedBunVersion) {
-  throw new Error(`Runtime bundle requires Bun ${expectedBunVersion}, received ${Bun.version}`);
+const packageManagerMatch = /^bun@((\d+\.\d+\.\d+)-canary\.\d+\+[0-9a-f]+)$/.exec(packageJson.packageManager ?? "");
+if (!packageManagerMatch) throw new Error("package.json must pin an exact Bun canary revision");
+const expectedBunRevision = packageManagerMatch[1];
+const expectedBunVersion = packageManagerMatch[2];
+const buildRevision = Bun.spawnSync([process.execPath, "--revision"], { stdout: "pipe", stderr: "pipe" });
+const reportedBuildRevision = buildRevision.stdout.toString().trim();
+if (buildRevision.exitCode !== 0 || Bun.version !== expectedBunVersion || reportedBuildRevision !== expectedBunRevision) {
+  throw new Error(`Runtime bundle requires Bun ${expectedBunRevision}, received ${reportedBuildRevision || Bun.version}`);
 }
 
 type EmbeddedBun = { executable: string; version: string; revision: string };
@@ -34,12 +37,9 @@ function embeddedBunRuntime(): EmbeddedBun {
   }
   const reportedVersion = version.stdout.toString().trim();
   const reportedRevision = revision.stdout.toString().trim();
-  const configuredVersion = process.env.CODEX_CHATGPT_WEB_EMBEDDED_BUN_VERSION;
-  const configuredRevision = process.env.CODEX_CHATGPT_WEB_EMBEDDED_BUN_REVISION;
-  if (reportedVersion !== expectedBunVersion
-    && (configuredVersion !== reportedVersion || configuredRevision !== reportedRevision)) {
+  if (reportedVersion !== expectedBunVersion || reportedRevision !== expectedBunRevision) {
     throw new Error(
-      `Embedded Bun must be ${expectedBunVersion} or match its explicit version and revision; received ${reportedRevision || reportedVersion || "no version"}`,
+      `Embedded Bun must be ${expectedBunRevision}; received ${reportedRevision || reportedVersion || "no version"}`,
     );
   }
   return { executable, version: reportedVersion, revision: reportedRevision };

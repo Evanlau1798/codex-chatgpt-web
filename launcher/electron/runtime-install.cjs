@@ -84,7 +84,8 @@ function ensurePackagedRuntime({ app, coreHome, resourcesPath }) {
       throw error;
     }
     if (previousMoved) {
-      fs.rmSync(previous, { recursive: true, force: true });
+      // Windows can keep the old Bun executable locked after the validated replacement is live.
+      try { fs.rmSync(previous, { recursive: true, force: true }); } catch {}
       previousMoved = false;
     }
   } finally {
