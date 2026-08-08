@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { estimateChatGptWebInputTokens } from "../src/adapters/chatgpt-web/usage";
+import { CHATGPT_WEB_LUNA_MODEL_ID } from "../src/adapters/chatgpt-web/model";
+import { chatGptUsageInputForRound, estimateChatGptWebInputTokens } from "../src/adapters/chatgpt-web/usage";
 import type { CodexParsedRequest } from "../src/types";
 
 const capabilities = { localToolsEnabled: false, solAvailable: true, proAvailable: true };
@@ -26,4 +27,12 @@ test("ordinary context below the transport threshold keeps its tokenizer-derived
   );
 
   expect(estimated).toBeLessThan(100_000);
+});
+
+test("ordinary tool rounds report the latest Codex context while Luna keeps its bounded checkpoint", () => {
+  const prepared = request("initial request");
+  const latest = request("initial request plus a large tool result ".repeat(2_000));
+
+  expect(chatGptUsageInputForRound(latest, prepared)).toBe(latest);
+  expect(chatGptUsageInputForRound({ ...latest, modelId: CHATGPT_WEB_LUNA_MODEL_ID }, prepared)).toBe(prepared);
 });

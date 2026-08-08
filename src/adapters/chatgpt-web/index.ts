@@ -18,7 +18,7 @@ import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebC
 import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt } from "./prompt";
 import { TurnBroker, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptBrowserOutcome, type ChatGptTraceEvent, type ChatGptTurnRuntime, type ChatGptTurnSession } from "./turn-execution";
-import { estimateChatGptWebUsage } from "./usage";
+import { chatGptUsageInputForRound, estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
 import {
   ChatGptLunaCheckpointStore,
@@ -145,11 +145,11 @@ function replayEvents(events: AdapterEvent[], emit: (event: AdapterEvent) => voi
   for (const event of events) emit(event);
 }
 
-function runtimeUsageInput(session: ChatGptTurnSession): CodexParsedRequest {
+function runtimeUsageInput(parsed: CodexParsedRequest, session: ChatGptTurnSession): CodexParsedRequest {
   if (!session.runtime.usageInput) {
     throw new Error("ChatGPT browser runtime is missing the exact prepared usage input");
   }
-  return session.runtime.usageInput;
+  return chatGptUsageInputForRound(parsed, session.runtime.usageInput);
 }
 
 function appendCompactionUserPrompt(
@@ -440,7 +440,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
             const answer = appendCompactionUserPrompt(parsed, settled.answer, emit);
             emitBrowserCompletion(
               { ...settled, answer },
-              estimateChatGptWebUsage(runtimeUsageInput(session), { answer, reasoning }, turnCapabilities),
+              estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning }, turnCapabilities),
               emit,
             );
             return;
@@ -458,7 +458,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
               if (results.length === 0) {
                 const reasoning = session.reasoningForOutstandingReplay();
                 replayEvents(session.eventsForOutstandingReplay(), emit);
-                emitToolBatch(outstanding, estimateChatGptWebUsage(runtimeUsageInput(session), { reasoning, toolRequests: outstanding }, turnCapabilities), emit);
+                emitToolBatch(outstanding, estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning, toolRequests: outstanding }, turnCapabilities), emit);
                 return;
               }
               if (results.length !== outstanding.length) {
@@ -528,7 +528,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                 const answer = appendCompactionUserPrompt(parsed, next.outcome.answer, emitRound);
                 emitBrowserCompletion(
                   { ...next.outcome, answer },
-                  estimateChatGptWebUsage(runtimeUsageInput(session), { answer, reasoning: roundReasoning }, turnCapabilities),
+                  estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning: roundReasoning }, turnCapabilities),
                   emit,
                 );
                 return;
@@ -541,7 +541,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
               session.setOutstanding(next.requests, roundReasoning, roundEvents);
               emitToolBatch(
                 next.requests,
-                estimateChatGptWebUsage(runtimeUsageInput(session), { reasoning: roundReasoning, toolRequests: next.requests }, turnCapabilities),
+                estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning: roundReasoning, toolRequests: next.requests }, turnCapabilities),
                 emit,
               );
               return;

@@ -16,6 +16,13 @@ export interface ChatGptWebRoundEvidence {
   toolRequests?: BrokerToolRequest[];
 }
 
+export function chatGptUsageInputForRound(
+  parsed: CodexParsedRequest,
+  prepared: CodexParsedRequest,
+): CodexParsedRequest {
+  return parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? prepared : parsed;
+}
+
 function conservativeTextTokens(text: string, modelId: string): number {
   return estimateTokens(text, modelId);
 }
