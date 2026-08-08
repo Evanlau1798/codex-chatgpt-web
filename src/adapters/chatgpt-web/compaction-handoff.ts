@@ -1,32 +1,18 @@
 import { parseDataUrl } from "../image";
 import { COMPACT_PROMPT, isUsableCompactionSummary } from "../../responses/compaction";
 import type { CodexContentPart, CodexParsedRequest, CodexToolResultMessage } from "../../types";
-import type { BrowserTurn, ChatGptBrowserWorker } from "./browser-worker";
 import { extractChatGptCompactionSourceRevision } from "./environment";
 import type { BrokerToolResult, TurnBroker } from "./turn-broker";
-import type { ChatGptTraceEvent, ChatGptTurnSession } from "./turn-execution";
+import type { ChatGptTurnSession } from "./turn-execution";
 
 export const COMPACTION_HANDOFF_MARKER = "CODEX_COMPACTION_HANDOFF";
 export const LATEST_USER_PROMPT_MARKER = "CODEX_LATEST_USER_PROMPT_JSON";
 const ESCAPED_COMPACTION_HANDOFF_MARKER = "CODEX\\_COMPACTION\\_HANDOFF";
 const ACTIVE_HANDOFF_ATTEMPTS = 3;
-const INLINE_COMPACTION_ATTEMPTS = 2;
 
 const HANDOFF_INSTRUCTION = `Automatic Codex context compaction has started. Do not call any more tools.
 ${COMPACT_PROMPT}
 Return only the checkpoint summary. Start the response with exactly ${COMPACTION_HANDOFF_MARKER} on its own line.`;
-
-export interface BufferedCompactionAttempt {
-  answer: string;
-  trace: ChatGptTraceEvent[];
-  text: string;
-}
-
-type BrowserRunner = Pick<ChatGptBrowserWorker, "run">;
-type BrowserAttemptBase = Omit<
-  BrowserTurn,
-  "traceId" | "onReasoningSummary" | "onCommentary" | "onTextDelta"
->;
 
 function brokerContent(content: string | CodexContentPart[]): unknown[] {
   if (typeof content === "string") return [{ type: "text", text: content }];
@@ -77,7 +63,10 @@ function missingToolResult(): BrokerToolResult {
   };
 }
 
-function currentToolResults(parsed: CodexParsedRequest, session: ChatGptTurnSession): Map<string, CodexToolResultMessage> {
+export function codexToolResultsById(
+  parsed: CodexParsedRequest,
+  session: ChatGptTurnSession,
+): Map<string, CodexToolResultMessage> {
   const byId = new Map<string, CodexToolResultMessage>();
   for (const message of parsed.context.messages) {
     if (message.role !== "toolResult" || !session.hasOutstanding(message.toolCallId)) continue;
@@ -207,7 +196,7 @@ export async function requestActiveCompactionHandoff(
   const handoffTextOffset = session.runtime.text.value().length;
   try {
     const token = await session.runtime.token;
-    const results = currentToolResults(parsed, session);
+    const results = codexToolResultsById(parsed, session);
     for (const request of session.outstanding()) {
       const result = results.get(request.callId);
       broker.completeTool(token, request.callId, result
@@ -237,38 +226,3 @@ export async function requestActiveCompactionHandoff(
   }
 }
 
-async function runBufferedAttempt(
-  worker: BrowserRunner,
-  base: BrowserAttemptBase,
-  traceId: string,
-): Promise<BufferedCompactionAttempt> {
-  const trace: ChatGptTraceEvent[] = [];
-  let text = "";
-  const answer = await worker.run({
-    ...base,
-    traceId,
-    onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
-    onCommentary: (value, continuation) => trace.push({ kind: "commentary", text: value, ...(continuation ? { continuation: true } : {}) }),
-    onTextDelta: delta => { text += delta; },
-  });
-  return { answer, trace, text };
-}
-
-export async function runInlineCompactionWithRetry(
-  worker: BrowserRunner,
-  base: BrowserAttemptBase,
-  traceId: string,
-): Promise<BufferedCompactionAttempt> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= INLINE_COMPACTION_ATTEMPTS; attempt += 1) {
-    try {
-      const outcome = await runBufferedAttempt(worker, base, `${traceId}-inline-${attempt}`);
-      if (isUsableCompactionSummary(outcome.answer)) return outcome;
-      lastError = new Error("ChatGPT did not produce a usable checkpoint summary");
-    } catch (error) {
-      lastError = error;
-      if (!retryableBrowserFailure(error)) throw error;
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("ChatGPT did not produce a usable checkpoint summary");
-}

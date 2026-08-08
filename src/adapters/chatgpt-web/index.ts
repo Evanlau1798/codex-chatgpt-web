@@ -1,24 +1,34 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { defaultBrokerEndpoint, expandUserPath, resolveBrokerEndpoint } from "../../config";
-import { namespacedToolName, type AdapterEvent, type CodexContentPart, type CodexParsedRequest, type CodexProviderConfig, type CodexToolResultMessage, type CodexUsage } from "../../types";
+import { namespacedToolName, type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
 import type { ProviderAdapter } from "../base";
-import { parseDataUrl } from "../image";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { ChatGptBrowserWorker } from "./browser-worker";
 import {
   canonicalizeCompactionHandoff,
+  codexToolResultToBrokerResult,
+  codexToolResultsById,
   recoverCompactionHandoff,
   requestActiveCompactionHandoff,
   retryActiveCompactionHandoff,
-  runInlineCompactionWithRetry,
 } from "./compaction-handoff";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
-import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt } from "./prompt";
-import { TurnBroker, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker";
-import { ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptBrowserOutcome, type ChatGptTraceEvent, type ChatGptTurnRuntime, type ChatGptTurnSession } from "./turn-execution";
-import { chatGptUsageInputForRound, estimateChatGptWebUsage } from "./usage";
+import { compileChatGptWebPrompt } from "./prompt";
+import { TurnBroker, type BrokerToolRequest } from "./turn-broker";
+import { ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
+import {
+  appendCompactionUserPrompt,
+  emitBrowserCompletion,
+  emitProContextWarning,
+  emitTextDeltas,
+  emitToolBatch,
+  emitTraceEvents,
+  replayEvents,
+  runtimeUsageInput,
+} from "./turn-events";
+import { estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
 import {
   ChatGptLunaCheckpointStore,
@@ -63,121 +73,6 @@ function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Pro
   });
 }
 
-function structuredContent(text: string): unknown | undefined {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return parsed !== null && typeof parsed === "object" ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function brokerContent(content: string | CodexContentPart[]): unknown[] {
-  if (typeof content === "string") return [{ type: "text", text: content }];
-  return content.map(part => {
-    if (part.type === "text") return { type: "text", text: part.text };
-    const parsed = parseDataUrl(part.imageUrl);
-    if (parsed) return { type: "image", data: parsed.base64, mimeType: parsed.mediaType };
-    return { type: "resource_link", uri: part.imageUrl, name: "Codex tool image", mimeType: "image/*" };
-  });
-}
-
-function brokerResult(message: CodexToolResultMessage): BrokerToolResult {
-  const content = brokerContent(message.content);
-  const text = typeof message.content === "string"
-    ? message.content
-    : message.content.filter(part => part.type === "text").map(part => part.text).join("\n");
-  const structured = structuredContent(text);
-  return {
-    content,
-    ...(structured !== undefined ? { structuredContent: structured } : {}),
-    ...(message.isError ? { isError: true } : {}),
-  };
-}
-
-function emitToolBatch(requests: BrokerToolRequest[], usage: CodexUsage, emit: (event: AdapterEvent) => void): void {
-  for (const request of requests) {
-    emit({ type: "tool_call_start", id: request.callId, name: request.wireName });
-    emit({
-      type: "tool_call_delta",
-      arguments: request.freeform
-        ? JSON.stringify({ input: request.input ?? "" })
-        : JSON.stringify(request.arguments ?? {}),
-    });
-    emit({ type: "tool_call_end" });
-  }
-  emit({ type: "done", stopReason: "tool_use", endTurn: false, usage });
-}
-
-function emitBrowserCompletion(outcome: ChatGptBrowserOutcome, usage: CodexUsage, emit: (event: AdapterEvent) => void): void {
-  if (outcome.type === "error") throw outcome.error;
-  emit({ type: "done", stopReason: "stop", endTurn: true, usage });
-}
-
-function emitTraceEvents(trace: ChatGptTraceEvent[], emit: (event: AdapterEvent) => void): void {
-  for (const event of trace) {
-    if (!event.continuation) emit({ type: "assistant_boundary" });
-    if (event.kind === "commentary") {
-      emit({ type: "text_delta", text: event.text, phase: "commentary" });
-    } else {
-      emit({ type: "thinking_delta", thinking: event.text });
-    }
-  }
-}
-
-function emitTextDeltas(deltas: string[], emit: (event: AdapterEvent) => void): void {
-  for (const text of deltas) emit({ type: "text_delta", text, phase: "final_answer" });
-}
-
-function emitProContextWarning(
-  parsed: CodexParsedRequest,
-  capabilities: ChatGptWebCapabilities,
-  emit: (event: AdapterEvent) => void,
-): void {
-  const warning = chatGptReadOnlyContextWarning(parsed, capabilities);
-  if (!warning) return;
-  emit({ type: "assistant_boundary" });
-  emit({ type: "text_delta", text: warning, phase: "commentary" });
-  emit({ type: "assistant_boundary" });
-}
-
-function replayEvents(events: AdapterEvent[], emit: (event: AdapterEvent) => void): void {
-  for (const event of events) emit(event);
-}
-
-function runtimeUsageInput(parsed: CodexParsedRequest, session: ChatGptTurnSession): CodexParsedRequest {
-  if (!session.runtime.usageInput) {
-    throw new Error("ChatGPT browser runtime is missing the exact prepared usage input");
-  }
-  return chatGptUsageInputForRound(parsed, session.runtime.usageInput);
-}
-
-function appendCompactionUserPrompt(
-  parsed: CodexParsedRequest,
-  answer: string,
-  emit: (event: AdapterEvent) => void,
-): string {
-  if (!parsed._compactionRequest) return answer;
-  const canonical = canonicalizeCompactionHandoff(parsed, answer);
-  if (!canonical || !canonical.startsWith(answer)) {
-    throw new Error("ChatGPT compaction could not preserve the latest user prompt");
-  }
-  if (canonical.length > answer.length) {
-    emit({ type: "text_delta", text: canonical.slice(answer.length), phase: "final_answer" });
-  }
-  return canonical;
-}
-
-function currentToolResults(parsed: CodexParsedRequest, session: ChatGptTurnSession): CodexToolResultMessage[] {
-  const byId = new Map<string, CodexToolResultMessage>();
-  for (const message of parsed.context.messages) {
-    if (message.role !== "toolResult" || !session.hasOutstanding(message.toolCallId)) continue;
-    if (byId.has(message.toolCallId)) throw new Error(`Codex returned duplicate results for tool call ${message.toolCallId}`);
-    byId.set(message.toolCallId, message);
-  }
-  return [...byId.values()];
-}
-
 function validateBatchTools(parsed: CodexParsedRequest, requests: BrokerToolRequest[]): void {
   const available = new Set((parsed.context.tools ?? []).map(tool => namespacedToolName(tool.namespace, tool.name)));
   for (const request of requests) {
@@ -191,6 +86,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = TurnBroker.forSocket(brokerSocketPath(provider));
   const timeoutMs = provider.chatgptWeb?.turnTimeoutMs;
+  const useNewCompactMode = provider.chatgptWeb?.useNewCompactMode === true;
   const configuredCapabilities: ChatGptWebCapabilities = {
     localToolsEnabled: provider.chatgptWeb?.localToolsEnabled === true,
     solAvailable: provider.chatgptWeb?.solAvailable !== false,
@@ -269,19 +165,13 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           onLunaCheckpoint: captureCheckpoint,
         } : {}),
       };
-      const browserRun = parsed._compactionRequest
-        ? runInlineCompactionWithRetry(worker, base, traceId).then(outcome => {
-          for (const event of outcome.trace) trace.push(event);
-          text.push(outcome.text);
-          return outcome.answer;
-        })
-        : worker.run({
-          ...base,
-          traceId,
-          onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
-          onCommentary: (value, continuation) => trace.push({ kind: "commentary", text: value, ...(continuation ? { continuation: true } : {}) }),
-          onTextDelta: delta => text.push(delta),
-        });
+      const browserRun = worker.run({
+        ...base,
+        traceId,
+        onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
+        onCommentary: (value, continuation) => trace.push({ kind: "commentary", text: value, ...(continuation ? { continuation: true } : {}) }),
+        onTextDelta: delta => text.push(delta),
+      });
       const browser = finalizeCheckpoint(browserRun);
       return {
         mode: "read-only",
@@ -383,24 +273,39 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       }
       if (parsed._compactionRequest) {
         const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
-        const sourceSession = chatGptTurnSessions.find(responseExecutionKey);
-        const activeHandoff = sourceSession
-          ? await requestActiveCompactionHandoff(parsed, sourceSession, broker, incoming.abortSignal, timeoutMs)
-          : undefined;
-        const handoff = canonicalizeCompactionHandoff(
-          parsed,
-          activeHandoff ?? recoverCompactionHandoff(parsed) ?? "",
-        );
-        await chatGptTurnSessions.retireAndWait(responseExecutionKey);
-        if (handoff) {
-          emit({ type: "text_delta", text: handoff, phase: "final_answer" });
-          emitBrowserCompletion(
-            { type: "final", answer: handoff },
-            estimateChatGptWebUsage(parsed, { answer: handoff, reasoning: [] }, turnCapabilities),
-            emit,
+        if (useNewCompactMode) {
+          const sourceSession = chatGptTurnSessions.find(responseExecutionKey);
+          const activeHandoff = sourceSession
+            ? await requestActiveCompactionHandoff(parsed, sourceSession, broker, incoming.abortSignal, timeoutMs)
+            : undefined;
+          const handoff = canonicalizeCompactionHandoff(
+            parsed,
+            activeHandoff ?? recoverCompactionHandoff(parsed) ?? "",
           );
-          return;
+          await chatGptTurnSessions.retireAndWait(responseExecutionKey);
+          if (handoff) {
+            console.info("[chatgpt-web] compact mode=beta path=active_handoff result=completed");
+            emit({ type: "text_delta", text: handoff, phase: "final_answer" });
+            emitBrowserCompletion(
+              { type: "final", answer: handoff },
+              estimateChatGptWebUsage(parsed, { answer: handoff, reasoning: [] }, turnCapabilities),
+              emit,
+            );
+            return;
+          }
+          console.warn("[chatgpt-web] compact mode=beta path=active_handoff result=unavailable");
+          throw new ChatGptWebAdapterError(
+            "The beta compact mode could not obtain a checkpoint from the active ChatGPT Web conversation. Retry the compact request or disable the beta mode to use the original compact path.",
+            {
+              status: 409,
+              errorType: "invalid_request_error",
+              code: "compaction_handoff_unavailable",
+              retryable: false,
+            },
+          );
         }
+        console.info("[chatgpt-web] compact mode=original path=upstream_compact result=started");
+        await chatGptTurnSessions.retireAndWait(responseExecutionKey);
       }
       const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
       await chatGptTurnSessions.waitForRetirement(executionKey);
@@ -437,7 +342,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
               session.setFinalReasoning(reasoning);
               session.setFinalEvents(events);
             }
-            const answer = appendCompactionUserPrompt(parsed, settled.answer, emit);
+            const answer = appendCompactionUserPrompt(parsed, settled.answer, emit, useNewCompactMode);
             emitBrowserCompletion(
               { ...settled, answer },
               estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning }, turnCapabilities),
@@ -454,7 +359,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
 
             const outstanding = session.outstanding();
             if (outstanding.length > 0) {
-              const results = currentToolResults(parsed, session);
+            const results = [...codexToolResultsById(parsed, session).values()];
               if (results.length === 0) {
                 const reasoning = session.reasoningForOutstandingReplay();
                 replayEvents(session.eventsForOutstandingReplay(), emit);
@@ -465,7 +370,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                 throw new Error(`Codex returned ${results.length} of ${outstanding.length} results for a parallel ChatGPT tool batch`);
               }
               for (const message of results) {
-                broker.completeTool(turnToken, message.toolCallId, brokerResult(message));
+                broker.completeTool(turnToken, message.toolCallId, codexToolResultToBrokerResult(message));
                 session.markResultDelivered(message.toolCallId);
               }
             }
@@ -525,7 +430,12 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                 if (session.runtime.text.value() !== next.outcome.answer) {
                   throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
                 }
-                const answer = appendCompactionUserPrompt(parsed, next.outcome.answer, emitRound);
+                const answer = appendCompactionUserPrompt(
+                  parsed,
+                  next.outcome.answer,
+                  emitRound,
+                  useNewCompactMode,
+                );
                 emitBrowserCompletion(
                   { ...next.outcome, answer },
                   estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning: roundReasoning }, turnCapabilities),

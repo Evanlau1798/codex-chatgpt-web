@@ -1,6 +1,6 @@
 import type { AdapterEvent, CodexMessagePhase, CodexProviderContinuationState, CodexUsage } from "./types";
 import { adapterFailureFromMessage, classifyError, type CodexErrorPayload } from "./lib/errors";
-import { encodeCompactionSummary, isUsableCompactionSummary } from "./responses/compaction";
+import { encodeCompactionSummary } from "./responses/compaction";
 import { encodeReasoningEnvelope, type ReasoningEnvelope } from "./responses/reasoning-envelope";
 import { resolveStallTimeoutSec } from "./stall-timeout";
 import { usageDisplayTotalTokens } from "./usage/totals";
@@ -652,20 +652,6 @@ export function bridgeToResponsesSSE(
               // need their envelope-only reasoning item so the blocks replay next turn.
               flushHiddenReasoningEnvelope();
               if (options?.compaction) {
-                if (!isUsableCompactionSummary(compactionText)) {
-                  const failure = adapterFailureFromMessage("ChatGPT did not produce a usable checkpoint summary");
-                  emit("response.failed", {
-                    response: {
-                      ...responseSnapshot("failed", finishedItems),
-                      error: failure.error,
-                      last_error: failure.error,
-                      retryable: false,
-                    },
-                  });
-                  reportTerminal("failed");
-                  terminalEvent = true;
-                  break;
-                }
                 // Exactly one compaction item per turn; codex-rs takes the first and fatals on 0.
                 const item = {
                   type: "compaction", id: `cmp_${uuid()}`,
@@ -1133,18 +1119,7 @@ export function buildResponseJSON(
   // A truncated turn must never be installed as replacement history: emit the
   // compaction item only when the turn actually completed (#422).
   if (options?.compaction && !errorEvent && !incompleteEvent && stopReason !== "max_tokens") {
-    if (isUsableCompactionSummary(compactionText)) {
-      output.push({ type: "compaction", id: `cmp_${uuid()}`, encrypted_content: encodeCompactionSummary(compactionText) });
-    } else {
-      errorEvent = {
-        type: "error",
-        message: "ChatGPT did not produce a usable checkpoint summary",
-        status: 502,
-        errorType: "invalid_response_error",
-        code: "invalid_compaction_summary",
-        retryable: false,
-      };
-    }
+    output.push({ type: "compaction", id: `cmp_${uuid()}`, encrypted_content: encodeCompactionSummary(compactionText) });
   }
 
   const failure = errorEvent ? adapterFailureFromEvent(errorEvent) : undefined;

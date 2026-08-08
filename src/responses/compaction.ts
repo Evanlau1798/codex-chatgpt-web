@@ -52,14 +52,7 @@ export function isUsableCompactionSummary(summary: string): boolean {
   return !(reportsInability && namesCheckpoint && namesMissingContext);
 }
 
-function assertUsableCompactionSummary(summary: string): void {
-  if (!isUsableCompactionSummary(summary)) {
-    throw new Error("ChatGPT did not produce a usable checkpoint summary");
-  }
-}
-
 export function encodeCompactionSummary(summary: string): string {
-  assertUsableCompactionSummary(summary);
   return BRIDGE_COMPACTION_PREFIX + Buffer.from(summary, "utf-8").toString("base64");
 }
 
@@ -175,13 +168,11 @@ export function buildCompactV1Output(
   summary: string,
   maxImages = 10,
 ): CompactMessageItem[] {
-  assertUsableCompactionSummary(summary);
   const selected: CompactMessageItem[] = [];
   let remaining = COMPACT_V1_RETAINED_CHAR_BUDGET;
   let retainedImages = 0;
   for (let i = userMessages.length - 1; i >= 0 && (remaining > 0 || retainedImages < maxImages); i--) {
     const message = structuredClone(userMessages[i]!);
-    const latestUserMessage = i === userMessages.length - 1;
     const blocks = compactContentBlocks(message);
     const retainedReversed: CompactContentBlock[] = [];
     for (let blockIndex = blocks.length - 1; blockIndex >= 0; blockIndex -= 1) {
@@ -193,14 +184,8 @@ export function buildCompactV1Output(
         }
         continue;
       }
-      if (!textBlock(block)) continue;
+      if (!textBlock(block) || remaining === 0) continue;
       const text = block.text!;
-      if (latestUserMessage) {
-        remaining = Math.max(0, remaining - text.length);
-        retainedReversed.push({ ...block, type: "input_text", text });
-        continue;
-      }
-      if (remaining === 0) continue;
       if (text.length <= remaining) {
         remaining -= text.length;
         retainedReversed.push({ ...block, type: "input_text", text });
@@ -220,6 +205,6 @@ export function buildCompactV1Output(
   selected.reverse();
   // codex-rs compact.rs uses "{SUMMARY_PREFIX}\n{summary}" (single newline) and detects stored
   // summaries by that exact prefix — keep the same shape.
-  const summaryText = `${SUMMARY_PREFIX}\n${summary}`;
+  const summaryText = summary.trim().length > 0 ? `${SUMMARY_PREFIX}\n${summary}` : "(no summary available)";
   return [...selected, compactUserMessageItem(summaryText)];
 }
