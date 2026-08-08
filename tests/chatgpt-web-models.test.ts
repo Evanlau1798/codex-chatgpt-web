@@ -118,6 +118,21 @@ describe("fixed ChatGPT Web model routes", () => {
     });
   });
 
+  test("uses the native 90 percent threshold when the beta compact mode is enabled", () => {
+    expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "low", pro, true)).toEqual({
+      contextWindow: 137_000,
+      autoCompactTokenLimit: 123_300,
+    });
+    expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", pro, true)).toEqual({
+      contextWindow: 256_000,
+      autoCompactTokenLimit: 230_400,
+    });
+    expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "max", pro, true)).toEqual({
+      contextWindow: 272_000,
+      autoCompactTokenLimit: 244_800,
+    });
+  });
+
   test("publishes Luna's real model window without early native compaction", () => {
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_LUNA_BACKEND_MODEL, "low", {
       solAvailable: false,

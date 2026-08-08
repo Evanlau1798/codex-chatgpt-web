@@ -57,6 +57,7 @@ export interface AppConfig {
   host: "127.0.0.1";
   port: number;
   contextWindow: number;
+  useNewCompactMode: boolean;
   appName: string;
   browserHost: BrowserHostMode;
   browserHostDescriptorPath?: string;
@@ -149,6 +150,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     host: "127.0.0.1",
     port: 17841,
     contextWindow: 256_000,
+    useNewCompactMode: false,
     appName: CHATGPT_CONNECTOR_NAME,
     browserHost: "managed-chrome",
     chromeExecutablePath: defaultChromeExecutable(),
@@ -314,6 +316,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (!Number.isSafeInteger(parsed.contextWindow) || parsed.contextWindow! <= 0) {
     throw new Error(`Invalid contextWindow in ${path}`);
   }
+  if (parsed.useNewCompactMode !== undefined && typeof parsed.useNewCompactMode !== "boolean") {
+    throw new Error(`Invalid useNewCompactMode in ${path}`);
+  }
   if (typeof parsed.headed !== "boolean") throw new Error(`Invalid headed in ${path}`);
   if (typeof parsed.autoApproveToolCalls !== "boolean") {
     throw new Error(`Invalid autoApproveToolCalls in ${path}`);
@@ -379,7 +384,12 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (proAvailable && !solAvailable) {
     throw new Error(`Invalid ChatGPT account capabilities in ${path}: Pro requires Sol`);
   }
-  return { ...parsed, solAvailable, proAvailable } as AppConfig;
+  return {
+    ...parsed,
+    useNewCompactMode: parsed.useNewCompactMode === true,
+    solAvailable,
+    proAvailable,
+  } as AppConfig;
 }
 
 export function saveConfig(config: AppConfig): void {
@@ -416,6 +426,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       localToolsEnabled: config.mode === "full",
       solAvailable: config.solAvailable,
       proAvailable: config.proAvailable,
+      useNewCompactMode: config.useNewCompactMode,
       autoApproveToolCalls: config.autoApproveToolCalls,
     },
   };

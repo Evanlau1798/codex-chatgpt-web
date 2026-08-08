@@ -88,6 +88,7 @@ test("user-home expansion accepts native Unix and Windows separators", () => {
 
 test("the direct-turn connector identity migrates known legacy setup without overwriting custom names", () => {
   expect(defaultConfig("full").appName).toBe(CHATGPT_CONNECTOR_NAME);
+  expect(defaultConfig("full").useNewCompactMode).toBe(false);
   expect(resolveSetupConnectorName("Codex Native")).toBe("Codex Native2");
   expect(resolveSetupConnectorName("Team Codex Harness")).toBe("Team Codex Harness");
   expect(resolveSetupConnectorName(undefined, "Team Codex Harness")).toBe("Team Codex Harness");
@@ -124,6 +125,7 @@ test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", 
     mode: "browser-only",
     browserHost: "managed-chrome",
     solAvailable: true,
+    useNewCompactMode: false,
   });
 });
 

@@ -77,6 +77,20 @@ describe("native /models augmentation", () => {
     }
   });
 
+  test("publishes the beta compact threshold only when explicitly enabled", () => {
+    const originalConfig = defaultConfig("full");
+    originalConfig.proAvailable = true;
+    const original = augmentNativeModelCatalog(source(), originalConfig).models as Array<Record<string, unknown>>;
+
+    const betaConfig = { ...originalConfig, useNewCompactMode: true };
+    const beta = augmentNativeModelCatalog(source(), betaConfig).models as Array<Record<string, unknown>>;
+    const originalPro = original.find(model => model.slug === "chatgpt-web/pro");
+    const betaPro = beta.find(model => model.slug === "chatgpt-web/pro");
+
+    expect(originalPro?.auto_compact_token_limit).toBe(95_000);
+    expect(betaPro?.auto_compact_token_limit).toBe(244_800);
+  });
+
   test("keeps every routed Web model in Codex's V1 spawn-agent model registry", () => {
     const config = defaultConfig("full");
     config.proAvailable = true;

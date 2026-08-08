@@ -53,6 +53,7 @@ export function resolveChatGptWebContextLimits(
   backendModel: ChatGptWebBackendModel,
   effort: ChatGptWebAdapterEffort,
   capabilities: ChatGptWebAccountCapabilities,
+  useNewCompactMode = false,
 ): ChatGptWebContextLimits {
   if (backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
     // Luna carries continuity through a private checkpoint on every completed browser turn. Codex
@@ -72,12 +73,14 @@ export function resolveChatGptWebContextLimits(
         : CHATGPT_WEB_PRO_REASONING_CONTEXT_WINDOW;
     return {
       contextWindow,
-      // The model can retain more context than ChatGPT accepts in one newly composed message.
-      // Compact before that transport boundary while preserving the real model window above.
-      autoCompactTokenLimit: Math.min(
-        Math.floor(contextWindow * 0.9),
-        CHATGPT_WEB_PRO_AUTO_COMPACT_TOKEN_LIMIT,
-      ),
+      // The original path compacts before ChatGPT's measured one-message transport boundary.
+      // The beta path keeps the native model threshold and carries continuity in the Web conversation.
+      autoCompactTokenLimit: useNewCompactMode
+        ? Math.floor(contextWindow * 0.9)
+        : Math.min(
+            Math.floor(contextWindow * 0.9),
+            CHATGPT_WEB_PRO_AUTO_COMPACT_TOKEN_LIMIT,
+          ),
     };
   }
 
