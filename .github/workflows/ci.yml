@@ -38,7 +38,7 @@ jobs:
       - name: Prepare AVX2-independent Windows runtime
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.3.14 -GitHubEnv $env:GITHUB_ENV
+        run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -ReleaseTag canary -Revision 1.4.0-canary.1+52bf09cb1 -GitHubEnv $env:GITHUB_ENV
       - run: bun run verify
       - run: bun run app:package
       - name: Ensure virtual display is available

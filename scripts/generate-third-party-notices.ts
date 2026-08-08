@@ -78,15 +78,16 @@ const sections = [...visited.values()]
   });
 
 const bunLicense = readFileSync(join(root, "LICENSES", "Bun-1.3.14.md"), "utf8").trim();
+const embeddedBunVersion = process.env.CODEX_CHATGPT_WEB_EMBEDDED_BUN_VERSION ?? Bun.version;
 const output = [
   "codex-chatgpt-web third-party notices",
   "",
   "This file covers runtime JavaScript packages bundled into the standalone executable.",
-  "The executable also embeds Bun 1.3.14; Bun's licensing and relinking notice follows first.",
+  `The executable also embeds Bun ${embeddedBunVersion}; Bun's licensing and relinking notice follows first.`,
   "Project/OpenCodex notices are distributed separately in LICENSES/NOTICE.md and OpenCodex-MIT.txt.",
   "",
   "=".repeat(80),
-  "Bun 1.3.14 runtime",
+  `Bun ${embeddedBunVersion} runtime`,
   "=".repeat(80),
   bunLicense,
   "",
