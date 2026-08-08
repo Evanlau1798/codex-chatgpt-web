@@ -49,7 +49,12 @@ interface SmokeMessage {
 }
 
 type MaintenanceMessage = VerifyMessage | InspectMessage | SmokeMessage;
-type InputMessage = RunMessage | MaintenanceMessage | { type: "abort"; id: string } | { type: "shutdown" };
+interface AnswerRetryMessage {
+  type: "answer_retry";
+  id: string;
+  prompt?: string;
+}
+type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage | { type: "abort"; id: string } | { type: "shutdown" };
 
 let outputFailure: Error | undefined;
 const handleOutputFailure = (error: Error): void => {
@@ -72,6 +77,7 @@ console.warn = diagnostic;
 console.error = diagnostic;
 
 const abortControllers = new Map<string, AbortController>();
+const answerRetryWaiters = new Map<string, (prompt?: string) => void>();
 let shuttingDown = false;
 let shutdownPromise: Promise<void> | undefined;
 
@@ -85,6 +91,8 @@ function requestShutdown(): Promise<void> {
   protocolOutput.close();
   diagnosticOutput.close();
   for (const controller of abortControllers.values()) controller.abort();
+  for (const resolve of answerRetryWaiters.values()) resolve();
+  answerRetryWaiters.clear();
   input.close();
   void closeChatGptBrowserWorkers().then(
     () => {
@@ -141,6 +149,10 @@ async function run(message: RunMessage): Promise<void> {
     }),
     onCommentary: (text, continuation) => writeProtocol({ type: "event", id: message.id, event: "commentary", text, ...(continuation ? { continuation: true } : {}) }),
     onTextDelta: text => writeProtocol({ type: "event", id: message.id, event: "text", text }),
+    retryPromptForAnswer: (text, attempt) => new Promise<string | undefined>(resolve => {
+      answerRetryWaiters.set(message.id, resolve);
+      writeProtocol({ type: "event", id: message.id, event: "answer", text, attempt });
+    }),
     ...(message.turn.captureLunaCheckpoint ? {
       captureLunaCheckpoint: true,
       onLunaCheckpoint: captured => writeProtocol({
@@ -168,6 +180,7 @@ async function run(message: RunMessage): Promise<void> {
       } : {}),
     });
   } finally {
+    answerRetryWaiters.delete(message.id);
     abortControllers.delete(message.id);
   }
 }
@@ -234,8 +247,17 @@ input.on("line", line => {
     writeProtocol({ type: "error", id: "protocol", message: "Browser helper received invalid JSON" });
     return;
   }
-  if (message.type === "abort") abortControllers.get(message.id)?.abort();
-  else if (message.type === "shutdown") {
+  if (message.type === "abort") {
+    answerRetryWaiters.get(message.id)?.();
+    answerRetryWaiters.delete(message.id);
+    abortControllers.get(message.id)?.abort();
+  } else if (message.type === "answer_retry") {
+    const resolve = answerRetryWaiters.get(message.id);
+    if (resolve) {
+      answerRetryWaiters.delete(message.id);
+      resolve(typeof message.prompt === "string" && message.prompt ? message.prompt : undefined);
+    }
+  } else if (message.type === "shutdown") {
     void requestShutdown();
   } else if (message.type === "verify") {
     void verify(message).catch(error => writeProtocol({

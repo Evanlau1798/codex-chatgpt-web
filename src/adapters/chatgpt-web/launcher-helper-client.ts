@@ -20,6 +20,7 @@ interface PendingTurn {
 type HelperMessage =
   | { type: "ready" }
   | { type: "event"; id: string; event: "heartbeat" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
+  | { type: "event"; id: string; event: "answer"; text: string; attempt: number }
   | { type: "event"; id: string; event: "luna_checkpoint"; checkpoint: ChatGptLunaCheckpoint; answerHash: string }
   | { type: "result"; id: string; text: string }
   | {
@@ -45,6 +46,12 @@ function parseHelperMessage(line: string): HelperMessage {
   }
   if (message.type === "event") {
     const event = message.event;
+    if (event === "answer") {
+      if (typeof message.text !== "string" || !Number.isSafeInteger(message.attempt) || Number(message.attempt) < 1) {
+        throw new Error("Launcher browser helper answer event is invalid");
+      }
+      return { type: "event", id: message.id, event, text: message.text, attempt: Number(message.attempt) };
+    }
     if (event === "luna_checkpoint") {
       if (typeof message.answerHash !== "string" || !/^[a-f0-9]{64}$/.test(message.answerHash)) {
         throw new Error("Launcher browser helper Luna checkpoint answer hash is invalid");
@@ -302,6 +309,11 @@ export class LauncherBrowserHelperClient {
     if (!pending) return;
     if (message.type === "event") {
       if (message.event === "heartbeat") pending.turn.onHeartbeat?.();
+      else if (message.event === "answer") {
+        void Promise.resolve(pending.turn.retryPromptForAnswer?.(message.text, message.attempt))
+          .then(prompt => this.send({ type: "answer_retry", id: message.id, ...(prompt ? { prompt } : {}) }))
+          .catch(error => this.finishWithError(message.id, error instanceof Error ? error : new Error(String(error))));
+      }
       else if (message.event === "luna_checkpoint") {
         if (!pending.turn.captureLunaCheckpoint || !pending.turn.onLunaCheckpoint) {
           this.finishWithError(message.id, new Error("Launcher browser helper emitted an unexpected Luna checkpoint"));

@@ -92,14 +92,8 @@ function gatewayNestedToolName(toolName: string): string {
   return toolName.replace(/[^A-Za-z0-9_$]/g, "_");
 }
 
-function execGatewayProgram(
-  nestedToolName: string,
-  freeform: boolean,
-  payload: { arguments?: Record<string, unknown>; input?: string },
-): string {
-  const nestedInput = freeform ? payload.input ?? "" : payload.arguments ?? {};
+function gatewayResultProgram(): string[] {
   return [
-    `const result = await tools[${JSON.stringify(gatewayNestedToolName(nestedToolName))}](${JSON.stringify(nestedInput)});`,
     "const emit = value => {",
     "  if (Array.isArray(value)) { for (const item of value) emit(item); return; }",
     "  if (value && typeof value === \"object\") {",
@@ -114,6 +108,32 @@ function execGatewayProgram(
     "  text(value);",
     "};",
     "emit(result);",
+  ];
+}
+
+function execGatewayProgram(
+  nestedToolName: string,
+  freeform: boolean,
+  payload: { arguments?: Record<string, unknown>; input?: string },
+): string {
+  const nestedInput = freeform ? payload.input ?? "" : payload.arguments ?? {};
+  return [
+    `const result = await tools[${JSON.stringify(gatewayNestedToolName(nestedToolName))}](${JSON.stringify(nestedInput)});`,
+    ...gatewayResultProgram(),
+  ].join("\n");
+}
+
+function commandGatewayProgram(
+  execArguments: Record<string, unknown>,
+  shellArguments: Record<string, unknown>,
+): string {
+  return [
+    "const result = typeof tools.exec_command === \"function\"",
+    `  ? await tools.exec_command(${JSON.stringify(execArguments)})`,
+    "  : typeof tools.shell_command === \"function\"",
+    `    ? await tools.shell_command(${JSON.stringify(shellArguments)})`,
+    "    : (() => { throw new Error(\"No native command tool is available\"); })();",
+    ...gatewayResultProgram(),
   ].join("\n");
 }
 
@@ -196,15 +216,22 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
             };
         return invoke(claimed.bindingId, bound, tool, { arguments: args });
       }
-      return invokeNestedNative(claimed.bindingId, bound, "exec_command", false, {
-        arguments: {
+      const gateway = execGateway(bound);
+      if (!gateway) throw new Error("This Codex turn did not advertise a native command tool or exec gateway");
+      return invoke(claimed.bindingId, bound, gateway, { input: commandGatewayProgram(
+        {
           cmd,
           ...(workdir ? { workdir } : {}),
           ...(yield_time_ms !== undefined ? { yield_time_ms } : {}),
           ...(max_output_tokens !== undefined ? { max_output_tokens } : {}),
           ...(tty !== undefined ? { tty } : {}),
         },
-      });
+        {
+          command: cmd,
+          ...(workdir ? { workdir } : {}),
+          ...(yield_time_ms !== undefined ? { timeout_ms: yield_time_ms } : {}),
+        },
+      ) });
     },
   );
 
@@ -212,10 +239,10 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     "codex_write_stdin",
     {
       title: "Continue a native Codex command session",
-      description: "Write characters to, or poll, a session_id returned by codex_exec.",
+      description: "Write characters to, or poll, a numeric session_id or string cell_id returned by codex_exec.",
       inputSchema: {
         turn_token: turnTokenSchema,
-        session_id: z.number().int().nonnegative(),
+        session_id: z.union([z.number().int().nonnegative(), z.string().min(1).max(512)]),
         chars: z.string().max(1_000_000).optional(),
         yield_time_ms: z.number().int().min(250).max(300_000).optional(),
         max_output_tokens: z.number().int().min(1).max(1_000_000).optional(),
@@ -225,16 +252,18 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     async ({ turn_token, session_id, chars, yield_time_ms, max_output_tokens }, extra) => {
       const claimed = await claimTurn("codex_write_stdin", turn_token, extra);
       const bound = claimed.environment;
-      const tool = exactTool(bound, "write_stdin");
+      const cellId = typeof session_id === "string" ? session_id : undefined;
+      const toolName = cellId !== undefined && chars === undefined ? "wait" : "write_stdin";
+      const tool = exactTool(bound, toolName);
       const payload = { arguments: {
-        session_id,
+        ...(toolName === "wait" ? { cell_id: cellId } : { session_id }),
         ...(chars !== undefined ? { chars } : {}),
         ...(yield_time_ms !== undefined ? { yield_time_ms } : {}),
-        ...(max_output_tokens !== undefined ? { max_output_tokens } : {}),
+        ...(max_output_tokens !== undefined ? { [toolName === "wait" ? "max_tokens" : "max_output_tokens"]: max_output_tokens } : {}),
       } };
       return tool
         ? invoke(claimed.bindingId, bound, tool, payload)
-        : invokeNestedNative(claimed.bindingId, bound, "write_stdin", false, payload);
+        : invokeNestedNative(claimed.bindingId, bound, toolName, false, payload);
     },
   );
 
