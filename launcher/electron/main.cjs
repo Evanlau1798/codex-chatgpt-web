@@ -480,6 +480,12 @@ function registerIpc({ logger, stateStore }) {
     else stopCatalogVerificationMonitor();
     return state;
   });
+  handle("launcher:new-compact-mode", async (_event, enabled) => {
+    const useNewCompactMode = await runtimeHost.setUseNewCompactMode(enabled === true);
+    const state = stateStore.update({ useNewCompactMode, codexRestartRequired: true });
+    send("launcher:state-changed", state);
+    return state;
+  });
   handle("launcher:uninstall-integration", async () => {
     const language = stateStore.read().language;
     const chinese = language === "zh-CN";
@@ -724,6 +730,10 @@ async function start() {
     publishOperation,
     supervisor: runtimeSupervisor,
   });
+  const configuredCompactMode = runtimeHost.runtimeConfigSnapshot().config?.useNewCompactMode === true;
+  if (stateStore.read().useNewCompactMode !== configuredCompactMode) {
+    stateStore.update({ useNewCompactMode: configuredCompactMode });
+  }
   browserHost = new BrowserHost({
     window: mainWindow,
     descriptorPath: BROWSER_DESCRIPTOR_PATH,

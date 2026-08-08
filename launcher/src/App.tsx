@@ -1289,6 +1289,17 @@ function SettingsSurface({
       setBusy(false);
     }
   };
+  const setUseNewCompactMode = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      updateState(await api!.setUseNewCompactMode(enabled));
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const uninstallIntegration = async () => {
     setBusy(true);
     setError(null);
@@ -1322,6 +1333,13 @@ function SettingsSurface({
             checked={snapshot.state.bridgeEnabled}
             disabled={busy || snapshot.state.coreSetupComplete !== true}
             onChange={(checked) => void setBridgeEnabled(checked)}
+          />
+        </SettingRow>
+        <SettingRow body={copy.newCompactModeBody} label={copy.newCompactMode}>
+          <Switch
+            checked={snapshot.state.useNewCompactMode}
+            disabled={busy || snapshot.state.coreSetupComplete !== true}
+            onChange={(enabled) => void setUseNewCompactMode(enabled)}
           />
         </SettingRow>
         <SettingRow body={copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>

@@ -9,6 +9,7 @@ export interface LauncherState {
   xOpened: boolean;
   autoStart: boolean;
   bridgeEnabled: boolean;
+  useNewCompactMode: boolean;
   keepRunningOnClose: boolean;
   showBrowserDuringTurns: boolean;
   sidebarOpen: boolean;
@@ -125,6 +126,7 @@ export interface LauncherApi {
   doctor(): Promise<DoctorReport>;
   cancelTurns(): Promise<{ stdout: string }>;
   setBridgeEnabled(enabled: boolean): Promise<LauncherState>;
+  setUseNewCompactMode(enabled: boolean): Promise<LauncherState>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCore(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
   setupMcp(input: {

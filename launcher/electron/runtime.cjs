@@ -781,6 +781,55 @@ class RuntimeHost {
     }
   }
 
+  async setUseNewCompactMode(enabled) {
+    const desired = enabled === true;
+    const name = "compact-mode-change";
+    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured || current.owner !== "launcher") {
+      throw new Error("Install the launcher-owned runtime before changing compact mode");
+    }
+    if (current.config.useNewCompactMode === desired) return desired;
+    if (typeof this.supervisor.configPath !== "string" || !path.isAbsolute(this.supervisor.configPath)) {
+      throw new Error("Launcher runtime supervisor has no absolute configuration path");
+    }
+
+    this.lifecycleOperation = name;
+    const previous = fs.readFileSync(this.supervisor.configPath, "utf8");
+    try {
+      await this.supervisor.stopForSetup();
+      try {
+        writePrivateFileAtomic(
+          this.supervisor.configPath,
+          `${JSON.stringify({ ...current.config, useNewCompactMode: desired }, null, 2)}\n`,
+        );
+        const runtime = await this.supervisor.startIfConfigured();
+        if (runtime.status !== "ready") {
+          throw new Error(`Local runtime is ${runtime.status}${runtime.detail ? `: ${runtime.detail}` : ""}`);
+        }
+        return desired;
+      } catch (error) {
+        let recoveryError;
+        try {
+          writePrivateFileAtomic(this.supervisor.configPath, previous);
+          const runtime = await this.supervisor.startIfConfigured();
+          if (runtime.status !== "ready") {
+            throw new Error(`runtime recovery returned ${runtime.status}${runtime.detail ? `: ${runtime.detail}` : ""}`);
+          }
+        } catch (caught) {
+          recoveryError = caught;
+        }
+        if (!recoveryError) throw error;
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}; restoring the previous compact mode also failed:`
+          + ` ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
+        );
+      }
+    } finally {
+      this.lifecycleOperation = null;
+    }
+  }
+
   mcpConnectorName() {
     const current = this.runtimeConfigSnapshot();
     if (!current.configured || current.mode !== "full") {
