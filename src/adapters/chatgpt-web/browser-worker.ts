@@ -271,6 +271,8 @@ export interface BrowserTurn {
   /** Require and remove the private Luna checkpoint tail from the visible Markdown stream. */
   captureLunaCheckpoint?: boolean;
   onLunaCheckpoint?: (captured: CapturedChatGptLunaCheckpoint) => void;
+  /** Return a corrective follow-up prompt to retry the final answer in the same chat. */
+  retryPromptForAnswer?: (answer: string, attempt: number) => string | undefined | Promise<string | undefined>;
 }
 
 export interface ResolvedBrowserConfig {
@@ -1280,8 +1282,9 @@ export class ChatGptBrowserWorker {
   }
 
   private async insertPromptText(page: Page, text: string): Promise<void> {
-    for (let offset = 0; offset < text.length; offset += CHATGPT_PROMPT_INSERT_CHUNK_CHARS) {
-      const end = Math.min(offset + CHATGPT_PROMPT_INSERT_CHUNK_CHARS, text.length);
+    for (let offset = 0; offset < text.length;) {
+      let end = Math.min(offset + CHATGPT_PROMPT_INSERT_CHUNK_CHARS, text.length);
+      if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]!) && /[\uDC00-\uDFFF]/.test(text[end]!)) end -= 1;
       await page.keyboard.insertText(text.slice(offset, end));
       if (end < text.length) {
         await this.waitForPromptChunkAttached(page, text.slice(0, end).trimStart());
@@ -1289,6 +1292,7 @@ export class ChatGptBrowserWorker {
         // editor. Move to the end of the complete composer before appending the next verified edit.
         await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
       }
+      offset = end;
     }
   }
 
@@ -1762,20 +1766,25 @@ export class ChatGptBrowserWorker {
         )
       ));
       await diagnostics.capture(page, "effort-selection-complete");
-      await this.runStage(turn.traceId, "prompt_attachment", browserStageTimeouts.promptAttachment, () => (
-        this.attachPrompt(page, prepared.text, mode.localTools, checkpoint => diagnostics.capture(page, checkpoint))
-      ));
-      await diagnostics.capture(page, "prompt-attachment-complete");
-      await this.runStage(turn.traceId, "file_attachment", browserStageTimeouts.fileAttachment, () => (
-        this.attachFiles(page, prepared)
-      ));
-      await diagnostics.capture(page, "file-attachment-complete");
-      const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
-      const initialResponseTurnCount = await responseTurns.count();
-      const responseTurn = responseTurns.nth(initialResponseTurnCount);
-      const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
-      const initialUserTurnCount = await userTurns.count();
-      await this.runStage(turn.traceId, "send", browserStageTimeouts.send, async (stageSignal) => {
+      let finalText = "";
+      let responsePrompt = prepared.text;
+      for (let responseAttempt = 1; ; responseAttempt += 1) {
+        await this.runStage(turn.traceId, "prompt_attachment", browserStageTimeouts.promptAttachment, () => (
+          this.attachPrompt(page, responsePrompt, mode.localTools, checkpoint => diagnostics.capture(page, checkpoint))
+        ));
+        await diagnostics.capture(page, "prompt-attachment-complete");
+        if (responseAttempt === 1) {
+          await this.runStage(turn.traceId, "file_attachment", browserStageTimeouts.fileAttachment, () => (
+            this.attachFiles(page, prepared)
+          ));
+          await diagnostics.capture(page, "file-attachment-complete");
+        }
+        const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
+        const initialResponseTurnCount = await responseTurns.count();
+        const responseTurn = responseTurns.nth(initialResponseTurnCount);
+        const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
+        const initialUserTurnCount = await userTurns.count();
+        await this.runStage(turn.traceId, "send", browserStageTimeouts.send, async (stageSignal) => {
         const composer = await this.activeComposer(page);
         const sendButton = composer
           .locator("xpath=ancestor::form[1]")
@@ -1798,27 +1807,26 @@ export class ChatGptBrowserWorker {
           stageSignal,
         );
         console.info(`[chatgpt-web] browser turn ${turn.traceId} submission accepted evidence=${evidence}`);
-      });
-      await diagnostics.capture(page, "send-accepted");
+        });
+        await diagnostics.capture(page, "send-accepted");
 
-      let lastHeartbeat = 0;
-      let finalText = "";
-      let sawRunning = false;
-      let loggedCompletionWait = false;
-      let capturedResponse = false;
-      const sentAt = Date.now();
-      const visibleTrace = new ChatGptVisibleTraceTracker();
-      const markdownBuffer = new ChatGptMarkdownBuffer();
-      const checkpointStream = turn.captureLunaCheckpoint
-        ? new ChatGptLunaCheckpointStream()
-        : undefined;
-      const emitMarkdownDelta = (delta: string): void => {
-        const visible = checkpointStream ? checkpointStream.push(delta) : delta;
-        if (visible) turn.onTextDelta(visible);
-      };
-      const completionTracker = new ChatGptCompletionTracker();
-      const domHealthTracker = new ChatGptTurnDomHealthTracker();
-      for (;;) {
+        let lastHeartbeat = 0;
+        let sawRunning = false;
+        let loggedCompletionWait = false;
+        let capturedResponse = false;
+        const sentAt = Date.now();
+        const visibleTrace = new ChatGptVisibleTraceTracker();
+        const markdownBuffer = new ChatGptMarkdownBuffer();
+        const checkpointStream = turn.captureLunaCheckpoint
+          ? new ChatGptLunaCheckpointStream()
+          : undefined;
+        const emitMarkdownDelta = (delta: string): void => {
+          const visible = checkpointStream ? checkpointStream.push(delta) : delta;
+          if (visible) turn.onTextDelta(visible);
+        };
+        const completionTracker = new ChatGptCompletionTracker();
+        const domHealthTracker = new ChatGptTurnDomHealthTracker();
+        for (;;) {
         if (page.isClosed()) {
           throw new Error("ChatGPT browser tab was closed; the Codex turn was terminated");
         }
@@ -1920,7 +1928,13 @@ export class ChatGptBrowserWorker {
           });
           if (domError) throw new Error(domError);
         }
-        await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+          await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+        }
+        const retryPrompt = await turn.retryPromptForAnswer?.(finalText, responseAttempt);
+        if (!retryPrompt) break;
+        if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry their final answer");
+        responsePrompt = retryPrompt;
+        console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying final answer attempt=${responseAttempt + 1}`);
       }
 
       if (this.context && this.config.browserHost === "managed-chrome") {

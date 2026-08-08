@@ -45,6 +45,7 @@ interface TurnChannel {
   invocations: Map<string, PendingInvocation>;
   waiters: Set<ToolWaiter>;
   batchTimer?: ReturnType<typeof setTimeout>;
+  handoffInstruction?: string;
 }
 
 interface BrokerRequest {
@@ -200,6 +201,23 @@ export class TurnBroker {
     channel.invocations.delete(callId);
     console.info(`[chatgpt-web] broker trace=${channel.traceId} completed call=${callId.slice(0, 17)} pending=${channel.invocations.size}`);
     invocation.resolve(result);
+  }
+
+  requestHandoff(token: string, instruction: string): void {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    channel.handoffInstruction = instruction;
+    channel.queuedCallIds.length = 0;
+    for (const [callId, invocation] of channel.invocations) {
+      channel.invocations.delete(callId);
+      invocation.resolve({ content: [{ type: "text", text: instruction }], isError: true });
+    }
+  }
+
+  handoffRequested(token: string): boolean {
+    this.prune();
+    return Boolean(this.channels.get(token)?.handoffInstruction);
   }
 
   revoke(token: string): void {
@@ -422,6 +440,13 @@ export class TurnBroker {
       return { released: true };
     }
     if (request.method === "resolve") return { environment: binding.channel.environment };
+
+    if (binding.channel.handoffInstruction) {
+      return {
+        content: [{ type: "text", text: binding.channel.handoffInstruction }],
+        isError: true,
+      } satisfies BrokerToolResult;
+    }
 
     const wireName = request.wireName?.trim();
     if (!wireName) throw new Error("wire tool name is required");

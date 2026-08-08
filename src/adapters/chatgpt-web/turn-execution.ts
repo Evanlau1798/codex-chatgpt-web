@@ -183,6 +183,7 @@ export class ChatGptTurnSession {
   private finalReasoning: string[] = [];
   private outstandingPrelude: AdapterEvent[] = [];
   private finalPrelude: AdapterEvent[] = [];
+  private handoff?: string;
   private settledBrowserOutcome?: ChatGptBrowserOutcome;
   private tail: Promise<void> = Promise.resolve();
 
@@ -272,6 +273,14 @@ export class ChatGptTurnSession {
     return [...this.finalPrelude];
   }
 
+  setCompactionHandoff(text: string): void {
+    this.handoff = text;
+  }
+
+  compactionHandoff(): string | undefined {
+    return this.handoff;
+  }
+
   cancel(): void {
     this.runtime.cancel();
   }
@@ -303,6 +312,11 @@ export class ChatGptTurnSessions {
     const session = new ChatGptTurnSession(start());
     this.entries.set(key, session);
     return session;
+  }
+
+  find(key: string): ChatGptTurnSession | undefined {
+    this.prune();
+    return this.entries.get(key);
   }
 
   async waitForRetirement(key: string): Promise<void> {
