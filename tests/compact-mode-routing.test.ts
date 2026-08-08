@@ -9,6 +9,7 @@ import {
   requestActiveCompactionHandoff,
 } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
+import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import {
   ChatGptTextFeed,
   ChatGptTraceFeed,
@@ -95,6 +96,33 @@ describe("compact mode routing", () => {
       });
     }
     expect(events).toEqual([]);
+  });
+
+  test("does not attach beta handoff behavior to original-mode browser turns", async () => {
+    const config = provider(false);
+    const worker = ChatGptBrowserWorker.forProvider(config);
+    const originalRun = worker.run.bind(worker);
+    let browserTurn: BrowserTurn | undefined;
+    worker.run = turn => {
+      browserTurn = turn;
+      turn.onTextDelta("original response");
+      return Promise.resolve("original response");
+    };
+    const request = compactRequest();
+    delete request._compactionRequest;
+    const metadata = (request._rawBody as { client_metadata: Record<string, string> }).client_metadata;
+    metadata["x-codex-turn-metadata"] = JSON.stringify({
+      thread_id: "thread_compact_test",
+      turn_id: "turn_compact_source",
+    });
+
+    try {
+      await createChatGptWebAdapter(config).runTurn!(request, { headers: new Headers() }, () => {});
+      expect(browserTurn?.retryPromptForAnswer).toBeUndefined();
+      expect(browserTurn?.retryPromptForError).toBeUndefined();
+    } finally {
+      worker.run = originalRun;
+    }
   });
 
   test("obtains the beta checkpoint from the active tools conversation", async () => {

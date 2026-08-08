@@ -145,7 +145,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const browserAbort = new AbortController();
     const trace = new ChatGptTraceFeed();
     const text = new ChatGptTextFeed();
-    const handoffPrompts = createActiveCompactionHandoffPrompts();
+    const handoffPrompts = useNewCompactMode ? createActiveCompactionHandoffPrompts() : undefined;
     if (!mode.localTools) {
       const base = {
         modelId: parsed.modelId,
@@ -172,8 +172,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
         onCommentary: (value, continuation) => trace.push({ kind: "commentary", text: value, ...(continuation ? { continuation: true } : {}) }),
         onTextDelta: delta => text.push(delta),
-        retryPromptForAnswer: answer => handoffPrompts.retryPromptForAnswer(answer),
-        retryPromptForError: error => handoffPrompts.retryPromptForError(error),
+        ...(handoffPrompts ? { retryPromptForAnswer: handoffPrompts.retryPromptForAnswer, retryPromptForError: handoffPrompts.retryPromptForError } : {}),
       });
       const browser = finalizeCheckpoint(browserRun);
       return {
@@ -182,7 +181,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         trace,
         text,
         usageInput: checkpointInput.parsed,
-        requestHandoff: instructionDelivered => handoffPrompts.request(instructionDelivered),
+        ...(handoffPrompts ? { requestHandoff: handoffPrompts.request } : {}),
         cancel: () => browserAbort.abort(),
       };
     }
@@ -221,8 +220,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       onReasoningSummary: (text, continuation) => trace.push({ kind: "reasoning", text, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: (text, continuation) => trace.push({ kind: "commentary", text, ...(continuation ? { continuation: true } : {}) }),
       onTextDelta: delta => text.push(delta),
-      retryPromptForAnswer: answer => handoffPrompts.retryPromptForAnswer(answer),
-      retryPromptForError: error => handoffPrompts.retryPromptForError(error),
+      ...(handoffPrompts ? { retryPromptForAnswer: handoffPrompts.retryPromptForAnswer, retryPromptForError: handoffPrompts.retryPromptForError } : {}),
       ...(captureLunaCheckpoint ? {
         captureLunaCheckpoint: true,
         onLunaCheckpoint: captureCheckpoint,
@@ -241,7 +239,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       trace,
       text,
       usageInput: checkpointInput.parsed,
-      requestHandoff: instructionDelivered => handoffPrompts.request(instructionDelivered),
+      ...(handoffPrompts ? { requestHandoff: handoffPrompts.request } : {}),
       cancel: () => {
         browserAbort.abort();
         if (activeToken) broker.revoke(activeToken);
