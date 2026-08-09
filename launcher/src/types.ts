@@ -17,6 +17,8 @@ export interface LauncherState {
   sidebarWidth: number;
   browserSmokePassed?: boolean;
   browserSmokeVersion?: string | null;
+  codexSetupComplete: boolean;
+  claudeSetupComplete: boolean;
   coreSetupComplete?: boolean;
   codexCatalogVerified?: boolean;
   mcpSetupComplete?: boolean;
@@ -129,7 +131,8 @@ export interface LauncherApi {
   setBridgeEnabled(enabled: boolean): Promise<LauncherState>;
   setUseNewCompactMode(enabled: boolean): Promise<LauncherState>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
-  setupCore(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
+  setupCodex(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
+  setupClaude(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
   setupMcp(input: {
     tunnelId?: string;
     runtimeKey?: string;

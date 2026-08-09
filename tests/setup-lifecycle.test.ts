@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { launcherCapabilityProbeRequired, setupProxyIsReady } from "../src/setup";
+import {
+  launcherCapabilityProbeRequired,
+  setupIntegrationSelection,
+  setupProxyIsReady,
+} from "../src/setup";
 
 const config = {
   mode: "browser-only" as const,
@@ -35,4 +39,10 @@ test("launcher setup refreshes account capabilities only when missing or explici
     proAvailable: false,
   } as never)).toBe(true);
   expect(launcherCapabilityProbeRequired(verifiedLauncher, true)).toBe(true);
+});
+
+test("setup can install Codex and Claude Code independently without changing the combined default", () => {
+  expect(setupIntegrationSelection()).toEqual({ codex: true, claude: true });
+  expect(setupIntegrationSelection("codex")).toEqual({ codex: true, claude: false });
+  expect(setupIntegrationSelection("claude")).toEqual({ codex: false, claude: true });
 });

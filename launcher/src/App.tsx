@@ -292,8 +292,9 @@ function LauncherShell({
   snapshot: LauncherSnapshot;
   updateState: (state: LauncherState) => void;
 }) {
+  const clientIntegrationInstalled = hasClientIntegration(snapshot.state);
   const [surface, setSurface] = useState<Surface>(
-    snapshot.state.coreSetupComplete && snapshot.state.codexCatalogVerified ? "browser" : "setup",
+    snapshot.state.coreSetupComplete && clientIntegrationInstalled ? "browser" : "setup",
   );
   const compactAtMount = useRef(window.matchMedia(COMPACT_SIDEBAR_QUERY).matches).current;
   const [sidebarOpen, setSidebarOpen] = useState(!compactAtMount);
@@ -305,8 +306,8 @@ function LauncherShell({
   const browserSurfaceActive = surface === "browser" && !(compactSidebar && sidebarOpen);
   const needsBrowser = browser?.authenticated !== true;
   const needsSetup = !needsBrowser
-    && (snapshot.state.coreSetupComplete !== true || snapshot.state.codexCatalogVerified !== true);
-  const mcpOptional = snapshot.state.codexCatalogVerified === true && snapshot.state.mcpSetupComplete !== true;
+    && (snapshot.state.coreSetupComplete !== true || !clientIntegrationInstalled);
+  const mcpOptional = clientIntegrationInstalled && snapshot.state.mcpSetupComplete !== true;
   const updateVisible = ["available", "downloading", "installing"].includes(snapshot.update.status);
   const updateBusy = snapshot.update.status === "downloading" || snapshot.update.status === "installing";
   const updateVersion = "version" in snapshot.update ? snapshot.update.version : null;
@@ -838,6 +839,7 @@ function SetupSurface({
   updateState: (state: LauncherState) => void;
 }) {
   const [localBusy, setLocalBusy] = useState(false);
+  const clientIntegrationInstalled = hasClientIntegration(snapshot.state);
   const busy = localBusy
     || operation?.status === "running"
     || browser?.status === "loading"
@@ -865,8 +867,12 @@ function SetupSurface({
     await api!.smokeTest();
     updateState((await api!.snapshot()).state);
   });
-  const install = () => run(async () => {
-    await api!.setupCore();
+  const installCodex = () => run(async () => {
+    await api!.setupCodex();
+    updateState((await api!.snapshot()).state);
+  });
+  const installClaude = () => run(async () => {
+    await api!.setupClaude();
     updateState((await api!.snapshot()).state);
   });
 
@@ -899,14 +905,16 @@ function SetupSurface({
           title={copy.stepSmoke}
         />
         <SetupRow
-          action={snapshot.state.coreSetupComplete ? copy.reinstall : copy.install}
-          complete={snapshot.state.codexCatalogVerified === true}
+          action={snapshot.state.codexSetupComplete ? copy.reinstallCodex : copy.installCodex}
+          complete={clientIntegrationInstalled}
           description={copy.stepInstallBody}
           disabled={busy
             || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
           index={3}
-          onAction={install}
+          onAction={installCodex}
+          onSecondaryAction={installClaude}
           repeatable
+          secondaryAction={snapshot.state.claudeSetupComplete ? copy.reinstallClaude : copy.installClaude}
           title={copy.stepInstall}
         />
       </div>
@@ -918,7 +926,7 @@ function SetupSurface({
       ) : null}
 
       <SectionHeading label="MCP" meta={copy.optional} spaced />
-      <button className="next-surface-row" disabled={!snapshot.state.codexCatalogVerified} onClick={showMcp} type="button">
+      <button className="next-surface-row" disabled={!clientIntegrationInstalled} onClick={showMcp} type="button">
         <Icon name="mcp" />
         <span>
           <strong>{copy.mcpTitle}</strong>
@@ -946,6 +954,7 @@ function McpSurface({
   snapshot: LauncherSnapshot;
   updateState: (state: LauncherState) => void;
 }) {
+  const clientIntegrationInstalled = hasClientIntegration(snapshot.state);
   const [step, setStep] = useState(Math.min(2, Math.max(0, snapshot.state.mcpGuideStep || 0)));
   const [tunnelId, setTunnelId] = useState("");
   const [runtimeKey, setRuntimeKey] = useState("");
@@ -1020,7 +1029,7 @@ function McpSurface({
 
   return (
     <ContentSurface fit subtitle={copy.mcpSubtitle} title="MCP">
-      {!snapshot.state.codexCatalogVerified ? (
+      {!clientIntegrationInstalled ? (
         <NoticeRow icon="setup" tone="warning">{copy.stepInstallBody}</NoticeRow>
       ) : null}
 
@@ -1168,7 +1177,7 @@ function McpSurface({
           <PrimaryButton
             disabled={
               busy
-              || !snapshot.state.codexCatalogVerified
+              || !clientIntegrationInstalled
               || ((!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey))
             }
             onClick={() => void install()}
@@ -1335,7 +1344,7 @@ function SettingsSurface({
         <SettingRow body={copy.bridgeRouteBody} label={copy.bridgeRoute}>
           <Switch
             checked={snapshot.state.bridgeEnabled}
-            disabled={busy || snapshot.state.coreSetupComplete !== true}
+            disabled={busy || snapshot.state.codexSetupComplete !== true}
             onChange={(checked) => void setBridgeEnabled(checked)}
           />
         </SettingRow>
@@ -1449,7 +1458,9 @@ function SetupRow({
   disabled,
   index,
   onAction,
+  onSecondaryAction,
   repeatable = false,
+  secondaryAction,
   title,
 }: {
   action: string;
@@ -1458,7 +1469,9 @@ function SetupRow({
   disabled: boolean;
   index: number;
   onAction: () => void;
+  onSecondaryAction?: () => void;
   repeatable?: boolean;
+  secondaryAction?: string;
   title: string;
 }) {
   return (
@@ -1468,11 +1481,20 @@ function SetupRow({
         <strong>{title}</strong>
         <p>{description}</p>
       </div>
-      <SecondaryButton disabled={disabled || (complete && !repeatable)} onClick={onAction}>
-        {action}
-      </SecondaryButton>
+      {secondaryAction && onSecondaryAction ? (
+        <div className="setup-actions">
+          <SecondaryButton disabled={disabled || (complete && !repeatable)} onClick={onAction}>{action}</SecondaryButton>
+          <SecondaryButton disabled={disabled || (complete && !repeatable)} onClick={onSecondaryAction}>{secondaryAction}</SecondaryButton>
+        </div>
+      ) : (
+        <SecondaryButton disabled={disabled || (complete && !repeatable)} onClick={onAction}>{action}</SecondaryButton>
+      )}
     </div>
   );
+}
+
+function hasClientIntegration(state: LauncherState): boolean {
+  return state.codexSetupComplete || state.claudeSetupComplete;
 }
 
 function SectionHeading({ label, meta, spaced = false }: { label: string; meta?: string; spaced?: boolean }) {

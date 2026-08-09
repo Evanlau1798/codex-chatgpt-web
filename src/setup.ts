@@ -35,6 +35,7 @@ import { VERSION } from "./version";
 
 export interface SetupOptions {
   mode: RuntimeMode;
+  integration?: "all" | "codex" | "claude";
   port?: number;
   chromeExecutablePath?: string;
   browserHostDescriptorPath?: string;
@@ -56,8 +57,17 @@ export interface SetupResult {
   loginCreated: boolean;
   serviceLoaded: boolean;
   tunnelReady: boolean | null;
-  codexRestartRequired: true;
+  codexRestartRequired: boolean;
   connectorSetupRequired: boolean;
+}
+
+export function setupIntegrationSelection(
+  integration: SetupOptions["integration"] = "all",
+): { codex: boolean; claude: boolean } {
+  return {
+    codex: integration !== "claude",
+    claude: integration !== "codex",
+  };
 }
 
 export interface ExistingFullSetupCredentials {
@@ -266,6 +276,7 @@ async function bootstrapTunnelProfile(config: AppConfig): Promise<void> {
 export async function setup(options: SetupOptions): Promise<SetupResult> {
   const existing = loadExistingConfig();
   const config = baseConfig(existing, options);
+  const integrations = setupIntegrationSelection(options.integration);
   const launcherOwned = config.browserHost === "launcher";
   if (!launcherOwned && process.platform !== "darwin") {
     throw new Error(
@@ -273,12 +284,16 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       + "Use the Codex Web GPT launcher on Windows or Linux.",
     );
   }
-  preflightCodexIntegration(config, {
-    replaceExistingRoute: options.replaceCodexRoute,
-  });
-  preflightClaudeIntegration(config, {
-    replaceExistingRoute: options.replaceCodexRoute,
-  });
+  if (integrations.codex) {
+    preflightCodexIntegration(config, {
+      replaceExistingRoute: options.replaceCodexRoute,
+    });
+  }
+  if (integrations.claude) {
+    preflightClaudeIntegration(config, {
+      replaceExistingRoute: options.replaceCodexRoute,
+    });
+  }
   const refreshTunnelWorker = tunnelWorkerRuntimeChanged(existing, config);
   if (existing && options.restartService) config.controlToken = randomBytes(32).toString("base64url");
   const beforeService = getServiceStatus();
@@ -409,12 +424,16 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     launcherOwned && existing && existing.browserHost !== "launcher",
   );
   if (!migratingTerminalRuntime) removeLegacyRuntimeArtifacts(config);
-  installCodexIntegration(config, {
-    replaceExistingRoute: options.replaceCodexRoute,
-  });
-  installClaudeIntegration(config, {
-    replaceExistingRoute: options.replaceCodexRoute,
-  });
+  if (integrations.codex) {
+    installCodexIntegration(config, {
+      replaceExistingRoute: options.replaceCodexRoute,
+    });
+  }
+  if (integrations.claude) {
+    installClaudeIntegration(config, {
+      replaceExistingRoute: options.replaceCodexRoute,
+    });
+  }
 
   return {
     mode: config.mode,
@@ -422,7 +441,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     loginCreated,
     serviceLoaded: launcherOwned ? false : getServiceStatus().loaded,
     tunnelReady,
-    codexRestartRequired: true,
+    codexRestartRequired: integrations.codex,
     connectorSetupRequired: config.mode === "full",
   };
 }

@@ -242,12 +242,18 @@ test("launcher refreshes persisted ChatGPT authentication before presenting setu
   assert.match(i18nSource, /checkingSignIn: "Checking saved session"/);
 });
 
-test("completed model setup remains a repeatable account-capability probe", () => {
-  assert.match(appSource, /copy\.reinstall/);
-  assert.match(appSource, /<SetupRow[\s\S]*?onAction=\{install\}[\s\S]*?repeatable/);
-  assert.match(appSource, /complete && !repeatable/);
-  assert.match(i18nSource, /reinstall: "Reinstall models"/);
-  assert.match(i18nSource, /reinstall: "重新安装模型"/);
+test("Codex and Claude Code installs are independent and either completes setup", () => {
+  assert.match(appSource, /api!\.setupCodex\(\)/);
+  assert.match(appSource, /api!\.setupClaude\(\)/);
+  assert.match(appSource, /state\.codexSetupComplete\s*\|\|\s*state\.claudeSetupComplete/);
+  assert.match(appSource, /copy\.reinstallCodex/);
+  assert.match(appSource, /copy\.reinstallClaude/);
+  assert.match(preloadSource, /setupCodex:[\s\S]*?launcher:setup-codex/);
+  assert.match(preloadSource, /setupClaude:[\s\S]*?launcher:setup-claude/);
+  assert.match(electronMain, /launcher:setup-codex/);
+  assert.match(electronMain, /launcher:setup-claude/);
+  assert.match(i18nSource, /installCodex: "Install into Codex"/);
+  assert.match(i18nSource, /installClaude: "Install into Claude Code"/);
   assert.match(
     electronMain,
     /!setupState\.coreSetupComplete[\s\S]*?smokePassedThisSession[\s\S]*?smokePassedForCurrentVersion\(setupState\)/,

@@ -18,6 +18,8 @@ const DEFAULT_STATE = Object.freeze({
   lockBrowserDuringTurns: true,
   browserSmokePassed: false,
   browserSmokeVersion: null,
+  codexSetupComplete: false,
+  claudeSetupComplete: false,
   sidebarOpen: true,
   sidebarWidth: 252,
   mcpGuideStep: 0,
@@ -34,6 +36,12 @@ function readState(filePath) {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
     if (!parsed || parsed.version !== 1) return { ...DEFAULT_STATE };
     const state = { ...DEFAULT_STATE, ...parsed };
+    if (parsed.coreSetupComplete === true
+      && parsed.codexSetupComplete === undefined
+      && parsed.claudeSetupComplete === undefined) {
+      state.codexSetupComplete = true;
+      state.claudeSetupComplete = true;
+    }
     if (state.language !== null && state.language !== "en" && state.language !== "zh-CN") {
       state.language = DEFAULT_STATE.language;
     }
@@ -48,6 +56,8 @@ function readState(filePath) {
       "showBrowserDuringTurns",
       "lockBrowserDuringTurns",
       "browserSmokePassed",
+      "codexSetupComplete",
+      "claudeSetupComplete",
       "sidebarOpen",
     ]) {
       if (typeof state[key] !== "boolean") state[key] = DEFAULT_STATE[key];

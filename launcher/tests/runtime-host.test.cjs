@@ -90,6 +90,20 @@ test("core setup starts in browser-only mode when no installation exists", async
   assert.deepEqual(fixture.invocation().args.slice(-2), ["--chrome", "/usr/bin/chromium"]);
 });
 
+test("launcher setup targets Codex and Claude Code independently", async () => {
+  const codex = hostFor(null);
+  await codex.host.setupCore("codex");
+  assert.equal(codex.invocation().args.includes("--codex-only"), true);
+  assert.equal(codex.invocation().args.includes("--claude-only"), false);
+  assert.equal(codex.invocation().args.includes("--replace-codex-route"), true);
+
+  const claude = hostFor(null);
+  await claude.host.setupCore("claude");
+  assert.equal(claude.invocation().args.includes("--claude-only"), true);
+  assert.equal(claude.invocation().args.includes("--codex-only"), false);
+  assert.equal(claude.invocation().args.includes("--replace-codex-route"), true);
+});
+
 test("launcher login captures verified storage in a private transfer and returns explicit cleanup", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-browser-login-"));
   const descriptorPath = path.join(root, "launcher-browser.json");

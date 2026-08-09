@@ -29,6 +29,8 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       lockBrowserDuringTurns: true,
       browserSmokePassed: false,
       browserSmokeVersion: null,
+      codexSetupComplete: false,
+      claudeSetupComplete: false,
       sidebarOpen: true,
       sidebarWidth: 252,
       mcpGuideStep: 0,
@@ -56,6 +58,8 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       lockBrowserDuringTurns: false,
       browserSmokePassed: true,
       browserSmokeVersion: "0.2.0",
+      codexSetupComplete: false,
+      claudeSetupComplete: false,
       sidebarOpen: true,
       sidebarWidth: 252,
       mcpGuideStep: 0,
@@ -109,11 +113,26 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       lockBrowserDuringTurns: true,
       browserSmokePassed: false,
       browserSmokeVersion: null,
+      codexSetupComplete: false,
+      claudeSetupComplete: false,
       sidebarOpen: true,
       sidebarWidth: 252,
       mcpGuideStep: 0,
       sessionRefreshReminderAt: null,
     });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("legacy combined setup is migrated as both client integrations installed", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-legacy-setup-state-"));
+  const file = path.join(root, "state.json");
+  try {
+    fs.writeFileSync(file, JSON.stringify({ version: 1, coreSetupComplete: true }));
+    const state = createStateStore(file).read();
+    assert.equal(state.codexSetupComplete, true);
+    assert.equal(state.claudeSetupComplete, true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

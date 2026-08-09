@@ -965,6 +965,12 @@ code {
   padding: 14px 0;
 }
 
+.setup-row > .setup-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0;
+}
+
 .setup-row strong,
 .setting-row strong,
 .next-surface-row strong,
@@ -2108,6 +2114,13 @@ code {
 
   .setup-row > .button-secondary {
     grid-column: 2;
+    justify-self: start;
+    margin-bottom: 7px;
+  }
+
+  .setup-row > .setup-actions {
+    grid-column: 2;
+    flex-wrap: wrap;
     justify-self: start;
     margin-bottom: 7px;
   }

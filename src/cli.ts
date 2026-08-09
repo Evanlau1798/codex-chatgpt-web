@@ -55,6 +55,8 @@ Setup options:
   --app-name NAME              ChatGPT connector name (default: ${CHATGPT_CONNECTOR_NAME})
   --tunnel-id ID               Existing OpenAI tunnel id (full mode)
   --runtime-key-file PATH      File containing a Tunnels Read+Use runtime key
+  --codex-only                 Install only the native Codex integration
+  --claude-only                Install only the Claude Code integration
   --replace-codex-route        Reversibly replace an existing openai_base_url
   --restart-service            Explicitly restart this project's daemon after an update
   --login                      Refresh the stored ChatGPT login even if one exists
@@ -167,10 +169,14 @@ async function setupCommand(args: string[]): Promise<void> {
   const browserOnly = takeFlag(args, "--browser-only");
   const full = takeFlag(args, "--full");
   if (browserOnly === full) throw new Error("Choose exactly one setup mode: --browser-only or --full");
+  const codexOnly = takeFlag(args, "--codex-only");
+  const claudeOnly = takeFlag(args, "--claude-only");
+  if (codexOnly && claudeOnly) throw new Error("Choose at most one integration target: --codex-only or --claude-only");
   const portRaw = takeOption(args, "--port");
   let acknowledged = takeFlag(args, "--acknowledge-unofficial");
   const options: SetupOptions = {
     mode: full ? "full" : "browser-only",
+    integration: codexOnly ? "codex" : claudeOnly ? "claude" : "all",
     ...(portRaw ? { port: Number(portRaw) } : {}),
   };
   const appName = takeOption(args, "--app-name");
@@ -224,7 +230,9 @@ async function setupCommand(args: string[]): Promise<void> {
     stdout.write("One account-level step remains: attach the tunnel to the ChatGPT connector named in config.\n");
     stdout.write("Open: https://chatgpt.com/#settings/Plugins\n");
   }
-  stdout.write("Restart the Codex app once so its native model catalog refreshes through the installed route.\n");
+  if (result.codexRestartRequired) {
+    stdout.write("Restart the Codex app once so its native model catalog refreshes through the installed route.\n");
+  }
 }
 
 async function doctorCommand(args: string[]): Promise<void> {

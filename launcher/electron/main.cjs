@@ -127,7 +127,9 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
   stopCatalogVerificationMonitor();
   const check = async () => {
     const current = stateStore.read();
-    if (current.coreSetupComplete !== true || current.codexCatalogVerified === true) {
+    if (current.coreSetupComplete !== true
+      || current.codexSetupComplete !== true
+      || current.codexCatalogVerified === true) {
       stopCatalogVerificationMonitor();
       return;
     }
@@ -511,6 +513,8 @@ function registerIpc({ logger, stateStore }) {
     }
     const state = stateStore.update({
       coreSetupComplete: false,
+      codexSetupComplete: false,
+      claudeSetupComplete: false,
       bridgeEnabled: false,
       codexCatalogVerified: false,
       mcpSetupComplete: false,
@@ -522,20 +526,26 @@ function registerIpc({ logger, stateStore }) {
     stopCatalogVerificationMonitor();
     return { cancelled: false, state };
   });
-  handle("launcher:setup-core", async () => {
+  const setupIntegration = async (integration) => {
     const browser = await browserHost.probeAuthentication();
-    if (!browser.authenticated) throw new Error("Sign in to ChatGPT before installing the Codex integration");
+    if (!browser.authenticated) throw new Error("Sign in to ChatGPT before installing an integration");
     const setupState = stateStore.read();
     if (!setupState.coreSetupComplete
       && !(smokePassedThisSession || smokePassedForCurrentVersion(setupState))) {
-      throw new Error("Run the browser smoke test before installing the Codex integration");
+      throw new Error("Run the browser smoke test before installing an integration");
     }
-    const result = await runtimeHost.setupCore();
+    const result = await runtimeHost.setupCore(integration);
+    const installsCodex = integration === "codex";
     stateStore.update({
-      bridgeEnabled: true,
+      bridgeEnabled: installsCodex ? true : setupState.codexSetupComplete && setupState.bridgeEnabled,
       coreSetupComplete: true,
-      codexCatalogVerified: false,
-      codexRestartRequired: true,
+      ...(installsCodex ? {
+        codexSetupComplete: true,
+        codexCatalogVerified: false,
+        codexRestartRequired: true,
+      } : {
+        claudeSetupComplete: true,
+      }),
       ...(result.mode === "full" ? {
         mcpRuntimeInstalled: true,
         mcpSetupComplete: false,
@@ -551,9 +561,11 @@ function registerIpc({ logger, stateStore }) {
         message: error instanceof Error ? error.message : String(error),
       });
     });
-    startCatalogVerificationMonitor({ logger, stateStore });
-    return { ok: true, stdout: result.stdout, restartRequired: true };
-  });
+    if (installsCodex) startCatalogVerificationMonitor({ logger, stateStore });
+    return { ok: true, stdout: result.stdout, restartRequired: installsCodex };
+  };
+  handle("launcher:setup-codex", () => setupIntegration("codex"));
+  handle("launcher:setup-claude", () => setupIntegration("claude"));
   handle("launcher:setup-mcp", async (_event, input) => {
     await browserHost.reveal();
     const result = await runtimeHost.setupMcp({
@@ -686,9 +698,8 @@ async function start() {
   const persistedState = stateStore.read();
   if (persistedState.coreSetupComplete === true && persistedState.codexCatalogVerified === undefined) {
     stateStore.update({
-      coreSetupComplete: false,
       codexCatalogVerified: false,
-      codexRestartRequired: false,
+      codexRestartRequired: persistedState.codexSetupComplete === true,
     });
   }
   const autostart = getAutostart(app);
@@ -875,7 +886,7 @@ async function start() {
         const state = stateStore.update(patch);
         send("launcher:state-changed", state);
       }
-      startCatalogVerificationMonitor({ logger, stateStore });
+      if (stateStore.read().codexSetupComplete) startCatalogVerificationMonitor({ logger, stateStore });
       return;
     }
     if (runtime.status === "not-configured") {
@@ -884,6 +895,8 @@ async function start() {
       if (current.coreSetupComplete || current.mcpRuntimeInstalled || current.mcpSetupComplete) {
         const state = stateStore.update({
           coreSetupComplete: false,
+          codexSetupComplete: false,
+          claudeSetupComplete: false,
           codexCatalogVerified: false,
           mcpRuntimeInstalled: false,
           mcpSetupComplete: false,
@@ -901,7 +914,12 @@ async function start() {
       return;
     }
     const routeRecovery = await restoreCodexRouteAfterRuntimeFailure({ logger, stateStore });
-    const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false });
+    const state = stateStore.update({
+      coreSetupComplete: false,
+      codexSetupComplete: false,
+      claudeSetupComplete: false,
+      codexCatalogVerified: false,
+    });
     send("launcher:state-changed", state);
     if (runtime.status === "external" || runtime.status === "needs-setup") {
       const detail = runtime.detail || (
@@ -928,7 +946,12 @@ async function start() {
         ? `${primary}; the previous Codex route was restored, restart Codex once`
         : primary;
     logger.error("runtime.startup_failed", { message });
-    const state = stateStore.update({ coreSetupComplete: false, codexCatalogVerified: false });
+    const state = stateStore.update({
+      coreSetupComplete: false,
+      codexSetupComplete: false,
+      claudeSetupComplete: false,
+      codexCatalogVerified: false,
+    });
     send("launcher:state-changed", state);
     publishOperation({ name: "runtime-start", status: "failed", message });
   });

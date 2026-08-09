@@ -904,8 +904,11 @@ class RuntimeHost {
     }
   }
 
-  async setupCore() {
+  async setupCore(integration = "all") {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
+    if (!new Set(["all", "codex", "claude"]).has(integration)) {
+      throw new Error(`Unsupported setup integration: ${integration}`);
+    }
     const existing = this.runtimeConfigSnapshot();
     const mode = existing.mode;
     const args = [
@@ -914,15 +917,18 @@ class RuntimeHost {
       "--browser-host-descriptor",
       this.browserDescriptorPath,
       "--refresh-account-capabilities",
-      "--replace-codex-route",
-      "--acknowledge-unofficial",
-      "--restart-service",
     ];
+    if (integration === "codex") args.push("--codex-only");
+    if (integration === "claude") args.push("--claude-only");
+    args.push("--replace-codex-route");
+    args.push("--acknowledge-unofficial", "--restart-service");
     if (!existing.configured) args.push("--chrome", this.resolveBrowserLoginExecutable());
     if (mode === "full") args.push("--app-name", this.browserConnectorName());
     const result = await this.runSetup("core-setup", args, {
-      message: "Installing ChatGPT Web models into Codex",
-      successMessage: "Codex integration installed",
+      message: integration === "claude"
+        ? "Installing ChatGPT Web models into Claude Code"
+        : "Installing ChatGPT Web models into Codex",
+      successMessage: integration === "claude" ? "Claude Code integration installed" : "Codex integration installed",
       timeoutMs: CORE_SETUP_TIMEOUT_MS,
     });
     return { ...result, mode };
