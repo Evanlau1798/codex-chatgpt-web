@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { defaultBrokerEndpoint, expandUserPath, resolveBrokerEndpoint } from "../../config";
+import { withStallTimeout } from "../../stall-timeout";
 import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
 import type { ProviderAdapter } from "../base";
 import { ChatGptWebAdapterError } from "./adapter-error";
@@ -408,12 +409,12 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
             let nextText = session.runtime.text.wait(toolWaitAbort.signal).then(() => ({ type: "text" as const }));
             for (;;) {
               const next = await withAbort(
-                Promise.race([
+                withStallTimeout(Promise.race([
                   ...(nextTools ? [nextTools] : []),
                   browserOutcome,
                   nextTrace,
                   nextText,
-                ]),
+                ])),
                 incoming.abortSignal,
               );
               if (next.type === "trace") {
