@@ -8,7 +8,7 @@ import {
 import { CHATGPT_WEB_LUNA_MODEL_ID, CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import type { CodexParsedRequest } from "../src/types";
 
-function request(reasoning: "low" | "medium" | "high" | "max"): CodexParsedRequest {
+function request(reasoning: "low" | "medium" | "high" | "xhigh" | "max"): CodexParsedRequest {
   return {
     modelId: CHATGPT_WEB_MODEL_ID,
     context: {
@@ -368,6 +368,18 @@ test("requires ChatGPT-native rich results to include a safe Markdown answer for
   expect(compiled.text).toContain("also provide the relevant result as ordinary Markdown in the final answer");
   expect(compiled.text).toContain("A private ChatGPT UI widget never replaces the Markdown answer returned to Codex");
   expect(compiled.text).toContain("Never copy a ChatGPT widget's HTML, CSS, class names, or DOM markup");
+});
+
+test("describes one-shot Windows shell limits without exposing secret values", () => {
+  const compiled = compileChatGptWebPrompt(
+    request("xhigh"),
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    "turn_12345678901234567890123456789012",
+  );
+
+  expect(compiled.text).toContain("shell_command is one-shot");
+  expect(compiled.text).toContain("Windows PowerShell 5.1");
+  expect(compiled.text).toContain("never print secret values");
 });
 
 test("uses the public Instant name without leaking the browser menu alias into the prompt", () => {

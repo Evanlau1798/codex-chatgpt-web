@@ -1906,11 +1906,9 @@ describe("ChatGPT outer-native harness v4", () => {
         },
       }]);
       const shellGatewayCalls: GatewayProgramCall[] = [];
-      await executeGatewayProgram(pwdRequest!.input!, ["shell_command"], shellGatewayCalls);
-      expect(shellGatewayCalls).toEqual([{
-        name: "shell_command",
-        input: { command: "pwd", workdir: tempRoot, timeout_ms: 2_000 },
-      }]);
+      await expect(executeGatewayProgram(pwdRequest!.input!, ["shell_command"], shellGatewayCalls))
+        .rejects.toThrow("one-shot shell_command cannot provide a TTY or accept later stdin");
+      expect(shellGatewayCalls).toEqual([]);
       for (const ambiguousInventory of [[], ["exec_command", "shell_command"]]) {
         const rejectedCalls: GatewayProgramCall[] = [];
         await expect(executeGatewayProgram(pwdRequest!.input!, ambiguousInventory, rejectedCalls))

@@ -92,6 +92,8 @@ function gatewayNestedToolName(toolName: string): string {
   return toolName.replace(/[^A-Za-z0-9_$]/g, "_");
 }
 
+const ONE_SHOT_SHELL_TTY_ERROR = "The one-shot shell_command cannot provide a TTY or accept later stdin. Pipe input inside the same command; on Windows use Windows PowerShell 5.1-compatible APIs.";
+
 function execGatewayResultProgram(invocation: string[]): string {
   return [
     ...invocation,
@@ -137,6 +139,7 @@ function execCommandGatewayProgram(
     "const nativeCommandName = nativeCommandCandidates[0];",
     "const nativeCommand = tools[nativeCommandName];",
     "if (typeof nativeCommand !== \"function\") throw new Error(\"Native command tool \" + nativeCommandName + \" is listed but unavailable\");",
+    `if (nativeCommandName === ${JSON.stringify(shellCommandName)} && ${execCommandArguments.tty === true}) throw new Error(${JSON.stringify(ONE_SHOT_SHELL_TTY_ERROR)});`,
     `const nativeCommandInput = nativeCommandName === ${JSON.stringify(execCommandName)} ? ${JSON.stringify(execCommandArguments)} : ${JSON.stringify(shellCommandArguments)};`,
     "const result = await nativeCommand(nativeCommandInput);",
   ]);
@@ -218,6 +221,9 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       };
       const tool = exactTool(bound, "exec_command") ?? exactTool(bound, "shell_command");
       if (tool) {
+        if (tool.name === "shell_command" && tty === true) {
+          throw new Error(ONE_SHOT_SHELL_TTY_ERROR);
+        }
         const args = tool.name === "exec_command" ? execCommandArguments : shellCommandArguments;
         return invoke(claimed.bindingId, bound, tool, { arguments: args });
       }
