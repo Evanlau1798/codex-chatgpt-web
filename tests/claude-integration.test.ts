@@ -125,4 +125,19 @@ describe("reversible Claude Code integration", () => {
     uninstallClaudeIntegration();
     expect(settings().model).toBe("another-model");
   });
+
+  test("preserves a selected available model while upgrading managed settings", () => {
+    fixture();
+    const config = defaultConfig("browser-only");
+    installClaudeIntegration(config);
+    const edited = settings();
+    edited.model = "claude-chatgpt-web-medium";
+    writeFileSync(getClaudeSettingsPath(), `${JSON.stringify(edited, null, 2)}\n`);
+
+    preflightClaudeIntegration(config);
+    installClaudeIntegration(config);
+
+    expect(settings().model).toBe("claude-chatgpt-web-medium");
+    expect(() => preflightClaudeIntegration(config)).not.toThrow();
+  });
 });

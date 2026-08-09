@@ -62,6 +62,13 @@ function settingsEnv(settings: JsonObject): JsonObject {
   return object(settings.env, "Claude settings env");
 }
 
+function selectedAvailableModel(settings: JsonObject, installed: JsonObject): string | undefined {
+  const available = installed.availableModels;
+  return typeof settings.model === "string" && Array.isArray(available) && available.includes(settings.model)
+    ? settings.model
+    : undefined;
+}
+
 function userPromptHooks(settings: JsonObject): { hooks: JsonObject; entries: unknown[] } {
   const hooks = Object.hasOwn(settings, "hooks") ? object(settings.hooks, "Claude settings hooks") : {};
   const raw = hooks.UserPromptSubmit;
@@ -168,7 +175,9 @@ function assertJournalPath(journal: ClaudeIntegrationJournal, path: string): voi
 
 function assertInstalled(settings: JsonObject, journal: ClaudeIntegrationJournal): void {
   const env = settingsEnv(settings);
+  const selectedModel = selectedAvailableModel(settings, journal.installed.settings);
   for (const [key, value] of Object.entries(journal.installed.settings)) {
+    if (key === "model" && selectedModel) continue;
     if (!same(settings[key], value)) throw new Error(`Claude ${key} changed after setup`);
   }
   for (const [key, value] of Object.entries(journal.installed.env)) {
@@ -232,6 +241,8 @@ export function installClaudeIntegration(
   if (existing && options.replaceExistingRoute !== true) assertInstalled(current.value, existing);
 
   const installed = desired(config);
+  const selectedModel = selectedAvailableModel(current.value, installed.settings);
+  if (selectedModel) installed.settings.model = selectedModel;
   const previous = {
     settings: previousValues(current.value, installed.settings, existing?.installed.settings, existing?.previous.settings),
     env: previousValues(currentEnv, installed.env, existing?.installed.env, existing?.previous.env),
