@@ -49,6 +49,19 @@ export interface ChatGptMarkdownSegment {
   streamable: boolean;
 }
 
+function visibleSegmentText(segments: ChatGptMarkdownSegment[]): string {
+  let text = "";
+  let previousGroup: string | undefined;
+  for (const segment of segments) {
+    const separator = text
+      ? segment.group !== undefined && segment.group === previousGroup ? "\n" : "\n\n"
+      : "";
+    text += `${separator}${segment.text}`;
+    previousGroup = segment.group;
+  }
+  return text.replace(/\r\n/g, "\n");
+}
+
 interface ChatGptMarkdownCandidate extends ChatGptMarkdownSegment {
   changedAt: number;
   streamableAt?: number;
@@ -85,7 +98,14 @@ export class ChatGptMarkdownBuffer {
   }
 
   observe(segments: ChatGptMarkdownSegment[], now = Date.now()): string {
-    this.assertCommittedPrefix(segments);
+    try {
+      this.assertCommittedPrefix(segments);
+    } catch (error) {
+      // ChatGPT can merge completed Markdown roots while adding final-turn controls. Responses
+      // deltas remain valid when the complete visible answer is byte-equivalent after regrouping.
+      if (visibleSegmentText(segments) === visibleSegmentText(this.latest)) return "";
+      throw error;
+    }
     this.latest = segments.map(segment => ({ ...segment }));
 
     for (let index = this.committed.length; index < segments.length; index += 1) {
