@@ -1238,24 +1238,6 @@ test("completed Claude conversations retain and reuse their browser tab", async 
   assert.deepEqual(throttling, [true, false]);
 });
 
-test("owned turn tabs block direct Web input and tell users to steer from Codex", async () => {
-  const scripts = [];
-  const tab = {
-    id: "tab-shielded",
-    status: "running",
-    view: { webContents: {
-      isDestroyed: () => false,
-      executeJavaScript: async script => { scripts.push(script); },
-    } },
-  };
-
-  await BrowserHost.prototype.syncTurnInteractionShield.call({}, tab);
-
-  assert.equal(scripts.length, 1);
-  assert.match(scripts[0], /codex-web-gpt-interaction-shield/);
-  assert.match(scripts[0], /Stop or send follow-up messages from Codex/);
-});
-
 test("retained Claude conversation tabs expire after thirty minutes", () => {
   let removed = false;
   const tab = {

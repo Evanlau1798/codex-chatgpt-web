@@ -8,6 +8,7 @@ const {
   verifyConnectorWithBrowserHelper,
 } = require("./browser-helper-verifier.cjs");
 const { validateConnectorName } = require("./connector-identity.cjs");
+const { createTurnInteractionShield, TURN_INTERACTION_SHIELD_URL } = require("./interaction-shield.cjs");
 const { processRunning } = require("./process-tree.cjs");
 const {
   browserViewVisible,
@@ -398,12 +399,14 @@ class BrowserHost {
         backgroundThrottling: false,
       },
     });
+    const interactionShield = createTurnInteractionShield(WebContentsView);
     const tab = {
       id,
       surfaceId,
       traceId,
       helperPid,
       view,
+      interactionShield,
       status: "running",
       ordinal,
       label: `ChatGPT ${ordinal}`,
@@ -417,10 +420,21 @@ class BrowserHost {
     };
     this.turnTabs.set(id, tab);
     this.window.contentView.addChildView(view);
+    this.window.contentView.addChildView(interactionShield);
     view.setBounds(this.bounds);
+    interactionShield.setBounds(this.bounds);
     view.setVisible(false);
+    interactionShield.setVisible(false);
     view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindTurnContents(tab);
+    void interactionShield.webContents.loadURL(TURN_INTERACTION_SHIELD_URL).catch((error) => {
+      this.logger.error("browser.interaction_shield_failed", {
+        tabId: tab.id,
+        traceId: tab.traceId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      this.removeTurnTab(tab, true);
+    });
     void view.webContents.loadURL(IDLE_BROWSER_URL).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error("browser.tab_initialization_failed", {
@@ -489,7 +503,7 @@ class BrowserHost {
           value: ${encoded}, configurable: true, enumerable: false, writable: false,
         });
         document.documentElement.dataset.codexWebGptSurface = ${encoded};
-      })()`, true).then(() => this.syncTurnInteractionShield(tab)).then(
+      })()`, true).then(
         () => this.publishState?.(this.snapshot()),
         (error) => {
           tab.status = "error";
@@ -860,7 +874,10 @@ class BrowserHost {
     this.bounds = constrainBrowserBounds(normalizeBounds(bounds), { width, height });
     this.boundsReady = true;
     this.view.setBounds(this.bounds);
-    for (const tab of this.turnTabs.values()) tab.view.setBounds(this.bounds);
+    for (const tab of this.turnTabs.values()) {
+      tab.view.setBounds(this.bounds);
+      tab.interactionShield?.setBounds(this.bounds);
+    }
     this.syncViewVisibility();
     void this.view.webContents.executeJavaScript("window.dispatchEvent(new Event('resize'))", true).catch(() => {});
   }
@@ -869,10 +886,18 @@ class BrowserHost {
     return this.selectedTurnTab()?.view || this.view;
   }
 
+  focusActiveSurface() {
+    const selected = typeof this.selectedTurnTab === "function"
+      ? this.selectedTurnTab()
+      : this.turnTabs?.get(this.selectedTabId);
+    const contents = selected?.interactionShield?.webContents || this.activeView().webContents;
+    if (typeof contents.isDestroyed !== "function" || !contents.isDestroyed()) contents.focus();
+  }
+
   activateHomeSurface() {
     this.selectedTabId = "home";
     this.syncViewVisibility();
-    if (this.visible && this.surfaceActive) this.activeView().webContents.focus();
+    if (this.visible && this.surfaceActive) BrowserHost.prototype.focusActiveSurface.call(this);
     this.publishState?.(this.snapshot());
     this.writeDescriptor();
   }
@@ -882,7 +907,9 @@ class BrowserHost {
     const selected = this.selectedTurnTab();
     this.view.setVisible(visible && !selected);
     for (const tab of this.turnTabs.values()) {
-      tab.view.setVisible(visible && selected?.id === tab.id);
+      const selectedVisible = visible && selected?.id === tab.id;
+      tab.view.setVisible(selectedVisible);
+      tab.interactionShield?.setVisible(selectedVisible);
     }
   }
 
@@ -890,7 +917,7 @@ class BrowserHost {
     if (tabId !== "home" && !this.turnTabs.has(tabId)) throw new Error("Browser tab does not exist");
     this.selectedTabId = tabId;
     this.syncViewVisibility();
-    if (this.visible && this.surfaceActive) this.activeView().webContents.focus();
+    if (this.visible && this.surfaceActive) BrowserHost.prototype.focusActiveSurface.call(this);
     this.publishState?.(this.snapshot());
     this.writeDescriptor();
     return this.snapshot();
@@ -902,6 +929,10 @@ class BrowserHost {
     if (abortRunning && tab.status === "running") {
       this.closedTurnOwners.set(tab.traceId, tab.helperPid);
       tab.status = "aborted";
+    }
+    if (tab.interactionShield) {
+      try { this.window.contentView.removeChildView(tab.interactionShield); } catch {}
+      if (!tab.interactionShield.webContents.isDestroyed()) tab.interactionShield.webContents.close();
     }
     try { this.window.contentView.removeChildView(tab.view); } catch {}
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
@@ -958,7 +989,7 @@ class BrowserHost {
     this.visible = true;
     this.syncViewVisibility();
     this.setState({ visible: true });
-    if (this.surfaceActive && this.boundsReady) this.activeView().webContents.focus();
+    if (this.surfaceActive && this.boundsReady) BrowserHost.prototype.focusActiveSurface.call(this);
   }
 
   async reveal() {
@@ -1073,30 +1104,6 @@ class BrowserHost {
     this.publishState?.(this.snapshot());
     this.logger.info("browser.tab_created", { tabId: tab.id, traceId, tabCount: this.turnTabs.size });
     return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false };
-  }
-
-  async syncTurnInteractionShield(tab) {
-    const contents = tab.view.webContents;
-    if (contents.isDestroyed()) return;
-    await contents.executeJavaScript(`(() => {
-      const id = "codex-web-gpt-interaction-shield";
-      let shield = document.getElementById(id);
-      if (!shield) {
-        shield = document.createElement("div");
-        shield.id = id;
-        shield.tabIndex = 0;
-        shield.setAttribute("aria-label", "This ChatGPT conversation is controlled by Codex");
-        shield.innerHTML = '<div style="margin:12px auto;padding:8px 14px;max-width:520px;border-radius:8px;background:rgba(20,20,20,.88);color:white;font:13px system-ui;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.3)">This conversation is controlled by Codex. Stop or send follow-up messages from Codex.</div>';
-        Object.assign(shield.style, { position: "fixed", inset: "0", zIndex: "2147483647", pointerEvents: "auto", background: "transparent", cursor: "not-allowed" });
-        for (const type of ["click", "dblclick", "contextmenu", "pointerdown", "pointerup", "wheel", "drop", "dragover"]) {
-          shield.addEventListener(type, event => { event.preventDefault(); event.stopPropagation(); }, true);
-        }
-        shield.addEventListener("pointerdown", () => shield.focus(), true);
-        shield.addEventListener("keydown", event => { event.preventDefault(); event.stopPropagation(); }, true);
-        document.documentElement.appendChild(shield);
-      }
-      return true;
-    })()`, true);
   }
 
   async endTurn(traceId, helperPid, status, hideAfterTurn, message, retain = false) {
@@ -1513,6 +1520,10 @@ class BrowserHost {
     this.clearHomeNavigationTimeout();
     if (this.turnLeaseSweep) clearInterval(this.turnLeaseSweep);
     for (const tab of this.turnTabs.values()) {
+      if (tab.interactionShield) {
+        try { this.window.contentView.removeChildView(tab.interactionShield); } catch {}
+        if (!tab.interactionShield.webContents.isDestroyed()) tab.interactionShield.webContents.close();
+      }
       try { this.window.contentView.removeChildView(tab.view); } catch {}
       if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     }
