@@ -1358,6 +1358,14 @@ function SettingsSurface({
               .catch((cause) => setError(messageOf(cause)))}
           />
         </SettingRow>
+        <SettingRow body={copy.lockBrowserDuringTurnsBody} label={copy.lockBrowserDuringTurns}>
+          <Switch
+            checked={snapshot.state.lockBrowserDuringTurns}
+            onChange={(checked) => void api!.setPreference("lockBrowserDuringTurns", checked)
+              .then(updateState)
+              .catch((cause) => setError(messageOf(cause)))}
+          />
+        </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
           <LanguageMenu language={language} onChange={(next) => void updateLanguage(next)} />
         </SettingRow>

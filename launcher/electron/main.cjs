@@ -583,10 +583,12 @@ function registerIpc({ logger, stateStore }) {
     };
   });
   handle("launcher:set-preference", (_event, key, value) => {
-    if (key !== "keepRunningOnClose" && key !== "showBrowserDuringTurns") {
+    if (key !== "keepRunningOnClose" && key !== "showBrowserDuringTurns" && key !== "lockBrowserDuringTurns") {
       throw new Error("Unknown preference");
     }
-    return stateStore.update({ [key]: value === true });
+    const state = stateStore.update({ [key]: value === true });
+    if (key === "lockBrowserDuringTurns") browserHost?.setInteractionLocked(value === true);
+    return state;
   });
   handle("launcher:sidebar-state", (_event, value) => stateStore.update(validateSidebarState(value)));
   handle("launcher:logs", (_event, limit) => logger.recent(limit));

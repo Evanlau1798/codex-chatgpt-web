@@ -115,7 +115,12 @@ class BrowserControlServer {
       }
       const preferences = this.getPreferences();
       if (request.url === "/v1/turn/start") {
-        const lease = host.beginTurn(body.traceId, preferences.showBrowserDuringTurns === true, body.helperPid);
+        const lease = host.beginTurn(
+          body.traceId,
+          preferences.showBrowserDuringTurns === true,
+          body.helperPid,
+          preferences.lockBrowserDuringTurns !== false,
+        );
         this.logger.info("browser.turn_started", { traceId: body.traceId });
         writeJson(response, 200, { ok: true, ...lease });
         return;

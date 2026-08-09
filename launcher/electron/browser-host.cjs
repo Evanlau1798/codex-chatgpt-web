@@ -377,7 +377,7 @@ class BrowserHost {
     return this.turnTabs.get(this.selectedTabId) || null;
   }
 
-  createTurnTab(traceId, helperPid) {
+  createTurnTab(traceId, helperPid, interactionLocked = true) {
     if (this.turnTabs.size >= MAX_BROWSER_TABS
       && !BrowserHost.prototype.evictOldestRetainedTurnTab.call(this)) {
       throw new Error(
@@ -407,6 +407,7 @@ class BrowserHost {
       helperPid,
       view,
       interactionShield,
+      interactionLocked,
       status: "running",
       ordinal,
       label: `ChatGPT ${ordinal}`,
@@ -890,7 +891,9 @@ class BrowserHost {
     const selected = typeof this.selectedTurnTab === "function"
       ? this.selectedTurnTab()
       : this.turnTabs?.get(this.selectedTabId);
-    const contents = selected?.interactionShield?.webContents || this.activeView().webContents;
+    const contents = selected?.interactionLocked === false
+      ? selected.view.webContents
+      : selected?.interactionShield?.webContents || this.activeView().webContents;
     if (typeof contents.isDestroyed !== "function" || !contents.isDestroyed()) contents.focus();
   }
 
@@ -909,8 +912,13 @@ class BrowserHost {
     for (const tab of this.turnTabs.values()) {
       const selectedVisible = visible && selected?.id === tab.id;
       tab.view.setVisible(selectedVisible);
-      tab.interactionShield?.setVisible(selectedVisible);
+      tab.interactionShield?.setVisible(selectedVisible && tab.interactionLocked !== false);
     }
+  }
+
+  setInteractionLocked(locked) {
+    for (const tab of this.turnTabs.values()) tab.interactionLocked = locked;
+    this.syncViewVisibility();
   }
 
   selectTab(tabId) {
@@ -1058,7 +1066,7 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  beginTurn(traceId, reveal, helperPid) {
+  beginTurn(traceId, reveal, helperPid, interactionLocked = true) {
     if (this.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.manualOperation}`);
     }
@@ -1078,6 +1086,7 @@ class BrowserHost {
         });
       }
       existing.helperPid = helperPid;
+      existing.interactionLocked = interactionLocked;
       existing.status = "running";
       existing.loading = true;
       existing.message = "ChatGPT is working";
@@ -1097,7 +1106,7 @@ class BrowserHost {
       this.logger.info("browser.tab_reused", { tabId: existing.id, traceId });
       return { surfaceId: existing.surfaceId, tabId: existing.id, reused };
     }
-    const tab = this.createTurnTab(traceId, helperPid);
+    const tab = this.createTurnTab(traceId, helperPid, interactionLocked);
     this.selectedTabId = tab.id;
     if (reveal) this.show();
     else this.syncViewVisibility();

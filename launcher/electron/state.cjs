@@ -15,6 +15,7 @@ const DEFAULT_STATE = Object.freeze({
   useNewCompactMode: false,
   keepRunningOnClose: true,
   showBrowserDuringTurns: true,
+  lockBrowserDuringTurns: true,
   browserSmokePassed: false,
   browserSmokeVersion: null,
   sidebarOpen: true,
@@ -45,6 +46,7 @@ function readState(filePath) {
       "useNewCompactMode",
       "keepRunningOnClose",
       "showBrowserDuringTurns",
+      "lockBrowserDuringTurns",
       "browserSmokePassed",
       "sidebarOpen",
     ]) {

@@ -96,6 +96,13 @@ test("closing the launcher follows the persisted background-runtime preference",
   assert.match(i18nSource, /keepRunningOnClose: "Keep server running when window closes"/);
 });
 
+test("settings expose default-on browser turn interaction protection", () => {
+  assert.match(appSource, /checked=\{snapshot\.state\.lockBrowserDuringTurns\}/);
+  assert.match(appSource, /setPreference\("lockBrowserDuringTurns", checked\)/);
+  assert.match(i18nSource, /lockBrowserDuringTurns: "Protect browser during turns"/);
+  assert.match(electronMain, /browserHost\?\.setInteractionLocked\(value === true\)/);
+});
+
 test("normal launcher shutdown flushes the persistent ChatGPT session before closing its views", () => {
   const persist = electronMain.indexOf("await browserHost?.persistSession()");
   const destroy = electronMain.indexOf("browserHost?.destroy()", persist);
