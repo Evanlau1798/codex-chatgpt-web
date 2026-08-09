@@ -95,6 +95,42 @@ test("accepts a model id returned by Claude gateway discovery", async () => {
   expect(response.status).toBe(200);
 });
 
+test("answers Claude Code title requests without opening a retained browser turn", async () => {
+  let adapterRuns = 0;
+  const response = await messagesRequest(request({
+    model: "claude-chatgpt-web-high",
+    max_tokens: 64,
+    stream: true,
+    system: [
+      { type: "text", text: "Generate a concise, sentence-case title (3-7 words) that captures the main topic or goal of this coding session." },
+      { type: "text", text: "Return JSON with a single \"title\" field." },
+    ],
+    messages: [{ role: "user", content: [{
+      type: "text",
+      text: "<session>\n請對目前的repo進行code review\n</session>\n\nWrite the title in the predominant language of the session.",
+    }] }],
+    output_config: {
+      effort: "high",
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: { title: { type: "string" } },
+          required: ["title"],
+          additionalProperties: false,
+        },
+      },
+    },
+  }), defaultConfig("full"), () => ({
+    name: "messages-title-must-not-run",
+    async runTurn() { adapterRuns += 1; },
+  }));
+
+  expect(response.status).toBe(200);
+  expect(adapterRuns).toBe(0);
+  expect(await response.text()).toContain(JSON.stringify({ title: "請對目前的repo進行code review" }).replaceAll('"', '\\"'));
+});
+
 test("streams Anthropic tool-use events and accepts unknown beta fields", async () => {
   const response = await messagesRequest(request({
     model: "chatgpt-web/high",

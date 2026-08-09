@@ -68,6 +68,11 @@ export async function messagesRequest(
   else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
   const run = async () => {
     try {
+      if (request.translated.auxiliaryResponse) {
+        queue.push({ type: "text_delta", text: request.translated.auxiliaryResponse });
+        queue.push({ type: "done", stopReason: "stop", endTurn: true });
+        return;
+      }
       await adapterFactory(providerConfig(config)).runTurn(request.parsed, {
         headers: req.headers,
         abortSignal: abort.signal,

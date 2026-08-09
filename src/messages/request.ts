@@ -124,10 +124,29 @@ function toolChoice(value: unknown): unknown {
   return undefined;
 }
 
+function claudeTitleResponse(request: Json, system: string): string | undefined {
+  const outputConfig = request.output_config;
+  if (!outputConfig || typeof outputConfig !== "object" || Array.isArray(outputConfig)) return undefined;
+  const format = (outputConfig as Json).format;
+  if (!format || typeof format !== "object" || Array.isArray(format) || (format as Json).type !== "json_schema") return undefined;
+  const schema = (format as Json).schema;
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return undefined;
+  const properties = (schema as Json).properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties) || !("title" in properties)) return undefined;
+  if (!system.includes("Generate a concise, sentence-case title")
+    || !system.includes("Return JSON with a single \"title\" field.")) return undefined;
+  const latestUser = [...request.messages as unknown[]].reverse().find(raw => raw && typeof raw === "object"
+    && !Array.isArray(raw) && (raw as Json).role === "user") as Json | undefined;
+  const session = textBlocks(latestUser?.content).match(/<session>\s*([\s\S]*?)\s*<\/session>/i)?.[1];
+  const firstLine = session?.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? "Claude Code session";
+  return JSON.stringify({ title: [...firstLine].slice(0, 80).join("") });
+}
+
 export interface TranslatedClaudeRequest {
   requestedModel: string;
   stream: boolean;
   compact: boolean;
+  auxiliaryResponse?: string;
   body: Json;
 }
 
@@ -153,6 +172,7 @@ export function translateClaudeMessages(raw: unknown, headers: Headers): Transla
   const threadId = `claude_${session}`;
   const turnId = `claude_${agent}`;
   const system = textBlocks(request.system);
+  const auxiliaryResponse = claudeTitleResponse(request, system);
   const root = workingDirectory(system);
   const input: Json[] = [];
   let latestUserOffset = -1;
@@ -188,6 +208,7 @@ export function translateClaudeMessages(raw: unknown, headers: Headers): Transla
     requestedModel: request.model,
     stream: request.stream === true,
     compact,
+    ...(auxiliaryResponse ? { auxiliaryResponse } : {}),
     body: {
       model,
       stream: request.stream === true,
@@ -201,7 +222,7 @@ export function translateClaudeMessages(raw: unknown, headers: Headers): Transla
       client_metadata: {
         "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: turnId, request_kind: "turn", sandbox: "none", workspaces: { [root]: {} } }),
         claude_request_hash: createHash("sha256").update(JSON.stringify(request.messages)).digest("hex"),
-        claude_retain_conversation: headers.has("x-claude-code-session-id"),
+        claude_retain_conversation: !auxiliaryResponse && headers.has("x-claude-code-session-id"),
       },
     },
   };
