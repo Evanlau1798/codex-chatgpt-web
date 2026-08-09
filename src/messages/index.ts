@@ -100,7 +100,11 @@ export async function messagesRequest(
   const meta = { model: request.translated.requestedModel, inputTokens };
   if (request.translated.stream) {
     void run();
-    return new Response(streamClaudeMessage(request.translated.compact ? compactClaudeStream(queue) : queue, meta), {
+    return new Response(streamClaudeMessage(
+      request.translated.compact ? compactClaudeStream(queue) : queue,
+      meta,
+      () => abort.abort(),
+    ), {
       headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive", "x-accel-buffering": "no" },
     });
   }

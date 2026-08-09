@@ -72,12 +72,19 @@ function frame(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
-export function streamClaudeMessage(events: AsyncIterable<AdapterEvent>, meta: ClaudeResponseMeta): ReadableStream<Uint8Array> {
+export function streamClaudeMessage(
+  events: AsyncIterable<AdapterEvent>,
+  meta: ClaudeResponseMeta,
+  onCancel?: () => void,
+): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const id = `msg_${randomUUID().replaceAll("-", "")}`;
+  let cancelled = false;
   return new ReadableStream({
     async start(controller) {
-      const send = (event: string, data: unknown) => controller.enqueue(encoder.encode(frame(event, data)));
+      const send = (event: string, data: unknown) => {
+        if (!cancelled) controller.enqueue(encoder.encode(frame(event, data)));
+      };
       let index = -1;
       let kind: "text" | "thinking" | "tool" | undefined;
       let thinking = "";
@@ -114,7 +121,12 @@ export function streamClaudeMessage(events: AsyncIterable<AdapterEvent>, meta: C
           } else if (event.type === "tool_call_delta" && kind === "tool") {
             send("content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: event.arguments } });
           } else if (event.type === "tool_call_end") closeBlock();
-          else if (event.type === "error") { closeBlock(); send("error", { type: "error", error: { type: event.errorType ?? "api_error", message: event.message } }); controller.close(); return; }
+          else if (event.type === "error") {
+            closeBlock();
+            send("error", { type: "error", error: { type: event.errorType ?? "api_error", message: event.message } });
+            if (!cancelled) controller.close();
+            return;
+          }
           else if (event.type === "done") {
             usage = event.usage;
             closeBlock();
@@ -125,12 +137,19 @@ export function streamClaudeMessage(events: AsyncIterable<AdapterEvent>, meta: C
             send("message_delta", { type: "message_delta", delta: { stop_reason: stopReason(event.reason), stop_sequence: null }, usage: { output_tokens: usage?.outputTokens ?? 0 } });
           }
         }
-        send("message_stop", { type: "message_stop" });
-        controller.close();
+        if (!cancelled) {
+          send("message_stop", { type: "message_stop" });
+          controller.close();
+        }
       } catch (error) {
+        if (cancelled) return;
         send("error", { type: "error", error: { type: "api_error", message: error instanceof Error ? error.message : String(error) } });
         controller.close();
       }
+    },
+    cancel() {
+      cancelled = true;
+      onCancel?.();
     },
   });
 }

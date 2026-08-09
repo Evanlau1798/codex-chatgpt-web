@@ -12,11 +12,12 @@ const headers = {
   "x-claude-code-agent-id": "agent-main",
 };
 
-function request(body: Record<string, unknown>, path = "/v1/messages") {
+function request(body: Record<string, unknown>, path = "/v1/messages", signal?: AbortSignal) {
   return new Request(`http://127.0.0.1:17841${path}?beta=true`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
+    signal,
   });
 }
 
@@ -162,6 +163,42 @@ test("streams Anthropic tool-use events and accepts unknown beta fields", async 
   expect(body).toContain('"partial_json":"{\\"path\\":\\"package.json\\"}"');
   expect(body).toContain('"stop_reason":"tool_use"');
   expect(body).toContain("event: message_stop");
+});
+
+test("cancelling a streamed Claude response aborts its active browser turn", async () => {
+  const requestAbort = new AbortController();
+  let releaseStarted!: () => void;
+  let releaseFinished!: () => void;
+  let browserAborted = false;
+  const started = new Promise<void>(resolve => { releaseStarted = resolve; });
+  const finished = new Promise<void>(resolve => { releaseFinished = resolve; });
+  const response = await messagesRequest(request({
+    model: "chatgpt-web/high",
+    max_tokens: 1024,
+    stream: true,
+    messages: [{ role: "user", content: "Keep working" }],
+  }, "/v1/messages", requestAbort.signal), defaultConfig("full"), () => ({
+    name: "messages-stream-cancel-test",
+    async runTurn(_parsed, incoming) {
+      releaseStarted();
+      await new Promise<void>(resolve => incoming.abortSignal?.addEventListener("abort", () => {
+        browserAborted = true;
+        resolve();
+      }, { once: true }));
+      releaseFinished();
+    },
+  }));
+
+  await started;
+  const reader = response.body!.getReader();
+  expect((await reader.read()).done).toBe(false);
+  await reader.cancel("Claude Code interrupted the turn");
+  await Bun.sleep(0);
+  const abortedByStream = browserAborted;
+  requestAbort.abort();
+  await finished;
+
+  expect(abortedByStream).toBe(true);
 });
 
 test("replays Claude thinking and tool results into the existing tool loop", async () => {
