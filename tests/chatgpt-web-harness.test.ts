@@ -1088,7 +1088,7 @@ describe("ChatGPT outer-native harness v4", () => {
       status: 502,
       errorType: "server_error",
       code: "upstream_server_error",
-      retryable: false,
+      retryable: true,
     }], CHATGPT_WEB_MODEL_ID) as {
       status: string;
       retryable: boolean;
@@ -1096,7 +1096,7 @@ describe("ChatGPT outer-native harness v4", () => {
     };
     expect(missingEffort).toMatchObject({
       status: "failed",
-      retryable: false,
+      retryable: true,
       error: { type: "server_error", code: "upstream_server_error" },
     });
     expect(missingEffort.error.code).not.toBe("server_is_overloaded");

@@ -930,13 +930,13 @@ export class ChatGptBrowserWorker {
     await captureDiagnostic?.("effort-menu-open-requested");
     const effortChoices = effortMenu.locator(CHATGPT_EFFORT_ITEM_SELECTOR);
     const effortChoice = effortChoices.nth(uiEffortIndex);
-    const effortSlider = page.locator(CHATGPT_EFFORT_SLIDER_SELECTOR).filter({ visible: true }).last();
+    const effortSlider = page.locator(CHATGPT_EFFORT_SLIDER_SELECTOR).last();
     const waitAbort = new AbortController();
     let ready: "effort" | "slider" | "rate-limit";
     try {
       ready = await Promise.race([
         effortChoice.waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal }).then(() => "effort" as const),
-        effortSlider.waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal }).then(() => "slider" as const),
+        effortSlider.waitFor({ state: "attached", timeout: 70_000, signal: waitAbort.signal }).then(() => "slider" as const),
         chatGptRateLimitDialog(page).waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal }).then(() => "rate-limit" as const),
       ]);
       if (ready === "rate-limit") await throwIfChatGptRateLimitDialog(page);
@@ -944,10 +944,16 @@ export class ChatGptBrowserWorker {
     } catch (error) {
       if (error instanceof ChatGptWebAdapterError) throw error;
       await throwIfChatGptRateLimitDialog(page);
+      const effortChoiceCount = await effortChoices.count().catch(() => 0);
       throw new ChatGptWebAdapterError(
         `ChatGPT effort menu did not expose item index ${uiEffortIndex}`
-        + `; item count: ${await effortChoices.count().catch(() => 0)}`,
-        { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: false },
+        + `; item count: ${effortChoiceCount}`,
+        {
+          status: 502,
+          errorType: "server_error",
+          code: "upstream_server_error",
+          retryable: effortChoiceCount === 0,
+        },
       );
     } finally {
       waitAbort.abort();
