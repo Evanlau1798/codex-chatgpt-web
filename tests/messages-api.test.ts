@@ -74,6 +74,23 @@ test("translates a Claude Code message into the existing ChatGPT Web adapter", a
   expect(body.usage).toEqual({ input_tokens: 120, output_tokens: 8 });
 });
 
+test("accepts a model id returned by Claude gateway discovery", async () => {
+  const response = await messagesRequest(request({
+    model: "claude-chatgpt-web-high",
+    max_tokens: 100,
+    messages: [{ role: "user", content: "test" }],
+  }), defaultConfig("full"), () => ({
+    name: "messages-discovered-model-test",
+    async runTurn(parsed, _incoming, emit) {
+      expect(parsed.modelId).toBe("gpt-5.6-sol");
+      expect(parsed.options.reasoning).toBe("high");
+      emit({ type: "done", stopReason: "stop", endTurn: true });
+    },
+  }));
+
+  expect(response.status).toBe(200);
+});
+
 test("streams Anthropic tool-use events and accepts unknown beta fields", async () => {
   const response = await messagesRequest(request({
     model: "chatgpt-web/high",

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { cwd } from "node:process";
 import { isClaudeCompactRequest } from "./compact";
+import { resolveClaudeGatewayModelId } from "./models";
 
 type Json = Record<string, unknown>;
 
@@ -132,13 +133,16 @@ export interface TranslatedClaudeRequest {
 
 export function translateClaudeMessages(raw: unknown, headers: Headers): TranslatedClaudeRequest {
   const request = object(raw, "request body");
+  const discoveredModel = typeof request.model === "string"
+    ? resolveClaudeGatewayModelId(request.model)
+    : undefined;
   if (typeof request.model !== "string"
-    || (!request.model.startsWith("chatgpt-web/") && !request.model.startsWith("chatgpt-web-"))) {
+    || (!discoveredModel && !request.model.startsWith("chatgpt-web/") && !request.model.startsWith("chatgpt-web-"))) {
     throw new Error("model must be an existing chatgpt-web route slug or Claude Code alias");
   }
-  const model = request.model.startsWith("chatgpt-web-")
+  const model = discoveredModel ?? (request.model.startsWith("chatgpt-web-")
     ? `chatgpt-web/${request.model.slice("chatgpt-web-".length)}`
-    : request.model;
+    : request.model);
   if (!Array.isArray(request.messages) || request.messages.length === 0) throw new Error("messages must be a non-empty array");
   if (request.max_tokens !== undefined && (!Number.isFinite(request.max_tokens) || Number(request.max_tokens) < 1)) {
     throw new Error("max_tokens must be a positive number");

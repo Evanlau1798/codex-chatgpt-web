@@ -173,6 +173,33 @@ test("server routes Claude Messages query variants to the Anthropic error contra
   }
 });
 
+test("server routes Claude gateway discovery without touching the Codex catalog upstream", async () => {
+  const config = { ...defaultConfig("browser-only"), port: 0 };
+  let upstreamCalled = false;
+  const server = startServer(config, {
+    fetchUpstream: async () => {
+      upstreamCalled = true;
+      return Response.json({ models: [] });
+    },
+  });
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/models?limit=1000`, {
+      headers: { authorization: "Bearer codex-chatgpt-web-local" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      data: [
+        { id: "claude-chatgpt-web-light", display_name: "ChatGPT Web — Instant" },
+        { id: "claude-chatgpt-web-medium", display_name: "ChatGPT Web — Medium" },
+        { id: "claude-chatgpt-web-high", display_name: "ChatGPT Web — High" },
+      ],
+    });
+    expect(upstreamCalled).toBe(false);
+  } finally {
+    await server.stop(true);
+  }
+});
+
 test("a full-mode runtime exposes its broker endpoint before any turn registers", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-serve-"));
   // The endpoint is a Unix socket on POSIX and a named pipe on Windows, so liveness is proven by

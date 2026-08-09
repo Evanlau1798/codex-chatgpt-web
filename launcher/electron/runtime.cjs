@@ -214,6 +214,9 @@ class RuntimeHost {
       : process.env.CODEX_HOME?.trim()
         ? resolveUserPath(process.env.CODEX_HOME.trim())
         : path.join(os.homedir(), ".codex");
+    this.claudeHome = process.env.CLAUDE_CONFIG_DIR?.trim()
+      ? resolveUserPath(process.env.CLAUDE_CONFIG_DIR.trim())
+      : path.join(this.app.getPath("home"), ".claude");
     this.launchAgentsDir = launchAgentsDir
       ? resolveUserPath(launchAgentsDir)
       : path.join(os.homedir(), "Library", "LaunchAgents");
@@ -410,8 +413,10 @@ class RuntimeHost {
     const paths = new Set([
       this.supervisor.configPath,
       path.join(coreHome, "codex", "integration-journal.json"),
+      path.join(coreHome, "claude", "integration-journal.json"),
       path.join(this.codexHome, "config.toml"),
       path.join(this.codexHome, "models_cache.json"),
+      path.join(this.claudeHome, "settings.json"),
       path.join(coreHome, "secrets", "tunnel-runtime.key"),
       path.join(coreHome, "tunnel", "profiles", "codex-chatgpt-web.yaml"),
     ]);

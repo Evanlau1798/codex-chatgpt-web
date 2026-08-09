@@ -19,6 +19,7 @@ import {
   storedBrowserLoginCapabilities,
 } from "./browser-login";
 import { installCodexIntegration, preflightCodexIntegration } from "./codex-integration";
+import { installClaudeIntegration, preflightClaudeIntegration } from "./claude-integration";
 import { inspectLauncherBrowserHost } from "./launcher-browser-host";
 import {
   assertServiceIdle,
@@ -275,6 +276,9 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   preflightCodexIntegration(config, {
     replaceExistingRoute: options.replaceCodexRoute,
   });
+  preflightClaudeIntegration(config, {
+    replaceExistingRoute: options.replaceCodexRoute,
+  });
   const refreshTunnelWorker = tunnelWorkerRuntimeChanged(existing, config);
   if (existing && options.restartService) config.controlToken = randomBytes(32).toString("base64url");
   const beforeService = getServiceStatus();
@@ -406,6 +410,9 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   );
   if (!migratingTerminalRuntime) removeLegacyRuntimeArtifacts(config);
   installCodexIntegration(config, {
+    replaceExistingRoute: options.replaceCodexRoute,
+  });
+  installClaudeIntegration(config, {
     replaceExistingRoute: options.replaceCodexRoute,
   });
 

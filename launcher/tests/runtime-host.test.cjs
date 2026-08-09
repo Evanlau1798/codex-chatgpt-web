@@ -506,9 +506,13 @@ test("failed first-time setup removes its route before restoring the unconfigure
   const configPath = path.join(root, "config.json");
   const codexConfigPath = path.join(codexHome, "config.toml");
   const codexModelsCachePath = path.join(codexHome, "models_cache.json");
+  const claudeSettingsPath = path.join(root, ".claude", "settings.json");
+  const claudeJournalPath = path.join(coreHome, "claude", "integration-journal.json");
   fs.mkdirSync(codexHome, { recursive: true });
+  fs.mkdirSync(path.dirname(claudeSettingsPath), { recursive: true });
   fs.writeFileSync(codexConfigPath, "original codex config\n");
   fs.writeFileSync(codexModelsCachePath, "original codex models cache\n");
+  fs.writeFileSync(claudeSettingsPath, "original claude settings\n");
   let cleared = 0;
   let stops = 0;
   const calls = [];
@@ -537,6 +541,9 @@ test("failed first-time setup removes its route before restoring the unconfigure
     fs.mkdirSync(path.dirname(journalPath), { recursive: true });
     fs.writeFileSync(configPath, `${JSON.stringify({ mode: "browser-only", browserHost: "launcher" })}\n`);
     fs.writeFileSync(journalPath, "partial integration journal\n");
+    fs.mkdirSync(path.dirname(claudeJournalPath), { recursive: true });
+    fs.writeFileSync(claudeJournalPath, "partial claude integration journal\n");
+    fs.writeFileSync(claudeSettingsPath, "partially changed claude settings\n");
     fs.writeFileSync(codexConfigPath, "partially changed codex config\n");
     fs.rmSync(codexModelsCachePath);
     throw new Error("synthetic setup failure");
@@ -551,6 +558,8 @@ test("failed first-time setup removes its route before restoring the unconfigure
     assert.equal(fs.existsSync(journalPath), false);
     assert.equal(fs.readFileSync(codexConfigPath, "utf8"), "original codex config\n");
     assert.equal(fs.readFileSync(codexModelsCachePath, "utf8"), "original codex models cache\n");
+    assert.equal(fs.readFileSync(claudeSettingsPath, "utf8"), "original claude settings\n");
+    assert.equal(fs.existsSync(claudeJournalPath), false);
     assert.equal(stops, 2);
     assert.equal(cleared, 1);
   } finally {

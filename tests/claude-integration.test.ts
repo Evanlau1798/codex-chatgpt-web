@@ -1,0 +1,111 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  getClaudeIntegrationJournalPath,
+  getClaudeSettingsPath,
+  installClaudeIntegration,
+  preflightClaudeIntegration,
+  uninstallClaudeIntegration,
+} from "../src/claude-integration";
+import { defaultConfig } from "../src/config";
+
+const roots: string[] = [];
+
+function fixture(initial?: Record<string, unknown>) {
+  const root = join(tmpdir(), `codex-chatgpt-web-claude-${process.pid}-${Date.now()}-${Math.random()}`);
+  const claudeHome = join(root, "claude");
+  process.env.CLAUDE_CONFIG_DIR = claudeHome;
+  process.env.CODEX_CHATGPT_WEB_HOME = join(root, "app");
+  roots.push(root);
+  if (initial) {
+    mkdirSync(claudeHome, { recursive: true });
+    writeFileSync(join(claudeHome, "settings.json"), `${JSON.stringify(initial, null, 2)}\n`);
+  }
+  return { root, settingsPath: join(claudeHome, "settings.json") };
+}
+
+function settings(): Record<string, any> {
+  return JSON.parse(readFileSync(getClaudeSettingsPath(), "utf8"));
+}
+
+afterEach(() => {
+  delete process.env.CLAUDE_CONFIG_DIR;
+  delete process.env.CODEX_CHATGPT_WEB_HOME;
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe("reversible Claude Code integration", () => {
+  test("installs a working bare-Claude default backed by the discovered gateway model list", () => {
+    fixture({ language: "traditional-chinese", env: { USER_SETTING: "keep" } });
+
+    installClaudeIntegration(defaultConfig("browser-only"));
+
+    const installed = settings();
+    expect(installed.language).toBe("traditional-chinese");
+    expect(installed.model).toBe("claude-chatgpt-web-high");
+    expect(installed.availableModels).toEqual([
+      "claude-chatgpt-web-high",
+      "claude-chatgpt-web-light",
+      "claude-chatgpt-web-medium",
+    ]);
+    expect(installed.enforceAvailableModels).toBe(true);
+    expect(installed.env).toMatchObject({
+      USER_SETTING: "keep",
+      ANTHROPIC_BASE_URL: "http://127.0.0.1:17841",
+      ANTHROPIC_AUTH_TOKEN: "codex-chatgpt-web-local",
+      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+    });
+    expect(existsSync(getClaudeIntegrationJournalPath())).toBe(true);
+  });
+
+  test("exposes only Luna to Claude Code on Luna-only accounts", () => {
+    fixture();
+    const config = defaultConfig("browser-only");
+    config.solAvailable = false;
+
+    installClaudeIntegration(config);
+
+    const installed = settings();
+    expect(installed.model).toBe("claude-chatgpt-web-luna");
+    expect(installed.availableModels).toEqual(["claude-chatgpt-web-luna"]);
+    uninstallClaudeIntegration();
+    expect(existsSync(getClaudeSettingsPath())).toBe(false);
+  });
+
+  test("restores only managed settings and preserves unrelated edits made after install", () => {
+    fixture({ model: "user-model", env: { ANTHROPIC_BASE_URL: "https://gateway.example", KEEP: "before" } });
+    installClaudeIntegration(defaultConfig("browser-only"));
+    const edited = settings();
+    edited.env.KEEP = "after";
+    edited.statusLine = { type: "command", command: "status" };
+    writeFileSync(getClaudeSettingsPath(), `${JSON.stringify(edited, null, 2)}\n`);
+
+    expect(uninstallClaudeIntegration()).toEqual({ changed: true });
+
+    expect(settings()).toEqual({
+      model: "user-model",
+      env: { ANTHROPIC_BASE_URL: "https://gateway.example", KEEP: "after" },
+      statusLine: { type: "command", command: "status" },
+    });
+    expect(existsSync(getClaudeIntegrationJournalPath())).toBe(false);
+  });
+
+  test("refuses to overwrite a changed managed model unless replacement is explicit", () => {
+    fixture({ model: "user-model" });
+    const config = defaultConfig("browser-only");
+    installClaudeIntegration(config);
+    const edited = settings();
+    edited.model = "another-model";
+    writeFileSync(getClaudeSettingsPath(), `${JSON.stringify(edited, null, 2)}\n`);
+
+    expect(() => preflightClaudeIntegration(config)).toThrow("Claude model changed after setup");
+    expect(() => installClaudeIntegration(config)).toThrow("Claude model changed after setup");
+    installClaudeIntegration(config, { replaceExistingRoute: true });
+    expect(settings().model).toBe("claude-chatgpt-web-high");
+
+    uninstallClaudeIntegration();
+    expect(settings().model).toBe("another-model");
+  });
+});

@@ -27,6 +27,7 @@ import type { CodexProviderConfig } from "./types";
 import type { ProviderAdapter } from "./adapters/base";
 import { VERSION } from "./version";
 import { messagesCountTokensRequest, messagesRequest } from "./messages";
+import { claudeGatewayModelsResponse, isClaudeGatewayModelsRequest } from "./messages/models";
 
 export class HttpTurnCounter {
   private active = 0;
@@ -414,6 +415,7 @@ export function startServer(
             "codex-chatgpt-web is draining for a requested service operation",
           );
         }
+        if (isClaudeGatewayModelsRequest(req)) return claudeGatewayModelsResponse(config);
         return httpTurns.track(async () => {
           const response = await modelsRequest(
             req,

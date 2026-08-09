@@ -4,7 +4,24 @@ import {
   CHATGPT_WEB_MODEL_PRIORITY,
 } from "../src/model-catalog";
 import { CHATGPT_WEB_MODEL_ROUTES, resolveChatGptWebContextLimits } from "../src/chatgpt-web-models";
+import { claudeGatewayModelsResponse, isClaudeGatewayModelsRequest } from "../src/messages/models";
 import { modelsRequest } from "../src/server";
+
+test("serves the account-scoped Claude gateway model catalog without proxying upstream", async () => {
+  const request = new Request("http://127.0.0.1:17841/v1/models?limit=1000", {
+    headers: { authorization: "Bearer codex-chatgpt-web-local" },
+  });
+  const config = defaultConfig("browser-only");
+
+  expect(isClaudeGatewayModelsRequest(request)).toBe(true);
+  expect(await claudeGatewayModelsResponse(config).json()).toEqual({
+    data: [
+      { id: "claude-chatgpt-web-light", display_name: "ChatGPT Web — Instant" },
+      { id: "claude-chatgpt-web-medium", display_name: "ChatGPT Web — Medium" },
+      { id: "claude-chatgpt-web-high", display_name: "ChatGPT Web — High" },
+    ],
+  });
+});
 
 test("proxies official /models auth and query, then appends the fixed ChatGPT Web models", async () => {
   const request = new Request("http://127.0.0.1:17841/v1/models?client_version=1.2.3", {
