@@ -226,6 +226,54 @@ test("structured helper errors preserve the ChatGPT adapter failure contract", a
   });
 });
 
+test("a synchronous answer retry failure rejects only its browser turn", async () => {
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native",
+    browserHost: "launcher",
+    browserHostDescriptorPath: "/durable/launcher.json",
+    storageStatePath: "/durable/unused-state.json",
+    chromeExecutablePath: "/durable/unused-chrome",
+    turnTimeoutMs: 60_000,
+    headed: true,
+    autoApproveToolCalls: false,
+  });
+  const internal = client as unknown as {
+    child?: unknown;
+    pending: Map<string, {
+      turn: BrowserTurn;
+      resolve: (value: string) => void;
+      reject: (error: Error) => void;
+    }>;
+    handleLine(child: unknown, line: string): void;
+  };
+  const child = {};
+  internal.child = child;
+  const result = new Promise<string>((resolveResult, rejectResult) => {
+    internal.pending.set("answer-retry-123", {
+      turn: {
+        traceId: "answer-retry-123",
+        modelId: "chatgpt-web/medium",
+        capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
+        prepare: async () => ({ text: "inspect", images: [], release() {} }),
+        onTextDelta() {},
+        retryPromptForAnswer: () => { throw new Error("subagent retry refused"); },
+      },
+      resolve: resolveResult,
+      reject: rejectResult,
+    });
+  });
+
+  expect(() => internal.handleLine(child, JSON.stringify({
+    type: "event",
+    id: "answer-retry-123",
+    event: "answer",
+    text: "native command gateway unavailable",
+    attempt: 2,
+  }))).not.toThrow();
+
+  await expect(result).rejects.toThrow("subagent retry refused");
+});
+
 test("launcher helper retries recoverable browser failures in the same turn", async () => {
   const client = new LauncherBrowserHelperClient({
     appName: "Codex Native",

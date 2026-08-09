@@ -317,12 +317,12 @@ export class LauncherBrowserHelperClient {
     if (message.type === "event") {
       if (message.event === "heartbeat") pending.turn.onHeartbeat?.();
       else if (message.event === "answer") {
-        void Promise.resolve(pending.turn.retryPromptForAnswer?.(message.text, message.attempt))
+        void Promise.resolve().then(() => pending.turn.retryPromptForAnswer?.(message.text, message.attempt))
           .then(prompt => this.send({ type: "answer_retry", id: message.id, ...(prompt ? { prompt } : {}) }))
           .catch(error => this.finishWithError(message.id, error instanceof Error ? error : new Error(String(error))));
       }
       else if (message.event === "error_retry") {
-        void Promise.resolve(pending.turn.retryPromptForError?.(new Error(message.text), message.attempt))
+        void Promise.resolve().then(() => pending.turn.retryPromptForError?.(new Error(message.text), message.attempt))
           .then(prompt => this.send({ type: "answer_retry", id: message.id, ...(prompt ? { prompt } : {}) }))
           .catch(error => this.finishWithError(message.id, error instanceof Error ? error : new Error(String(error))));
       }
