@@ -1779,6 +1779,7 @@ export class ChatGptBrowserWorker {
         ));
       await diagnostics.capture(page, "effort-selection-complete");
       let finalText = "";
+      let emittedText = "";
       let responsePrompt = prepared.text;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
         try {
@@ -1835,7 +1836,10 @@ export class ChatGptBrowserWorker {
           : undefined;
         const emitMarkdownDelta = (delta: string): void => {
           const visible = checkpointStream ? checkpointStream.push(delta) : delta;
-          if (visible) turn.onTextDelta(visible);
+          if (visible) {
+            emittedText += visible;
+            turn.onTextDelta(visible);
+          }
         };
         const completionTracker = new ChatGptCompletionTracker();
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
@@ -1966,8 +1970,8 @@ export class ChatGptBrowserWorker {
         atomicWriteFile(this.config.storageStatePath, `${JSON.stringify(state)}\n`);
       }
       await diagnostics.capture(page, "turn-completed");
-      console.info(`[chatgpt-web] browser turn ${turn.traceId} completed (markdownChars=${finalText.length})`);
-      return finalText;
+      console.info(`[chatgpt-web] browser turn ${turn.traceId} completed (markdownChars=${emittedText.length})`);
+      return emittedText;
     } catch (error) {
       if (diagnosticPage && !diagnosticPage.isClosed()) {
         await diagnostics.capture(diagnosticPage, "turn-failed", error);

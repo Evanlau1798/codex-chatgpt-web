@@ -114,12 +114,26 @@ export class ChatGptTextFeed {
   }
 }
 
+export class ChatGptSteeringFeed {
+  private readonly queued: string[] = [];
+
+  push(instruction: string): void {
+    this.queued.push(instruction);
+  }
+
+  take(): string | undefined {
+    if (this.queued.length === 0) return undefined;
+    return this.queued.splice(0).join("\n\n");
+  }
+}
+
 interface ChatGptTurnRuntimeBase {
   browser: Promise<string>;
   trace: ChatGptTraceFeed;
   text: ChatGptTextFeed;
   /** Exact bounded request used to prepare this browser turn and report Codex usage. */
   usageInput?: CodexParsedRequest;
+  steering?: ChatGptSteeringFeed;
   requestHandoff?: (instructionDelivered?: boolean) => void;
   cancel: () => void;
 }
@@ -184,11 +198,12 @@ export class ChatGptTurnSession {
   private finalPrelude: AdapterEvent[] = [];
   private handoff?: string;
   private userRevision?: string;
-  private pendingSteering?: string;
+  private readonly steering: ChatGptSteeringFeed;
   private settledBrowserOutcome?: ChatGptBrowserOutcome;
   private tail: Promise<void> = Promise.resolve();
 
   constructor(readonly runtime: ChatGptTurnRuntime, readonly group?: string) {
+    this.steering = runtime.steering ?? new ChatGptSteeringFeed();
     this.browserOutcome = runtime.browser
       .then(answer => ({ type: "final", answer }) as ChatGptBrowserOutcome)
       .catch(error => ({ type: "error", error: error instanceof Error ? error : new Error(String(error)) }) as ChatGptBrowserOutcome)
@@ -289,14 +304,12 @@ export class ChatGptTurnSession {
     }
     if (this.userRevision === revision) return undefined;
     this.userRevision = revision;
-    this.pendingSteering = steering;
+    this.steering.push(steering);
     return steering;
   }
 
   takePendingSteering(): string | undefined {
-    const steering = this.pendingSteering;
-    this.pendingSteering = undefined;
-    return steering;
+    return this.steering.take();
   }
 
   clearOutstanding(): void {

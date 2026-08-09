@@ -2,7 +2,24 @@ import { namespacedToolName, type CodexParsedRequest } from "../../types";
 import { extractChatGptTurnUserRevision, extractChatGptTurnUserText } from "./environment";
 import type { BrokerToolRequest, TurnBroker } from "./turn-broker";
 import { claudeBrowserSessionGroup, normalizeClaudeToolRequests } from "./claude-subagent";
-import type { ChatGptTurnRuntime, ChatGptTurnSession, ChatGptTurnSessions } from "./turn-execution";
+import type { ChatGptSteeringFeed, ChatGptTurnRuntime, ChatGptTurnSession, ChatGptTurnSessions } from "./turn-execution";
+
+type AnswerRetry = (answer: string, attempt: number) => string | undefined | Promise<string | undefined>;
+
+export function browserSteeringRetry(
+  steering: ChatGptSteeringFeed,
+  traceId: string,
+  upstream?: AnswerRetry,
+): AnswerRetry {
+  let steeringAttempts = 0;
+  return (answer, attempt) => {
+    const instruction = steering.take();
+    if (!instruction) return upstream?.(answer, Math.max(1, attempt - steeringAttempts));
+    steeringAttempts += 1;
+    console.info(`[chatgpt-web] browser turn ${traceId} continued native steering in the existing Web conversation`);
+    return `The user added this instruction while you were working:\n\n${instruction}\n\nContinue the task in this same conversation. Treat this as the latest user instruction.`;
+  };
+}
 
 export async function sessionForChatGptRequest(
   sessions: ChatGptTurnSessions,
@@ -15,7 +32,7 @@ export async function sessionForChatGptRequest(
   const group = claudeBrowserSessionGroup(parsed);
   let session = sessions.getOrCreate(key, start, group);
   const steering = session.updateUserRevision(revision, text);
-  if (!steering || (session.runtime.mode === "tools" && !session.settledOutcome())) return session;
+  if (!steering || (!session.settledOutcome() && (session.runtime.mode === "tools" || session.runtime.steering))) return session;
 
   await sessions.retireAndWait(key);
   session = sessions.getOrCreate(key, start, group);

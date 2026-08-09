@@ -120,7 +120,7 @@ describe("compact mode routing", () => {
 
     try {
       await createChatGptWebAdapter(config).runTurn!(request, { headers: new Headers() }, () => {});
-      expect(browserTurn?.retryPromptForAnswer).toBeUndefined();
+      expect(browserTurn?.retryPromptForAnswer?.("ordinary answer", 1)).toBeUndefined();
       expect(browserTurn?.retryPromptForError).toBeUndefined();
     } finally {
       worker.run = originalRun;

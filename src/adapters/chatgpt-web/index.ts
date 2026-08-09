@@ -19,7 +19,7 @@ import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./env
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { compileChatGptWebPrompt } from "./prompt";
 import { TurnBroker } from "./turn-broker";
-import { ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
+import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
 import {
   appendCompactionUserPrompt,
   emitBrowserCompletion,
@@ -32,12 +32,8 @@ import {
 } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
-import { claudeConversationResumeRequest, deliverPendingChatGptSteering, sessionForChatGptRequest, validateBatchTools } from "./steering";
-import {
-  ChatGptLunaCheckpointStore,
-  type CapturedChatGptLunaCheckpoint,
-} from "./rolling-checkpoint";
-
+import { browserSteeringRetry, claudeConversationResumeRequest, deliverPendingChatGptSteering, sessionForChatGptRequest, validateBatchTools } from "./steering";
+import { ChatGptLunaCheckpointStore, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint";
 function brokerSocketPath(provider: CodexProviderConfig): string {
   const configured = provider.chatgptWeb?.brokerSocketPath?.trim();
   return resolveBrokerEndpoint(configured || defaultBrokerEndpoint());
@@ -136,9 +132,11 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const browserAbort = new AbortController();
     const trace = new ChatGptTraceFeed();
     const text = new ChatGptTextFeed();
+    const steering = captureLunaCheckpoint ? undefined : new ChatGptSteeringFeed();
     const handoffPrompts = useNewCompactMode ? createActiveCompactionHandoffPrompts() : undefined;
     const resumeInput = claudeConversationResumeRequest(checkpointInput.parsed);
-    const { retainConversation, retryPromptForAnswer } = claudeBrowserTurnOptions(checkpointInput.parsed, handoffPrompts?.retryPromptForAnswer);
+    const { retainConversation, retryPromptForAnswer: upstreamRetry } = claudeBrowserTurnOptions(checkpointInput.parsed, handoffPrompts?.retryPromptForAnswer);
+    const retryPromptForAnswer = parsed._compactionRequest || !steering ? upstreamRetry : browserSteeringRetry(steering, traceId, upstreamRetry);
     if (!mode.localTools) {
       const base = {
         modelId: parsed.modelId,
@@ -181,6 +179,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         browser,
         trace,
         text,
+        ...(steering ? { steering } : {}),
         usageInput: checkpointInput.parsed,
         ...(handoffPrompts ? { requestHandoff: handoffPrompts.request } : {}),
         cancel: () => browserAbort.abort(),
@@ -239,6 +238,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       browser,
       trace,
       text,
+      ...(steering ? { steering } : {}),
       usageInput: checkpointInput.parsed,
       ...(handoffPrompts ? { requestHandoff: handoffPrompts.request } : {}),
       cancel: () => {
