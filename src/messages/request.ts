@@ -159,7 +159,10 @@ export function translateClaudeMessages(raw: unknown, headers: Headers): Transla
   for (const rawMessage of request.messages) {
     const message = object(rawMessage, "message");
     if (message.role === "assistant") input.push(...assistantItems(message.content));
-    else if (message.role === "user") {
+    else if (message.role === "system") {
+      const content = textBlocks(message.content);
+      if (content) input.push({ type: "message", role: "system", content: [{ type: "input_text", text: content }] });
+    } else if (message.role === "user") {
       const start = input.length;
       input.push(...userItems(message.content, turnId));
       if (input.slice(start).some(item => item.type === "message")) latestUserOffset = start;

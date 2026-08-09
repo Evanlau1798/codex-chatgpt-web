@@ -32,6 +32,7 @@ test("translates a Claude Code message into the existing ChatGPT Web adapter", a
           turnId: expect.stringContaining("claude_agent-main"),
         });
         expect(extractChatGptTurnEnvironment(parsed).cwd).toBe("G:\\claude-project");
+        expect(parsed.context.systemPrompt).toContain("Available agent types for the Agent tool: Explore");
         expect(parsed.context.tools).toEqual([{
           name: "read_file",
           description: "Read one file",
@@ -52,10 +53,13 @@ test("translates a Claude Code message into the existing ChatGPT Web adapter", a
     model: "chatgpt-web-high",
     max_tokens: 2048,
     system: "You are Claude Code.\n- Primary working directory: G:\\claude-project",
-    messages: [{ role: "user", content: [
-      { type: "text", text: "Inspect this image" },
-      { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } },
-    ] }],
+    messages: [
+      { role: "user", content: [
+        { type: "text", text: "Inspect this image" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } },
+      ] },
+      { role: "system", content: [{ type: "text", text: "Available agent types for the Agent tool: Explore" }] },
+    ],
     tools: [{
       name: "read_file",
       description: "Read one file",
