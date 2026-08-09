@@ -370,7 +370,7 @@ test("requires ChatGPT-native rich results to include a safe Markdown answer for
   expect(compiled.text).toContain("Never copy a ChatGPT widget's HTML, CSS, class names, or DOM markup");
 });
 
-test("describes one-shot Windows shell limits without exposing secret values", () => {
+test("describes one-shot cross-platform shell limits without exposing secret values", () => {
   const compiled = compileChatGptWebPrompt(
     request("xhigh"),
     { localToolsEnabled: true, solAvailable: true, proAvailable: true },
@@ -378,7 +378,8 @@ test("describes one-shot Windows shell limits without exposing secret values", (
   );
 
   expect(compiled.text).toContain("shell_command is one-shot");
-  expect(compiled.text).toContain("Windows PowerShell 5.1");
+  expect(compiled.text).toContain("active platform shell");
+  expect(compiled.text).not.toContain("PowerShell 5.1");
   expect(compiled.text).toContain("never print secret values");
 });
 

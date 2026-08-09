@@ -234,7 +234,7 @@ export function compileChatGptWebPrompt(
     : mode.localTools
     ? [
       "For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.",
-      "Codex Native shell_command is one-shot: do not request a TTY or expect later stdin. On Windows use Windows PowerShell 5.1-compatible APIs, pipe generated input inside the same command, and never print secret values.",
+      "Codex Native shell_command is one-shot: do not request a TTY or expect later stdin. Use APIs compatible with the active platform shell, pipe generated input inside the same command, and never print secret values.",
       "Use actual Codex Native results as evidence for local observations and effects, and keep calling tools until the requested work is complete and verified.",
     ]
     : [
