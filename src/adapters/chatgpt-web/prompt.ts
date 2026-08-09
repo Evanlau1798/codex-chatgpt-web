@@ -236,6 +236,7 @@ export function compileChatGptWebPrompt(
       "For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.",
       "Codex Native shell_command is one-shot: do not request a TTY or expect later stdin. Use APIs compatible with the active platform shell, pipe generated input inside the same command, and never print secret values.",
       "Use actual Codex Native results as evidence for local observations and effects, and keep calling tools until the requested work is complete and verified.",
+      "Describe failed local actions using only observable tool evidence. If no native result was returned, state only that the action did not execute; never infer or name an unreported cause.",
     ]
     : [
       `This is ChatGPT Web ${mode.displayLabel} with no Codex Native bridge to the user's local computer attached to this response. This restriction applies only to local Codex files, commands, processes, and computer mutations.`,

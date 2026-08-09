@@ -52,6 +52,19 @@ function result(value: Record<string, unknown>, isError = false) {
   };
 }
 
+function diagnosticErrorType(value: unknown): string {
+  return value instanceof Error ? value.name : typeof value;
+}
+
+function logToolPhase(
+  toolName: string,
+  phase: "claim" | "invoke",
+  status: "started" | "completed" | "failed",
+  detail = "",
+): void {
+  console.error(`[chatgpt-web-mcp] tool=${toolName} phase=${phase} status=${status}${detail}`);
+}
+
 function wireName(tool: CodexTool): string {
   return namespacedToolName(tool.namespace, tool.name);
 }
@@ -153,8 +166,15 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     turnToken: string,
     extra: Parameters<typeof requestScopeSummary>[0],
   ): Promise<ClaimedTurn> => {
-    console.error(`[chatgpt-web-mcp] ${toolName} scope=${requestScopeSummary(extra)}`);
-    return await callTurnBroker<ClaimedTurn>(options.brokerSocketPath, { method: "claim", token: turnToken });
+    logToolPhase(toolName, "claim", "started", ` scope=${requestScopeSummary(extra)}`);
+    try {
+      const claimed = await callTurnBroker<ClaimedTurn>(options.brokerSocketPath, { method: "claim", token: turnToken });
+      logToolPhase(toolName, "claim", "completed", ` binding=${scopeHash(claimed.bindingId)}`);
+      return claimed;
+    } catch (error) {
+      logToolPhase(toolName, "claim", "failed", ` errorType=${diagnosticErrorType(error)}`);
+      throw error;
+    }
   };
 
   const invoke = async (
@@ -163,14 +183,23 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     tool: CodexTool,
     payload: { arguments?: Record<string, unknown>; input?: string },
   ) => {
-    const response = await callTurnBroker<BrokerToolResult>(options.brokerSocketPath, {
-      method: "invoke",
-      bindingId,
-      wireName: wireName(tool),
-      freeform: tool.freeform === true,
-      ...(tool.freeform ? { input: payload.input ?? "" } : { arguments: payload.arguments ?? {} }),
-    }, invocationTimeout(bound));
-    return asMcpResult(response);
+    const name = wireName(tool);
+    const binding = scopeHash(bindingId);
+    logToolPhase(name, "invoke", "started", ` binding=${binding}`);
+    try {
+      const response = await callTurnBroker<BrokerToolResult>(options.brokerSocketPath, {
+        method: "invoke",
+        bindingId,
+        wireName: name,
+        freeform: tool.freeform === true,
+        ...(tool.freeform ? { input: payload.input ?? "" } : { arguments: payload.arguments ?? {} }),
+      }, invocationTimeout(bound));
+      logToolPhase(name, "invoke", "completed", ` isError=${response.isError === true} binding=${binding}`);
+      return asMcpResult(response);
+    } catch (error) {
+      logToolPhase(name, "invoke", "failed", ` errorType=${diagnosticErrorType(error)} binding=${binding}`);
+      throw error;
+    }
   };
 
   const invokeNestedNative = (
