@@ -172,6 +172,14 @@ describe("compact mode routing", () => {
         "The native shell gateway is unavailable, so I could not run the command.",
         1,
       )).toContain("Advertised client tools are available");
+      expect(browserTurn?.retryPromptForAnswer?.(
+        "This Codex turn did not advertise a native command tool or the native exec gateway",
+        1,
+      )).toContain("Advertised client tools are available");
+      expect(browserTurn?.retryPromptForAnswer?.(
+        "其執行環境未提供 command/exec gateway，因此沒有實際輸出。",
+        1,
+      )).toContain("Advertised client tools are available");
       expect(() => browserTurn?.retryPromptForAnswer?.(
         "重試後仍未提供 native command/exec 工具。",
         2,
