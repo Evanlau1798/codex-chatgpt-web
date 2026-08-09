@@ -46,6 +46,7 @@ interface TurnChannel {
   waiters: Set<ToolWaiter>;
   batchTimer?: ReturnType<typeof setTimeout>;
   handoffInstruction?: string;
+  steeringInstruction?: string;
 }
 
 interface BrokerRequest {
@@ -212,6 +213,25 @@ export class TurnBroker {
     for (const [callId, invocation] of channel.invocations) {
       channel.invocations.delete(callId);
       invocation.resolve({ content: [{ type: "text", text: instruction }], isError: true });
+    }
+  }
+
+  requestSteering(token: string, instruction: string): void {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    channel.queuedCallIds.length = 0;
+    if (channel.invocations.size === 0) {
+      channel.steeringInstruction = instruction;
+      return;
+    }
+    const result: BrokerToolResult = {
+      content: [{ type: "text", text: instruction }],
+      isError: true,
+    };
+    for (const [callId, invocation] of channel.invocations) {
+      channel.invocations.delete(callId);
+      invocation.resolve(result);
     }
   }
 
@@ -444,6 +464,15 @@ export class TurnBroker {
     if (binding.channel.handoffInstruction) {
       return {
         content: [{ type: "text", text: binding.channel.handoffInstruction }],
+        isError: true,
+      } satisfies BrokerToolResult;
+    }
+
+    if (binding.channel.steeringInstruction) {
+      const instruction = binding.channel.steeringInstruction;
+      binding.channel.steeringInstruction = undefined;
+      return {
+        content: [{ type: "text", text: instruction }],
         isError: true,
       } satisfies BrokerToolResult;
     }

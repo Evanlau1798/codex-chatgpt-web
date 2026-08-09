@@ -30,6 +30,7 @@ import {
 } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
+import { deliverPendingChatGptSteering, sessionForChatGptRequest } from "./steering";
 import {
   ChatGptLunaCheckpointStore,
   type CapturedChatGptLunaCheckpoint,
@@ -312,8 +313,10 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
       await chatGptTurnSessions.waitForRetirement(executionKey);
       const traceId = createHash("sha256").update(executionKey).digest("hex").slice(0, 12);
-      const session = chatGptTurnSessions.getOrCreate(
+      const session = await sessionForChatGptRequest(
+        chatGptTurnSessions,
         executionKey,
+        parsed,
         () => startRuntime(parsed, environment, traceId, turnCapabilities),
       );
       const heartbeat = setInterval(() => emit({ type: "heartbeat" }), 10_000);
@@ -358,6 +361,8 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
             turnToken = await withAbort(session.runtime.token, incoming.abortSignal);
             if (!environment) throw new Error("Tool-capable ChatGPT web runtime lost its trusted environment");
             broker.updateEnvironment(turnToken, environment);
+
+            deliverPendingChatGptSteering(session, broker, turnToken, traceId);
 
             const outstanding = session.outstanding();
             if (outstanding.length > 0) {

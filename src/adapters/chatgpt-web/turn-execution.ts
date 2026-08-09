@@ -151,13 +151,12 @@ function compactionInputRevision(parsed: CodexParsedRequest): unknown[] {
 export function chatGptTurnExecutionKey(parsed: CodexParsedRequest): string {
   const identity = extractChatGptTurnIdentity(parsed);
   if (!identity.turnId) throw new Error("ChatGPT web requires native Codex turn_id metadata for browser-session replay");
+  if (!parsed._compactionRequest) extractChatGptTurnUserRevision(parsed);
   return executionKey(parsed, {
     threadId: identity.threadId,
     turnId: identity.turnId,
     purpose: parsed._compactionRequest ? "compaction" : "response",
-    revision: parsed._compactionRequest
-      ? compactionInputRevision(parsed)
-      : extractChatGptTurnUserRevision(parsed),
+    ...(parsed._compactionRequest ? { revision: compactionInputRevision(parsed) } : {}),
   });
 }
 
@@ -170,7 +169,6 @@ export function chatGptCompactionSourceExecutionKey(parsed: CodexParsedRequest):
     threadId: identity.threadId,
     turnId: source.turnId ?? identity.turnId,
     purpose: "response",
-    revision: source.content,
   });
 }
 
@@ -185,6 +183,8 @@ export class ChatGptTurnSession {
   private outstandingPrelude: AdapterEvent[] = [];
   private finalPrelude: AdapterEvent[] = [];
   private handoff?: string;
+  private userRevision?: string;
+  private pendingSteering?: string;
   private settledBrowserOutcome?: ChatGptBrowserOutcome;
   private tail: Promise<void> = Promise.resolve();
 
@@ -280,6 +280,29 @@ export class ChatGptTurnSession {
 
   compactionHandoff(): string | undefined {
     return this.handoff;
+  }
+
+  updateUserRevision(revision: string, steering: string): string | undefined {
+    if (this.userRevision === undefined) {
+      this.userRevision = revision;
+      return undefined;
+    }
+    if (this.userRevision === revision) return undefined;
+    this.userRevision = revision;
+    this.pendingSteering = steering;
+    return steering;
+  }
+
+  takePendingSteering(): string | undefined {
+    const steering = this.pendingSteering;
+    this.pendingSteering = undefined;
+    return steering;
+  }
+
+  clearOutstanding(): void {
+    this.outstandingById.clear();
+    this.outstandingReasoning = [];
+    this.outstandingPrelude = [];
   }
 
   cancel(): void {

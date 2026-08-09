@@ -382,7 +382,7 @@ describe("ChatGPT outer-native harness v4", () => {
       content: [{ type: "input_text", text: "Stop and review the implementation before continuing" }],
       internal_chat_message_metadata_passthrough: { turn_id: "turn_test_123" },
     });
-    expect(chatGptTurnExecutionKey(steered)).not.toBe(chatGptTurnExecutionKey(second));
+    expect(chatGptTurnExecutionKey(steered)).toBe(chatGptTurnExecutionKey(second));
     const afterCompact = rawWireRequest(environmentXml);
     afterCompact.context.messages.push({
       role: "user",
@@ -438,6 +438,79 @@ describe("ChatGPT outer-native harness v4", () => {
     expect(starts).toBe(1);
     first.setOutstanding([{ callId: "call_1", wireName: "exec_command", freeform: false, arguments: { cmd: "pwd" } }]);
     expect(second.outstanding()).toEqual([{ callId: "call_1", wireName: "exec_command", freeform: false, arguments: { cmd: "pwd" } }]);
+  });
+
+  test("records one pending steering revision on a reused browser session", () => {
+    const sessions = new ChatGptTurnSessions();
+    const session = sessions.getOrCreate("steering", () => ({
+      mode: "read-only",
+      browser: new Promise<string>(() => {}),
+      trace: new ChatGptTraceFeed(),
+      text: new ChatGptTextFeed(),
+      cancel: () => {},
+    }));
+
+    expect(session.updateUserRevision("revision-1", "first request")).toBeUndefined();
+    expect(session.updateUserRevision("revision-1", "duplicate request")).toBeUndefined();
+    expect(session.updateUserRevision("revision-2", "stop and review first")).toBe("stop and review first");
+    expect(session.takePendingSteering()).toBe("stop and review first");
+    expect(session.takePendingSteering()).toBeUndefined();
+    sessions.clear();
+  });
+
+  test("delivers native steering through the existing browser tool loop", async () => {
+    const socketPath = brokerTestEndpoint(`cgw-steering-${process.pid}-${Date.now()}`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web",
+      baseUrl: "browser://chatgpt-steering-test",
+      chatgptWeb: { brokerSocketPath: socketPath, localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run.bind(worker);
+    let browserStarts = 0;
+    let steeringResult: BrokerToolResult | undefined;
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+      browserStarts += 1;
+      const prepared = await turn.prepare();
+      const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
+      if (!token) throw new Error("turn token missing from compiled prompt");
+      const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
+      steeringResult = await callTurnBroker<BrokerToolResult>(socketPath, {
+        method: "invoke",
+        bindingId: claimed.bindingId,
+        wireName: "exec_command",
+        arguments: { cmd: "long-running-task" },
+      }, 10_000);
+      const answer = "Stopped and reviewed the existing implementation.";
+      turn.onTextDelta(answer);
+      return answer;
+    };
+    try {
+      const adapter = createChatGptWebAdapter(provider);
+      const firstEvents: AdapterEvent[] = [];
+      const first = rawWireRequest(environmentXml);
+      await adapter.runTurn!(first, { headers: new Headers() }, event => firstEvents.push(event));
+      expect(firstEvents.at(-1)).toMatchObject({ type: "done", stopReason: "tool_use" });
+
+      const steered = structuredClone(first);
+      steered.context.messages.push({ role: "user", content: "Stop and review first", timestamp: Date.now() });
+      ((steered._rawBody as { input: unknown[] }).input).push({
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Stop and review first" }],
+        internal_chat_message_metadata_passthrough: { turn_id: "turn_test_123" },
+      });
+      const secondEvents: AdapterEvent[] = [];
+      await adapter.runTurn!(steered, { headers: new Headers() }, event => secondEvents.push(event));
+
+      expect(browserStarts).toBe(1);
+      expect(steeringResult).toMatchObject({ isError: true });
+      expect(JSON.stringify(steeringResult)).toContain("Stop and review first");
+      expect(secondEvents.at(-1)).toMatchObject({ type: "done", stopReason: "stop" });
+    } finally {
+      (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      await TurnBroker.forSocket(socketPath).close();
+    }
   });
 
   test("retires a failed session so the next native retry starts a new browser turn", async () => {

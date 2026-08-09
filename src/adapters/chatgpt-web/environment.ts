@@ -100,6 +100,19 @@ export function extractChatGptTurnUserRevision(parsed: CodexParsedRequest): unkn
   return revision.content;
 }
 
+export function extractChatGptTurnUserText(parsed: CodexParsedRequest): string | undefined {
+  const content = extractChatGptTurnUserRevision(parsed);
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+  const text = content.flatMap(part => {
+    const value = record(part);
+    return (value?.type === "input_text" || value?.type === "text") && typeof value.text === "string"
+      ? [value.text]
+      : [];
+  }).join("\n");
+  return text || undefined;
+}
+
 function latestChatGptTurnUserRevision(parsed: CodexParsedRequest): ChatGptTurnUserRevision | undefined {
   const body = record(parsed._rawBody);
   const input = Array.isArray(body?.input) ? body.input : [];

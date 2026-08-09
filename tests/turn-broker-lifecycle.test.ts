@@ -146,6 +146,46 @@ test("turn broker tokens do not expire while their browser turn is still alive",
   }
 });
 
+test("turn broker delivers steering once through the active tool loop", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-broker-steering-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  try {
+    const token = await broker.register({
+      cwd: root,
+      roots: [root],
+      writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" },
+      tools: [],
+    });
+    const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
+    const first = callTurnBroker<{ content: Array<{ type: string; text: string }>; isError: boolean }>(socketPath, {
+      method: "invoke",
+      bindingId: claimed.bindingId,
+      wireName: "exec_command",
+    });
+    await Bun.sleep(5);
+    broker.requestSteering(token, "The user added: stop and review first");
+    await expect(first).resolves.toEqual({
+      content: [{ type: "text", text: "The user added: stop and review first" }],
+      isError: true,
+    });
+
+    broker.requestSteering(token, "The user added: use the existing implementation");
+    await expect(callTurnBroker(socketPath, {
+      method: "invoke",
+      bindingId: claimed.bindingId,
+      wireName: "exec_command",
+    })).resolves.toEqual({
+      content: [{ type: "text", text: "The user added: use the existing implementation" }],
+      isError: true,
+    });
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function unansweredBrokerEndpoint(name: string, onConnection: (socket: Socket) => void) {
   const root = mkdtempSync(join(tmpdir(), name));
   const socketPath = defaultBrokerEndpoint(root);
