@@ -1,5 +1,7 @@
 import type { CodexParsedRequest } from "../../types";
+import { extractChatGptTurnIdentity } from "./environment";
 import type { BrokerToolRequest } from "./turn-broker";
+import type { ChatGptTurnSessions } from "./turn-execution";
 
 type AnswerRetry = (answer: string, attempt: number) => string | undefined;
 
@@ -30,6 +32,24 @@ export function normalizeClaudeToolRequests(parsed: CodexParsedRequest, requests
       request.arguments = { ...request.arguments, run_in_background: true };
     }
   }
+}
+
+export function claudeBrowserSessionGroup(parsed: CodexParsedRequest): string | undefined {
+  if (typeof clientMetadata(parsed)?.claude_subagent !== "boolean") return undefined;
+  return extractChatGptTurnIdentity(parsed).threadId;
+}
+
+export function bindClaudeSessionAbort(
+  parsed: CodexParsedRequest,
+  signal: AbortSignal,
+  sessions: ChatGptTurnSessions,
+): () => void {
+  const group = claudeBrowserSessionGroup(parsed);
+  if (!group) return () => {};
+  const retire = () => { sessions.retireGroup(group); };
+  if (signal.aborted) retire();
+  else signal.addEventListener("abort", retire, { once: true });
+  return () => signal.removeEventListener("abort", retire);
 }
 
 export function claudeBrowserTurnOptions(parsed: CodexParsedRequest, upstreamRetry?: AnswerRetry) {

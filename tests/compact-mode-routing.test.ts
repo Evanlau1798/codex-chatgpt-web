@@ -10,11 +10,12 @@ import {
 } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
-import { normalizeClaudeToolRequests } from "../src/adapters/chatgpt-web/claude-subagent";
+import { bindClaudeSessionAbort, normalizeClaudeToolRequests } from "../src/adapters/chatgpt-web/claude-subagent";
 import {
   ChatGptTextFeed,
   ChatGptTraceFeed,
   ChatGptTurnSession,
+  ChatGptTurnSessions,
   chatGptCompactionSourceExecutionKey,
   chatGptTurnSessions,
 } from "../src/adapters/chatgpt-web/turn-execution";
@@ -181,6 +182,34 @@ describe("compact mode routing", () => {
 
     expect(tools[0]!.arguments).toEqual({ run_in_background: true });
     expect(tools[1]!.arguments).toEqual({ command: "Get-Location" });
+  });
+
+  test("aborting a Claude round retires every browser turn in the same session", () => {
+    const request = compactRequest();
+    const metadata = (request._rawBody as { client_metadata: Record<string, unknown> }).client_metadata;
+    metadata.claude_subagent = true;
+    const sessions = new ChatGptTurnSessions();
+    let cancelled = 0;
+    const runtime = () => ({
+      mode: "read-only" as const,
+      browser: new Promise<string>(() => {}),
+      trace: new ChatGptTraceFeed(),
+      text: new ChatGptTextFeed(),
+      cancel: () => { cancelled += 1; },
+    });
+    sessions.getOrCreate("parent", runtime, "thread_compact_test");
+    sessions.getOrCreate("child", runtime, "thread_compact_test");
+    sessions.getOrCreate("unrelated", runtime, "another_claude_session");
+    const abort = new AbortController();
+    const unbind = bindClaudeSessionAbort(request, abort.signal, sessions);
+
+    abort.abort();
+    unbind();
+
+    expect(cancelled).toBe(2);
+    expect(sessions.activeCount()).toBe(1);
+    expect(sessions.find("unrelated")).toBeDefined();
+    sessions.clear();
   });
 
   test("obtains the beta checkpoint from the active tools conversation", async () => {

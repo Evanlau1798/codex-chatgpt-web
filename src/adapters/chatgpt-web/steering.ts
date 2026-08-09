@@ -1,7 +1,7 @@
 import { namespacedToolName, type CodexParsedRequest } from "../../types";
 import { extractChatGptTurnUserRevision, extractChatGptTurnUserText } from "./environment";
 import type { BrokerToolRequest, TurnBroker } from "./turn-broker";
-import { normalizeClaudeToolRequests } from "./claude-subagent";
+import { claudeBrowserSessionGroup, normalizeClaudeToolRequests } from "./claude-subagent";
 import type { ChatGptTurnRuntime, ChatGptTurnSession, ChatGptTurnSessions } from "./turn-execution";
 
 export async function sessionForChatGptRequest(
@@ -12,12 +12,13 @@ export async function sessionForChatGptRequest(
 ): Promise<ChatGptTurnSession> {
   const revision = JSON.stringify(extractChatGptTurnUserRevision(parsed));
   const text = extractChatGptTurnUserText(parsed) ?? "The user added a new instruction.";
-  let session = sessions.getOrCreate(key, start);
+  const group = claudeBrowserSessionGroup(parsed);
+  let session = sessions.getOrCreate(key, start, group);
   const steering = session.updateUserRevision(revision, text);
   if (!steering || (session.runtime.mode === "tools" && !session.settledOutcome())) return session;
 
   await sessions.retireAndWait(key);
-  session = sessions.getOrCreate(key, start);
+  session = sessions.getOrCreate(key, start, group);
   session.updateUserRevision(revision, text);
   return session;
 }
