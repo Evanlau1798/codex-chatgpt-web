@@ -21,6 +21,7 @@ const TUNNEL_START_TIMEOUT_MS = 120_000;
 const TUNNEL_HEALTH_POLL_INTERVAL_MS = 1_000;
 const TUNNEL_MONITOR_INTERVAL_MS = 10_000;
 const TUNNEL_MONITOR_FAILURE_THRESHOLD = 3;
+const TUNNEL_MCP_CONNECTION_MAX_TTL = "24h";
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -1355,6 +1356,7 @@ class RuntimeSupervisor {
       const child = spawn(tunnel.binaryPath, args, {
         cwd: tunnel.profileDir,
         detached: DETACH_OWNED_CHILD,
+        env: { ...process.env, MCP_CONNECTION_MAX_TTL: TUNNEL_MCP_CONNECTION_MAX_TTL },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });
