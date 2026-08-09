@@ -125,6 +125,48 @@ describe("compact mode routing", () => {
     }
   });
 
+  test("retries a progress-only subagent answer without retaining its browser tab", async () => {
+    const config = provider(false);
+    const worker = ChatGptBrowserWorker.forProvider(config);
+    const originalRun = worker.run.bind(worker);
+    let browserTurn: BrowserTurn | undefined;
+    worker.run = turn => {
+      browserTurn = turn;
+      turn.onTextDelta("No findings.");
+      return Promise.resolve("No findings.");
+    };
+    const request = compactRequest();
+    delete request._compactionRequest;
+    const rawBody = request._rawBody as {
+      client_metadata: Record<string, unknown>;
+      input: Array<{ internal_chat_message_metadata_passthrough?: { turn_id?: string } }>;
+      prompt_cache_key: string;
+    };
+    rawBody.prompt_cache_key = "thread_subagent_progress";
+    rawBody.input[0]!.internal_chat_message_metadata_passthrough = { turn_id: "turn_subagent_progress" };
+    const metadata = rawBody.client_metadata;
+    metadata["x-codex-turn-metadata"] = JSON.stringify({
+      thread_id: "thread_subagent_progress",
+      turn_id: "turn_subagent_progress",
+    });
+    metadata.claude_subagent = true;
+    metadata.claude_retain_conversation = false;
+
+    try {
+      await createChatGptWebAdapter(config).runTurn!(request, { headers: new Headers() }, () => {});
+      expect(browserTurn?.retainConversation).toBeUndefined();
+      expect(browserTurn?.retryPromptForAnswer?.("Gathering test_deploy_artifacts.py diff", 1)).toContain(
+        "only a progress update",
+      );
+      expect(() => browserTurn?.retryPromptForAnswer?.("Gathering the same diff", 2)).toThrow(
+        "subagent completed with only a progress update",
+      );
+      expect(browserTurn?.retryPromptForAnswer?.("No findings.", 1)).toBeUndefined();
+    } finally {
+      worker.run = originalRun;
+    }
+  });
+
   test("obtains the beta checkpoint from the active tools conversation", async () => {
     let completeBrowser!: (answer: string) => void;
     const browser = new Promise<string>(resolve => { completeBrowser = resolve; });

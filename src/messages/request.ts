@@ -168,6 +168,7 @@ export function translateClaudeMessages(raw: unknown, headers: Headers): Transla
   }
 
   const session = safeId(headers.get("x-claude-code-session-id") ?? randomUUID(), "ephemeral");
+  const subagent = headers.has("x-claude-code-agent-id");
   const agent = safeId(headers.get("x-claude-code-agent-id") ?? "root", "root");
   const threadId = `claude_${session}`;
   const turnId = `claude_${agent}`;
@@ -222,7 +223,8 @@ export function translateClaudeMessages(raw: unknown, headers: Headers): Transla
       client_metadata: {
         "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: turnId, request_kind: "turn", sandbox: "none", workspaces: { [root]: {} } }),
         claude_request_hash: createHash("sha256").update(JSON.stringify(request.messages)).digest("hex"),
-        claude_retain_conversation: !auxiliaryResponse && headers.has("x-claude-code-session-id"),
+        claude_subagent: subagent,
+        claude_retain_conversation: !auxiliaryResponse && headers.has("x-claude-code-session-id") && !subagent,
       },
     },
   };

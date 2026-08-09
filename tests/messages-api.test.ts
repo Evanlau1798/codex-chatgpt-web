@@ -31,6 +31,10 @@ test("translates a Claude Code message into the existing ChatGPT Web adapter", a
           threadId: expect.stringContaining("claude_session-123"),
           turnId: expect.stringContaining("claude_agent-main"),
         });
+        expect((parsed._rawBody as { client_metadata: Record<string, unknown> }).client_metadata).toMatchObject({
+          claude_subagent: true,
+          claude_retain_conversation: false,
+        });
         expect(extractChatGptTurnEnvironment(parsed).cwd).toBe("G:\\claude-project");
         expect(parsed.context.systemPrompt).toContain("Available agent types for the Agent tool: Explore");
         expect(parsed.context.tools).toEqual([{
