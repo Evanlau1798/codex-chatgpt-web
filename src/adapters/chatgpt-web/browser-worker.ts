@@ -123,7 +123,7 @@ export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
   );
 }
 
-type ChatGptTextScope = Pick<Locator, "getByText">;
+type ChatGptTextScope = Pick<Locator, "getByText" | "getByRole">;
 
 const chatGptSessionFailureAlert = (page: Page): Locator => page
   .locator('[role="alert"]')
@@ -142,12 +142,28 @@ const chatGptTerminalErrorAlert = (scope: ChatGptTextScope): Locator => scope
   .getByText(/Something went wrong[\s\S]*help\.openai\.com/i)
   .last();
 
-export async function throwIfChatGptTerminalErrorAlert(scope: ChatGptTextScope): Promise<void> {
-  if (!await chatGptTerminalErrorAlert(scope).isVisible().catch(() => false)) return;
+export async function recoverChatGptTerminalErrorAlert(
+  scope: ChatGptTextScope,
+  allowRetry: boolean,
+): Promise<boolean> {
+  const alert = chatGptTerminalErrorAlert(scope);
+  if (!await alert.isVisible().catch(() => false)) return false;
+  if (allowRetry) {
+    const retry = scope.getByRole("button", { name: /^(?:Retry|重試)$/i }).last();
+    if (await retry.isVisible().catch(() => false)) {
+      await retry.press("Enter");
+      await alert.waitFor({ state: "hidden", timeout: 10_000 });
+      return true;
+    }
+  }
   throw new ChatGptWebAdapterError(
     "ChatGPT ended the turn with 'Something went wrong'. Retry the turn.",
     { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
   );
+}
+
+export async function throwIfChatGptTerminalErrorAlert(scope: ChatGptTextScope): Promise<void> {
+  await recoverChatGptTerminalErrorAlert(scope, false);
 }
 
 export async function resolveChatGptToolConfirmation(
@@ -1291,22 +1307,37 @@ export class ChatGptBrowserWorker {
     localTools: boolean,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
   ): Promise<void> {
+    let composer: Locator;
     if (!localTools) {
-      const composer = await this.activeComposer(page);
+      composer = await this.activeComposer(page);
       // Playwright's multiline fill maps through an input action that ChatGPT's Lexical editor can
       // collapse to the first paragraph on the launcher-owned Electron surface. Clear separately,
-      // then transport the complete text in one CDP Input.insertText command.
+      // then transport the complete text through verified CDP edits.
       await composer.fill("");
       await composer.focus();
       await this.insertPromptText(page, prompt);
-      await this.assertPromptAttached(page, prompt);
-      return;
+    } else {
+      composer = await this.selectConnector(page, captureDiagnostic);
+      await composer.focus();
+      await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
+      await this.insertPromptText(page, ` ${prompt}`);
     }
-    const selectedComposer = await this.selectConnector(page, captureDiagnostic);
-    await selectedComposer.focus();
-    await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
-    await this.insertPromptText(page, ` ${prompt}`);
-    await this.assertPromptAttached(page, prompt);
+    try {
+      await this.assertPromptAttached(page, prompt);
+    } catch (error) {
+      const transportedPrompt = localTools ? ` ${prompt}` : prompt;
+      if (transportedPrompt.length <= CHATGPT_PROMPT_INSERT_CHUNK_CHARS) throw error;
+      if (localTools) {
+        composer = await this.selectConnector(page, captureDiagnostic);
+        await composer.focus();
+        await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
+      } else {
+        await composer.fill("");
+        await composer.focus();
+      }
+      await page.keyboard.insertText(transportedPrompt);
+      await this.assertPromptAttached(page, prompt);
+    }
   }
 
   private async insertPromptText(page: Page, text: string): Promise<void> {
@@ -1637,10 +1668,10 @@ export class ChatGptBrowserWorker {
             testId: candidate.getAttribute("data-testid"),
             ariaLabelChars: candidate.getAttribute("aria-label")?.length ?? 0,
             titleChars: candidate.getAttribute("title")?.length ?? 0,
-            textChars: candidate.innerText.trim().length,
+            textChars: (candidate.innerText ?? candidate.textContent ?? "").trim().length,
           }));
         return {
-          textChars: root.innerText.trim().length,
+          textChars: (root.innerText ?? root.textContent ?? "").trim().length,
           htmlChars: root.innerHTML.length,
           descriptors,
         };
@@ -1660,7 +1691,7 @@ export class ChatGptBrowserWorker {
             role: candidate.getAttribute("role"),
             testId: candidate.getAttribute("data-testid"),
             ariaLabelChars: candidate.getAttribute("aria-label")?.length ?? 0,
-            textChars: candidate.innerText.trim().length,
+            textChars: (candidate.innerText ?? candidate.textContent ?? "").trim().length,
           };
         })
     )).catch(() => [] as Array<Record<string, string | null>>);
@@ -1869,7 +1900,8 @@ export class ChatGptBrowserWorker {
         let sawRunning = false;
         let loggedCompletionWait = false;
         let capturedResponse = false;
-        const sentAt = Date.now();
+        let sentAt = Date.now();
+        let terminalErrorRetryUsed = false;
         const visibleTrace = new ChatGptVisibleTraceTracker();
         const markdownBuffer = new ChatGptMarkdownBuffer();
         const checkpointStream = turn.captureLunaCheckpoint
@@ -1917,7 +1949,19 @@ export class ChatGptBrowserWorker {
         }
 
         await throwIfChatGptSessionFailureAlert(page);
-        await throwIfChatGptTerminalErrorAlert(responseTurn);
+        if (await recoverChatGptTerminalErrorAlert(
+          responseTurn,
+          emittedText.length === 0 && !terminalErrorRetryUsed,
+        )) {
+          terminalErrorRetryUsed = true;
+          responseTurn = responseTurns.last();
+          sentAt = Date.now();
+          sawRunning = false;
+          loggedCompletionWait = false;
+          capturedResponse = false;
+          await diagnostics.capture(page, "terminal-error-retried");
+          continue;
+        }
 
         if (mode.localTools && await resolveChatGptToolConfirmation(
           page,
