@@ -3,6 +3,7 @@ import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worke
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { timingSafeEqual } from "node:crypto";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
+import { handleClaudeSteeringHook } from "./messages/steering-hook";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
@@ -443,6 +444,10 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/v1/messages") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(() => messagesRequest(req, config), req.signal);
+      }
+      if (req.method === "POST" && url.pathname === "/v1/messages/steering") {
+        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+        return handleClaudeSteeringHook(req);
       }
       if (req.method === "POST" && url.pathname === "/v1/messages/count_tokens") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");

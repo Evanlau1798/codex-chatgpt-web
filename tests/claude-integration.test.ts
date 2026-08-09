@@ -40,7 +40,8 @@ describe("reversible Claude Code integration", () => {
   test("installs a working bare-Claude default backed by the discovered gateway model list", () => {
     fixture({ language: "traditional-chinese", env: { USER_SETTING: "keep" } });
 
-    installClaudeIntegration(defaultConfig("browser-only"));
+    const config = defaultConfig("browser-only");
+    installClaudeIntegration(config);
 
     const installed = settings();
     expect(installed.language).toBe("traditional-chinese");
@@ -56,6 +57,16 @@ describe("reversible Claude Code integration", () => {
       ANTHROPIC_BASE_URL: "http://127.0.0.1:17841",
       ANTHROPIC_AUTH_TOKEN: "codex-chatgpt-web-local",
       CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+      CODEX_CHATGPT_WEB_CONTROL_TOKEN: config.controlToken,
+    });
+    expect(installed.hooks.UserPromptSubmit).toContainEqual({
+      hooks: [{
+        type: "http",
+        url: "http://127.0.0.1:17841/v1/messages/steering",
+        timeout: 5,
+        headers: { Authorization: "Bearer $CODEX_CHATGPT_WEB_CONTROL_TOKEN" },
+        allowedEnvVars: ["CODEX_CHATGPT_WEB_CONTROL_TOKEN"],
+      }],
     });
     expect(existsSync(getClaudeIntegrationJournalPath())).toBe(true);
   });
@@ -75,7 +86,12 @@ describe("reversible Claude Code integration", () => {
   });
 
   test("restores only managed settings and preserves unrelated edits made after install", () => {
-    fixture({ model: "user-model", env: { ANTHROPIC_BASE_URL: "https://gateway.example", KEEP: "before" } });
+    const userHook = { hooks: [{ type: "command", command: "user-hook" }] };
+    fixture({
+      model: "user-model",
+      env: { ANTHROPIC_BASE_URL: "https://gateway.example", KEEP: "before" },
+      hooks: { UserPromptSubmit: [userHook] },
+    });
     installClaudeIntegration(defaultConfig("browser-only"));
     const edited = settings();
     edited.env.KEEP = "after";
@@ -87,6 +103,7 @@ describe("reversible Claude Code integration", () => {
     expect(settings()).toEqual({
       model: "user-model",
       env: { ANTHROPIC_BASE_URL: "https://gateway.example", KEEP: "after" },
+      hooks: { UserPromptSubmit: [userHook] },
       statusLine: { type: "command", command: "status" },
     });
     expect(existsSync(getClaudeIntegrationJournalPath())).toBe(false);

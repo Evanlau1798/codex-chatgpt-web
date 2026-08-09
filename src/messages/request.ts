@@ -94,6 +94,10 @@ function safeId(value: string, fallback: string): string {
   return safe || fallback;
 }
 
+export function claudeSessionThreadId(sessionId: string): string {
+  return `claude_${safeId(sessionId, "ephemeral")}`;
+}
+
 function xml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
@@ -170,7 +174,7 @@ export function translateClaudeMessages(raw: unknown, headers: Headers): Transla
   const session = safeId(headers.get("x-claude-code-session-id") ?? randomUUID(), "ephemeral");
   const subagent = headers.has("x-claude-code-agent-id");
   const agent = safeId(headers.get("x-claude-code-agent-id") ?? "root", "root");
-  const threadId = `claude_${session}`;
+  const threadId = claudeSessionThreadId(session);
   const turnId = `claude_${agent}`;
   const system = textBlocks(request.system);
   const auxiliaryResponse = claudeTitleResponse(request, system);

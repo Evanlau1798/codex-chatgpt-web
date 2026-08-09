@@ -1,8 +1,8 @@
 import { namespacedToolName, type CodexParsedRequest } from "../../types";
-import { extractChatGptTurnUserRevision, extractChatGptTurnUserText } from "./environment";
+import { extractChatGptTurnIdentity, extractChatGptTurnUserRevision, extractChatGptTurnUserText } from "./environment";
 import type { BrokerToolRequest, TurnBroker } from "./turn-broker";
 import { claudeBrowserSessionGroup, normalizeClaudeToolRequests } from "./claude-subagent";
-import type { ChatGptSteeringFeed, ChatGptTurnRuntime, ChatGptTurnSession, ChatGptTurnSessions } from "./turn-execution";
+import { chatGptTurnSteeringId, type ChatGptSteeringFeed, type ChatGptTurnRuntime, type ChatGptTurnSession, type ChatGptTurnSessions } from "./turn-execution";
 
 type AnswerRetry = (answer: string, attempt: number) => string | undefined | Promise<string | undefined>;
 
@@ -30,12 +30,16 @@ export async function sessionForChatGptRequest(
   const revision = JSON.stringify(extractChatGptTurnUserRevision(parsed));
   const text = extractChatGptTurnUserText(parsed) ?? "The user added a new instruction.";
   const group = claudeBrowserSessionGroup(parsed);
-  let session = sessions.getOrCreate(key, start, group);
+  const identity = extractChatGptTurnIdentity(parsed);
+  const steeringId = identity.threadId && identity.turnId
+    ? chatGptTurnSteeringId(identity.threadId, identity.turnId)
+    : undefined;
+  let session = sessions.getOrCreate(key, start, group, steeringId);
   const steering = session.updateUserRevision(revision, text);
   if (!steering || (!session.settledOutcome() && (session.runtime.mode === "tools" || session.runtime.steering))) return session;
 
   await sessions.retireAndWait(key);
-  session = sessions.getOrCreate(key, start, group);
+  session = sessions.getOrCreate(key, start, group, steeringId);
   session.updateUserRevision(revision, text);
   return session;
 }

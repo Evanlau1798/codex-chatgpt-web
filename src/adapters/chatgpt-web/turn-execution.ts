@@ -174,6 +174,10 @@ export function chatGptTurnExecutionKey(parsed: CodexParsedRequest): string {
   });
 }
 
+export function chatGptTurnSteeringId(threadId: string, turnId: string): string {
+  return `${threadId}:${turnId}`;
+}
+
 /** Locate the browser response that a native mid-turn compaction replaces. */
 export function chatGptCompactionSourceExecutionKey(parsed: CodexParsedRequest): string {
   const identity = extractChatGptTurnIdentity(parsed);
@@ -202,7 +206,11 @@ export class ChatGptTurnSession {
   private settledBrowserOutcome?: ChatGptBrowserOutcome;
   private tail: Promise<void> = Promise.resolve();
 
-  constructor(readonly runtime: ChatGptTurnRuntime, readonly group?: string) {
+  constructor(
+    readonly runtime: ChatGptTurnRuntime,
+    readonly group?: string,
+    readonly steeringId?: string,
+  ) {
     this.steering = runtime.steering ?? new ChatGptSteeringFeed();
     this.browserOutcome = runtime.browser
       .then(answer => ({ type: "final", answer }) as ChatGptBrowserOutcome)
@@ -312,6 +320,10 @@ export class ChatGptTurnSession {
     return this.steering.take();
   }
 
+  queueSteering(steering: string): void {
+    this.steering.push(steering);
+  }
+
   clearOutstanding(): void {
     this.outstandingById.clear();
     this.outstandingReasoning = [];
@@ -332,7 +344,12 @@ export class ChatGptTurnSessions {
     private readonly maxEntries = 256,
   ) {}
 
-  getOrCreate(key: string, start: () => ChatGptTurnRuntime, group?: string): ChatGptTurnSession {
+  getOrCreate(
+    key: string,
+    start: () => ChatGptTurnRuntime,
+    group?: string,
+    steeringId?: string,
+  ): ChatGptTurnSession {
     this.prune();
     const existing = this.entries.get(key);
     if (existing) {
@@ -346,7 +363,7 @@ export class ChatGptTurnSessions {
       );
     }
     if (this.entries.size >= this.maxEntries) throw new Error(`ChatGPT web session registry is full (${this.maxEntries} entries)`);
-    const session = new ChatGptTurnSession(start(), group);
+    const session = new ChatGptTurnSession(start(), group, steeringId);
     this.entries.set(key, session);
     return session;
   }
@@ -386,6 +403,16 @@ export class ChatGptTurnSessions {
     session.cancel();
     this.entries.delete(key);
     return true;
+  }
+
+  steer(steeringId: string, instruction: string): boolean {
+    this.prune();
+    let target: ChatGptTurnSession | undefined;
+    for (const session of this.entries.values()) {
+      if (session.isActive() && session.steeringId === steeringId) target = session;
+    }
+    target?.queueSteering(instruction);
+    return Boolean(target);
   }
 
   retireGroup(group: string): number {

@@ -2,6 +2,14 @@ import { expect, test } from "bun:test";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
+import { handleClaudeSteeringHook } from "../src/messages/steering-hook";
+import {
+  ChatGptSteeringFeed,
+  ChatGptTextFeed,
+  ChatGptTraceFeed,
+  ChatGptTurnSessions,
+  chatGptTurnSteeringId,
+} from "../src/adapters/chatgpt-web/turn-execution";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig } from "../src/types";
 
 const turnId = `turn_steering_${Date.now()}`;
@@ -76,4 +84,30 @@ test("continues queued prompts in the active Web conversation without replaying 
     await Promise.allSettled(runs);
     worker.run = originalRun;
   }
+});
+
+test("routes a Claude UserPromptSubmit hook into the active root Web turn", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const steering = new ChatGptSteeringFeed();
+  const browser = new Promise<string>(() => {});
+  sessions.getOrCreate("root", () => ({
+    mode: "read-only",
+    browser,
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    steering,
+    cancel: () => {},
+  }), undefined, chatGptTurnSteeringId("claude_session-test", "claude_root"));
+
+  const response = await handleClaudeSteeringHook(new Request("http://localhost/v1/messages/steering", {
+    method: "POST",
+    body: JSON.stringify({
+      hook_event_name: "UserPromptSubmit",
+      session_id: "session-test",
+      prompt: "Please acknowledge this steering message",
+    }),
+  }), sessions);
+
+  expect(response.status).toBe(204);
+  expect(steering.take()).toBe("Please acknowledge this steering message");
 });
