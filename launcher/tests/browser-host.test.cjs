@@ -122,6 +122,27 @@ test("browser surface visibility requires both requested and active state", () =
   assert.equal(browserViewVisible(true, true, true), true);
 });
 
+test("showing the browser restores its minimized parent window", () => {
+  const calls = [];
+  const fixture = {
+    visible: false,
+    surfaceActive: true,
+    boundsReady: false,
+    window: {
+      isMinimized: () => true,
+      isVisible: () => false,
+      restore: () => calls.push("restore"),
+      show: () => calls.push("show-window"),
+    },
+    syncViewVisibility: () => calls.push("sync"),
+    setState: patch => calls.push(["state", patch]),
+  };
+
+  BrowserHost.prototype.show.call(fixture);
+
+  assert.deepEqual(calls, ["restore", "show-window", "sync", ["state", { visible: true }]]);
+});
+
 test("smoke preserves an already-hydrated Temporary Chat page", () => {
   assert.equal(isTemporaryChatUrl("https://chatgpt.com/?temporary-chat=true"), true);
   assert.equal(isTemporaryChatUrl("https://chatgpt.com/?temporary-chat=false"), false);

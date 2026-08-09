@@ -103,6 +103,13 @@ test("settings expose default-on browser turn interaction protection", () => {
   assert.match(electronMain, /browserHost\?\.setInteractionLocked\(value === true\)/);
 });
 
+test("show-during-turns activates the embedded browser surface for trusted input", () => {
+  assert.match(
+    appSource,
+    /if \(snapshot\.state\.showBrowserDuringTurns && browser\?\.status === "running"\) setSurface\("browser"\)/,
+  );
+});
+
 test("normal launcher shutdown flushes the persistent ChatGPT session before closing its views", () => {
   const persist = electronMain.indexOf("await browserHost?.persistSession()");
   const destroy = electronMain.indexOf("browserHost?.destroy()", persist);

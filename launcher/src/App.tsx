@@ -311,6 +311,10 @@ function LauncherShell({
   const updateBusy = snapshot.update.status === "downloading" || snapshot.update.status === "installing";
   const updateVersion = "version" in snapshot.update ? snapshot.update.version : null;
 
+  useEffect(() => {
+    if (snapshot.state.showBrowserDuringTurns && browser?.status === "running") setSurface("browser");
+  }, [browser?.status, snapshot.state.showBrowserDuringTurns]);
+
   useLayoutEffect(() => {
     let cancelled = false;
     let animationFrame = 0;

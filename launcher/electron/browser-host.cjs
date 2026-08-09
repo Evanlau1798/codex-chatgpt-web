@@ -994,6 +994,8 @@ class BrowserHost {
   }
 
   show() {
+    if (this.window.isMinimized()) this.window.restore();
+    if (!this.window.isVisible()) this.window.show();
     this.visible = true;
     this.syncViewVisibility();
     this.setState({ visible: true });
