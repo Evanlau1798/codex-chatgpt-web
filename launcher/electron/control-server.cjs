@@ -132,6 +132,7 @@ class BrowserControlServer {
           body.status,
           preferences.showBrowserDuringTurns === true,
           body.message,
+          body.retain === true,
         );
         this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status });
       }

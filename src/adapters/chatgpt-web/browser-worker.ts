@@ -260,6 +260,8 @@ export interface BrowserTurn {
   reasoning?: string;
   capabilities: ChatGptWebCapabilities;
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
+  prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
+  retainConversation?: boolean;
   abortSignal?: AbortSignal;
   onHeartbeat?: () => void;
   /** Visible ChatGPT reasoning-summary step titles only; never hidden chain-of-thought. */
@@ -1662,7 +1664,7 @@ export class ChatGptBrowserWorker {
     try {
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
-      return await this.runBrowserTurn(turn, surfaceId);
+      return await this.runBrowserTurn(turn, surfaceId, undefined, lease.reused === true);
     } catch (error) {
       originalError = error;
       terminal = error instanceof DOMException && error.name === "AbortError" ? "aborted" : "failed";
@@ -1676,6 +1678,7 @@ export class ChatGptBrowserWorker {
           traceId: turn.traceId,
           helperPid: process.pid,
           status: terminal,
+          ...(terminal === "completed" && turn.retainConversation ? { retain: true } : {}),
           ...(terminalMessage ? { message: terminalMessage } : {}),
         });
       } catch (controlError) {
@@ -1691,6 +1694,7 @@ export class ChatGptBrowserWorker {
     turn: BrowserTurn,
     launcherSurfaceId?: string,
     maintenancePage?: Page,
+    reuseConversation = false,
   ): Promise<string> {
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     if ((turn.captureLunaCheckpoint === true) !== (turn.onLunaCheckpoint !== undefined)) {
@@ -1700,7 +1704,9 @@ export class ChatGptBrowserWorker {
       throw new Error("Private rolling checkpoint capture is valid only for ChatGPT Luna");
     }
     const requestedMode = resolveChatGptWebModelMode(turn.modelId, turn.reasoning, turn.capabilities);
-    const prepared = await turn.prepare();
+    const prepared = reuseConversation && turn.prepareResume
+      ? await turn.prepareResume()
+      : await turn.prepare();
     const diagnostics = new ChatGptBrowserDiagnostics(turn.traceId);
     let turnConnection: Browser | undefined;
     let managedPage: Page | undefined;
@@ -1749,24 +1755,28 @@ export class ChatGptBrowserWorker {
       console.info(
         `[chatgpt-web] browser turn ${turn.traceId} opened (transport=inline, promptChars=${prepared.text.length}, estimatedInputTokens=${estimatedInputTokens}, images=${prepared.images.length}, compactionTrimmedMessages=${prepared.trimmedCompactionMessages ?? 0})`,
       );
-      await this.runStage(
-        turn.traceId,
-        "temporary_chat_preparation",
-        browserStageTimeouts.temporaryChatPreparation,
-        () => this.prepareTemporaryChatSurface(
-          page,
-          checkpoint => diagnostics.capture(page, checkpoint),
-        ),
-      );
-      const mode = await this.runStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, () => (
-        this.selectModelAndEffort(
-          page,
-          turn.modelId,
-          turn.reasoning,
-          turn.capabilities,
-          checkpoint => diagnostics.capture(page, checkpoint),
-        )
-      ));
+      if (!reuseConversation) {
+        await this.runStage(
+          turn.traceId,
+          "temporary_chat_preparation",
+          browserStageTimeouts.temporaryChatPreparation,
+          () => this.prepareTemporaryChatSurface(
+            page,
+            checkpoint => diagnostics.capture(page, checkpoint),
+          ),
+        );
+      }
+      const mode = reuseConversation
+        ? requestedMode
+        : await this.runStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, () => (
+          this.selectModelAndEffort(
+            page,
+            turn.modelId,
+            turn.reasoning,
+            turn.capabilities,
+            checkpoint => diagnostics.capture(page, checkpoint),
+          )
+        ));
       await diagnostics.capture(page, "effort-selection-complete");
       let finalText = "";
       let responsePrompt = prepared.text;

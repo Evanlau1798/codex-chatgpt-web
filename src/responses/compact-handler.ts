@@ -1,0 +1,126 @@
+import { createChatGptWebAdapter } from "../adapters/chatgpt-web";
+import type { ProviderAdapter } from "../adapters/base";
+import {
+  CHATGPT_WEB_LUNA_BACKEND_MODEL,
+  isChatGptWebModelSlug,
+  requireChatGptWebModelRoute,
+  type ChatGptWebModelRoute,
+} from "../chatgpt-web-models";
+import type { AppConfig } from "../config";
+import { readJsonRequestBody } from "../http-body";
+import { httpStatusFromTerminalError } from "../lib/errors";
+import { forwardNativeCodexRequest } from "../native-passthrough";
+import type { CodexProviderConfig } from "../types";
+import { formatErrorResponse } from "../bridge";
+import {
+  buildCompactV1Output,
+  decodeCompactionSummary,
+  extractCompactUserMessages,
+} from "./compaction";
+
+type AdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
+type ResponseHandler = (req: Request, config: AppConfig, adapterFactory: AdapterFactory) => Promise<Response>;
+
+export async function handleCompactRequest(
+  req: Request,
+  config: AppConfig,
+  responseRequest: ResponseHandler,
+  adapterFactory: AdapterFactory = createChatGptWebAdapter,
+): Promise<Response> {
+  const nativeRequest = req.clone();
+  let raw: Record<string, unknown>;
+  try {
+    const parsed = await readJsonRequestBody(req);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
+    raw = parsed as Record<string, unknown>;
+  } catch (error) {
+    return formatErrorResponse(
+      400,
+      "invalid_request_error",
+      error instanceof Error ? error.message : "Compaction request body must be a JSON object",
+    );
+  }
+  const headerTurnMetadata = req.headers.get("x-codex-turn-metadata");
+  if (headerTurnMetadata) {
+    const existingMetadata = raw.client_metadata;
+    const clientMetadata = existingMetadata && typeof existingMetadata === "object" && !Array.isArray(existingMetadata)
+      ? existingMetadata as Record<string, unknown>
+      : {};
+    raw = {
+      ...raw,
+      client_metadata: {
+        ...clientMetadata,
+        "x-codex-turn-metadata": headerTurnMetadata,
+      },
+    };
+  }
+  if (typeof raw.model !== "string" || !raw.model) {
+    return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
+  }
+  if (!isChatGptWebModelSlug(raw.model)) {
+    try {
+      return await forwardNativeCodexRequest(nativeRequest, "responses/compact", undefined, raw);
+    } catch (error) {
+      return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
+    }
+  }
+  let route: ChatGptWebModelRoute;
+  try {
+    route = requireChatGptWebModelRoute(raw.model, config);
+  } catch (error) {
+    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
+  }
+  if (route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
+    return formatErrorResponse(
+      409,
+      "invalid_request_error",
+      "ChatGPT Web Luna uses a rolling checkpoint on every completed browser turn; separate Codex compaction is disabled for this route.",
+    );
+  }
+  const input = Array.isArray(raw.input) ? raw.input : [];
+  const headers = new Headers(req.headers);
+  headers.set("content-type", "application/json");
+  const internal = new Request("http://127.0.0.1/v1/responses", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ ...raw, stream: false, input: [...input, { type: "compaction_trigger" }] }),
+    signal: req.signal,
+  });
+  const response = await responseRequest(internal, config, adapterFactory);
+  if (!response.ok) return response;
+  let body: {
+    output?: unknown[];
+    status?: unknown;
+    error?: { message?: unknown; type?: unknown; code?: unknown } | null;
+  };
+  try {
+    body = await response.json() as typeof body;
+  } catch {
+    return formatErrorResponse(502, "invalid_response_error", "Compaction turn returned invalid JSON");
+  }
+  if (body.error) {
+    const error = {
+      message: typeof body.error.message === "string" ? body.error.message : "Compaction turn failed",
+      type: typeof body.error.type === "string" ? body.error.type : "upstream_error",
+      code: typeof body.error.code === "string" ? body.error.code : null,
+    };
+    return Response.json({ error }, { status: httpStatusFromTerminalError(error) });
+  }
+  if (body.status !== "completed") {
+    return formatErrorResponse(502, "upstream_error", `Compaction turn failed (status: ${String(body.status ?? "unknown")})`);
+  }
+  const items = (body.output ?? []).filter(
+    (item): item is { type: "compaction"; encrypted_content?: string } =>
+      Boolean(item && typeof item === "object" && (item as { type?: string }).type === "compaction"),
+  );
+  if (items.length !== 1) {
+    return formatErrorResponse(502, "invalid_response_error", `Compaction turn produced ${items.length} compaction items; expected one`);
+  }
+  const summary = typeof items[0]!.encrypted_content === "string"
+    ? decodeCompactionSummary(items[0]!.encrypted_content)
+    : null;
+  if (!summary?.trim()) {
+    return formatErrorResponse(502, "invalid_response_error", "Compaction turn produced an empty summary");
+  }
+  return Response.json({ output: buildCompactV1Output(extractCompactUserMessages(input), summary) });
+}

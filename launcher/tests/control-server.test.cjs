@@ -66,13 +66,14 @@ test("browser control server authenticates and owns turn visibility", async () =
         traceId: "abcdef123456",
         helperPid: process.pid,
         status: "completed",
+        retain: true,
       }),
     });
     assert.equal(end.status, 200);
     assert.deepEqual(calls, [
       ["start", "abcdef123456", true, process.pid],
       ["heartbeat", "abcdef123456", process.pid],
-      ["end", "abcdef123456", process.pid, "completed", true, undefined],
+      ["end", "abcdef123456", process.pid, "completed", true, undefined, true],
     ]);
     assert.equal(logs.some(([, event]) => event === "browser.turn_started"), true);
     assert.equal(logs.some(([, event]) => event === "browser.turn_ended"), true);

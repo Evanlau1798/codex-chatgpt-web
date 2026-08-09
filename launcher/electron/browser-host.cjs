@@ -27,6 +27,7 @@ const MAX_BROWSER_TABS = 5;
 const TURN_HEARTBEAT_SWEEP_MS = 5_000;
 const TURN_HEARTBEAT_TIMEOUT_MS = 60_000;
 const TURN_TAB_BOOTSTRAP_TIMEOUT_MS = 120_000;
+const RETAINED_TURN_TAB_TTL_MS = 30 * 60 * 1000;
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
 const CHATGPT_PARTITION = "persist:codex-web-gpt-chatgpt";
 const CHATGPT_BACKEND_REQUEST_FILTER = { urls: [`${CHATGPT_ORIGIN}/backend-api/*`] };
@@ -376,7 +377,8 @@ class BrowserHost {
   }
 
   createTurnTab(traceId, helperPid) {
-    if (this.turnTabs.size >= MAX_BROWSER_TABS) {
+    if (this.turnTabs.size >= MAX_BROWSER_TABS
+      && !BrowserHost.prototype.evictOldestRetainedTurnTab.call(this)) {
       throw new Error(
         `ChatGPT Web already has ${MAX_BROWSER_TABS} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
       );
@@ -431,6 +433,15 @@ class BrowserHost {
     return tab;
   }
 
+  evictOldestRetainedTurnTab() {
+    const retained = [...this.turnTabs.values()]
+      .filter(tab => tab.status === "ready")
+      .sort((left, right) => (left.lastHeartbeatAt ?? 0) - (right.lastHeartbeatAt ?? 0))[0];
+    if (!retained) return false;
+    this.removeTurnTab(retained, false);
+    return true;
+  }
+
   bindTurnContents(tab) {
     const contents = tab.view.webContents;
     contents.setWindowOpenHandler(({ url }) => {
@@ -478,7 +489,7 @@ class BrowserHost {
           value: ${encoded}, configurable: true, enumerable: false, writable: false,
         });
         document.documentElement.dataset.codexWebGptSurface = ${encoded};
-      })()`, true).then(
+      })()`, true).then(() => this.syncTurnInteractionShield(tab)).then(
         () => this.publishState?.(this.snapshot()),
         (error) => {
           tab.status = "error";
@@ -821,6 +832,12 @@ class BrowserHost {
 
   reapExpiredTurnTabs(now = Date.now()) {
     for (const tab of [...this.turnTabs.values()]) {
+      if (tab.status === "ready") {
+        if (now - (tab.lastHeartbeatAt ?? 0) < RETAINED_TURN_TAB_TTL_MS) continue;
+        this.logger.info("browser.retained_tab_expired", { tabId: tab.id, traceId: tab.traceId });
+        this.removeTurnTab(tab, false);
+        continue;
+      }
       if (tab.status !== "running") continue;
       const bootstrapExpired = tab.bootstrapReady !== true
         && now >= (tab.bootstrapDeadlineAt ?? Number.POSITIVE_INFINITY);
@@ -1016,6 +1033,7 @@ class BrowserHost {
     }
     const existing = [...this.turnTabs.values()].find((tab) => tab.traceId === traceId);
     if (existing) {
+      const reused = existing.status === "ready";
       if (existing.status === "running" && existing.helperPid !== helperPid) {
         if (processRunning(existing.helperPid)) {
           throw new Error(`ChatGPT browser turn ${traceId} is owned by another helper process`);
@@ -1032,8 +1050,10 @@ class BrowserHost {
       existing.status = "running";
       existing.loading = true;
       existing.message = "ChatGPT is working";
-      existing.bootstrapReady = false;
-      existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
+      if (!reused) {
+        existing.bootstrapReady = false;
+        existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
+      }
       existing.lastHeartbeatAt = Date.now();
       if (!existing.view.webContents.isDestroyed()) {
         existing.view.webContents.setBackgroundThrottling(false);
@@ -1044,7 +1064,7 @@ class BrowserHost {
       this.publishState?.(this.snapshot());
       this.writeDescriptor();
       this.logger.info("browser.tab_reused", { tabId: existing.id, traceId });
-      return { surfaceId: existing.surfaceId, tabId: existing.id };
+      return { surfaceId: existing.surfaceId, tabId: existing.id, reused };
     }
     const tab = this.createTurnTab(traceId, helperPid);
     this.selectedTabId = tab.id;
@@ -1052,10 +1072,34 @@ class BrowserHost {
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
     this.logger.info("browser.tab_created", { tabId: tab.id, traceId, tabCount: this.turnTabs.size });
-    return { surfaceId: tab.surfaceId, tabId: tab.id };
+    return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false };
   }
 
-  async endTurn(traceId, helperPid, status, hideAfterTurn, message) {
+  async syncTurnInteractionShield(tab) {
+    const contents = tab.view.webContents;
+    if (contents.isDestroyed()) return;
+    await contents.executeJavaScript(`(() => {
+      const id = "codex-web-gpt-interaction-shield";
+      let shield = document.getElementById(id);
+      if (!shield) {
+        shield = document.createElement("div");
+        shield.id = id;
+        shield.tabIndex = 0;
+        shield.setAttribute("aria-label", "This ChatGPT conversation is controlled by Codex");
+        shield.innerHTML = '<div style="margin:12px auto;padding:8px 14px;max-width:520px;border-radius:8px;background:rgba(20,20,20,.88);color:white;font:13px system-ui;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.3)">This conversation is controlled by Codex. Stop or send follow-up messages from Codex.</div>';
+        Object.assign(shield.style, { position: "fixed", inset: "0", zIndex: "2147483647", pointerEvents: "auto", background: "transparent", cursor: "not-allowed" });
+        for (const type of ["click", "dblclick", "contextmenu", "pointerdown", "pointerup", "wheel", "drop", "dragover"]) {
+          shield.addEventListener(type, event => { event.preventDefault(); event.stopPropagation(); }, true);
+        }
+        shield.addEventListener("pointerdown", () => shield.focus(), true);
+        shield.addEventListener("keydown", event => { event.preventDefault(); event.stopPropagation(); }, true);
+        document.documentElement.appendChild(shield);
+      }
+      return true;
+    })()`, true);
+  }
+
+  async endTurn(traceId, helperPid, status, hideAfterTurn, message, retain = false) {
     const tab = [...this.turnTabs.values()].find((candidate) => candidate.traceId === traceId);
     if (!tab) {
       const closedOwner = this.closedTurnOwners.get(traceId);
@@ -1076,6 +1120,14 @@ class BrowserHost {
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.setBackgroundThrottling(true);
     if (status === "completed") {
       this.logger.info("browser.tab_completed", { tabId: tab.id, traceId });
+    }
+    if (status === "completed" && retain) {
+      tab.lastHeartbeatAt = Date.now();
+      if (hideAfterTurn && !this.activeTraceId) this.hide();
+      this.logger.info("browser.tab_retained", { tabId: tab.id, traceId });
+      this.publishState?.(this.snapshot());
+      this.writeDescriptor();
+      return;
     }
     // A browser tab represents an active Codex turn, not durable task history. Retaining terminal
     // tabs leaked one slot per response/compaction until the five-tab safety limit made later

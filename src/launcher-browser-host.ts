@@ -279,6 +279,7 @@ export type LauncherTurnActivity =
       helperPid: number;
       status: "completed" | "failed" | "aborted";
       message?: string;
+      retain?: boolean;
     };
 
 export const LAUNCHER_TURN_START_TIMEOUT_MS = 5_000;
@@ -294,7 +295,7 @@ export async function notifyLauncherTurn(
     : activity.phase === "heartbeat"
       ? LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS
       : LAUNCHER_TURN_START_TIMEOUT_MS,
-): Promise<{ surfaceId?: string }> {
+): Promise<{ surfaceId?: string; reused?: boolean }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -317,7 +318,10 @@ export async function notifyLauncherTurn(
       if (typeof body.surfaceId !== "string" || !/^[A-Za-z0-9_-]{32}$/.test(body.surfaceId)) {
         throw new Error("Launcher browser control channel returned an invalid turn surface id");
       }
-      return { surfaceId: body.surfaceId };
+      if (body.reused !== undefined && typeof body.reused !== "boolean") {
+        throw new Error("Launcher browser control channel returned an invalid reuse state");
+      }
+      return { surfaceId: body.surfaceId, reused: body.reused === true };
     }
     return {};
   } catch (error) {

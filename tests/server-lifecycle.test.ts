@@ -151,6 +151,28 @@ test("authenticated lifecycle control cancels orphaned browser turns", async () 
   }
 });
 
+test("server routes Claude Messages query variants to the Anthropic error contract", async () => {
+  const config = { ...defaultConfig("browser-only"), port: 0 };
+  const server = startServer(config);
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages?beta=true`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${config.controlToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ model: "claude-sonnet", max_tokens: 100, messages: [{ role: "user", content: "test" }] }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      type: "error",
+      error: { type: "invalid_request_error", message: expect.stringContaining("chatgpt-web route slug") },
+    });
+  } finally {
+    await server.stop(true);
+  }
+});
+
 test("a full-mode runtime exposes its broker endpoint before any turn registers", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-serve-"));
   // The endpoint is a Unix socket on POSIX and a named pipe on Windows, so liveness is proven by

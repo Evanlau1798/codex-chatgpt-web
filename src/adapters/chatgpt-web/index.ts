@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { defaultBrokerEndpoint, expandUserPath, resolveBrokerEndpoint } from "../../config";
-import { namespacedToolName, type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
+import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
 import type { ProviderAdapter } from "../base";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { ChatGptBrowserWorker } from "./browser-worker";
@@ -16,7 +16,7 @@ import {
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { compileChatGptWebPrompt } from "./prompt";
-import { TurnBroker, type BrokerToolRequest } from "./turn-broker";
+import { TurnBroker } from "./turn-broker";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
 import {
   appendCompactionUserPrompt,
@@ -30,7 +30,7 @@ import {
 } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
-import { deliverPendingChatGptSteering, sessionForChatGptRequest } from "./steering";
+import { claudeConversationResumeRequest, deliverPendingChatGptSteering, sessionForChatGptRequest, validateBatchTools } from "./steering";
 import {
   ChatGptLunaCheckpointStore,
   type CapturedChatGptLunaCheckpoint,
@@ -40,7 +40,6 @@ function brokerSocketPath(provider: CodexProviderConfig): string {
   const configured = provider.chatgptWeb?.brokerSocketPath?.trim();
   return resolveBrokerEndpoint(configured || defaultBrokerEndpoint());
 }
-
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: Error) => void } {
   let resolvePromise!: (value: T) => void;
   let rejectPromise!: (error: Error) => void;
@@ -50,7 +49,6 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
   });
   return { promise, resolve: resolvePromise, reject: rejectPromise };
 }
-
 function abortError(): DOMException {
   return new DOMException("ChatGPT web turn aborted", "AbortError");
 }
@@ -72,15 +70,6 @@ function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Pro
       },
     );
   });
-}
-
-function validateBatchTools(parsed: CodexParsedRequest, requests: BrokerToolRequest[]): void {
-  const available = new Set((parsed.context.tools ?? []).map(tool => namespacedToolName(tool.namespace, tool.name)));
-  for (const request of requests) {
-    if (!available.has(request.wireName)) {
-      throw new Error(`ChatGPT requested a tool that the active Codex round did not advertise: ${request.wireName}`);
-    }
-  }
 }
 
 export function createChatGptWebAdapter(provider: CodexProviderConfig): ProviderAdapter {
@@ -147,6 +136,10 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const trace = new ChatGptTraceFeed();
     const text = new ChatGptTextFeed();
     const handoffPrompts = useNewCompactMode ? createActiveCompactionHandoffPrompts() : undefined;
+    const resumeInput = claudeConversationResumeRequest(checkpointInput.parsed);
+    const retainConversation = (parsed._rawBody as {
+      client_metadata?: { claude_retain_conversation?: unknown };
+    } | undefined)?.client_metadata?.claude_retain_conversation === true;
     if (!mode.localTools) {
       const base = {
         modelId: parsed.modelId,
@@ -161,6 +154,13 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           ),
           release: () => {},
         }),
+        ...(resumeInput ? {
+          prepareResume: async () => ({
+            ...compileChatGptWebPrompt(resumeInput, turnCapabilities, undefined, { captureLunaCheckpoint }),
+            release: () => {},
+          }),
+        } : {}),
+        ...(retainConversation ? { retainConversation: true } : {}),
         abortSignal: browserAbort.signal,
         ...(captureLunaCheckpoint ? {
           captureLunaCheckpoint: true,
@@ -190,33 +190,32 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const token = deferred<string>();
     let tokenSettled = false;
     let activeToken: string | undefined;
+    const prepareWith = async (input: CodexParsedRequest) => {
+      const turnToken = activeToken ?? await broker.register(
+        environment,
+        timeoutMs === undefined ? undefined : timeoutMs + 60_000,
+        traceId,
+      );
+      activeToken = turnToken;
+      if (!tokenSettled) {
+        tokenSettled = true;
+        token.resolve(turnToken);
+      }
+      try {
+        return { ...compileChatGptWebPrompt(input, turnCapabilities, turnToken, { captureLunaCheckpoint }), release: () => {} };
+      } catch (error) {
+        broker.revoke(turnToken);
+        throw error;
+      }
+    };
     const browser = finalizeCheckpoint(worker.run({
       traceId,
       modelId: parsed.modelId,
       reasoning: parsed.options.reasoning,
       capabilities: turnCapabilities,
-      prepare: async () => {
-        const turnToken = await broker.register(
-          environment,
-          timeoutMs === undefined ? undefined : timeoutMs + 60_000,
-          traceId,
-        );
-        activeToken = turnToken;
-        tokenSettled = true;
-        token.resolve(turnToken);
-        try {
-          const compiled = compileChatGptWebPrompt(
-            checkpointInput.parsed,
-            turnCapabilities,
-            turnToken,
-            { captureLunaCheckpoint },
-          );
-          return { ...compiled, release: () => {} };
-        } catch (error) {
-          broker.revoke(turnToken);
-          throw error;
-        }
-      },
+      prepare: () => prepareWith(checkpointInput.parsed),
+      ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput) } : {}),
+      ...(retainConversation ? { retainConversation: true } : {}),
       abortSignal: browserAbort.signal,
       onReasoningSummary: (text, continuation) => trace.push({ kind: "reasoning", text, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: (text, continuation) => trace.push({ kind: "commentary", text, ...(continuation ? { continuation: true } : {}) }),

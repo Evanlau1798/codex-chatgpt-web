@@ -24,6 +24,12 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       const message = JSON.parse(line);
       if (message.type === "shutdown") process.exit(0);
       if (message.type !== "run") return;
+      if (message.turn.prepared.text !== "inspect"
+        || message.turn.resumePrepared.text !== "continue"
+        || message.turn.retainConversation !== true) {
+        send({ type: "error", id: message.id, message: "resume payload missing" });
+        return;
+      }
       send({ type: "event", id: message.id, event: "reasoning", text: "Reading project" });
       send({ type: "event", id: message.id, event: "reasoning", text: " files", continuation: true });
       send({ type: "event", id: message.id, event: "text", text: "done" });
@@ -74,6 +80,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
   const deltas: string[] = [];
   const checkpoints: unknown[] = [];
   let released = false;
+  let resumeReleased = false;
   const client = new LauncherBrowserHelperClient(config);
   try {
     const result = await client.run({
@@ -82,6 +89,8 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       reasoning: "high",
       capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
       prepare: async () => ({ text: "inspect", images: [], release: () => { released = true; } }),
+      prepareResume: async () => ({ text: "continue", images: [], release: () => { resumeReleased = true; } }),
+      retainConversation: true,
       onReasoningSummary: (text, continuation) => reasoning.push({ text, continuation: continuation === true }),
       onTextDelta: text => deltas.push(text),
       captureLunaCheckpoint: true,
@@ -105,6 +114,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       },
     }]);
     expect(released).toBe(true);
+    expect(resumeReleased).toBe(true);
   } finally {
     await client.close();
   }

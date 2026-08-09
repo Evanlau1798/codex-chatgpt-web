@@ -773,7 +773,7 @@ test("a replacement helper takes over only after the previous owner exited", () 
 
   const lease = BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, process.pid);
 
-  assert.deepEqual(lease, { surfaceId: tab.surfaceId, tabId: tab.id });
+  assert.deepEqual(lease, { surfaceId: tab.surfaceId, tabId: tab.id, reused: false });
   assert.equal(tab.helperPid, process.pid);
   assert.equal(warnings.length, 1);
   assert.equal(warnings[0][0], "browser.stale_turn_owner_replaced");
@@ -1126,7 +1126,7 @@ test("a later provider round reuses its task tab and restores active ownership",
 
   const lease = BrowserHost.prototype.beginTurn.call(fixture, "trace_reused", false, 222);
 
-  assert.deepEqual(lease, { surfaceId: "surface-reused", tabId: "tab-reused" });
+  assert.deepEqual(lease, { surfaceId: "surface-reused", tabId: "tab-reused", reused: true });
   assert.equal(tab.helperPid, 222);
   assert.equal(tab.status, "running");
   assert.equal(tab.loading, true);
@@ -1199,6 +1199,103 @@ test("ending one browser turn does not stop another running tab", async () => {
   assert.equal(removedViews, 1);
   assert.equal(active.status, "running");
   assert.equal(fixture.activeTraceId, active.traceId);
+});
+
+test("completed Claude conversations retain and reuse their browser tab", async () => {
+  const throttling = [];
+  const tab = {
+    id: "tab-claude",
+    surfaceId: "surface-claude",
+    traceId: "trace_claude",
+    helperPid: 555,
+    status: "running",
+    loading: true,
+    bootstrapReady: true,
+    view: { webContents: { isDestroyed: () => false, setBackgroundThrottling: value => throttling.push(value) } },
+  };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    manualOperation: null,
+    turnTabs: new Map([[tab.id, tab]]),
+    closedTurnOwners: new Map(),
+    selectedTabId: tab.id,
+    syncViewVisibility() {},
+    writeDescriptor() {},
+    publishState() {},
+    snapshot: () => ({ tabs: [] }),
+    hide() {},
+    logger: { info() {} },
+  });
+
+  await BrowserHost.prototype.endTurn.call(fixture, tab.traceId, tab.helperPid, "completed", true, undefined, true);
+  assert.equal(fixture.turnTabs.get(tab.id), tab);
+  assert.equal(tab.status, "ready");
+
+  const lease = BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, 777);
+  assert.deepEqual(lease, { surfaceId: tab.surfaceId, tabId: tab.id, reused: true });
+  assert.equal(tab.status, "running");
+  assert.equal(tab.helperPid, 777);
+  assert.equal(tab.bootstrapReady, true);
+  assert.deepEqual(throttling, [true, false]);
+});
+
+test("owned turn tabs block direct Web input and tell users to steer from Codex", async () => {
+  const scripts = [];
+  const tab = {
+    id: "tab-shielded",
+    status: "running",
+    view: { webContents: {
+      isDestroyed: () => false,
+      executeJavaScript: async script => { scripts.push(script); },
+    } },
+  };
+
+  await BrowserHost.prototype.syncTurnInteractionShield.call({}, tab);
+
+  assert.equal(scripts.length, 1);
+  assert.match(scripts[0], /codex-web-gpt-interaction-shield/);
+  assert.match(scripts[0], /Stop or send follow-up messages from Codex/);
+});
+
+test("retained Claude conversation tabs expire after thirty minutes", () => {
+  let removed = false;
+  const tab = {
+    id: "tab-expired",
+    traceId: "trace_expired",
+    helperPid: 555,
+    status: "ready",
+    lastHeartbeatAt: 100,
+  };
+  const fixture = {
+    turnTabs: new Map([[tab.id, tab]]),
+    logger: { info() {} },
+    removeTurnTab(candidate, abortRunning) {
+      assert.equal(candidate, tab);
+      assert.equal(abortRunning, false);
+      removed = true;
+      this.turnTabs.delete(candidate.id);
+    },
+  };
+
+  BrowserHost.prototype.reapExpiredTurnTabs.call(fixture, 100 + (30 * 60 * 1000));
+
+  assert.equal(removed, true);
+  assert.equal(fixture.turnTabs.size, 0);
+});
+
+test("a new turn evicts the oldest retained conversation before a running tab", () => {
+  const oldest = { id: "oldest", status: "ready", lastHeartbeatAt: 10 };
+  const newer = { id: "newer", status: "ready", lastHeartbeatAt: 20 };
+  const running = { id: "running", status: "running", lastHeartbeatAt: 1 };
+  const removed = [];
+  const fixture = {
+    turnTabs: new Map([[oldest.id, oldest], [newer.id, newer], [running.id, running]]),
+    removeTurnTab(tab, abortRunning) { removed.push([tab.id, abortRunning]); },
+  };
+
+  const evicted = BrowserHost.prototype.evictOldestRetainedTurnTab.call(fixture);
+
+  assert.equal(evicted, true);
+  assert.deepEqual(removed, [["oldest", false]]);
 });
 
 test("failed and aborted browser turns release their tab slots", async () => {

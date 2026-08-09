@@ -77,7 +77,7 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
     };
     response.writeHead(200, { "content-type": "application/json" });
     response.end(request.url === "/v1/turn/start"
-      ? '{"ok":true,"surfaceId":"launcher_surface_id_0123456789AB"}\n'
+      ? '{"ok":true,"surfaceId":"launcher_surface_id_0123456789AB","reused":true}\n'
       : '{"ok":true}\n');
   });
   await new Promise<void>((resolve, reject) => {
@@ -92,7 +92,7 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
       phase: "start",
       traceId: "abc123def456",
       helperPid: process.pid,
-    })).resolves.toEqual({ surfaceId: "launcher_surface_id_0123456789AB" });
+    })).resolves.toEqual({ surfaceId: "launcher_surface_id_0123456789AB", reused: true });
     expect(received.authorization).toBe("Bearer launcher-control-token-0123456789abcdefghijklmnop");
     expect(received.body).toEqual({ phase: "start", traceId: "abc123def456", helperPid: process.pid });
     await notifyLauncherTurn(path, {
@@ -106,12 +106,14 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
       traceId: "abc123def456",
       helperPid: process.pid,
       status: "completed",
+      retain: true,
     });
     expect(received.body).toEqual({
       phase: "end",
       traceId: "abc123def456",
       helperPid: process.pid,
       status: "completed",
+      retain: true,
     });
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));

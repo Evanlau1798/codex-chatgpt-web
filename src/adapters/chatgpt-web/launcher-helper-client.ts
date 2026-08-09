@@ -143,7 +143,9 @@ export class LauncherBrowserHelperClient {
   async run(turn: BrowserTurn): Promise<string> {
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     const prepared = await turn.prepare();
+    let resumePrepared: (CompiledChatGptWebPrompt & { release: () => void }) | undefined;
     try {
+      resumePrepared = turn.prepareResume ? await turn.prepareResume() : undefined;
       await this.ensureChild();
       if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       return await new Promise<string>((resolveResult, rejectResult) => {
@@ -194,12 +196,17 @@ export class LauncherBrowserHelperClient {
             reasoning: turn.reasoning,
             capabilities: turn.capabilities,
             prepared: { text: prepared.text, images: prepared.images } satisfies CompiledChatGptWebPrompt,
+            ...(resumePrepared ? {
+              resumePrepared: { text: resumePrepared.text, images: resumePrepared.images } satisfies CompiledChatGptWebPrompt,
+            } : {}),
+            ...(turn.retainConversation ? { retainConversation: true } : {}),
             ...(turn.captureLunaCheckpoint ? { captureLunaCheckpoint: true } : {}),
           },
         }).catch(error => this.finishWithError(turn.traceId, error instanceof Error ? error : new Error(String(error))));
       });
     } finally {
       prepared.release();
+      resumePrepared?.release();
     }
   }
 

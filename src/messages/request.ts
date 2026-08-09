@@ -1,0 +1,201 @@
+import { createHash, randomUUID } from "node:crypto";
+import { isAbsolute } from "node:path";
+import { cwd } from "node:process";
+import { isClaudeCompactRequest } from "./compact";
+
+type Json = Record<string, unknown>;
+
+function object(value: unknown, label: string): Json {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
+  return value as Json;
+}
+
+function textBlocks(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!Array.isArray(value)) return "";
+  return value.flatMap(block => {
+    const part = object(block, "content block");
+    return part.type === "text" && typeof part.text === "string" ? [part.text] : [];
+  }).join("\n");
+}
+
+function inputParts(content: unknown): Json[] {
+  if (typeof content === "string") return [{ type: "input_text", text: content }];
+  if (!Array.isArray(content)) return [];
+  const parts: Json[] = [];
+  for (const raw of content) {
+    const block = object(raw, "message content block");
+    if (block.type === "text" && typeof block.text === "string") {
+      parts.push({ type: "input_text", text: block.text });
+    } else if (block.type === "image") {
+      const source = object(block.source, "image source");
+      if (source.type !== "base64" || typeof source.media_type !== "string" || typeof source.data !== "string") {
+        throw new Error("only base64 Claude image sources are supported");
+      }
+      parts.push({ type: "input_image", image_url: `data:${source.media_type};base64,${source.data}` });
+    }
+  }
+  return parts;
+}
+
+function assistantItems(content: unknown): Json[] {
+  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
+  if (!Array.isArray(blocks)) return [];
+  const items: Json[] = [];
+  let text: Json[] = [];
+  const flushText = () => {
+    if (text.length > 0) items.push({ type: "message", role: "assistant", content: text });
+    text = [];
+  };
+  for (const raw of blocks) {
+    const block = object(raw, "assistant content block");
+    if (block.type === "text" && typeof block.text === "string") {
+      text.push({ type: "output_text", text: block.text });
+    } else if (block.type === "thinking" && typeof block.thinking === "string") {
+      flushText();
+      items.push({ type: "reasoning", summary: [{ type: "summary_text", text: block.thinking }] });
+    } else if (block.type === "redacted_thinking" && typeof block.data === "string") {
+      flushText();
+      items.push({ type: "reasoning", encrypted_content: block.data });
+    } else if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
+      flushText();
+      items.push({ type: "function_call", call_id: block.id, name: block.name, arguments: JSON.stringify(block.input ?? {}) });
+    }
+  }
+  flushText();
+  return items;
+}
+
+function userItems(content: unknown, turnId: string): Json[] {
+  const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
+  if (!Array.isArray(blocks)) return [];
+  const items: Json[] = [];
+  const ordinary = inputParts(blocks);
+  if (ordinary.length > 0) {
+    items.push({
+      type: "message",
+      role: "user",
+      content: ordinary,
+      internal_chat_message_metadata_passthrough: { turn_id: turnId },
+    });
+  }
+  for (const raw of blocks) {
+    const block = object(raw, "user content block");
+    if (block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
+    const output = typeof block.content === "string" ? block.content : inputParts(block.content);
+    items.push({ type: "function_call_output", call_id: block.tool_use_id, output });
+  }
+  return items;
+}
+
+function safeId(value: string, fallback: string): string {
+  const safe = value.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80);
+  return safe || fallback;
+}
+
+function xml(value: string): string {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function workingDirectory(system: string): string {
+  const match = system.match(/^\s*-?\s*(?:Primary )?working directory:\s*(.+?)\s*$/mi);
+  const candidate = match?.[1]?.replace(/^`|`$/g, "").trim();
+  return candidate && isAbsolute(candidate) ? candidate : cwd();
+}
+
+function environment(turnId: string, root: string): Json {
+  const escaped = xml(root);
+  return {
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: `<environment_context><cwd>${escaped}</cwd><workspace_roots><root>${escaped}</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></environment_context>` }],
+    internal_chat_message_metadata_passthrough: { turn_id: turnId },
+  };
+}
+
+function toolChoice(value: unknown): unknown {
+  if (!value) return undefined;
+  const choice = object(value, "tool_choice");
+  if (choice.type === "auto") return "auto";
+  if (choice.type === "any") return "required";
+  if (choice.type === "none") return "none";
+  if (choice.type === "tool" && typeof choice.name === "string") return { type: "function", name: choice.name };
+  return undefined;
+}
+
+export interface TranslatedClaudeRequest {
+  requestedModel: string;
+  stream: boolean;
+  compact: boolean;
+  body: Json;
+}
+
+export function translateClaudeMessages(raw: unknown, headers: Headers): TranslatedClaudeRequest {
+  const request = object(raw, "request body");
+  if (typeof request.model !== "string"
+    || (!request.model.startsWith("chatgpt-web/") && !request.model.startsWith("chatgpt-web-"))) {
+    throw new Error("model must be an existing chatgpt-web route slug or Claude Code alias");
+  }
+  const model = request.model.startsWith("chatgpt-web-")
+    ? `chatgpt-web/${request.model.slice("chatgpt-web-".length)}`
+    : request.model;
+  if (!Array.isArray(request.messages) || request.messages.length === 0) throw new Error("messages must be a non-empty array");
+  if (request.max_tokens !== undefined && (!Number.isFinite(request.max_tokens) || Number(request.max_tokens) < 1)) {
+    throw new Error("max_tokens must be a positive number");
+  }
+
+  const session = safeId(headers.get("x-claude-code-session-id") ?? randomUUID(), "ephemeral");
+  const agent = safeId(headers.get("x-claude-code-agent-id") ?? "root", "root");
+  const threadId = `claude_${session}`;
+  const turnId = `claude_${agent}`;
+  const system = textBlocks(request.system);
+  const root = workingDirectory(system);
+  const input: Json[] = [];
+  let latestUserOffset = -1;
+  for (const rawMessage of request.messages) {
+    const message = object(rawMessage, "message");
+    if (message.role === "assistant") input.push(...assistantItems(message.content));
+    else if (message.role === "user") {
+      const start = input.length;
+      input.push(...userItems(message.content, turnId));
+      if (input.slice(start).some(item => item.type === "message")) latestUserOffset = start;
+    } else throw new Error("message role must be user or assistant");
+  }
+  if (latestUserOffset < 0) throw new Error("messages must contain a user text or image block");
+  input.splice(latestUserOffset, 0, environment(turnId, root));
+
+  const tools = Array.isArray(request.tools) ? request.tools.map(rawTool => {
+    const tool = object(rawTool, "tool");
+    if (typeof tool.name !== "string") throw new Error("tool name must be a string");
+    return {
+      type: "function",
+      name: tool.name,
+      description: typeof tool.description === "string" ? tool.description : "",
+      parameters: object(tool.input_schema ?? {}, "tool input_schema"),
+    };
+  }) : undefined;
+  const compact = isClaudeCompactRequest(system, request.messages);
+  const choice = toolChoice(request.tool_choice);
+  const harness = "You are serving Claude Code through ChatGPT Web. Follow the supplied system and user instructions. Use only advertised client tools; the client owns tool execution and permission decisions.";
+  return {
+    requestedModel: request.model,
+    stream: request.stream === true,
+    compact,
+    body: {
+      model,
+      stream: request.stream === true,
+      input,
+      instructions: system ? `${system}\n\n${harness}` : harness,
+      ...(request.max_tokens !== undefined ? { max_output_tokens: request.max_tokens } : {}),
+      ...(tools ? { tools } : {}),
+      ...(choice !== undefined ? { tool_choice: choice } : {}),
+      parallel_tool_calls: true,
+      prompt_cache_key: threadId,
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: turnId, request_kind: "turn", sandbox: "none", workspaces: { [root]: {} } }),
+        claude_request_hash: createHash("sha256").update(JSON.stringify(request.messages)).digest("hex"),
+        claude_retain_conversation: headers.has("x-claude-code-session-id"),
+      },
+    },
+  };
+}

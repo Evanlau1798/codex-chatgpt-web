@@ -22,6 +22,8 @@ interface RunMessage {
     reasoning?: string;
     capabilities: ChatGptWebCapabilities;
     prepared: CompiledChatGptWebPrompt;
+    resumePrepared?: CompiledChatGptWebPrompt;
+    retainConversation?: boolean;
     captureLunaCheckpoint?: boolean;
   };
 }
@@ -116,6 +118,14 @@ async function run(message: RunMessage): Promise<void> {
   if (!message.turn.prepared || typeof message.turn.prepared.text !== "string" || !Array.isArray(message.turn.prepared.images)) {
     throw new Error("Browser helper prompt is invalid");
   }
+  if (message.turn.resumePrepared !== undefined && (
+    typeof message.turn.resumePrepared.text !== "string" || !Array.isArray(message.turn.resumePrepared.images)
+  )) {
+    throw new Error("Browser helper resume prompt is invalid");
+  }
+  if (message.turn.retainConversation !== undefined && typeof message.turn.retainConversation !== "boolean") {
+    throw new Error("Browser helper conversation retention flag is invalid");
+  }
   if (message.turn.captureLunaCheckpoint !== undefined && typeof message.turn.captureLunaCheckpoint !== "boolean") {
     throw new Error("Browser helper Luna checkpoint flag is invalid");
   }
@@ -138,6 +148,10 @@ async function run(message: RunMessage): Promise<void> {
     reasoning: message.turn.reasoning,
     capabilities: message.turn.capabilities,
     prepare: async () => ({ ...message.turn.prepared, release: () => {} }),
+    ...(message.turn.resumePrepared ? {
+      prepareResume: async () => ({ ...message.turn.resumePrepared!, release: () => {} }),
+    } : {}),
+    ...(message.turn.retainConversation ? { retainConversation: true } : {}),
     abortSignal: abortController.signal,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
     onReasoningSummary: (text, continuation) => writeProtocol({

@@ -8,7 +8,6 @@ import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
 import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
-import { httpStatusFromTerminalError } from "./lib/errors";
 import { createHash } from "node:crypto";
 import { augmentNativeModelCatalog } from "./model-catalog";
 import { readCodexModelContextOverride, type CodexModelContextOverride } from "./codex-integration";
@@ -19,18 +18,15 @@ import {
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
 import { forwardNativeCodexRequest, type NativeFetch } from "./native-passthrough";
-import {
-  buildCompactV1Output,
-  COMPACT_PROMPT,
-  decodeCompactionSummary,
-  extractCompactUserMessages,
-} from "./responses/compaction";
+import { COMPACT_PROMPT } from "./responses/compaction";
+import { handleCompactRequest } from "./responses/compact-handler";
 import { parseRequest } from "./responses/parser";
 import { expandPreviousResponseInput, flushResponseState, rememberResponseState } from "./responses/state";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
 import type { CodexProviderConfig } from "./types";
 import type { ProviderAdapter } from "./adapters/base";
 import { VERSION } from "./version";
+import { messagesCountTokensRequest, messagesRequest } from "./messages";
 
 export class HttpTurnCounter {
   private active = 0;
@@ -333,107 +329,7 @@ export async function compactRequest(
   config: AppConfig,
   adapterFactory: ChatGptWebAdapterFactory = createChatGptWebAdapter,
 ): Promise<Response> {
-  const nativeRequest = req.clone();
-  let raw: Record<string, unknown>;
-  try {
-    const parsed = await readJsonRequestBody(req);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
-    raw = parsed as Record<string, unknown>;
-  } catch (error) {
-    return formatErrorResponse(
-      400,
-      "invalid_request_error",
-      error instanceof Error ? error.message : "Compaction request body must be a JSON object",
-    );
-  }
-  const headerTurnMetadata = req.headers.get("x-codex-turn-metadata");
-  if (headerTurnMetadata) {
-    const existingMetadata = raw.client_metadata;
-    const clientMetadata = existingMetadata && typeof existingMetadata === "object" && !Array.isArray(existingMetadata)
-      ? existingMetadata as Record<string, unknown>
-      : {};
-    raw = {
-      ...raw,
-      client_metadata: {
-        ...clientMetadata,
-        // `/responses/compact` carries native turn authority in this canonical Codex header,
-        // unlike ordinary `/responses` payloads where the same value also appears in the body.
-        "x-codex-turn-metadata": headerTurnMetadata,
-      },
-    };
-  }
-  if (typeof raw.model !== "string" || !raw.model) {
-    return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
-  }
-  if (!isChatGptWebModelSlug(raw.model)) {
-    try {
-      return await forwardNativeCodexRequest(nativeRequest, "responses/compact", undefined, raw);
-    } catch (error) {
-      return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
-    }
-  }
-  let route: ChatGptWebModelRoute;
-  try {
-    route = requireChatGptWebModelRoute(raw.model, config);
-  } catch (error) {
-    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
-  }
-  if (route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
-    return formatErrorResponse(
-      409,
-      "invalid_request_error",
-      "ChatGPT Web Luna uses a rolling checkpoint on every completed browser turn; separate Codex compaction is disabled for this route.",
-    );
-  }
-  const input = Array.isArray(raw.input) ? raw.input : [];
-  const headers = new Headers(req.headers);
-  headers.set("content-type", "application/json");
-  const internal = new Request("http://127.0.0.1/v1/responses", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ ...raw, stream: false, input: [...input, { type: "compaction_trigger" }] }),
-    signal: req.signal,
-  });
-  const response = await responseRequest(internal, config, adapterFactory);
-  if (!response.ok) return response;
-  let body: {
-    output?: unknown[];
-    status?: unknown;
-    error?: { message?: unknown; type?: unknown; code?: unknown } | null;
-  };
-  try {
-    body = await response.json() as typeof body;
-  } catch {
-    return formatErrorResponse(502, "invalid_response_error", "Compaction turn returned invalid JSON");
-  }
-  if (body.error) {
-    const error = {
-      message: typeof body.error.message === "string" ? body.error.message : "Compaction turn failed",
-      type: typeof body.error.type === "string" ? body.error.type : "upstream_error",
-      code: typeof body.error.code === "string" ? body.error.code : null,
-    };
-    return Response.json(
-      { error },
-      { status: httpStatusFromTerminalError(error) },
-    );
-  }
-  if (body.status !== "completed") {
-    return formatErrorResponse(502, "upstream_error", `Compaction turn failed (status: ${String(body.status ?? "unknown")})`);
-  }
-  const items = (body.output ?? []).filter(
-    (item): item is { type: "compaction"; encrypted_content?: string } =>
-      Boolean(item && typeof item === "object" && (item as { type?: string }).type === "compaction"),
-  );
-  if (items.length !== 1) {
-    return formatErrorResponse(502, "invalid_response_error", `Compaction turn produced ${items.length} compaction items; expected one`);
-  }
-  const summary = typeof items[0]!.encrypted_content === "string"
-    ? decodeCompactionSummary(items[0]!.encrypted_content)
-    : null;
-  if (!summary?.trim()) {
-    return formatErrorResponse(502, "invalid_response_error", "Compaction turn produced an empty summary");
-  }
-  return Response.json({ output: buildCompactV1Output(extractCompactUserMessages(input), summary) });
+  return handleCompactRequest(req, config, responseRequest, adapterFactory);
 }
 
 export function startServer(
@@ -541,6 +437,14 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/v1/responses") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(() => responseRequest(req, config), req.signal);
+      }
+      if (req.method === "POST" && url.pathname === "/v1/messages") {
+        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        return httpTurns.track(() => messagesRequest(req, config), req.signal);
+      }
+      if (req.method === "POST" && url.pathname === "/v1/messages/count_tokens") {
+        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        return httpTurns.track(() => messagesCountTokensRequest(req, config), req.signal);
       }
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");

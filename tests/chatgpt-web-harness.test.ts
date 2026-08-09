@@ -18,6 +18,7 @@ import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions, chatGptCompacti
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 import { estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
+import { claudeConversationResumeRequest } from "../src/adapters/chatgpt-web/steering";
 import { decodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
 import { parseRequest } from "../src/responses/parser";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig, CodexTool } from "../src/types";
@@ -41,6 +42,23 @@ const environmentXml = `<environment_context>
 </environment_context>`;
 const toolCapabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true };
 const readOnlyCapabilities = { localToolsEnabled: false, solAvailable: true, proAvailable: true };
+
+test("Claude conversation resume keeps only context after the latest assistant turn", () => {
+  const request = parsed();
+  request._rawBody = { client_metadata: { claude_retain_conversation: true } };
+  request.context.messages = [
+    { role: "user", content: "old", timestamp: 1 },
+    { role: "assistant", content: [{ type: "text", text: "answer" }], timestamp: 2 },
+    { role: "user", content: "environment", timestamp: 3 },
+    { role: "user", content: "next", timestamp: 4 },
+  ];
+
+  expect(claudeConversationResumeRequest(request)?.context.messages).toEqual([
+    { role: "user", content: "environment", timestamp: 3 },
+    { role: "user", content: "next", timestamp: 4 },
+  ]);
+  expect(claudeConversationResumeRequest(parsed())).toBeUndefined();
+});
 
 function brokerTestEndpoint(name: string): string {
   return process.platform === "win32"
