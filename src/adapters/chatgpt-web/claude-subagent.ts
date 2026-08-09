@@ -1,4 +1,5 @@
 import type { CodexParsedRequest } from "../../types";
+import type { BrokerToolRequest } from "./turn-broker";
 
 type AnswerRetry = (answer: string, attempt: number) => string | undefined;
 
@@ -18,8 +19,21 @@ function progressOnly(answer: string): boolean {
     && (ENGLISH_PROGRESS.test(normalized) || CHINESE_PROGRESS.test(normalized));
 }
 
+function clientMetadata(parsed: CodexParsedRequest): ClaudeClientMetadata | undefined {
+  return (parsed._rawBody as { client_metadata?: ClaudeClientMetadata } | undefined)?.client_metadata;
+}
+
+export function normalizeClaudeToolRequests(parsed: CodexParsedRequest, requests: BrokerToolRequest[]): void {
+  if (typeof clientMetadata(parsed)?.claude_subagent !== "boolean") return;
+  for (const request of requests) {
+    if (request.wireName === "Agent") {
+      request.arguments = { ...request.arguments, run_in_background: true };
+    }
+  }
+}
+
 export function claudeBrowserTurnOptions(parsed: CodexParsedRequest, upstreamRetry?: AnswerRetry) {
-  const metadata = (parsed._rawBody as { client_metadata?: ClaudeClientMetadata } | undefined)?.client_metadata;
+  const metadata = clientMetadata(parsed);
   const subagent = metadata?.claude_subagent === true;
   const retryPromptForAnswer: AnswerRetry | undefined = upstreamRetry || subagent
     ? (answer, attempt) => {

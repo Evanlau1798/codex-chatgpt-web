@@ -1,6 +1,7 @@
 import { namespacedToolName, type CodexParsedRequest } from "../../types";
 import { extractChatGptTurnUserRevision, extractChatGptTurnUserText } from "./environment";
 import type { BrokerToolRequest, TurnBroker } from "./turn-broker";
+import { normalizeClaudeToolRequests } from "./claude-subagent";
 import type { ChatGptTurnRuntime, ChatGptTurnSession, ChatGptTurnSessions } from "./turn-execution";
 
 export async function sessionForChatGptRequest(
@@ -46,6 +47,7 @@ export function claudeConversationResumeRequest(parsed: CodexParsedRequest): Cod
 }
 
 export function validateBatchTools(parsed: CodexParsedRequest, requests: BrokerToolRequest[]): void {
+  normalizeClaudeToolRequests(parsed, requests);
   const available = new Set((parsed.context.tools ?? []).map(tool => namespacedToolName(tool.namespace, tool.name)));
   for (const request of requests) {
     if (!available.has(request.wireName)) {

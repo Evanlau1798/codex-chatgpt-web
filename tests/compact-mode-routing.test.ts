@@ -10,6 +10,7 @@ import {
 } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
+import { normalizeClaudeToolRequests } from "../src/adapters/chatgpt-web/claude-subagent";
 import {
   ChatGptTextFeed,
   ChatGptTraceFeed,
@@ -165,6 +166,21 @@ describe("compact mode routing", () => {
     } finally {
       worker.run = originalRun;
     }
+  });
+
+  test("forces Claude Agent dispatches into the background", () => {
+    const request = compactRequest();
+    const metadata = (request._rawBody as { client_metadata: Record<string, unknown> }).client_metadata;
+    metadata.claude_subagent = false;
+    const tools = [
+      { callId: "call_agent", wireName: "Agent", freeform: false, arguments: { run_in_background: false } },
+      { callId: "call_shell", wireName: "PowerShell", freeform: false, arguments: { command: "Get-Location" } },
+    ];
+
+    normalizeClaudeToolRequests(request, tools);
+
+    expect(tools[0]!.arguments).toEqual({ run_in_background: true });
+    expect(tools[1]!.arguments).toEqual({ command: "Get-Location" });
   });
 
   test("obtains the beta checkpoint from the active tools conversation", async () => {
