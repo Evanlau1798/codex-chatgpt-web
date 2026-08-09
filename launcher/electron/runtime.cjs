@@ -344,7 +344,7 @@ class RuntimeHost {
         ],
         {
           env: this.launcherControlEnvironment(),
-          message: "Sign in to ChatGPT in the system Chrome/Chromium window, then close that window",
+          message: "Sign in to ChatGPT in the dedicated system Chrome/Chromium window; transfer continues automatically",
           successMessage: "System-browser ChatGPT login verified",
         },
       );

@@ -201,7 +201,7 @@ test("active composer resolution waits for exactly one visible editor", async ()
   expect(await activeComposer.call({}, page, 500)).toBe(composer);
 });
 
-test("large read-only context is inserted in bounded edits before exact verification", async () => {
+test("large read-only context is inserted as contiguous bounded edits before exact verification", async () => {
   const prompt = `Act as the model backend for the Codex task encoded below.\n${"x".repeat(819_343)}`;
   const calls: Array<[string, string?]> = [];
   let asserted = "";
@@ -243,9 +243,7 @@ test("large read-only context is inserted in bounded edits before exact verifica
       String((index + 1) * CHATGPT_PROMPT_INSERT_CHUNK_CHARS),
     ]),
   );
-  expect(calls.filter(call => call[0] === "press")).toEqual(
-    Array.from({ length: fullChunkCount }, () => ["press", CHATGPT_COMPOSER_DOCUMENT_END_KEY]),
-  );
+  expect(calls.filter(call => call[0] === "press")).toEqual([]);
   expect(asserted).toBe(prompt);
 });
 

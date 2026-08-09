@@ -1298,9 +1298,9 @@ export class ChatGptBrowserWorker {
       await page.keyboard.insertText(text.slice(offset, end));
       if (end < text.length) {
         await this.waitForPromptChunkAttached(page, text.slice(0, end).trimStart());
-        // A plain End key stops at the end of the current visual line in a multiline Lexical
-        // editor. Move to the end of the complete composer before appending the next verified edit.
-        await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
+        // Input.insertText leaves the native caret after the committed edit. Keep that exact
+        // insertion point: a document-end shortcut makes Lexical reconstruct the boundary block
+        // and can preserve the length while changing prompt text around the chunk boundary.
       }
       offset = end;
     }

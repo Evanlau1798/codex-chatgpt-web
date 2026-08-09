@@ -83,8 +83,9 @@ irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install
 
 然后在应用中完成三项检查：
 
-1. 在启动器打开的系统 Chrome/Chromium 窗口中登录，然后关闭该专用窗口。启动器会先验证会话，
-   再将其导入私有的内置浏览器 profile。
+1. 在启动器打开的专用系统 Chrome/Chromium 窗口中登录并保持窗口打开。启动器检测到已认证的
+   Temporary Chat 输入框后，会捕获会话并关闭该专用窗口，然后独立验证捕获的状态，再将其导入私有的
+   内置浏览器 profile。
 2. 运行浏览器冒烟测试。
 3. 点击 **安装模型**，重启一次 Codex，然后选择一个 **ChatGPT Web — …** 模型。
 
