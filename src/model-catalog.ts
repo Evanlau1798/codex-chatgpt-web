@@ -55,6 +55,14 @@ function selectNativeTemplate(models: unknown[], config: AppConfig): JsonObject 
   );
 }
 
+function useReadableV1SubagentSurface(model: JsonObject): void {
+  // A native V2 parent encrypts delegated task content for OpenAI's backend. The browser adapter
+  // cannot decrypt that cross-backend payload, so the integration's catalog must keep every model
+  // that supports delegation on one readable V1 surface. Preserve an explicit disabled capability
+  // instead of advertising support that the native model denied.
+  if (model.multi_agent_version !== "disabled") model.multi_agent_version = "v1";
+}
+
 export function buildChatGptWebModel(
   templateValue: unknown,
   route: ChatGptWebModelRoute,
@@ -95,6 +103,7 @@ export function buildChatGptWebModel(
     supported_reasoning_levels: [reasoningLevel(template, route.codexEffort, route.displayName)],
     context_window: limits.contextWindow,
     max_context_window: limits.contextWindow,
+    effective_context_window_percent: limits.effectiveContextWindowPercent,
     auto_compact_token_limit: limits.autoCompactTokenLimit,
     // ChatGPT Web has no Codex service tier. Never inherit the native template's Fast tiers.
     additional_speed_tiers: [],
@@ -121,6 +130,11 @@ export function augmentNativeModelCatalog(
   const nativeModels = structuredClone(
     catalog.models.filter(model => !slug(model)?.startsWith(CHATGPT_WEB_MODEL_PREFIX)),
   );
+  for (const candidate of nativeModels) {
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      useReadableV1SubagentSurface(candidate as JsonObject);
+    }
+  }
   const template = selectNativeTemplate(nativeModels, config);
   if (contextOverride) {
     // model_context_window is a single top-level Codex setting, not a per-model one. Binding it to

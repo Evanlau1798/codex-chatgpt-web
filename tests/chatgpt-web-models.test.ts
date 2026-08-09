@@ -69,14 +69,17 @@ describe("fixed ChatGPT Web model routes", () => {
   test("publishes measured Plus browser windows and compacts before the transport ceiling", () => {
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "low", plus)).toEqual({
       contextWindow: 41_000,
+      effectiveContextWindowPercent: 78,
       autoCompactTokenLimit: 32_000,
     });
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "medium", plus)).toEqual({
       contextWindow: 90_000,
+      effectiveContextWindowPercent: 89,
       autoCompactTokenLimit: 80_000,
     });
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "high", plus)).toEqual({
       contextWindow: 90_000,
+      effectiveContextWindowPercent: 89,
       autoCompactTokenLimit: 80_000,
     });
     expect(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, "low", plus)).toEqual({
@@ -85,21 +88,26 @@ describe("fixed ChatGPT Web model routes", () => {
     expect(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, "medium", plus)).toEqual({
       browserComposerCharLimit: 1_048_572,
     });
+    expect(() => resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", plus))
+      .toThrow("unavailable effort");
   });
 
-  test("keeps Pro model windows separate from measured one-message transport limits", () => {
+  test("publishes the usable Pro browser window instead of the unreachable underlying model window", () => {
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "low", pro)).toEqual({
-      contextWindow: 137_000,
+      contextWindow: 111_193,
+      effectiveContextWindowPercent: 85,
       autoCompactTokenLimit: 95_000,
     });
     for (const effort of ["medium", "high", "xhigh"] as const) {
       expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, effort, pro)).toEqual({
-        contextWindow: 256_000,
+        contextWindow: 111_193,
+        effectiveContextWindowPercent: 85,
         autoCompactTokenLimit: 95_000,
       });
     }
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "max", pro)).toEqual({
-      contextWindow: 272_000,
+      contextWindow: 112_193,
+      effectiveContextWindowPercent: 85,
       autoCompactTokenLimit: 95_000,
     });
     expect(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, "low", pro)).toEqual({
@@ -121,16 +129,33 @@ describe("fixed ChatGPT Web model routes", () => {
   test("uses the native 90 percent threshold when the beta compact mode is enabled", () => {
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "low", pro, true)).toEqual({
       contextWindow: 137_000,
+      effectiveContextWindowPercent: 90,
       autoCompactTokenLimit: 123_300,
     });
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", pro, true)).toEqual({
       contextWindow: 256_000,
+      effectiveContextWindowPercent: 90,
       autoCompactTokenLimit: 230_400,
     });
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "max", pro, true)).toEqual({
       contextWindow: 272_000,
+      effectiveContextWindowPercent: 90,
       autoCompactTokenLimit: 244_800,
     });
+  });
+
+  test("reports the compact-aligned effective window in Codex's context indicator", () => {
+    const displayedThousands = (effort: "low" | "medium" | "high" | "xhigh" | "max", capabilities: typeof pro) => {
+      const limits = resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, effort, capabilities);
+      return Math.round((limits.contextWindow * limits.effectiveContextWindowPercent) / 100 / 1_000);
+    };
+    expect(displayedThousands("low", plus)).toBe(32);
+    expect(displayedThousands("medium", plus)).toBe(80);
+    expect(displayedThousands("low", pro)).toBe(95);
+    expect(displayedThousands("medium", pro)).toBe(95);
+    expect(displayedThousands("high", pro)).toBe(95);
+    expect(displayedThousands("xhigh", pro)).toBe(95);
+    expect(displayedThousands("max", pro)).toBe(95);
   });
 
   test("publishes Luna's real model window without early native compaction", () => {
@@ -139,6 +164,7 @@ describe("fixed ChatGPT Web model routes", () => {
       proAvailable: false,
     })).toEqual({
       contextWindow: 1_050_000,
+      effectiveContextWindowPercent: 100,
       autoCompactTokenLimit: 1_050_000,
     });
   });

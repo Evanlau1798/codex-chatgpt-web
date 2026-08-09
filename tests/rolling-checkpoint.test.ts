@@ -57,7 +57,8 @@ function request(
 
 test("Luna checkpoint stream hides a marker split across arbitrary DOM deltas", () => {
   const stream = new ChatGptLunaCheckpointStream();
-  const raw = `Visible answer.\n\n${CHATGPT_LUNA_CHECKPOINT_MARKER}\n${JSON.stringify(checkpoint)}`;
+  const checkpointText = "Objective:\nFinish the requested repository audit.\nPending:\n- Inspect remaining files.";
+  const raw = `Visible answer.\n\n${CHATGPT_LUNA_CHECKPOINT_MARKER}\n${checkpointText}`;
   let visible = "";
   for (let index = 0; index < raw.length; index += (index % 7) + 1) {
     const next = raw.slice(index, index + (index % 7) + 1);
@@ -66,17 +67,14 @@ test("Luna checkpoint stream hides a marker split across arbitrary DOM deltas", 
   const completed = stream.finish(raw);
   expect(visible).toBe("Visible answer.");
   expect(completed.answer).toBe("Visible answer.");
-  expect(completed.captured.checkpoint).toEqual(checkpoint);
+  expect(completed.captured.checkpoint).toEqual({ version: 2, summary: checkpointText });
   expect(completed.captured.answerHash).toBe(hashChatGptLunaAnswer("Visible answer."));
   expect(visible).not.toContain("CHECKPOINT");
 });
 
 test("Luna checkpoint marker survives the real ChatGPT DOM-to-Markdown serializer", () => {
   const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
-  const domCheckpoint: ChatGptLunaCheckpoint = {
-    ...checkpoint,
-    state: ["Inspect src/foo_bar.ts and preserve *literal* [evidence]."],
-  };
+  const domCheckpoint = "State:\n- Inspect src/foo_bar.ts and preserve *literal* [evidence].";
   const segments = [
     { key: "answer", html: "<p>Visible answer.</p>", text: "Visible answer.", streamable: true },
     {
@@ -87,8 +85,8 @@ test("Luna checkpoint marker survives the real ChatGPT DOM-to-Markdown serialize
     },
     {
       key: "checkpoint",
-      html: `<p>${JSON.stringify(domCheckpoint)}</p>`,
-      text: JSON.stringify(domCheckpoint),
+      html: `<p>${domCheckpoint}</p>`,
+      text: domCheckpoint,
       streamable: false,
     },
   ];
@@ -97,12 +95,27 @@ test("Luna checkpoint marker survives the real ChatGPT DOM-to-Markdown serialize
   const final = buffer.finish();
   let visible = stream.push(delta);
   visible += stream.push(final.delta);
-  const raw = `Visible answer.\n\n${CHATGPT_LUNA_CHECKPOINT_MARKER}\n${JSON.stringify(domCheckpoint)}`;
+  const raw = `Visible answer.\n\n${CHATGPT_LUNA_CHECKPOINT_MARKER}\n${domCheckpoint}`;
   const completed = stream.finish(raw);
   expect(final.markdown).toContain(CHATGPT_LUNA_CHECKPOINT_MARKER);
   expect(final.markdown).toContain("foo\\_bar.ts");
   expect(visible).toBe("Visible answer.");
-  expect(completed.captured.checkpoint).toEqual(domCheckpoint);
+  expect(completed.captured.checkpoint).toEqual({ version: 2, summary: domCheckpoint });
+});
+
+test("Luna checkpoint treats the malformed quoted payload from issue 89 as opaque semantic state", () => {
+  const stream = new ChatGptLunaCheckpointStream();
+  const checkpointText = `{"version":1,"objective":"Acknowledge the user's latest message.","state":["Latest human-authored request was "di OK".","No substantive task was requested in the provided context."],"evidence":["The final human message in the task context is "di OK"."],"decisions":["Respond with a concise acknowledgment."],"pending":[]}`;
+  const raw = `OK.\n\n${CHATGPT_LUNA_CHECKPOINT_MARKER}\n${checkpointText}`;
+  stream.push(raw);
+
+  expect(stream.finish(raw)).toEqual({
+    answer: "OK.",
+    captured: {
+      checkpoint: { version: 2, summary: checkpointText },
+      answerHash: hashChatGptLunaAnswer("OK."),
+    },
+  });
 });
 
 test("Luna checkpoint stream fails closed when the model omits its private tail", () => {
@@ -120,7 +133,8 @@ test("Luna prompt requests the strict private checkpoint only when capture is en
   const rolling = compileChatGptWebPrompt(parsed, capabilities, undefined, { captureLunaCheckpoint: true });
   expect(normal.text).not.toContain(CHATGPT_LUNA_CHECKPOINT_MARKER);
   expect(rolling.text).toContain(CHATGPT_LUNA_CHECKPOINT_MARKER);
-  expect(rolling.text).toContain('"version":1');
+  expect(rolling.text).toContain("Do not write JSON");
+  expect(rolling.text).toContain("Objective:");
   expect(rolling.text).toContain(`${CHATGPT_LUNA_CHECKPOINT_MAX_TOKENS.toLocaleString("en-US")} tokens`);
 });
 
@@ -137,7 +151,11 @@ test("Luna checkpoint replaces only exact-parent history and preserves the curre
   ]);
   const answer = "Completed the first step.";
   const store = new ChatGptLunaCheckpointStore(path);
-  store.commit(source, { checkpoint, answerHash: hashChatGptLunaAnswer(answer) }, answer);
+  const textCheckpoint: ChatGptLunaCheckpoint = {
+    version: 2,
+    summary: "Objective:\nFinish the requested repository audit.\nPending:\n- Inspect the remaining files.",
+  };
+  store.commit(source, { checkpoint: textCheckpoint, answerHash: hashChatGptLunaAnswer(answer) }, answer);
 
   const nextTurnId = "turn_next";
   const next = request(threadId, nextTurnId, [
@@ -161,6 +179,34 @@ test("Luna checkpoint replaces only exact-parent history and preserves the curre
   const capabilities = { localToolsEnabled: false, solAvailable: false, proAvailable: false };
   expect(estimateChatGptWebInputTokens(applied.parsed, capabilities))
     .toBeLessThan(estimateChatGptWebInputTokens(next, capabilities));
+
+  const continued = request(threadId, nextTurnId, [
+    message("developer", "Old operational contract", sourceTurnId),
+    message("user", originalTask, sourceTurnId),
+    message("assistant", answer, sourceTurnId),
+    message("developer", "Fresh operational contract", nextTurnId),
+    message("user", "Continue with the second step", nextTurnId),
+    message("assistant", "Current-turn progress commentary", nextTurnId),
+    {
+      type: "function_call",
+      call_id: "call_luna_current",
+      name: "exec_command",
+      arguments: JSON.stringify({ cmd: "pwd" }),
+    },
+    {
+      type: "function_call_output",
+      call_id: "call_luna_current",
+      output: "current tool evidence",
+    },
+  ]);
+  const appliedContinuation = store.apply(continued);
+  expect(appliedContinuation.applied).toBe(true);
+  const continuedEncoded = JSON.stringify(appliedContinuation.parsed.context.messages);
+  expect(continuedEncoded).toContain("Current-turn progress commentary");
+  expect(continuedEncoded).toContain("current tool evidence");
+  expect(continuedEncoded).not.toContain("Original task");
+  expect(estimateChatGptWebInputTokens(appliedContinuation.parsed, capabilities))
+    .toBeGreaterThan(estimateChatGptWebInputTokens(applied.parsed, capabilities));
 
   const branch = request(threadId, "turn_branch", [
     message("assistant", "A different parent answer.", sourceTurnId),

@@ -1,9 +1,9 @@
+import { CHATGPT_WEB_PLATFORM_RESERVE_TOKENS } from "../../chatgpt-web-models";
 import { estimateTokens } from "../../lib/token-estimate";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 
 // ChatGPT's product system prompt and the fixed Codex Native MCP schemas are not present in the
 // visible composer text. Reserve them explicitly; over-counting fails safe by compacting earlier.
-const CHATGPT_PLATFORM_RESERVE_TOKENS = 8_192;
 const CHATGPT_IMAGE_RESERVE_TOKENS = 4_096;
 const CHATGPT_ORIGINAL_IMAGE_RESERVE_TOKENS = 8_192;
 
@@ -32,7 +32,7 @@ export function estimateCompiledChatGptWebInputTokens(
       : CHATGPT_IMAGE_RESERVE_TOKENS),
     0,
   );
-  return CHATGPT_PLATFORM_RESERVE_TOKENS
+  return CHATGPT_WEB_PLATFORM_RESERVE_TOKENS
     + estimateCompiledChatGptWebMessageTokens(compiled, modelId)
     + imageTokens;
 }

@@ -37,7 +37,16 @@ writeFileSync(catalogPath, `${JSON.stringify(augmentNativeModelCatalog(sourceCat
 writeFileSync(join(process.env.CODEX_HOME, "config.toml"), `model_catalog_json = ${JSON.stringify(catalogPath)}\n`);
 try {
   const result = runCodex(["debug", "models"], { ...process.env, CODEX_HOME: process.env.CODEX_HOME });
-  const catalog = JSON.parse(result.stdout) as { models?: Array<{ slug?: string; supported_reasoning_levels?: unknown[] }> };
+  const catalog = JSON.parse(result.stdout) as {
+    models?: Array<{
+      slug?: string;
+      supported_reasoning_levels?: unknown[];
+      multi_agent_version?: string;
+      supported_in_api?: boolean;
+      visibility?: string;
+      priority?: number;
+    }>;
+  };
   const web = catalog.models?.filter(model => model.slug?.startsWith("chatgpt-web/")) ?? [];
   const expected = CHATGPT_WEB_MODEL_ROUTES.map(route => ({ slug: route.slug, effort: route.codexEffort }));
   const actual = web.map(model => ({
@@ -48,6 +57,21 @@ try {
   }));
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`Codex did not preserve the fixed ChatGPT Web model contract: ${JSON.stringify(actual)}`);
+  }
+  const nativeSol = catalog.models?.find(model => model.slug === "gpt-5.6-sol");
+  const webPro = catalog.models?.find(model => model.slug === "chatgpt-web/pro");
+  if (nativeSol?.multi_agent_version !== "v1" || webPro?.multi_agent_version !== "v1") {
+    throw new Error(
+      `Codex did not preserve the readable V1 subagent surface: ${JSON.stringify({ nativeSol, webPro })}`,
+    );
+  }
+  const spawnOverrides = (catalog.models ?? [])
+    .filter(model => model.supported_in_api === true && model.visibility === "list")
+    .toSorted((left, right) => (left.priority ?? Number.MAX_SAFE_INTEGER) - (right.priority ?? Number.MAX_SAFE_INTEGER))
+    .slice(0, 5)
+    .map(model => model.slug);
+  if (JSON.stringify(spawnOverrides) !== JSON.stringify(CHATGPT_WEB_MODEL_ROUTES.map(route => route.slug))) {
+    throw new Error(`Codex did not feature the five ChatGPT Web subagent overrides: ${JSON.stringify(spawnOverrides)}`);
   }
   process.stdout.write("NATIVE_CODEX_CATALOG_SMOKE_OK\n");
 } finally {

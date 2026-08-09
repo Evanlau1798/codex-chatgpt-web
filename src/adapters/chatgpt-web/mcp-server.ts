@@ -92,8 +92,9 @@ function gatewayNestedToolName(toolName: string): string {
   return toolName.replace(/[^A-Za-z0-9_$]/g, "_");
 }
 
-function gatewayResultProgram(): string[] {
+function execGatewayResultProgram(invocation: string[]): string {
   return [
+    ...invocation,
     "const emit = value => {",
     "  if (Array.isArray(value)) { for (const item of value) emit(item); return; }",
     "  if (value && typeof value === \"object\") {",
@@ -108,7 +109,7 @@ function gatewayResultProgram(): string[] {
     "  text(value);",
     "};",
     "emit(result);",
-  ];
+  ].join("\n");
 }
 
 function execGatewayProgram(
@@ -117,24 +118,28 @@ function execGatewayProgram(
   payload: { arguments?: Record<string, unknown>; input?: string },
 ): string {
   const nestedInput = freeform ? payload.input ?? "" : payload.arguments ?? {};
-  return [
+  return execGatewayResultProgram([
     `const result = await tools[${JSON.stringify(gatewayNestedToolName(nestedToolName))}](${JSON.stringify(nestedInput)});`,
-    ...gatewayResultProgram(),
-  ].join("\n");
+  ]);
 }
 
-function commandGatewayProgram(
-  execArguments: Record<string, unknown>,
-  shellArguments: Record<string, unknown>,
+function execCommandGatewayProgram(
+  execCommandArguments: Record<string, unknown>,
+  shellCommandArguments: Record<string, unknown>,
 ): string {
-  return [
-    "const result = typeof tools.exec_command === \"function\"",
-    `  ? await tools.exec_command(${JSON.stringify(execArguments)})`,
-    "  : typeof tools.shell_command === \"function\"",
-    `    ? await tools.shell_command(${JSON.stringify(shellArguments)})`,
-    "    : (() => { throw new Error(\"No native command tool is available\"); })();",
-    ...gatewayResultProgram(),
-  ].join("\n");
+  const execCommandName = gatewayNestedToolName("exec_command");
+  const shellCommandName = gatewayNestedToolName("shell_command");
+  return execGatewayResultProgram([
+    "if (typeof ALL_TOOLS === \"undefined\" || !Array.isArray(ALL_TOOLS)) throw new Error(\"Native command tool registry is unavailable\");",
+    "const nativeCommandNames = new Set(ALL_TOOLS.map(tool => tool?.name));",
+    `const nativeCommandCandidates = ${JSON.stringify([execCommandName, shellCommandName])}.filter(name => nativeCommandNames.has(name));`,
+    "if (nativeCommandCandidates.length !== 1) throw new Error(\"Expected exactly one native command tool; found \" + (nativeCommandCandidates.join(\", \") || \"none\"));",
+    "const nativeCommandName = nativeCommandCandidates[0];",
+    "const nativeCommand = tools[nativeCommandName];",
+    "if (typeof nativeCommand !== \"function\") throw new Error(\"Native command tool \" + nativeCommandName + \" is listed but unavailable\");",
+    `const nativeCommandInput = nativeCommandName === ${JSON.stringify(execCommandName)} ? ${JSON.stringify(execCommandArguments)} : ${JSON.stringify(shellCommandArguments)};`,
+    "const result = await nativeCommand(nativeCommandInput);",
+  ]);
 }
 
 export async function runChatGptMcpServer(options: { brokerSocketPath: string }): Promise<void> {
@@ -199,39 +204,30 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     async ({ turn_token, cmd, workdir, yield_time_ms, max_output_tokens, tty }, extra) => {
       const claimed = await claimTurn("codex_exec", turn_token, extra);
       const bound = claimed.environment;
+      const execCommandArguments = {
+        cmd,
+        ...(workdir ? { workdir } : {}),
+        ...(yield_time_ms !== undefined ? { yield_time_ms } : {}),
+        ...(max_output_tokens !== undefined ? { max_output_tokens } : {}),
+        ...(tty !== undefined ? { tty } : {}),
+      };
+      const shellCommandArguments = {
+        command: cmd,
+        ...(workdir ? { workdir } : {}),
+        ...(yield_time_ms !== undefined ? { timeout_ms: yield_time_ms } : {}),
+      };
       const tool = exactTool(bound, "exec_command") ?? exactTool(bound, "shell_command");
       if (tool) {
-        const args = tool.name === "exec_command"
-          ? {
-              cmd,
-              ...(workdir ? { workdir } : {}),
-              ...(yield_time_ms !== undefined ? { yield_time_ms } : {}),
-              ...(max_output_tokens !== undefined ? { max_output_tokens } : {}),
-              ...(tty !== undefined ? { tty } : {}),
-            }
-          : {
-              command: cmd,
-              ...(workdir ? { workdir } : {}),
-              ...(yield_time_ms !== undefined ? { timeout_ms: yield_time_ms } : {}),
-            };
+        const args = tool.name === "exec_command" ? execCommandArguments : shellCommandArguments;
         return invoke(claimed.bindingId, bound, tool, { arguments: args });
       }
       const gateway = execGateway(bound);
-      if (!gateway) throw new Error("This Codex turn did not advertise a native command tool or exec gateway");
-      return invoke(claimed.bindingId, bound, gateway, { input: commandGatewayProgram(
-        {
-          cmd,
-          ...(workdir ? { workdir } : {}),
-          ...(yield_time_ms !== undefined ? { yield_time_ms } : {}),
-          ...(max_output_tokens !== undefined ? { max_output_tokens } : {}),
-          ...(tty !== undefined ? { tty } : {}),
-        },
-        {
-          command: cmd,
-          ...(workdir ? { workdir } : {}),
-          ...(yield_time_ms !== undefined ? { timeout_ms: yield_time_ms } : {}),
-        },
-      ) });
+      if (!gateway) {
+        throw new Error("This Codex turn did not advertise a native command tool or the native exec gateway");
+      }
+      return invoke(claimed.bindingId, bound, gateway, {
+        input: execCommandGatewayProgram(execCommandArguments, shellCommandArguments),
+      });
     },
   );
 

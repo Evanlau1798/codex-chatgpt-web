@@ -246,11 +246,11 @@ export function compileChatGptWebPrompt(
   const checkpointContract = captureLunaCheckpoint
     ? [
       "After the complete user-facing answer, append one private rolling task checkpoint for the next Luna turn.",
-      `Append the exact marker ${CHATGPT_LUNA_CHECKPOINT_MARKER} on its own line, followed by exactly one JSON object and nothing else. Do not use a Markdown code fence.`,
-      "The JSON object must have exactly this shape: {\"version\":1,\"objective\":\"...\",\"state\":[\"...\"],\"evidence\":[\"...\"],\"decisions\":[\"...\"],\"pending\":[\"...\"]}.",
+      `Append the exact marker ${CHATGPT_LUNA_CHECKPOINT_MARKER} on its own line, followed by one compact plain-text checkpoint and nothing else. Do not write JSON and do not use a Markdown code fence.`,
+      "Use the headings Objective:, State:, Evidence:, Decisions:, and Pending:. Put each heading on its own line and use concise dash bullets under the list headings.",
       `Keep the checkpoint at or below ${CHATGPT_LUNA_CHECKPOINT_MAX_TOKENS.toLocaleString("en-US")} tokens. Preserve concrete requirements, exact paths, commands, results, decisions, unresolved blockers, and the next useful actions.`,
       "Record only compact task state and evidence. Do not include hidden reasoning, chain-of-thought, capability tokens, credentials, or transport details.",
-      "The outer bridge removes this marker and JSON from the user-facing stream. Never refer to the checkpoint in the visible answer.",
+      "The outer bridge removes this marker and checkpoint from the user-facing stream. Never refer to the checkpoint in the visible answer.",
     ]
     : [];
   const transportResume = parsed._compactionRequest

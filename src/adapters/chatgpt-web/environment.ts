@@ -139,14 +139,23 @@ export function extractChatGptCompactionSourceRevision(parsed: CodexParsedReques
 function environmentBeforeUser(input: unknown[], userIndex: number, expectedTurnId?: string): string | undefined {
   if (userIndex <= 0) return undefined;
   const user = record(input[userIndex]);
-  const candidate = record(input[userIndex - 1]);
   if (user?.type !== "message" || user.role !== "user") return undefined;
-  if (candidate?.type !== "message" || candidate.role !== "user") return undefined;
 
   const userTurnId = itemTurnId(user);
+  if (!userTurnId || (expectedTurnId && userTurnId !== expectedTurnId)) return undefined;
+
+  let candidateIndex = userIndex - 1;
+  let candidate = record(input[candidateIndex]);
+  while (candidate?.type === "message" && candidate.role === "developer") {
+    const developerTurnId = itemTurnId(candidate);
+    if (developerTurnId !== userTurnId) return undefined;
+    candidateIndex -= 1;
+    candidate = record(input[candidateIndex]);
+  }
+  if (candidate?.type !== "message" || candidate.role !== "user") return undefined;
+
   const candidateTurnId = itemTurnId(candidate);
-  if (!userTurnId || candidateTurnId !== userTurnId) return undefined;
-  if (expectedTurnId && userTurnId !== expectedTurnId) return undefined;
+  if (candidateTurnId !== userTurnId) return undefined;
 
   const content = Array.isArray(candidate.content) ? candidate.content : [];
   for (const part of content) {
@@ -173,6 +182,10 @@ function sandboxTypeFromEnvironment(text: string): ChatGptSandboxPolicy["type"] 
 }
 
 type ChatGptMetadataSandbox = ChatGptSandboxPolicy["type"] | "platform";
+
+function canonicalSandboxMetadata(metadata: Record<string, unknown>): unknown {
+  return metadata.sandbox_mode ?? metadata.sandbox;
+}
 
 function sandboxTypeFromMetadata(value: unknown): ChatGptMetadataSandbox | undefined {
   if (typeof value !== "string") return undefined;
@@ -211,6 +224,43 @@ function sandboxMetadataMatchesEnvironment(
   return metadataSandbox === environmentSandbox;
 }
 
+function environmentMatchesCanonicalMetadata(
+  environmentText: string,
+  metadata: Record<string, unknown>,
+  requireMetadataBoundRoots: boolean,
+): boolean {
+  const metadataSandboxValue = canonicalSandboxMetadata(metadata);
+  const metadataSandbox = sandboxTypeFromMetadata(metadataSandboxValue);
+  if (!metadataSandbox) return false;
+  const workspaces = record(metadata.workspaces);
+  const metadataRoots = workspaces ? Object.keys(workspaces) : [];
+  if (metadataRoots.some(path => !isAbsolute(path))) return false;
+  const normalizedMetadataRoots = [...new Set(metadataRoots.map(pathIdentity))];
+
+  let cwdMatches: string[];
+  try {
+    cwdMatches = environmentCwdMatches(environmentText, normalizedMetadataRoots)
+      .map(value => decodeXmlText(value.trim()));
+  } catch {
+    return false;
+  }
+  if (cwdMatches.length !== 1 || !isAbsolute(cwdMatches[0]!)) return false;
+  const rootMatches = [...environmentText.matchAll(/<workspace_roots>[\s\S]*?<\/workspace_roots>/g)]
+    .flatMap(section => [...section[0].matchAll(/<root>([^<]+)<\/root>/g)].map(match => decodeXmlText(match[1]!.trim())));
+  const declaredRootValues = rootMatches.length > 0 ? rootMatches : cwdMatches;
+  if (declaredRootValues.some(path => !isAbsolute(path))) return false;
+  const declaredRoots = [...new Set(declaredRootValues.map(pathIdentity))];
+  const cwd = pathIdentity(cwdMatches[0]!);
+  if (normalizedMetadataRoots.length > 0
+    && !normalizedMetadataRoots.some(root => matchesPath(root, cwd))) return false;
+  if (requireMetadataBoundRoots && (
+    normalizedMetadataRoots.length === 0
+    || declaredRoots.some(root => !normalizedMetadataRoots.some(metadataRoot => matchesPath(metadataRoot, root)))
+  )) return false;
+  if (!declaredRoots.some(root => matchesPath(root, cwd))) return false;
+  return sandboxMetadataMatchesEnvironment(metadataSandboxValue, environmentText);
+}
+
 function canonicalMetadataEnvironmentBeforeUser(
   input: unknown[],
   userIndex: number,
@@ -219,21 +269,26 @@ function canonicalMetadataEnvironmentBeforeUser(
 ): string | undefined {
   if (userIndex <= 0 || !metadata) return undefined;
   const metadataTurnId = typeof metadata.turn_id === "string" ? metadata.turn_id.trim() : "";
-  const metadataSandbox = sandboxTypeFromMetadata(metadata.sandbox);
+  const metadataSandbox = sandboxTypeFromMetadata(canonicalSandboxMetadata(metadata));
   if (!metadataTurnId || !metadataSandbox) return undefined;
-  const workspaces = record(metadata.workspaces);
-  const metadataRoots = workspaces ? Object.keys(workspaces) : [];
-  if (metadataRoots.some(path => !isAbsolute(path))) return undefined;
-  const normalizedMetadataRoots = [...new Set(metadataRoots.map(pathIdentity))];
 
   const user = record(input[userIndex]);
-  const candidate = record(input[userIndex - 1]);
   if (user?.type !== "message" || user.role !== "user" || typeof user.id !== "string" || !user.id) return undefined;
-  if (candidate?.type !== "message" || candidate.role !== "user" || typeof candidate.id !== "string" || !candidate.id) return undefined;
   const userTurnId = itemTurnId(user);
+  if (userTurnId !== undefined && userTurnId !== metadataTurnId) return undefined;
+
+  let candidateIndex = userIndex - 1;
+  let candidate = record(input[candidateIndex]);
+  while (candidate?.type === "message" && candidate.role === "developer") {
+    const developerTurnId = itemTurnId(candidate);
+    const serverOwnedId = typeof candidate.id === "string" && candidate.id.length > 0;
+    if (developerTurnId === undefined ? !serverOwnedId : developerTurnId !== metadataTurnId) return undefined;
+    candidateIndex -= 1;
+    candidate = record(input[candidateIndex]);
+  }
+  if (candidate?.type !== "message" || candidate.role !== "user" || typeof candidate.id !== "string" || !candidate.id) return undefined;
   const candidateTurnId = itemTurnId(candidate);
-  if ((userTurnId !== undefined && userTurnId !== metadataTurnId)
-    || (candidateTurnId !== undefined && candidateTurnId !== metadataTurnId)) return undefined;
+  if (candidateTurnId !== undefined && candidateTurnId !== metadataTurnId) return undefined;
 
   const content = Array.isArray(candidate.content) ? candidate.content : [];
   for (const part of content) {
@@ -241,33 +296,12 @@ function canonicalMetadataEnvironmentBeforeUser(
     if (typeof text !== "string") continue;
     const trimmed = text.trim();
     if (!/^<environment_context>[\s\S]*<\/environment_context>$/.test(trimmed)) continue;
-
-    let cwdMatches: string[];
-    try {
-      cwdMatches = environmentCwdMatches(trimmed, normalizedMetadataRoots)
-        .map(value => decodeXmlText(value.trim()));
-    } catch {
-      continue;
-    }
-    if (cwdMatches.length !== 1 || !isAbsolute(cwdMatches[0]!)) continue;
-    const rootMatches = [...trimmed.matchAll(/<workspace_roots>[\s\S]*?<\/workspace_roots>/g)]
-      .flatMap(section => [...section[0].matchAll(/<root>([^<]+)<\/root>/g)].map(match => decodeXmlText(match[1]!.trim())));
-    const declaredRootValues = rootMatches.length > 0 ? rootMatches : cwdMatches;
-    if (declaredRootValues.some(path => !isAbsolute(path))) continue;
-    const declaredRoots = [...new Set(declaredRootValues.map(pathIdentity))];
-    const cwd = pathIdentity(cwdMatches[0]!);
     // Current Codex stamps server-owned item IDs but not per-item turn IDs on the initial request,
     // and canonical workspaces contains Git enrichment rather than filesystem authority. Bind the
-    // adjacent context to canonical turn/sandbox metadata; when Git roots are present, require the
-    // primary cwd to agree with them as an additional check.
-    if (normalizedMetadataRoots.length > 0
-      && !normalizedMetadataRoots.some(root => matchesPath(root, cwd))) continue;
-    if (requireMetadataBoundRoots && (
-      normalizedMetadataRoots.length === 0
-      || declaredRoots.some(root => !normalizedMetadataRoots.some(metadataRoot => matchesPath(metadataRoot, root)))
-    )) continue;
-    if (!declaredRoots.some(root => matchesPath(root, cwd))) continue;
-    if (!sandboxMetadataMatchesEnvironment(metadata.sandbox, trimmed)) continue;
+    // structurally adjacent context (allowing only provenance-checked developer messages) to
+    // canonical turn/sandbox metadata; when Git roots are present, require the primary cwd to agree
+    // with them as an additional check.
+    if (!environmentMatchesCanonicalMetadata(trimmed, metadata, requireMetadataBoundRoots)) continue;
     return trimmed;
   }
   return undefined;
@@ -321,16 +355,37 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
 
   // Codex can resume a local task by explicitly replaying its native transcript instead of
   // sending previous_response_id. In that shape, accept a historical environment/user pair only
-  // when both items carry the same native turn_id and completed assistant output separates that
-  // historical turn from the active user. A user-authored <environment_context> inside one chat
-  // message cannot satisfy this provenance structure.
+  // when both items carry the same native turn_id and either completed assistant output separates
+  // that turn from the active user or the complete historical pair is server-owned and its
+  // filesystem authority still matches the current thread's canonical workspace/sandbox metadata.
+  // A user-authored <environment_context> inside one chat message cannot satisfy this structure.
   const currentTurnId = typeof turnId === "string" ? turnId : undefined;
-  for (let index = activeUserIndex - 1; index > 0; index -= 1) {
-    const historicalTurnId = itemTurnId(input[index]);
-    if (!historicalTurnId || historicalTurnId === currentTurnId) continue;
-    const historical = environmentBeforeUser(input, index);
-    if (!historical) continue;
-    if (hasAssistantOutputBetween(input, index + 1, activeUserIndex)) return historical;
+  const currentThreadId = typeof metadata?.thread_id === "string" && metadata.thread_id.trim()
+    ? metadata.thread_id
+    : undefined;
+  const activeUser = record(input[activeUserIndex]);
+  const activeUserOwned = activeUser?.type === "message"
+    && activeUser.role === "user"
+    && typeof activeUser.id === "string"
+    && activeUser.id.length > 0
+    && itemTurnId(activeUser) === currentTurnId;
+  if (currentTurnId && itemTurnId(activeUser) === currentTurnId) {
+    for (let index = activeUserIndex - 1; index > 0; index -= 1) {
+      const historicalUser = record(input[index]);
+      const historicalTurnId = itemTurnId(historicalUser);
+      if (!historicalTurnId || historicalTurnId === currentTurnId) continue;
+      const historical = environmentBeforeUser(input, index);
+      if (!historical) continue;
+      if (hasAssistantOutputBetween(input, index + 1, activeUserIndex)) return historical;
+      if (!currentThreadId || !metadata || !activeUserOwned) continue;
+      const bounded = canonicalMetadataEnvironmentBeforeUser(
+        input,
+        index,
+        { ...metadata, turn_id: historicalTurnId, sandbox: canonicalSandboxMetadata(metadata) },
+        true,
+      );
+      if (bounded === historical) return bounded;
+    }
   }
   return undefined;
 }

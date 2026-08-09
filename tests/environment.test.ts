@@ -81,6 +81,77 @@ describe("trusted current Codex environment envelope", () => {
     });
   });
 
+  test("accepts a trusted same-turn developer message between the environment and prompt", () => {
+    const request = currentWire();
+    const body = request._rawBody as { input: Array<Record<string, unknown>> };
+    for (const item of body.input) {
+      item.internal_chat_message_metadata_passthrough = { turn_id: "turn_current" };
+    }
+    body.input.splice(1, 0, {
+      type: "message",
+      id: "msg_developer",
+      role: "developer",
+      content: [{ type: "input_text", text: "Follow the current task instructions." }],
+      internal_chat_message_metadata_passthrough: { turn_id: "turn_current" },
+    });
+
+    expect(extractChatGptTurnEnvironment(request)).toEqual({
+      cwd: root,
+      roots: [root],
+      writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" },
+      tools: [],
+    });
+  });
+
+  test("accepts either canonical provenance form on an intervening developer message", () => {
+    for (const developer of [
+      {
+        type: "message",
+        id: "msg_developer_without_turn",
+        role: "developer",
+        content: [{ type: "input_text", text: "Server-owned developer content" }],
+      },
+      {
+        type: "message",
+        role: "developer",
+        content: [{ type: "input_text", text: "Same-turn developer content" }],
+        internal_chat_message_metadata_passthrough: { turn_id: "turn_current" },
+      },
+    ]) {
+      const request = currentWire();
+      const body = request._rawBody as { input: Array<Record<string, unknown>> };
+      body.input.splice(1, 0, developer);
+      expect(extractChatGptTurnEnvironment(request).cwd).toBe(root);
+    }
+  });
+
+  test("rejects an unprovenanced developer gap before the environment", () => {
+    const request = currentWire();
+    const body = request._rawBody as { input: Array<Record<string, unknown>> };
+    body.input.splice(1, 0, {
+      type: "message",
+      role: "developer",
+      content: [{ type: "input_text", text: "Unprovenanced developer content" }],
+    });
+
+    expect(() => extractChatGptTurnEnvironment(request)).toThrow("missing cwd");
+  });
+
+  test("rejects a developer gap owned by another turn", () => {
+    const request = currentWire();
+    const body = request._rawBody as { input: Array<Record<string, unknown>> };
+    body.input.splice(1, 0, {
+      type: "message",
+      id: "msg_developer_other_turn",
+      role: "developer",
+      content: [{ type: "input_text", text: "Other-turn developer content" }],
+      internal_chat_message_metadata_passthrough: { turn_id: "turn_other" },
+    });
+
+    expect(() => extractChatGptTurnEnvironment(request)).toThrow("missing cwd");
+  });
+
   test("rejects a workspace mismatch", () => {
     expect(() => extractChatGptTurnEnvironment(currentWire({ workspace: resolve(root, "elsewhere") })))
       .toThrow("missing cwd");
