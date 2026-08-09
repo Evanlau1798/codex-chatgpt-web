@@ -12,6 +12,7 @@ interface ClaudeClientMetadata {
 
 const ENGLISH_PROGRESS = /^(?:(?:i(?:'m| am)|we(?:'re| are))\s+)?(?:gathering|reviewing|inspecting|checking|analyzing|analysing|reading|searching|running|verifying|investigating|examining|collecting|comparing|preparing|loading|exploring|scanning|evaluating)\b/i;
 const CHINESE_PROGRESS = /^(?:(?:我(?:會先|正在|正)?|正在|先)\s*)?(?:蒐集|收集|檢查|審查|分析|閱讀|搜尋|執行|驗證|調查|比較|準備|載入|掃描|評估)/;
+const MISSING_TOOL = /(?:沒有提供可用|沒有可用|未提供).{0,24}(?:原生命令|命令執行|native (?:shell|command|exec))|native (?:shell|command|exec)(?: tool| gateway)?.{0,40}(?:unavailable|not available|timed out)/i;
 
 function progressOnly(answer: string): boolean {
   const normalized = answer.trim();
@@ -58,9 +59,17 @@ export function claudeBrowserTurnOptions(parsed: CodexParsedRequest, upstreamRet
   const retryPromptForAnswer: AnswerRetry | undefined = upstreamRetry || subagent
     ? (answer, attempt) => {
         const upstream = upstreamRetry?.(answer, attempt);
-        if (upstream || !subagent || !progressOnly(answer)) return upstream;
-        if (attempt > 1) throw new Error("ChatGPT Web subagent completed with only a progress update after retry");
-        return "Your previous response was only a progress update, not the requested subagent result. Continue the task now, use tools as needed, and return the requested result or an explicit no-findings result. Do not finish with another plan or progress update.";
+        if (upstream || !subagent) return upstream;
+        const refusedTools = Boolean(parsed.context.tools?.length)
+          && !parsed.context.messages.some(message => message.role === "toolResult")
+          && MISSING_TOOL.test(answer);
+        if (!refusedTools && !progressOnly(answer)) return undefined;
+        if (attempt > 1) throw new Error(refusedTools
+          ? "ChatGPT Web subagent refused advertised client tools after retry"
+          : "ChatGPT Web subagent completed with only a progress update after retry");
+        return refusedTools
+          ? "Advertised client tools are available in this turn. Invoke the appropriate tool now and return its actual result. Do not claim the native command or shell gateway is missing unless a tool invocation returns that concrete error."
+          : "Your previous response was only a progress update, not the requested subagent result. Continue the task now, use tools as needed, and return the requested result or an explicit no-findings result. Do not finish with another plan or progress update.";
       }
     : undefined;
   return {

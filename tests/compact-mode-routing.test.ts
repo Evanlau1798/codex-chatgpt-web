@@ -127,7 +127,7 @@ describe("compact mode routing", () => {
     }
   });
 
-  test("retries a progress-only subagent answer without retaining its browser tab", async () => {
+  test("retries incomplete subagent answers without retaining its browser tab", async () => {
     const config = provider(false);
     const worker = ChatGptBrowserWorker.forProvider(config);
     const originalRun = worker.run.bind(worker);
@@ -139,6 +139,7 @@ describe("compact mode routing", () => {
     };
     const request = compactRequest();
     delete request._compactionRequest;
+    request.context.tools = [{ name: "PowerShell", description: "Run a command", parameters: {} }];
     const rawBody = request._rawBody as {
       client_metadata: Record<string, unknown>;
       input: Array<{ internal_chat_message_metadata_passthrough?: { turn_id?: string } }>;
@@ -163,6 +164,30 @@ describe("compact mode routing", () => {
       expect(() => browserTurn?.retryPromptForAnswer?.("Gathering the same diff", 2)).toThrow(
         "subagent completed with only a progress update",
       );
+      expect(browserTurn?.retryPromptForAnswer?.(
+        "無法執行 git status：目前這個 Codex turn 沒有提供可用的原生命令執行工具。",
+        1,
+      )).toContain("Advertised client tools are available");
+      expect(browserTurn?.retryPromptForAnswer?.(
+        "The native shell gateway is unavailable, so I could not run the command.",
+        1,
+      )).toContain("Advertised client tools are available");
+      expect(() => browserTurn?.retryPromptForAnswer?.(
+        "重試後仍未提供 native command/exec 工具。",
+        2,
+      )).toThrow("subagent refused advertised client tools");
+      request.context.messages.push({
+        role: "toolResult",
+        toolCallId: "call_failed",
+        toolName: "PowerShell",
+        content: "Codex Native connection timed out",
+        isError: true,
+        timestamp: Date.now(),
+      });
+      expect(browserTurn?.retryPromptForAnswer?.(
+        "Codex Native 連線逾時，因此無法執行命令。",
+        1,
+      )).toBeUndefined();
       expect(browserTurn?.retryPromptForAnswer?.("No findings.", 1)).toBeUndefined();
     } finally {
       worker.run = originalRun;
