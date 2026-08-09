@@ -1451,7 +1451,7 @@ describe("ChatGPT outer-native harness v4", () => {
       // ChatGPT caches the complete tools/list contract under a connector identity.
       // An intentional hash change therefore requires an explicit connector refresh or identity migration.
       expect(createHash("sha256").update(canonicalJson(publicConnectorAbi)).digest("hex"))
-        .toBe("5cb59b378c7d1939e260a2b4a60f58e22da31208fe09c2cc17a2cf31eb5ff3ad");
+        .toBe("22453f12f727e5ae39765b0fb16632a85cef840f7337ae5277de7981c10f0cfe");
       for (const tool of listed.tools) {
         const properties = tool.inputSchema.properties as Record<string, unknown>;
         expect(properties.turn_token).toEqual({ type: "string", minLength: 20, maxLength: 256 });
@@ -1503,7 +1503,8 @@ describe("ChatGPT outer-native harness v4", () => {
       expect(execRequests.some(request => request.input?.includes(JSON.stringify({ cmd: "pwd", workdir: tempRoot })))).toBe(true);
       expect(execRequests.some(request => request.input?.includes(JSON.stringify({ cmd: "git status --short", workdir: tempRoot })))).toBe(true);
       for (const request of execRequests) {
-        expect(request.input).toContain('tools["exec_command"]');
+        expect(request.input).toContain("typeof tools.exec_command");
+        expect(request.input).toContain("typeof tools.shell_command");
         const output = request.input?.includes('git status --short') ? "clean" : tempRoot;
         broker.completeTool(token, request.callId, toolResult({ output, exit_code: 0 }));
       }
@@ -1741,7 +1742,8 @@ describe("ChatGPT outer-native harness v4", () => {
         }),
       ]);
       expect(execRequest).toMatchObject({ wireName: "exec", freeform: true });
-      expect(execRequest?.input).toContain('tools["exec_command"]');
+      expect(execRequest?.input).toContain("typeof tools.exec_command");
+      expect(execRequest?.input).toContain("typeof tools.shell_command");
       expect(execRequest?.input).toContain(JSON.stringify({ cmd: "pwd", workdir: tempRoot }));
       broker.completeTool(token, execRequest!.callId, toolResult({ output: tempRoot, exit_code: 0 }));
       expect((await execPromise).structuredContent).toEqual({ output: tempRoot, exit_code: 0 });
