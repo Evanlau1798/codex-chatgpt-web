@@ -3,6 +3,7 @@ const net = require("node:net");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { readJsonFile } = require("./json-file.cjs");
 const { redactText } = require("./logging.cjs");
 const {
   DETACH_OWNED_CHILD,
@@ -59,10 +60,6 @@ function loopbackHealthBaseURL(value) {
   } catch {
     return null;
   }
-}
-
-function readJson(pathname) {
-  return JSON.parse(fs.readFileSync(pathname, "utf8"));
 }
 
 function errorMessage(error) {
@@ -303,12 +300,12 @@ class RuntimeSupervisor {
 
   readConfig() {
     if (!fs.existsSync(this.configPath)) return null;
-    return validateConfig(readJson(this.configPath), this.browserDescriptorPath);
+    return validateConfig(readJsonFile(this.configPath), this.browserDescriptorPath);
   }
 
   readSetupConfig() {
     if (!fs.existsSync(this.configPath)) return null;
-    const config = readJson(this.configPath);
+    const config = readJsonFile(this.configPath);
     if (!config || typeof config !== "object" || Array.isArray(config)) {
       throw new Error("Runtime configuration is not an object");
     }
@@ -322,7 +319,7 @@ class RuntimeSupervisor {
   readState() {
     if (!fs.existsSync(this.statePath)) return null;
     try {
-      const state = readJson(this.statePath);
+      const state = readJsonFile(this.statePath);
       const validPid = (value) => value === null || (Number.isInteger(value) && value > 0);
       if (!state
         || state.version !== 1

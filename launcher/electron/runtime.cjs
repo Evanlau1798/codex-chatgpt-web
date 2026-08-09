@@ -4,6 +4,7 @@ const os = require("node:os");
 const { randomBytes } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { readJsonFile } = require("./json-file.cjs");
 const {
   connectorNameForSetup,
   CURRENT_CONNECTOR_NAME,
@@ -289,7 +290,7 @@ class RuntimeHost {
   launcherControlEnvironment() {
     let descriptor;
     try {
-      descriptor = JSON.parse(fs.readFileSync(this.browserDescriptorPath, "utf8"));
+      descriptor = readJsonFile(this.browserDescriptorPath);
     } catch (error) {
       throw new Error(
         `Launcher browser ownership descriptor is unavailable: ${error instanceof Error ? error.message : String(error)}`,
@@ -357,11 +358,11 @@ class RuntimeHost {
       if (!markerStat.isFile() || markerStat.size <= 0 || markerStat.size > 64 * 1024) {
         throw new Error("System-browser login returned an invalid verification marker");
       }
-      const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
+      const marker = readJsonFile(markerPath);
       if (marker?.version !== 1 || marker?.authenticated !== true || typeof marker?.verifiedAt !== "string") {
         throw new Error("System-browser login did not return authenticated verification evidence");
       }
-      const storageState = JSON.parse(fs.readFileSync(storageStatePath, "utf8"));
+      const storageState = readJsonFile(storageStatePath);
       return { storageState, cleanup };
     } catch (error) {
       await cleanup();

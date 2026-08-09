@@ -3,6 +3,7 @@ const path = require("node:path");
 const { randomBytes } = require("node:crypto");
 const { WebContentsView, shell } = require("electron");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { readJsonFile } = require("./json-file.cjs");
 const {
   runBrowserHelperOperation,
   verifyConnectorWithBrowserHelper,
@@ -1525,7 +1526,7 @@ class BrowserHost {
 
   destroy() {
     try {
-      const current = JSON.parse(fs.readFileSync(this.descriptorPath, "utf8"));
+      const current = readJsonFile(this.descriptorPath);
       if (current.pid === process.pid) fs.rmSync(this.descriptorPath, { force: true });
     } catch {}
     this.clearHomeNavigationTimeout();

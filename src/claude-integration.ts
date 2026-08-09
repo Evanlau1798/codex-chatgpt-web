@@ -2,7 +2,7 @@ import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AppConfig } from "./config";
-import { atomicWriteFile, expandUserPath, getConfigDir } from "./config";
+import { atomicWriteFile, expandUserPath, getConfigDir, preserveUtf8Bom, stripUtf8Bom } from "./config";
 import { preferredClaudeGatewayModelIds } from "./messages/models";
 
 type JsonObject = Record<string, unknown>;
@@ -97,10 +97,11 @@ function removeHook(settings: JsonObject, hook: JsonObject): void {
   else delete settings.hooks;
 }
 
-function readSettings(path: string): { exists: boolean; value: JsonObject } {
-  if (!existsSync(path)) return { exists: false, value: {} };
+function readSettings(path: string): { exists: boolean; value: JsonObject; raw: string } {
+  if (!existsSync(path)) return { exists: false, value: {}, raw: "" };
   try {
-    return { exists: true, value: object(JSON.parse(readFileSync(path, "utf8")), "Claude settings") };
+    const raw = readFileSync(path, "utf8");
+    return { exists: true, value: object(JSON.parse(stripUtf8Bom(raw)), "Claude settings"), raw };
   } catch (error) {
     throw new Error(`Cannot read Claude settings ${path}: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -141,10 +142,15 @@ function restoreSnapshot(file: FileSnapshot): void {
   else rmSync(file.path, { force: true });
 }
 
-function writeWithCompensation(settingsPath: string, settings: JsonObject, journal: ClaudeIntegrationJournal): void {
+function writeWithCompensation(
+  settingsPath: string,
+  settings: JsonObject,
+  journal: ClaudeIntegrationJournal,
+  original: string,
+): void {
   const files = [snapshot(settingsPath), snapshot(getClaudeIntegrationJournalPath())];
   try {
-    atomicWriteFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+    atomicWriteFile(settingsPath, preserveUtf8Bom(`${JSON.stringify(settings, null, 2)}\n`, original));
     atomicWriteFile(getClaudeIntegrationJournalPath(), `${JSON.stringify(journal, null, 2)}\n`);
   } catch (error) {
     const failures: string[] = [];
@@ -159,7 +165,7 @@ function writeWithCompensation(settingsPath: string, settings: JsonObject, journ
 function readJournal(): ClaudeIntegrationJournal | undefined {
   const path = getClaudeIntegrationJournalPath();
   if (!existsSync(path)) return undefined;
-  const value = object(JSON.parse(readFileSync(path, "utf8")), "Claude integration journal") as unknown as ClaudeIntegrationJournal;
+  const value = object(JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))), "Claude integration journal") as unknown as ClaudeIntegrationJournal;
   if (value.version !== 1 || typeof value.settingsPath !== "string" || !value.installed || !value.previous) {
     throw new Error(`Unsupported Claude integration journal: ${path}`);
   }
@@ -265,7 +271,7 @@ export function installClaudeIntegration(
     installed,
     previous,
   };
-  writeWithCompensation(settingsPath, current.value, journal);
+  writeWithCompensation(settingsPath, current.value, journal, current.raw);
   return journal;
 }
 
@@ -285,7 +291,10 @@ export function uninstallClaudeIntegration(): { changed: boolean } {
   const files = [snapshot(journal.settingsPath), snapshot(getClaudeIntegrationJournalPath())];
   try {
     if (!journal.settingsExisted && Object.keys(current.value).length === 0) rmSync(journal.settingsPath, { force: true });
-    else atomicWriteFile(journal.settingsPath, `${JSON.stringify(current.value, null, 2)}\n`);
+    else atomicWriteFile(
+      journal.settingsPath,
+      preserveUtf8Bom(`${JSON.stringify(current.value, null, 2)}\n`, current.raw),
+    );
     rmSync(getClaudeIntegrationJournalPath(), { force: true });
   } catch (error) {
     for (const file of files.reverse()) restoreSnapshot(file);

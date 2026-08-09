@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { atomicWriteFile } from "../../config";
+import { atomicWriteFile, stripUtf8Bom } from "../../config";
 import { estimateTokens } from "../../lib/token-estimate";
 import { parseRequest } from "../../responses/parser";
 import type { CodexParsedRequest } from "../../types";
@@ -335,7 +335,7 @@ export class ChatGptLunaCheckpointStore {
     if (this.loaded) return;
     this.loaded = true;
     if (!this.path || !existsSync(this.path)) return;
-    const payload = JSON.parse(readFileSync(this.path, "utf8")) as Partial<StoredChatGptLunaCheckpointFile>;
+    const payload = JSON.parse(stripUtf8Bom(readFileSync(this.path, "utf8"))) as Partial<StoredChatGptLunaCheckpointFile>;
     if (payload.version !== 1 || !Array.isArray(payload.checkpoints)) {
       throw new Error(`Invalid ChatGPT Luna checkpoint store: ${this.path}`);
     }

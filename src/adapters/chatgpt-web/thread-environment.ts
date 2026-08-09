@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import { atomicWriteFile } from "../../config";
+import { atomicWriteFile, stripUtf8Bom } from "../../config";
 import type { CodexParsedRequest } from "../../types";
 import {
   extractChatGptTurnEnvironment,
@@ -169,7 +169,7 @@ export class ChatGptThreadEnvironmentStore {
     if (this.loaded) return;
     this.loaded = true;
     if (!this.path || !existsSync(this.path)) return;
-    const parsed = JSON.parse(readFileSync(this.path, "utf8")) as Partial<StoredThreadEnvironmentFile>;
+    const parsed = JSON.parse(stripUtf8Bom(readFileSync(this.path, "utf8"))) as Partial<StoredThreadEnvironmentFile>;
     const rawThreads = record(parsed.threads);
     if (parsed.version !== 1 || !rawThreads) {
       throw new Error(`Invalid ChatGPT thread environment store: ${this.path}`);

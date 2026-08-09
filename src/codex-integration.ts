@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { AppConfig } from "./config";
-import { atomicWriteFile, expandUserPath, getConfigDir } from "./config";
+import { atomicWriteFile, expandUserPath, getConfigDir, stripUtf8Bom } from "./config";
 
 const MANAGED_COMMENT = "# Managed by codex-chatgpt-web; `codex-chatgpt-web uninstall` restores prior values.";
 const MANAGED_REMOTE_COMPACTION_LINE =
@@ -314,7 +314,8 @@ function textFormat(text: string): NonNullable<CodexIntegrationJournal["format"]
 }
 
 function splitLines(text: string): string[] {
-  return text.length > 0 ? text.replace(/\r?\n$/, "").split(/\r?\n/) : [];
+  const normalized = stripUtf8Bom(text);
+  return normalized.length > 0 ? normalized.replace(/\r?\n$/, "").split(/\r?\n/) : [];
 }
 
 /**
@@ -324,9 +325,12 @@ function splitLines(text: string): string[] {
 interface CodexConfigDocument {
   lines: string[];
   endings: string[];
+  utf8Bom: boolean;
 }
 
 function parseDocument(text: string): CodexConfigDocument {
+  const utf8Bom = text.startsWith("\uFEFF");
+  text = stripUtf8Bom(text);
   const lines: string[] = [];
   const endings: string[] = [];
   const lineBreak = /\r\n|\n|\r/g;
@@ -341,11 +345,12 @@ function parseDocument(text: string): CodexConfigDocument {
     lines.push(text.slice(start));
     endings.push("");
   }
-  return { lines, endings };
+  return { lines, endings, utf8Bom };
 }
 
 function renderDocument(document: CodexConfigDocument): string {
-  return document.lines.map((line, index) => `${line}${document.endings[index] ?? ""}`).join("");
+  const text = document.lines.map((line, index) => `${line}${document.endings[index] ?? ""}`).join("");
+  return document.utf8Bom ? `\uFEFF${text}` : text;
 }
 
 function dominantLineEnding(document: CodexConfigDocument): string {
@@ -958,7 +963,7 @@ function restoreLegacyV2(text: string, journal: LegacyCodexIntegrationJournal): 
 function readJournal(): AnyCodexIntegrationJournal | undefined {
   const path = getCodexJournalPath();
   if (!existsSync(path)) return undefined;
-  const value = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const value = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
   if (value.version === 6
     && typeof value.active === "boolean"
     && value.installed

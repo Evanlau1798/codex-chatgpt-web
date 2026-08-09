@@ -10,7 +10,7 @@ import {
   type Page,
 } from "playwright-core";
 import type { AppConfig } from "./config";
-import { atomicWriteFile } from "./config";
+import { atomicWriteFile, stripUtf8Bom } from "./config";
 import {
   assertAuthenticatedChatGptPage,
   assertTemporaryChatPage,
@@ -282,7 +282,7 @@ export function storedBrowserLoginCapabilities(
 ): Partial<ChatGptWebAccountCapabilities> {
   if (!browserLoginStateExists(config)) return {};
   try {
-    const marker = JSON.parse(readFileSync(loginVerificationMarkerPath(config.storageStatePath), "utf8")) as Partial<LoginVerificationMarker>;
+    const marker = JSON.parse(stripUtf8Bom(readFileSync(loginVerificationMarkerPath(config.storageStatePath), "utf8"))) as Partial<LoginVerificationMarker>;
     return {
       ...(typeof marker.solAvailable === "boolean" ? { solAvailable: marker.solAvailable } : {}),
       ...(typeof marker.proAvailable === "boolean" ? { proAvailable: marker.proAvailable } : {}),
@@ -406,7 +406,7 @@ export function browserLoginStateExists(config: AppConfig): boolean {
   const markerPath = loginVerificationMarkerPath(config.storageStatePath);
   if (!existsSync(markerPath)) return false;
   try {
-    const marker = JSON.parse(readFileSync(markerPath, "utf8")) as Partial<LoginVerificationMarker>;
+    const marker = JSON.parse(stripUtf8Bom(readFileSync(markerPath, "utf8"))) as Partial<LoginVerificationMarker>;
     return marker.version === 1 && marker.authenticated === true && typeof marker.verifiedAt === "string";
   } catch {
     return false;
