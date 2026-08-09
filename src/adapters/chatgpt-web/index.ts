@@ -4,7 +4,7 @@ import { defaultBrokerEndpoint, expandUserPath, resolveBrokerEndpoint } from "..
 import { withStallTimeout } from "../../stall-timeout";
 import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
 import type { ProviderAdapter } from "../base";
-import { ChatGptWebAdapterError } from "./adapter-error";
+import { ChatGptWebAdapterError, chatGptSessionFailureDisposition } from "./adapter-error";
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { claudeBrowserTurnOptions } from "./claude-subagent";
 import {
@@ -468,7 +468,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           }
         });
       } catch (error) {
-        if (error instanceof ChatGptWebAdapterError && !error.retryable) {
+        if (chatGptSessionFailureDisposition(error) === "replay") {
           // A deterministic request failure remains replayable so a native reconnect cannot burn
           // another browser attempt. Every other failure retires the browser session: client
           // disconnects, stage failures, and retryable ChatGPT errors must start a fresh surface

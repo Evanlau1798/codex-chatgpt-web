@@ -32,6 +32,7 @@ type HelperMessage =
       errorType?: string;
       code?: string;
       retryable?: boolean;
+      retireSession?: boolean;
     };
 
 function parseHelperMessage(line: string): HelperMessage {
@@ -97,6 +98,7 @@ function parseHelperMessage(line: string): HelperMessage {
     const errorType = message.errorType;
     const code = message.code;
     const retryable = message.retryable;
+    const retireSession = message.retireSession;
     const structured = status !== undefined
       || errorType !== undefined
       || code !== undefined
@@ -112,6 +114,7 @@ function parseHelperMessage(line: string): HelperMessage {
         || typeof code !== "string"
         || !code
         || typeof retryable !== "boolean"
+        || (retireSession !== undefined && typeof retireSession !== "boolean")
       ))) {
       throw new Error("Launcher browser helper error payload is invalid");
     }
@@ -125,6 +128,7 @@ function parseHelperMessage(line: string): HelperMessage {
         errorType: errorType as string,
         code: code as string,
         retryable: retryable as boolean,
+        ...(retireSession === true ? { retireSession: true } : {}),
       } : {}),
     };
   }
@@ -350,6 +354,7 @@ export class LauncherBrowserHelperClient {
           errorType: message.errorType!,
           code: message.code!,
           retryable: message.retryable!,
+          retireSession: message.retireSession === true,
         })
         : message.name === "AbortError"
           ? new DOMException(message.message, "AbortError")

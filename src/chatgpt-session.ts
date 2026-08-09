@@ -32,6 +32,18 @@ export const CHATGPT_USER_TURN_SELECTOR = [
   '[data-testid^="conversation-turn-"]:has([data-message-author-role="user"])',
 ].join(", ");
 
+export function isTemporaryChatGptUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const expected = new URL(CHATGPT_TEMPORARY_CHAT_URL);
+    return url.origin === expected.origin
+      && url.pathname === expected.pathname
+      && url.searchParams.get("temporary-chat") === "true";
+  } catch {
+    return false;
+  }
+}
+
 export interface ChatGptEffortSliderState {
   min: number;
   max: number;
@@ -77,9 +89,7 @@ export async function assertAuthenticatedChatGptPage(page: Page): Promise<void> 
 }
 
 export async function assertTemporaryChatPage(page: Page): Promise<void> {
-  const url = new URL(page.url());
-  const expected = new URL(CHATGPT_TEMPORARY_CHAT_URL);
-  if (url.origin !== expected.origin || url.pathname !== expected.pathname || url.searchParams.get("temporary-chat") !== "true") {
+  if (!isTemporaryChatGptUrl(page.url())) {
     throw new Error(`ChatGPT left the isolated Temporary Chat surface (${page.url()})`);
   }
 }

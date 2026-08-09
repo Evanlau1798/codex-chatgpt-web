@@ -42,6 +42,7 @@ import {
   CHATGPT_TEMPORARY_CHAT_URL,
   CHATGPT_USER_TURN_SELECTOR,
   detectChatGptAccountCapabilities,
+  isTemporaryChatGptUrl,
   parseChatGptEffortSliderState,
 } from "../../chatgpt-session";
 import { loginVerificationMarkerPath } from "../../browser-login";
@@ -57,7 +58,7 @@ import {
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
-import { ChatGptWebAdapterError } from "./adapter-error";
+import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "./adapter-error";
 import {
   ChatGptLunaCheckpointStream,
   type CapturedChatGptLunaCheckpoint,
@@ -413,6 +414,7 @@ interface ChatGptResponseDomSnapshot {
   responsePresent: boolean;
   visibleText: string;
   fullHtml: string;
+  plainTextFallback: string;
   markdownSegments: ChatGptMarkdownSegment[];
   completionActionVisible: boolean;
   traceBlocks: ChatGptVisibleTraceBlock[];
@@ -422,6 +424,7 @@ const absentResponseDomSnapshot = (): ChatGptResponseDomSnapshot => ({
   responsePresent: false,
   visibleText: "",
   fullHtml: "",
+  plainTextFallback: "",
   markdownSegments: [],
   completionActionVisible: false,
   traceBlocks: [],
@@ -740,12 +743,27 @@ export class ChatGptBrowserWorker {
     if (useHelper) {
       this.launcherHelper ??= new LauncherBrowserHelperClient(this.config);
     }
-    const run = Promise.resolve().then(() => useHelper ? this.launcherHelper!.run(turn) : this.runExclusive(turn));
+    const run = Promise.resolve().then(() => (
+      useHelper ? this.launcherHelper!.run(turn) : this.runWithSurfaceRetry(turn)
+    ));
     this.activeRuns.set(turn.traceId, run);
     void run.finally(() => {
       if (this.activeRuns.get(turn.traceId) === run) this.activeRuns.delete(turn.traceId);
     }).catch(() => {});
     return run;
+  }
+
+  private async runWithSurfaceRetry(turn: BrowserTurn): Promise<string> {
+    try {
+      return await this.runExclusive(turn);
+    } catch (error) {
+      if (!(error instanceof ChatGptWebAdapterError)
+        || error.code !== "chatgpt_surface_changed"
+        || !error.retryable
+        || turn.abortSignal?.aborted) throw error;
+      console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying once on a fresh surface`);
+      return this.runExclusive(turn);
+    }
   }
 
   verifyConnector(): Promise<string> {
@@ -1479,12 +1497,28 @@ export class ChatGptBrowserWorker {
         });
       });
       const rendered = renderedRoots.at(-1);
+      const completionActions = [...root.querySelectorAll<HTMLElement>(completionActionSelector)]
+        .filter(renderedInDom);
       const completionAction = rendered
-        ? [...root.querySelectorAll<HTMLElement>(completionActionSelector)]
-          .filter(renderedInDom)
-          .find(candidate => !rendered.contains(candidate)
-            && Boolean(rendered.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING))
-        : undefined;
+        ? completionActions.find(candidate => !rendered.contains(candidate)
+          && Boolean(rendered.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING))
+        : completionActions.at(-1);
+      const plainTextFallback = renderedRoots.length === 0 && completionAction ? (() => {
+        const blocks = new Set(["ADDRESS", "ARTICLE", "BLOCKQUOTE", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "P", "PRE", "TR"]);
+        const collect = (node: Node): string => {
+          if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+          if (!(node instanceof HTMLElement)
+            || node.matches('button, script, style, [aria-hidden="true"], [data-streaming-response-status]')) return "";
+          const text = [...node.childNodes].map(collect).join("");
+          return blocks.has(node.tagName) ? `${text}\n` : text;
+        };
+        return collect(root)
+          .split("\n")
+          .map(line => line.replace(/[\t ]+/g, " ").trim())
+          .filter(Boolean)
+          .join("\n")
+          .trim();
+      })() : "";
       const completionActionSet = new Set(completionAction ? [completionAction] : []);
       const candidates = new Map<HTMLElement, ChatGptVisibleTraceBlock["kind"]>();
       renderedRoots.forEach(candidate => candidates.set(candidate, "answer"));
@@ -1568,8 +1602,9 @@ export class ChatGptBrowserWorker {
       }));
       return {
         responsePresent: true,
-        visibleText: renderedRoots.map(candidate => candidate.innerText.trim()).filter(Boolean).join("\n\n"),
-        fullHtml: renderedRoots.map(candidate => candidate.innerHTML).join(""),
+        visibleText: renderedRoots.map(candidate => candidate.innerText.trim()).filter(Boolean).join("\n\n") || plainTextFallback,
+        fullHtml: renderedRoots.map(candidate => candidate.innerHTML).join("") || plainTextFallback,
+        plainTextFallback,
         markdownSegments,
         completionActionVisible: completionAction !== undefined,
         traceBlocks,
@@ -1801,7 +1836,7 @@ export class ChatGptBrowserWorker {
         }
         const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
         const initialResponseTurnCount = await responseTurns.count();
-        const responseTurn = responseTurns.nth(initialResponseTurnCount);
+        let responseTurn = responseTurns.nth(initialResponseTurnCount);
         const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
         const initialUserTurnCount = await userTurns.count();
         await this.runStage(turn.traceId, "send", browserStageTimeouts.send, async (stageSignal) => {
@@ -1851,7 +1886,7 @@ export class ChatGptBrowserWorker {
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
         for (;;) {
         if (page.isClosed()) {
-          throw new Error("ChatGPT browser tab was closed; the Codex turn was terminated");
+          throw chatGptWebSurfaceError("ChatGPT browser tab was closed while the turn was active", emittedText.length > 0);
         }
         if (turn.abortSignal?.aborted) {
           const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
@@ -1864,6 +1899,21 @@ export class ChatGptBrowserWorker {
         if (Date.now() - lastHeartbeat >= 10_000) {
           turn.onHeartbeat?.();
           lastHeartbeat = Date.now();
+        }
+
+        if (!isTemporaryChatGptUrl(page.url())) {
+          throw chatGptWebSurfaceError(
+            `ChatGPT left the isolated Temporary Chat surface while the turn was active (${page.url()})`,
+            emittedText.length > 0,
+          );
+        }
+
+        if (capturedResponse && await responseTurn.count().catch(() => 0) === 0) {
+          const rebound = responseTurns.last();
+          if (await rebound.count().catch(() => 0) > 0) {
+            responseTurn = rebound;
+            await diagnostics.capture(page, "response-dom-rebound");
+          }
         }
 
         await throwIfChatGptSessionFailureAlert(page);
@@ -1902,7 +1952,7 @@ export class ChatGptBrowserWorker {
             currentText: snapshot.visibleText,
             completionActionVisible: snapshot.completionActionVisible,
           });
-          if (domError) throw new Error(domError);
+          if (domError) throw chatGptWebSurfaceError(domError, emittedText.length > 0);
           if (completionTracker.update({
             responsePresent: snapshot.responsePresent,
             running,
@@ -1914,7 +1964,9 @@ export class ChatGptBrowserWorker {
               throw new Error("ChatGPT selected mode rejected the Codex Native MCP tool (api_tool unavailable)");
             }
             const final = markdownBuffer.finish();
-            if (!final.markdown && snapshot.visibleText) {
+            if (!final.markdown && snapshot.plainTextFallback) {
+              emitMarkdownDelta(snapshot.plainTextFallback);
+            } else if (!final.markdown && snapshot.visibleText) {
               throw new Error("ChatGPT completed with visible text that could not be serialized as Markdown");
             }
             if (final.delta) emitMarkdownDelta(final.delta);
@@ -1928,7 +1980,7 @@ export class ChatGptBrowserWorker {
               turn.onLunaCheckpoint!(completed.captured);
               finalText = completed.answer;
             } else {
-              finalText = final.markdown;
+              finalText = final.markdown || snapshot.plainTextFallback;
             }
             break;
           }
@@ -1949,12 +2001,13 @@ export class ChatGptBrowserWorker {
             currentText: "",
             completionActionVisible: false,
           });
-          if (domError) throw new Error(domError);
+          if (domError) throw chatGptWebSurfaceError(domError, emittedText.length > 0);
         }
           await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
         }
         } catch (error) {
           const failure = error instanceof Error ? error : new Error(String(error));
+          if (failure instanceof ChatGptWebAdapterError && failure.retireSession) throw failure;
           const retryPrompt = await turn.retryPromptForError?.(failure, responseAttempt);
           if (!retryPrompt) throw error;
           if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry browser failures");

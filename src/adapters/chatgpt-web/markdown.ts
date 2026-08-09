@@ -70,6 +70,7 @@ interface ChatGptMarkdownCandidate extends ChatGptMarkdownSegment {
 interface CommittedChatGptMarkdownSegment {
   key: string;
   text: string;
+  group?: string;
 }
 
 /**
@@ -87,6 +88,7 @@ export class ChatGptMarkdownBuffer {
   private latest: ChatGptMarkdownSegment[] = [];
   private markdown = "";
   private lastGroup: string | undefined;
+  private regrouped = false;
 
   constructor(
     private readonly transform: (markdown: string) => string = markdown => markdown,
@@ -98,13 +100,19 @@ export class ChatGptMarkdownBuffer {
   }
 
   observe(segments: ChatGptMarkdownSegment[], now = Date.now()): string {
+    if (this.regrouped) {
+      this.assertVisiblePrefix(segments);
+      this.latest = segments.map(segment => ({ ...segment }));
+      return "";
+    }
     try {
       this.assertCommittedPrefix(segments);
     } catch (error) {
-      // ChatGPT can merge completed Markdown roots while adding final-turn controls. Responses
-      // deltas remain valid when the complete visible answer is byte-equivalent after regrouping.
-      if (visibleSegmentText(segments) === visibleSegmentText(this.latest)) return "";
-      throw error;
+      this.assertVisiblePrefix(segments, error);
+      this.regrouped = true;
+      this.latest = segments.map(segment => ({ ...segment }));
+      this.candidates.clear();
+      return "";
     }
     this.latest = segments.map(segment => ({ ...segment }));
 
@@ -137,19 +145,30 @@ export class ChatGptMarkdownBuffer {
       if (!candidate?.streamable || candidate.streamableAt === undefined) break;
       if (now - Math.max(candidate.changedAt, candidate.streamableAt) < this.stabilityMs) break;
       delta += this.commit(candidate);
-      this.committed.push({ key: candidate.key, text: candidate.text });
+      this.committed.push({ key: candidate.key, text: candidate.text, group: candidate.group });
       this.candidates.delete(index);
     }
     return delta;
   }
 
   finish(): { markdown: string; delta: string } {
+    if (this.regrouped) {
+      this.assertVisiblePrefix(this.latest);
+      const complete = this.render(this.latest);
+      if (!complete.startsWith(this.markdown)) {
+        throw new Error("ChatGPT changed a completed text block that was already streamed to Codex");
+      }
+      const delta = complete.slice(this.markdown.length);
+      this.markdown = complete;
+      this.candidates.clear();
+      return { markdown: this.markdown, delta };
+    }
     this.assertCommittedPrefix(this.latest);
     let delta = "";
     for (let index = this.committed.length; index < this.latest.length; index += 1) {
       const segment = this.latest[index]!;
       delta += this.commit(segment);
-      this.committed.push({ key: segment.key, text: segment.text });
+      this.committed.push({ key: segment.key, text: segment.text, group: segment.group });
     }
     this.candidates.clear();
     return { markdown: this.markdown, delta };
@@ -166,6 +185,33 @@ export class ChatGptMarkdownBuffer {
         throw new Error("ChatGPT changed a completed text block that was already streamed to Codex");
       }
     }
+  }
+
+  private assertVisiblePrefix(segments: ChatGptMarkdownSegment[], cause?: unknown): void {
+    const committed = visibleSegmentText(this.committed.map(segment => ({
+      ...segment,
+      html: "",
+      streamable: true,
+    })));
+    const current = visibleSegmentText(segments);
+    if (!committed || current === committed || current.startsWith(`${committed}\n`)) return;
+    if (cause instanceof Error) throw cause;
+    throw new Error("ChatGPT changed a completed text block that was already streamed to Codex");
+  }
+
+  private render(segments: ChatGptMarkdownSegment[]): string {
+    let markdown = "";
+    let previousGroup: string | undefined;
+    for (const segment of segments) {
+      const block = this.transform(chatGptHtmlToMarkdown(segment.html));
+      if (!block) continue;
+      const separator = markdown
+        ? segment.group !== undefined && segment.group === previousGroup ? "\n" : "\n\n"
+        : "";
+      markdown += `${separator}${block}`;
+      previousGroup = segment.group;
+    }
+    return markdown;
   }
 
   private commit(segment: ChatGptMarkdownSegment): string {

@@ -195,6 +195,7 @@ async function run(message: RunMessage): Promise<void> {
         errorType: error.errorType,
         code: error.code,
         retryable: error.retryable,
+        retireSession: error.retireSession,
       } : {}),
     });
   } finally {
