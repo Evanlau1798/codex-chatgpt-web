@@ -1,4 +1,9 @@
 import type { CodexAssistantContentPart, CodexContentPart, CodexMessage, CodexParsedRequest } from "../../types";
+import {
+  CHATGPT_WEB_BACKEND_MODEL,
+  CHATGPT_WEB_LUNA_BACKEND_MODEL,
+  resolveChatGptWebTransportLimits,
+} from "../../chatgpt-web-models";
 import { isOnePixelPngDataUrl, isReadableCompactionSummaryText } from "../../responses/compaction";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import {
@@ -15,6 +20,12 @@ export interface ChatGptWebPromptImage {
 export interface CompiledChatGptWebPrompt {
   text: string;
   images: ChatGptWebPromptImage[];
+  /** Native2 archive metadata used only when the visible browser message exceeds measured limits. */
+  turnToken?: string;
+  bootstrapLimits?: { chars: number; tokens?: number };
+  modelInputText?: string;
+  transport?: "inline" | "native2-archive";
+  archiveChars?: number;
   /** Oldest history items removed by native-style compaction fit recovery; absent on normal turns. */
   trimmedCompactionMessages?: number;
 }
@@ -24,6 +35,12 @@ export interface CompileChatGptWebPromptOptions {
 }
 
 const RETIRED_TURN_HANDLE = /\b(turn|binding)_[A-Za-z0-9_-]{24,}/g;
+const BOOTSTRAP_HEADROOM = 0.95;
+const BOOTSTRAP_ALIGNMENT = 4_096;
+
+function alignedBootstrapLimit(value: number): number {
+  return Math.floor(value * BOOTSTRAP_HEADROOM / BOOTSTRAP_ALIGNMENT) * BOOTSTRAP_ALIGNMENT;
+}
 
 /**
  * The accumulated Codex context replays earlier turns, including the broker handles those turns
@@ -198,6 +215,19 @@ export function compileChatGptWebPrompt(
   options?: CompileChatGptWebPromptOptions,
 ): CompiledChatGptWebPrompt {
   const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
+  const transportLimits = resolveChatGptWebTransportLimits(
+    parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_BACKEND_MODEL : CHATGPT_WEB_BACKEND_MODEL,
+    mode.effort,
+    capabilities,
+  );
+  const bootstrapLimits = transportLimits.browserComposerCharLimit === undefined
+    ? undefined
+    : {
+      chars: alignedBootstrapLimit(transportLimits.browserComposerCharLimit),
+      ...(transportLimits.browserMessageTokenLimit === undefined
+        ? {}
+        : { tokens: alignedBootstrapLimit(transportLimits.browserMessageTokenLimit) }),
+    };
   const captureLunaCheckpoint = options?.captureLunaCheckpoint === true;
   if (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && parsed._compactionRequest) {
     throw new Error("ChatGPT Luna uses rolling checkpoints and does not accept a separate compaction turn");
@@ -292,7 +322,12 @@ export function compileChatGptWebPrompt(
       "</codex_context_json>",
       ...transportResume,
     ].join("\n");
-    return { text, images };
+    return {
+      text,
+      images,
+      ...(turnToken ? { turnToken } : {}),
+      ...(bootstrapLimits ? { bootstrapLimits } : {}),
+    };
   };
 
   let sourceMessages = withoutSupersededModelSwitchContracts(parsed.context.messages);

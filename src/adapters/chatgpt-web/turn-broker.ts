@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
@@ -53,6 +53,11 @@ interface PendingContext {
   text: string;
   traceId: string;
   expiresAt?: number;
+  turnToken?: string;
+  nextChunk: number;
+  chunkChars?: number;
+  chunks?: string[];
+  complete: boolean;
 }
 
 interface BrokerRequest {
@@ -64,6 +69,8 @@ interface BrokerRequest {
   freeform?: boolean;
   arguments?: Record<string, unknown>;
   input?: string;
+  index?: number;
+  chunkChars?: number;
 }
 
 interface BrokerResponse {
@@ -104,6 +111,24 @@ function steeringResult(instruction: string): BrokerToolResult {
     type: "text",
     text: `${instruction}\n\nCodex steering notice: the pending tool result was superseded by the user's new instruction. This is a control message, not evidence that the command failed or succeeded. Continue with the new instruction and only rerun it if it remains necessary.`,
   }] };
+}
+
+function completeArchiveChunks(text: string, limit: number): string[] {
+  const lines = text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
+  const chunks: string[] = [];
+  let current = "";
+  for (const line of lines) {
+    if (line.length > limit) {
+      throw new Error(`context archive entry requires ${line.length} characters and exceeds the MCP chunk limit`);
+    }
+    if (current && current.length + line.length > limit) {
+      chunks.push(current);
+      current = "";
+    }
+    current += line;
+  }
+  if (current) chunks.push(current);
+  return chunks;
 }
 
 function environmentIdentity(environment: ChatGptTurnEnvironment): string {
@@ -171,7 +196,12 @@ export class TurnBroker {
     return token;
   }
 
-  async registerContext(text: string, ttlMs?: number, traceId = "unknown"): Promise<string> {
+  async registerContext(
+    text: string,
+    ttlMs?: number,
+    traceId = "unknown",
+    turnToken?: string,
+  ): Promise<string> {
     await this.start();
     this.prune();
     if (!text) throw new Error("ChatGPT web context must not be empty");
@@ -185,6 +215,9 @@ export class TurnBroker {
     this.contexts.set(token, {
       text,
       traceId,
+      ...(turnToken ? { turnToken } : {}),
+      nextChunk: 0,
+      complete: false,
       ...(ttlMs !== undefined ? { expiresAt: Date.now() + ttlMs } : {}),
     });
     return token;
@@ -472,8 +505,35 @@ export class TurnBroker {
       if (typeof token !== "string" || token.length === 0) throw new Error("context token is required");
       const context = this.contexts.get(token);
       if (!context) throw new Error("context token is invalid, expired, or revoked");
-      console.info(`[chatgpt-web] broker trace=${context.traceId} served context chars=${context.text.length}`);
-      return { context: context.text };
+      if (request.index === undefined && request.chunkChars === undefined) {
+        context.complete = true;
+        console.info(`[chatgpt-web] broker trace=${context.traceId} served context chars=${context.text.length} chunks=1`);
+        return { context: context.text };
+      }
+      const index = request.index;
+      const chunkChars = request.chunkChars;
+      if (!Number.isInteger(index) || index! < 0 || !Number.isInteger(chunkChars) || chunkChars! < 1) {
+        throw new Error("context archive chunk request is invalid");
+      }
+      if (context.chunkChars !== undefined && context.chunkChars !== chunkChars) {
+        throw new Error("context archive chunk size changed during retrieval");
+      }
+      if (index !== context.nextChunk) {
+        throw new Error(`context archive chunk is out of order; expected ${context.nextChunk}`);
+      }
+      context.chunkChars = chunkChars;
+      context.chunks ??= completeArchiveChunks(context.text, chunkChars!);
+      const total = context.chunks.length;
+      if (index! >= total) throw new Error("context archive chunk index is out of range");
+      const chunk = context.chunks[index!]!;
+      context.nextChunk += 1;
+      context.complete = context.nextChunk === total;
+      const sha256 = createHash("sha256").update(context.text).digest("hex");
+      console.info(
+        `[chatgpt-web] broker trace=${context.traceId} served context chunk=${index! + 1}/${total}`
+        + ` chars=${chunk.length} complete=${context.complete}`,
+      );
+      return { context: chunk, index, total, sha256, nextIndex: context.complete ? null : context.nextChunk };
     }
     if (request.method === "claim") {
       const token = request.token;
@@ -489,6 +549,9 @@ export class TurnBroker {
           ? `This turn_token was issued for ${retiredTurnLabel(retiredTurn)}, which has already finished.`
           + " This Codex Native action can no longer run."
           : "turn token is invalid, expired, or revoked");
+      }
+      if ([...this.contexts.values()].some(context => context.turnToken === token && !context.complete)) {
+        throw new Error("Read and verify the complete Codex context archive before calling work tools");
       }
       if (channel.bindingId) {
         const existing = this.bindings.get(channel.bindingId);

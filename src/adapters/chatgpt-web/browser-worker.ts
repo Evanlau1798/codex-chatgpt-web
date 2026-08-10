@@ -1782,7 +1782,10 @@ export class ChatGptBrowserWorker {
     let diagnosticPage: Page | undefined;
     try {
       if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-      const estimatedInputTokens = estimateCompiledChatGptWebInputTokens(prepared, turn.modelId);
+      const estimatedInputTokens = estimateCompiledChatGptWebInputTokens(
+        prepared.modelInputText ? { ...prepared, text: prepared.modelInputText } : prepared,
+        turn.modelId,
+      );
       const estimatedMessageTokens = estimateCompiledChatGptWebMessageTokens(prepared, turn.modelId);
       assertChatGptWebInputWithinLimits(
         estimatedInputTokens,
@@ -1822,7 +1825,10 @@ export class ChatGptBrowserWorker {
       diagnosticPage = page;
       await diagnostics.capture(page, "browser-page-acquired");
       console.info(
-        `[chatgpt-web] browser turn ${turn.traceId} opened (transport=inline, promptChars=${prepared.text.length}, estimatedInputTokens=${estimatedInputTokens}, images=${prepared.images.length}, compactionTrimmedMessages=${prepared.trimmedCompactionMessages ?? 0})`,
+        `[chatgpt-web] browser turn ${turn.traceId} opened (transport=${prepared.transport ?? "inline"},`
+        + ` promptChars=${prepared.text.length}, archiveChars=${prepared.archiveChars ?? 0},`
+        + ` estimatedInputTokens=${estimatedInputTokens}, images=${prepared.images.length},`
+        + ` compactionTrimmedMessages=${prepared.trimmedCompactionMessages ?? 0})`,
       );
       if (!reuseConversation) {
         await this.runStage(
