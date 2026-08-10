@@ -123,7 +123,7 @@ export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
   );
 }
 
-type ChatGptTextScope = Pick<Locator, "getByText" | "getByRole">;
+type ChatGptTextScope = Pick<Locator, "getByText">;
 
 const chatGptSessionFailureAlert = (page: Page): Locator => page
   .locator('[role="alert"]')
@@ -142,28 +142,25 @@ const chatGptTerminalErrorAlert = (scope: ChatGptTextScope): Locator => scope
   .getByText(/Something went wrong[\s\S]*help\.openai\.com/i)
   .last();
 
-export async function recoverChatGptTerminalErrorAlert(
-  scope: ChatGptTextScope,
-  allowRetry: boolean,
-): Promise<boolean> {
+export async function throwIfChatGptTerminalErrorAlert(scope: ChatGptTextScope): Promise<void> {
   const alert = chatGptTerminalErrorAlert(scope);
-  if (!await alert.isVisible().catch(() => false)) return false;
-  if (allowRetry) {
-    const retry = scope.getByRole("button", { name: /^(?:Retry|重試)$/i }).last();
-    if (await retry.isVisible().catch(() => false)) {
-      await retry.press("Enter");
-      await alert.waitFor({ state: "hidden", timeout: 10_000 });
-      return true;
-    }
-  }
+  if (!await alert.isVisible().catch(() => false)) return;
   throw new ChatGptWebAdapterError(
     "ChatGPT ended the turn with 'Something went wrong'. Retry the turn.",
     { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
   );
 }
 
-export async function throwIfChatGptTerminalErrorAlert(scope: ChatGptTextScope): Promise<void> {
-  await recoverChatGptTerminalErrorAlert(scope, false);
+export function chatGptTerminalErrorRetryPrompt(
+  error: Error,
+  attempt: number,
+  emittedText: string,
+): string | undefined {
+  if (attempt !== 1
+    || emittedText.length > 0
+    || !(error instanceof ChatGptWebAdapterError)
+    || error.code !== "upstream_server_error") return undefined;
+  return "Continue the current response from the completed Codex Native2 tool results above. Do not repeat completed tool calls. Complete only the remaining work, then return the requested answer.";
 }
 
 export async function resolveChatGptToolConfirmation(
@@ -1901,7 +1898,6 @@ export class ChatGptBrowserWorker {
         let loggedCompletionWait = false;
         let capturedResponse = false;
         let sentAt = Date.now();
-        let terminalErrorRetryUsed = false;
         const visibleTrace = new ChatGptVisibleTraceTracker();
         const markdownBuffer = new ChatGptMarkdownBuffer();
         const checkpointStream = turn.captureLunaCheckpoint
@@ -1949,19 +1945,7 @@ export class ChatGptBrowserWorker {
         }
 
         await throwIfChatGptSessionFailureAlert(page);
-        if (await recoverChatGptTerminalErrorAlert(
-          responseTurn,
-          emittedText.length === 0 && !terminalErrorRetryUsed,
-        )) {
-          terminalErrorRetryUsed = true;
-          responseTurn = responseTurns.last();
-          sentAt = Date.now();
-          sawRunning = false;
-          loggedCompletionWait = false;
-          capturedResponse = false;
-          await diagnostics.capture(page, "terminal-error-retried");
-          continue;
-        }
+        await throwIfChatGptTerminalErrorAlert(responseTurn);
 
         if (mode.localTools && await resolveChatGptToolConfirmation(
           page,
@@ -2052,7 +2036,8 @@ export class ChatGptBrowserWorker {
         } catch (error) {
           const failure = error instanceof Error ? error : new Error(String(error));
           if (failure instanceof ChatGptWebAdapterError && failure.retireSession) throw failure;
-          const retryPrompt = await turn.retryPromptForError?.(failure, responseAttempt);
+          const retryPrompt = chatGptTerminalErrorRetryPrompt(failure, responseAttempt, emittedText)
+            ?? await turn.retryPromptForError?.(failure, responseAttempt);
           if (!retryPrompt) throw error;
           if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry browser failures");
           const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();

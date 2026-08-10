@@ -4,7 +4,8 @@ import type { Locator, Page } from "playwright-core";
 import {
   CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
   ChatGptBrowserWorker,
-  recoverChatGptTerminalErrorAlert,
+  chatGptTerminalErrorRetryPrompt,
+  throwIfChatGptTerminalErrorAlert,
 } from "../src/adapters/chatgpt-web/browser-worker";
 
 function terminalErrorScope() {
@@ -35,21 +36,20 @@ function terminalErrorScope() {
   };
 }
 
-test("a terminal ChatGPT error retries once inside the existing assistant turn", async () => {
+test("a terminal ChatGPT error continues once without pressing the Web retry button", async () => {
   const fixture = terminalErrorScope();
+  let failure: Error | undefined;
 
-  expect(await recoverChatGptTerminalErrorAlert(fixture.scope, true)).toBe(true);
-  expect(fixture.pressed).toEqual(["Enter"]);
-});
-
-test("a terminal ChatGPT error fails closed when same-turn recovery is unavailable", async () => {
-  const fixture = terminalErrorScope();
-
-  await expect(recoverChatGptTerminalErrorAlert(fixture.scope, false)).rejects.toMatchObject({
-    code: "upstream_server_error",
-    retryable: true,
-  });
+  try {
+    await throwIfChatGptTerminalErrorAlert(fixture.scope);
+  } catch (error) {
+    failure = error as Error;
+  }
+  expect(failure).toMatchObject({ code: "upstream_server_error", retryable: true });
   expect(fixture.pressed).toEqual([]);
+  expect(chatGptTerminalErrorRetryPrompt(failure!, 1, "")).toContain("Do not repeat completed tool calls");
+  expect(chatGptTerminalErrorRetryPrompt(failure!, 2, "")).toBeUndefined();
+  expect(chatGptTerminalErrorRetryPrompt(failure!, 1, "partial answer")).toBeUndefined();
 });
 
 test("a long prompt retries as one edit when a later Lexical chunk rewrites committed text", async () => {
@@ -123,12 +123,11 @@ test("a long tool prompt reselects its connector before the single-edit retry", 
   expect(inserted).toEqual([` ${prompt}`]);
 });
 
-test("terminal recovery is integrated before replay and diagnostics tolerate non-HTMLElement nodes", () => {
+test("terminal recovery is integrated as a same-conversation continuation", () => {
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
 
-  expect(source).toMatch(/recoverChatGptTerminalErrorAlert\(\s*responseTurn,/);
-  expect(source).toContain("terminalErrorRetryUsed");
-  expect(source).toContain("responseTurn = responseTurns.last()");
+  expect(source).toContain("chatGptTerminalErrorRetryPrompt(failure, responseAttempt, emittedText)");
+  expect(source).not.toContain("terminalErrorRetryUsed");
   expect(source).toContain('(candidate.innerText ?? candidate.textContent ?? "").trim().length');
   expect(source).toContain('(root.innerText ?? root.textContent ?? "").trim().length');
 });
