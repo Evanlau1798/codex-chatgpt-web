@@ -243,6 +243,11 @@ export async function responseRequest(
   } catch (error) {
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
+  if (parsed._contextCompactionBoundary) {
+    console.info(
+      `[responses] accepted canonical compaction replacement messages=${parsed.context.messages.length}`,
+    );
+  }
   if (typeof requestedPreviousResponseId === "string" && expanded === raw) {
     return formatErrorResponse(
       409,

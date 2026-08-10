@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import type { ProviderAdapter } from "../src/adapters/base";
 import { defaultConfig } from "../src/config";
-import { COMPACT_PROMPT, SUMMARY_PREFIX, decodeCompactionSummary } from "../src/responses/compaction";
+import { COMPACT_PROMPT, SUMMARY_PREFIX, decodeCompactionSummary, encodeCompactionSummary } from "../src/responses/compaction";
 import { compactRequest, responseRequest } from "../src/server";
 import type { CodexProviderConfig } from "../src/types";
 import { extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
@@ -291,4 +291,34 @@ test("refuses a ChatGPT Web continuation when local previous-response state is u
   expect(response.status).toBe(409);
   const body = await response.json() as { error: { message: string } };
   expect(body.error.message).toContain("partial Codex context");
+});
+
+test("accepts a self-contained compaction replacement when continuation state is unavailable", async () => {
+  let adapterStarted = false;
+  const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model,
+      previous_response_id: "resp_missing_after_compact",
+      input: [
+        { type: "compaction", encrypted_content: encodeCompactionSummary("Canonical compacted state") },
+        { type: "message", role: "user", content: "Continue from the checkpoint" },
+      ],
+      stream: false,
+    }),
+  }), defaultConfig("browser-only"), () => ({
+    name: "post-compact-continuation",
+    async runTurn(parsed, _incoming, emit) {
+      adapterStarted = true;
+      expect(parsed._contextCompactionBoundary).toBeTrue();
+      expect(JSON.stringify(parsed.context.messages)).toContain("Canonical compacted state");
+      expect(JSON.stringify(parsed.context.messages)).toContain("Continue from the checkpoint");
+      emit({ type: "text_delta", text: "continued", phase: "final_answer" });
+      emit({ type: "done", stopReason: "stop", endTurn: true });
+    },
+  }));
+
+  expect(response.status).toBe(200);
+  expect(adapterStarted).toBeTrue();
 });

@@ -171,6 +171,14 @@ function inputItems(input: unknown): unknown[] {
   return [input];
 }
 
+function containsCompactionReplacement(items: readonly unknown[]): boolean {
+  return items.some(item => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const type = (item as { type?: unknown }).type;
+    return type === "compaction" || type === "compaction_summary" || type === "context_compaction";
+  });
+}
+
 function pruneResponses(at = now()): void {
   for (const [id, state] of states) {
     if (at - state.createdAt > RESPONSE_TTL_MS) deleteEntry(id);
@@ -195,11 +203,18 @@ export function expandPreviousResponseInput(body: unknown): unknown {
   if (!previousId) return body;
   ensureLoaded();
   pruneResponses();
+  const suffix = inputItems(request.input);
   const previous = states.get(previousId);
+  if (containsCompactionReplacement(suffix)) {
+    console.info(
+      `[responses] compaction replacement discarded previous_response_id history items=${previous?.items.length ?? 0}`,
+    );
+    return { ...request, input: suffix };
+  }
   if (!previous) return body;
   const expanded = {
     ...request,
-    input: [...previous.items, ...inputItems(request.input)],
+    input: [...previous.items, ...suffix],
   };
   replayedInputPrefixLengths.set(expanded, previous.items.length);
   return expanded;
