@@ -99,6 +99,13 @@ function retiredTurnLabel(traceId: string): string {
   return traceId && traceId !== "unknown" ? `Codex turn ${traceId}` : "a Codex turn";
 }
 
+function steeringResult(instruction: string): BrokerToolResult {
+  return { content: [{
+    type: "text",
+    text: `${instruction}\n\nCodex steering notice: the pending tool result was superseded by the user's new instruction. This is a control message, not evidence that the command failed or succeeded. Continue with the new instruction and only rerun it if it remains necessary.`,
+  }] };
+}
+
 function environmentIdentity(environment: ChatGptTurnEnvironment): string {
   return JSON.stringify({
     cwd: environment.cwd,
@@ -261,10 +268,7 @@ export class TurnBroker {
       ? `${channel.steeringInstruction}\n\n${instruction}`
       : instruction;
     channel.steeringInstruction = undefined;
-    const result: BrokerToolResult = {
-      content: [{ type: "text", text: deliveredInstruction }],
-      isError: true,
-    };
+    const result = steeringResult(deliveredInstruction);
     for (const [callId, invocation] of channel.invocations) {
       channel.invocations.delete(callId);
       invocation.resolve(result);
@@ -530,10 +534,7 @@ export class TurnBroker {
       const instruction = binding.channel.steeringInstruction;
       binding.channel.steeringInstruction = undefined;
       console.info(`[chatgpt-web] broker trace=${binding.channel.traceId} delivered queued native steering through the tool loop`);
-      return {
-        content: [{ type: "text", text: instruction }],
-        isError: true,
-      } satisfies BrokerToolResult;
+      return steeringResult(instruction);
     }
 
     const wireName = request.wireName?.trim();

@@ -167,20 +167,20 @@ test("turn broker delivers steering once through the active tool loop", async ()
     });
     await Bun.sleep(5);
     expect(broker.requestSteering(token, "The user added: stop and review first")).toBe("delivered");
-    await expect(first).resolves.toEqual({
-      content: [{ type: "text", text: "The user added: stop and review first" }],
-      isError: true,
-    });
+    const delivered = await first;
+    expect(delivered.isError).toBeUndefined();
+    expect(delivered.content[0]?.text).toContain("The user added: stop and review first");
+    expect(delivered.content[0]?.text).toContain("control message, not evidence that the command failed");
 
     expect(broker.requestSteering(token, "The user added: use the existing implementation")).toBe("queued");
-    await expect(callTurnBroker(socketPath, {
+    const queued = await callTurnBroker<{ content: Array<{ type: string; text: string }>; isError?: boolean }>(socketPath, {
       method: "invoke",
       bindingId: claimed.bindingId,
       wireName: "exec_command",
-    })).resolves.toEqual({
-      content: [{ type: "text", text: "The user added: use the existing implementation" }],
-      isError: true,
     });
+    expect(queued.isError).toBeUndefined();
+    expect(queued.content[0]?.text).toContain("The user added: use the existing implementation");
+    expect(queued.content[0]?.text).toContain("only rerun it if it remains necessary");
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
