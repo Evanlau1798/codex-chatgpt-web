@@ -8,6 +8,8 @@ import {
   CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS,
   prepareChatGptWebContext,
 } from "../src/adapters/chatgpt-web/context-bootstrap";
+import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
+import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 
@@ -47,6 +49,45 @@ test("beta transport keeps prompts within the measured boundary inline", async (
     expect(prepared.transport).toBe("inline");
     expect(prepared.modelInputText).toBeUndefined();
   } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("archive bootstrap preserves the lazy stateful tool contract", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-context-tool-contract-"));
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
+  const environment = {
+    cwd: process.cwd(),
+    roots: [process.cwd()],
+    writableRoots: [],
+    sandboxPolicy: { type: "readOnly" as const, networkAccess: false },
+    tools: [],
+  };
+  const turnToken = await broker.register(environment, 60_000, "tool-contract-test");
+  const compiled = compileChatGptWebPrompt({
+    modelId: CHATGPT_WEB_MODEL_ID,
+    context: {
+      messages: [
+        { role: "toolResult", toolCallId: "old", toolName: "exec", content: "x".repeat(20_000), isError: false, timestamp: 1 },
+        { role: "user", content: "use the requested stateful tool", timestamp: 2 },
+      ],
+    },
+    stream: true,
+    options: { reasoning: "high" },
+  }, { localToolsEnabled: true, solAvailable: true, proAvailable: true }, turnToken);
+  compiled.bootstrapLimits = { chars: 8_192, tokens: 8_192 };
+
+  try {
+    const prepared = await prepareChatGptWebContext(broker, compiled, true, 60_000, "tool-contract-test");
+    expect(prepared.transport).toBe("native2-archive");
+    expect(prepared.text).toContain("codex_tool_inventory");
+    expect(prepared.text).toContain("tool_search");
+    expect(prepared.text).toContain("same Web conversation");
+    expect(prepared.text).toContain("Never emulate a stateful or persistent tool with codex_exec");
+    prepared.release();
+  } finally {
+    broker.revoke(turnToken);
     await broker.close();
     rmSync(root, { recursive: true, force: true });
   }

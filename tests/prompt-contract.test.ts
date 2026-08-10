@@ -46,9 +46,15 @@ test("tool-capable prompts pass one stable turn token directly to native actions
   expect(compiled.text).toContain("[retired turn handle]");
   expect(transportOnly).toContain("For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.");
   expect(transportOnly).toContain("Use actual Codex Native results as evidence for local observations and effects, and keep calling tools until the requested work is complete and verified.");
+  expect(transportOnly).toContain("A skill catalog entry is an instruction source, not proof that its runtime tool is loaded.");
+  expect(transportOnly).toContain("codex_tool_inventory");
+  expect(transportOnly).toContain("tool_search");
+  expect(transportOnly).toContain("codex_tool_call");
+  expect(transportOnly).toContain("same Web conversation");
+  expect(transportOnly).toContain("Never emulate a stateful or persistent tool with codex_exec");
   expect(transportOnly).toContain(`The task context is complete. Pass turn_token ${token} unchanged to every Codex Native call in this response, including continuations after tool results; do not expose it in the answer. Execute the latest active user request now.`);
   expect(transportOnly).not.toMatch(/codex_bind_turn|binding_id|outer_tool_gateway|command_tool/);
-  expect(transportOnly).not.toMatch(/codex_exec|codex_write_stdin|codex_apply_patch|codex_view_image|codex_tool_inventory|codex_tool_call/);
+  expect(transportOnly).not.toMatch(/codex_write_stdin|codex_apply_patch|codex_view_image/);
   expect(transportOnly).not.toMatch(/expired|invalid|revoked|blocked|safety|security layer|permission gate/i);
   expect(compiled.text).not.toContain("CODEX_INTERNAL_CONTEXT_COMPACT");
   expect(compiled.text).not.toContain("internally compacts this response");
