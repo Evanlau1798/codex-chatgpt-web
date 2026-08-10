@@ -7,6 +7,7 @@ import {
 } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptMarkdownBuffer } from "../src/adapters/chatgpt-web/markdown";
+import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { isTemporaryChatGptUrl } from "../src/chatgpt-session";
 
 describe("ChatGPT Web surface resilience", () => {
@@ -56,7 +57,12 @@ describe("ChatGPT Web surface resilience", () => {
       if (attempts === 1) throw chatGptWebSurfaceError("surface changed", false);
       return "recovered";
     };
-    const turn = { traceId: "surface-retry" } as BrowserTurn;
+    const turn = {
+      traceId: "surface-retry",
+      modelId: CHATGPT_WEB_MODEL_ID,
+      reasoning: "high",
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+    } as BrowserTurn;
 
     expect(await worker.run(turn)).toBe("recovered");
     expect(attempts).toBe(2);
@@ -71,10 +77,33 @@ describe("ChatGPT Web surface resilience", () => {
       throw chatGptWebSurfaceError("surface changed", true);
     };
 
-    await expect(worker.run({ traceId: "surface-no-retry" } as BrowserTurn)).rejects.toMatchObject({
+    await expect(worker.run({
+      traceId: "surface-no-retry",
+      modelId: CHATGPT_WEB_MODEL_ID,
+      reasoning: "high",
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+    } as BrowserTurn)).rejects.toMatchObject({
       code: "chatgpt_surface_changed",
       retryable: false,
     });
+    expect(attempts).toBe(1);
+  });
+
+  test("leaves tool-capable fresh-surface recovery to the adapter", async () => {
+    const Worker = ChatGptBrowserWorker as unknown as new (config: object) => ChatGptBrowserWorker;
+    const worker = new Worker({ browserHost: "managed-chrome" });
+    let attempts = 0;
+    (worker as unknown as { runExclusive: () => Promise<string> }).runExclusive = async () => {
+      attempts += 1;
+      throw chatGptWebSurfaceError("surface changed", false);
+    };
+
+    await expect(worker.run({
+      traceId: "tool-surface-adapter-recovery",
+      modelId: CHATGPT_WEB_MODEL_ID,
+      reasoning: "high",
+      capabilities: { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    } as BrowserTurn)).rejects.toMatchObject({ code: "chatgpt_surface_changed" });
     expect(attempts).toBe(1);
   });
 

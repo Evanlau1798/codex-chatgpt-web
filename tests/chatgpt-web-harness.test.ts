@@ -6,7 +6,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildResponseJSON } from "../src/bridge";
-import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
+import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptCompletionTracker, chatGptImageFilePayloads, chatGptPromptFilePayloads, chatGptTurnIsComplete } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
@@ -1449,6 +1449,91 @@ describe("ChatGPT outer-native harness v4", () => {
       expect(finalDone).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
       expect(finalDone.usage!.inputTokens).toBeGreaterThan(95_000);
       expect(finalDone.usage!.inputTokens).toBeGreaterThan(firstDone.usage!.inputTokens + 50_000);
+    } finally {
+      (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      await TurnBroker.forSocket(socketPath).close();
+    }
+  });
+
+  test("rebuilds one failed tool surface from the canonical request after completed results", async () => {
+    const socketPath = brokerTestEndpoint(`cgw-h4-canonical-recovery-${process.pid}-${Date.now()}`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web",
+      baseUrl: "browser://chatgpt-canonical-recovery-test",
+      chatgptWeb: { brokerSocketPath: socketPath, turnTimeoutMs: 30_000, localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run.bind(worker);
+    const turnTokens: string[] = [];
+    let browserStarts = 0;
+    let retiredInvocation: Promise<void> | undefined;
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+      browserStarts += 1;
+      const prepared = await turn.prepare();
+      try {
+        const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
+        if (!token) throw new Error("turn token missing from compiled prompt");
+        turnTokens.push(token);
+        if (browserStarts === 1) {
+          const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
+          retiredInvocation = callTurnBroker<BrokerToolResult>(socketPath, {
+            method: "invoke",
+            bindingId: claimed.bindingId,
+            wireName: "exec_command",
+            arguments: { cmd: "collect-recovery-evidence" },
+          }, 30_000).then(() => undefined, () => undefined);
+          await new Promise(resolveWait => setTimeout(resolveWait, 25));
+          throw chatGptWebSurfaceError("surface changed before the tool result arrived", false);
+        }
+        expect(prepared.modelInputText ?? prepared.text).toContain("RECOVERY_RESULT_MARKER");
+        const answer = "Recovered from canonical tool state";
+        turn.onTextDelta(answer);
+        return answer;
+      } finally {
+        prepared.release();
+      }
+    };
+
+    const adapter = createChatGptWebAdapter(provider);
+    const initial = rawWireRequest(environmentXml);
+    try {
+      const firstEvents: AdapterEvent[] = [];
+      await adapter.runTurn!(initial, { headers: new Headers() }, event => firstEvents.push(event));
+      const call = firstEvents.find(
+        (event): event is Extract<AdapterEvent, { type: "tool_call_start" }> => event.type === "tool_call_start",
+      );
+      expect(call?.name).toBe("exec_command");
+      await new Promise(resolveWait => setTimeout(resolveWait, 50));
+
+      const continuation = structuredClone(initial);
+      continuation.context.messages.push(
+        {
+          role: "assistant",
+          content: [{ type: "toolCall", id: call!.id, name: "exec_command", arguments: { cmd: "collect-recovery-evidence" } }],
+          timestamp: 3,
+        },
+        {
+          role: "toolResult",
+          toolCallId: call!.id,
+          toolName: "exec_command",
+          content: JSON.stringify({ output: "RECOVERY_RESULT_MARKER", exit_code: 0 }),
+          isError: false,
+          timestamp: 4,
+        },
+      );
+      ((continuation._rawBody as { input: unknown[] }).input).push(
+        { type: "function_call", call_id: call!.id, name: "exec_command", arguments: JSON.stringify({ cmd: "collect-recovery-evidence" }) },
+        { type: "function_call_output", call_id: call!.id, output: JSON.stringify({ output: "RECOVERY_RESULT_MARKER", exit_code: 0 }) },
+      );
+
+      const finalEvents: AdapterEvent[] = [];
+      await adapter.runTurn!(continuation, { headers: new Headers() }, event => finalEvents.push(event));
+
+      expect(browserStarts).toBe(2);
+      expect(new Set(turnTokens).size).toBe(2);
+      expect(finalEvents.some(event => event.type === "tool_call_start")).toBeFalse();
+      expect(finalEvents.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+      await retiredInvocation;
     } finally {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
       await TurnBroker.forSocket(socketPath).close();

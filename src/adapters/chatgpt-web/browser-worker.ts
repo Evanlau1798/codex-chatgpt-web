@@ -770,9 +770,15 @@ export class ChatGptBrowserWorker {
     try {
       return await this.runExclusive(turn);
     } catch (error) {
+      const adapterOwnsRecovery = resolveChatGptWebModelMode(
+        turn.modelId,
+        turn.reasoning,
+        turn.capabilities,
+      ).localTools;
       if (!(error instanceof ChatGptWebAdapterError)
         || error.code !== "chatgpt_surface_changed"
         || !error.retryable
+        || adapterOwnsRecovery
         || turn.abortSignal?.aborted) throw error;
       console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying once on a fresh surface`);
       return this.runExclusive(turn);

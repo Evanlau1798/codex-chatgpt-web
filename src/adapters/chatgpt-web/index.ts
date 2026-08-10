@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
-import { defaultBrokerEndpoint, expandUserPath, resolveBrokerEndpoint } from "../../config";
+import { expandUserPath } from "../../config";
 import { withStallTimeout } from "../../stall-timeout";
 import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
 import type { ProviderAdapter } from "../base";
@@ -19,57 +19,14 @@ import {
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { compileChatGptWebPrompt } from "./prompt";
+import { brokerSocketPath, deferred, recoverableToolSurfaceResultCount, withAbort } from "./runtime-lifecycle";
 import { TurnBroker } from "./turn-broker";
 import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
-import {
-  appendCompactionUserPrompt,
-  emitBrowserCompletion,
-  emitProContextWarning,
-  emitTextDeltas,
-  emitToolBatch,
-  emitTraceEvents,
-  replayEvents,
-  runtimeUsageInput,
-} from "./turn-events";
+import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
 import { browserSteeringRetry, claudeConversationResumeRequest, deliverPendingChatGptSteering, sessionForChatGptRequest, validateBatchTools } from "./steering";
 import { ChatGptLunaCheckpointStore, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint";
-function brokerSocketPath(provider: CodexProviderConfig): string {
-  const configured = provider.chatgptWeb?.brokerSocketPath?.trim();
-  return resolveBrokerEndpoint(configured || defaultBrokerEndpoint());
-}
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (error: Error) => void } {
-  let resolvePromise!: (value: T) => void;
-  let rejectPromise!: (error: Error) => void;
-  const promise = new Promise<T>((resolveDeferred, rejectDeferred) => {
-    resolvePromise = resolveDeferred;
-    rejectPromise = rejectDeferred;
-  });
-  return { promise, resolve: resolvePromise, reject: rejectPromise };
-}
-function abortError(): DOMException {
-  return new DOMException("ChatGPT web turn aborted", "AbortError");
-}
-
-function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
-  if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(abortError());
-  return new Promise<T>((resolveWait, rejectWait) => {
-    const onAbort = () => rejectWait(abortError());
-    signal.addEventListener("abort", onAbort, { once: true });
-    promise.then(
-      value => {
-        signal.removeEventListener("abort", onAbort);
-        resolveWait(value);
-      },
-      error => {
-        signal.removeEventListener("abort", onAbort);
-        rejectWait(error);
-      },
-    );
-  });
-}
 
 export function createChatGptWebAdapter(provider: CodexProviderConfig): ProviderAdapter {
   const worker = ChatGptBrowserWorker.forProvider(provider);
@@ -313,19 +270,32 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
       await chatGptTurnSessions.waitForRetirement(executionKey);
       const traceId = createHash("sha256").update(executionKey).digest("hex").slice(0, 12);
-      const session = await sessionForChatGptRequest(
+      let session = await sessionForChatGptRequest(
         chatGptTurnSessions,
         executionKey,
         parsed,
         () => startRuntime(parsed, environment, traceId, turnCapabilities),
       );
       const heartbeat = setInterval(() => emit({ type: "heartbeat" }), 10_000);
+      let surfaceRecoveries = 0;
       try {
         emit({ type: "heartbeat" });
-        await session.runExclusive(async () => {
+        for (;;) {
+          let recoveredResultCount: number | undefined;
+          await session.runExclusive(async () => {
           const settled = session.settledOutcome();
           if (settled) {
-            if (settled.type === "error") throw settled.error;
+            if (settled.type === "error") {
+              recoveredResultCount = recoverableToolSurfaceResultCount(
+                settled.error,
+                session,
+                parsed,
+                surfaceRecoveries,
+                incoming.abortSignal,
+              );
+              if (recoveredResultCount !== undefined) return;
+              throw settled.error;
+            }
             let reasoning = session.reasoningForFinalReplay();
             const replay = session.eventsForFinalReplay();
             if (replay.length > 0) {
@@ -433,7 +403,17 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                 session.setFinalReasoning(roundReasoning);
                 session.setFinalEvents(roundEvents);
                 if (turnToken) broker.revoke(turnToken);
-                if (next.outcome.type === "error") throw next.outcome.error;
+                if (next.outcome.type === "error") {
+                  recoveredResultCount = recoverableToolSurfaceResultCount(
+                    next.outcome.error,
+                    session,
+                    parsed,
+                    surfaceRecoveries,
+                    incoming.abortSignal,
+                  );
+                  if (recoveredResultCount !== undefined) return;
+                  throw next.outcome.error;
+                }
                 if (session.runtime.text.value() !== next.outcome.answer) {
                   throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
                 }
@@ -466,7 +446,22 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           } finally {
             toolWaitAbort.abort();
           }
-        });
+          });
+          if (recoveredResultCount === undefined) break;
+          surfaceRecoveries += 1;
+          console.warn(
+            `[chatgpt-web] browser turn ${traceId} rebuilding tool surface from canonical state`
+            + ` generation=${surfaceRecoveries} contextMessages=${parsed.context.messages.length}`
+            + ` completedResults=${recoveredResultCount}`,
+          );
+          await chatGptTurnSessions.retireAndWait(executionKey);
+          session = await sessionForChatGptRequest(
+            chatGptTurnSessions,
+            executionKey,
+            parsed,
+            () => startRuntime(parsed, environment, traceId, turnCapabilities),
+          );
+        }
       } catch (error) {
         if (chatGptSessionFailureDisposition(error) === "replay") {
           // A deterministic request failure remains replayable so a native reconnect cannot burn
