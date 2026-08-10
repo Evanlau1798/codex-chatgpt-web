@@ -405,7 +405,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
               ? broker.nextToolBatch(turnToken, toolWaitAbort.signal).then(requests => ({ type: "tools" as const, requests }))
               : undefined;
             const browserOutcome = session.browserOutcome.then(outcome => ({ type: "browser" as const, outcome }));
-            let nextTrace = session.runtime.trace.next(toolWaitAbort.signal).then(event => ({ type: "trace" as const, event }));
+            let nextTrace = session.runtime.trace.wait(toolWaitAbort.signal).then(() => ({ type: "trace" as const }));
             let nextText = session.runtime.text.wait(toolWaitAbort.signal).then(() => ({ type: "text" as const }));
             for (;;) {
               const next = await withAbort(
@@ -418,8 +418,8 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                 incoming.abortSignal,
               );
               if (next.type === "trace") {
-                emitNewTrace([next.event]);
-                nextTrace = session.runtime.trace.next(toolWaitAbort.signal).then(event => ({ type: "trace" as const, event }));
+                emitNewTrace(session.runtime.trace.drain());
+                nextTrace = session.runtime.trace.wait(toolWaitAbort.signal).then(() => ({ type: "trace" as const }));
                 continue;
               }
               if (next.type === "text") {

@@ -19,7 +19,7 @@ export interface ChatGptTraceEvent {
 }
 
 interface TraceWaiter {
-  resolve: (event: ChatGptTraceEvent) => void;
+  resolve: () => void;
   reject: (error: Error) => void;
   signal?: AbortSignal;
   onAbort?: () => void;
@@ -33,25 +33,22 @@ export class ChatGptTraceFeed {
     const normalized = event.continuation ? event.text : event.text.trim();
     if (!normalized) return;
     const normalizedEvent = { ...event, text: normalized };
+    this.queued.push(normalizedEvent);
     const waiter = this.waiters.values().next().value as TraceWaiter | undefined;
-    if (!waiter) {
-      this.queued.push(normalizedEvent);
-      return;
-    }
+    if (!waiter) return;
     this.waiters.delete(waiter);
     if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
-    waiter.resolve(normalizedEvent);
+    waiter.resolve();
   }
 
   drain(): ChatGptTraceEvent[] {
     return this.queued.splice(0);
   }
 
-  next(signal?: AbortSignal): Promise<ChatGptTraceEvent> {
-    const queued = this.queued.shift();
-    if (queued !== undefined) return Promise.resolve(queued);
+  wait(signal?: AbortSignal): Promise<void> {
+    if (this.queued.length > 0) return Promise.resolve();
     if (signal?.aborted) return Promise.reject(new DOMException("trace wait aborted", "AbortError"));
-    return new Promise<ChatGptTraceEvent>((resolveWait, rejectWait) => {
+    return new Promise<void>((resolveWait, rejectWait) => {
       const waiter: TraceWaiter = { resolve: resolveWait, reject: rejectWait, ...(signal ? { signal } : {}) };
       if (signal) {
         waiter.onAbort = () => {

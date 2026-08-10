@@ -707,7 +707,7 @@ describe("ChatGPT outer-native harness v4", () => {
       await adapter.runTurn!(steered, { headers: new Headers() }, event => secondEvents.push(event));
 
       expect(browserStarts).toBe(1);
-      expect(steeringResult).toMatchObject({ isError: true });
+      expect(steeringResult?.isError).toBeUndefined();
       expect(JSON.stringify(steeringResult)).toContain("Stop and review first");
       expect(secondEvents.at(-1)).toMatchObject({ type: "done", stopReason: "stop" });
     } finally {
