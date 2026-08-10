@@ -104,7 +104,7 @@ test("launcher setup targets Codex and Claude Code independently", async () => {
   assert.equal(claude.invocation().args.includes("--replace-codex-route"), true);
 });
 
-test("launcher login captures verified storage in a private transfer and returns explicit cleanup", async () => {
+test("launcher login accepts authenticated capture evidence in a private transfer and returns explicit cleanup", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-browser-login-"));
   const descriptorPath = path.join(root, "launcher-browser.json");
   const staleTransfer = path.join(root, "browser-login", "transfer-stale123");
@@ -121,15 +121,17 @@ test("launcher login captures verified storage in a private transfer and returns
   host.resolveBrowserLoginExecutable = () => "/usr/bin/chromium";
   host.launcherControlEnvironment = () => ({ CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "private-token" });
   let invocation;
+  let marker = {
+    version: 2,
+    authenticated: true,
+    source: "authenticated-system-browser",
+    capturedAt: new Date().toISOString(),
+  };
   host.run = async (name, args, options) => {
     invocation = { name, args, options };
     const statePath = args[args.indexOf("--storage-state") + 1];
     fs.writeFileSync(statePath, `${JSON.stringify({ cookies: [], origins: [] })}\n`, { mode: 0o600 });
-    fs.writeFileSync(`${statePath}.verified.json`, `${JSON.stringify({
-      version: 1,
-      authenticated: true,
-      verifiedAt: new Date().toISOString(),
-    })}\n`, { mode: 0o600 });
+    fs.writeFileSync(`${statePath}.verified.json`, `${JSON.stringify(marker)}\n`, { mode: 0o600 });
     return { code: 0, stdout: "", stderr: "" };
   };
 
@@ -150,6 +152,13 @@ test("launcher login captures verified storage in a private transfer and returns
     assert.equal(fs.existsSync(transferRoot), true);
     await transfer.cleanup();
     assert.equal(fs.existsSync(transferRoot), false);
+
+    marker = { version: 1, authenticated: true, verifiedAt: new Date().toISOString() };
+    await assert.rejects(
+      host.captureSystemBrowserLogin(),
+      /did not return authenticated capture evidence/,
+    );
+    assert.equal(fs.existsSync(path.dirname(invocation.args.at(-1))), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

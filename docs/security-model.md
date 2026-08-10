@@ -73,11 +73,13 @@ transport, or returns a fabricated success.
 
 Platform passkeys and identity verification run only in a configured system Google Chrome or
 Chromium process with a dedicated temporary profile. The launcher does not treat opening that
-browser as authentication evidence. A helper attaches over a loopback-only ephemeral DevTools port,
-proves a real ChatGPT Temporary Chat composer in that same browser, captures the session, and closes
-the dedicated browser before verification continues. The launcher then imports only allowlisted
-ChatGPT/OpenAI cookies and ChatGPT local storage into its private Electron partition and proves the
-composer again. Third-party identity-provider state is not imported into the persistent Electron
+browser as authentication evidence. A helper attaches over a loopback-only randomly reserved
+DevTools port,
+proves a real ChatGPT Temporary Chat composer in that same browser, captures the session, verifies
+the serialized state in a fresh context inside the same owned process, and closes the dedicated
+browser. The launcher then imports only allowlisted ChatGPT/OpenAI cookies and ChatGPT local storage
+into its private Electron partition and independently proves the composer there.
+Third-party identity-provider state is not imported into the persistent Electron
 partition. Invalid or oversized state, a
 partial import, failed embedded verification, or failed temporary-state cleanup clears the imported
 Electron state and fails closed.

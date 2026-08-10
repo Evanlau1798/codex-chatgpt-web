@@ -504,7 +504,10 @@ test("system-browser login proves the Electron composer and cleans transfer stat
         executeJavaScript: async (script) => calls.push(["script", script]),
       },
     },
-    waitForAuthenticated: async () => ({ authenticated: true }),
+    waitForAuthenticated: async () => {
+      calls.push("verify-electron");
+      return { authenticated: true };
+    },
     persistSession: async () => calls.push("persist"),
     activateHomeSurface: () => calls.push("activate"),
     show: () => calls.push("show"),
@@ -533,6 +536,8 @@ test("system-browser login proves the Electron composer and cleans transfer stat
   assert.equal(calls.filter((call) => call === "clear").length, 1);
   assert.ok(calls.some((call) => Array.isArray(call) && call[0] === "cookie"));
   assert.ok(calls.some((call) => Array.isArray(call) && call[0] === "script" && call[1].includes("theme")));
+  assert.ok(calls.indexOf("verify-electron") > calls.findIndex((call) => Array.isArray(call) && call[0] === "cookie"));
+  assert.ok(calls.indexOf("cleanup") > calls.indexOf("verify-electron"));
   assert.equal(calls.at(-1), "cleanup");
 });
 

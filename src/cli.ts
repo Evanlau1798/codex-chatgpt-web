@@ -162,7 +162,7 @@ async function loginCommand(args: string[]): Promise<void> {
     chromeExecutablePath,
     storageStatePath,
   });
-  stdout.write("Launcher-controlled ChatGPT login captured and verified.\n");
+  stdout.write("Launcher-controlled ChatGPT login captured for private-profile verification.\n");
 }
 
 async function setupCommand(args: string[]): Promise<void> {

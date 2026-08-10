@@ -93,9 +93,9 @@ irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install
 Then complete the three checks in the app:
 
 1. Sign in through the dedicated system Chrome/Chromium window opened by the launcher and leave it
-   open. The launcher detects the authenticated Temporary Chat composer, captures the session,
-   closes that dedicated window, independently verifies the captured state, then imports it into
-   its private embedded-browser profile.
+   open. The launcher detects the authenticated Temporary Chat composer, captures the session, and
+   closes that dedicated window. It then imports only allowlisted ChatGPT state into its private
+   embedded-browser profile and independently proves the authenticated composer there.
 2. Run the browser smoke test.
 3. Press **Install models**, restart Codex once, and select a **ChatGPT Web — …** model.
 

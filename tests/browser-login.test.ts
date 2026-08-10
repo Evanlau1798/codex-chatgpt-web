@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { browserLoginStateExists, loginToChatGpt, loginVerificationMarkerPath } from "../src/browser-login";
@@ -16,19 +15,7 @@ function processIsRunning(pid: number): boolean {
   }
 }
 
-async function unusedLoopbackPort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolveListen, rejectListen) => {
-    server.once("error", rejectListen);
-    server.listen(0, "127.0.0.1", resolveListen);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Could not reserve a loopback test port");
-  await new Promise<void>((resolveClose, rejectClose) => server.close(error => error ? rejectClose(error) : resolveClose()));
-  return address.port;
-}
-
-test("login attaches to one normal Chrome profile instead of relaunching that profile", async () => {
+test("login uses one normal Chrome on a non-automation loopback port and never launches a verifier browser", async () => {
   if (process.platform === "win32") return;
   const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-login-"));
   const executable = join(root, "fake-chrome");
@@ -54,15 +41,25 @@ test("login attaches to one normal Chrome profile instead of relaunching that pr
     expect(firstLaunch).toContain("--new-window");
     expect(firstLaunch).toContain("--user-data-dir=");
     expect(firstLaunch).toContain("--remote-debugging-address=127.0.0.1");
-    expect(firstLaunch).toContain("--remote-debugging-port=0");
+    const portMatch = firstLaunch.match(/--remote-debugging-port=(\d+)/);
+    expect(portMatch).not.toBeNull();
+    expect(Number(portMatch?.[1])).toBeGreaterThan(0);
     expect(firstLaunch).toContain(CHATGPT_TEMPORARY_CHAT_URL);
     expect(firstLaunch).not.toContain("--remote-debugging-pipe");
     expect(launches).toHaveLength(1);
 
     const source = readFileSync(new URL("../src/browser-login.ts", import.meta.url), "utf8");
+    const loginSource = source.slice(
+      source.indexOf("export async function loginToChatGpt"),
+      source.indexOf("export function browserLoginStateExists"),
+    );
     expect(source).toContain("chromium.connectOverCDP(transport");
     expect(source).toContain('session.send("Browser.close")');
     expect(source).not.toContain("launchPersistentContext(profileDir");
+    expect(source).not.toContain("inspectStoredState");
+    expect(source).toContain("browser.newContext({ storageState })");
+    expect(loginSource).not.toContain("chromium.launch(");
+    expect(loginSource).not.toContain("AutomationControlled");
   } finally {
     if (previousLog === undefined) delete process.env.CODEX_LOGIN_ARG_LOG;
     else process.env.CODEX_LOGIN_ARG_LOG = previousLog;
@@ -70,7 +67,7 @@ test("login attaches to one normal Chrome profile instead of relaunching that pr
   }
 });
 
-test("a storage-state file is not trusted without a verification marker", () => {
+test("stored login accepts legacy verification evidence and the new authenticated-capture marker only", () => {
   const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-login-state-"));
   try {
     const config = defaultConfig("browser-only");
@@ -84,6 +81,25 @@ test("a storage-state file is not trusted without a verification marker", () => 
       { mode: 0o600 },
     );
     expect(browserLoginStateExists(config)).toBe(true);
+
+    writeFileSync(
+      loginVerificationMarkerPath(config.storageStatePath),
+      `${JSON.stringify({
+        version: 2,
+        authenticated: true,
+        source: "authenticated-system-browser",
+        capturedAt: "2026-08-10T00:00:00.000Z",
+      })}\n`,
+      { mode: 0o600 },
+    );
+    expect(browserLoginStateExists(config)).toBe(true);
+
+    writeFileSync(
+      loginVerificationMarkerPath(config.storageStatePath),
+      `${JSON.stringify({ version: 2, authenticated: true, capturedAt: "2026-08-10T00:00:00.000Z" })}\n`,
+      { mode: 0o600 },
+    );
+    expect(browserLoginStateExists(config)).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -131,22 +147,29 @@ test("login socket rejection terminates its owned browser and removes the privat
   const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-login-socket-"));
   const executable = join(root, "fake-chrome");
   const pidLog = join(root, "pid.log");
-  const port = await unusedLoopbackPort();
   writeFileSync(executable, [
-    "#!/bin/sh",
-    "printf '%s\\n' \"$$\" > \"$CODEX_LOGIN_PID_LOG\"",
-    "printf '%s\\n%s\\n' \"$CODEX_LOGIN_DEVTOOLS_PORT\" '/devtools/browser/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' > \"$CODEX_LOGIN_PROFILE/DevToolsActivePort\"",
-    "trap 'exit 0' TERM INT HUP",
-    "while :; do sleep 1; done",
+    "#!/usr/bin/env bun",
+    'import { createServer } from "node:http";',
+    'import { writeFileSync } from "node:fs";',
+    'writeFileSync(process.env.CODEX_LOGIN_PID_LOG, `${process.pid}\\n`);',
+    'const portArg = process.argv.find(arg => arg.startsWith("--remote-debugging-port="));',
+    'const port = Number(portArg?.slice("--remote-debugging-port=".length));',
+    'if (!Number.isInteger(port) || port < 1) process.exit(2);',
+    'const server = createServer((request, response) => {',
+    '  if (request.url !== "/json/version") { response.writeHead(404).end(); return; }',
+    '  response.setHeader("content-type", "application/json");',
+    '  response.end(JSON.stringify({ webSocketDebuggerUrl: `ws://127.0.0.1:${port}/devtools/browser/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` }));',
+    '});',
+    'server.on("upgrade", (_request, socket) => socket.destroy());',
+    'server.listen(port, "127.0.0.1");',
+    'const stop = () => server.close(() => process.exit(0));',
+    'process.on("SIGTERM", stop);',
+    'process.on("SIGINT", stop);',
     "",
   ].join("\n"), { mode: 0o700 });
   chmodSync(executable, 0o700);
   const previousPidLog = process.env.CODEX_LOGIN_PID_LOG;
-  const previousProfile = process.env.CODEX_LOGIN_PROFILE;
-  const previousPort = process.env.CODEX_LOGIN_DEVTOOLS_PORT;
   process.env.CODEX_LOGIN_PID_LOG = pidLog;
-  process.env.CODEX_LOGIN_PROFILE = join(root, "browser", "login-profile");
-  process.env.CODEX_LOGIN_DEVTOOLS_PORT = String(port);
   let pid: number | undefined;
   try {
     const config = defaultConfig("browser-only");
@@ -164,10 +187,6 @@ test("login socket rejection terminates its owned browser and removes the privat
   } finally {
     if (previousPidLog === undefined) delete process.env.CODEX_LOGIN_PID_LOG;
     else process.env.CODEX_LOGIN_PID_LOG = previousPidLog;
-    if (previousProfile === undefined) delete process.env.CODEX_LOGIN_PROFILE;
-    else process.env.CODEX_LOGIN_PROFILE = previousProfile;
-    if (previousPort === undefined) delete process.env.CODEX_LOGIN_DEVTOOLS_PORT;
-    else process.env.CODEX_LOGIN_DEVTOOLS_PORT = previousPort;
     if (pid && processIsRunning(pid)) process.kill(-pid, "SIGKILL");
     rmSync(root, { recursive: true, force: true });
   }

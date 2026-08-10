@@ -173,6 +173,14 @@ test("MCP copy includes every required account, key, and connector instruction",
   assert.match(i18nSource, /only after this step succeeds and the tunnel is running/);
   assert.match(i18nSource, /只有此步骤成功且 Tunnel 正在运行后/);
   assert.match(appSource, /className="mcp-step-two-hint"/);
+  assert.match(i18nSource, /Connect harness is unavailable until the Codex models are installed and verified/);
+  assert.match(i18nSource, /Return to Setup, click Install models, restart Codex once/);
+  assert.match(i18nSource, /在 Codex 模型安装并验证完成前，无法连接 Harness/);
+  assert.match(
+    appSource,
+    /snapshot\.state\.codexCatalogVerified \? copy\.mcpStepTwoHint : copy\.mcpCatalogRequired/,
+  );
+  assert.match(appSource, /\|\| !snapshot\.state\.codexCatalogVerified/);
   assert.match(i18nSource, /enable Developer Mode[\s\S]*?choose Tunnel[\s\S]*?set Authentication to None/);
   assert.match(i18nSource, /create a new connector[\s\S]*?exact connector name shown below/);
   assert.match(i18nSource, /Leave the old connector untouched and create Codex Native2 as a new connector/);

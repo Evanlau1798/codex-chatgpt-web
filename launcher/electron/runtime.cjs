@@ -346,7 +346,7 @@ class RuntimeHost {
         {
           env: this.launcherControlEnvironment(),
           message: "Sign in to ChatGPT in the dedicated system Chrome/Chromium window; transfer continues automatically",
-          successMessage: "System-browser ChatGPT login verified",
+          successMessage: "Authenticated system-browser ChatGPT session captured",
         },
       );
       const stateStat = fs.lstatSync(storageStatePath);
@@ -359,8 +359,13 @@ class RuntimeHost {
         throw new Error("System-browser login returned an invalid verification marker");
       }
       const marker = readJsonFile(markerPath);
-      if (marker?.version !== 1 || marker?.authenticated !== true || typeof marker?.verifiedAt !== "string") {
-        throw new Error("System-browser login did not return authenticated verification evidence");
+      if (
+        marker?.version !== 2
+        || marker?.authenticated !== true
+        || marker?.source !== "authenticated-system-browser"
+        || typeof marker?.capturedAt !== "string"
+      ) {
+        throw new Error("System-browser login did not return authenticated capture evidence");
       }
       const storageState = readJsonFile(storageStatePath);
       return { storageState, cleanup };

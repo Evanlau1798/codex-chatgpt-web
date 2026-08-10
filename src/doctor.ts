@@ -134,7 +134,7 @@ export async function runDoctor(): Promise<DoctorReport> {
     } else if (!secureFile(loginVerificationMarkerPath(config.storageStatePath))) {
       checks.push({ id: "login", status: "error", message: "ChatGPT login verification marker is readable by other users" });
     } else {
-      checks.push({ id: "login", status: "ok", message: "ChatGPT login state was verified in a fresh runtime context" });
+      checks.push({ id: "login", status: "ok", message: "ChatGPT login state has authenticated browser evidence" });
     }
   }
 

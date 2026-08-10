@@ -1,11 +1,11 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
 import { dirname, join, win32 } from "node:path";
 import {
   chromium,
   type Browser,
   type BrowserContext,
-  type BrowserContextOptions,
   type ConnectOverCDPTransport,
   type Page,
 } from "playwright-core";
@@ -14,7 +14,6 @@ import { atomicWriteFile, stripUtf8Bom } from "./config";
 import {
   assertAuthenticatedChatGptPage,
   assertTemporaryChatPage,
-  CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_TEMPORARY_CHAT_URL,
   detectChatGptAccountCapabilities,
 } from "./chatgpt-session";
@@ -27,13 +26,24 @@ export interface BrowserLoginResult {
   proAvailable: boolean;
 }
 
-interface LoginVerificationMarker {
+interface LegacyLoginVerificationMarker {
   version: 1;
   authenticated: true;
   verifiedAt: string;
   solAvailable?: boolean;
   proAvailable?: boolean;
 }
+
+interface LoginCaptureMarker {
+  version: 2;
+  authenticated: true;
+  source: "authenticated-system-browser";
+  capturedAt: string;
+  solAvailable?: boolean;
+  proAvailable?: boolean;
+}
+
+type LoginVerificationMarker = LegacyLoginVerificationMarker | LoginCaptureMarker;
 
 interface LoginBrowserExit {
   code: number | null;
@@ -44,6 +54,7 @@ interface LoginBrowserExit {
 const LOGIN_BROWSER_START_TIMEOUT_MS = 30_000;
 const LOGIN_COMPLETION_TIMEOUT_MS = 10 * 60_000;
 const LOGIN_POLL_INTERVAL_MS = 100;
+const MAX_DEVTOOLS_VERSION_BYTES = 64 * 1024;
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolveDelay => setTimeout(resolveDelay, ms));
@@ -55,17 +66,54 @@ function loginBrowserExitError(exit: LoginBrowserExit, phase: string): Error {
   return new Error(`System Chrome/Chromium ${phase} with status ${exit.code ?? "unknown"}`);
 }
 
-function readDevToolsEndpoint(profileDir: string): string | undefined {
+async function reserveLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolveListen, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, resolveListen);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string" || address.address !== "127.0.0.1" || address.port < 1) {
+    await new Promise<void>(resolveClose => server.close(() => resolveClose()));
+    throw new Error("Could not reserve a private loopback port for system Chrome/Chromium login");
+  }
+  const port = address.port;
+  await new Promise<void>((resolveClose, rejectClose) => {
+    server.close(error => error ? rejectClose(error) : resolveClose());
+  });
+  return port;
+}
+
+async function readDevToolsEndpoint(port: number, timeoutMs: number): Promise<string | undefined> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const [rawPort, rawPath] = readFileSync(join(profileDir, "DevToolsActivePort"), "utf8").split(/\r?\n/, 2);
-    if (!rawPort || !/^\d+$/.test(rawPort.trim())) return undefined;
-    const port = Number(rawPort.trim());
-    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) return undefined;
-    const browserPath = rawPath?.trim();
-    if (!browserPath || !/^\/devtools\/browser\/[A-Za-z0-9_-]{16,}$/.test(browserPath)) return undefined;
-    return `ws://127.0.0.1:${port}${browserPath}`;
+    const response = await fetch(`http://127.0.0.1:${port}/json/version`, {
+      cache: "no-store",
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!response.ok) return undefined;
+    const raw = await response.text();
+    if (!raw || raw.length > MAX_DEVTOOLS_VERSION_BYTES) return undefined;
+    const payload = JSON.parse(raw) as unknown;
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+    const endpoint = (payload as Record<string, unknown>).webSocketDebuggerUrl;
+    if (typeof endpoint !== "string") return undefined;
+    const parsed = new URL(endpoint);
+    if (
+      parsed.protocol !== "ws:"
+      || parsed.hostname !== "127.0.0.1"
+      || parsed.port !== String(port)
+      || parsed.search
+      || parsed.hash
+      || !/^\/devtools\/browser\/[A-Za-z0-9_-]{16,}$/.test(parsed.pathname)
+    ) return undefined;
+    return endpoint;
   } catch {
     return undefined;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -112,13 +160,14 @@ async function openNativeCdpTransport(endpoint: string, timeoutMs: number): Prom
 }
 
 async function waitForDevToolsEndpoint(
-  profileDir: string,
+  port: number,
   browserExit: Promise<LoginBrowserExit>,
   timeoutMs: number,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const endpoint = readDevToolsEndpoint(profileDir);
+    const remaining = Math.max(1, deadline - Date.now());
+    const endpoint = await readDevToolsEndpoint(port, Math.min(500, remaining));
     if (endpoint) return endpoint;
     const exited = await Promise.race([
       browserExit,
@@ -216,7 +265,7 @@ async function closeOwnedLoginBrowser(
     const session = await browser.newBrowserCDPSession();
     // A browser attached through CDP treats Browser.close() on Playwright's Browser object as a
     // disconnect. Send the native command so the dedicated profile process really exits before
-    // its sensitive temporary files can be removed or independently verified.
+    // its sensitive temporary files are removed or transferred to the launcher-owned browser.
     void session.send("Browser.close").catch(() => {});
   }
   await requireCleanLoginBrowserExit(browserExit);
@@ -226,55 +275,43 @@ export function loginVerificationMarkerPath(storageStatePath: string): string {
   return `${storageStatePath}.verified.json`;
 }
 
-function writeVerificationMarker(
+function writeLoginCaptureMarker(
   storageStatePath: string,
   capabilities: ChatGptWebAccountCapabilities,
 ): void {
-  const marker: LoginVerificationMarker = {
-    version: 1,
+  const marker: LoginCaptureMarker = {
+    version: 2,
     authenticated: true,
-    verifiedAt: new Date().toISOString(),
+    source: "authenticated-system-browser",
+    capturedAt: new Date().toISOString(),
     ...capabilities,
   };
   atomicWriteFile(loginVerificationMarkerPath(storageStatePath), `${JSON.stringify(marker)}\n`);
 }
 
-async function inspectStoredState(
-  config: AppConfig,
-  storageState: NonNullable<BrowserContextOptions["storageState"]>,
-): Promise<ChatGptWebAccountCapabilities & { url: string }> {
-  const verifierBrowser = await chromium.launch({
-    executablePath: config.chromeExecutablePath,
-    headless: false,
-    ignoreDefaultArgs: ["--password-store=basic", "--use-mock-keychain"],
-    args: ["--no-first-run", "--no-default-browser-check"],
-  });
+async function verifyCapturedStateInOwnedBrowser(
+  browser: Browser,
+  browserExit: Promise<LoginBrowserExit>,
+  storageState: Awaited<ReturnType<BrowserContext["storageState"]>>,
+  timeoutMs: number,
+): Promise<void> {
+  const verifierContext = await browser.newContext({ storageState });
   try {
-    const verifierContext = await verifierBrowser.newContext({ storageState });
-    try {
-      const verifierPage = await verifierContext.newPage();
-      await verifierPage.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-      await verifierPage
-        .locator(CHATGPT_COMPOSER_SELECTOR)
-        .filter({ visible: true })
-        .first()
-        .waitFor({ state: "visible", timeout: 60_000 });
-      await assertAuthenticatedChatGptPage(verifierPage);
-      await assertTemporaryChatPage(verifierPage);
-      return { ...await detectChatGptAccountCapabilities(verifierPage), url: verifierPage.url() };
-    } finally {
-      await verifierContext.close();
-    }
+    const verifierPage = await verifierContext.newPage();
+    await verifierPage.goto(CHATGPT_TEMPORARY_CHAT_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: timeoutMs,
+    });
+    await waitForAuthenticatedTemporaryChat(verifierContext, browserExit, timeoutMs);
   } finally {
-    await verifierBrowser.close();
+    await verifierContext.close();
   }
 }
 
 export async function inspectBrowserLoginCapabilities(config: AppConfig): Promise<ChatGptWebAccountCapabilities> {
   if (!browserLoginStateExists(config)) throw new Error("ChatGPT login state is missing or unverified");
-  const inspected = await inspectStoredState(config, config.storageStatePath);
-  writeVerificationMarker(config.storageStatePath, inspected);
-  return { solAvailable: inspected.solAvailable, proAvailable: inspected.proAvailable };
+  const refreshed = await loginToChatGpt(config);
+  return { solAvailable: refreshed.solAvailable, proAvailable: refreshed.proAvailable };
 }
 
 export function storedBrowserLoginCapabilities(
@@ -300,8 +337,11 @@ export async function loginToChatGpt(
     throw new Error(`Chrome/Chromium was not found at ${config.chromeExecutablePath}. Pass --chrome with its executable path.`);
   }
   const profileDir = join(dirname(config.storageStatePath), "login-profile");
+  rmSync(profileDir, { recursive: true, force: true });
   mkdirSync(profileDir, { recursive: true, mode: 0o700 });
-  rmSync(join(profileDir, "DevToolsActivePort"), { force: true });
+  // Chrome treats port 0 as an automation signal and exposes navigator.webdriver=true. Reserve a
+  // normal loopback port so provider/passkey sign-in stays on Chrome's ordinary browser surface.
+  const devToolsPort = await reserveLoopbackPort();
   process.stdout.write(
     "A dedicated system Chrome/Chromium window is open. Sign in to ChatGPT and leave it open; transfer continues automatically when the Temporary Chat composer is visible.\n",
   );
@@ -310,7 +350,7 @@ export async function loginToChatGpt(
     "--new-window",
     "--disable-background-mode",
     "--remote-debugging-address=127.0.0.1",
-    "--remote-debugging-port=0",
+    `--remote-debugging-port=${devToolsPort}`,
     "--no-first-run",
     "--no-default-browser-check",
     CHATGPT_TEMPORARY_CHAT_URL,
@@ -331,7 +371,7 @@ export async function loginToChatGpt(
   try {
     const completionTimeoutMs = options.timeoutMs ?? LOGIN_COMPLETION_TIMEOUT_MS;
     const endpoint = await waitForDevToolsEndpoint(
-      profileDir,
+      devToolsPort,
       browserExit,
       Math.min(LOGIN_BROWSER_START_TIMEOUT_MS, completionTimeoutMs),
     );
@@ -348,21 +388,27 @@ export async function loginToChatGpt(
     }
     const context = contexts[0];
     const page = await waitForAuthenticatedTemporaryChat(context, browserExit, completionTimeoutMs);
+    const capabilities = await detectChatGptAccountCapabilities(page);
     const state = await context.storageState();
     const accountSurfaceUrl = page.url();
+    await verifyCapturedStateInOwnedBrowser(
+      browser,
+      browserExit,
+      state,
+      Math.min(60_000, completionTimeoutMs),
+    );
 
     await closeOwnedLoginBrowser(browser, browserExit);
     browserProcessClosed = true;
     browser = undefined;
 
-    const inspected = await inspectStoredState(config, state);
     atomicWriteFile(config.storageStatePath, `${JSON.stringify(state)}\n`);
-    writeVerificationMarker(config.storageStatePath, inspected);
+    writeLoginCaptureMarker(config.storageStatePath, capabilities);
     result = {
       storageStatePath: config.storageStatePath,
       accountSurfaceUrl,
-      solAvailable: inspected.solAvailable,
-      proAvailable: inspected.proAvailable,
+      solAvailable: capabilities.solAvailable,
+      proAvailable: capabilities.proAvailable,
     };
   } catch (error) {
     primaryError = error;
@@ -397,7 +443,7 @@ export async function loginToChatGpt(
     throw primaryError;
   }
   if (cleanupError) throw cleanupError;
-  if (!result) throw new Error("System-browser login completed without a verified result");
+  if (!result) throw new Error("System-browser login completed without authenticated capture evidence");
   return result;
 }
 
@@ -407,7 +453,11 @@ export function browserLoginStateExists(config: AppConfig): boolean {
   if (!existsSync(markerPath)) return false;
   try {
     const marker = JSON.parse(stripUtf8Bom(readFileSync(markerPath, "utf8"))) as Partial<LoginVerificationMarker>;
-    return marker.version === 1 && marker.authenticated === true && typeof marker.verifiedAt === "string";
+    if (marker.authenticated !== true) return false;
+    if (marker.version === 1) return typeof marker.verifiedAt === "string";
+    return marker.version === 2
+      && marker.source === "authenticated-system-browser"
+      && typeof marker.capturedAt === "string";
   } catch {
     return false;
   }
