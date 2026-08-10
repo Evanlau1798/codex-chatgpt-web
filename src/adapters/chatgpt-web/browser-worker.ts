@@ -832,19 +832,31 @@ export class ChatGptBrowserWorker {
     stage: string,
     timeoutMs: number,
     action: (abortSignal: AbortSignal) => Promise<T>,
+    ownerSignal?: AbortSignal,
   ): Promise<T> {
     const startedAt = performance.now();
     console.info(`[chatgpt-web] browser turn ${traceId} stage=${stage} started`);
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let onOwnerAbort: (() => void) | undefined;
     try {
+      if (ownerSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       const timeout = new Promise<never>((_, rejectTimeout) => {
         timer = setTimeout(() => {
           rejectTimeout(new Error(`ChatGPT browser stage timed out: ${stage}`));
           controller.abort();
         }, timeoutMs);
       });
-      const value = await Promise.race([action(controller.signal), timeout]);
+      const ownerAbort = ownerSignal
+        ? new Promise<never>((_, rejectAbort) => {
+            onOwnerAbort = () => {
+              rejectAbort(new DOMException("ChatGPT web turn aborted", "AbortError"));
+              controller.abort();
+            };
+            ownerSignal.addEventListener("abort", onOwnerAbort, { once: true });
+          })
+        : undefined;
+      const value = await Promise.race([action(controller.signal), timeout, ...(ownerAbort ? [ownerAbort] : [])]);
       console.info(`[chatgpt-web] browser turn ${traceId} stage=${stage} completed durationMs=${Math.round(performance.now() - startedAt)}`);
       return value;
     } catch (error) {
@@ -852,6 +864,7 @@ export class ChatGptBrowserWorker {
       throw error;
     } finally {
       if (timer) clearTimeout(timer);
+      if (ownerSignal && onOwnerAbort) ownerSignal.removeEventListener("abort", onOwnerAbort);
     }
   }
 
@@ -1188,6 +1201,7 @@ export class ChatGptBrowserWorker {
 
   private selectedConnectorControl(composer: Locator): Locator {
     return composer
+      .locator("xpath=ancestor::form[1]")
       .locator('[data-id^="plugin:"][data-keyword]')
       .filter({ hasText: this.config.appName, visible: true });
   }
@@ -1222,8 +1236,7 @@ export class ChatGptBrowserWorker {
     }
     return `ChatGPT connector menu opened but exposed no row named ${JSON.stringify(this.config.appName)}`
       + ` after ${triggerAttempts} complete mention trigger attempt(s)`
-      + `; create a connector with that exact name before retrying`
-      + `; visible rows: ${titles.map(title => JSON.stringify(title)).join(", ")}`;
+      + "; create a connector with that exact name before retrying";
   }
 
   private async selectConnector(
@@ -1249,6 +1262,7 @@ export class ChatGptBrowserWorker {
       composer = await this.activeComposer(page);
       await composer.fill("");
       await composer.focus();
+      await composer.press("Escape");
       await settleChatGptUi();
       await composer.pressSequentially("@c", { delay: 25 });
       if (!firstMenuCaptured) {
@@ -1860,7 +1874,7 @@ export class ChatGptBrowserWorker {
         try {
         await this.runStage(turn.traceId, "prompt_attachment", browserStageTimeouts.promptAttachment, () => (
           this.attachPrompt(page, responsePrompt, mode.localTools, checkpoint => diagnostics.capture(page, checkpoint))
-        ));
+        ), turn.abortSignal);
         await diagnostics.capture(page, "prompt-attachment-complete");
         if (responseAttempt === 1) {
           await this.runStage(turn.traceId, "file_attachment", browserStageTimeouts.fileAttachment, () => (
@@ -2049,7 +2063,10 @@ export class ChatGptBrowserWorker {
           const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
           if (await stop.isVisible().catch(() => false)) await stop.press("Enter").catch(() => {});
           responsePrompt = retryPrompt;
-          console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying response failure attempt=${responseAttempt + 1}`);
+          const reason = failure instanceof ChatGptWebAdapterError
+            ? `${failure.name}:${failure.code}`
+            : failure.name;
+          console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying response failure attempt=${responseAttempt + 1} reason=${reason}`);
           continue;
         }
         const retryPrompt = await turn.retryPromptForAnswer?.(finalText, responseAttempt);

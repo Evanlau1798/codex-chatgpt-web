@@ -106,6 +106,14 @@ test("connector verification reports a legacy-only ChatGPT menu as a migration e
   }, {}, 4);
   expect(mixedMessage).not.toContain("Legacy ChatGPT connector");
   expect(mixedMessage).toContain('no row named "Codex Native2"');
+
+  const unrelatedMessage = await connectorMentionFailure.call({
+    config: { appName: CHATGPT_CONNECTOR_NAME },
+    connectorMentionRowTitles: async () => ["新增相片與檔案", "Private project title"],
+  }, {}, 7);
+  expect(unrelatedMessage).toContain('no row named "Codex Native2"');
+  expect(unrelatedMessage).not.toContain("新增相片與檔案");
+  expect(unrelatedMessage).not.toContain("Private project title");
 });
 
 test("browser stage timeout aborts late page acquisition", async () => {
@@ -134,6 +142,38 @@ test("browser stage timeout aborts late page acquisition", async () => {
 
   await expect(result).rejects.toThrow("ChatGPT browser stage timed out: browser_page");
   expect(acquisitionAborted).toBeTrue();
+});
+
+test("browser stage aborts immediately when the owning turn is cancelled", async () => {
+  const owner = new AbortController();
+  let stageAborted = false;
+  const runStage = (ChatGptBrowserWorker.prototype as unknown as {
+    runStage<T>(
+      traceId: string,
+      stage: string,
+      timeoutMs: number,
+      action: (signal: AbortSignal) => Promise<T>,
+      ownerSignal?: AbortSignal,
+    ): Promise<T>;
+  }).runStage;
+
+  const result = runStage.call(
+    {},
+    "trace_abort",
+    "prompt_attachment",
+    60_000,
+    async (signal) => await new Promise<string>((resolve) => {
+      signal.addEventListener("abort", () => {
+        stageAborted = true;
+        resolve("late prompt");
+      }, { once: true });
+    }),
+    owner.signal,
+  );
+  owner.abort();
+
+  await expect(result).rejects.toMatchObject({ name: "AbortError" });
+  expect(stageAborted).toBeTrue();
 });
 
 test("closing the launcher page is an immediate terminal turn error", async () => {
@@ -280,6 +320,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
   const initialComposer = {
     fill: async (value: string) => { calls.push(["fill", value]); },
     focus: async () => { calls.push(["focus"]); },
+    press: async (value: string) => { calls.push(["press", value]); },
     pressSequentially: async (value: string, options: { delay: number }) => {
       expect(options).toEqual({ delay: 25 });
       calls.push(["pressSequentially", value]);
@@ -325,11 +366,39 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
     ["fill", ""],
     ["fill", ""],
     ["focus"],
+    ["press", "Escape"],
     ["pressSequentially", "@c"],
     ["waitForResult"],
     ["click"],
     ["waitForSelectedConnector"],
   ]);
+});
+
+test("connector selection resolves a selected pill from the owning composer form", () => {
+  const selectedConnector = {};
+  const composerForm = {
+    locator: (selector: string) => {
+      expect(selector).toBe('[data-id^="plugin:"][data-keyword]');
+      return {
+        filter: (options: { hasText: string; visible: boolean }) => {
+          expect(options).toEqual({ hasText: "Codex Native2", visible: true });
+          return selectedConnector;
+        },
+      };
+    },
+  };
+  const composer = {
+    locator: (selector: string) => {
+      expect(selector).toBe("xpath=ancestor::form[1]");
+      return composerForm;
+    },
+  };
+  const selectedConnectorControl = (ChatGptBrowserWorker.prototype as unknown as {
+    selectedConnectorControl(composer: unknown): unknown;
+  }).selectedConnectorControl;
+  const resolved = selectedConnectorControl.call({ config: { appName: "Codex Native2" } }, composer);
+
+  expect(resolved).toBe(selectedConnector);
 });
 
 test("connector selection retriggers the complete mention after a fresh-page hydration miss", async () => {
@@ -364,6 +433,10 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
   const initialComposer = {
     fill: async () => { calls.push("clear"); },
     focus: async () => { calls.push("focus"); },
+    press: async (value: string) => {
+      expect(value).toBe("Escape");
+      calls.push("dismiss");
+    },
     pressSequentially: async (value: string) => {
       expect(value).toBe("@c");
       calls.push("type");
@@ -392,8 +465,8 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
 
   expect(calls).toEqual([
     "clear",
-    "clear", "focus", "type", "menu:1",
-    "clear", "focus", "type", "menu:2",
+    "clear", "focus", "dismiss", "type", "menu:1",
+    "clear", "focus", "dismiss", "type", "menu:2",
     "activate", "selected",
   ]);
 });
@@ -424,6 +497,7 @@ test("tool-capable prompts use the shared Playwright connector selection before 
   const initialComposer = {
     fill: async (value: string) => { calls.push(["fill", value]); },
     focus: async () => { calls.push(["focus"]); },
+    press: async (value: string) => { calls.push(["press", value]); },
     pressSequentially: async (value: string) => { calls.push(["type", value]); },
   };
   const page = {
@@ -464,6 +538,7 @@ test("tool-capable prompts use the shared Playwright connector selection before 
     ["fill", ""],
     ["fill", ""],
     ["focus"],
+    ["press", "Escape"],
     ["type", "@c"],
     ["connectorMenu"],
     ["selectConnector"],
