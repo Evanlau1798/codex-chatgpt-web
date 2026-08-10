@@ -216,23 +216,42 @@ export class TurnBroker {
     }
   }
 
-  requestSteering(token: string, instruction: string): void {
+  requestSteering(token: string, instruction: string): "queued" | "delivered" {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
     channel.queuedCallIds.length = 0;
     if (channel.invocations.size === 0) {
-      channel.steeringInstruction = instruction;
-      return;
+      channel.steeringInstruction = channel.steeringInstruction
+        ? `${channel.steeringInstruction}\n\n${instruction}`
+        : instruction;
+      return "queued";
     }
+    const deliveredInstruction = channel.steeringInstruction
+      ? `${channel.steeringInstruction}\n\n${instruction}`
+      : instruction;
+    channel.steeringInstruction = undefined;
     const result: BrokerToolResult = {
-      content: [{ type: "text", text: instruction }],
+      content: [{ type: "text", text: deliveredInstruction }],
       isError: true,
     };
     for (const [callId, invocation] of channel.invocations) {
       channel.invocations.delete(callId);
       invocation.resolve(result);
     }
+    return "delivered";
+  }
+
+  takeUndeliveredSteering(token: string): string | undefined {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    const instruction = channel.steeringInstruction;
+    channel.steeringInstruction = undefined;
+    if (instruction) {
+      console.info(`[chatgpt-web] broker trace=${channel.traceId} recovered undelivered native steering for same-conversation follow-up`);
+    }
+    return instruction;
   }
 
   handoffRequested(token: string): boolean {
@@ -471,6 +490,7 @@ export class TurnBroker {
     if (binding.channel.steeringInstruction) {
       const instruction = binding.channel.steeringInstruction;
       binding.channel.steeringInstruction = undefined;
+      console.info(`[chatgpt-web] broker trace=${binding.channel.traceId} delivered queued native steering through the tool loop`);
       return {
         content: [{ type: "text", text: instruction }],
         isError: true,

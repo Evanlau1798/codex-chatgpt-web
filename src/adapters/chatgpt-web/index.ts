@@ -133,10 +133,11 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const trace = new ChatGptTraceFeed();
     const text = new ChatGptTextFeed();
     const steering = captureLunaCheckpoint ? undefined : new ChatGptSteeringFeed();
+    let activeToken: string | undefined;
     const handoffPrompts = useNewCompactMode ? createActiveCompactionHandoffPrompts() : undefined;
     const resumeInput = claudeConversationResumeRequest(checkpointInput.parsed);
     const { retainConversation, retryPromptForAnswer: upstreamRetry } = claudeBrowserTurnOptions(checkpointInput.parsed, handoffPrompts?.retryPromptForAnswer);
-    const retryPromptForAnswer = parsed._compactionRequest || !steering ? upstreamRetry : browserSteeringRetry(steering, traceId, upstreamRetry);
+    const retryPromptForAnswer = parsed._compactionRequest || !steering ? upstreamRetry : browserSteeringRetry(steering, traceId, upstreamRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined);
     if (!mode.localTools) {
       const base = {
         modelId: parsed.modelId,
@@ -188,7 +189,6 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     if (!environment) throw new Error("Tool-capable ChatGPT web mode requires a trusted Codex environment");
     const token = deferred<string>();
     let tokenSettled = false;
-    let activeToken: string | undefined;
     const prepareWith = async (input: CodexParsedRequest) => {
       const turnToken = activeToken ?? await broker.register(
         environment,

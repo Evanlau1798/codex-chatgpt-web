@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
+import { browserSteeringRetry } from "../src/adapters/chatgpt-web/steering";
+import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -165,13 +166,13 @@ test("turn broker delivers steering once through the active tool loop", async ()
       wireName: "exec_command",
     });
     await Bun.sleep(5);
-    broker.requestSteering(token, "The user added: stop and review first");
+    expect(broker.requestSteering(token, "The user added: stop and review first")).toBe("delivered");
     await expect(first).resolves.toEqual({
       content: [{ type: "text", text: "The user added: stop and review first" }],
       isError: true,
     });
 
-    broker.requestSteering(token, "The user added: use the existing implementation");
+    expect(broker.requestSteering(token, "The user added: use the existing implementation")).toBe("queued");
     await expect(callTurnBroker(socketPath, {
       method: "invoke",
       bindingId: claimed.bindingId,
@@ -180,6 +181,37 @@ test("turn broker delivers steering once through the active tool loop", async ()
       content: [{ type: "text", text: "The user added: use the existing implementation" }],
       isError: true,
     });
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("queued steering becomes a same-conversation follow-up when no tool call consumes it", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-broker-steering-fallback-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  try {
+    const token = await broker.register({
+      cwd: root,
+      roots: [root],
+      writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" },
+      tools: [],
+    });
+    const instruction = "The user added this instruction while you were working:\n\nReview live progress first.";
+    expect(broker.requestSteering(token, instruction)).toBe("queued");
+
+    const retry = browserSteeringRetry(
+      new ChatGptSteeringFeed(),
+      "steering-fallback",
+      undefined,
+      () => broker.takeUndeliveredSteering(token),
+    );
+    expect(retry("premature answer", 1)).toBe(
+      `${instruction}\n\nContinue the task in this same conversation. Treat this as the latest user instruction.`,
+    );
+    expect(retry("completed after guidance", 2)).toBeUndefined();
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });

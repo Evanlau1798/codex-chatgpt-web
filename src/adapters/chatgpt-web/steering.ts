@@ -10,14 +10,18 @@ export function browserSteeringRetry(
   steering: ChatGptSteeringFeed,
   traceId: string,
   upstream?: AnswerRetry,
+  takeUndelivered?: () => string | undefined,
 ): AnswerRetry {
   let steeringAttempts = 0;
   return (answer, attempt) => {
     const instruction = steering.take();
-    if (!instruction) return upstream?.(answer, Math.max(1, attempt - steeringAttempts));
+    const prompt = instruction
+      ? `The user added this instruction while you were working:\n\n${instruction}`
+      : takeUndelivered?.();
+    if (!prompt) return upstream?.(answer, Math.max(1, attempt - steeringAttempts));
     steeringAttempts += 1;
     console.info(`[chatgpt-web] browser turn ${traceId} continued native steering in the existing Web conversation`);
-    return `The user added this instruction while you were working:\n\n${instruction}\n\nContinue the task in this same conversation. Treat this as the latest user instruction.`;
+    return `${prompt}\n\nContinue the task in this same conversation. Treat this as the latest user instruction.`;
   };
 }
 
@@ -52,9 +56,9 @@ export function deliverPendingChatGptSteering(
 ): void {
   const steering = session.takePendingSteering();
   if (!steering) return;
-  broker.requestSteering(token, `The user added this instruction while you were working:\n\n${steering}`);
+  const delivery = broker.requestSteering(token, `The user added this instruction while you were working:\n\n${steering}`);
   session.clearOutstanding();
-  console.info(`[chatgpt-web] browser turn ${traceId} accepted native steering without opening a replacement tab`);
+  console.info(`[chatgpt-web] browser turn ${traceId} ${delivery} native steering without opening a replacement tab`);
 }
 
 export function claudeConversationResumeRequest(parsed: CodexParsedRequest): CodexParsedRequest | undefined {
