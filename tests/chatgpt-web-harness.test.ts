@@ -1804,6 +1804,7 @@ describe("ChatGPT outer-native harness v4", () => {
       expect(listed.tools.map(tool => tool.name).sort()).toEqual([
         "codex_apply_patch",
         "codex_exec",
+        "codex_read_context",
         "codex_tool_call",
         "codex_tool_inventory",
         "codex_view_image",
@@ -1820,13 +1821,20 @@ describe("ChatGPT outer-native harness v4", () => {
       // ChatGPT caches the complete tools/list contract under a connector identity.
       // An intentional hash change therefore requires an explicit connector refresh or identity migration.
       expect(createHash("sha256").update(canonicalJson(publicConnectorAbi)).digest("hex"))
-        .toBe("22453f12f727e5ae39765b0fb16632a85cef840f7337ae5277de7981c10f0cfe");
+        .toBe("28b2ed2e0333df5e23918b820f164dd6001016672a17e9528a6268e862b6dd33");
       for (const tool of listed.tools) {
         const properties = tool.inputSchema.properties as Record<string, unknown>;
-        expect(properties.turn_token).toEqual({ type: "string", minLength: 20, maxLength: 256 });
+        expect(properties[tool.name === "codex_read_context" ? "context_token" : "turn_token"])
+          .toEqual({ type: "string", minLength: 20, maxLength: 256 });
         expect(properties).not.toHaveProperty("binding_id");
         expect(tool.outputSchema).toBeUndefined();
       }
+      expect(listed.tools.find(tool => tool.name === "codex_read_context")?.annotations).toMatchObject({
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      });
       expect(listed.tools.find(tool => tool.name === "codex_exec")?.annotations).toMatchObject({
         readOnlyHint: false,
         destructiveHint: true,

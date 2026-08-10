@@ -7,6 +7,7 @@ import type { ProviderAdapter } from "../base";
 import { ChatGptWebAdapterError, chatGptSessionFailureDisposition } from "./adapter-error";
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { claudeBrowserTurnOptions } from "./claude-subagent";
+import { prepareChatGptWebContext } from "./context-bootstrap";
 import {
   canonicalizeCompactionHandoff,
   codexToolResultToBrokerResult,
@@ -130,6 +131,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       return answer;
     });
     const browserAbort = new AbortController();
+    const contextTtlMs = timeoutMs === undefined ? undefined : timeoutMs + 60_000;
     const trace = new ChatGptTraceFeed();
     const text = new ChatGptTextFeed();
     const steering = captureLunaCheckpoint ? undefined : new ChatGptSteeringFeed();
@@ -143,20 +145,16 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         modelId: parsed.modelId,
         reasoning: parsed.options.reasoning,
         capabilities: turnCapabilities,
-        prepare: async () => ({
-          ...compileChatGptWebPrompt(
+        prepare: async () => prepareChatGptWebContext(broker, compileChatGptWebPrompt(
             checkpointInput.parsed,
             turnCapabilities,
             undefined,
             { captureLunaCheckpoint },
-          ),
-          release: () => {},
-        }),
+          ), useNewCompactMode, contextTtlMs, traceId),
         ...(resumeInput ? {
-          prepareResume: async () => ({
-            ...compileChatGptWebPrompt(resumeInput, turnCapabilities, undefined, { captureLunaCheckpoint }),
-            release: () => {},
-          }),
+          prepareResume: async () => prepareChatGptWebContext(broker,
+            compileChatGptWebPrompt(resumeInput, turnCapabilities, undefined, { captureLunaCheckpoint }),
+            useNewCompactMode, contextTtlMs, traceId),
         } : {}),
         ...(retainConversation ? { retainConversation: true } : {}),
         abortSignal: browserAbort.signal,
@@ -201,7 +199,9 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         token.resolve(turnToken);
       }
       try {
-        return { ...compileChatGptWebPrompt(input, turnCapabilities, turnToken, { captureLunaCheckpoint }), release: () => {} };
+        return await prepareChatGptWebContext(broker,
+          compileChatGptWebPrompt(input, turnCapabilities, turnToken, { captureLunaCheckpoint }),
+          useNewCompactMode, contextTtlMs, traceId);
       } catch (error) {
         broker.revoke(turnToken);
         throw error;

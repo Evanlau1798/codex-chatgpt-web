@@ -12,6 +12,7 @@ interface ClaimedTurn {
 }
 
 const turnTokenSchema = z.string().min(20).max(256);
+const contextTokenSchema = z.string().min(20).max(256);
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 
 function scopeHash(value: string): string {
@@ -159,7 +160,7 @@ function execCommandGatewayProgram(
 }
 
 export async function runChatGptMcpServer(options: { brokerSocketPath: string }): Promise<void> {
-  const server = new McpServer({ name: "codex-native", version: "4.0.0" });
+  const server = new McpServer({ name: "codex-native", version: "4.1.0" });
 
   const claimTurn = async (
     toolName: string,
@@ -217,6 +218,23 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       input: execGatewayProgram(nestedToolName, freeform, payload),
     });
   };
+
+  server.registerTool(
+    "codex_read_context",
+    {
+      title: "Read the current Codex task context",
+      description: "Read the complete bridge-supplied Codex harness, history, handoff, and transport contract referenced by a short bootstrap prompt.",
+      inputSchema: { context_token: contextTokenSchema },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ context_token }) => {
+      const { context } = await callTurnBroker<{ context: string }>(
+        options.brokerSocketPath,
+        { method: "read_context", token: context_token },
+      );
+      return { content: [{ type: "text" as const, text: context }] };
+    },
+  );
 
   server.registerTool(
     "codex_exec",

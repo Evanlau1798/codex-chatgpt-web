@@ -49,9 +49,15 @@ interface TurnChannel {
   steeringInstruction?: string;
 }
 
+interface PendingContext {
+  text: string;
+  traceId: string;
+  expiresAt?: number;
+}
+
 interface BrokerRequest {
   id: string;
-  method: "claim" | "resolve" | "release" | "invoke";
+  method: "claim" | "resolve" | "release" | "invoke" | "read_context";
   token?: string;
   bindingId?: string;
   wireName?: string;
@@ -114,6 +120,7 @@ export class TurnBroker {
 
   private readonly channels = new Map<string, TurnChannel>();
   private readonly pending = new Map<string, TurnChannel>();
+  private readonly contexts = new Map<string, PendingContext>();
   private readonly bindings = new Map<string, { token: string; channel: TurnChannel }>();
   // The Codex context replayed into ChatGPT still carries the handles of finished turns, so a model
   // can present one. Remembering which turn retired a handle is what separates "you are holding a
@@ -155,6 +162,29 @@ export class TurnBroker {
     this.channels.set(token, channel);
     this.pending.set(token, channel);
     return token;
+  }
+
+  async registerContext(text: string, ttlMs?: number, traceId = "unknown"): Promise<string> {
+    await this.start();
+    this.prune();
+    if (!text) throw new Error("ChatGPT web context must not be empty");
+    if (JSON.stringify({ context: text }).length + 256 > MAX_BROKER_LINE_CHARS) {
+      throw new Error("ChatGPT web context exceeds the turn broker response size limit");
+    }
+    if (ttlMs !== undefined && (!Number.isFinite(ttlMs) || ttlMs <= 0)) {
+      throw new Error("ChatGPT web context TTL must be a positive finite number");
+    }
+    const token = opaqueId("context");
+    this.contexts.set(token, {
+      text,
+      traceId,
+      ...(ttlMs !== undefined ? { expiresAt: Date.now() + ttlMs } : {}),
+    });
+    return token;
+  }
+
+  revokeContext(token: string): void {
+    this.contexts.delete(token);
   }
 
   updateEnvironment(token: string, environment: ChatGptTurnEnvironment): void {
@@ -284,6 +314,7 @@ export class TurnBroker {
 
   async close(): Promise<void> {
     for (const token of [...this.channels.keys()]) this.revoke(token);
+    this.contexts.clear();
     const server = this.server;
     this.server = undefined;
     this.startPromise = undefined;
@@ -425,13 +456,21 @@ export class TurnBroker {
     if (!request || typeof request !== "object" || typeof request.id !== "string" || request.id.length === 0 || request.id.length > 256) {
       throw new Error("turn broker request id is invalid");
     }
-    if (request.method !== "claim" && request.method !== "resolve" && request.method !== "release" && request.method !== "invoke") {
+    if (request.method !== "claim" && request.method !== "resolve" && request.method !== "release" && request.method !== "invoke" && request.method !== "read_context") {
       throw new Error("turn broker method is invalid");
     }
   }
 
   private dispatch(request: BrokerRequest): unknown | Promise<unknown> {
     this.prune();
+    if (request.method === "read_context") {
+      const token = request.token;
+      if (typeof token !== "string" || token.length === 0) throw new Error("context token is required");
+      const context = this.contexts.get(token);
+      if (!context) throw new Error("context token is invalid, expired, or revoked");
+      console.info(`[chatgpt-web] broker trace=${context.traceId} served context chars=${context.text.length}`);
+      return { context: context.text };
+    }
     if (request.method === "claim") {
       const token = request.token;
       if (typeof token !== "string" || token.length === 0) throw new Error("turn token is required");
@@ -564,6 +603,9 @@ export class TurnBroker {
 
   private prune(): void {
     const now = Date.now();
+    for (const [token, context] of this.contexts) {
+      if (context.expiresAt !== undefined && context.expiresAt <= now) this.contexts.delete(token);
+    }
     for (const [token, channel] of this.channels) {
       if (channel.environment.expiresAt === undefined || channel.environment.expiresAt > now) continue;
       this.revoke(token);
