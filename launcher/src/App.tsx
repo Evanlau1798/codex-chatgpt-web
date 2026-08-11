@@ -914,7 +914,9 @@ function SetupSurface({
           onAction={installCodex}
           onSecondaryAction={installClaude}
           repeatable
-          secondaryAction={snapshot.state.claudeSetupComplete ? copy.reinstallClaude : copy.installClaude}
+          secondaryAction={snapshot.state.claudeSetupComplete || snapshot.state.claudeSetupOutdated
+            ? copy.reinstallClaude
+            : copy.installClaude}
           title={copy.stepInstall}
         />
       </div>

@@ -19,6 +19,7 @@ export interface LauncherState {
   browserSmokeVersion?: string | null;
   codexSetupComplete: boolean;
   claudeSetupComplete: boolean;
+  claudeSetupOutdated: boolean;
   coreSetupComplete?: boolean;
   codexCatalogVerified?: boolean;
   mcpSetupComplete?: boolean;

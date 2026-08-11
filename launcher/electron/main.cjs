@@ -25,6 +25,7 @@ const {
   registerLoggedIpc,
 } = require("./logging.cjs");
 const { RuntimeHost } = require("./runtime.cjs");
+const { reconcileClaudeSetupState } = require("./claude-integration-status.cjs");
 const { ensurePackagedRuntime } = require("./runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { runtimeBundlePaths } = require("./runtime-command.cjs");
@@ -364,20 +365,30 @@ function smokePassedForCurrentVersion(state) {
 
 function registerIpc({ logger, stateStore }) {
   const handle = (channel, handler) => registerLoggedIpc(ipcMain, logger, channel, handler);
-  handle("launcher:snapshot", async () => ({
-    state: stateStore.read(),
-    browser: browserHost?.snapshot() ?? null,
-    connectorName: runtimeHost.browserConnectorName(),
-    mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
-    logs: logger.recent(),
-    urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
-    platform: process.platform,
-    packaged: app.isPackaged,
-    version: app.getVersion(),
-    smokePassed: smokePassedThisSession || smokePassedForCurrentVersion(stateStore.read()),
-    operation: lastOperation,
-    update: updateController?.getState() ?? { status: "disabled" },
-  }));
+  handle("launcher:snapshot", async () => {
+    const current = stateStore.read();
+    const claude = reconcileClaudeSetupState(
+      runtimeHost?.claudeIntegrationStatus() ?? "missing",
+    );
+    const state = current.claudeSetupComplete === claude.claudeSetupComplete
+      && current.claudeSetupOutdated === claude.claudeSetupOutdated
+      ? current
+      : stateStore.update(claude);
+    return {
+      state,
+      browser: browserHost?.snapshot() ?? null,
+      connectorName: runtimeHost.browserConnectorName(),
+      mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
+      logs: logger.recent(),
+      urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
+      platform: process.platform,
+      packaged: app.isPackaged,
+      version: app.getVersion(),
+      smokePassed: smokePassedThisSession || smokePassedForCurrentVersion(state),
+      operation: lastOperation,
+      update: updateController?.getState() ?? { status: "disabled" },
+    };
+  });
 
   handle("launcher:set-language", (_event, language) => stateStore.update({ language: validateLanguage(language) }));
   handle("launcher:open-social", async (_event, target) => {
@@ -515,6 +526,7 @@ function registerIpc({ logger, stateStore }) {
       coreSetupComplete: false,
       codexSetupComplete: false,
       claudeSetupComplete: false,
+      claudeSetupOutdated: false,
       bridgeEnabled: false,
       codexCatalogVerified: false,
       mcpSetupComplete: false,
@@ -545,6 +557,7 @@ function registerIpc({ logger, stateStore }) {
         codexRestartRequired: true,
       } : {
         claudeSetupComplete: true,
+        claudeSetupOutdated: false,
       }),
       ...(result.mode === "full" ? {
         mcpRuntimeInstalled: true,

@@ -21,6 +21,7 @@ const DEFAULT_STATE = Object.freeze({
   browserSmokeVersion: null,
   codexSetupComplete: false,
   claudeSetupComplete: false,
+  claudeSetupOutdated: false,
   sidebarOpen: true,
   sidebarWidth: 252,
   mcpGuideStep: 0,
@@ -59,6 +60,7 @@ function readState(filePath) {
       "browserSmokePassed",
       "codexSetupComplete",
       "claudeSetupComplete",
+      "claudeSetupOutdated",
       "sidebarOpen",
     ]) {
       if (typeof state[key] !== "boolean") state[key] = DEFAULT_STATE[key];

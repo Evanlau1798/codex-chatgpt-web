@@ -15,6 +15,7 @@ const {
 const { embeddedRuntimeInvocation, runtimeInvocation } = require("./runtime-command.cjs");
 const { redactText } = require("./logging.cjs");
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require("./process-tree.cjs");
+const { inspectClaudeIntegrationStatus } = require("./claude-integration-status.cjs");
 
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
@@ -408,6 +409,17 @@ class RuntimeHost {
       && path.isAbsolute(tunnel.runtimeKeyFile)
       && fs.existsSync(tunnel.runtimeKeyFile),
     );
+  }
+
+  claudeIntegrationStatus() {
+    const coreHome = this.supervisor.coreHome
+      || (typeof this.supervisor.configPath === "string"
+        ? path.dirname(this.supervisor.configPath)
+        : path.join(os.homedir(), ".codex-chatgpt-web"));
+    return inspectClaudeIntegrationStatus({
+      journalPath: path.join(coreHome, "claude", "integration-journal.json"),
+      settingsPath: path.join(this.claudeHome, "settings.json"),
+    });
   }
 
   captureSetupCheckpoint(snapshot) {
