@@ -18,12 +18,10 @@ function inspectClaudeIntegrationStatus({ journalPath, settingsPath }) {
     const installed = journal?.installed;
     const hook = installed?.hook;
     const events = installed?.hookEvents;
-    const brief = installed?.env?.CLAUDE_CODE_BRIEF;
     if (!hook || typeof hook !== "object" || Array.isArray(hook)
       || !Array.isArray(events)
       || !CLAUDE_STEERING_HOOK_EVENTS.every(event => events.includes(event))
-      || brief !== "1"
-      || settings?.env?.CLAUDE_CODE_BRIEF !== brief) {
+      || Object.hasOwn(installed?.env ?? {}, "CLAUDE_CODE_BRIEF")) {
       return "outdated";
     }
     const hooks = settings?.hooks;

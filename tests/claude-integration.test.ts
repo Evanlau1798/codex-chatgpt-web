@@ -56,10 +56,10 @@ describe("reversible Claude Code integration", () => {
       USER_SETTING: "keep",
       ANTHROPIC_BASE_URL: "http://127.0.0.1:17841",
       ANTHROPIC_AUTH_TOKEN: "codex-chatgpt-web-local",
-      CLAUDE_CODE_BRIEF: "1",
       CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
       CODEX_CHATGPT_WEB_CONTROL_TOKEN: config.controlToken,
     });
+    expect(installed.env).not.toHaveProperty("CLAUDE_CODE_BRIEF");
     const steeringHook = {
       hooks: [{
         type: "http",
@@ -96,21 +96,39 @@ describe("reversible Claude Code integration", () => {
     const legacySettings = settings();
     delete legacySettings.hooks.PostToolUse;
     delete legacySettings.hooks.PostToolUseFailure;
-    delete legacySettings.env.CLAUDE_CODE_BRIEF;
     writeFileSync(getClaudeSettingsPath(), `${JSON.stringify(legacySettings, null, 2)}\n`);
     const legacyJournal = JSON.parse(readFileSync(getClaudeIntegrationJournalPath(), "utf8"));
     delete legacyJournal.installed.hookEvents;
     delete legacyJournal.installed.hookEventsAdded;
-    delete legacyJournal.installed.env.CLAUDE_CODE_BRIEF;
     legacyJournal.installed.hookAdded = true;
     writeFileSync(getClaudeIntegrationJournalPath(), `${JSON.stringify(legacyJournal, null, 2)}\n`);
 
     installClaudeIntegration(config);
     expect(settings().hooks.PostToolUse).toHaveLength(1);
     expect(settings().hooks.PostToolUseFailure).toHaveLength(1);
-    expect(settings().env.CLAUDE_CODE_BRIEF).toBe("1");
+    expect(settings().env).not.toHaveProperty("CLAUDE_CODE_BRIEF");
     uninstallClaudeIntegration();
     expect(existsSync(getClaudeSettingsPath())).toBe(false);
+  });
+
+  test("retires a managed Brief value and restores its original user value", () => {
+    fixture({ env: { CLAUDE_CODE_BRIEF: "user-value", KEEP: "value" } });
+    const config = defaultConfig("browser-only");
+    installClaudeIntegration(config);
+    const legacySettings = settings();
+    legacySettings.env.CLAUDE_CODE_BRIEF = "1";
+    writeFileSync(getClaudeSettingsPath(), `${JSON.stringify(legacySettings, null, 2)}\n`);
+    const legacyJournal = JSON.parse(readFileSync(getClaudeIntegrationJournalPath(), "utf8"));
+    legacyJournal.installed.env.CLAUDE_CODE_BRIEF = "1";
+    legacyJournal.previous.env.CLAUDE_CODE_BRIEF = { present: true, value: "user-value" };
+    writeFileSync(getClaudeIntegrationJournalPath(), `${JSON.stringify(legacyJournal, null, 2)}\n`);
+
+    installClaudeIntegration(config);
+
+    expect(settings().env.CLAUDE_CODE_BRIEF).toBe("user-value");
+    const upgradedJournal = JSON.parse(readFileSync(getClaudeIntegrationJournalPath(), "utf8"));
+    expect(upgradedJournal.installed.env).not.toHaveProperty("CLAUDE_CODE_BRIEF");
+    expect(upgradedJournal.previous.env).not.toHaveProperty("CLAUDE_CODE_BRIEF");
   });
 
   test("restores only managed settings and preserves unrelated edits made after install", () => {

@@ -135,7 +135,6 @@ function desired(config: AppConfig): ClaudeIntegrationJournal["installed"] {
     env: {
       ANTHROPIC_BASE_URL: `http://${config.host}:${config.port}`,
       ANTHROPIC_AUTH_TOKEN: "codex-chatgpt-web-local",
-      CLAUDE_CODE_BRIEF: "1",
       CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
       CODEX_CHATGPT_WEB_CONTROL_TOKEN: config.controlToken,
     },
@@ -265,6 +264,9 @@ export function installClaudeIntegration(
     throw new Error(`Claude settings are missing: ${settingsPath}`);
   }
   if (existing && options.replaceExistingRoute !== true) assertInstalled(current.value, existing);
+  if (existing && Object.hasOwn(existing.installed.env, "CLAUDE_CODE_BRIEF")) {
+    restore(currentEnv, "CLAUDE_CODE_BRIEF", existing.previous.env.CLAUDE_CODE_BRIEF ?? { present: false });
+  }
 
   const installed = desired(config);
   const selectedModel = selectedAvailableModel(current.value, installed.settings);

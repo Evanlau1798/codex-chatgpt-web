@@ -40,7 +40,7 @@ function journal(hook, hookEvents) {
     version: 1,
     installed: {
       hook,
-      env: { CLAUDE_CODE_BRIEF: "1" },
+      env: {},
       ...(hookEvents ? { hookEvents } : {}),
       hookAdded: true,
     },
@@ -61,28 +61,20 @@ test("marks legacy and drifted Claude steering hooks as outdated", (t) => {
   t.after(() => fs.rmSync(files.root, { recursive: true, force: true }));
   const hook = managedHook();
   writeJson(files.journalPath, journal(hook));
-  writeJson(files.settingsPath, { env: { CLAUDE_CODE_BRIEF: "1" }, hooks: { UserPromptSubmit: [hook] } });
+  writeJson(files.settingsPath, { hooks: { UserPromptSubmit: [hook] } });
   assert.equal(inspectClaudeIntegrationStatus(files), "outdated");
 
   writeJson(files.journalPath, journal(hook, EVENTS));
   writeJson(files.settingsPath, {
-    env: { CLAUDE_CODE_BRIEF: "1" },
     hooks: Object.fromEntries(EVENTS.map(event => [event, [managedHook("http://127.0.0.1:1/wrong")]])),
   });
   assert.equal(inspectClaudeIntegrationStatus(files), "outdated");
 
   const legacyJournal = journal(hook, EVENTS);
-  delete legacyJournal.installed.env.CLAUDE_CODE_BRIEF;
+  legacyJournal.installed.env.CLAUDE_CODE_BRIEF = "1";
   writeJson(files.journalPath, legacyJournal);
   writeJson(files.settingsPath, {
     env: { CLAUDE_CODE_BRIEF: "1" },
-    hooks: Object.fromEntries(EVENTS.map(event => [event, [hook]])),
-  });
-  assert.equal(inspectClaudeIntegrationStatus(files), "outdated");
-
-  writeJson(files.journalPath, journal(hook, EVENTS));
-  writeJson(files.settingsPath, {
-    env: { CLAUDE_CODE_BRIEF: "0" },
     hooks: Object.fromEntries(EVENTS.map(event => [event, [hook]])),
   });
   assert.equal(inspectClaudeIntegrationStatus(files), "outdated");
@@ -95,7 +87,7 @@ test("accepts the managed hook on all three events alongside user hooks", (t) =>
   const userHook = { hooks: [{ type: "command", command: "user-hook" }] };
   writeJson(files.journalPath, journal(hook, EVENTS));
   writeJson(files.settingsPath, {
-    env: { CLAUDE_CODE_BRIEF: "1", USER_VALUE: "keep" },
+    env: { USER_VALUE: "keep" },
     hooks: Object.fromEntries(EVENTS.map(event => [event, [userHook, hook]])),
   });
 
