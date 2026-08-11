@@ -57,12 +57,12 @@ test("Claude queued-command replay keeps the original prompt line endings for fi
   expect(translated.suppressedSteeringReplays).toBe(1);
 });
 
-test("Claude queued-command replay supports CRLF, multiline prompts, and revised control tails", () => {
-  const prompt = "First paragraph\r\n\r\nSecond paragraph";
-  const revised = `<system-reminder>\r\nThe user sent a new message while you were working:\r\n${prompt}\r\n\r\nIMPORTANT: The user message above arrived during the current task.\r\n\r\nAddress it without losing the current work.\r\n</system-reminder>`;
+test("Claude queued-command replay supports the current bare mid-turn control tail", () => {
+  const prompt = "First paragraph\n\nSecond paragraph";
+  const current = `The user sent a new message while you were working:\n${prompt}\n\nThis is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.`;
   const translated = translateClaudeMessages(raw([
     { role: "user", content: "Inspect the repository" },
-    { role: "user", content: revised },
+    { role: "user", content: current },
   ]), headers, (_threadId, instruction) => instruction === prompt ? 1 : 0);
 
   expect(JSON.stringify(translated.body.input)).not.toContain("First paragraph");

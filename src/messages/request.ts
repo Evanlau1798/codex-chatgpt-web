@@ -157,14 +157,22 @@ export interface TranslatedClaudeRequest {
 
 type ClaudeSteeringSuppressionCount = (threadId: string, instruction: string) => number;
 
+const CLAUDE_MID_TURN_TAIL = "This is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.";
+
 function claudeQueuedCommandInstruction(text: string): string | undefined {
-  const match = text.trim().match(/^<system-reminder>\r?\nThe user sent a new message while you were working:\r?\n([\s\S]*)\r?\n<\/system-reminder>$/);
-  if (!match) return undefined;
-  const body = match[1]!;
+  const trimmed = text.trim();
+  const wrapper = trimmed.match(/^<system-reminder>\r?\n([\s\S]*)\r?\n<\/system-reminder>$/);
+  if (trimmed.startsWith("<system-reminder>") && !wrapper) return undefined;
+  const message = wrapper?.[1] ?? trimmed;
+  const header = message.match(/^The user sent a new message while you were working:\r?\n/);
+  if (!header) return undefined;
+  const body = message.slice(header[0].length);
   const separators = [...body.matchAll(/\r?\n\r?\n/g)];
   for (const boundary of separators.reverse()) {
     const tail = body.slice(boundary.index! + boundary[0].length);
-    if (/^IMPORTANT:[\s\S]*\bmessage above\b/i.test(tail)) return body.slice(0, boundary.index);
+    if (tail === CLAUDE_MID_TURN_TAIL || /^IMPORTANT:[\s\S]*\bmessage above\b/i.test(tail)) {
+      return body.slice(0, boundary.index);
+    }
   }
   return undefined;
 }
