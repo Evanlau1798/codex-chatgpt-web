@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ChatGptMarkdownSegment } from "./markdown";
+import { chatGptHtmlToMarkdown, type ChatGptMarkdownSegment } from "./markdown";
 import type { ChatGptVisibleTraceBlock } from "./visible-trace-tracker";
 
 export interface ChatGptMarkdownRootSnapshot {
@@ -51,11 +51,11 @@ export class ChatGptMarkdownOwnershipTracker {
       let id = this.nodeOwners.get(snapshot.nodeId) ?? this.fallbackOwners.get(fallbackKey);
       if (!id && snapshot.ownership === "commentary") {
         id = [...this.roots.values()]
-          .filter(root => !root.visible
-            && root.ownership === "commentary"
+          .filter(root => root.ownership === "commentary"
             && root.toolEpoch === snapshot.toolEpoch
             && root.lastSeenObservation >= observation - 2
             && root.text.length > 0
+            && snapshot.text.length > root.text.length
             && snapshot.text.startsWith(root.text))
           .sort((left, right) => right.text.length - left.text.length || right.order - left.order)
           .at(0)?.id;
@@ -94,7 +94,7 @@ export class ChatGptMarkdownOwnershipTracker {
       commentaryBlocks: commentary.map((root, index) => ({
         kind: "commentary",
         key: root.id,
-        text: root.text,
+        text: chatGptHtmlToMarkdown(root.html) || root.text,
         ...(index < commentary.length - 1 || !root.visible ? { complete: true } : {}),
       })),
     };

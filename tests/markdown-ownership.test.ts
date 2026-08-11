@@ -81,4 +81,29 @@ describe("ChatGPT Markdown phase ownership", () => {
       expect.objectContaining({ text: "正在檢查測試" }),
     ]);
   });
+
+  test("coalesces simultaneous append-only commentary roots into the longest version", () => {
+    const tracker = new ChatGptMarkdownOwnershipTracker();
+    const observed = tracker.observe([
+      root("node-1", "commentary", "Reading package", 6),
+      root("node-2", "commentary", "Reading package metadata", 6),
+    ]);
+
+    expect(observed.commentaryBlocks.map(block => block.text)).toEqual(["Reading package metadata"]);
+  });
+
+  test("returns commentary through the shared HTML-to-Markdown conversion", () => {
+    const tracker = new ChatGptMarkdownOwnershipTracker();
+    const markdownRoot = root("node-1", "commentary", "SMOKE_PROGRESS", 7);
+    markdownRoot.html = "<p><strong>SMOKE_PROGRESS</strong></p>";
+    markdownRoot.segments = [{
+      key: "p",
+      html: markdownRoot.html,
+      text: markdownRoot.text,
+      streamable: false,
+    }];
+
+    expect(tracker.observe([markdownRoot]).commentaryBlocks.map(block => block.text))
+      .toEqual(["**SMOKE\\_PROGRESS**"]);
+  });
 });
