@@ -60,6 +60,7 @@ import {
   CHATGPT_STOP_BUTTON_SELECTOR,
   CHATGPT_TEMPORARY_CHAT_URL,
   CHATGPT_USER_TURN_SELECTOR,
+  chatGptEffortSliderAdvancedTowardTarget,
   detectChatGptAccountCapabilities,
   isTemporaryChatGptUrl,
   parseChatGptEffortSliderState,
@@ -1001,10 +1002,10 @@ export class ChatGptBrowserWorker {
           if (sliderState.value !== previousValue) break;
           await new Promise(resolveSleep => setTimeout(resolveSleep, 50));
         } while (Date.now() < changeDeadline);
-        if (sliderState.value !== previousValue + direction) {
+        if (!chatGptEffortSliderAdvancedTowardTarget(previousValue, sliderState.value, targetValue)) {
           throw new Error(
-            `ChatGPT effort slider did not move exactly one step with ${key}`
-            + ` (before=${previousValue}; after=${sliderState.value})`,
+            `ChatGPT effort slider did not advance toward the target with ${key}`
+            + ` (before=${previousValue}; after=${sliderState.value}; target=${targetValue})`,
           );
         }
       }

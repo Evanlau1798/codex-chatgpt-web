@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import type { Page } from "playwright-core";
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_PROMPT_INSERT_CHUNK_CHARS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, assertChatGptWebInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, chatGptSubmissionEvidence, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_CONNECTOR_NAME, defaultChromeExecutable } from "../src/config";
-import { parseChatGptEffortSliderState } from "../src/chatgpt-session";
+import { chatGptEffortSliderAdvancedTowardTarget, parseChatGptEffortSliderState } from "../src/chatgpt-session";
 
 test("Codex context uses the owned CDP composer transport, never the operating-system clipboard", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
@@ -1186,6 +1186,14 @@ test("completed-turn evidence flushes a short-lived reasoning label immediately"
   ], true, 1_000)).toEqual([
     { kind: "reasoning", text: "Reviewing ChatGPT Web Prompt and State Handling" },
   ]);
+});
+
+test("effort slider accepts semantic jumps only when they advance to the target", () => {
+  expect(chatGptEffortSliderAdvancedTowardTarget(4, 2, 2)).toBe(true);
+  expect(chatGptEffortSliderAdvancedTowardTarget(0, 2, 2)).toBe(true);
+  expect(chatGptEffortSliderAdvancedTowardTarget(4, 4, 2)).toBe(false);
+  expect(chatGptEffortSliderAdvancedTowardTarget(4, 2, 3)).toBe(false);
+  expect(chatGptEffortSliderAdvancedTowardTarget(2, 4, 0)).toBe(false);
 });
 
 test("a tool boundary flushes short-lived commentary without waiting for the stability timer", () => {

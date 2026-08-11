@@ -71,6 +71,12 @@ export function parseChatGptEffortSliderState(
   return { min, max, value };
 }
 
+export function chatGptEffortSliderAdvancedTowardTarget(previous: number, current: number, target: number): boolean {
+  return target > previous
+    ? current > previous && current <= target
+    : current < previous && current >= target;
+}
+
 async function anyVisible(locator: Locator): Promise<boolean> {
   const count = await locator.count();
   for (let index = 0; index < count; index += 1) {
