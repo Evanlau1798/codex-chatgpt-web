@@ -164,10 +164,13 @@ describe("compact mode routing", () => {
       expect(() => browserTurn?.retryPromptForAnswer?.("Gathering the same diff", 2)).toThrow(
         "subagent completed with only a progress update",
       );
-      expect(browserTurn?.retryPromptForAnswer?.(
+      const refusedRetry = browserTurn?.retryPromptForAnswer?.(
         "無法執行 git status：目前這個 Codex turn 沒有提供可用的原生命令執行工具。",
         1,
-      )).toContain("Advertised client tools are available");
+      );
+      expect(refusedRetry).toContain("Advertised client tools are available");
+      expect(refusedRetry).toContain("PowerShell");
+      expect(refusedRetry).toContain("codex_tool_inventory");
       expect(browserTurn?.retryPromptForAnswer?.(
         "The native shell gateway is unavailable, so I could not run the command.",
         1,

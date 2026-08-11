@@ -1,4 +1,4 @@
-import type { CodexParsedRequest } from "../../types";
+import { namespacedToolName, type CodexParsedRequest } from "../../types";
 import { extractChatGptTurnIdentity } from "./environment";
 import type { BrokerToolRequest } from "./turn-broker";
 import type { ChatGptTurnSessions } from "./turn-execution";
@@ -73,8 +73,12 @@ export function claudeBrowserTurnOptions(parsed: CodexParsedRequest, upstreamRet
         if (attempt > 1) throw new Error(refusedTools
           ? "ChatGPT Web subagent refused advertised client tools after retry"
           : "ChatGPT Web subagent completed with only a progress update after retry");
+        const advertised = (parsed.context.tools ?? [])
+          .map(tool => namespacedToolName(tool.namespace, tool.name))
+          .slice(0, 12)
+          .join(", ");
         return refusedTools
-          ? "Advertised client tools are available in this turn. Invoke the appropriate tool now and return its actual result. Do not claim the native command or shell gateway is missing unless a tool invocation returns that concrete error."
+          ? `Advertised client tools are available in this turn: ${advertised}. Use codex_tool_inventory to find the required capability or one of those exact names, then invoke the returned wire_name with codex_tool_call. Return the actual result. Do not claim the native command or shell gateway is missing unless a tool invocation returns that concrete error.`
           : "Your previous response was only a progress update, not the requested subagent result. Continue the task now, use tools as needed, and return the requested result or an explicit no-findings result. Do not finish with another plan or progress update.";
       }
     : undefined;

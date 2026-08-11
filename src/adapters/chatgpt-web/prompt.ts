@@ -269,8 +269,8 @@ export function compileChatGptWebPrompt(
     ? [
       "For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.",
       "A skill catalog entry is an instruction source, not proof that its runtime tool is loaded. When a relevant entry names a SKILL.md path, read that file completely before deciding the capability is unavailable.",
-      "If a required tool is absent, use codex_tool_inventory to find tool_search, invoke that exact wire name through codex_tool_call, and wait for its result in this same Web conversation. Do not open a replacement conversation or resend the task context.",
-      "After Codex returns the tool_search result, query the refreshed inventory and call the loaded tool by its exact wire name.",
+      "If a required tool is absent from the attached shortcuts, use codex_tool_inventory to find the required capability or exact advertised tool name, then invoke its returned wire_name through codex_tool_call and wait for its result in this same Web conversation. Do not open a replacement conversation or resend the task context.",
+      "Only when that capability is not already advertised, query codex_tool_inventory for tool_search; if present, invoke it, then query the refreshed inventory and call the loaded tool by its exact wire name.",
       "Never emulate a stateful or persistent tool with codex_exec, shell commands, or a temporary language process. If discovery or loading fails, report only the observed failure and do not attempt that fallback.",
       "Codex Native shell_command is one-shot: do not request a TTY or expect later stdin. Use APIs compatible with the active platform shell, pipe generated input inside the same command, and never print secret values.",
       "Use actual Codex Native results as evidence for local observations and effects, and keep calling tools until the requested work is complete and verified.",

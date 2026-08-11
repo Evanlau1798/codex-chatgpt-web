@@ -48,6 +48,7 @@ test("tool-capable prompts pass one stable turn token directly to native actions
   expect(transportOnly).toContain("Use actual Codex Native results as evidence for local observations and effects, and keep calling tools until the requested work is complete and verified.");
   expect(transportOnly).toContain("A skill catalog entry is an instruction source, not proof that its runtime tool is loaded.");
   expect(transportOnly).toContain("codex_tool_inventory");
+  expect(transportOnly).toContain("required capability or exact advertised tool name");
   expect(transportOnly).toContain("tool_search");
   expect(transportOnly).toContain("codex_tool_call");
   expect(transportOnly).toContain("same Web conversation");
