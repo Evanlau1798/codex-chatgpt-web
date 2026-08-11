@@ -40,16 +40,23 @@ export function readClaudeQueuedSteering(path: string, sessionId: string): Claud
     let value: Record<string, unknown>;
     try { value = JSON.parse(line) as Record<string, unknown>; }
     catch { continue; }
-    if (value.type !== "queue-operation" || value.operation !== "enqueue"
-      || value.sessionId !== sessionId || typeof value.content !== "string" || !value.content.trim()
-      || typeof value.timestamp !== "string") continue;
-    const occurredAt = Date.parse(value.timestamp);
-    if (!Number.isFinite(occurredAt)) continue;
-    queued.push({
-      deliveryId: createHash("sha256").update(line).digest("hex"),
-      occurredAt,
-      prompt: value.content,
-    });
+    if (value.type !== "queue-operation" || value.sessionId !== sessionId) continue;
+    const content = typeof value.content === "string" && value.content.trim() ? value.content : undefined;
+    if (value.operation === "enqueue") {
+      if (!content || typeof value.timestamp !== "string") continue;
+      const occurredAt = Date.parse(value.timestamp);
+      if (!Number.isFinite(occurredAt)) continue;
+      queued.push({
+        deliveryId: createHash("sha256").update(line).digest("hex"),
+        occurredAt,
+        prompt: content,
+      });
+      continue;
+    }
+    if (value.operation !== "popAll" && value.operation !== "remove" && value.operation !== "dequeue") continue;
+    if (value.operation === "popAll" && !content) continue;
+    const index = content ? queued.findIndex(item => item.prompt === content) : 0;
+    if (index >= 0 && queued.length > 0) queued.splice(index, 1);
   }
   return queued.slice(-32);
 }

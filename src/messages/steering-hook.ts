@@ -30,12 +30,10 @@ export async function handleClaudeSteeringHook(
       return new Response("Invalid Claude tool hook", { status: 400 });
     }
     try {
-      const results = readClaudeQueuedSteering(body.transcript_path, body.session_id)
-        .map(queued => sessions.steerClaudeRoot(threadId, queued.prompt, queued));
-      const accepted = results.filter(result => result === "accepted").length;
-      if (accepted > 0) {
-        console.info(`[chatgpt-web] accepted ${accepted} queued Claude steering prompt(s) for the active root Web conversation`);
-      } else if (results.includes("ambiguous")) {
+      const result = sessions.syncClaudeRoot(threadId, readClaudeQueuedSteering(body.transcript_path, body.session_id));
+      if (typeof result === "number" && result > 0) {
+        console.info(`[chatgpt-web] accepted ${result} queued Claude steering prompt(s) for the active root Web conversation`);
+      } else if (result === "ambiguous") {
         console.warn("[chatgpt-web] ignored queued Claude steering because multiple active root turns matched the session");
       } else {
         console.debug("[chatgpt-web] found no new queued Claude steering for the active root Web conversation");

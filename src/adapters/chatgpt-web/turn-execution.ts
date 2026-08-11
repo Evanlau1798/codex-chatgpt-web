@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import type { BrokerToolRequest } from "./turn-broker";
-import { ChatGptSteeringFeed, steeringFingerprint } from "./steering-feed";
+import { ChatGptSteeringFeed, steeringFingerprint, type ClaudeSteeringDelivery } from "./steering-feed";
 import {
   extractChatGptCompactionSourceRevision,
   extractChatGptTurnIdentity,
@@ -204,7 +204,6 @@ export class ChatGptTurnSession {
   private handoff?: string;
   private userRevision?: string;
   private readonly hookedSteeringReplays: string[] = [];
-  private readonly hookedSteeringEvents: string[] = [];
   private readonly steering: ChatGptSteeringFeed;
   private settledBrowserOutcome?: ChatGptBrowserOutcome;
   private tail: Promise<void> = Promise.resolve();
@@ -327,37 +326,28 @@ export class ChatGptTurnSession {
   }
 
   peekPendingSteering() { return this.steering.peek(); }
-
   takePendingSteering(count?: number): string | undefined { return this.steering.take(count); }
-
   queueSteering(steering: string, hooked = false, deliveryId?: string): boolean {
-    if (deliveryId && this.hookedSteeringEvents.includes(deliveryId)) return false;
-    if (deliveryId) {
-      this.hookedSteeringEvents.push(deliveryId);
-      if (this.hookedSteeringEvents.length > 32) this.hookedSteeringEvents.shift();
-    }
+    if (hooked && !this.steering.pushClaude(steering, deliveryId)) return false;
     if (hooked) {
       this.hookedSteeringReplays.push(steeringFingerprint(steering));
       if (this.hookedSteeringReplays.length > 32) this.hookedSteeringReplays.shift();
     }
-    this.steering.push(steering);
+    if (!hooked) this.steering.push(steering);
     return true;
   }
 
-  acknowledgePendingClaudeSteering(count: number): string | undefined {
-    return this.steering.acknowledgeClaude(count);
+  syncClaudeSteering(active: ClaudeSteeringDelivery[]): number {
+    const accepted = this.steering.syncClaude(active);
+    this.hookedSteeringReplays.push(...accepted.map(steeringFingerprint));
+    if (this.hookedSteeringReplays.length > 32) this.hookedSteeringReplays.splice(0, this.hookedSteeringReplays.length - 32);
+    return accepted.length;
   }
 
-  claudeSteeringSuppressionCount(instruction: string): number {
-    return this.steering.claudeSuppressionCount(instruction);
-  }
-
-  completedClaudeSteeringFingerprints(): string[] {
-    return this.steering.completedClaudeFingerprints();
-  }
-  inheritCompletedClaudeSteering(fingerprints: string[]): void {
-    this.steering.inheritCompletedClaude(fingerprints);
-  }
+  acknowledgePendingClaudeSteering(count: number): string | undefined { return this.steering.acknowledgeClaude(count); }
+  claudeSteeringSuppressionCount(instruction: string): number { return this.steering.claudeSuppressionCount(instruction); }
+  completedClaudeSteeringFingerprints(): string[] { return this.steering.completedClaudeFingerprints(); }
+  inheritCompletedClaudeSteering(fingerprints: string[]): void { this.steering.inheritCompletedClaude(fingerprints); }
 
   clearOutstanding(): void {
     this.outstandingById.clear();
@@ -365,9 +355,7 @@ export class ChatGptTurnSession {
     this.outstandingPrelude = [];
   }
 
-  cancel(): void {
-    this.runtime.cancel();
-  }
+  cancel(): void { this.runtime.cancel(); }
 }
 
 export class ChatGptTurnSessions {
@@ -459,6 +447,15 @@ export class ChatGptTurnSessions {
     const target = targets[0]!;
     if (source && source.occurredAt < target.createdAt) return "stale";
     return target.queueSteering(instruction, true, source?.deliveryId) ? "accepted" : "duplicate";
+  }
+
+  syncClaudeRoot(threadId: string, active: Array<ClaudeSteeringDelivery & { occurredAt: number }>): number | "inactive" | "ambiguous" {
+    this.prune();
+    const targets = [...this.entries.values()].filter(session => session.isActive() && session.claudeRootThreadId === threadId);
+    if (targets.length === 0) return "inactive";
+    if (targets.length > 1) return "ambiguous";
+    const target = targets[0]!;
+    return target.syncClaudeSteering(active.filter(item => item.occurredAt >= target.createdAt));
   }
 
   claudeSteeringSuppressionCount(threadId: string, instruction: string): number {

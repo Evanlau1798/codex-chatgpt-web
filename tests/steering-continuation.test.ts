@@ -162,6 +162,105 @@ test("routes queued Claude commands from tool hooks once and ignores stale trans
   }
 });
 
+test("shares Claude delivery identity while preserving identical independent prompts", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const steering = new ChatGptSteeringFeed();
+  sessions.getOrCreate("root", () => ({
+    mode: "read-only",
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    steering,
+    cancel: () => {},
+  }), "claude_session-test", undefined, "claude_session-test");
+  const root = join(tmpdir(), `claude-steering-identity-${process.pid}-${Date.now()}`);
+  const transcriptPath = join(root, "session-test.jsonl");
+  mkdirSync(root, { recursive: true });
+  const prompt = "Please compare with upstream";
+  const userHook = () => new Request("http://localhost/v1/messages/steering", {
+    method: "POST",
+    body: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "session-test", prompt }),
+  });
+  const toolHook = () => new Request("http://localhost/v1/messages/steering", {
+    method: "POST",
+    body: JSON.stringify({ hook_event_name: "PostToolUse", session_id: "session-test", transcript_path: transcriptPath }),
+  });
+
+  try {
+    await handleClaudeSteeringHook(userHook(), sessions);
+    await handleClaudeSteeringHook(userHook(), sessions);
+    writeFileSync(transcriptPath, [1, 2].map(offset => JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      timestamp: new Date(Date.now() + offset).toISOString(),
+      sessionId: "session-test",
+      content: prompt,
+    })).join("\n"));
+    await handleClaudeSteeringHook(toolHook(), sessions);
+    await handleClaudeSteeringHook(toolHook(), sessions);
+    expect(steering.take()).toBe(`${prompt}\n\n${prompt}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("does not route Claude commands withdrawn before the tool hook", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const steering = new ChatGptSteeringFeed();
+  sessions.getOrCreate("root", () => ({
+    mode: "read-only",
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    steering,
+    cancel: () => {},
+  }), "claude_session-test", undefined, "claude_session-test");
+  const root = join(tmpdir(), `claude-steering-withdrawal-${process.pid}-${Date.now()}`);
+  const transcriptPath = join(root, "session-test.jsonl");
+  const base = Date.now() + 1_000;
+  const operation = (name: string, offset: number, content?: string) => JSON.stringify({
+    type: "queue-operation",
+    operation: name,
+    timestamp: new Date(base + offset).toISOString(),
+    sessionId: "session-test",
+    ...(content === undefined ? {} : { content }),
+  });
+  mkdirSync(root, { recursive: true });
+  writeFileSync(transcriptPath, [
+    operation("enqueue", 1, "Removed steering"),
+    operation("remove", 2, "Removed steering"),
+    operation("enqueue", 3, "Dequeued steering"),
+    operation("dequeue", 4),
+    operation("enqueue", 5, "Repeated steering"),
+    operation("popAll", 6, "Repeated steering"),
+    operation("enqueue", 7, "Repeated steering"),
+    operation("enqueue", 8, "Live steering"),
+  ].join("\n"));
+
+  try {
+    await handleClaudeSteeringHook(new Request("http://localhost/v1/messages/steering", {
+      method: "POST",
+      body: JSON.stringify({
+        hook_event_name: "UserPromptSubmit",
+        session_id: "session-test",
+        prompt: "Removed steering",
+      }),
+    }), sessions);
+    const response = await handleClaudeSteeringHook(new Request("http://localhost/v1/messages/steering", {
+      method: "POST",
+      body: JSON.stringify({
+        hook_event_name: "PostToolUse",
+        session_id: "session-test",
+        transcript_path: transcriptPath,
+      }),
+    }), sessions);
+    expect(response.status).toBe(204);
+    expect(steering.take()).toBe("Repeated steering\n\nLive steering");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("routes Claude hook steering only to the active root when subagents share its session", async () => {
   const sessions = new ChatGptTurnSessions();
   const root = new ChatGptSteeringFeed();

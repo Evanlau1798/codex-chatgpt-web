@@ -66,8 +66,8 @@ test("Claude steering preserves real parallel tool results and attaches once at 
   expect(boundary[1]?.text).toBe(
     "Additional user guidance for the current task:\n\n"
       + "Prioritize the failing test\n\nThen continue the review\n\n"
-      + "Apply it once to the ongoing work without separately acknowledging this notice. "
-      + "Continue the existing task unless the guidance explicitly asks to stop or replace it.",
+      + "Apply this guidance once to the ongoing work. Continue the existing task unless the guidance explicitly asks to stop or replace it. "
+      + "Respond naturally when the guidance itself requests a response; do not add a separate receipt otherwise.",
   );
   expect(boundary[1]?.text.match(/Prioritize the failing test/g)).toHaveLength(1);
   expect(boundary[1]?.text.match(/Then continue the review/g)).toHaveLength(1);
@@ -130,9 +130,14 @@ test("Claude same-conversation continuation acknowledges steering only after sub
   expect(typeof pending).toBe("object");
   if (!pending || typeof pending === "string") throw new Error("expected acknowledged retry prompt");
   expect(pending.text).toContain("Check the new constraint");
-  expect(pending.text).toContain("Apply it once to the ongoing work without separately acknowledging this notice");
+  expect(pending.text).toContain("Apply this guidance once to the ongoing work");
   expect(steering.peek()?.text).toBe("Check the new constraint");
   pending.onSubmitted?.();
   expect(steering.peek()).toBeUndefined();
   expect(steering.claudeSuppressionCount("Check the new constraint")).toBe(1);
+});
+
+test("a text-only Claude completion succeeds when no guidance is pending", async () => {
+  const retry = browserSteeringRetry(new ChatGptSteeringFeed(), "claude-text-only", undefined, undefined, true);
+  expect(await retry("Complete answer without a tool call", 1)).toBeUndefined();
 });
