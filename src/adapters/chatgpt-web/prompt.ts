@@ -25,7 +25,9 @@ export interface CompiledChatGptWebPrompt {
   bootstrapLimits?: { chars: number; tokens?: number };
   modelInputText?: string;
   transport?: "inline" | "native2-archive";
+  inlineChars?: number;
   archiveChars?: number;
+  archiveSha256?: string;
   /** Oldest history items removed by native-style compaction fit recovery; absent on normal turns. */
   trimmedCompactionMessages?: number;
 }
@@ -37,9 +39,11 @@ export interface CompileChatGptWebPromptOptions {
 const RETIRED_TURN_HANDLE = /\b(turn|binding)_[A-Za-z0-9_-]{24,}/g;
 const BOOTSTRAP_HEADROOM = 0.95;
 const BOOTSTRAP_ALIGNMENT = 4_096;
+export const CHATGPT_STABLE_BOOTSTRAP_CHAR_LIMIT = 94_208;
 
 function alignedBootstrapLimit(value: number): number {
-  return Math.floor(value * BOOTSTRAP_HEADROOM / BOOTSTRAP_ALIGNMENT) * BOOTSTRAP_ALIGNMENT;
+  const measured = Math.floor(value * BOOTSTRAP_HEADROOM / BOOTSTRAP_ALIGNMENT) * BOOTSTRAP_ALIGNMENT;
+  return Math.min(measured, CHATGPT_STABLE_BOOTSTRAP_CHAR_LIMIT);
 }
 
 /**

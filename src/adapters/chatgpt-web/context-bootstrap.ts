@@ -110,7 +110,7 @@ export async function prepareChatGptWebContext(
 ): Promise<CompiledChatGptWebPrompt & { release: () => void }> {
   const limits = compiled.bootstrapLimits;
   if (!enabled || !compiled.turnToken || !limits || withinLimits(compiled.text, limits)) {
-    return { ...compiled, transport: "inline", release: () => {} };
+    return { ...compiled, transport: "inline", inlineChars: compiled.text.length, release: () => {} };
   }
   const split = splitOversizePrompt(compiled.text, limits);
   const contextToken = await broker.registerContext(split.archive, ttlMs, traceId, compiled.turnToken);
@@ -129,7 +129,9 @@ export async function prepareChatGptWebContext(
     text: bootstrap,
     modelInputText: compiled.text,
     transport: "native2-archive",
+    inlineChars: bootstrap.length,
     archiveChars: split.archive.length,
+    archiveSha256: archiveHash,
     release: () => broker.revokeContext(contextToken),
   };
 }

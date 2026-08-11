@@ -47,8 +47,44 @@ test("beta transport keeps prompts within the measured boundary inline", async (
     const prepared = await prepareChatGptWebContext(broker, compiled, true, 60_000, "inline-test");
     expect(prepared.text).toBe(compiled.text);
     expect(prepared.transport).toBe("inline");
+    expect(prepared.inlineChars).toBe(compiled.text.length);
     expect(prepared.modelInputText).toBeUndefined();
   } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("tool-capable prompts above the stable 94208 character boundary use the archive", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-context-stable-limit-"));
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
+  const turnToken = await broker.register({
+    cwd: process.cwd(), roots: [process.cwd()], writableRoots: [], sandboxPolicy: { type: "readOnly", networkAccess: false }, tools: [],
+  }, 60_000, "stable-limit-test");
+  const compiled = compileChatGptWebPrompt({
+    modelId: CHATGPT_WEB_MODEL_ID,
+    context: {
+      messages: [
+        { role: "user", content: `old-${"x".repeat(308_616)}`, timestamp: 1 },
+        { role: "user", content: "CODEX_LATEST_USER_PROMPT_JSON: continue", timestamp: 2 },
+      ],
+    },
+    stream: true,
+    options: { reasoning: "medium" },
+  }, { localToolsEnabled: true, solAvailable: true, proAvailable: false }, turnToken);
+
+  try {
+    expect(compiled.bootstrapLimits?.chars).toBe(94_208);
+    const prepared = await prepareChatGptWebContext(broker, compiled, true, 60_000, "stable-limit-test");
+    expect(prepared.transport).toBe("native2-archive");
+    expect(prepared.text.length).toBeLessThanOrEqual(94_208);
+    expect(prepared.inlineChars).toBe(prepared.text.length);
+    expect(prepared.archiveChars).toBeGreaterThan(200_000);
+    expect(prepared.archiveSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(prepared.text).toContain("CODEX_LATEST_USER_PROMPT_JSON");
+    prepared.release();
+  } finally {
+    broker.revoke(turnToken);
     await broker.close();
     rmSync(root, { recursive: true, force: true });
   }
