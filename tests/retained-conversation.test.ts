@@ -28,6 +28,16 @@ function request(clientMetadata: Record<string, unknown> = {}): CodexParsedReque
   };
 }
 
+function setRevision(parsed: CodexParsedRequest, text: string): void {
+  const body = parsed._rawBody as Record<string, unknown>;
+  body.input = [{
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text }],
+    internal_chat_message_metadata_passthrough: { turn_id: "turn-current" },
+  }];
+}
+
 test("trusted Codex root and subagent threads retain their Web conversation", () => {
   expect(claudeBrowserTurnOptions(request()).retainConversation).toBeTrue();
   const compact = request();
@@ -65,15 +75,6 @@ test("completed Claude steering suppression follows a successful retained root s
     text: new ChatGptTextFeed(),
     cancel() {},
   });
-  const setRevision = (parsed: CodexParsedRequest, text: string) => {
-    const body = parsed._rawBody as Record<string, unknown>;
-    body.input = [{
-      type: "message",
-      role: "user",
-      content: [{ type: "input_text", text }],
-      internal_chat_message_metadata_passthrough: { turn_id: "turn-current" },
-    }];
-  };
   const firstRequest = request({ claude_subagent: false, claude_retain_conversation: true });
   setRevision(firstRequest, "initial prompt");
   const first = await sessionForChatGptRequest(sessions, "claude-root", firstRequest, start);
@@ -90,5 +91,26 @@ test("completed Claude steering suppression follows a successful retained root s
 
   expect(second).not.toBe(first);
   expect(second.claudeSteeringSuppressionCount("Apply the retained guidance")).toBe(1);
+  sessions.clear();
+});
+
+test("active Claude root transcript revisions do not become duplicate steering", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const start = () => ({
+    mode: "tools" as const,
+    browser: new Promise<string>(() => {}),
+    token: Promise.resolve("turn-token"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel() {},
+  });
+  const firstRequest = request({ claude_subagent: false, claude_retain_conversation: true });
+  setRevision(firstRequest, "initial prompt");
+  const session = await sessionForChatGptRequest(sessions, "claude-root-active", firstRequest, start);
+  const nextRequest = request({ claude_subagent: false, claude_retain_conversation: true });
+  setRevision(nextRequest, "transcript changed after a tool result");
+
+  expect(await sessionForChatGptRequest(sessions, "claude-root-active", nextRequest, start)).toBe(session);
+  expect(session.peekPendingSteering()).toBeUndefined();
   sessions.clear();
 });

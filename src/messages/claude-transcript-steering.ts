@@ -10,6 +10,29 @@ export interface ClaudeQueuedSteering {
   prompt: string;
 }
 
+function deliveryId(sessionId: string, timestamp: string, prompt: string): string {
+  return createHash("sha256").update(sessionId).update("\0").update(timestamp).update("\0").update(prompt).digest("hex");
+}
+
+function queuedCommand(value: Record<string, unknown>, sessionId: string): ClaudeQueuedSteering | undefined {
+  if (value.type !== "attachment" || !value.attachment || typeof value.attachment !== "object") return;
+  const attachment = value.attachment as Record<string, unknown>;
+  if (attachment.type !== "queued_command" || attachment.commandMode !== "prompt") return;
+  const prompt = (typeof attachment.prompt === "string"
+    ? attachment.prompt
+    : Array.isArray(attachment.prompt) ? attachment.prompt.flatMap(item => (
+      item && typeof item === "object"
+        && (item as Record<string, unknown>).type === "text"
+        && typeof (item as Record<string, unknown>).text === "string"
+        ? [(item as Record<string, unknown>).text as string]
+        : []
+    )).join("\n") : "").trim();
+  const timestamp = typeof attachment.timestamp === "string" ? attachment.timestamp : value.timestamp;
+  const occurredAt = typeof timestamp === "string" ? Date.parse(timestamp) : NaN;
+  if (!prompt || !Number.isFinite(occurredAt)) return;
+  return { deliveryId: deliveryId(sessionId, timestamp as string, prompt), occurredAt, prompt };
+}
+
 function transcriptTail(path: string): string {
   const size = statSync(path).size;
   const length = Math.min(size, MAX_TRANSCRIPT_TAIL_BYTES);
@@ -40,14 +63,20 @@ export function readClaudeQueuedSteering(path: string, sessionId: string): Claud
     let value: Record<string, unknown>;
     try { value = JSON.parse(line) as Record<string, unknown>; }
     catch { continue; }
-    if (value.type !== "queue-operation" || value.sessionId !== sessionId) continue;
+    if (value.sessionId !== sessionId) continue;
+    const attachment = queuedCommand(value, sessionId);
+    if (attachment) {
+      queued.push(attachment);
+      continue;
+    }
+    if (value.type !== "queue-operation") continue;
     const content = typeof value.content === "string" && value.content.trim() ? value.content : undefined;
     if (value.operation === "enqueue") {
       if (!content || typeof value.timestamp !== "string") continue;
       const occurredAt = Date.parse(value.timestamp);
       if (!Number.isFinite(occurredAt)) continue;
       queued.push({
-        deliveryId: createHash("sha256").update(line).digest("hex"),
+        deliveryId: deliveryId(sessionId, value.timestamp, content),
         occurredAt,
         prompt: content,
       });

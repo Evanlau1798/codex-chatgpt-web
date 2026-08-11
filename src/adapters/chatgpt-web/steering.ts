@@ -46,8 +46,11 @@ export async function sessionForChatGptRequest(
     ? chatGptTurnSteeringId(identity.threadId, identity.turnId)
     : undefined;
   let session = sessions.getOrCreate(key, start, group, steeringId, claudeRootThreadId);
-  const steering = session.updateUserRevision(revision, text);
-  if (!steering || (!session.settledOutcome() && (session.runtime.mode === "tools" || session.runtime.steering))) return session;
+  const settled = session.settledOutcome();
+  const activeClaudeRoot = Boolean(claudeRootThreadId && !settled);
+  const steering = session.updateUserRevision(revision, text, !activeClaudeRoot);
+  if (activeClaudeRoot) return session;
+  if (!steering || (!settled && (session.runtime.mode === "tools" || session.runtime.steering))) return session;
 
   const completedClaudeSteering = session.completedClaudeSteeringFingerprints();
   await sessions.retireAndWait(key);

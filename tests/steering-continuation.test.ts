@@ -162,6 +162,135 @@ test("routes queued Claude commands from tool hooks once and ignores stale trans
   }
 });
 
+test("routes Claude SDK queued_command attachments from tool hooks", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const steering = new ChatGptSteeringFeed();
+  sessions.getOrCreate("root", () => ({
+    mode: "read-only",
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    steering,
+    cancel: () => {},
+  }), "claude_session-test", undefined, "claude_session-test");
+  const root = join(tmpdir(), `claude-steering-attachment-${process.pid}-${Date.now()}`);
+  const transcriptPath = join(root, "session-test.jsonl");
+  const timestamp = new Date(Date.now() + 1).toISOString();
+  const prompt = "Continue the task and include the steering marker";
+  mkdirSync(root, { recursive: true });
+  writeFileSync(transcriptPath, [
+    JSON.stringify({ type: "queue-operation", operation: "enqueue", timestamp, sessionId: "session-test" }),
+    JSON.stringify({ type: "queue-operation", operation: "remove", timestamp, sessionId: "session-test" }),
+    JSON.stringify({
+      type: "attachment",
+      sessionId: "session-test",
+      timestamp,
+      uuid: "queued-command-1",
+      attachment: { type: "queued_command", timestamp, commandMode: "prompt", prompt: [{ type: "text", text: prompt }] },
+    }),
+  ].join("\n"));
+  const hook = () => new Request("http://localhost/v1/messages/steering", {
+    method: "POST",
+    body: JSON.stringify({
+      hook_event_name: "PostToolUse",
+      session_id: "session-test",
+      transcript_path: transcriptPath,
+    }),
+  });
+
+  try {
+    expect((await handleClaudeSteeringHook(hook(), sessions)).status).toBe(204);
+    expect(steering.take()).toBe(prompt);
+    expect((await handleClaudeSteeringHook(hook(), sessions)).status).toBe(204);
+    expect(steering.take()).toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("routes current Claude SDK string queued_command attachments from tool hooks", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const steering = new ChatGptSteeringFeed();
+  sessions.getOrCreate("root", () => ({
+    mode: "read-only",
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    steering,
+    cancel: () => {},
+  }), "claude_session-test", undefined, "claude_session-test");
+  const root = join(tmpdir(), `claude-steering-string-attachment-${process.pid}-${Date.now()}`);
+  const transcriptPath = join(root, "session-test.jsonl");
+  const timestamp = new Date(Date.now() + 1).toISOString();
+  const prompt = "Report the lifecycle friction after finishing";
+  mkdirSync(root, { recursive: true });
+  writeFileSync(transcriptPath, [
+    JSON.stringify({ type: "queue-operation", operation: "enqueue", timestamp, sessionId: "session-test", content: prompt }),
+    JSON.stringify({ type: "queue-operation", operation: "remove", timestamp, sessionId: "session-test", content: prompt }),
+    JSON.stringify({
+      type: "attachment",
+      sessionId: "session-test",
+      timestamp,
+      attachment: { type: "queued_command", timestamp, commandMode: "prompt", prompt },
+    }),
+  ].join("\n"));
+
+  try {
+    const response = await handleClaudeSteeringHook(new Request("http://localhost/v1/messages/steering", {
+      method: "POST",
+      body: JSON.stringify({ hook_event_name: "PostToolUseFailure", session_id: "session-test", transcript_path: transcriptPath }),
+    }), sessions);
+    expect(response.status).toBe(204);
+    expect(steering.take()).toBe(prompt);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("treats queued and attached Claude records as one logical delivery", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const steering = new ChatGptSteeringFeed();
+  const session = sessions.getOrCreate("root", () => ({
+    mode: "read-only",
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    steering,
+    cancel: () => {},
+  }), "claude_session-test", undefined, "claude_session-test");
+  const root = join(tmpdir(), `claude-steering-logical-delivery-${process.pid}-${Date.now()}`);
+  const transcriptPath = join(root, "session-test.jsonl");
+  const timestamp = new Date(Date.now() + 1).toISOString();
+  const prompt = "Apply this guidance once";
+  mkdirSync(root, { recursive: true });
+  const hook = () => handleClaudeSteeringHook(new Request("http://localhost/v1/messages/steering", {
+    method: "POST",
+    body: JSON.stringify({ hook_event_name: "PostToolUse", session_id: "session-test", transcript_path: transcriptPath }),
+  }), sessions);
+
+  try {
+    writeFileSync(transcriptPath, JSON.stringify({
+      type: "queue-operation", operation: "enqueue", timestamp, sessionId: "session-test", content: prompt,
+    }));
+    await hook();
+    expect(session.acknowledgePendingClaudeSteering(1)).toBe(prompt);
+    writeFileSync(transcriptPath, [
+      JSON.stringify({ type: "queue-operation", operation: "enqueue", timestamp, sessionId: "session-test", content: prompt }),
+      JSON.stringify({ type: "queue-operation", operation: "remove", timestamp, sessionId: "session-test", content: prompt }),
+      JSON.stringify({
+        type: "attachment",
+        sessionId: "session-test",
+        timestamp,
+        attachment: { type: "queued_command", timestamp, commandMode: "prompt", prompt },
+      }),
+    ].join("\n"));
+    await hook();
+    expect(steering.peek()).toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("shares Claude delivery identity while preserving identical independent prompts", async () => {
   const sessions = new ChatGptTurnSessions();
   const steering = new ChatGptSteeringFeed();
