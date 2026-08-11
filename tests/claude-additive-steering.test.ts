@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { completeChatGptToolResults } from "../src/adapters/chatgpt-web/tool-result-delivery";
+import {
+  claudeSteeringMarker,
+  completeChatGptToolResults,
+} from "../src/adapters/chatgpt-web/tool-result-delivery";
 import { browserSteeringRetry } from "../src/adapters/chatgpt-web/steering";
 import {
   ChatGptSteeringFeed,
@@ -63,11 +66,12 @@ test("Claude steering preserves real parallel tool results and attaches once at 
   expect(completed[0]?.result.content).toEqual([{ type: "text", text: "first real result" }]);
   const boundary = completed[1]?.result.content as Array<{ type: string; text: string }>;
   expect(boundary).toHaveLength(1);
+  const marker = claudeSteeringMarker("turn-token");
   expect(boundary[0]?.text).toBe(
-    "Additional user guidance for the current task:\n\n"
+    `<${marker}>\nAdditional user guidance for the current task:\n\n`
       + "Prioritize the failing test\n\nThen continue the review\n\n"
       + "Apply this guidance once to the ongoing work. Continue the existing task unless the guidance explicitly asks to stop or replace it. "
-      + "Respond naturally when the guidance itself requests a response; do not add a separate receipt otherwise.\n\n"
+      + `Respond naturally when the guidance itself requests a response; do not add a separate receipt otherwise.\n</${marker}>\n\n`
       + "Tool result:\n\nsecond real result",
   );
   expect(boundary[0]?.text.match(/Prioritize the failing test/g)).toHaveLength(1);

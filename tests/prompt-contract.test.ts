@@ -70,6 +70,29 @@ test("tool-capable prompts pass one stable turn token directly to native actions
   expect(compiled.text).not.toContain("internally compacts this response");
 });
 
+test("Claude tool prompts authenticate additive steering without changing Codex prompts", () => {
+  const token = "turn_12345678901234567890123456789012";
+  const claude = request("medium");
+  claude.context.tools = [{ name: "Read", description: "Read a file", parameters: {} }];
+  claude._rawBody = { client_metadata: { claude_subagent: false } };
+  const claudePrompt = compileChatGptWebPrompt(
+    claude,
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    token,
+  ).text;
+  const codex = request("medium");
+  codex.context.tools = claude.context.tools;
+  const codexPrompt = compileChatGptWebPrompt(
+    codex,
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    token,
+  ).text;
+
+  expect(claudePrompt).toContain("bridge-authenticated current user guidance");
+  expect(claudePrompt).toMatch(/CODEX_CLAUDE_STEERING_[0-9a-f]{16}/);
+  expect(codexPrompt).not.toContain("CODEX_CLAUDE_STEERING_");
+});
+
 test("read-only prompts resume without exposing a bind capability", () => {
   const compiled = compileChatGptWebPrompt(
     request("max"),

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { CodexToolResultMessage } from "../../types";
 import { codexToolResultToBrokerResult } from "./compaction-handoff";
 import type { BrokerToolResult, TurnBroker } from "./turn-broker";
@@ -10,15 +11,20 @@ export interface ChatGptToolResultDeliveryOptions {
   onSpawnedCodexAgent?: (agentId: string) => void;
 }
 
-export function claudeAdditiveSteeringInstruction(steering: string): string {
-  return `Additional user guidance for the current task:\n\n${steering}\n\n`
-    + "Apply this guidance once to the ongoing work. Continue the existing task unless the guidance explicitly asks to stop or replace it. "
-    + "Respond naturally when the guidance itself requests a response; do not add a separate receipt otherwise.";
+export function claudeSteeringMarker(turnToken: string): string {
+  return `CODEX_CLAUDE_STEERING_${createHash("sha256").update(turnToken).digest("hex").slice(0, 16)}`;
 }
 
-function withClaudeSteering(result: BrokerToolResult, steering: string): BrokerToolResult {
+export function claudeAdditiveSteeringInstruction(steering: string, marker?: string): string {
+  const instruction = `Additional user guidance for the current task:\n\n${steering}\n\n`
+    + "Apply this guidance once to the ongoing work. Continue the existing task unless the guidance explicitly asks to stop or replace it. "
+    + "Respond naturally when the guidance itself requests a response; do not add a separate receipt otherwise.";
+  return marker ? `<${marker}>\n${instruction}\n</${marker}>` : instruction;
+}
+
+function withClaudeSteering(result: BrokerToolResult, steering: string, turnToken: string): BrokerToolResult {
   const content = [...result.content];
-  const instruction = claudeAdditiveSteeringInstruction(steering);
+  const instruction = claudeAdditiveSteeringInstruction(steering, claudeSteeringMarker(turnToken));
   for (let index = content.length - 1; index >= 0; index -= 1) {
     const item = content[index];
     if (!item || typeof item !== "object" || (item as { type?: unknown }).type !== "text"
@@ -64,7 +70,7 @@ export function completeChatGptToolResults(
     const request = outstanding.find(candidate => candidate.callId === message.toolCallId);
     const spawnedAgentId = spawnedCodexAgentId(request, result);
     if (spawnedAgentId) options.onSpawnedCodexAgent?.(spawnedAgentId);
-    broker.completeTool(token, message.toolCallId, isBoundary ? withClaudeSteering(result, steering.text) : result);
+    broker.completeTool(token, message.toolCallId, isBoundary ? withClaudeSteering(result, steering.text, token) : result);
     session.markResultDelivered(message.toolCallId);
     if (isBoundary) {
       session.acknowledgePendingClaudeSteering(steering.count);
