@@ -1,0 +1,84 @@
+import { describe, expect, test } from "bun:test";
+import { ChatGptMarkdownOwnershipTracker } from "../src/adapters/chatgpt-web/markdown-ownership";
+
+const root = (
+  nodeId: string,
+  ownership: "commentary" | "provisional" | "final",
+  text: string,
+  toolEpoch = 0,
+) => ({
+  nodeId,
+  ownership,
+  toolEpoch,
+  text,
+  html: `<p>${text}</p>`,
+  segments: [{ key: "p", html: `<p>${text}</p>`, text, streamable: false }],
+});
+
+describe("ChatGPT Markdown phase ownership", () => {
+  test("withholds provisional Markdown until the running turn completes", () => {
+    const tracker = new ChatGptMarkdownOwnershipTracker();
+
+    expect(tracker.observe([root("node-1", "provisional", "Work complete")])).toMatchObject({
+      markdownSegments: [],
+      commentaryBlocks: [],
+    });
+    expect(tracker.observe([]).markdownSegments).toEqual([]);
+
+    const completed = tracker.observe([root("node-1", "final", "Work complete")]);
+    expect(completed.markdownSegments.map(segment => segment.text)).toEqual(["Work complete"]);
+  });
+
+  test("keeps tool commentary out of the final stream after reparent and virtualization", () => {
+    const tracker = new ChatGptMarkdownOwnershipTracker();
+
+    expect(tracker.observe([root("node-1", "commentary", "Gathering evidence")])).toMatchObject({
+      markdownSegments: [],
+      commentaryBlocks: [{ kind: "commentary", text: "Gathering evidence" }],
+    });
+
+    const reparented = tracker.observe([
+      root("node-1", "final", "Gathering evidence"),
+      root("node-2", "final", "Review complete", 1),
+    ]);
+    expect(reparented.markdownSegments.map(segment => segment.text)).toEqual(["Review complete"]);
+    expect(reparented.commentaryBlocks.map(block => block.text)).toEqual(["Gathering evidence"]);
+
+    const virtualized = tracker.observe([root("node-2", "final", "Review complete", 1)]);
+    expect(virtualized.markdownSegments.map(segment => segment.text)).toEqual(["Review complete"]);
+    expect(virtualized.commentaryBlocks.map(block => block.text)).toEqual(["Gathering evidence"]);
+  });
+
+  test("recovers a replaced commentary node only inside the same tool epoch", () => {
+    const tracker = new ChatGptMarkdownOwnershipTracker();
+    tracker.observe([root("node-1", "commentary", "Checking tests", 3)]);
+
+    const replaced = tracker.observe([root("node-replaced", "final", "Checking tests", 3)]);
+    expect(replaced.markdownSegments).toEqual([]);
+    expect(replaced.commentaryBlocks.map(block => block.text)).toEqual(["Checking tests"]);
+
+    const identicalFinal = tracker.observe([root("node-final", "final", "Checking tests", 4)]);
+    expect(identicalFinal.markdownSegments.map(segment => segment.text)).toEqual(["Checking tests"]);
+  });
+
+  test("keeps append-only commentary growth on a replaced React node", () => {
+    const tracker = new ChatGptMarkdownOwnershipTracker();
+    tracker.observe([root("node-1", "commentary", "第一個唯讀", 2)]);
+
+    const growing = tracker.observe([root("node-2", "commentary", "第一個唯讀記憶查詢", 2)]);
+    expect(growing.commentaryBlocks.map(block => block.text)).toEqual(["第一個唯讀記憶查詢"]);
+  });
+
+  test("reconnects commentary after one empty DOM observation without replaying its prefix", () => {
+    const tracker = new ChatGptMarkdownOwnershipTracker();
+    tracker.observe([root("node-1", "commentary", "正在檢查", 5)]);
+    expect(tracker.observe([]).commentaryBlocks).toEqual([
+      expect.objectContaining({ text: "正在檢查", complete: true }),
+    ]);
+
+    const resumed = tracker.observe([root("node-2", "commentary", "正在檢查測試", 5)]);
+    expect(resumed.commentaryBlocks).toEqual([
+      expect.objectContaining({ text: "正在檢查測試" }),
+    ]);
+  });
+});
