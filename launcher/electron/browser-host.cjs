@@ -22,7 +22,7 @@ const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 const CHATGPT_ORIGIN = "https://chatgpt.com";
 const IDLE_BROWSER_URL = "about:blank#codex-web-gpt-browser-host";
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
-const MAX_BROWSER_TABS = 5;
+const MAX_BROWSER_TABS = 6;
 // These are lease/initialization guards only. They do not limit a live ChatGPT turn: active turns
 // stay alive as long as the helper keeps heartbeating. They only reclaim a blank surface or a turn
 // whose helper disappeared without delivering the normal /v1/turn/end event.
@@ -378,7 +378,7 @@ class BrowserHost {
     return this.turnTabs.get(this.selectedTabId) || null;
   }
 
-  createTurnTab(traceId, helperPid, interactionLocked = true) {
+  createTurnTab(traceId, helperPid, interactionLocked = true, conversationKey, connectorIdentity) {
     if (this.turnTabs.size >= MAX_BROWSER_TABS
       && !BrowserHost.prototype.evictOldestRetainedTurnTab.call(this)) {
       throw new Error(
@@ -405,6 +405,9 @@ class BrowserHost {
       id,
       surfaceId,
       traceId,
+      conversationKey,
+      connectorIdentity,
+      connectorBound: false,
       helperPid,
       view,
       interactionShield,
@@ -1069,11 +1072,22 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  beginTurn(traceId, reveal, helperPid, interactionLocked = true) {
+  beginTurn(traceId, reveal, helperPid, interactionLocked = true, conversationKey, connectorIdentity) {
     if (this.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.manualOperation}`);
     }
-    const existing = [...this.turnTabs.values()].find((tab) => tab.traceId === traceId);
+    const sameTrace = [...this.turnTabs.values()].find((tab) => tab.traceId === traceId);
+    if (sameTrace && ((conversationKey && sameTrace.conversationKey !== conversationKey)
+      || (connectorIdentity && sameTrace.connectorIdentity !== connectorIdentity))) {
+      throw new Error(`ChatGPT browser turn ${traceId} conversation metadata does not match its owned tab`);
+    }
+    const existing = sameTrace
+      || (conversationKey ? [...this.turnTabs.values()].find((tab) => (
+        tab.status === "ready"
+        && tab.conversationKey === conversationKey
+        && tab.connectorIdentity === connectorIdentity
+        && (!connectorIdentity || tab.connectorBound === true)
+      )) : undefined);
     if (existing) {
       const reused = existing.status === "ready";
       if (existing.status === "running" && existing.helperPid !== helperPid) {
@@ -1089,6 +1103,7 @@ class BrowserHost {
         });
       }
       existing.helperPid = helperPid;
+      existing.traceId = traceId;
       existing.interactionLocked = interactionLocked;
       existing.status = "running";
       existing.loading = true;
@@ -1107,9 +1122,14 @@ class BrowserHost {
       this.publishState?.(this.snapshot());
       this.writeDescriptor();
       this.logger.info("browser.tab_reused", { tabId: existing.id, traceId });
-      return { surfaceId: existing.surfaceId, tabId: existing.id, reused };
+      return {
+        surfaceId: existing.surfaceId,
+        tabId: existing.id,
+        reused,
+        ...(existing.connectorBound === true ? { connectorBound: true } : {}),
+      };
     }
-    const tab = this.createTurnTab(traceId, helperPid, interactionLocked);
+    const tab = this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity);
     this.selectedTabId = tab.id;
     if (reveal) this.show();
     else this.syncViewVisibility();
@@ -1118,7 +1138,7 @@ class BrowserHost {
     return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false };
   }
 
-  async endTurn(traceId, helperPid, status, hideAfterTurn, message, retain = false) {
+  async endTurn(traceId, helperPid, status, hideAfterTurn, message, retain = false, connectorBound = false) {
     const tab = [...this.turnTabs.values()].find((candidate) => candidate.traceId === traceId);
     if (!tab) {
       const closedOwner = this.closedTurnOwners.get(traceId);
@@ -1140,7 +1160,8 @@ class BrowserHost {
     if (status === "completed") {
       this.logger.info("browser.tab_completed", { tabId: tab.id, traceId });
     }
-    if (status === "completed" && retain) {
+    if (status === "completed" && retain && (!tab.connectorIdentity || connectorBound)) {
+      tab.connectorBound = connectorBound === true;
       tab.lastHeartbeatAt = Date.now();
       if (hideAfterTurn && !this.activeTraceId) this.hide();
       this.logger.info("browser.tab_retained", { tabId: tab.id, traceId });
@@ -1149,7 +1170,7 @@ class BrowserHost {
       return;
     }
     // A browser tab represents an active Codex turn, not durable task history. Retaining terminal
-    // tabs leaked one slot per response/compaction until the five-tab safety limit made later
+    // tabs leaked one slot per response/compaction until the bounded tab limit made later
     // turns fail. The result already lives in Codex; release the browser document on every
     // terminal path while leaving other concurrently running tabs untouched.
     this.removeTurnTab(tab, false);

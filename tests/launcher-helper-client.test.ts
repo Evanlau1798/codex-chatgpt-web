@@ -26,7 +26,8 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       if (message.type !== "run") return;
       if (message.turn.prepared.text !== "inspect"
         || message.turn.resumePrepared.text !== "continue"
-        || message.turn.retainConversation !== true) {
+        || message.turn.retainConversation !== true
+        || message.turn.conversationKey !== "a".repeat(64)) {
         send({ type: "error", id: message.id, message: "resume payload missing" });
         return;
       }
@@ -91,6 +92,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       prepare: async () => ({ text: "inspect", images: [], release: () => { released = true; } }),
       prepareResume: async () => ({ text: "continue", images: [], release: () => { resumeReleased = true; } }),
       retainConversation: true,
+      conversationKey: "a".repeat(64),
       onReasoningSummary: (text, continuation) => reasoning.push({ text, continuation: continuation === true }),
       onTextDelta: text => deltas.push(text),
       captureLunaCheckpoint: true,

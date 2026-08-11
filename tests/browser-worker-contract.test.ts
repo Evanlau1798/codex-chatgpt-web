@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { Page } from "playwright-core";
-import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_PROMPT_INSERT_CHUNK_CHARS, ChatGptBrowserWorker, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, assertChatGptWebInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, chatGptSubmissionEvidence, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
+import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_PROMPT_INSERT_CHUNK_CHARS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, assertChatGptWebInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, chatGptSubmissionEvidence, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_CONNECTOR_NAME, defaultChromeExecutable } from "../src/config";
 import { parseChatGptEffortSliderState } from "../src/chatgpt-session";
 
@@ -20,8 +20,8 @@ test("completed prompts activate the scoped semantic send control", () => {
   expect(workerSource).not.toContain('getByTestId("send-button").dispatchEvent("click")');
 });
 
-test("browser turns run concurrently up to the five-tab limit", async () => {
-  expect(MAX_CHATGPT_BROWSER_TABS).toBe(5);
+test("browser turns run six at once and queue the seventh in FIFO order", async () => {
+  expect(MAX_CHATGPT_BROWSER_TABS).toBe(6);
   const releases = new Map<string, () => void>();
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { browserHost: "managed-chrome" },
@@ -38,20 +38,80 @@ test("browser turns run concurrently up to the five-tab limit", async () => {
     onTextDelta() {},
   });
 
-  const active = Array.from({ length: 5 }, (_unused, index) => worker.run(browserTurn(`trace_${index + 1}`)));
+  const active = Array.from({ length: 6 }, (_unused, index) => worker.run(browserTurn(`trace_${index + 1}`)));
   await Promise.resolve();
-  expect(releases.size).toBe(5);
-  await expect(worker.run(browserTurn("trace_6"))).rejects.toThrow("at most 5 simultaneous browser turns");
+  expect(releases.size).toBe(6);
+  const seventh = worker.run(browserTurn("trace_7"));
+  const eighth = worker.run(browserTurn("trace_8"));
+  await Promise.resolve();
+  expect(releases.has("trace_7")).toBeFalse();
+  expect(releases.has("trace_8")).toBeFalse();
 
   releases.get("trace_1")?.();
   await active[0];
-  const sixth = worker.run(browserTurn("trace_6"));
   await Promise.resolve();
-  expect(releases.has("trace_6")).toBeTrue();
-  for (const traceId of ["trace_2", "trace_3", "trace_4", "trace_5", "trace_6"]) {
+  expect(releases.has("trace_7")).toBeTrue();
+  expect(releases.has("trace_8")).toBeFalse();
+  releases.get("trace_2")?.();
+  await active[1];
+  await Promise.resolve();
+  expect(releases.has("trace_8")).toBeTrue();
+  for (const traceId of ["trace_3", "trace_4", "trace_5", "trace_6", "trace_7", "trace_8"]) {
     releases.get(traceId)?.();
   }
-  await Promise.all([...active.slice(1), sixth]);
+  await Promise.all([...active.slice(2), seventh, eighth]);
+});
+
+test("aborting a queued seventh browser turn removes it without consuming a slot", async () => {
+  const releases: Array<() => void> = [];
+  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    config: { browserHost: "managed-chrome" },
+    activeRuns: new Map(),
+    runExclusive: () => new Promise<string>(resolve => { releases.push(() => resolve("done")); }),
+  }) as ChatGptBrowserWorker;
+  const turn = (traceId: string, abortSignal?: AbortSignal) => ({
+    traceId,
+    modelId: "chatgpt-web/high",
+    capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+    prepare: async () => ({ text: traceId, images: [], release() {} }),
+    ...(abortSignal ? { abortSignal } : {}),
+    onTextDelta() {},
+  });
+  const active = Array.from({ length: 6 }, (_unused, index) => worker.run(turn(`abort_active_${index}`)));
+  await Promise.resolve();
+  const controller = new AbortController();
+  const queued = worker.run(turn("abort_queued", controller.signal));
+  controller.abort();
+  await expect(queued).rejects.toMatchObject({ name: "AbortError" });
+  expect(releases).toHaveLength(6);
+  releases.forEach(release => release());
+  await Promise.all(active);
+});
+
+test("retained tool conversations attach plain suffix text without reopening the connector menu", async () => {
+  const calls: string[] = [];
+  const composer = {
+    fill: async (value: string) => { calls.push(`fill:${value}`); },
+    focus: async () => { calls.push("focus"); },
+  };
+  const attachPrompt = (ChatGptBrowserWorker.prototype as unknown as {
+    attachPrompt(page: unknown, prompt: string, localTools: boolean, capture: undefined, reuse: boolean): Promise<void>;
+  }).attachPrompt;
+  await attachPrompt.call({
+    activeComposer: async () => composer,
+    selectConnector: async () => { throw new Error("retained turns must not select a connector"); },
+    insertPromptText: async (_page: unknown, text: string) => { calls.push(`insert:${text}`); },
+    assertPromptAttached: async () => { calls.push("assert"); },
+  }, {}, "new suffix", true, undefined, true);
+
+  expect(calls).toEqual(["fill:", "focus", "insert:new suffix", "assert"]);
+});
+
+test("browser diagnostics distinguish composer pills from connector menu rows", () => {
+  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  expect(workerSource).toContain("composerSelectedConnectors:");
+  expect(workerSource).toContain("mentionMenuConnectors:");
+  expect(workerSource).not.toContain("selectedConnectors: rows(");
 });
 
 test("browser turns have no absolute deadline unless one is explicitly configured", () => {
@@ -1128,23 +1188,44 @@ test("completed-turn evidence flushes a short-lived reasoning label immediately"
   ]);
 });
 
+test("a tool boundary flushes short-lived commentary without waiting for the stability timer", () => {
+  const tracker = new ChatGptVisibleTraceTracker(10_000);
+  expect(tracker.observe([
+    { kind: "commentary", text: "Checking the retained session", complete: false },
+  ], false, 1_000)).toEqual([]);
+  expect(tracker.observe([
+    { kind: "commentary", text: "Checking the retained session", complete: true },
+    { kind: "status", text: "Called Codex Native2" },
+  ], false, 1_010)).toEqual([{
+    kind: "commentary",
+    text: "Checking the retained session",
+  }]);
+});
+
 test("visible DOM trace emits one complete commentary paragraph before the next action", () => {
   const tracker = new ChatGptVisibleTraceTracker(100);
   const initial = [
     { kind: "commentary", text: "I’m reading", complete: false },
   ] as const;
   expect(tracker.observe([...initial], false, 1_000)).toEqual([]);
+  expect(tracker.observe([...initial], false, 1_100)).toEqual([{
+    kind: "commentary",
+    text: "I’m reading",
+  }]);
   const expanded = [
     { kind: "commentary", text: "I’m reading the repository’s mandatory architecture", complete: false },
   ] as const;
   expect(tracker.observe([...expanded], false, 1_150)).toEqual([]);
+  expect(tracker.observe([...expanded], false, 1_250)).toEqual([{
+    kind: "commentary",
+    text: " the repository’s mandatory architecture",
+    continuation: true,
+  }]);
   const completed = [
     { kind: "commentary", text: "I’m reading the repository’s mandatory architecture", complete: true },
     { kind: "status", text: "Read context file contents" },
   ] as const;
-  expect(tracker.observe([...completed], false, 1_250)).toEqual([
-    { kind: "commentary", text: "I’m reading the repository’s mandatory architecture" },
-  ]);
+  expect(tracker.observe([...completed], false, 1_250)).toEqual([]);
   expect(tracker.observe([...completed], false, 1_350)).toEqual([
     { kind: "reasoning", text: "Read context file contents" },
   ]);
@@ -1291,12 +1372,32 @@ test("stalled-turn diagnostics record DOM metrics without response or overlay co
   expect(diagnosticSource).not.toMatch(/\bariaLabel:\s*candidate\.getAttribute/);
 });
 
-test("browser completion requires ChatGPT's response-scoped copy action", () => {
+test("browser completion scopes its primary action evidence to ChatGPT's copy control", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   const sessionSource = readFileSync(new URL("../src/chatgpt-session.ts", import.meta.url), "utf8");
   expect(sessionSource).toContain('button[data-testid="copy-turn-action-button"]');
   expect(workerSource).toContain("CHATGPT_COMPLETION_ACTION_SELECTOR");
   expect(workerSource).not.toContain('root.querySelectorAll<HTMLElement>("button")');
+});
+
+test("browser completion accepts a stable stopped generation before the delayed copy action", () => {
+  const tracker = new ChatGptCompletionTracker(2_000);
+  const stopped = {
+    responsePresent: true,
+    running: false,
+    sawRunning: true,
+    currentText: "complete answer",
+    currentHtml: "<p>complete answer</p>",
+    completionActionVisible: false,
+  };
+  expect(tracker.update(stopped, 1_000)).toBeFalse();
+  expect(tracker.update(stopped, 2_999)).toBeFalse();
+  expect(tracker.update(stopped, 3_000)).toBeTrue();
+
+  const changed = { ...stopped, currentText: "complete answer updated" };
+  expect(tracker.update(changed, 3_001)).toBeFalse();
+  expect(tracker.update(changed, 5_001)).toBeTrue();
+  expect(new ChatGptCompletionTracker(0).update({ ...stopped, sawRunning: false }, 1_000)).toBeFalse();
 });
 
 test("browser send accepts only conclusive ChatGPT submission evidence", () => {

@@ -6,7 +6,6 @@ import {
   extractChatGptTurnIdentity,
   extractChatGptTurnUserRevision,
 } from "./environment";
-import { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
 
 export type ChatGptBrowserOutcome =
   | { type: "final"; answer: string }
@@ -118,9 +117,13 @@ export class ChatGptSteeringFeed {
     this.queued.push(instruction);
   }
 
-  take(): string | undefined {
+  peek(): { text: string; count: number } | undefined {
+    return this.queued.length === 0 ? undefined : { text: this.queued.join("\n\n"), count: this.queued.length };
+  }
+
+  take(count = this.queued.length): string | undefined {
     if (this.queued.length === 0) return undefined;
-    return this.queued.splice(0).join("\n\n");
+    return this.queued.splice(0, count).join("\n\n");
   }
 }
 
@@ -171,6 +174,24 @@ export function chatGptTurnExecutionKey(parsed: CodexParsedRequest): string {
   });
 }
 
+export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: string): string | undefined {
+  const identity = extractChatGptTurnIdentity(parsed);
+  if (!identity.threadId) return undefined;
+  const raw = parsed._rawBody as { input?: unknown[] } | undefined;
+  const compaction = raw?.input?.findLast(item => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const type = (item as { type?: unknown }).type;
+    return type === "compaction" || type === "compaction_summary" || type === "context_compaction";
+  });
+  return createHash("sha256").update(JSON.stringify({
+    namespace,
+    threadId: identity.threadId,
+    modelId: parsed.modelId,
+    reasoning: parsed.options.reasoning,
+    compaction: compaction ?? null,
+  })).digest("hex");
+}
+
 export function chatGptTurnSteeringId(threadId: string, turnId: string): string {
   return `${threadId}:${turnId}`;
 }
@@ -199,6 +220,8 @@ export class ChatGptTurnSession {
   private finalPrelude: AdapterEvent[] = [];
   private handoff?: string;
   private userRevision?: string;
+  private readonly hookedSteeringReplays: string[] = [];
+  private readonly hookedSteeringEvents: string[] = [];
   private readonly steering: ChatGptSteeringFeed;
   private settledBrowserOutcome?: ChatGptBrowserOutcome;
   private tail: Promise<void> = Promise.resolve();
@@ -207,6 +230,7 @@ export class ChatGptTurnSession {
     readonly runtime: ChatGptTurnRuntime,
     readonly group?: string,
     readonly steeringId?: string,
+    readonly claudeRootThreadId?: string,
   ) {
     this.steering = runtime.steering ?? new ChatGptSteeringFeed();
     this.browserOutcome = runtime.browser
@@ -309,16 +333,31 @@ export class ChatGptTurnSession {
     }
     if (this.userRevision === revision) return undefined;
     this.userRevision = revision;
+    const hooked = this.hookedSteeringReplays.indexOf(createHash("sha256").update(steering).digest("hex"));
+    if (hooked >= 0) {
+      this.hookedSteeringReplays.splice(hooked, 1);
+      return undefined;
+    }
     this.steering.push(steering);
     return steering;
   }
 
-  takePendingSteering(): string | undefined {
-    return this.steering.take();
-  }
+  peekPendingSteering() { return this.steering.peek(); }
 
-  queueSteering(steering: string): void {
+  takePendingSteering(count?: number): string | undefined { return this.steering.take(count); }
+
+  queueSteering(steering: string, hooked = false, deliveryId?: string): boolean {
+    if (deliveryId && this.hookedSteeringEvents.includes(deliveryId)) return false;
+    if (deliveryId) {
+      this.hookedSteeringEvents.push(deliveryId);
+      if (this.hookedSteeringEvents.length > 32) this.hookedSteeringEvents.shift();
+    }
+    if (hooked) {
+      this.hookedSteeringReplays.push(createHash("sha256").update(steering).digest("hex"));
+      if (this.hookedSteeringReplays.length > 32) this.hookedSteeringReplays.shift();
+    }
     this.steering.push(steering);
+    return true;
   }
 
   clearOutstanding(): void {
@@ -346,6 +385,7 @@ export class ChatGptTurnSessions {
     start: () => ChatGptTurnRuntime,
     group?: string,
     steeringId?: string,
+    claudeRootThreadId?: string,
   ): ChatGptTurnSession {
     this.prune();
     const existing = this.entries.get(key);
@@ -353,14 +393,8 @@ export class ChatGptTurnSessions {
       existing.touch();
       return existing;
     }
-    const active = [...this.entries.values()].filter(session => session.isActive()).length;
-    if (active >= MAX_CHATGPT_BROWSER_TABS) {
-      throw new Error(
-        `ChatGPT Web supports at most ${MAX_CHATGPT_BROWSER_TABS} simultaneous browser turns; close or finish a browser tab before starting another`,
-      );
-    }
     if (this.entries.size >= this.maxEntries) throw new Error(`ChatGPT web session registry is full (${this.maxEntries} entries)`);
-    const session = new ChatGptTurnSession(start(), group, steeringId);
+    const session = new ChatGptTurnSession(start(), group, steeringId, claudeRootThreadId);
     this.entries.set(key, session);
     return session;
   }
@@ -410,6 +444,22 @@ export class ChatGptTurnSessions {
     }
     target?.queueSteering(instruction);
     return Boolean(target);
+  }
+
+  steerClaudeRoot(
+    threadId: string,
+    instruction: string,
+    source?: { deliveryId: string; occurredAt: number },
+  ): "accepted" | "inactive" | "ambiguous" | "duplicate" | "stale" {
+    this.prune();
+    const targets = [...this.entries.values()].filter(session => (
+      session.isActive() && session.claudeRootThreadId === threadId
+    ));
+    if (targets.length === 0) return "inactive";
+    if (targets.length > 1) return "ambiguous";
+    const target = targets[0]!;
+    if (source && source.occurredAt < target.createdAt) return "stale";
+    return target.queueSteering(instruction, true, source?.deliveryId) ? "accepted" : "duplicate";
   }
 
   retireGroup(group: string): number {

@@ -14,7 +14,7 @@ import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
 import { chatGptHtmlToMarkdown, ChatGptMarkdownBuffer } from "../src/adapters/chatgpt-web/markdown";
 import { CHATGPT_WEB_MODEL_ID, resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
 import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt, withoutSupersededModelSwitchContracts } from "../src/adapters/chatgpt-web/prompt";
-import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions, chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey } from "../src/adapters/chatgpt-web/turn-execution";
+import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey } from "../src/adapters/chatgpt-web/turn-execution";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 import { estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
@@ -1453,6 +1453,22 @@ describe("ChatGPT outer-native harness v4", () => {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
       await TurnBroker.forSocket(socketPath).close();
     }
+  });
+
+  test("keeps a conversation key across Codex turns and rotates it after compaction", () => {
+    const first = rawWireRequest(environmentXml);
+    const next = structuredClone(first);
+    (next._rawBody as { client_metadata: Record<string, unknown> }).client_metadata = {
+      "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread_test_123", turn_id: "turn_test_456" }),
+    };
+    expect(chatGptConversationKey(first, "provider-a")).toBe(chatGptConversationKey(next, "provider-a"));
+
+    const compacted = structuredClone(next);
+    const raw = compacted._rawBody as { input: unknown[] };
+    raw.input.push({ type: "context_compaction", encrypted_content: "epoch-two" });
+    compacted._contextCompactionBoundary = true;
+    expect(chatGptConversationKey(compacted, "provider-a")).not.toBe(chatGptConversationKey(next, "provider-a"));
+    expect(chatGptConversationKey(first, "provider-b")).not.toBe(chatGptConversationKey(first, "provider-a"));
   });
 
   test("rebuilds one failed tool surface from the canonical request after completed results", async () => {

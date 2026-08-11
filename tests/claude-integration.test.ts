@@ -59,7 +59,7 @@ describe("reversible Claude Code integration", () => {
       CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
       CODEX_CHATGPT_WEB_CONTROL_TOKEN: config.controlToken,
     });
-    expect(installed.hooks.UserPromptSubmit).toContainEqual({
+    const steeringHook = {
       hooks: [{
         type: "http",
         url: "http://127.0.0.1:17841/v1/messages/steering",
@@ -67,7 +67,10 @@ describe("reversible Claude Code integration", () => {
         headers: { Authorization: "Bearer $CODEX_CHATGPT_WEB_CONTROL_TOKEN" },
         allowedEnvVars: ["CODEX_CHATGPT_WEB_CONTROL_TOKEN"],
       }],
-    });
+    };
+    expect(installed.hooks.UserPromptSubmit).toContainEqual(steeringHook);
+    expect(installed.hooks.PostToolUse).toContainEqual(steeringHook);
+    expect(installed.hooks.PostToolUseFailure).toContainEqual(steeringHook);
     expect(existsSync(getClaudeIntegrationJournalPath())).toBe(true);
   });
 
@@ -81,6 +84,27 @@ describe("reversible Claude Code integration", () => {
     const installed = settings();
     expect(installed.model).toBe("claude-chatgpt-web-luna");
     expect(installed.availableModels).toEqual(["claude-chatgpt-web-luna"]);
+    uninstallClaudeIntegration();
+    expect(existsSync(getClaudeSettingsPath())).toBe(false);
+  });
+
+  test("upgrades the legacy single-event steering hook without leaving it behind on uninstall", () => {
+    fixture();
+    const config = defaultConfig("browser-only");
+    installClaudeIntegration(config);
+    const legacySettings = settings();
+    delete legacySettings.hooks.PostToolUse;
+    delete legacySettings.hooks.PostToolUseFailure;
+    writeFileSync(getClaudeSettingsPath(), `${JSON.stringify(legacySettings, null, 2)}\n`);
+    const legacyJournal = JSON.parse(readFileSync(getClaudeIntegrationJournalPath(), "utf8"));
+    delete legacyJournal.installed.hookEvents;
+    delete legacyJournal.installed.hookEventsAdded;
+    legacyJournal.installed.hookAdded = true;
+    writeFileSync(getClaudeIntegrationJournalPath(), `${JSON.stringify(legacyJournal, null, 2)}\n`);
+
+    installClaudeIntegration(config);
+    expect(settings().hooks.PostToolUse).toHaveLength(1);
+    expect(settings().hooks.PostToolUseFailure).toHaveLength(1);
     uninstallClaudeIntegration();
     expect(existsSync(getClaudeSettingsPath())).toBe(false);
   });

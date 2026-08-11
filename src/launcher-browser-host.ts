@@ -271,7 +271,13 @@ export const LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS = 30_000;
 export const LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS = 120_000;
 
 export type LauncherTurnActivity =
-  | { phase: "start"; traceId: string; helperPid: number }
+  | {
+      phase: "start";
+      traceId: string;
+      helperPid: number;
+      conversationKey?: string;
+      connectorIdentity?: string;
+    }
   | { phase: "heartbeat"; traceId: string; helperPid: number }
   | {
       phase: "end";
@@ -280,6 +286,7 @@ export type LauncherTurnActivity =
       status: "completed" | "failed" | "aborted";
       message?: string;
       retain?: boolean;
+      connectorBound?: boolean;
     };
 
 export const LAUNCHER_TURN_START_TIMEOUT_MS = 5_000;
@@ -295,7 +302,7 @@ export async function notifyLauncherTurn(
     : activity.phase === "heartbeat"
       ? LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS
       : LAUNCHER_TURN_START_TIMEOUT_MS,
-): Promise<{ surfaceId?: string; reused?: boolean }> {
+): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -321,7 +328,14 @@ export async function notifyLauncherTurn(
       if (body.reused !== undefined && typeof body.reused !== "boolean") {
         throw new Error("Launcher browser control channel returned an invalid reuse state");
       }
-      return { surfaceId: body.surfaceId, reused: body.reused === true };
+      if (body.connectorBound !== undefined && typeof body.connectorBound !== "boolean") {
+        throw new Error("Launcher browser control channel returned an invalid connector state");
+      }
+      return {
+        surfaceId: body.surfaceId,
+        reused: body.reused === true,
+        ...(body.connectorBound === true ? { connectorBound: true } : {}),
+      };
     }
     return {};
   } catch (error) {

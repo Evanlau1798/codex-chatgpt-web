@@ -113,6 +113,13 @@ class BrowserControlServer {
       if (!Number.isInteger(body.helperPid) || body.helperPid < 1) {
         throw new Error("browser helper pid is invalid");
       }
+      if (body.conversationKey !== undefined && !/^[a-f0-9]{64}$/.test(body.conversationKey)) {
+        throw new Error("conversationKey is invalid");
+      }
+      if (body.connectorIdentity !== undefined
+        && (typeof body.connectorIdentity !== "string" || !body.connectorIdentity.trim() || body.connectorIdentity.length > 80)) {
+        throw new Error("connectorIdentity is invalid");
+      }
       const preferences = this.getPreferences();
       if (request.url === "/v1/turn/start") {
         const lease = host.beginTurn(
@@ -120,6 +127,8 @@ class BrowserControlServer {
           preferences.showBrowserDuringTurns === true,
           body.helperPid,
           preferences.lockBrowserDuringTurns !== false,
+          body.conversationKey,
+          body.connectorIdentity,
         );
         this.logger.info("browser.turn_started", { traceId: body.traceId });
         writeJson(response, 200, { ok: true, ...lease });
@@ -138,6 +147,7 @@ class BrowserControlServer {
           preferences.showBrowserDuringTurns === true,
           body.message,
           body.retain === true,
+          body.connectorBound === true,
         );
         this.logger.info("browser.turn_ended", { traceId: body.traceId, status: body.status });
       }

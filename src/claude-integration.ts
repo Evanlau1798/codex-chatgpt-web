@@ -6,6 +6,7 @@ import { atomicWriteFile, expandUserPath, getConfigDir, preserveUtf8Bom, stripUt
 import { preferredClaudeGatewayModelIds } from "./messages/models";
 
 type JsonObject = Record<string, unknown>;
+const CLAUDE_STEERING_HOOK_EVENTS = ["UserPromptSubmit", "PostToolUse", "PostToolUseFailure"] as const;
 
 interface PreviousValue {
   present: boolean;
@@ -21,6 +22,8 @@ export interface ClaudeIntegrationJournal {
     settings: JsonObject;
     env: Record<string, string>;
     hook?: JsonObject;
+    hookEvents?: string[];
+    hookEventsAdded?: string[];
     hookAdded?: boolean;
   };
   previous: {
@@ -69,32 +72,46 @@ function selectedAvailableModel(settings: JsonObject, installed: JsonObject): st
     : undefined;
 }
 
-function userPromptHooks(settings: JsonObject): { hooks: JsonObject; entries: unknown[] } {
+function hookEntries(settings: JsonObject, event: string): { hooks: JsonObject; entries: unknown[] } {
   const hooks = Object.hasOwn(settings, "hooks") ? object(settings.hooks, "Claude settings hooks") : {};
-  const raw = hooks.UserPromptSubmit;
-  if (raw !== undefined && !Array.isArray(raw)) throw new Error("Claude UserPromptSubmit hooks must be an array");
+  const raw = hooks[event];
+  if (raw !== undefined && !Array.isArray(raw)) throw new Error(`Claude ${event} hooks must be an array`);
   return { hooks, entries: raw ? [...raw] : [] };
 }
 
-function hasHook(settings: JsonObject, hook: JsonObject): boolean {
-  return userPromptHooks(settings).entries.some(entry => same(entry, hook));
+function managedHookEvents(installed: ClaudeIntegrationJournal["installed"]): string[] {
+  return installed.hookEvents ?? ["UserPromptSubmit"];
 }
 
-function addHook(settings: JsonObject, hook: JsonObject): boolean {
-  const current = userPromptHooks(settings);
-  if (current.entries.some(entry => same(entry, hook))) return false;
-  current.hooks.UserPromptSubmit = [...current.entries, hook];
-  settings.hooks = current.hooks;
-  return true;
+function addedHookEvents(installed: ClaudeIntegrationJournal["installed"]): string[] {
+  return installed.hookEventsAdded ?? (installed.hookAdded ? ["UserPromptSubmit"] : []);
 }
 
-function removeHook(settings: JsonObject, hook: JsonObject): void {
-  const current = userPromptHooks(settings);
-  const remaining = current.entries.filter(entry => !same(entry, hook));
-  if (remaining.length > 0) current.hooks.UserPromptSubmit = remaining;
-  else delete current.hooks.UserPromptSubmit;
-  if (Object.keys(current.hooks).length > 0) settings.hooks = current.hooks;
-  else delete settings.hooks;
+function hasHook(settings: JsonObject, hook: JsonObject, events: string[]): boolean {
+  return events.every(event => hookEntries(settings, event).entries.some(entry => same(entry, hook)));
+}
+
+function addHook(settings: JsonObject, hook: JsonObject, events: string[]): string[] {
+  const added: string[] = [];
+  for (const event of events) {
+    const current = hookEntries(settings, event);
+    if (current.entries.some(entry => same(entry, hook))) continue;
+    current.hooks[event] = [...current.entries, hook];
+    settings.hooks = current.hooks;
+    added.push(event);
+  }
+  return added;
+}
+
+function removeHook(settings: JsonObject, hook: JsonObject, events: string[]): void {
+  for (const event of events) {
+    const current = hookEntries(settings, event);
+    const remaining = current.entries.filter(entry => !same(entry, hook));
+    if (remaining.length > 0) current.hooks[event] = remaining;
+    else delete current.hooks[event];
+    if (Object.keys(current.hooks).length > 0) settings.hooks = current.hooks;
+    else delete settings.hooks;
+  }
 }
 
 function readSettings(path: string): { exists: boolean; value: JsonObject; raw: string } {
@@ -130,6 +147,7 @@ function desired(config: AppConfig): ClaudeIntegrationJournal["installed"] {
         allowedEnvVars: ["CODEX_CHATGPT_WEB_CONTROL_TOKEN"],
       }],
     },
+    hookEvents: [...CLAUDE_STEERING_HOOK_EVENTS],
   };
 }
 
@@ -189,8 +207,9 @@ function assertInstalled(settings: JsonObject, journal: ClaudeIntegrationJournal
   for (const [key, value] of Object.entries(journal.installed.env)) {
     if (!same(env[key], value)) throw new Error(`Claude env.${key} changed after setup`);
   }
-  if (journal.installed.hook && !hasHook(settings, journal.installed.hook)) {
-    throw new Error("Claude UserPromptSubmit steering hook changed after setup");
+  if (journal.installed.hook
+    && !hasHook(settings, journal.installed.hook, managedHookEvents(journal.installed))) {
+    throw new Error("Claude steering hooks changed after setup");
   }
 }
 
@@ -256,13 +275,13 @@ export function installClaudeIntegration(
   Object.assign(current.value, installed.settings);
   Object.assign(currentEnv, installed.env);
   current.value.env = currentEnv;
-  if (existing?.installed.hook && existing.installed.hookAdded) {
-    removeHook(current.value, existing.installed.hook);
+  if (existing?.installed.hook) {
+    removeHook(current.value, existing.installed.hook, addedHookEvents(existing.installed));
   }
-  const hookAdded = installed.hook ? addHook(current.value, installed.hook) : false;
-  const reusedUserHook = existing?.installed.hookAdded === false
-    && same(existing.installed.hook, installed.hook);
-  installed.hookAdded = existing?.installed.hookAdded === true || (!reusedUserHook && hookAdded);
+  installed.hookEventsAdded = installed.hook
+    ? addHook(current.value, installed.hook, managedHookEvents(installed))
+    : [];
+  installed.hookAdded = installed.hookEventsAdded.length > 0;
   const journal: ClaudeIntegrationJournal = {
     version: 1,
     settingsPath,
@@ -282,7 +301,9 @@ export function uninstallClaudeIntegration(): { changed: boolean } {
   if (!current.exists) throw new Error(`Claude settings are missing: ${journal.settingsPath}`);
   assertInstalled(current.value, journal);
   const env = settingsEnv(current.value);
-  if (journal.installed.hook && journal.installed.hookAdded) removeHook(current.value, journal.installed.hook);
+  if (journal.installed.hook) {
+    removeHook(current.value, journal.installed.hook, addedHookEvents(journal.installed));
+  }
   for (const [key, previous] of Object.entries(journal.previous.settings)) restore(current.value, key, previous);
   for (const [key, previous] of Object.entries(journal.previous.env)) restore(env, key, previous);
   if (Object.keys(env).length > 0 || journal.previousEnvPresent) current.value.env = env;

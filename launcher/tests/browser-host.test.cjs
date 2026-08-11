@@ -1121,12 +1121,15 @@ test("closing a running browser tab preserves ownership until its helper reports
   assert.equal(fixture.selectedTabId, "home");
 });
 
-test("a later provider round reuses its task tab and restores active ownership", () => {
+test("a later provider round reuses the connector-bound conversation with a new trace id", () => {
   const throttling = [];
   const tab = {
     id: "tab-reused",
     surfaceId: "surface-reused",
     traceId: "trace_reused",
+    conversationKey: "conversation-a",
+    connectorIdentity: "Codex Native2",
+    connectorBound: true,
     helperPid: 111,
     status: "ready",
     loading: false,
@@ -1150,9 +1153,23 @@ test("a later provider round reuses its task tab and restores active ownership",
     logger: { info: (event) => events.push(event) },
   });
 
-  const lease = BrowserHost.prototype.beginTurn.call(fixture, "trace_reused", false, 222);
+  const lease = BrowserHost.prototype.beginTurn.call(
+    fixture,
+    "trace_next",
+    false,
+    222,
+    true,
+    "conversation-a",
+    "Codex Native2",
+  );
 
-  assert.deepEqual(lease, { surfaceId: "surface-reused", tabId: "tab-reused", reused: true });
+  assert.deepEqual(lease, {
+    surfaceId: "surface-reused",
+    tabId: "tab-reused",
+    reused: true,
+    connectorBound: true,
+  });
+  assert.equal(tab.traceId, "trace_next");
   assert.equal(tab.helperPid, 222);
   assert.equal(tab.status, "running");
   assert.equal(tab.loading, true);
@@ -1162,16 +1179,52 @@ test("a later provider round reuses its task tab and restores active ownership",
   assert.deepEqual(events, ["visible", "published", "descriptor", "browser.tab_reused"]);
 });
 
-test("five browser tabs are a hard account-safety limit", () => {
-  const turnTabs = new Map(Array.from({ length: 5 }, (_unused, index) => [
+test("six browser tabs are a hard account-safety limit", () => {
+  const turnTabs = new Map(Array.from({ length: 6 }, (_unused, index) => [
     `tab-${index + 1}`,
     { ordinal: index + 1 },
   ]));
 
   assert.throws(
-    () => BrowserHost.prototype.createTurnTab.call({ turnTabs }, "trace_six", 444),
-    /already has 5 browser tabs.*avoid excessive parallel traffic/,
+    () => BrowserHost.prototype.createTurnTab.call({ turnTabs }, "trace_seven", 444),
+    /already has 6 browser tabs.*avoid excessive parallel traffic/,
   );
+});
+
+test("a retained conversation is not reused for a different connector identity", () => {
+  const retained = {
+    id: "retained",
+    traceId: "trace_old",
+    status: "ready",
+    conversationKey: "conversation-a",
+    connectorIdentity: "Codex Native2",
+    connectorBound: true,
+  };
+  const created = { id: "fresh", surfaceId: "surface-fresh" };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    manualOperation: null,
+    turnTabs: new Map([[retained.id, retained]]),
+    createTurnTab: (...args) => {
+      assert.deepEqual(args, ["trace_next", 222, true, "conversation-a", "Other Connector"]);
+      return created;
+    },
+    syncViewVisibility() {},
+    publishState() {},
+    snapshot: () => ({ tabs: [] }),
+    logger: { info() {} },
+  });
+
+  const lease = BrowserHost.prototype.beginTurn.call(
+    fixture,
+    "trace_next",
+    false,
+    222,
+    true,
+    "conversation-a",
+    "Other Connector",
+  );
+  assert.deepEqual(lease, { surfaceId: "surface-fresh", tabId: "fresh", reused: false });
+  assert.equal(retained.status, "ready");
 });
 
 test("ending one browser turn does not stop another running tab", async () => {

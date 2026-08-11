@@ -40,6 +40,11 @@ export function claudeBrowserSessionGroup(parsed: CodexParsedRequest): string | 
   return extractChatGptTurnIdentity(parsed).threadId;
 }
 
+export function claudeRootSessionThreadId(parsed: CodexParsedRequest): string | undefined {
+  if (clientMetadata(parsed)?.claude_subagent !== false) return undefined;
+  return extractChatGptTurnIdentity(parsed).threadId;
+}
+
 export function bindClaudeSessionAbort(
   parsed: CodexParsedRequest,
   signal: AbortSignal,
@@ -56,6 +61,7 @@ export function bindClaudeSessionAbort(
 export function claudeBrowserTurnOptions(parsed: CodexParsedRequest, upstreamRetry?: AnswerRetry) {
   const metadata = clientMetadata(parsed);
   const subagent = metadata?.claude_subagent === true;
+  const claudeClient = typeof metadata?.claude_subagent === "boolean";
   const retryPromptForAnswer: AnswerRetry | undefined = upstreamRetry || subagent
     ? (answer, attempt) => {
         const upstream = upstreamRetry?.(answer, attempt);
@@ -73,7 +79,9 @@ export function claudeBrowserTurnOptions(parsed: CodexParsedRequest, upstreamRet
       }
     : undefined;
   return {
-    retainConversation: metadata?.claude_retain_conversation === true && !subagent,
+    retainConversation: !parsed._compactionRequest && (claudeClient
+      ? metadata?.claude_retain_conversation === true && !subagent
+      : Boolean(extractChatGptTurnIdentity(parsed).threadId)),
     retryPromptForAnswer,
   };
 }

@@ -40,7 +40,13 @@ test("browser control server authenticates and owns turn visibility", async () =
     const start = await fetch(`${descriptor.endpoint}/v1/turn/start`, {
       method: "POST",
       headers: { authorization: `Bearer ${descriptor.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ phase: "start", traceId: "abcdef123456", helperPid: process.pid }),
+      body: JSON.stringify({
+        phase: "start",
+        traceId: "abcdef123456",
+        helperPid: process.pid,
+        conversationKey: "a".repeat(64),
+        connectorIdentity: "Codex Native2",
+      }),
     });
     assert.equal(start.status, 200);
 
@@ -67,13 +73,14 @@ test("browser control server authenticates and owns turn visibility", async () =
         helperPid: process.pid,
         status: "completed",
         retain: true,
+        connectorBound: true,
       }),
     });
     assert.equal(end.status, 200);
     assert.deepEqual(calls, [
-      ["start", "abcdef123456", true, process.pid, true],
+      ["start", "abcdef123456", true, process.pid, true, "a".repeat(64), "Codex Native2"],
       ["heartbeat", "abcdef123456", process.pid],
-      ["end", "abcdef123456", process.pid, "completed", true, undefined, true],
+      ["end", "abcdef123456", process.pid, "completed", true, undefined, true, true],
     ]);
     assert.equal(logs.some(([, event]) => event === "browser.turn_started"), true);
     assert.equal(logs.some(([, event]) => event === "browser.turn_ended"), true);

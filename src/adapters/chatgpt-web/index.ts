@@ -6,11 +6,10 @@ import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } 
 import type { ProviderAdapter } from "../base";
 import { ChatGptWebAdapterError, chatGptSessionFailureDisposition } from "./adapter-error";
 import { ChatGptBrowserWorker } from "./browser-worker";
-import { claudeBrowserTurnOptions } from "./claude-subagent";
+import { claudeBrowserTurnOptions, claudeRootSessionThreadId } from "./claude-subagent";
 import { prepareChatGptWebContext } from "./context-bootstrap";
 import {
   canonicalizeCompactionHandoff,
-  codexToolResultToBrokerResult,
   codexToolResultsById,
   createActiveCompactionHandoffPrompts,
   recoverCompactionHandoff,
@@ -21,11 +20,12 @@ import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebC
 import { compileChatGptWebPrompt } from "./prompt";
 import { brokerSocketPath, deferred, recoverableToolSurfaceResultCount, withAbort } from "./runtime-lifecycle";
 import { TurnBroker } from "./turn-broker";
-import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
+import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
 import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
-import { browserSteeringRetry, claudeConversationResumeRequest, deliverPendingChatGptSteering, sessionForChatGptRequest, validateBatchTools } from "./steering";
+import { browserSteeringRetry, deliverPendingChatGptSteering, retainedConversationResumeRequest, sessionForChatGptRequest, validateBatchTools } from "./steering";
+import { completeChatGptToolResults } from "./tool-result-delivery";
 import { ChatGptLunaCheckpointStore, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint";
 
 export function createChatGptWebAdapter(provider: CodexProviderConfig): ProviderAdapter {
@@ -94,9 +94,10 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const steering = captureLunaCheckpoint ? undefined : new ChatGptSteeringFeed();
     let activeToken: string | undefined;
     const handoffPrompts = useNewCompactMode ? createActiveCompactionHandoffPrompts() : undefined;
-    const resumeInput = claudeConversationResumeRequest(checkpointInput.parsed);
     const { retainConversation, retryPromptForAnswer: upstreamRetry } = claudeBrowserTurnOptions(checkpointInput.parsed, handoffPrompts?.retryPromptForAnswer);
-    const retryPromptForAnswer = parsed._compactionRequest || !steering ? upstreamRetry : browserSteeringRetry(steering, traceId, upstreamRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined);
+    const conversationKey = retainConversation ? chatGptConversationKey(checkpointInput.parsed, executionNamespace) : undefined;
+    const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
+    const retryPromptForAnswer = parsed._compactionRequest || !steering ? upstreamRetry : browserSteeringRetry(steering, traceId, upstreamRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, Boolean(claudeRootSessionThreadId(checkpointInput.parsed)));
     if (!mode.localTools) {
       const base = {
         modelId: parsed.modelId,
@@ -114,6 +115,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
             useNewCompactMode, contextTtlMs, traceId),
         } : {}),
         ...(retainConversation ? { retainConversation: true } : {}),
+        ...(conversationKey ? { conversationKey } : {}),
         abortSignal: browserAbort.signal,
         ...(captureLunaCheckpoint ? {
           captureLunaCheckpoint: true,
@@ -172,6 +174,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       prepare: () => prepareWith(checkpointInput.parsed),
       ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput) } : {}),
       ...(retainConversation ? { retainConversation: true } : {}),
+      ...(conversationKey ? { conversationKey } : {}),
       abortSignal: browserAbort.signal,
       onReasoningSummary: (text, continuation) => trace.push({ kind: "reasoning", text, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: (text, continuation) => trace.push({ kind: "commentary", text, ...(continuation ? { continuation: true } : {}) }),
@@ -336,20 +339,14 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
 
             const outstanding = session.outstanding();
             if (outstanding.length > 0) {
-            const results = [...codexToolResultsById(parsed, session).values()];
+              const results = [...codexToolResultsById(parsed, session).values()];
               if (results.length === 0) {
                 const reasoning = session.reasoningForOutstandingReplay();
                 replayEvents(session.eventsForOutstandingReplay(), emit);
                 emitToolBatch(outstanding, estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning, toolRequests: outstanding }, turnCapabilities), emit);
                 return;
               }
-              if (results.length !== outstanding.length) {
-                throw new Error(`Codex returned ${results.length} of ${outstanding.length} results for a parallel ChatGPT tool batch`);
-              }
-              for (const message of results) {
-                broker.completeTool(turnToken, message.toolCallId, codexToolResultToBrokerResult(message));
-                session.markResultDelivered(message.toolCallId);
-              }
+              completeChatGptToolResults(session, broker, turnToken, results);
             }
           } else if (session.outstanding().length > 0) {
             throw new Error("Read-only ChatGPT Web runtime cannot own local tool calls");

@@ -165,6 +165,31 @@ test("streams Anthropic tool-use events and accepts unknown beta fields", async 
   expect(body).toContain("event: message_stop");
 });
 
+test("keeps incremental Claude commentary in one text block across transient thinking", async () => {
+  const response = await messagesRequest(request({
+    model: "chatgpt-web/high",
+    max_tokens: 1024,
+    stream: true,
+    messages: [{ role: "user", content: "Describe the bridge" }],
+  }), defaultConfig("full"), () => ({
+    name: "messages-commentary-boundary-test",
+    async runTurn(_parsed, _incoming, emit) {
+      emit({ type: "text_delta", text: "Cod", phase: "commentary" });
+      emit({ type: "thinking_delta", thinking: "Transient Web status" });
+      emit({ type: "text_delta", text: "ex Native", phase: "commentary" });
+      emit({ type: "done", stopReason: "stop", endTurn: true });
+    },
+  }));
+
+  const body = await response.text();
+  const textStarts = body.match(/"content_block":\{"type":"text","text":""\}/g) ?? [];
+  const deltas = [...body.matchAll(/"delta":\{"type":"text_delta","text":"([^"]*)"\}/g)]
+    .map(match => match[1]);
+  expect(textStarts).toHaveLength(1);
+  expect(deltas.join("")).toBe("Codex Native");
+  expect(body).not.toContain("Transient Web status");
+});
+
 test("cancelling a streamed Claude response aborts its active browser turn", async () => {
   const requestAbort = new AbortController();
   let releaseStarted!: () => void;

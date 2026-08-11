@@ -1,0 +1,88 @@
+export interface ChatGptVisibleTraceBlock {
+  kind: "answer" | "commentary" | "status";
+  text: string;
+  key?: string;
+  complete?: boolean;
+  uiControl?: boolean;
+}
+
+export interface ChatGptVisibleTraceEvent {
+  kind: "reasoning" | "commentary";
+  text: string;
+  continuation?: boolean;
+}
+
+interface TraceCandidate {
+  text: string;
+  changedAt: number;
+}
+
+function normalizeTrace(block: ChatGptVisibleTraceBlock): string {
+  const stripped = block.text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map(line => line.replace(/[\t ]+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return block.kind === "status" ? stripped.replace(/\s+/g, " ") : stripped;
+}
+
+/** Convert public ChatGPT trace DOM into append-only reasoning and commentary. */
+export class ChatGptVisibleTraceTracker {
+  private readonly emittedTrace = new Map<string, string>();
+  private readonly traceCandidates = new Map<string, TraceCandidate>();
+
+  constructor(private readonly traceStabilityMs = 250) {}
+
+  observe(
+    blocks: ChatGptVisibleTraceBlock[],
+    completionActionVisible: boolean,
+    now = Date.now(),
+  ): ChatGptVisibleTraceEvent[] {
+    const output: ChatGptVisibleTraceEvent[] = [];
+    let statusSlot = 0;
+    let commentarySlot = 0;
+    for (const block of blocks) {
+      if (block.kind === "answer") continue;
+      const index = block.kind === "status" ? statusSlot++ : commentarySlot++;
+      const slot = block.key ? `${block.kind}:${block.key}` : `${block.kind}:${index}`;
+      const text = normalizeTrace(block);
+      if (!text) continue;
+
+      const immediate = completionActionVisible || block.complete === true || this.traceStabilityMs === 0;
+      const candidate = this.traceCandidates.get(slot);
+      let stableText: string | undefined;
+      if (immediate) {
+        stableText = text;
+        this.traceCandidates.set(slot, { text, changedAt: now });
+      } else if (!candidate) {
+        this.traceCandidates.set(slot, { text, changedAt: now });
+        continue;
+      } else if (candidate.text === text) {
+        if (now - candidate.changedAt < this.traceStabilityMs) continue;
+        stableText = text;
+      } else if (block.kind === "commentary"
+        && text.startsWith(candidate.text)
+        && now - candidate.changedAt >= this.traceStabilityMs) {
+        stableText = candidate.text;
+        this.traceCandidates.set(slot, { text, changedAt: now });
+      } else {
+        this.traceCandidates.set(slot, { text, changedAt: now });
+        continue;
+      }
+
+      const previous = this.emittedTrace.get(slot);
+      if (previous === stableText) continue;
+      this.emittedTrace.set(slot, stableText);
+      const kind = block.kind === "commentary" ? "commentary" : "reasoning";
+      if (previous && stableText.startsWith(previous)) {
+        output.push({ kind, text: stableText.slice(previous.length), continuation: true });
+      } else {
+        output.push({ kind, text: stableText });
+      }
+    }
+    return output;
+  }
+}
+

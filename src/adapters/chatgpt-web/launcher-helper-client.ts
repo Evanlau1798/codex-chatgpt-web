@@ -204,6 +204,7 @@ export class LauncherBrowserHelperClient {
               resumePrepared: { text: resumePrepared.text, images: resumePrepared.images } satisfies CompiledChatGptWebPrompt,
             } : {}),
             ...(turn.retainConversation ? { retainConversation: true } : {}),
+            ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
             ...(turn.captureLunaCheckpoint ? { captureLunaCheckpoint: true } : {}),
           },
         }).catch(error => this.finishWithError(turn.traceId, error instanceof Error ? error : new Error(String(error))));

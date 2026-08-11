@@ -107,6 +107,31 @@ describe("ChatGPT Web surface resilience", () => {
     expect(attempts).toBe(1);
   });
 
+  test("retries one fresh surface when ChatGPT explicitly rejects the bound connector", async () => {
+    const Worker = ChatGptBrowserWorker as unknown as new (config: object) => ChatGptBrowserWorker;
+    const worker = new Worker({ browserHost: "managed-chrome" });
+    let attempts = 0;
+    (worker as unknown as { runExclusive: () => Promise<string> }).runExclusive = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new ChatGptWebAdapterError("api_tool unavailable", {
+        status: 502,
+        errorType: "server_error",
+        code: "chatgpt_connector_unavailable",
+        retryable: true,
+        retireSession: true,
+      });
+      return "recovered";
+    };
+
+    expect(await worker.run({
+      traceId: "connector-fresh-retry",
+      modelId: CHATGPT_WEB_MODEL_ID,
+      reasoning: "high",
+      capabilities: { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    } as BrowserTurn)).toBe("recovered");
+    expect(attempts).toBe(2);
+  });
+
   test("recognizes the Temporary Chat route while allowing harmless query parameters", () => {
     expect(isTemporaryChatGptUrl("https://chatgpt.com/?temporary-chat=true&model=gpt-5")).toBe(true);
     expect(isTemporaryChatGptUrl("https://chatgpt.com/c/changed")).toBe(false);

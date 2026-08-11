@@ -79,6 +79,7 @@ export function streamClaudeMessage(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const id = `msg_${randomUUID().replaceAll("-", "")}`;
+  const startedAt = Date.now();
   let cancelled = false;
   return new ReadableStream({
     async start(controller) {
@@ -90,6 +91,7 @@ export function streamClaudeMessage(
       let thinking = "";
       let thinkingSignature = "";
       let usage: CodexUsage | undefined;
+      let firstTextLogged = false;
       const closeBlock = () => {
         if (!kind) return;
         if (kind === "thinking") send("content_block_delta", { type: "content_block_delta", index, delta: { type: "signature_delta", signature: thinkingSignature || createHash("sha256").update(thinking).digest("base64url") } });
@@ -103,6 +105,7 @@ export function streamClaudeMessage(
         for await (const event of events) {
           if (event.type === "heartbeat") send("ping", { type: "ping" });
           else if (event.type === "thinking_delta") {
+            if (kind === "text") continue;
             if (kind !== "thinking") { closeBlock(); index += 1; kind = "thinking"; send("content_block_start", { type: "content_block_start", index, content_block: { type: "thinking", thinking: "", signature: "" } }); }
             thinking += event.thinking;
             send("content_block_delta", { type: "content_block_delta", index, delta: { type: "thinking_delta", thinking: event.thinking } });
@@ -113,6 +116,10 @@ export function streamClaudeMessage(
             send("content_block_start", { type: "content_block_start", index, content_block: { type: "redacted_thinking", data: event.data } });
             send("content_block_stop", { type: "content_block_stop", index });
           } else if (event.type === "text_delta") {
+            if (!firstTextLogged) {
+              firstTextLogged = true;
+              console.info(`[chatgpt-web] Claude SSE latency stage=first_text_enqueue elapsedMs=${Date.now() - startedAt}`);
+            }
             if (kind !== "text") { closeBlock(); index += 1; kind = "text"; send("content_block_start", { type: "content_block_start", index, content_block: { type: "text", text: "" } }); }
             send("content_block_delta", { type: "content_block_delta", index, delta: { type: "text_delta", text: event.text } });
           } else if (event.type === "tool_call_start") {
