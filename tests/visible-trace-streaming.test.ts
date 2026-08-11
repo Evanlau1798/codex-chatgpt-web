@@ -105,24 +105,17 @@ test("coalesces commentary roots without interleaving animated reasoning", () =>
   }]);
 });
 
-test("waits out an unfinished Markdown render instead of replaying its prefix", () => {
+test("waits out escaped raw Markdown until the renderer exposes stable Markdown", () => {
   const tracker = new ChatGptVisibleTraceTracker(100);
-  const prefix = [{ kind: "commentary" as const, text: "成本是" }];
-  const raw = [{ kind: "commentary" as const, text: "成本是 **< TWD 55.76" }];
-  const rendered = [{ kind: "commentary" as const, text: "成本是 < TWD 55.76，繼續執行" }];
+  const raw = [{ kind: "commentary" as const, text: "I am starting \\*\\*SMOKE_PROGRESS" }];
+  const rendered = [{ kind: "commentary" as const, text: "I am starting **SMOKE_PROGRESS**" }];
 
-  expect(tracker.observe(prefix, false, 800)).toEqual([]);
-  expect(tracker.observe(prefix, false, 900)).toEqual([{
-    kind: "commentary",
-    text: "成本是",
-  }]);
   expect(tracker.observe(raw, false, 1_000)).toEqual([]);
   expect(tracker.observe(raw, false, 1_100)).toEqual([]);
   expect(tracker.observe(rendered, false, 1_101)).toEqual([]);
   expect(tracker.observe(rendered, false, 1_201)).toEqual([{
     kind: "commentary",
-    text: " < TWD 55.76，繼續執行",
-    continuation: true,
+    text: "I am starting **SMOKE_PROGRESS**",
   }]);
 });
 

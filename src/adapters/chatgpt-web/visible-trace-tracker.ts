@@ -35,6 +35,10 @@ function hasUnclosedStrongMarkdown(text: string): boolean {
   return markerCount("**") % 2 === 1 || markerCount("__") % 2 === 1;
 }
 
+function hasUnrenderedMarkdown(text: string): boolean {
+  return /\\[*_`~[\]]/.test(text) || hasUnclosedStrongMarkdown(text);
+}
+
 function coalescedCommentary(blocks: ChatGptVisibleTraceBlock[]): ChatGptVisibleTraceBlock | undefined {
   const commentary = blocks.filter(block => block.kind === "commentary");
   if (commentary.length === 0) return undefined;
@@ -94,7 +98,10 @@ export class ChatGptVisibleTraceTracker {
       const immediate = completionActionVisible
         || this.traceStabilityMs === 0
         || (block.complete === true && candidate?.text === text);
-      if (block.kind === "commentary" && hasUnclosedStrongMarkdown(text)) {
+      if (block.kind === "commentary"
+        && !completionActionVisible
+        && block.complete !== true
+        && hasUnrenderedMarkdown(text)) {
         this.traceCandidates.set(slot, { text, changedAt: now });
         continue;
       }
