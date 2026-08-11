@@ -29,31 +29,39 @@ export function buildClaudeMessage(events: AdapterEvent[], meta: ClaudeResponseM
   let thinking = "";
   let thinkingSignature = "";
   let tool: { id: string; name: string; json: string } | undefined;
+  let kind: "text" | "thinking" | "tool" | undefined;
   let usage: CodexUsage | undefined;
   let reason: string | undefined;
   const flush = () => {
-    if (thinking) {
+    if (kind === "thinking" && thinking) {
       content.push({ type: "thinking", thinking, signature: thinkingSignature || createHash("sha256").update(thinking).digest("base64url") });
-      thinking = "";
-      thinkingSignature = "";
     }
-    if (text) {
+    if (kind === "text" && text) {
       content.push({ type: "text", text });
-      text = "";
     }
-    if (tool) {
+    if (kind === "tool" && tool) {
       let input: unknown = {};
       try { input = JSON.parse(tool.json || "{}"); } catch { input = {}; }
       content.push({ type: "tool_use", id: tool.id, name: tool.name, input });
-      tool = undefined;
     }
+    kind = undefined;
+    text = "";
+    thinking = "";
+    thinkingSignature = "";
+    tool = undefined;
   };
   for (const event of events) {
-    if (event.type === "thinking_delta" && !isClaudeGenericThinkingPlaceholder(event.thinking)) thinking += event.thinking;
+    if (event.type === "thinking_delta" && !isClaudeGenericThinkingPlaceholder(event.thinking)) {
+      if (kind !== "thinking") { flush(); kind = "thinking"; }
+      thinking += event.thinking;
+    }
     else if (event.type === "thinking_signature") thinkingSignature = event.signature;
     else if (event.type === "redacted_thinking") { flush(); content.push({ type: "redacted_thinking", data: event.data }); }
-    else if (event.type === "text_delta") text += event.text;
-    else if (event.type === "tool_call_start") { flush(); tool = { id: event.id, name: event.name, json: "" }; }
+    else if (event.type === "text_delta") {
+      if (kind !== "text") { flush(); kind = "text"; }
+      text += event.text;
+    }
+    else if (event.type === "tool_call_start") { flush(); kind = "tool"; tool = { id: event.id, name: event.name, json: "" }; }
     else if (event.type === "tool_call_delta" && tool) tool.json += event.arguments;
     else if (event.type === "tool_call_end") flush();
     else if (event.type === "done") { usage = event.usage; reason = event.stopReason; }
@@ -111,7 +119,6 @@ export function streamClaudeMessage(
           if (event.type === "heartbeat") send("ping", { type: "ping" });
           else if (event.type === "thinking_delta") {
             if (isClaudeGenericThinkingPlaceholder(event.thinking)) continue;
-            if (kind === "text") continue;
             if (kind !== "thinking") { closeBlock(); index += 1; kind = "thinking"; send("content_block_start", { type: "content_block_start", index, content_block: { type: "thinking", thinking: "", signature: "" } }); }
             thinking += event.thinking;
             send("content_block_delta", { type: "content_block_delta", index, delta: { type: "thinking_delta", thinking: event.thinking } });

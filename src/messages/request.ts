@@ -239,9 +239,6 @@ export function translateClaudeMessages(
   const compact = isClaudeCompactRequest(system, request.messages);
   const choice = toolChoice(request.tool_choice);
   const harness = "You are serving Claude Code through ChatGPT Web. Follow the supplied system and user instructions. Use only advertised client tools; the client owns tool execution and permission decisions.";
-  const brief = tools?.some(tool => tool.name === "SendUserMessage")
-    ? 'Use SendUserMessage with its advertised schema for user-visible progress and completion messages. Use status: "normal" for ordinary messages; reserve "proactive" for unsolicited alerts.'
-    : undefined;
   return {
     requestedModel: request.model,
     stream: request.stream === true,
@@ -252,7 +249,7 @@ export function translateClaudeMessages(
       model,
       stream: request.stream === true,
       input,
-      instructions: [system, harness, brief].filter(Boolean).join("\n\n"),
+      instructions: [system, harness].filter(Boolean).join("\n\n"),
       ...(request.max_tokens !== undefined ? { max_output_tokens: request.max_tokens } : {}),
       ...(tools ? { tools } : {}),
       ...(choice !== undefined ? { tool_choice: choice } : {}),

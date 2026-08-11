@@ -84,7 +84,7 @@ test("translates a Claude Code message into the existing ChatGPT Web adapter", a
   expect(body.usage).toEqual({ input_tokens: 120, output_tokens: 8 });
 });
 
-test("preserves SendUserMessage and adds native progress guidance only when Claude advertises it", () => {
+test("preserves SendUserMessage without changing Claude transport semantics", () => {
   const base = {
     model: "chatgpt-web/high",
     max_tokens: 1024,
@@ -102,7 +102,6 @@ test("preserves SendUserMessage and adds native progress guidance only when Clau
       },
     }],
   }, new Headers(headers));
-  const withoutBrief = translateClaudeMessages(base, new Headers(headers));
   const body = withBrief.body as Record<string, any>;
 
   expect(body.tools).toEqual([{
@@ -115,10 +114,37 @@ test("preserves SendUserMessage and adds native progress guidance only when Clau
       required: ["message", "status"],
     },
   }]);
-  expect(body.instructions).toContain("SendUserMessage");
-  expect(body.instructions).toContain('status: "normal"');
-  expect(body.instructions).toContain('"proactive"');
-  expect((withoutBrief.body as Record<string, any>).instructions).not.toContain("SendUserMessage");
+  expect(body.instructions).not.toContain("SendUserMessage");
+  expect(withBrief).not.toHaveProperty("brief");
+});
+
+test("preserves non-streaming Claude content block order and Markdown verbatim", async () => {
+  const response = await messagesRequest(request({
+    model: "chatgpt-web/high",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: "Describe the bridge" }],
+  }), defaultConfig("full"), () => ({
+    name: "messages-block-order-test",
+    async runTurn(_parsed, _incoming, emit) {
+      emit({ type: "text_delta", text: "**Codex**\n", phase: "commentary" });
+      emit({ type: "thinking_delta", thinking: "Checking transport" });
+      emit({ type: "text_delta", text: "`Native`", phase: "commentary" });
+      emit({ type: "tool_call_start", id: "toolu_read", name: "Read" });
+      emit({ type: "tool_call_delta", arguments: '{"file_path":"README.md"}' });
+      emit({ type: "tool_call_end" });
+      emit({ type: "text_delta", text: "完成。", phase: "final_answer" });
+      emit({ type: "done", stopReason: "stop", endTurn: true });
+    },
+  }));
+
+  const body = await response.json() as Record<string, any>;
+  expect(body.content).toEqual([
+    { type: "text", text: "**Codex**\n" },
+    expect.objectContaining({ type: "thinking", thinking: "Checking transport" }),
+    { type: "text", text: "`Native`" },
+    { type: "tool_use", id: "toolu_read", name: "Read", input: { file_path: "README.md" } },
+    { type: "text", text: "完成。" },
+  ]);
 });
 
 test("omits generic Web thinking placeholders from non-streaming Claude responses", async () => {
@@ -226,7 +252,7 @@ test("streams Anthropic tool-use events and accepts unknown beta fields", async 
   expect(body).toContain("event: message_stop");
 });
 
-test("keeps incremental Claude commentary in one text block across transient thinking", async () => {
+test("streams Claude content blocks in source order without dropping transitions", async () => {
   const response = await messagesRequest(request({
     model: "chatgpt-web/high",
     max_tokens: 1024,
@@ -235,20 +261,28 @@ test("keeps incremental Claude commentary in one text block across transient thi
   }), defaultConfig("full"), () => ({
     name: "messages-commentary-boundary-test",
     async runTurn(_parsed, _incoming, emit) {
-      emit({ type: "text_delta", text: "Cod", phase: "commentary" });
-      emit({ type: "thinking_delta", thinking: "Transient Web status" });
-      emit({ type: "text_delta", text: "ex Native", phase: "commentary" });
+      emit({ type: "text_delta", text: "**Cod", phase: "commentary" });
+      emit({ type: "thinking_delta", thinking: "Checking transport" });
+      emit({ type: "text_delta", text: "ex**", phase: "commentary" });
+      emit({ type: "tool_call_start", id: "toolu_read", name: "Read" });
+      emit({ type: "tool_call_delta", arguments: '{"file_path":"README.md"}' });
+      emit({ type: "tool_call_end" });
+      emit({ type: "text_delta", text: "完成。", phase: "final_answer" });
       emit({ type: "done", stopReason: "stop", endTurn: true });
     },
   }));
 
   const body = await response.text();
-  const textStarts = body.match(/"content_block":\{"type":"text","text":""\}/g) ?? [];
-  const deltas = [...body.matchAll(/"delta":\{"type":"text_delta","text":"([^"]*)"\}/g)]
-    .map(match => match[1]);
-  expect(textStarts).toHaveLength(1);
-  expect(deltas.join("")).toBe("Codex Native");
-  expect(body).not.toContain("Transient Web status");
+  const events = body.split("\n").filter(line => line.startsWith("data: "))
+    .map(line => JSON.parse(line.slice(6)));
+  expect(events.filter(event => event.type === "content_block_start").map(event => event.content_block.type))
+    .toEqual(["text", "thinking", "text", "tool_use", "text"]);
+  expect(events.filter(event => event.type === "content_block_start").map(event => event.index))
+    .toEqual([0, 1, 2, 3, 4]);
+  expect(events.filter(event => event.type === "content_block_delta" && event.delta.type === "text_delta")
+    .map(event => event.delta.text).join(""))
+    .toBe("**Codex**完成。");
+  expect(body).toContain('"type":"thinking_delta","thinking":"Checking transport"');
 });
 
 test("omits generic Web thinking placeholders from streamed Claude responses", async () => {
