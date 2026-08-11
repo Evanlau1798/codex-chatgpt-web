@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
+import { withoutRecursiveChatGptConnectorTools } from "./native-tool-filter";
 
 export type ChatGptSandboxPolicy =
   | { type: "dangerFullAccess" }
@@ -491,7 +492,7 @@ export function extractChatGptTurnEnvironment(parsed: CodexParsedRequest): ChatG
     throw new Error("ChatGPT web turn requires one explicit trusted Codex sandbox mode");
   }
   if (sandboxType === "dangerFullAccess") {
-    return { cwd, roots, writableRoots: roots, sandboxPolicy: { type: "dangerFullAccess" }, tools: parsed.context.tools ?? [] };
+    return { cwd, roots, writableRoots: roots, sandboxPolicy: { type: "dangerFullAccess" }, tools: withoutRecursiveChatGptConnectorTools(parsed.context.tools) };
   }
   if (sandboxType === "workspaceWrite") {
     return {
@@ -499,10 +500,10 @@ export function extractChatGptTurnEnvironment(parsed: CodexParsedRequest): ChatG
       roots,
       writableRoots: roots,
       sandboxPolicy: { type: "workspaceWrite", writableRoots: roots, networkAccess },
-      tools: parsed.context.tools ?? [],
+      tools: withoutRecursiveChatGptConnectorTools(parsed.context.tools),
     };
   }
-  return { cwd, roots, writableRoots: [], sandboxPolicy: { type: "readOnly", networkAccess }, tools: parsed.context.tools ?? [] };
+  return { cwd, roots, writableRoots: [], sandboxPolicy: { type: "readOnly", networkAccess }, tools: withoutRecursiveChatGptConnectorTools(parsed.context.tools) };
 }
 
 export function extractChatGptTurnIdentity(parsed: CodexParsedRequest): ChatGptTurnIdentity {

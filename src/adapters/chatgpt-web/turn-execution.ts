@@ -12,14 +12,13 @@ export { ChatGptSteeringFeed } from "./steering-feed";
 export type ChatGptBrowserOutcome =
   | { type: "final"; answer: string }
   | { type: "error"; error: Error };
-
 export interface ChatGptTraceEvent {
   kind: "reasoning" | "commentary";
   text: string;
   continuation?: boolean;
 }
 
-interface TraceWaiter {
+interface FeedWaiter {
   resolve: () => void;
   reject: (error: Error) => void;
   signal?: AbortSignal;
@@ -28,14 +27,15 @@ interface TraceWaiter {
 
 export class ChatGptTraceFeed {
   private readonly queued: ChatGptTraceEvent[] = [];
-  private readonly waiters = new Set<TraceWaiter>();
+  private readonly waiters = new Set<FeedWaiter>();
+  private progressPending = false;
 
   push(event: ChatGptTraceEvent): void {
     const normalized = event.continuation ? event.text : event.text.trim();
     if (!normalized) return;
     const normalizedEvent = { ...event, text: normalized };
     this.queued.push(normalizedEvent);
-    const waiter = this.waiters.values().next().value as TraceWaiter | undefined;
+    const waiter = this.waiters.values().next().value as FeedWaiter | undefined;
     if (!waiter) return;
     this.waiters.delete(waiter);
     if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
@@ -43,14 +43,24 @@ export class ChatGptTraceFeed {
   }
 
   drain(): ChatGptTraceEvent[] {
+    this.progressPending = false;
     return this.queued.splice(0);
   }
 
+  signalProgress(): void {
+    this.progressPending = true;
+    const waiter = this.waiters.values().next().value as FeedWaiter | undefined;
+    if (!waiter) return;
+    this.waiters.delete(waiter);
+    if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
+    waiter.resolve();
+  }
+
   wait(signal?: AbortSignal): Promise<void> {
-    if (this.queued.length > 0) return Promise.resolve();
+    if (this.queued.length > 0 || this.progressPending) return Promise.resolve();
     if (signal?.aborted) return Promise.reject(new DOMException("trace wait aborted", "AbortError"));
     return new Promise<void>((resolveWait, rejectWait) => {
-      const waiter: TraceWaiter = { resolve: resolveWait, reject: rejectWait, ...(signal ? { signal } : {}) };
+      const waiter: FeedWaiter = { resolve: resolveWait, reject: rejectWait, ...(signal ? { signal } : {}) };
       if (signal) {
         waiter.onAbort = () => {
           this.waiters.delete(waiter);
@@ -62,24 +72,17 @@ export class ChatGptTraceFeed {
     });
   }
 }
-interface TextWaiter {
-  resolve: () => void;
-  reject: (error: Error) => void;
-  signal?: AbortSignal;
-  onAbort?: () => void;
-}
-
 /** Append-only browser Markdown feed. Waiters are notifications; `drain` owns consumption. */
 export class ChatGptTextFeed {
   private readonly queued: string[] = [];
-  private readonly waiters = new Set<TextWaiter>();
+  private readonly waiters = new Set<FeedWaiter>();
   private text = "";
 
   push(delta: string): void {
     if (!delta) return;
     this.text += delta;
     this.queued.push(delta);
-    const waiter = this.waiters.values().next().value as TextWaiter | undefined;
+    const waiter = this.waiters.values().next().value as FeedWaiter | undefined;
     if (!waiter) return;
     this.waiters.delete(waiter);
     if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
@@ -98,7 +101,7 @@ export class ChatGptTextFeed {
     if (this.queued.length > 0) return Promise.resolve();
     if (signal?.aborted) return Promise.reject(new DOMException("text wait aborted", "AbortError"));
     return new Promise<void>((resolveWait, rejectWait) => {
-      const waiter: TextWaiter = { resolve: resolveWait, reject: rejectWait, ...(signal ? { signal } : {}) };
+      const waiter: FeedWaiter = { resolve: resolveWait, reject: rejectWait, ...(signal ? { signal } : {}) };
       if (signal) {
         waiter.onAbort = () => {
           this.waiters.delete(waiter);
@@ -202,7 +205,7 @@ export class ChatGptTurnSession {
   private outstandingPrelude: AdapterEvent[] = [];
   private finalPrelude: AdapterEvent[] = [];
   private handoff?: string;
-  private userRevision?: string;
+  private userRevision?: string; private readonly seenUserRevisions: string[] = [];
   private readonly hookedSteeringReplays: string[] = [];
   private readonly steering: ChatGptSteeringFeed;
   private settledBrowserOutcome?: ChatGptBrowserOutcome;
@@ -301,27 +304,25 @@ export class ChatGptTurnSession {
     return [...this.finalPrelude];
   }
 
-  setCompactionHandoff(text: string): void {
-    this.handoff = text;
-  }
+  setCompactionHandoff(text: string): void { this.handoff = text; }
 
-  compactionHandoff(): string | undefined {
-    return this.handoff;
-  }
+  compactionHandoff(): string | undefined { return this.handoff; }
 
-  updateUserRevision(revision: string, steering: string): string | undefined {
+  updateUserRevision(revision: string, steering: string, queue = true): string | undefined {
     if (this.userRevision === undefined) {
-      this.userRevision = revision;
+      this.seenUserRevisions.push(this.userRevision = revision);
       return undefined;
     }
     if (this.userRevision === revision) return undefined;
     this.userRevision = revision;
+    if (this.seenUserRevisions.includes(revision)) return undefined;
+    if (this.seenUserRevisions.push(revision) > 32) this.seenUserRevisions.shift();
     const hooked = this.hookedSteeringReplays.indexOf(steeringFingerprint(steering));
     if (hooked >= 0) {
       this.hookedSteeringReplays.splice(hooked, 1);
       return undefined;
     }
-    this.steering.push(steering);
+    if (queue) this.steering.push(steering);
     return steering;
   }
 

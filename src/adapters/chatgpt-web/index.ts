@@ -24,6 +24,7 @@ import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompacti
 import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
+import { inheritSpawnedCodexEnvironment, resolveTrustedCodexEnvironment } from "./trusted-environment-lifecycle";
 import { browserSteeringRetry, deliverPendingChatGptSteering, retainedConversationResumeRequest, sessionForChatGptRequest, validateBatchTools } from "./steering";
 import { completeChatGptToolResults } from "./tool-result-delivery";
 import { ChatGptLunaCheckpointStore, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint";
@@ -127,6 +128,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         traceId,
         onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
         onCommentary: (value, continuation) => trace.push({ kind: "commentary", text: value, ...(continuation ? { continuation: true } : {}) }),
+        onProgress: () => trace.signalProgress(),
         onTextDelta: delta => text.push(delta),
         ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
         ...(handoffPrompts ? { retryPromptForError: handoffPrompts.retryPromptForError } : {}),
@@ -178,6 +180,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       abortSignal: browserAbort.signal,
       onReasoningSummary: (text, continuation) => trace.push({ kind: "reasoning", text, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: (text, continuation) => trace.push({ kind: "commentary", text, ...(continuation ? { continuation: true } : {}) }),
+      onProgress: () => trace.signalProgress(),
       onTextDelta: delta => text.push(delta),
       ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
       ...(handoffPrompts ? { retryPromptForError: handoffPrompts.retryPromptForError } : {}),
@@ -224,15 +227,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
       let environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined;
       if (mode.localTools) {
-        try {
-          environment = environmentStore.resolve(parsed);
-        } catch (error) {
-          const identity = extractChatGptTurnIdentity(parsed);
-          console.warn(
-            `[chatgpt-web] trusted environment unavailable (thread_id=${identity.threadId ? "present" : "missing"}, turn_id=${identity.turnId ? "present" : "missing"}, previous_response_id=${parsed.previousResponseId ?? "none"}, replay_prefix_items=${parsed._replayPrefixLen ?? 0}, context_messages=${parsed.context.messages.length})`,
-          );
-          throw error;
-        }
+        environment = resolveTrustedCodexEnvironment(environmentStore, parsed);
       }
       if (parsed._compactionRequest) {
         const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
@@ -346,7 +341,9 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                 emitToolBatch(outstanding, estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning, toolRequests: outstanding }, turnCapabilities), emit);
                 return;
               }
-              completeChatGptToolResults(session, broker, turnToken, results);
+              completeChatGptToolResults(session, broker, turnToken, results, {
+                onSpawnedCodexAgent: childThreadId => inheritSpawnedCodexEnvironment(environmentStore, parsed, childThreadId),
+              });
             }
           } else if (session.outstanding().length > 0) {
             throw new Error("Read-only ChatGPT Web runtime cannot own local tool calls");

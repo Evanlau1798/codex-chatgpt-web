@@ -9,6 +9,7 @@ import {
   type ChatGptSandboxPolicy,
   type ChatGptTurnEnvironment,
 } from "./environment";
+import { withoutRecursiveChatGptConnectorTools } from "./native-tool-filter";
 
 interface StoredThreadEnvironment {
   cwd: string;
@@ -136,14 +137,25 @@ export class ChatGptThreadEnvironmentStore {
         roots: stored.roots,
         writableRoots: stored.writableRoots,
         sandboxPolicy: stored.sandboxPolicy,
-        tools: parsed.context.tools ?? [],
+        tools: withoutRecursiveChatGptConnectorTools(parsed.context.tools),
       };
     }
   }
 
+  inherit(parentThreadId: string, childThreadId: string): boolean {
+    const parent = this.get(parentThreadId);
+    if (!parent) return false;
+    this.setStored(childThreadId, { ...parent, updatedAt: this.now() });
+    return true;
+  }
+
   private get(threadId: string): StoredThreadEnvironment | undefined {
     this.load();
-    const stored = this.threads.get(threadId);
+    let stored = this.threads.get(threadId);
+    if (!stored) {
+      this.load(true);
+      stored = this.threads.get(threadId);
+    }
     if (!stored) return undefined;
     if (this.now() - stored.updatedAt > THREAD_ENVIRONMENT_TTL_MS) {
       this.threads.delete(threadId);
@@ -154,9 +166,13 @@ export class ChatGptThreadEnvironmentStore {
   }
 
   private set(threadId: string, environment: ChatGptTurnEnvironment): void {
-    this.load();
+    this.setStored(threadId, authority(environment, this.now()));
+  }
+
+  private setStored(threadId: string, environment: StoredThreadEnvironment): void {
+    this.load(true);
     this.threads.delete(threadId);
-    this.threads.set(threadId, authority(environment, this.now()));
+    this.threads.set(threadId, environment);
     while (this.threads.size > MAX_THREAD_ENVIRONMENTS) {
       const oldest = this.threads.keys().next().value as string | undefined;
       if (!oldest) break;
@@ -165,8 +181,8 @@ export class ChatGptThreadEnvironmentStore {
     this.persist();
   }
 
-  private load(): void {
-    if (this.loaded) return;
+  private load(refresh = false): void {
+    if (this.loaded && !refresh) return;
     this.loaded = true;
     if (!this.path || !existsSync(this.path)) return;
     const parsed = JSON.parse(stripUtf8Bom(readFileSync(this.path, "utf8"))) as Partial<StoredThreadEnvironmentFile>;
@@ -180,7 +196,10 @@ export class ChatGptThreadEnvironmentStore {
       .filter(([, environment]) => environment.updatedAt >= cutoff)
       .sort((left, right) => left[1].updatedAt - right[1].updatedAt)
       .slice(-MAX_THREAD_ENVIRONMENTS);
-    for (const [threadId, environment] of entries) this.threads.set(threadId, environment);
+    for (const [threadId, environment] of entries) {
+      const current = this.threads.get(threadId);
+      if (!current || current.updatedAt < environment.updatedAt) this.threads.set(threadId, environment);
+    }
   }
 
   private persist(): void {

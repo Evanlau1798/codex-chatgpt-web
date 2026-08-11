@@ -81,6 +81,16 @@ describe("trusted current Codex environment envelope", () => {
     });
   });
 
+  test("does not expose the bridge's own Native connector back to its Web Agent", () => {
+    const request = currentWire();
+    request.context.tools = [
+      { namespace: "mcp__codex_apps__codex_native2_", name: "codex_exec", description: "recursive", parameters: {} },
+      { namespace: "multi_agent_v1", name: "spawn_agent", description: "child", parameters: {} },
+    ];
+
+    expect(extractChatGptTurnEnvironment(request).tools.map(tool => tool.name)).toEqual(["spawn_agent"]);
+  });
+
   test("accepts a trusted same-turn developer message between the environment and prompt", () => {
     const request = currentWire();
     const body = request._rawBody as { input: Array<Record<string, unknown>> };
@@ -374,6 +384,56 @@ describe("permission_profile sandbox detection (Codex CLI 0.146+)", () => {
 });
 
 describe("trusted Codex task environment continuity", () => {
+  test("inherits trusted authority for a spawned child without persisting tools", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "codex-chatgpt-child-environment-"));
+    temporaryRoots.push(stateRoot);
+    const statePath = join(stateRoot, "thread-environments.json");
+    const store = new ChatGptThreadEnvironmentStore(statePath);
+    store.resolve(currentWire());
+
+    expect(store.inherit("thread_current", "019ff0ff-1438-7a00-9aa2-0f1887d92a6c")).toBe(true);
+    const child = currentWire();
+    child.context.tools = [{ name: "child_tool", description: "child", parameters: { type: "object" } }];
+    child._rawBody = {
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({
+          thread_id: "019ff0ff-1438-7a00-9aa2-0f1887d92a6c",
+          turn_id: "turn_child",
+        }),
+      },
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Review" }] }],
+    };
+
+    expect(new ChatGptThreadEnvironmentStore(statePath).resolve(child)).toMatchObject({
+      cwd: root,
+      tools: child.context.tools,
+    });
+    expect(readFileSync(statePath, "utf8")).not.toContain("child_tool");
+  });
+
+  test("refreshes a previously loaded store on miss after another instance inherits a child", () => {
+    const stateRoot = mkdtempSync(join(tmpdir(), "codex-chatgpt-refresh-environment-"));
+    temporaryRoots.push(stateRoot);
+    const statePath = join(stateRoot, "thread-environments.json");
+    const writer = new ChatGptThreadEnvironmentStore(statePath);
+    writer.resolve(currentWire());
+    const reader = new ChatGptThreadEnvironmentStore(statePath);
+    expect(reader.inherit("missing", "019ff0ff-1438-7a00-9aa2-0f1887d92a6c")).toBe(false);
+    expect(writer.inherit("thread_current", "019ff0ff-1438-7a00-9aa2-0f1887d92a6c")).toBe(true);
+
+    const child = currentWire();
+    child._rawBody = {
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({
+          thread_id: "019ff0ff-1438-7a00-9aa2-0f1887d92a6c",
+          turn_id: "turn_child",
+        }),
+      },
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Review" }] }],
+    };
+    expect(reader.resolve(child).cwd).toBe(root);
+  });
+
   test("persists the trusted first-turn authority and refreshes tools from every follow-up", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "codex-chatgpt-thread-environment-"));
     temporaryRoots.push(stateRoot);
