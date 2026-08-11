@@ -56,6 +56,7 @@ describe("reversible Claude Code integration", () => {
       USER_SETTING: "keep",
       ANTHROPIC_BASE_URL: "http://127.0.0.1:17841",
       ANTHROPIC_AUTH_TOKEN: "codex-chatgpt-web-local",
+      CLAUDE_CODE_BRIEF: "1",
       CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
       CODEX_CHATGPT_WEB_CONTROL_TOKEN: config.controlToken,
     });
@@ -95,16 +96,19 @@ describe("reversible Claude Code integration", () => {
     const legacySettings = settings();
     delete legacySettings.hooks.PostToolUse;
     delete legacySettings.hooks.PostToolUseFailure;
+    delete legacySettings.env.CLAUDE_CODE_BRIEF;
     writeFileSync(getClaudeSettingsPath(), `${JSON.stringify(legacySettings, null, 2)}\n`);
     const legacyJournal = JSON.parse(readFileSync(getClaudeIntegrationJournalPath(), "utf8"));
     delete legacyJournal.installed.hookEvents;
     delete legacyJournal.installed.hookEventsAdded;
+    delete legacyJournal.installed.env.CLAUDE_CODE_BRIEF;
     legacyJournal.installed.hookAdded = true;
     writeFileSync(getClaudeIntegrationJournalPath(), `${JSON.stringify(legacyJournal, null, 2)}\n`);
 
     installClaudeIntegration(config);
     expect(settings().hooks.PostToolUse).toHaveLength(1);
     expect(settings().hooks.PostToolUseFailure).toHaveLength(1);
+    expect(settings().env.CLAUDE_CODE_BRIEF).toBe("1");
     uninstallClaudeIntegration();
     expect(existsSync(getClaudeSettingsPath())).toBe(false);
   });
@@ -113,7 +117,7 @@ describe("reversible Claude Code integration", () => {
     const userHook = { hooks: [{ type: "command", command: "user-hook" }] };
     fixture({
       model: "user-model",
-      env: { ANTHROPIC_BASE_URL: "https://gateway.example", KEEP: "before" },
+      env: { ANTHROPIC_BASE_URL: "https://gateway.example", CLAUDE_CODE_BRIEF: "user-value", KEEP: "before" },
       hooks: { UserPromptSubmit: [userHook] },
     });
     installClaudeIntegration(defaultConfig("browser-only"));
@@ -126,7 +130,7 @@ describe("reversible Claude Code integration", () => {
 
     expect(settings()).toEqual({
       model: "user-model",
-      env: { ANTHROPIC_BASE_URL: "https://gateway.example", KEEP: "after" },
+      env: { ANTHROPIC_BASE_URL: "https://gateway.example", CLAUDE_CODE_BRIEF: "user-value", KEEP: "after" },
       hooks: { UserPromptSubmit: [userHook] },
       statusLine: { type: "command", command: "status" },
     });

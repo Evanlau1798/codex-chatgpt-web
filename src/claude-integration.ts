@@ -135,6 +135,7 @@ function desired(config: AppConfig): ClaudeIntegrationJournal["installed"] {
     env: {
       ANTHROPIC_BASE_URL: `http://${config.host}:${config.port}`,
       ANTHROPIC_AUTH_TOKEN: "codex-chatgpt-web-local",
+      CLAUDE_CODE_BRIEF: "1",
       CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
       CODEX_CHATGPT_WEB_CONTROL_TOKEN: config.controlToken,
     },

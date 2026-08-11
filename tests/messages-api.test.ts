@@ -4,6 +4,7 @@ import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-erro
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
 import { defaultConfig } from "../src/config";
 import { messagesCountTokensRequest, messagesRequest } from "../src/messages";
+import { translateClaudeMessages } from "../src/messages/request";
 import type { CodexProviderConfig } from "../src/types";
 
 const headers = {
@@ -81,6 +82,43 @@ test("translates a Claude Code message into the existing ChatGPT Web adapter", a
     { type: "text", text: "Ready." },
   ]);
   expect(body.usage).toEqual({ input_tokens: 120, output_tokens: 8 });
+});
+
+test("preserves SendUserMessage and adds native progress guidance only when Claude advertises it", () => {
+  const base = {
+    model: "chatgpt-web/high",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: "Inspect the repository" }],
+  };
+  const withBrief = translateClaudeMessages({
+    ...base,
+    tools: [{
+      name: "SendUserMessage",
+      description: "Send a visible message",
+      input_schema: {
+        type: "object",
+        properties: { message: { type: "string" }, status: { enum: ["normal", "proactive"] } },
+        required: ["message", "status"],
+      },
+    }],
+  }, new Headers(headers));
+  const withoutBrief = translateClaudeMessages(base, new Headers(headers));
+  const body = withBrief.body as Record<string, any>;
+
+  expect(body.tools).toEqual([{
+    type: "function",
+    name: "SendUserMessage",
+    description: "Send a visible message",
+    parameters: {
+      type: "object",
+      properties: { message: { type: "string" }, status: { enum: ["normal", "proactive"] } },
+      required: ["message", "status"],
+    },
+  }]);
+  expect(body.instructions).toContain("SendUserMessage");
+  expect(body.instructions).toContain('status: "normal"');
+  expect(body.instructions).toContain('"proactive"');
+  expect((withoutBrief.body as Record<string, any>).instructions).not.toContain("SendUserMessage");
 });
 
 test("omits generic Web thinking placeholders from non-streaming Claude responses", async () => {

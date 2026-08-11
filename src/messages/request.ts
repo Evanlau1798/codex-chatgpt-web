@@ -158,8 +158,15 @@ export interface TranslatedClaudeRequest {
 type ClaudeSteeringSuppressionCount = (threadId: string, instruction: string) => number;
 
 function claudeQueuedCommandInstruction(text: string): string | undefined {
-  const match = text.trim().match(/^<system-reminder>\r?\nThe user sent a new message while you were working:\r?\n([\s\S]*?)\r?\n\r?\nIMPORTANT: After completing your current task, you MUST address the user's message above\. Do not ignore it\.\r?\n<\/system-reminder>$/);
-  return match?.[1];
+  const match = text.trim().match(/^<system-reminder>\r?\nThe user sent a new message while you were working:\r?\n([\s\S]*)\r?\n<\/system-reminder>$/);
+  if (!match) return undefined;
+  const body = match[1]!;
+  const separators = [...body.matchAll(/\r?\n\r?\n/g)];
+  for (const boundary of separators.reverse()) {
+    const tail = body.slice(boundary.index! + boundary[0].length);
+    if (/^IMPORTANT:[\s\S]*\bmessage above\b/i.test(tail)) return body.slice(0, boundary.index);
+  }
+  return undefined;
 }
 
 export function translateClaudeMessages(
@@ -232,6 +239,9 @@ export function translateClaudeMessages(
   const compact = isClaudeCompactRequest(system, request.messages);
   const choice = toolChoice(request.tool_choice);
   const harness = "You are serving Claude Code through ChatGPT Web. Follow the supplied system and user instructions. Use only advertised client tools; the client owns tool execution and permission decisions.";
+  const brief = tools?.some(tool => tool.name === "SendUserMessage")
+    ? 'Use SendUserMessage with its advertised schema for user-visible progress and completion messages. Use status: "normal" for ordinary messages; reserve "proactive" for unsolicited alerts.'
+    : undefined;
   return {
     requestedModel: request.model,
     stream: request.stream === true,
@@ -242,7 +252,7 @@ export function translateClaudeMessages(
       model,
       stream: request.stream === true,
       input,
-      instructions: system ? `${system}\n\n${harness}` : harness,
+      instructions: [system, harness, brief].filter(Boolean).join("\n\n"),
       ...(request.max_tokens !== undefined ? { max_output_tokens: request.max_tokens } : {}),
       ...(tools ? { tools } : {}),
       ...(choice !== undefined ? { tool_choice: choice } : {}),
