@@ -5,6 +5,7 @@ import { isClaudeCompactRequest } from "./compact";
 import { resolveClaudeGatewayModelId } from "./models";
 
 type Json = Record<string, unknown>;
+type TextFilter = (text: string) => string | undefined;
 
 function object(value: unknown, label: string): Json {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
@@ -20,14 +21,18 @@ function textBlocks(value: unknown): string {
   }).join("\n");
 }
 
-function inputParts(content: unknown, includeText: (text: string) => boolean = () => true): Json[] {
-  if (typeof content === "string") return includeText(content) ? [{ type: "input_text", text: content }] : [];
+function inputParts(content: unknown, filterText: TextFilter = text => text): Json[] {
+  if (typeof content === "string") {
+    const text = filterText(content);
+    return text === undefined ? [] : [{ type: "input_text", text }];
+  }
   if (!Array.isArray(content)) return [];
   const parts: Json[] = [];
   for (const raw of content) {
     const block = object(raw, "message content block");
-    if (block.type === "text" && typeof block.text === "string" && includeText(block.text)) {
-      parts.push({ type: "input_text", text: block.text });
+    if (block.type === "text" && typeof block.text === "string") {
+      const text = filterText(block.text);
+      if (text !== undefined) parts.push({ type: "input_text", text });
     } else if (block.type === "image") {
       const source = object(block.source, "image source");
       if (source.type !== "base64" || typeof source.media_type !== "string" || typeof source.data !== "string") {
@@ -67,11 +72,12 @@ function assistantItems(content: unknown): Json[] {
   return items;
 }
 
-function userItems(content: unknown, turnId: string, includeText?: (text: string) => boolean): Json[] {
+function userItems(content: unknown, turnId: string, filterText?: TextFilter): Json[] {
   const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
   if (!Array.isArray(blocks)) return [];
+  const filter = filterText ?? (text => text);
   const items: Json[] = [];
-  const ordinary = inputParts(blocks, includeText);
+  const ordinary = inputParts(blocks, filter);
   if (ordinary.length > 0) {
     items.push({
       type: "message",
@@ -83,7 +89,7 @@ function userItems(content: unknown, turnId: string, includeText?: (text: string
   for (const raw of blocks) {
     const block = object(raw, "user content block");
     if (block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
-    const output = typeof block.content === "string" ? block.content : inputParts(block.content);
+    const output = typeof block.content === "string" ? (filter(block.content) ?? "") : inputParts(block.content, filter);
     items.push({ type: "function_call_output", call_id: block.tool_use_id, output });
   }
   return items;
@@ -157,6 +163,7 @@ export interface TranslatedClaudeRequest {
 
 type ClaudeSteeringSuppressionCount = (threadId: string, instruction: string) => number;
 
+const CLAUDE_MID_TURN_HEADER = "The user sent a new message while you were working:";
 const CLAUDE_MID_TURN_TAIL = "This is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.";
 
 function claudeQueuedCommandInstruction(text: string): string | undefined {
@@ -164,7 +171,7 @@ function claudeQueuedCommandInstruction(text: string): string | undefined {
   const wrapper = trimmed.match(/^<system-reminder>\r?\n([\s\S]*)\r?\n<\/system-reminder>$/);
   if (trimmed.startsWith("<system-reminder>") && !wrapper) return undefined;
   const message = wrapper?.[1] ?? trimmed;
-  const header = message.match(/^The user sent a new message while you were working:\r?\n/);
+  const header = message.match(new RegExp(`^${CLAUDE_MID_TURN_HEADER}\\r?\\n`));
   if (!header) return undefined;
   const body = message.slice(header[0].length);
   const separators = [...body.matchAll(/\r?\n\r?\n/g)];
@@ -175,6 +182,31 @@ function claudeQueuedCommandInstruction(text: string): string | undefined {
     }
   }
   return undefined;
+}
+
+function filterClaudeQueuedCommandReplays(text: string, suppress: (instruction: string) => boolean): string | undefined {
+  const whole = claudeQueuedCommandInstruction(text);
+  if (whole !== undefined && suppress(whole)) return undefined;
+  let cursor = 0;
+  let filtered = "";
+  let changed = false;
+  for (const match of text.matchAll(/<system-reminder>\r?\n[\s\S]*?\r?\n<\/system-reminder>/g)) {
+    const instruction = claudeQueuedCommandInstruction(match[0]);
+    if (instruction === undefined || !suppress(instruction)) continue;
+    filtered += text.slice(cursor, match.index);
+    cursor = match.index + match[0].length;
+    changed = true;
+  }
+  filtered = changed ? filtered + text.slice(cursor) : text;
+  const bareStart = filtered.lastIndexOf(`\n${CLAUDE_MID_TURN_HEADER}`);
+  if (bareStart >= 0) {
+    const instruction = claudeQueuedCommandInstruction(filtered.slice(bareStart + 1));
+    if (instruction !== undefined && suppress(instruction)) {
+      const cut = bareStart > 0 && filtered[bareStart - 1] === "\r" ? bareStart - 1 : bareStart;
+      filtered = filtered.slice(0, cut);
+    }
+  }
+  return filtered || undefined;
 }
 
 export function translateClaudeMessages(
@@ -209,15 +241,15 @@ export function translateClaudeMessages(
   const input: Json[] = [];
   const suppressedByInstruction = new Map<string, number>();
   let suppressedSteeringReplays = 0;
-  const includeUserText = (text: string): boolean => {
-    const instruction = claudeQueuedCommandInstruction(text);
-    if (instruction === undefined || !suppressionCount) return true;
+  const consumeSuppression = (instruction: string): boolean => {
+    if (!suppressionCount) return false;
     const used = suppressedByInstruction.get(instruction) ?? 0;
-    if (used >= suppressionCount(threadId, instruction)) return true;
+    if (used >= suppressionCount(threadId, instruction)) return false;
     suppressedByInstruction.set(instruction, used + 1);
     suppressedSteeringReplays += 1;
-    return false;
+    return true;
   };
+  const filterUserText = (text: string) => filterClaudeQueuedCommandReplays(text, consumeSuppression);
   let latestUserOffset = -1;
   for (const rawMessage of request.messages) {
     const message = object(rawMessage, "message");
@@ -227,7 +259,7 @@ export function translateClaudeMessages(
       if (content) input.push({ type: "message", role: "system", content: [{ type: "input_text", text: content }] });
     } else if (message.role === "user") {
       const start = input.length;
-      input.push(...userItems(message.content, turnId, includeUserText));
+      input.push(...userItems(message.content, turnId, filterUserText));
       if (input.slice(start).some(item => item.type === "message")) latestUserOffset = start;
     } else throw new Error("message role must be user or assistant");
   }

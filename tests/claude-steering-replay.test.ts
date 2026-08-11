@@ -4,6 +4,7 @@ import { translateClaudeMessages } from "../src/messages/request";
 const headers = new Headers({ "x-claude-code-session-id": "session-replay" });
 const guidance = "Keep reviewing without stopping";
 const reminder = `<system-reminder>\nThe user sent a new message while you were working:\n${guidance}\n\nIMPORTANT: After completing your current task, you MUST address the user's message above. Do not ignore it.\n</system-reminder>`;
+const bareReminder = (prompt: string) => `The user sent a new message while you were working:\n${prompt}\n\nThis is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.`;
 
 function raw(messages: Array<Record<string, unknown>>) {
   return { model: "chatgpt-web/high", max_tokens: 1024, messages };
@@ -59,13 +60,26 @@ test("Claude queued-command replay keeps the original prompt line endings for fi
 
 test("Claude queued-command replay supports the current bare mid-turn control tail", () => {
   const prompt = "First paragraph\n\nSecond paragraph";
-  const current = `The user sent a new message while you were working:\n${prompt}\n\nThis is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.`;
   const translated = translateClaudeMessages(raw([
     { role: "user", content: "Inspect the repository" },
-    { role: "user", content: current },
+    { role: "user", content: bareReminder(prompt) },
   ]), headers, (_threadId, instruction) => instruction === prompt ? 1 : 0);
 
   expect(JSON.stringify(translated.body.input)).not.toContain("First paragraph");
+  expect(translated.suppressedSteeringReplays).toBe(1);
+});
+
+test("Claude queued-command replay is removed from tool results without dropping real output", () => {
+  const output = `54 matching tests\n${bareReminder(guidance)}`;
+  const translated = translateClaudeMessages(raw([
+    { role: "user", content: "Inspect the repository" },
+    { role: "assistant", content: [{ type: "tool_use", id: "tool-1", name: "Glob", input: {} }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "tool-1", content: output }] },
+  ]), headers, (_threadId, prompt) => prompt === guidance ? 1 : 0);
+  const input = JSON.stringify(translated.body.input);
+
+  expect(input).toContain("54 matching tests");
+  expect(input).not.toContain(guidance);
   expect(translated.suppressedSteeringReplays).toBe(1);
 });
 
