@@ -10,7 +10,7 @@ import {
 } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
-import { bindClaudeSessionAbort, normalizeClaudeToolRequests } from "../src/adapters/chatgpt-web/claude-subagent";
+import { bindClaudeSessionAbort, claudeBrowserTurnOptions, normalizeClaudeToolRequests } from "../src/adapters/chatgpt-web/claude-subagent";
 import {
   ChatGptTextFeed,
   ChatGptTraceFeed,
@@ -203,6 +203,28 @@ describe("compact mode routing", () => {
     } finally {
       worker.run = originalRun;
     }
+  });
+
+  test("recovers a Claude root that mistakes an unavailable shortcut for missing client tools", () => {
+    const request = compactRequest();
+    delete request._compactionRequest;
+    request.context.tools = [
+      { name: "Read", description: "Read a file", parameters: {} },
+      { name: "Glob", description: "Find files", parameters: {} },
+      { name: "Task", description: "Run a subagent", parameters: {} },
+    ];
+    const metadata = (request._rawBody as { client_metadata: Record<string, unknown> }).client_metadata;
+    metadata.claude_subagent = false;
+
+    const retry = claudeBrowserTurnOptions(request).retryPromptForAnswer;
+    expect(retry?.(
+      "This Codex turn did not advertise a native command tool or the native exec gateway",
+      1,
+    )).toContain("Read, Glob, Task");
+    expect(retry?.("Gathering repository context", 1)).toBeUndefined();
+    expect(() => retry?.("The native shell gateway is unavailable", 2)).toThrow(
+      "Claude root refused advertised client tools",
+    );
   });
 
   test("forces Claude Agent dispatches into the background", () => {

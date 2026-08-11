@@ -62,16 +62,17 @@ export function claudeBrowserTurnOptions(parsed: CodexParsedRequest, upstreamRet
   const metadata = clientMetadata(parsed);
   const subagent = metadata?.claude_subagent === true;
   const claudeClient = typeof metadata?.claude_subagent === "boolean";
-  const retryPromptForAnswer: AnswerRetry | undefined = upstreamRetry || subagent
+  const retryPromptForAnswer: AnswerRetry | undefined = upstreamRetry || claudeClient
     ? (answer, attempt) => {
         const upstream = upstreamRetry?.(answer, attempt);
-        if (upstream || !subagent) return upstream;
-        const refusedTools = Boolean(parsed.context.tools?.length)
+        if (upstream) return upstream;
+        const refusedTools = claudeClient && Boolean(parsed.context.tools?.length)
           && !parsed.context.messages.some(message => message.role === "toolResult")
           && MISSING_TOOL.test(answer);
-        if (!refusedTools && !progressOnly(answer)) return undefined;
+        const incompleteProgress = subagent && progressOnly(answer);
+        if (!refusedTools && !incompleteProgress) return undefined;
         if (attempt > 1) throw new Error(refusedTools
-          ? "ChatGPT Web subagent refused advertised client tools after retry"
+          ? `ChatGPT Web ${subagent ? "subagent" : "Claude root"} refused advertised client tools after retry`
           : "ChatGPT Web subagent completed with only a progress update after retry");
         const advertised = (parsed.context.tools ?? [])
           .map(tool => namespacedToolName(tool.namespace, tool.name))
