@@ -31,8 +31,17 @@ import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import { ChatGptVisibleTraceTracker, type ChatGptVisibleTraceBlock } from "./visible-trace-tracker";
 import type { ChatGptRetryPrompt } from "./steering";
 import { ChatGptTurnLatencyDiagnostics } from "./turn-latency";
+import {
+  chatGptAssistantTurnChanged,
+  chatGptSubmissionEvidence,
+  readChatGptAssistantTurnState,
+  type ChatGptAssistantTurnState,
+  type ChatGptSubmissionEvidence,
+} from "./response-turn-boundary";
 export { ChatGptVisibleTraceTracker } from "./visible-trace-tracker";
 export type { ChatGptVisibleTraceBlock, ChatGptVisibleTraceEvent } from "./visible-trace-tracker";
+export { chatGptSubmissionEvidence } from "./response-turn-boundary";
+export type { ChatGptSubmissionEvidence } from "./response-turn-boundary";
 import {
   assertAuthenticatedChatGptPage,
   assertTemporaryChatPage,
@@ -322,21 +331,6 @@ export function chatGptTurnIsComplete(state: {
     && !state.running
     && state.currentText.length > 0
     && (state.completionActionVisible || state.sawRunning === true);
-}
-
-export type ChatGptSubmissionEvidence = "user_turn" | "assistant_turn" | "generation_running";
-
-export function chatGptSubmissionEvidence(state: {
-  initialUserTurnCount: number;
-  userTurnCount: number;
-  initialAssistantTurnCount: number;
-  assistantTurnCount: number;
-  generationRunning: boolean;
-}): ChatGptSubmissionEvidence | undefined {
-  if (state.userTurnCount > state.initialUserTurnCount) return "user_turn";
-  if (state.assistantTurnCount > state.initialAssistantTurnCount) return "assistant_turn";
-  if (state.generationRunning) return "generation_running";
-  return undefined;
 }
 
 export class ChatGptCompletionTracker {
@@ -1097,7 +1091,7 @@ export class ChatGptBrowserWorker {
     responseTurns: Locator,
     responseTurn: Locator,
     initialUserTurnCount: number,
-    initialResponseTurnCount: number,
+    initialResponseTurn: ChatGptAssistantTurnState,
     signal?: AbortSignal,
   ): Promise<ChatGptSubmissionEvidence> {
     if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
@@ -1106,16 +1100,18 @@ export class ChatGptBrowserWorker {
       if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       await throwIfChatGptSessionFailureAlert(page);
       await throwIfChatGptTerminalErrorAlert(responseTurn);
-      const [userTurnCount, assistantTurnCount, visibleStopButtonCount] = await Promise.all([
+      const [userTurnCount, assistantTurn, visibleStopButtonCount] = await Promise.all([
         userTurns.count(),
-        responseTurns.count(),
+        readChatGptAssistantTurnState(responseTurns),
         visibleStopButtons.count(),
       ]);
       const evidence = chatGptSubmissionEvidence({
         initialUserTurnCount,
         userTurnCount,
-        initialAssistantTurnCount: initialResponseTurnCount,
-        assistantTurnCount,
+        initialAssistantTurnCount: initialResponseTurn.count,
+        assistantTurnCount: assistantTurn.count,
+        ...(initialResponseTurn.lastId ? { initialAssistantTurnId: initialResponseTurn.lastId } : {}),
+        ...(assistantTurn.lastId ? { assistantTurnId: assistantTurn.lastId } : {}),
         generationRunning: visibleStopButtonCount > 0,
       });
       if (evidence) return evidence;
@@ -1858,8 +1854,8 @@ export class ChatGptBrowserWorker {
           await diagnostics.capture(page, "file-attachment-complete");
         }
         const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
-        const initialResponseTurnCount = await responseTurns.count();
-        let responseTurn = responseTurns.nth(initialResponseTurnCount);
+        const initialResponseTurn = await readChatGptAssistantTurnState(responseTurns);
+        let responseTurn = responseTurns.nth(initialResponseTurn.count);
         const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
         const initialUserTurnCount = await userTurns.count();
         await this.runStage(turn.traceId, "send", browserStageTimeouts.send, async (stageSignal) => {
@@ -1881,7 +1877,7 @@ export class ChatGptBrowserWorker {
           responseTurns,
           responseTurn,
           initialUserTurnCount,
-          initialResponseTurnCount,
+          initialResponseTurn,
           stageSignal,
         );
         console.info(`[chatgpt-web] browser turn ${turn.traceId} submission accepted evidence=${evidence}`);
@@ -1934,7 +1930,10 @@ export class ChatGptBrowserWorker {
           );
         }
 
-        if (capturedResponse && await responseTurn.count().catch(() => 0) === 0) {
+        const currentResponseTurn = await readChatGptAssistantTurnState(responseTurns);
+        const firstResponseAppeared = !capturedResponse
+          && chatGptAssistantTurnChanged(initialResponseTurn, currentResponseTurn);
+        if (firstResponseAppeared || (capturedResponse && await responseTurn.count().catch(() => 0) === 0)) {
           const rebound = responseTurns.last();
           if (await rebound.count().catch(() => 0) > 0) {
             responseTurn = rebound;

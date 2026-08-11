@@ -871,7 +871,7 @@ test("submission acceptance stops when its stage is aborted", async () => {
       responseTurns: unknown,
       responseTurn: unknown,
       initialUserTurnCount: number,
-      initialResponseTurnCount: number,
+      initialResponseTurn: { count: number; lastId?: string },
       signal: AbortSignal,
     ): Promise<unknown>;
   }).waitForSubmissionAccepted;
@@ -885,7 +885,7 @@ test("submission acceptance stops when its stage is aborted", async () => {
     {},
     {},
     0,
-    0,
+    { count: 0 },
     controller.signal,
   )).rejects.toMatchObject({ name: "AbortError" });
 });
