@@ -300,6 +300,62 @@ describe("compact mode routing", () => {
     expect(requested).toBe(true);
   });
 
+  test("extends the handoff idle deadline while the streamed block keeps growing", async () => {
+    let completeBrowser!: (answer: string) => void;
+    const browser = new Promise<string>(resolve => { completeBrowser = resolve; });
+    const text = new ChatGptTextFeed();
+    const answer = `${COMPACTION_HANDOFF_MARKER}\nThe adaptive checkpoint kept growing until complete.`;
+    const session = new ChatGptTurnSession({
+      mode: "read-only",
+      browser,
+      trace: new ChatGptTraceFeed(),
+      text,
+      usageInput: compactRequest(),
+      requestHandoff: () => {
+        setTimeout(() => text.push(`${COMPACTION_HANDOFF_MARKER}\nThe adaptive checkpoint`), 10);
+        setTimeout(() => text.push(" kept growing"), 30);
+        setTimeout(() => {
+          text.push(" until complete.");
+          completeBrowser(answer);
+        }, 50);
+      },
+      cancel: () => {},
+    });
+
+    await expect(requestActiveCompactionHandoff(
+      compactRequest(),
+      session,
+      {} as TurnBroker,
+      undefined,
+      5,
+      30,
+      2,
+    )).resolves.toBe("The adaptive checkpoint kept growing until complete.");
+  });
+
+  test("recovers a valid handoff after it becomes idle when the browser outcome never settles", async () => {
+    const text = new ChatGptTextFeed();
+    const answer = `${COMPACTION_HANDOFF_MARKER}\nThe streamed checkpoint is safe to resume.`;
+    const session = new ChatGptTurnSession({
+      mode: "read-only",
+      browser: new Promise<string>(() => {}),
+      trace: new ChatGptTraceFeed(),
+      text,
+      usageInput: compactRequest(),
+      requestHandoff: () => setTimeout(() => text.push(answer), 20),
+      cancel: () => {},
+    });
+
+    await expect(requestActiveCompactionHandoff(
+      compactRequest(),
+      session,
+      {} as TurnBroker,
+      undefined,
+      5,
+      30,
+    )).resolves.toBe("The streamed checkpoint is safe to resume.");
+  });
+
   test("retries malformed and recoverable handoff responses in the same conversation", () => {
     const prompts = createActiveCompactionHandoffPrompts();
     expect(prompts.retryPromptForAnswer("ordinary answer")).toBeUndefined();

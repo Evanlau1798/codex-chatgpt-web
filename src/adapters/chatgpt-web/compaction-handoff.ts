@@ -3,12 +3,15 @@ import { COMPACT_PROMPT, isUsableCompactionSummary } from "../../responses/compa
 import type { CodexContentPart, CodexParsedRequest, CodexToolResultMessage } from "../../types";
 import { extractChatGptCompactionSourceRevision } from "./environment";
 import type { BrokerToolResult, TurnBroker } from "./turn-broker";
-import type { ChatGptTurnSession } from "./turn-execution";
+import type { ChatGptBrowserOutcome, ChatGptTurnSession } from "./turn-execution";
 
 export const COMPACTION_HANDOFF_MARKER = "CODEX_COMPACTION_HANDOFF";
 export const LATEST_USER_PROMPT_MARKER = "CODEX_LATEST_USER_PROMPT_JSON";
 const ESCAPED_COMPACTION_HANDOFF_MARKER = "CODEX\\_COMPACTION\\_HANDOFF";
 const ACTIVE_HANDOFF_ATTEMPTS = 3;
+const ACTIVE_HANDOFF_TIMEOUT_MESSAGE = "active browser handoff timed out";
+const ACTIVE_HANDOFF_IDLE_TIMEOUT_MS = 60_000;
+const ACTIVE_HANDOFF_ACTIVITY_POLL_MS = 1_000;
 
 const HANDOFF_INSTRUCTION = `Automatic Codex context compaction has started. Do not call any more tools.
 ${COMPACT_PROMPT}
@@ -170,13 +173,18 @@ export function recoverCompactionHandoff(parsed: CodexParsedRequest): string | u
   return text ? handoffSummary(text) : undefined;
 }
 
-function streamedHandoffSummary(answer: string): string | undefined {
+function streamedHandoffBlock(answer: string): string | undefined {
   const markerOffset = Math.max(
     answer.lastIndexOf(COMPACTION_HANDOFF_MARKER),
     answer.lastIndexOf(ESCAPED_COMPACTION_HANDOFF_MARKER),
   );
   if (markerOffset < 0 || (markerOffset > 0 && answer[markerOffset - 1] !== "\n")) return undefined;
-  return handoffSummary(answer.slice(markerOffset));
+  return answer.slice(markerOffset);
+}
+
+function streamedHandoffSummary(answer: string): string | undefined {
+  const block = streamedHandoffBlock(answer);
+  return block ? handoffSummary(block) : undefined;
 }
 
 function retryableBrowserFailure(error: unknown): boolean {
@@ -193,11 +201,11 @@ async function waitForBrowser(
   session: ChatGptTurnSession,
   signal: AbortSignal | undefined,
   timeoutMs: number,
-) {
+): Promise<ChatGptBrowserOutcome> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error("active browser handoff timed out")), timeoutMs);
+    timer = setTimeout(() => reject(new Error(ACTIVE_HANDOFF_TIMEOUT_MESSAGE)), timeoutMs);
   });
   const aborted = signal
     ? new Promise<never>((_resolve, reject) => {
@@ -219,11 +227,18 @@ export async function requestActiveCompactionHandoff(
   broker: TurnBroker,
   signal?: AbortSignal,
   timeoutMs = 120_000,
+  lateCompletionIdleMs = ACTIVE_HANDOFF_IDLE_TIMEOUT_MS,
+  activityPollMs = ACTIVE_HANDOFF_ACTIVITY_POLL_MS,
 ): Promise<string | undefined> {
   const cached = session.compactionHandoff();
   if (cached) return cached;
   if (!session.isActive()) return undefined;
   const handoffTextOffset = session.runtime.text.value().length;
+  const recoverStreamed = (): string | undefined => {
+    const recovered = streamedHandoffSummary(session.runtime.text.value().slice(handoffTextOffset));
+    if (recovered) session.setCompactionHandoff(recovered);
+    return recovered;
+  };
   try {
     if (session.runtime.mode === "tools") {
       const token = await session.runtime.token;
@@ -241,16 +256,45 @@ export async function requestActiveCompactionHandoff(
       if (!session.runtime.requestHandoff) return undefined;
       session.runtime.requestHandoff(false);
     }
-    const outcome = await waitForBrowser(session, signal, timeoutMs);
+    let outcome: ChatGptBrowserOutcome;
+    try {
+      outcome = await waitForBrowser(session, signal, timeoutMs);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+      if (!(error instanceof Error)
+        || error.message !== ACTIVE_HANDOFF_TIMEOUT_MESSAGE
+        || lateCompletionIdleMs <= 0) throw error;
+      const handoffText = () => session.runtime.text.value().slice(handoffTextOffset);
+      let handoffChars = streamedHandoffBlock(handoffText())?.length ?? 0;
+      let idleDeadline = Date.now() + lateCompletionIdleMs;
+      for (;;) {
+        try {
+          outcome = await waitForBrowser(
+            session,
+            signal,
+            Math.max(1, Math.min(activityPollMs, idleDeadline - Date.now())),
+          );
+          break;
+        } catch (lateError) {
+          if (lateError instanceof DOMException && lateError.name === "AbortError") throw lateError;
+          if (!(lateError instanceof Error) || lateError.message !== ACTIVE_HANDOFF_TIMEOUT_MESSAGE) throw lateError;
+          const currentChars = streamedHandoffBlock(handoffText())?.length ?? 0;
+          if (currentChars > handoffChars) {
+            handoffChars = currentChars;
+            idleDeadline = Date.now() + lateCompletionIdleMs;
+          } else if (Date.now() >= idleDeadline) {
+            const lateRecovered = recoverStreamed();
+            if (lateRecovered) return lateRecovered;
+            throw new Error("active browser handoff stopped growing");
+          }
+        }
+      }
+    }
     if (outcome.type === "error") {
       const recovered = retryableBrowserFailure(outcome.error)
-        ? streamedHandoffSummary(session.runtime.text.value().slice(handoffTextOffset))
+        ? recoverStreamed()
         : undefined;
-      if (recovered) {
-        session.setCompactionHandoff(recovered);
-        return recovered;
-      }
-      return undefined;
+      return recovered;
     }
     const summary = handoffSummary(outcome.answer);
     if (summary) session.setCompactionHandoff(summary);
