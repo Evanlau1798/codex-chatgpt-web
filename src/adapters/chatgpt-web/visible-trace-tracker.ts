@@ -17,6 +17,8 @@ interface TraceCandidate {
   changedAt: number;
 }
 
+const DEFAULT_TRACE_STABILITY_MS = 750;
+
 function normalizeTrace(block: ChatGptVisibleTraceBlock): string {
   const stripped = block.text
     .replace(/\r\n/g, "\n")
@@ -28,12 +30,31 @@ function normalizeTrace(block: ChatGptVisibleTraceBlock): string {
   return block.kind === "status" ? stripped.replace(/\s+/g, " ") : stripped;
 }
 
+function hasUnclosedStrongMarkdown(text: string): boolean {
+  const markerCount = (marker: string): number => text.split(marker).length - 1;
+  return markerCount("**") % 2 === 1 || markerCount("__") % 2 === 1;
+}
+
+function coalescedCommentary(blocks: ChatGptVisibleTraceBlock[]): ChatGptVisibleTraceBlock | undefined {
+  const commentary = blocks.filter(block => block.kind === "commentary");
+  if (commentary.length === 0) return undefined;
+  if (commentary.length > 1 && !commentary.slice(0, -1).every(block => block.complete === true)) {
+    return undefined;
+  }
+  return {
+    kind: "commentary",
+    key: "stream",
+    text: commentary.map(block => block.text).join(""),
+    ...(commentary.at(-1)?.complete === true ? { complete: true } : {}),
+  };
+}
+
 /** Convert public ChatGPT trace DOM into append-only reasoning and commentary. */
 export class ChatGptVisibleTraceTracker {
   private readonly emittedTrace = new Map<string, string>();
   private readonly traceCandidates = new Map<string, TraceCandidate>();
 
-  constructor(private readonly traceStabilityMs = 250) {}
+  constructor(private readonly traceStabilityMs = DEFAULT_TRACE_STABILITY_MS) {}
 
   observe(
     blocks: ChatGptVisibleTraceBlock[],
@@ -43,15 +64,40 @@ export class ChatGptVisibleTraceTracker {
     const output: ChatGptVisibleTraceEvent[] = [];
     let statusSlot = 0;
     let commentarySlot = 0;
-    for (const block of blocks) {
+    const commentary = coalescedCommentary(blocks);
+    const commentaryText = commentary ? normalizeTrace(commentary) : "";
+    const commentaryCandidate = this.traceCandidates.get("commentary:stream");
+    const commentarySettled = commentary?.complete === true
+      && commentaryCandidate?.text === commentaryText;
+    let sawFirstCommentary = false;
+    const stableFirstCommentary = blocks.map(block => {
+      if (block.kind !== "commentary" || sawFirstCommentary) return block;
+      sawFirstCommentary = true;
+      return { ...block, key: "stream" };
+    });
+    const observable = commentary
+      ? [
+          ...(!this.emittedTrace.has("commentary:stream") || commentarySettled
+            ? blocks.filter(block => block.kind === "status")
+            : []),
+          commentary,
+        ]
+      : stableFirstCommentary;
+    for (const block of observable) {
       if (block.kind === "answer") continue;
       const index = block.kind === "status" ? statusSlot++ : commentarySlot++;
       const slot = block.key ? `${block.kind}:${block.key}` : `${block.kind}:${index}`;
       const text = normalizeTrace(block);
       if (!text) continue;
 
-      const immediate = completionActionVisible || block.complete === true || this.traceStabilityMs === 0;
       const candidate = this.traceCandidates.get(slot);
+      const immediate = completionActionVisible
+        || this.traceStabilityMs === 0
+        || (block.complete === true && candidate?.text === text);
+      if (block.kind === "commentary" && hasUnclosedStrongMarkdown(text)) {
+        this.traceCandidates.set(slot, { text, changedAt: now });
+        continue;
+      }
       let stableText: string | undefined;
       if (immediate) {
         stableText = text;
@@ -85,4 +131,3 @@ export class ChatGptVisibleTraceTracker {
     return output;
   }
 }
-

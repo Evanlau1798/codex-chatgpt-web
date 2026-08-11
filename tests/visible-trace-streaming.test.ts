@@ -17,7 +17,7 @@ test("streams stable commentary prefixes while the DOM node keeps growing", () =
   ], false, 1_200));
   output.push(...tracker.observe([
     { kind: "commentary", text: "Codex Native 正在讀取 `repo`", complete: true },
-  ], false, 1_201));
+  ], false, 1_300));
 
   expect(output).toEqual([
     { kind: "commentary", text: "Cod" },
@@ -56,6 +56,79 @@ test("keeps animated status fragments behind the full stability window", () => {
   expect(tracker.observe([{ kind: "status", text: "I am checking" }], false, 1_200)).toEqual([]);
   expect(tracker.observe([{ kind: "status", text: "I am checking" }], false, 1_300)).toEqual([
     { kind: "reasoning", text: "I am checking" },
+  ]);
+});
+
+test("uses the Markdown buffer stability window before first commentary output", () => {
+  const tracker = new ChatGptVisibleTraceTracker();
+  const commentary = [{ kind: "commentary" as const, text: "正在檢查目前狀態" }];
+
+  expect(tracker.observe(commentary, false, 1_000)).toEqual([]);
+  expect(tracker.observe(commentary, false, 1_250)).toEqual([]);
+  expect(tracker.observe(commentary, false, 1_750)).toEqual([{
+    kind: "commentary",
+    text: "正在檢查目前狀態",
+  }]);
+});
+
+test("coalesces commentary roots without interleaving animated reasoning", () => {
+  const tracker = new ChatGptVisibleTraceTracker(100);
+  const blocks = [
+    { kind: "status" as const, text: "正在思考" },
+    { kind: "commentary" as const, text: "目前 live Git 與", complete: true },
+    { kind: "commentary" as const, text: "舊 handoff 有差異" },
+  ];
+
+  expect(tracker.observe(blocks, false, 1_000)).toEqual([]);
+  expect(tracker.observe(blocks, false, 1_100)).toEqual([
+    { kind: "reasoning", text: "正在思考" },
+    { kind: "commentary", text: "目前 live Git 與舊 handoff 有差異" },
+  ]);
+
+  const growing = [
+    { kind: "status" as const, text: "讀取記憶與部署摘要" },
+    { kind: "commentary" as const, text: "目前 live Git 與舊 handoff 有差異，正在重新驗證" },
+  ];
+  expect(tracker.observe(growing, false, 1_200)).toEqual([]);
+  expect(tracker.observe(growing, false, 1_300)).toEqual([{
+    kind: "commentary",
+    text: "，正在重新驗證",
+    continuation: true,
+  }]);
+});
+
+test("waits out an unfinished Markdown render instead of replaying its prefix", () => {
+  const tracker = new ChatGptVisibleTraceTracker(100);
+  const prefix = [{ kind: "commentary" as const, text: "成本是" }];
+  const raw = [{ kind: "commentary" as const, text: "成本是 **< TWD 55.76" }];
+  const rendered = [{ kind: "commentary" as const, text: "成本是 < TWD 55.76，繼續執行" }];
+
+  expect(tracker.observe(prefix, false, 800)).toEqual([]);
+  expect(tracker.observe(prefix, false, 900)).toEqual([{
+    kind: "commentary",
+    text: "成本是",
+  }]);
+  expect(tracker.observe(raw, false, 1_000)).toEqual([]);
+  expect(tracker.observe(raw, false, 1_100)).toEqual([]);
+  expect(tracker.observe(rendered, false, 1_101)).toEqual([]);
+  expect(tracker.observe(rendered, false, 1_201)).toEqual([{
+    kind: "commentary",
+    text: " < TWD 55.76，繼續執行",
+    continuation: true,
+  }]);
+});
+
+test("does not treat a transient tool-adjacent status as a commentary flush boundary", () => {
+  const tracker = new ChatGptVisibleTraceTracker(10_000);
+  const blocks = [
+    { kind: "commentary" as const, text: "正在確認", complete: true },
+    { kind: "status" as const, text: "Called Codex Native2" },
+  ];
+
+  expect(tracker.observe(blocks, false, 1_000)).toEqual([]);
+  expect(tracker.observe(blocks, true, 1_001)).toEqual([
+    { kind: "reasoning", text: "Called Codex Native2" },
+    { kind: "commentary", text: "正在確認" },
   ]);
 });
 
