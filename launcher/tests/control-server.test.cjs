@@ -88,3 +88,52 @@ test("browser control server authenticates and owns turn visibility", async () =
     await server.close();
   }
 });
+
+test("browser control server cuts off exactly one authenticated debug surface", async () => {
+  const calls = [];
+  const host = {
+    snapshot: () => ({
+      tabs: [{
+        tabId: "tab-smoke",
+        id: "tab-smoke",
+        traceId: "trace_smoke",
+        status: "ready",
+      }],
+    }),
+    closeTab: (tabId) => calls.push(tabId),
+  };
+  const server = await new BrowserControlServer({
+    logger: { info() {}, warn() {} },
+    getBrowserHost: () => host,
+    getPreferences: () => ({}),
+  }).start();
+  const descriptor = server.descriptor();
+  const post = (body, authenticated = true) => fetch(`${descriptor.endpoint}/v1/debug/turn/cutoff`, {
+    method: "POST",
+    headers: {
+      ...(authenticated ? { authorization: `Bearer ${descriptor.token}` } : {}),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  try {
+    assert.equal((await post({ traceId: "trace_smoke" }, false)).status, 401);
+    assert.equal((await post({})).status, 400);
+    assert.equal((await post({ traceId: "trace_smoke", tabId: "tab-smoke" })).status, 400);
+
+    const closed = await post({ traceId: "trace_smoke" });
+    assert.equal(closed.status, 200);
+    assert.deepEqual(await closed.json(), {
+      ok: true,
+      tabId: "tab-smoke",
+      traceId: "trace_smoke",
+      status: "ready",
+      aborted: false,
+    });
+
+    assert.equal((await post({ traceId: "missing_trace" })).status, 404);
+    assert.deepEqual(calls, ["tab-smoke"]);
+  } finally {
+    await server.close();
+  }
+});

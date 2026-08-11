@@ -94,7 +94,8 @@ class BrowserControlServer {
       || request.url === "/v1/turn/heartbeat"
       || request.url === "/v1/turn/end";
     const isSessionInspect = request.url === "/v1/session/inspect";
-    if (request.method !== "POST" || (!isTurn && !isSessionInspect)) {
+    const isDebugCutoff = request.url === "/v1/debug/turn/cutoff";
+    if (request.method !== "POST" || (!isTurn && !isSessionInspect && !isDebugCutoff)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -105,6 +106,32 @@ class BrowserControlServer {
       if (isSessionInspect) {
         const result = await host.inspectSession(body?.detectCapabilities === true);
         writeJson(response, 200, result);
+        return;
+      }
+      if (isDebugCutoff) {
+        const hasTraceId = typeof body?.traceId === "string";
+        const hasTabId = typeof body?.tabId === "string";
+        if (hasTraceId === hasTabId) throw new Error("exactly one of traceId or tabId is required");
+        const selector = hasTraceId ? { traceId: body.traceId } : { tabId: body.tabId };
+        const value = hasTraceId ? body.traceId : body.tabId;
+        if (!/^[A-Za-z0-9_-]{6,128}$/.test(value)) throw new Error("debug turn selector is invalid");
+        const tabs = host.snapshot().tabs;
+        const tab = tabs.find(candidate => hasTraceId
+          ? candidate.traceId === selector.traceId
+          : candidate.id === selector.tabId);
+        if (!tab) {
+          writeJson(response, 404, { error: "turn_not_found" });
+          return;
+        }
+        const result = {
+          tabId: tab.id,
+          traceId: tab.traceId,
+          status: tab.status,
+          aborted: tab.status === "running",
+        };
+        host.closeTab(tab.id);
+        this.logger.info("browser.debug_turn_cutoff", result);
+        writeJson(response, 200, { ok: true, ...result });
         return;
       }
       if (!body || typeof body !== "object" || !/^[A-Za-z0-9_-]{6,128}$/.test(body.traceId || "")) {
