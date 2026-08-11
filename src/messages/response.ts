@@ -8,6 +8,11 @@ export interface ClaudeResponseMeta {
   inputTokens: number;
 }
 
+function isClaudeGenericThinkingPlaceholder(text: string): boolean {
+  const normalized = text.replace(/\s+/g, "").replace(/(?:\.{3}|\u2026)+$/u, "");
+  return /^(?:\u6b63\u5728\u601d\u8003)+$/u.test(normalized) || /^(?:thinking)+$/i.test(normalized);
+}
+
 function stopReason(reason?: string): string {
   if (reason === "tool_use") return "tool_use";
   if (reason === "max_tokens" || reason === "max_output_tokens" || reason === "length") return "max_tokens";
@@ -44,7 +49,7 @@ export function buildClaudeMessage(events: AdapterEvent[], meta: ClaudeResponseM
     }
   };
   for (const event of events) {
-    if (event.type === "thinking_delta") thinking += event.thinking;
+    if (event.type === "thinking_delta" && !isClaudeGenericThinkingPlaceholder(event.thinking)) thinking += event.thinking;
     else if (event.type === "thinking_signature") thinkingSignature = event.signature;
     else if (event.type === "redacted_thinking") { flush(); content.push({ type: "redacted_thinking", data: event.data }); }
     else if (event.type === "text_delta") text += event.text;
@@ -105,6 +110,7 @@ export function streamClaudeMessage(
         for await (const event of events) {
           if (event.type === "heartbeat") send("ping", { type: "ping" });
           else if (event.type === "thinking_delta") {
+            if (isClaudeGenericThinkingPlaceholder(event.thinking)) continue;
             if (kind === "text") continue;
             if (kind !== "thinking") { closeBlock(); index += 1; kind = "thinking"; send("content_block_start", { type: "content_block_start", index, content_block: { type: "thinking", thinking: "", signature: "" } }); }
             thinking += event.thinking;

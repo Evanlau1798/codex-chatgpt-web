@@ -57,8 +57,14 @@ test("Claude steering preserves real parallel tool results and attaches once at 
   expect(completed[0]?.result.content).toEqual([{ type: "text", text: "first real result" }]);
   const boundary = completed[1]?.result.content as Array<{ type: string; text: string }>;
   expect(boundary[0]?.text).toBe("second real result");
-  expect(boundary[1]?.text).toContain("Prioritize the failing test\n\nThen continue the review");
-  expect(boundary[1]?.text).toContain("do not end the task merely to acknowledge");
+  expect(boundary[1]?.text).toBe(
+    "Additional user guidance for the current task:\n\n"
+      + "Prioritize the failing test\n\nThen continue the review\n\n"
+      + "Apply it once to the ongoing work without separately acknowledging this notice. "
+      + "Continue the existing task unless the guidance explicitly asks to stop or replace it.",
+  );
+  expect(boundary[1]?.text.match(/Prioritize the failing test/g)).toHaveLength(1);
+  expect(boundary[1]?.text.match(/Then continue the review/g)).toHaveLength(1);
   expect(steering.peek()).toBeUndefined();
 });
 
@@ -90,7 +96,7 @@ test("Claude same-conversation continuation acknowledges steering only after sub
   expect(typeof pending).toBe("object");
   if (!pending || typeof pending === "string") throw new Error("expected acknowledged retry prompt");
   expect(pending.text).toContain("Check the new constraint");
-  expect(pending.text).toContain("keep the original task active");
+  expect(pending.text).toContain("Apply it once to the ongoing work without separately acknowledging this notice");
   expect(steering.peek()?.text).toBe("Check the new constraint");
   pending.onSubmitted?.();
   expect(steering.peek()).toBeUndefined();

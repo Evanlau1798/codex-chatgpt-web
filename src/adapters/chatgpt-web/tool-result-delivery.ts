@@ -4,8 +4,9 @@ import type { BrokerToolResult, TurnBroker } from "./turn-broker";
 import type { ChatGptTurnSession } from "./turn-execution";
 
 export function claudeAdditiveSteeringInstruction(steering: string): string {
-  return `The user added this instruction while you were working:\n\n${steering}\n\n`
-    + "Treat it as an added instruction for the current task. Unless it explicitly asks to stop, cancel, or replace the original goal, keep the original task active. Apply the instruction, continue the unfinished work, and do not end the task merely to acknowledge this message.";
+  return `Additional user guidance for the current task:\n\n${steering}\n\n`
+    + "Apply it once to the ongoing work without separately acknowledging this notice. "
+    + "Continue the existing task unless the guidance explicitly asks to stop or replace it.";
 }
 
 function withClaudeSteering(result: BrokerToolResult, steering: string): BrokerToolResult {

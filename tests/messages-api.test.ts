@@ -83,6 +83,29 @@ test("translates a Claude Code message into the existing ChatGPT Web adapter", a
   expect(body.usage).toEqual({ input_tokens: 120, output_tokens: 8 });
 });
 
+test("omits generic Web thinking placeholders from non-streaming Claude responses", async () => {
+  const response = await messagesRequest(request({
+    model: "chatgpt-web/high",
+    max_tokens: 1024,
+    messages: [{ role: "user", content: "Inspect the repository" }],
+  }), defaultConfig("full"), () => ({
+    name: "messages-placeholder-test",
+    async runTurn(_parsed, _incoming, emit) {
+      emit({ type: "thinking_delta", thinking: " \u6b63\u5728\u601d\u8003\u6b63\u5728\u601d\u8003\u2026 " });
+      emit({ type: "thinking_delta", thinking: "Thinking..." });
+      emit({ type: "thinking_delta", thinking: "Inspecting the request" });
+      emit({ type: "text_delta", text: "Ready.", phase: "final_answer" });
+      emit({ type: "done", stopReason: "stop", endTurn: true });
+    },
+  }));
+
+  const body = await response.json() as Record<string, any>;
+  expect(body.content).toEqual([
+    expect.objectContaining({ type: "thinking", thinking: "Inspecting the request" }),
+    { type: "text", text: "Ready." },
+  ]);
+});
+
 test("accepts a model id returned by Claude gateway discovery", async () => {
   const response = await messagesRequest(request({
     model: "claude-chatgpt-web-high",
@@ -188,6 +211,30 @@ test("keeps incremental Claude commentary in one text block across transient thi
   expect(textStarts).toHaveLength(1);
   expect(deltas.join("")).toBe("Codex Native");
   expect(body).not.toContain("Transient Web status");
+});
+
+test("omits generic Web thinking placeholders from streamed Claude responses", async () => {
+  const response = await messagesRequest(request({
+    model: "chatgpt-web/high",
+    max_tokens: 1024,
+    stream: true,
+    messages: [{ role: "user", content: "Inspect the repository" }],
+  }), defaultConfig("full"), () => ({
+    name: "messages-stream-placeholder-test",
+    async runTurn(_parsed, _incoming, emit) {
+      emit({ type: "thinking_delta", thinking: "\u6b63\u5728\u601d\u8003 \u6b63\u5728\u601d\u8003\u2026" });
+      emit({ type: "thinking_delta", thinking: "Thinking\u2026" });
+      emit({ type: "thinking_delta", thinking: "Inspecting the request" });
+      emit({ type: "text_delta", text: "Ready.", phase: "final_answer" });
+      emit({ type: "done", stopReason: "stop", endTurn: true });
+    },
+  }));
+
+  const body = await response.text();
+  expect(body).not.toContain("\u6b63\u5728\u601d\u8003");
+  expect(body).not.toContain("Thinking");
+  expect(body).toContain("Inspecting the request");
+  expect(body).toContain('"type":"text_delta","text":"Ready."');
 });
 
 test("cancelling a streamed Claude response aborts its active browser turn", async () => {
