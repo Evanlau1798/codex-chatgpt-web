@@ -26,6 +26,11 @@ function request(reasoning: "low" | "medium" | "high" | "xhigh" | "max"): CodexP
 test("tool-capable prompts pass one stable turn token directly to native actions", () => {
   const token = "turn_12345678901234567890123456789012";
   const parsed = request("high");
+  parsed.context.tools = [
+    { name: "Read", description: "Read a file", parameters: {} },
+    { name: "Glob", description: "Find files", parameters: {} },
+    { namespace: "multi_agent_v1", name: "spawn_agent", description: "Spawn a child", parameters: {} },
+  ];
   parsed.context.messages[1]!.content = `Diagnose an invalid binding_id safety failure without replaying ${token}`;
   const compiled = compileChatGptWebPrompt(
     parsed,
@@ -52,8 +57,12 @@ test("tool-capable prompts pass one stable turn token directly to native actions
   expect(transportOnly).toContain("tool_search");
   expect(transportOnly).toContain("codex_tool_call");
   expect(transportOnly).toContain("same Web conversation");
+  expect(transportOnly).toContain('Exact outer client tool wire names for this turn: ["Read","Glob","multi_agent_v1__spawn_agent"]');
   expect(transportOnly).toContain("Never emulate a stateful or persistent tool with codex_exec");
-  expect(transportOnly).toContain(`The task context is complete. Pass turn_token ${token} unchanged to every Codex Native call in this response, including continuations after tool results; do not expose it in the answer. Execute the latest active user request now.`);
+  expect(transportOnly).toContain("<codex_native_turn_binding>");
+  expect(transportOnly).toContain(`turn_token ${token}`);
+  expect(transportOnly).toContain("The value begins with turn_. Never substitute a connector or plugin identifier, conversation UUID, or any handle from task history.");
+  expect(transportOnly).toContain("</codex_native_turn_binding>");
   expect(transportOnly).not.toMatch(/codex_bind_turn|binding_id|outer_tool_gateway|command_tool/);
   expect(transportOnly).not.toMatch(/codex_write_stdin|codex_apply_patch|codex_view_image/);
   expect(transportOnly).not.toMatch(/expired|invalid|revoked|blocked|safety|security layer|permission gate/i);
