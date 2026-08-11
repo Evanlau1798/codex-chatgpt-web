@@ -64,10 +64,11 @@ test("Claude steering preserves real parallel tool results and attaches once at 
   const boundary = completed[1]?.result.content as Array<{ type: string; text: string }>;
   expect(boundary).toHaveLength(1);
   expect(boundary[0]?.text).toBe(
-    "second real result\n\nAdditional user guidance for the current task:\n\n"
+    "Additional user guidance for the current task:\n\n"
       + "Prioritize the failing test\n\nThen continue the review\n\n"
       + "Apply this guidance once to the ongoing work. Continue the existing task unless the guidance explicitly asks to stop or replace it. "
-      + "Respond naturally when the guidance itself requests a response; do not add a separate receipt otherwise.",
+      + "Respond naturally when the guidance itself requests a response; do not add a separate receipt otherwise.\n\n"
+      + "Tool result:\n\nsecond real result",
   );
   expect(boundary[0]?.text.match(/Prioritize the failing test/g)).toHaveLength(1);
   expect(boundary[0]?.text.match(/Then continue the review/g)).toHaveLength(1);

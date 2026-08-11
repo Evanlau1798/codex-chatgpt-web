@@ -23,7 +23,10 @@ function withClaudeSteering(result: BrokerToolResult, steering: string): BrokerT
     const item = content[index];
     if (!item || typeof item !== "object" || (item as { type?: unknown }).type !== "text"
       || typeof (item as { text?: unknown }).text !== "string") continue;
-    content[index] = { ...item, text: `${(item as { text: string }).text}\n\n${instruction}` };
+    content[index] = {
+      ...item,
+      text: `${instruction}\n\nTool result:\n\n${(item as { text: string }).text}`,
+    };
     return { ...result, content };
   }
   return {
