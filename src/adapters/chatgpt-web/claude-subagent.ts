@@ -74,12 +74,12 @@ export function claudeBrowserTurnOptions(parsed: CodexParsedRequest, upstreamRet
         if (attempt > 1) throw new Error(refusedTools
           ? `ChatGPT Web ${subagent ? "subagent" : "Claude root"} refused advertised client tools after retry`
           : "ChatGPT Web subagent completed with only a progress update after retry");
-        const advertised = (parsed.context.tools ?? [])
+        const advertisedNames = (parsed.context.tools ?? [])
           .map(tool => namespacedToolName(tool.namespace, tool.name))
-          .slice(0, 12)
-          .join(", ");
+          .slice(0, 12);
+        const advertised = advertisedNames.join(", ");
         return refusedTools
-          ? `Advertised client tools are available in this turn: ${advertised}. Use codex_tool_inventory to find the required capability or one of those exact names, then invoke the returned wire_name with codex_tool_call. Return the actual result. Do not claim the native command or shell gateway is missing unless a tool invocation returns that concrete error.`
+          ? `Advertised client tools are available in this turn: ${advertised}. Call the attached Codex Native2 codex_tool_inventory now with one exact name at a time, for example query ${JSON.stringify(advertisedNames[0])}; never combine several names into one query. Use the current turn_token from codex_native_turn_binding, invoke the returned wire_name with codex_tool_call, and return the actual result. Do not answer before that Native2 call returns, and do not claim the native command or shell gateway is missing unless a tool invocation returns that concrete error.`
           : "Your previous response was only a progress update, not the requested subagent result. Continue the task now, use tools as needed, and return the requested result or an explicit no-findings result. Do not finish with another plan or progress update.";
       }
     : undefined;

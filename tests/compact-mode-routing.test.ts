@@ -171,6 +171,8 @@ describe("compact mode routing", () => {
       expect(refusedRetry).toContain("Advertised client tools are available");
       expect(refusedRetry).toContain("PowerShell");
       expect(refusedRetry).toContain("codex_tool_inventory");
+      expect(refusedRetry).toContain('query "PowerShell"');
+      expect(refusedRetry).toContain("Do not answer before that Native2 call returns");
       expect(browserTurn?.retryPromptForAnswer?.(
         "The native shell gateway is unavailable, so I could not run the command.",
         1,
