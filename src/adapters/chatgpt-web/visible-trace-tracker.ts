@@ -120,6 +120,7 @@ export class ChatGptVisibleTraceTracker {
 
       const previous = this.emittedTrace.get(slot);
       if (previous === stableText) continue;
+      if (block.kind === "commentary" && previous && !stableText.startsWith(previous)) continue;
       this.emittedTrace.set(slot, stableText);
       const kind = block.kind === "commentary" ? "commentary" : "reasoning";
       if (previous && stableText.startsWith(previous)) {

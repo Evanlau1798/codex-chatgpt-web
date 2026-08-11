@@ -1239,8 +1239,15 @@ test("response DOM separates streaming commentary from the final Markdown answer
   expect(workerSource).toContain('candidate.closest("[data-streaming-response-status]") !== null');
   expect(workerSource).toContain("const renderedRoots = allMarkdownRoots.filter");
   expect(workerSource).toContain('fullHtml: renderedRoots.map(candidate => candidate.innerHTML).join("")');
-  expect(workerSource).toContain("const markdownSegments = renderedRoots.flatMap");
-  expect(workerSource).toContain('key: `${rootIndex}:${childIndex}:${tag}:${itemIndex}`');
+  expect(workerSource).toContain("const markdownRoots = allMarkdownRoots.map");
+  expect(workerSource).toContain("const markdownOwnership = new ChatGptMarkdownOwnershipTracker()");
+  expect(workerSource).toContain("this.responseDomSnapshot(responseTurn, markdownOwnership, running)");
+  expect(workerSource).toContain('running && root.ownership === "final"');
+  expect(workerSource.indexOf("const running = await stop.isVisible()")).toBeLessThan(
+    workerSource.indexOf("this.responseDomSnapshot(responseTurn, markdownOwnership, running)"),
+  );
+  expect(workerSource).toContain("snapshot.markdownSegments = owned.markdownSegments");
+  expect(workerSource).toContain('key: `${childIndex}:${tag}:${itemIndex}`');
   expect(workerSource).toContain("streamable: childIsComplete || itemIndex < listItems.length - 1");
   expect(workerSource).toContain("markdownBuffer.observe(snapshot.markdownSegments)");
   expect(workerSource).not.toContain("stableHtml:");

@@ -27,7 +27,7 @@ test("streams stable commentary prefixes while the DOM node keeps growing", () =
   expect(output.map(event => event.text).join("")).toBe("Codex Native 正在讀取 `repo`");
 });
 
-test("waits for a non-prefix commentary rewrite to stabilize", () => {
+test("does not replay a non-prefix commentary rewrite after output was committed", () => {
   const tracker = new ChatGptVisibleTraceTracker(100);
 
   expect(tracker.observe([
@@ -43,9 +43,17 @@ test("waits for a non-prefix commentary rewrite to stabilize", () => {
   ], false, 1_150)).toEqual([]);
   expect(tracker.observe([
     { kind: "commentary", text: "Rewritten result", complete: false },
-  ], false, 1_250)).toEqual([
-    { kind: "commentary", text: "Rewritten result" },
-  ]);
+  ], false, 1_250)).toEqual([]);
+  expect(tracker.observe([
+    { kind: "commentary", text: "Working draft safely grows", complete: false },
+  ], false, 1_300)).toEqual([]);
+  expect(tracker.observe([
+    { kind: "commentary", text: "Working draft safely grows", complete: false },
+  ], false, 1_400)).toEqual([{
+    kind: "commentary",
+    text: " safely grows",
+    continuation: true,
+  }]);
 });
 
 test("keeps animated status fragments behind the full stability window", () => {

@@ -52,6 +52,11 @@ test("a terminal ChatGPT error continues once without pressing the Web retry but
   expect(chatGptTerminalErrorRetryPrompt(failure!, 1, "partial answer")).toBeUndefined();
 });
 
+test("a visible completed answer wins over a stale terminal error banner", async () => {
+  const fixture = terminalErrorScope();
+  await expect(throwIfChatGptTerminalErrorAlert(fixture.scope, true)).resolves.toBeUndefined();
+});
+
 test("a long prompt retries as one edit when a later Lexical chunk rewrites committed text", async () => {
   const prompt = "x".repeat(CHATGPT_PROMPT_INSERT_CHUNK_CHARS + 7_506);
   const calls: Array<[string, string?]> = [];

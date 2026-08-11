@@ -16,6 +16,10 @@ import type { CodexProviderConfig } from "../../types";
 import { parseDataUrl } from "../image";
 import { ChatGptMarkdownBuffer, type ChatGptMarkdownSegment } from "./markdown";
 import {
+  ChatGptMarkdownOwnershipTracker,
+  type ChatGptMarkdownRootSnapshot,
+} from "./markdown-ownership";
+import {
   CHATGPT_WEB_LUNA_MODEL_ID,
   CHATGPT_WEB_MODEL_ID,
   resolveChatGptWebModelMode,
@@ -39,6 +43,7 @@ import {
   type ChatGptSubmissionEvidence,
 } from "./response-turn-boundary";
 export { ChatGptVisibleTraceTracker } from "./visible-trace-tracker";
+export { ChatGptMarkdownOwnershipTracker } from "./markdown-ownership";
 export type { ChatGptVisibleTraceBlock, ChatGptVisibleTraceEvent } from "./visible-trace-tracker";
 export { chatGptSubmissionEvidence } from "./response-turn-boundary";
 export type { ChatGptSubmissionEvidence } from "./response-turn-boundary";
@@ -156,7 +161,11 @@ const chatGptTerminalErrorAlert = (scope: ChatGptTextScope): Locator => scope
   .getByText(/Something went wrong[\s\S]*help\.openai\.com/i)
   .last();
 
-export async function throwIfChatGptTerminalErrorAlert(scope: ChatGptTextScope): Promise<void> {
+export async function throwIfChatGptTerminalErrorAlert(
+  scope: ChatGptTextScope,
+  completedAnswerVisible = false,
+): Promise<void> {
+  if (completedAnswerVisible) return;
   const alert = chatGptTerminalErrorAlert(scope);
   if (!await alert.isVisible().catch(() => false)) return;
   throw new ChatGptWebAdapterError(
@@ -293,6 +302,8 @@ export interface BrowserTurn {
   conversationKey?: string;
   abortSignal?: AbortSignal;
   onHeartbeat?: () => void;
+  /** Semantic DOM progress used only to reset the upstream silence timer. */
+  onProgress?: () => void;
   /** Visible ChatGPT reasoning-summary step titles only; never hidden chain-of-thought. */
   onReasoningSummary?: (text: string, continuation?: boolean) => void;
   /** Stable visible ChatGPT prose between status/tool rows. */
@@ -416,6 +427,7 @@ interface ChatGptResponseDomSnapshot {
   fullHtml: string;
   plainTextFallback: string;
   markdownSegments: ChatGptMarkdownSegment[];
+  markdownRoots: ChatGptMarkdownRootSnapshot[];
   completionActionVisible: boolean;
   traceBlocks: ChatGptVisibleTraceBlock[];
 }
@@ -426,6 +438,7 @@ const absentResponseDomSnapshot = (): ChatGptResponseDomSnapshot => ({
   fullHtml: "",
   plainTextFallback: "",
   markdownSegments: [],
+  markdownRoots: [],
   completionActionVisible: false,
   traceBlocks: [],
 });
@@ -1414,7 +1427,11 @@ export class ChatGptBrowserWorker {
     throw new Error("ChatGPT accepted the prompt attachments but did not make the message ready to send");
   }
 
-  private async responseDomSnapshot(responseTurn: Locator): Promise<ChatGptResponseDomSnapshot> {
+  private async responseDomSnapshot(
+    responseTurn: Locator,
+    ownership?: ChatGptMarkdownOwnershipTracker,
+    running = false,
+  ): Promise<ChatGptResponseDomSnapshot> {
     const snapshot = await responseTurn.evaluate((element, completionActionSelector) => {
       const root = element as HTMLElement;
       // Browser turn WebContents are intentionally allowed to run while their Electron view is
@@ -1440,15 +1457,27 @@ export class ChatGptBrowserWorker {
       const renderedRoots = allMarkdownRoots.filter(candidate => (
         candidate.closest("[data-streaming-response-status]") === null
       ));
-      const markdownSegments = renderedRoots.flatMap((markdownRoot, rootIndex) => {
-        const rootIsComplete = rootIndex < renderedRoots.length - 1;
+      const runtimeWindow = window as typeof window & {
+        __codexMarkdownRootIds?: WeakMap<HTMLElement, string>;
+        __codexMarkdownRootSequence?: number;
+      };
+      runtimeWindow.__codexMarkdownRootIds ??= new WeakMap<HTMLElement, string>();
+      runtimeWindow.__codexMarkdownRootSequence ??= 0;
+      const nodeId = (markdownRoot: HTMLElement): string => {
+        const existing = runtimeWindow.__codexMarkdownRootIds!.get(markdownRoot);
+        if (existing) return existing;
+        const created = `dom-${runtimeWindow.__codexMarkdownRootSequence!++}`;
+        runtimeWindow.__codexMarkdownRootIds!.set(markdownRoot, created);
+        return created;
+      };
+      const segmentsFor = (markdownRoot: HTMLElement, rootIsComplete: boolean) => {
         const hasDirectText = [...markdownRoot.childNodes].some(node => (
           node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim())
         ));
         const children = [...markdownRoot.children] as HTMLElement[];
         if (hasDirectText || children.length === 0) {
           return markdownRoot.innerHTML.trim() ? [{
-            key: `${rootIndex}:root`,
+            key: "root",
             html: markdownRoot.innerHTML,
             text: markdownRoot.innerText.trim(),
             streamable: rootIsComplete,
@@ -1463,14 +1492,14 @@ export class ChatGptBrowserWorker {
             : [];
           if (listItems.length === 0) {
             return [{
-              key: `${rootIndex}:${childIndex}:${tag}`,
+              key: `${childIndex}:${tag}`,
               html: child.outerHTML,
               text: child.innerText.trim(),
               streamable: childIsComplete,
             }];
           }
 
-          const group = `${rootIndex}:${childIndex}:${tag}`;
+          const group = `${childIndex}:${tag}`;
           const orderedStart = tag === "ol" ? Number(child.getAttribute("start") ?? "1") : undefined;
           return listItems.map((item, itemIndex) => {
             const shell = child.cloneNode(false) as HTMLElement;
@@ -1480,7 +1509,7 @@ export class ChatGptBrowserWorker {
             }
             shell.append(item.cloneNode(true));
             return {
-              key: `${rootIndex}:${childIndex}:${tag}:${itemIndex}`,
+              key: `${childIndex}:${tag}:${itemIndex}`,
               html: shell.outerHTML,
               text: item.innerText.trim(),
               group,
@@ -1488,7 +1517,22 @@ export class ChatGptBrowserWorker {
             };
           });
         });
+      };
+      const markdownRoots = allMarkdownRoots.map(markdownRoot => {
+        const renderedIndex = renderedRoots.indexOf(markdownRoot);
+        const rootIsComplete = renderedIndex >= 0 && renderedIndex < renderedRoots.length - 1;
+        return {
+          nodeId: nodeId(markdownRoot),
+          ownership: commentaryRoots.includes(markdownRoot) ? "commentary" as const : "final" as const,
+          toolEpoch: root.querySelectorAll("[data-item-anchor]").length,
+          text: markdownRoot.innerText.trim(),
+          html: markdownRoot.innerHTML,
+          segments: segmentsFor(markdownRoot, rootIsComplete),
+        };
       });
+      const markdownSegments = markdownRoots
+        .filter(markdownRoot => markdownRoot.ownership === "final")
+        .flatMap(markdownRoot => markdownRoot.segments);
       const rendered = renderedRoots.at(-1);
       const completionActions = [...root.querySelectorAll<HTMLElement>(completionActionSelector)]
         .filter(renderedInDom);
@@ -1599,6 +1643,7 @@ export class ChatGptBrowserWorker {
         fullHtml: renderedRoots.map(candidate => candidate.innerHTML).join("") || plainTextFallback,
         plainTextFallback,
         markdownSegments,
+        markdownRoots,
         completionActionVisible: completionAction !== undefined,
         traceBlocks,
       };
@@ -1611,6 +1656,20 @@ export class ChatGptBrowserWorker {
     snapshot.traceBlocks = snapshot.traceBlocks
       .map(stripChatGptTraceControlSuffix)
       .filter(block => block.text.length > 0 && !isChatGptTraceControl(block));
+    if (ownership) {
+      snapshot.markdownRoots = snapshot.markdownRoots.map(root => (
+        running && root.ownership === "final" ? { ...root, ownership: "provisional" } : root
+      ));
+      const owned = ownership.observe(snapshot.markdownRoots);
+      snapshot.markdownSegments = owned.markdownSegments;
+      snapshot.visibleText = owned.finalText || (owned.commentaryBlocks.length > 0 ? "" : snapshot.plainTextFallback);
+      snapshot.fullHtml = owned.finalHtml || snapshot.visibleText;
+      if (owned.commentaryBlocks.length > 0) snapshot.plainTextFallback = "";
+      snapshot.traceBlocks = [
+        ...snapshot.traceBlocks.filter(block => block.kind !== "commentary"),
+        ...owned.commentaryBlocks,
+      ];
+    }
     return snapshot;
   }
 
@@ -1804,7 +1863,8 @@ export class ChatGptBrowserWorker {
       await diagnostics.capture(page, "browser-page-acquired");
       console.info(
         `[chatgpt-web] browser turn ${turn.traceId} opened (transport=${prepared.transport ?? "inline"},`
-        + ` promptChars=${prepared.text.length}, archiveChars=${prepared.archiveChars ?? 0},`
+        + ` inlineChars=${prepared.inlineChars ?? prepared.text.length}, archiveChars=${prepared.archiveChars ?? 0},`
+        + ` archiveSha256=${prepared.archiveSha256 ?? "none"},`
         + ` estimatedInputTokens=${estimatedInputTokens}, images=${prepared.images.length},`
         + ` compactionTrimmedMessages=${prepared.trimmedCompactionMessages ?? 0})`,
       );
@@ -1893,7 +1953,11 @@ export class ChatGptBrowserWorker {
         let sentAt = Date.now();
         const latency = new ChatGptTurnLatencyDiagnostics(turn.traceId, sentAt);
         const visibleTrace = new ChatGptVisibleTraceTracker();
+        const markdownOwnership = new ChatGptMarkdownOwnershipTracker();
         const markdownBuffer = new ChatGptMarkdownBuffer();
+        let progressChars = 0;
+        let progressToolEpoch = -1;
+        const progressStatuses = new Set<string>();
         const checkpointStream = turn.captureLunaCheckpoint
           ? new ChatGptLunaCheckpointStream()
           : undefined;
@@ -1942,8 +2006,6 @@ export class ChatGptBrowserWorker {
         }
 
         await throwIfChatGptSessionFailureAlert(page);
-        await throwIfChatGptTerminalErrorAlert(responseTurn);
-
         if (mode.localTools && await resolveChatGptToolConfirmation(
           page,
           this.config.appName,
@@ -1956,11 +2018,38 @@ export class ChatGptBrowserWorker {
           continue;
         }
 
-        const snapshot = await this.responseDomSnapshot(responseTurn);
         const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
         const running = await stop.isVisible().catch(() => false);
+        const snapshot = await this.responseDomSnapshot(responseTurn, markdownOwnership, running);
+        await throwIfChatGptTerminalErrorAlert(
+          responseTurn,
+          snapshot.completionActionVisible && snapshot.visibleText.length > 0,
+        );
         if (running) sawRunning = true;
         if (snapshot.responsePresent) {
+          const currentProgressChars = snapshot.markdownRoots.reduce(
+            (total, root) => total + root.text.length,
+            0,
+          ) + snapshot.traceBlocks
+            .filter(block => block.kind === "commentary")
+            .reduce((total, block) => total + block.text.length, 0);
+          const currentToolEpoch = snapshot.markdownRoots.reduce(
+            (latest, root) => Math.max(latest, root.toolEpoch),
+            -1,
+          );
+          const newStatus = snapshot.traceBlocks
+            .filter(block => block.kind === "status")
+            .map(block => `${block.key ?? ""}:${block.text}`)
+            .find(status => !progressStatuses.has(status));
+          if (currentProgressChars > progressChars || currentToolEpoch > progressToolEpoch || newStatus) {
+            progressChars = Math.max(progressChars, currentProgressChars);
+            progressToolEpoch = Math.max(progressToolEpoch, currentToolEpoch);
+            if (newStatus) {
+              progressStatuses.add(newStatus);
+              if (progressStatuses.size > 512) progressStatuses.delete(progressStatuses.values().next().value!);
+            }
+            turn.onProgress?.();
+          }
           if (!capturedResponse) {
             capturedResponse = true;
             latency.responseVisible();
