@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { claudeBrowserTurnOptions } from "../src/adapters/chatgpt-web/claude-subagent";
-import { retainedConversationResumeRequest } from "../src/adapters/chatgpt-web/steering";
+import { retainedConversationResumeRequest, sessionForChatGptRequest } from "../src/adapters/chatgpt-web/steering";
+import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import type { CodexParsedRequest } from "../src/types";
 
 function request(clientMetadata: Record<string, unknown> = {}): CodexParsedRequest {
@@ -49,4 +50,45 @@ test("retained conversations send only the suffix after the latest assistant tur
   expect(retainedConversationResumeRequest(request())?.context.messages).toEqual([
     { role: "user", content: "new prompt", timestamp: 3 },
   ]);
+});
+
+test("completed Claude steering suppression follows a successful retained root session", async () => {
+  const sessions = new ChatGptTurnSessions();
+  let resolveFirst!: (answer: string) => void;
+  const firstBrowser = new Promise<string>(resolve => { resolveFirst = resolve; });
+  let starts = 0;
+  const start = () => ({
+    mode: "tools" as const,
+    browser: starts++ === 0 ? firstBrowser : new Promise<string>(() => {}),
+    token: Promise.resolve("turn-token"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel() {},
+  });
+  const setRevision = (parsed: CodexParsedRequest, text: string) => {
+    const body = parsed._rawBody as Record<string, unknown>;
+    body.input = [{
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text }],
+      internal_chat_message_metadata_passthrough: { turn_id: "turn-current" },
+    }];
+  };
+  const firstRequest = request({ claude_subagent: false, claude_retain_conversation: true });
+  setRevision(firstRequest, "initial prompt");
+  const first = await sessionForChatGptRequest(sessions, "claude-root", firstRequest, start);
+  first.queueSteering("Apply the retained guidance", true, "delivery-1");
+  first.acknowledgePendingClaudeSteering(1);
+  resolveFirst("completed answer");
+  await first.browserOutcome;
+
+  const secondRequest = request({ claude_subagent: false, claude_retain_conversation: true });
+  setRevision(secondRequest, "next prompt");
+  const latest = secondRequest.context.messages.at(-1);
+  if (latest?.role === "user") latest.content = "next prompt";
+  const second = await sessionForChatGptRequest(sessions, "claude-root", secondRequest, start);
+
+  expect(second).not.toBe(first);
+  expect(second.claudeSteeringSuppressionCount("Apply the retained guidance")).toBe(1);
+  sessions.clear();
 });

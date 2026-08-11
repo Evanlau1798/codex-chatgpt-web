@@ -33,7 +33,7 @@ export function completeChatGptToolResults(
     broker.completeTool(token, message.toolCallId, isBoundary ? withClaudeSteering(result, steering.text) : result);
     session.markResultDelivered(message.toolCallId);
     if (isBoundary) {
-      session.takePendingSteering(steering.count);
+      session.acknowledgePendingClaudeSteering(steering.count);
       console.info(`[chatgpt-web] delivered additive Claude steering prompts=${steering.count} boundary=tool_result`);
     }
   }

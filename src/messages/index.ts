@@ -18,7 +18,11 @@ import { compactClaudeEvents, compactClaudeStream } from "./compact";
 type AdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
 
 function parsedClaudeRequest(raw: unknown, req: Request, config: AppConfig) {
-  const translated = translateClaudeMessages(raw, req.headers);
+  const translated = translateClaudeMessages(
+    raw,
+    req.headers,
+    (threadId, instruction) => chatGptTurnSessions.claudeSteeringSuppressionCount(threadId, instruction),
+  );
   const parsed = parseRequest(translated.body);
   const route = requireChatGptWebModelRoute(parsed.modelId, config);
   parsed.modelId = route.backendModel;
@@ -60,6 +64,9 @@ export async function messagesRequest(
     request = parsedClaudeRequest(await readJsonRequestBody(req), req, config);
   } catch (error) {
     return anthropicError(error instanceof Error ? error.message : String(error));
+  }
+  if (request.translated.suppressedSteeringReplays > 0) {
+    console.info(`[chatgpt-web] suppressed acknowledged Claude queued-command replays count=${request.translated.suppressedSteeringReplays}`);
   }
 
   let inputTokens = 0;

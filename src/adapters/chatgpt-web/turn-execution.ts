@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import type { BrokerToolRequest } from "./turn-broker";
+import { ChatGptSteeringFeed, steeringFingerprint } from "./steering-feed";
 import {
   extractChatGptCompactionSourceRevision,
   extractChatGptTurnIdentity,
   extractChatGptTurnUserRevision,
 } from "./environment";
+export { ChatGptSteeringFeed } from "./steering-feed";
 
 export type ChatGptBrowserOutcome =
   | { type: "final"; answer: string }
@@ -60,7 +62,6 @@ export class ChatGptTraceFeed {
     });
   }
 }
-
 interface TextWaiter {
   resolve: () => void;
   reject: (error: Error) => void;
@@ -109,24 +110,6 @@ export class ChatGptTextFeed {
     });
   }
 }
-
-export class ChatGptSteeringFeed {
-  private readonly queued: string[] = [];
-
-  push(instruction: string): void {
-    this.queued.push(instruction);
-  }
-
-  peek(): { text: string; count: number } | undefined {
-    return this.queued.length === 0 ? undefined : { text: this.queued.join("\n\n"), count: this.queued.length };
-  }
-
-  take(count = this.queued.length): string | undefined {
-    if (this.queued.length === 0) return undefined;
-    return this.queued.splice(0, count).join("\n\n");
-  }
-}
-
 interface ChatGptTurnRuntimeBase {
   browser: Promise<string>;
   trace: ChatGptTraceFeed;
@@ -237,6 +220,7 @@ export class ChatGptTurnSession {
       .then(answer => ({ type: "final", answer }) as ChatGptBrowserOutcome)
       .catch(error => ({ type: "error", error: error instanceof Error ? error : new Error(String(error)) }) as ChatGptBrowserOutcome)
       .then(outcome => {
+      if (this.claudeRootThreadId) this.steering.settleClaude(outcome.type === "final");
       this.settledBrowserOutcome = outcome;
       return outcome;
     });
@@ -333,7 +317,7 @@ export class ChatGptTurnSession {
     }
     if (this.userRevision === revision) return undefined;
     this.userRevision = revision;
-    const hooked = this.hookedSteeringReplays.indexOf(createHash("sha256").update(steering).digest("hex"));
+    const hooked = this.hookedSteeringReplays.indexOf(steeringFingerprint(steering));
     if (hooked >= 0) {
       this.hookedSteeringReplays.splice(hooked, 1);
       return undefined;
@@ -353,11 +337,26 @@ export class ChatGptTurnSession {
       if (this.hookedSteeringEvents.length > 32) this.hookedSteeringEvents.shift();
     }
     if (hooked) {
-      this.hookedSteeringReplays.push(createHash("sha256").update(steering).digest("hex"));
+      this.hookedSteeringReplays.push(steeringFingerprint(steering));
       if (this.hookedSteeringReplays.length > 32) this.hookedSteeringReplays.shift();
     }
     this.steering.push(steering);
     return true;
+  }
+
+  acknowledgePendingClaudeSteering(count: number): string | undefined {
+    return this.steering.acknowledgeClaude(count);
+  }
+
+  claudeSteeringSuppressionCount(instruction: string): number {
+    return this.steering.claudeSuppressionCount(instruction);
+  }
+
+  completedClaudeSteeringFingerprints(): string[] {
+    return this.steering.completedClaudeFingerprints();
+  }
+  inheritCompletedClaudeSteering(fingerprints: string[]): void {
+    this.steering.inheritCompletedClaude(fingerprints);
   }
 
   clearOutstanding(): void {
@@ -462,6 +461,12 @@ export class ChatGptTurnSessions {
     return target.queueSteering(instruction, true, source?.deliveryId) ? "accepted" : "duplicate";
   }
 
+  claudeSteeringSuppressionCount(threadId: string, instruction: string): number {
+    this.prune();
+    const targets = [...this.entries.values()].filter(session => session.claudeRootThreadId === threadId);
+    return targets.length === 1 ? targets[0]!.claudeSteeringSuppressionCount(instruction) : 0;
+  }
+
   retireGroup(group: string): number {
     let retired = 0;
     for (const [key, session] of this.entries) {
@@ -476,14 +481,12 @@ export class ChatGptTurnSessions {
     this.entries.clear();
     return cancelled;
   }
-
   activeCount(): number {
     this.prune();
     let active = 0;
     for (const session of this.entries.values()) if (session.isActive()) active += 1;
     return active;
   }
-
   private prune(): void {
     const cutoff = Date.now() - this.ttlMs;
     for (const [key, session] of this.entries) {

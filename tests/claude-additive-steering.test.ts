@@ -12,9 +12,15 @@ import type { CodexToolResultMessage } from "../src/types";
 
 function claudeRootSession() {
   const steering = new ChatGptSteeringFeed();
+  let resolveBrowser!: (answer: string) => void;
+  let rejectBrowser!: (error: Error) => void;
+  const browser = new Promise<string>((resolve, reject) => {
+    resolveBrowser = resolve;
+    rejectBrowser = reject;
+  });
   const session = new ChatGptTurnSession({
     mode: "tools",
-    browser: new Promise<string>(() => {}),
+    browser,
     token: Promise.resolve("turn-token"),
     trace: new ChatGptTraceFeed(),
     text: new ChatGptTextFeed(),
@@ -25,7 +31,7 @@ function claudeRootSession() {
     { callId: "call-1", wireName: "exec_command", freeform: false },
     { callId: "call-2", wireName: "exec_command", freeform: false },
   ]);
-  return { session, steering };
+  return { session, steering, resolveBrowser, rejectBrowser };
 }
 
 function toolResult(callId: string, content: string): CodexToolResultMessage {
@@ -87,6 +93,34 @@ test("Claude steering remains queued when the boundary result cannot be delivere
   expect(session.outstanding().map(request => request.callId)).toEqual(["call-2"]);
 });
 
+test("Claude steering becomes suppressible only after Web submission and survives a successful turn", async () => {
+  const { session, resolveBrowser } = claudeRootSession();
+  session.queueSteering("Apply the new constraint", true, "delivery-1");
+  completeChatGptToolResults(session, { completeTool() {} }, "turn-token", [
+    toolResult("call-1", "first real result"),
+    toolResult("call-2", "second real result"),
+  ]);
+
+  expect(session.claudeSteeringSuppressionCount("Apply the new constraint")).toBe(1);
+  resolveBrowser("completed answer");
+  await session.browserOutcome;
+  expect(session.claudeSteeringSuppressionCount("Apply the new constraint")).toBe(1);
+});
+
+test("Claude steering submission remains available as fallback after a Web error", async () => {
+  const { session, rejectBrowser } = claudeRootSession();
+  session.queueSteering("Apply the new constraint", true, "delivery-1");
+  completeChatGptToolResults(session, { completeTool() {} }, "turn-token", [
+    toolResult("call-1", "first real result"),
+    toolResult("call-2", "second real result"),
+  ]);
+  expect(session.claudeSteeringSuppressionCount("Apply the new constraint")).toBe(1);
+
+  rejectBrowser(new Error("surface failed"));
+  await session.browserOutcome;
+  expect(session.claudeSteeringSuppressionCount("Apply the new constraint")).toBe(0);
+});
+
 test("Claude same-conversation continuation acknowledges steering only after submission", async () => {
   const steering = new ChatGptSteeringFeed();
   steering.push("Check the new constraint");
@@ -100,4 +134,5 @@ test("Claude same-conversation continuation acknowledges steering only after sub
   expect(steering.peek()?.text).toBe("Check the new constraint");
   pending.onSubmitted?.();
   expect(steering.peek()).toBeUndefined();
+  expect(steering.claudeSuppressionCount("Check the new constraint")).toBe(1);
 });

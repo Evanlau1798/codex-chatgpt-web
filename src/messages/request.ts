@@ -20,13 +20,13 @@ function textBlocks(value: unknown): string {
   }).join("\n");
 }
 
-function inputParts(content: unknown): Json[] {
-  if (typeof content === "string") return [{ type: "input_text", text: content }];
+function inputParts(content: unknown, includeText: (text: string) => boolean = () => true): Json[] {
+  if (typeof content === "string") return includeText(content) ? [{ type: "input_text", text: content }] : [];
   if (!Array.isArray(content)) return [];
   const parts: Json[] = [];
   for (const raw of content) {
     const block = object(raw, "message content block");
-    if (block.type === "text" && typeof block.text === "string") {
+    if (block.type === "text" && typeof block.text === "string" && includeText(block.text)) {
       parts.push({ type: "input_text", text: block.text });
     } else if (block.type === "image") {
       const source = object(block.source, "image source");
@@ -67,11 +67,11 @@ function assistantItems(content: unknown): Json[] {
   return items;
 }
 
-function userItems(content: unknown, turnId: string): Json[] {
+function userItems(content: unknown, turnId: string, includeText?: (text: string) => boolean): Json[] {
   const blocks = typeof content === "string" ? [{ type: "text", text: content }] : content;
   if (!Array.isArray(blocks)) return [];
   const items: Json[] = [];
-  const ordinary = inputParts(blocks);
+  const ordinary = inputParts(blocks, includeText);
   if (ordinary.length > 0) {
     items.push({
       type: "message",
@@ -150,11 +150,23 @@ export interface TranslatedClaudeRequest {
   requestedModel: string;
   stream: boolean;
   compact: boolean;
+  suppressedSteeringReplays: number;
   auxiliaryResponse?: string;
   body: Json;
 }
 
-export function translateClaudeMessages(raw: unknown, headers: Headers): TranslatedClaudeRequest {
+type ClaudeSteeringSuppressionCount = (threadId: string, instruction: string) => number;
+
+function claudeQueuedCommandInstruction(text: string): string | undefined {
+  const match = text.trim().match(/^<system-reminder>\r?\nThe user sent a new message while you were working:\r?\n([\s\S]*?)\r?\n\r?\nIMPORTANT: After completing your current task, you MUST address the user's message above\. Do not ignore it\.\r?\n<\/system-reminder>$/);
+  return match?.[1];
+}
+
+export function translateClaudeMessages(
+  raw: unknown,
+  headers: Headers,
+  suppressionCount?: ClaudeSteeringSuppressionCount,
+): TranslatedClaudeRequest {
   const request = object(raw, "request body");
   const discoveredModel = typeof request.model === "string"
     ? resolveClaudeGatewayModelId(request.model)
@@ -180,6 +192,17 @@ export function translateClaudeMessages(raw: unknown, headers: Headers): Transla
   const auxiliaryResponse = claudeTitleResponse(request, system);
   const root = workingDirectory(system);
   const input: Json[] = [];
+  const suppressedByInstruction = new Map<string, number>();
+  let suppressedSteeringReplays = 0;
+  const includeUserText = (text: string): boolean => {
+    const instruction = claudeQueuedCommandInstruction(text);
+    if (instruction === undefined || !suppressionCount) return true;
+    const used = suppressedByInstruction.get(instruction) ?? 0;
+    if (used >= suppressionCount(threadId, instruction)) return true;
+    suppressedByInstruction.set(instruction, used + 1);
+    suppressedSteeringReplays += 1;
+    return false;
+  };
   let latestUserOffset = -1;
   for (const rawMessage of request.messages) {
     const message = object(rawMessage, "message");
@@ -189,7 +212,7 @@ export function translateClaudeMessages(raw: unknown, headers: Headers): Transla
       if (content) input.push({ type: "message", role: "system", content: [{ type: "input_text", text: content }] });
     } else if (message.role === "user") {
       const start = input.length;
-      input.push(...userItems(message.content, turnId));
+      input.push(...userItems(message.content, turnId, includeUserText));
       if (input.slice(start).some(item => item.type === "message")) latestUserOffset = start;
     } else throw new Error("message role must be user or assistant");
   }
@@ -213,6 +236,7 @@ export function translateClaudeMessages(raw: unknown, headers: Headers): Transla
     requestedModel: request.model,
     stream: request.stream === true,
     compact,
+    suppressedSteeringReplays,
     ...(auxiliaryResponse ? { auxiliaryResponse } : {}),
     body: {
       model,

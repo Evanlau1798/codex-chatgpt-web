@@ -27,7 +27,7 @@ export function browserSteeringRetry(
     console.info(`[chatgpt-web] browser turn ${traceId} continued ${additive ? "additive Claude" : "native"} steering in the existing Web conversation`);
     const text = `${prompt}\n\nContinue the task in this same conversation. Treat this as the latest user instruction.`;
     if (pending && !additive) steering.take(pending.count);
-    return pending && additive ? { text, onSubmitted: () => steering.take(pending.count) } : text;
+    return pending && additive ? { text, onSubmitted: () => steering.acknowledgeClaude(pending.count) } : text;
   };
 }
 
@@ -49,8 +49,10 @@ export async function sessionForChatGptRequest(
   const steering = session.updateUserRevision(revision, text);
   if (!steering || (!session.settledOutcome() && (session.runtime.mode === "tools" || session.runtime.steering))) return session;
 
+  const completedClaudeSteering = session.completedClaudeSteeringFingerprints();
   await sessions.retireAndWait(key);
   session = sessions.getOrCreate(key, start, group, steeringId, claudeRootThreadId);
+  if (claudeRootThreadId) session.inheritCompletedClaudeSteering(completedClaudeSteering);
   session.updateUserRevision(revision, text);
   return session;
 }
