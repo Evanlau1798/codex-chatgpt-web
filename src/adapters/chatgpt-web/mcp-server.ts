@@ -16,6 +16,12 @@ const turnTokenSchema = z.string().min(20).max(256);
 const contextTokenSchema = z.string().min(20).max(256);
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 
+export function matchesToolInventoryQuery(haystack: string, query?: string): boolean {
+  const terms = query?.trim().toLowerCase().split(/[\s,]+/).filter(Boolean) ?? [];
+  const normalized = haystack.toLowerCase();
+  return terms.length === 0 || terms.some(term => normalized.includes(term));
+}
+
 function scopeHash(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
@@ -416,13 +422,12 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       }
       const claimed = await claimTurn("codex_tool_inventory", turn_token, extra);
       const bound = claimed.environment;
-      const needle = query?.trim().toLowerCase();
-      const matches = bound.tools.filter(tool => !needle || [
+      const matches = bound.tools.filter(tool => matchesToolInventoryQuery([
         wireName(tool),
         tool.name,
         tool.namespace ?? "",
         tool.description,
-      ].join("\n").toLowerCase().includes(needle));
+      ].join("\n"), query));
       const page = matches.slice(offset, offset + limit).map(tool => ({
         wire_name: wireName(tool),
         name: tool.name,
