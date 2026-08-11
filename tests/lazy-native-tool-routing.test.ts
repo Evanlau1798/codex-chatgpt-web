@@ -118,3 +118,49 @@ test("loads a deferred stateful tool into the same Native2 turn without an exec 
     rmSync(root, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("routes codex_exec through Claude Code Bash when Codex command tools are absent", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-claude-bash-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  const environment = {
+    cwd: process.cwd(),
+    roots: [process.cwd()],
+    writableRoots: [],
+    sandboxPolicy: { type: "readOnly" as const, networkAccess: false },
+    tools: [{
+      name: "Bash",
+      description: "Execute a command through Claude Code",
+      parameters: {
+        type: "object",
+        properties: { command: { type: "string" } },
+        required: ["command"],
+      },
+    }],
+  };
+  const token = await broker.register(environment, 60_000, "claude-bash-test");
+  const client = await clientFor(socketPath);
+
+  try {
+    const execution = client.callTool({
+      name: "codex_exec",
+      arguments: { turn_token: token, cmd: "pwd", workdir: process.cwd() },
+    });
+    const [request] = await broker.nextToolBatch(token);
+    expect(request).toMatchObject({
+      wireName: "Bash",
+      freeform: false,
+    });
+    const command = (request?.arguments as Record<string, unknown>).command;
+    expect(command).toBeString();
+    expect(command as string).toContain("cd --");
+    expect(command as string).toEndWith(" && pwd");
+    broker.completeTool(token, request!.callId, result({ stdout: process.cwd(), exitCode: 0 }));
+    expect((await execution).structuredContent).toEqual({ stdout: process.cwd(), exitCode: 0 });
+  } finally {
+    await client.close().catch(() => {});
+    broker.revoke(token);
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);

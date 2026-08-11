@@ -160,6 +160,14 @@ function execCommandGatewayProgram(
   ]);
 }
 
+function claudeBashCommand(cmd: string, workdir?: string): string {
+  if (!workdir) return cmd;
+  const quoted = /^[A-Za-z0-9_./:@%+=,-]+$/.test(workdir)
+    ? workdir
+    : `'${workdir.replaceAll("'", `'"'"'`)}'`;
+  return `cd -- ${quoted} && ${cmd}`;
+}
+
 export async function runChatGptMcpServer(options: { brokerSocketPath: string }): Promise<void> {
   const server = new McpServer({ name: "codex-native", version: "4.1.0" });
 
@@ -274,6 +282,13 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
         }
         const args = tool.name === "exec_command" ? execCommandArguments : shellCommandArguments;
         return invoke(claimed.bindingId, bound, tool, { arguments: args });
+      }
+      const claudeBash = exactTool(bound, "Bash");
+      if (claudeBash && !claudeBash.freeform) {
+        if (tty === true) throw new Error(ONE_SHOT_SHELL_TTY_ERROR);
+        return invoke(claimed.bindingId, bound, claudeBash, {
+          arguments: { command: claudeBashCommand(cmd, workdir) },
+        });
       }
       const gateway = execGateway(bound);
       if (!gateway) {
