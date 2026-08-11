@@ -185,6 +185,10 @@ describe("compact mode routing", () => {
         "其執行環境未提供 command/exec gateway，因此沒有實際輸出。",
         1,
       )).toContain("Advertised client tools are available");
+      expect(browserTurn?.retryPromptForAnswer?.(
+        "The read-only inspection action did not execute, so I do not have a native tool result to report.",
+        1,
+      )).toContain("Advertised client tools are available");
       expect(() => browserTurn?.retryPromptForAnswer?.(
         "重試後仍未提供 native command/exec 工具。",
         2,
