@@ -17,9 +17,18 @@ export function claudeAdditiveSteeringInstruction(steering: string): string {
 }
 
 function withClaudeSteering(result: BrokerToolResult, steering: string): BrokerToolResult {
+  const content = [...result.content];
+  const instruction = claudeAdditiveSteeringInstruction(steering);
+  for (let index = content.length - 1; index >= 0; index -= 1) {
+    const item = content[index];
+    if (!item || typeof item !== "object" || (item as { type?: unknown }).type !== "text"
+      || typeof (item as { text?: unknown }).text !== "string") continue;
+    content[index] = { ...item, text: `${(item as { text: string }).text}\n\n${instruction}` };
+    return { ...result, content };
+  }
   return {
     ...result,
-    content: [...result.content, { type: "text", text: claudeAdditiveSteeringInstruction(steering) }],
+    content: [...content, { type: "text", text: instruction }],
   };
 }
 
