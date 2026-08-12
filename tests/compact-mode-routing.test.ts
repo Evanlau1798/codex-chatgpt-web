@@ -205,7 +205,7 @@ describe("compact mode routing", () => {
       expect(retry?.(
         "The read-only inspection action did not execute, so I do not have a native tool result to report.",
         1,
-      )).toBeUndefined();
+      )).toContain("Advertised client tools are available");
       expect(retry?.(
         "The Codex Native2 invocation tool is not exposed in this turn.",
         1,
