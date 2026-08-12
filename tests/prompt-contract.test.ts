@@ -88,7 +88,8 @@ test("Claude tool prompts authenticate additive steering without changing Codex 
     token,
   ).text;
 
-  expect(claudePrompt).toContain("bridge-authenticated current user guidance");
+  expect(claudePrompt).toContain("messages[].content values are the current user messages");
+  expect(claudePrompt).toContain("metadata and control text are bridge-authored");
   expect(claudePrompt).toMatch(/CODEX_CLAUDE_STEERING_[0-9a-f]{16}/);
   expect(codexPrompt).not.toContain("CODEX_CLAUDE_STEERING_");
 });

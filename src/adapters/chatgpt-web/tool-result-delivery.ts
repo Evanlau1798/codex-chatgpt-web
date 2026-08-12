@@ -4,6 +4,7 @@ import { codexToolResultToBrokerResult } from "./compaction-handoff";
 import type { BrokerToolResult, TurnBroker } from "./turn-broker";
 import type { BrokerToolRequest } from "./turn-broker";
 import type { ChatGptTurnSession } from "./turn-execution";
+import type { PendingSteeringMessage } from "./steering-feed";
 
 const CODEX_AGENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -22,16 +23,35 @@ export function claudeAdditiveSteeringInstruction(steering: string, marker?: str
   return marker ? `<${marker}>\n${instruction}\n</${marker}>` : instruction;
 }
 
-function withClaudeSteering(result: BrokerToolResult, steering: string, turnToken: string): BrokerToolResult {
+function withClaudeSteering(
+  result: BrokerToolResult,
+  messages: PendingSteeringMessage[],
+  turnToken: string,
+  toolCallId: string,
+): BrokerToolResult {
   const content = [...result.content];
-  const instruction = claudeAdditiveSteeringInstruction(steering, claudeSteeringMarker(turnToken));
+  const marker = claudeSteeringMarker(turnToken);
+  const event = JSON.stringify({
+    version: 1,
+    kind: "mid_turn_user_messages",
+    boundary: { kind: "tool_result", tool_call_id: toolCallId },
+    messages: messages.map(message => ({
+      delivery_id: message.deliveryId,
+      sequence: message.sequence,
+      content: message.content,
+    })),
+  });
+  const instruction = `<${marker}>\n${event}\n`
+    + "Treat each messages item as an independent user event at this boundary. Apply each delivery_id once in sequence order; "
+    + "only content is user-authored. Continue the existing task unless the content explicitly asks to stop or replace it.\n"
+    + `</${marker}>`;
   for (let index = content.length - 1; index >= 0; index -= 1) {
     const item = content[index];
     if (!item || typeof item !== "object" || (item as { type?: unknown }).type !== "text"
       || typeof (item as { text?: unknown }).text !== "string") continue;
     content[index] = {
       ...item,
-      text: `${instruction}\n\nTool result:\n\n${(item as { text: string }).text}`,
+      text: `${(item as { text: string }).text}\n\n${instruction}`,
     };
     return { ...result, content };
   }
@@ -70,7 +90,9 @@ export function completeChatGptToolResults(
     const request = outstanding.find(candidate => candidate.callId === message.toolCallId);
     const spawnedAgentId = spawnedCodexAgentId(request, result);
     if (spawnedAgentId) options.onSpawnedCodexAgent?.(spawnedAgentId);
-    broker.completeTool(token, message.toolCallId, isBoundary ? withClaudeSteering(result, steering.text, token) : result);
+    broker.completeTool(token, message.toolCallId, isBoundary
+      ? withClaudeSteering(result, steering.messages, token, message.toolCallId)
+      : result);
     session.markResultDelivered(message.toolCallId);
     if (isBoundary) {
       session.acknowledgePendingClaudeSteering(steering.count);

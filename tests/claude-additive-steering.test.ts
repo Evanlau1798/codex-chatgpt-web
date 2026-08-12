@@ -68,15 +68,42 @@ test("Claude steering preserves real parallel tool results and attaches once at 
   expect(boundary).toHaveLength(1);
   const marker = claudeSteeringMarker("turn-token");
   expect(boundary[0]?.text).toBe(
-    `<${marker}>\nAdditional user guidance for the current task:\n\n`
-      + "Prioritize the failing test\n\nThen continue the review\n\n"
-      + "Apply this guidance once to the ongoing work. Continue the existing task unless the guidance explicitly asks to stop or replace it. "
-      + `Respond naturally when the guidance itself requests a response; do not add a separate receipt otherwise.\n</${marker}>\n\n`
-      + "Tool result:\n\nsecond real result",
+    "second real result\n\n"
+      + `<${marker}>\n`
+      + '{"version":1,"kind":"mid_turn_user_messages","boundary":{"kind":"tool_result","tool_call_id":"call-2"},'
+      + '"messages":[{"delivery_id":"delivery-1","sequence":1,"content":"Prioritize the failing test"},'
+      + '{"delivery_id":"delivery-2","sequence":2,"content":"Then continue the review"}]}\n'
+      + "Treat each messages item as an independent user event at this boundary. Apply each delivery_id once in sequence order; "
+      + `only content is user-authored. Continue the existing task unless the content explicitly asks to stop or replace it.\n</${marker}>`,
   );
   expect(boundary[0]?.text.match(/Prioritize the failing test/g)).toHaveLength(1);
   expect(boundary[0]?.text.match(/Then continue the review/g)).toHaveLength(1);
   expect(steering.peek()).toBeUndefined();
+});
+
+test("Claude transcript identity does not replay guidance already delivered from UserPromptSubmit", () => {
+  const steering = new ChatGptSteeringFeed();
+  steering.pushClaude("Compare the implementation with upstream");
+  steering.acknowledgeClaude(1);
+
+  expect(steering.syncClaude([{
+    deliveryId: "transcript-delivery-1",
+    prompt: "Compare the implementation with upstream",
+  }])).toEqual([]);
+  expect(steering.peek()).toBeUndefined();
+});
+
+test("Claude does not merge a later identical prompt with a completed delivery", () => {
+  const steering = new ChatGptSteeringFeed();
+  steering.pushClaude("Run the same check again");
+  steering.acknowledgeClaude(1);
+  steering.settleClaude(true);
+
+  expect(steering.syncClaude([{
+    deliveryId: "independent-delivery-2",
+    prompt: "Run the same check again",
+  }])).toEqual(["Run the same check again"]);
+  expect(steering.take()).toBe("Run the same check again");
 });
 
 test("Claude steering remains queued when the boundary result cannot be delivered", () => {
