@@ -52,3 +52,26 @@ test("manual compact uses the source conversation key and sends only a short ret
   expect(prepared.text).not.toContain("Inspect the project");
   prepared.release();
 });
+
+test("manual compact retries a malformed handoff on the retained conversation", async () => {
+  const namespace = createHash("sha256").update("retained-compact-retry").digest("hex");
+  const source = new ChatGptTurnSession({
+    mode: "read-only", browser: Promise.resolve("done"), trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(), usageInput: request(false), cancel: () => {},
+  });
+  let turn: BrowserTurn | undefined;
+  const worker = { run: async (value: BrowserTurn) => {
+    turn = value;
+    const retry = await value.retryPromptForAnswer?.("malformed checkpoint", 1);
+    expect(retry).toContain("required format");
+    return `${COMPACTION_HANDOFF_MARKER}\nRecovered retained handoff.`;
+  } };
+
+  const handoff = await requestRetainedCompactionHandoff(
+    worker as never, request(true), source, namespace,
+    { localToolsEnabled: false, solAvailable: true, proAvailable: true }, "trace_retry_123",
+  );
+
+  expect(handoff).toBe("Recovered retained handoff.");
+  expect(turn?.retryPromptForAnswer).toBeFunction();
+});

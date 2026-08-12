@@ -1,6 +1,6 @@
 import type { CodexParsedRequest } from "../../types";
 import type { ChatGptBrowserWorker } from "./browser-worker";
-import { HANDOFF_INSTRUCTION, parseCompactionHandoff, requestActiveCompactionHandoff } from "./compaction-handoff";
+import { HANDOFF_INSTRUCTION, parseCompactionHandoff, requestActiveCompactionHandoff, retryActiveCompactionHandoff } from "./compaction-handoff";
 import type { ChatGptWebCapabilities } from "./model";
 import type { TurnBroker } from "./turn-broker";
 import { chatGptConversationKey, type ChatGptTurnSession } from "./turn-execution";
@@ -28,6 +28,7 @@ export async function requestRetainedCompactionHandoff(
     requireRetainedConversation: true,
     abortSignal: signal,
     onTextDelta: () => {},
+    retryPromptForAnswer: retryActiveCompactionHandoff,
   });
   const handoff = parseCompactionHandoff(answer);
   console.info("[chatgpt-web] compact mode=beta path=retained_handoff"
