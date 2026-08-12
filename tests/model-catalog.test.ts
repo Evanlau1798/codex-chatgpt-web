@@ -69,6 +69,7 @@ describe("native /models augmentation", () => {
         display_name: route.displayName,
         tool_mode: null,
         use_responses_lite: false,
+        supports_search_tool: false,
         prefer_websockets: false,
         default_reasoning_level: route.codexEffort,
         supported_reasoning_levels: [{ effort: route.codexEffort, description: route.displayName }],
@@ -242,6 +243,7 @@ describe("native /models augmentation", () => {
     expect(web.every(model => model.shell_type === "shell_command")).toBe(true);
     expect(web.every(model => model.tool_mode === null)).toBe(true);
     expect(web.every(model => model.use_responses_lite === false)).toBe(true);
+    expect(web.every(model => model.supports_search_tool === false)).toBe(true);
     expect(web.every(model => model.prefer_websockets === false)).toBe(true);
   });
 

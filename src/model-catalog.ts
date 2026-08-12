@@ -99,6 +99,9 @@ export function buildChatGptWebModel(
     // Native2 can relay them back to the originating CLI.
     tool_mode: null,
     use_responses_lite: false,
+    // Codex defers collaboration tools behind its private tool-search catalog when this is true.
+    // The Web bridge can relay only tools present on the Responses wire, so keep V1 tools direct.
+    supports_search_tool: false,
     prefer_websockets: false,
     upgrade: null,
     default_reasoning_level: route.codexEffort,
