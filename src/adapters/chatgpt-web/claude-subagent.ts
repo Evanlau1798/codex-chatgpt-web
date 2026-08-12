@@ -12,7 +12,7 @@ interface ClaudeClientMetadata {
 
 const ENGLISH_PROGRESS = /^(?:(?:i(?:'m| am)|we(?:'re| are))\s+)?(?:gathering|reviewing|inspecting|checking|analyzing|analysing|reading|searching|running|verifying|investigating|examining|collecting|comparing|preparing|loading|exploring|scanning|evaluating)\b/i;
 const CHINESE_PROGRESS = /^(?:(?:我(?:會先|正在|正)?|正在|先)\s*)?(?:蒐集|收集|檢查|審查|分析|閱讀|搜尋|執行|驗證|調查|比較|準備|載入|掃描|評估)/;
-const MISSING_TOOL = /(?:沒有提供可用|沒有可用|未提供).{0,24}(?:原生命令|命令執行|command\/exec|native (?:shell|command|exec))|(?:did not advertise.{0,24})?native (?:shell|command|exec)(?: tool| gateway)?.{0,40}(?:unavailable|not available|timed out|native exec gateway)|(?:Codex Native2|codex_tool_(?:inventory|call)|Native2 invocation tool).{0,80}(?:not exposed|not available|unavailable|missing)|Codex Native(?:2)? (?:connection )?timed out/i;
+const MISSING_TOOL = /(?:沒有提供可用|沒有可用|未提供).{0,24}(?:原生命令|命令執行|command\/exec|native (?:shell|command|exec))|(?:did not advertise.{0,24})?native (?:shell|command|exec)(?: tool| gateway)?.{0,40}(?:unavailable|not available|timed out|native exec gateway)|(?:Codex Native2|codex_tool_(?:inventory|call)|Native2 invocation tool).{0,80}(?:not exposed|not available|unavailable|missing)|Codex Native(?:2)? (?:connection )?timed out|(?:unable|not able|could not|cannot).{0,120}(?:from|because|due to).{0,40}(?:available )?execution environment/i;
 
 function progressOnly(answer: string): boolean {
   const normalized = answer.trim();

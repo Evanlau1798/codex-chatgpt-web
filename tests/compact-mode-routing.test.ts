@@ -190,6 +190,10 @@ describe("compact mode routing", () => {
         1,
       )).toContain("Advertised client tools are available");
       expect(retry?.(
+        "I was not able to complete the inspection in the provided workspace from the available execution environment.",
+        1,
+      )).toContain("Advertised client tools are available");
+      expect(retry?.(
         "The deployment action did not execute because approval was not requested.",
         1,
       )).toBeUndefined();
