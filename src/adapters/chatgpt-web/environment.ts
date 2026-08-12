@@ -1,6 +1,6 @@
 import { isAbsolute, relative, resolve } from "node:path";
-import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
+import { isContextualCodexUserMessage } from "./contextual-user-message";
 import { withoutRecursiveChatGptConnectorTools } from "./native-tool-filter";
 
 export type ChatGptSandboxPolicy =
@@ -66,23 +66,6 @@ function itemTurnId(value: unknown): string | undefined {
   return typeof turnId === "string" ? turnId : undefined;
 }
 
-function rawMessageText(value: Record<string, unknown>): string {
-  if (typeof value.content === "string") return value.content;
-  if (!Array.isArray(value.content)) return "";
-  return value.content
-    .map(part => record(part)?.text)
-    .filter((text): text is string => typeof text === "string")
-    .join("\n");
-}
-
-function contextualUserMessage(value: Record<string, unknown>): boolean {
-  const text = rawMessageText(value).trim();
-  return /^<environment_context>[\s\S]*<\/environment_context>$/.test(text)
-    || /^<subagent_notification>[\s\S]*<\/subagent_notification>$/.test(text)
-    || isReadableCompactionSummaryText(text)
-    || text === OPAQUE_COMPACTION_NOTE;
-}
-
 /**
  * Return the latest real user instruction owned by the current native Codex turn.
  *
@@ -121,7 +104,7 @@ function latestChatGptTurnUserRevision(parsed: CodexParsedRequest): ChatGptTurnU
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = record(input[index]);
     if (item?.type !== "message" || item.role !== "user") continue;
-    if (contextualUserMessage(item)) continue;
+    if (isContextualCodexUserMessage(item.content)) continue;
     const messageTurnId = itemTurnId(item);
     const serverOwnedId = typeof item.id === "string" && item.id.length > 0;
     if (messageTurnId === undefined && !serverOwnedId) continue;

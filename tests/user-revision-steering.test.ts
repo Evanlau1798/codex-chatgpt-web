@@ -37,6 +37,67 @@ test("does not treat Codex subagent notifications as user steering", () => {
   expect(extractChatGptTurnUserText(parsed)).toBe("Apply this steering");
 });
 
+test("does not treat Codex contextual user fragments as steering", () => {
+  const turnId = "turn-root";
+  const message = (content: Array<{ type: "input_text"; text: string }>) => ({
+    type: "message",
+    role: "user",
+    content,
+    internal_chat_message_metadata_passthrough: { turn_id: turnId },
+  });
+  const parsed = {
+    modelId: "chatgpt-web/medium",
+    stream: true,
+    context: { systemPrompt: [], tools: [], messages: [] },
+    options: {},
+    _rawBody: {
+      prompt_cache_key: "thread-root",
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread-root", turn_id: turnId }),
+      },
+      input: [
+        message([{ type: "input_text", text: "Original task" }]),
+        message([
+          { type: "input_text", text: "<RECOMMENDED_PLUGINS>\nplugins\n</recommended_plugins>" },
+          { type: "input_text", text: "<turn_aborted>\ninterrupted\n</turn_aborted>" },
+        ]),
+        message([{ type: "input_text", text: "# AGENTS.md instructions for G:\\\n\n<INSTRUCTIONS>\nrules\n</INSTRUCTIONS>" }]),
+        message([{ type: "input_text", text: "<skill>\n<name>demo</name>\n</skill>" }]),
+        message([{ type: "input_text", text: "<user_shell_command>\n<command>pwd</command>\n</user_shell_command>" }]),
+        message([{ type: "input_text", text: "<codex_internal_context source=\"extension\">\nstate\n</codex_internal_context>" }]),
+      ],
+    },
+  } satisfies CodexParsedRequest;
+
+  expect(extractChatGptTurnUserText(parsed)).toBe("Original task");
+});
+
+test("keeps a user message that also contains a contextual fragment", () => {
+  const turnId = "turn-root";
+  const parsed = {
+    modelId: "chatgpt-web/medium",
+    stream: true,
+    context: { systemPrompt: [], tools: [], messages: [] },
+    options: {},
+    _rawBody: {
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread-root", turn_id: turnId }),
+      },
+      input: [{
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: "Actual user prompt" },
+          { type: "input_text", text: "<turn_aborted>interrupted</turn_aborted>" },
+        ],
+        internal_chat_message_metadata_passthrough: { turn_id: turnId },
+      }],
+    },
+  } satisfies CodexParsedRequest;
+
+  expect(extractChatGptTurnUserText(parsed)).toBe("Actual user prompt\n<turn_aborted>interrupted</turn_aborted>");
+});
+
 test("does not redeliver a native revision after a transient transcript rollback", () => {
   const sessions = new ChatGptTurnSessions();
   const steering = new ChatGptSteeringFeed();
