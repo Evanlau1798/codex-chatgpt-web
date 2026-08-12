@@ -75,3 +75,23 @@ test("manual compact retries a malformed handoff on the retained conversation", 
   expect(handoff).toBe("Recovered retained handoff.");
   expect(turn?.retryPromptForAnswer).toBeFunction();
 });
+
+test("manual compact preserves the connector identity of a tool-mode source", async () => {
+  const namespace = createHash("sha256").update("retained-compact-tools").digest("hex");
+  const source = new ChatGptTurnSession({
+    mode: "tools", token: Promise.resolve("turn_source_token"), browser: Promise.resolve("done"),
+    trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), usageInput: request(false), cancel: () => {},
+  });
+  let turn: BrowserTurn | undefined;
+  const worker = { run: async (value: BrowserTurn) => {
+    turn = value;
+    return `${COMPACTION_HANDOFF_MARKER}\nTool-mode retained handoff.`;
+  } };
+
+  await requestRetainedCompactionHandoff(
+    worker as never, request(true), source, namespace,
+    { localToolsEnabled: false, solAvailable: true, proAvailable: true }, "trace_tools_123",
+  );
+
+  expect(turn?.capabilities.localToolsEnabled).toBe(true);
+});

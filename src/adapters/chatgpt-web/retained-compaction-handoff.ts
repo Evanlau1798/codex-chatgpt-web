@@ -18,11 +18,14 @@ export async function requestRetainedCompactionHandoff(
   if (!usageInput) return undefined;
   const conversationKey = chatGptConversationKey(usageInput, namespace);
   if (!conversationKey) return undefined;
+  const retainedCapabilities = source.runtime.mode === "tools"
+    ? { ...capabilities, localToolsEnabled: true }
+    : capabilities;
   const answer = await worker.run({
     traceId,
     modelId: parsed.modelId,
     reasoning: parsed.options.reasoning,
-    capabilities,
+    capabilities: retainedCapabilities,
     prepare: async () => ({ text: HANDOFF_INSTRUCTION, images: [], release: () => {} }),
     conversationKey,
     requireRetainedConversation: true,
