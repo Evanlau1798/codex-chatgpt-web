@@ -184,7 +184,7 @@ test("oversize beta prompt maximizes a complete bootstrap and archives only omit
     const archive = await client.callTool({
       name: "codex_tool_inventory",
       arguments: {
-        turn_token: contextToken,
+        turn_token: turnToken,
         query: "__codex_context__:0",
         include_schema: false,
       },

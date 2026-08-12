@@ -406,7 +406,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     },
     async ({ turn_token, query, offset, limit, include_schema }, extra) => {
       const archiveMatch = /^__codex_context__:(\d+)$/.exec(query?.trim() ?? "");
-      if (turn_token.startsWith("context_") && archiveMatch) {
+      if (archiveMatch) {
         const requestedIndex = Number(archiveMatch[1]);
         const archive = await callTurnBroker<{
           context: string;

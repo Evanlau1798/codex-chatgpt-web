@@ -503,7 +503,10 @@ export class TurnBroker {
     if (request.method === "read_context") {
       const token = request.token;
       if (typeof token !== "string" || token.length === 0) throw new Error("context token is required");
-      const context = this.contexts.get(token);
+      const direct = this.contexts.get(token);
+      const inherited = direct ? [] : [...this.contexts.values()].filter(context => context.turnToken === token);
+      if (inherited.length > 1) throw new Error("turn token has multiple active context archives");
+      const context = direct ?? inherited[0];
       if (!context) throw new Error("context token is invalid, expired, or revoked");
       if (request.index === undefined && request.chunkChars === undefined) {
         context.complete = true;
