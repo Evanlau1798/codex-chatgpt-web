@@ -131,7 +131,7 @@ test("a long tool prompt reselects its connector before the single-edit retry", 
 test("terminal recovery is integrated as a same-conversation continuation", () => {
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
 
-  expect(source).toContain("chatGptTerminalErrorRetryPrompt(failure, responseAttempt, emittedText)");
+  expect(source).toContain("chatGptTerminalErrorRetryPrompt(failure, responseAttempt, answerBuffer.value())");
   expect(source).not.toContain("terminalErrorRetryUsed");
   expect(source).toContain('(candidate.innerText ?? candidate.textContent ?? "").trim().length');
   expect(source).toContain('(root.innerText ?? root.textContent ?? "").trim().length');
