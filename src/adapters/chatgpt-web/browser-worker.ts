@@ -305,6 +305,8 @@ export interface BrowserTurn {
   onHeartbeat?: () => void;
   /** Semantic DOM progress used only to reset the upstream silence timer. */
   onProgress?: () => void;
+  /** The current prompt is visible to ChatGPT and must never be replayed on another surface. */
+  onSubmitted?: () => void;
   /** Visible ChatGPT reasoning-summary step titles only; never hidden chain-of-thought. */
   onReasoningSummary?: (text: string, continuation?: boolean) => void;
   /** Stable visible ChatGPT prose between status/tool rows. */
@@ -723,8 +725,16 @@ export class ChatGptBrowserWorker {
   }
 
   private async runWithSurfaceRetry(turn: BrowserTurn): Promise<string> {
+    let submitted = false;
+    const submittedTurn: BrowserTurn = {
+      ...turn,
+      onSubmitted: () => {
+        submitted = true;
+        turn.onSubmitted?.();
+      },
+    };
     try {
-      return await this.runExclusive(turn);
+      return await this.runExclusive(submittedTurn);
     } catch (error) {
       const adapterOwnsRecovery = resolveChatGptWebModelMode(
         turn.modelId,
@@ -735,9 +745,10 @@ export class ChatGptBrowserWorker {
         || (error.code !== "chatgpt_surface_changed" && error.code !== "chatgpt_connector_unavailable")
         || !error.retryable
         || (adapterOwnsRecovery && error.code !== "chatgpt_connector_unavailable")
+        || submitted
         || turn.abortSignal?.aborted) throw error;
       console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying once on a fresh surface`);
-      return this.runExclusive(turn);
+      return this.runExclusive(submittedTurn);
     }
   }
 
@@ -1942,6 +1953,7 @@ export class ChatGptBrowserWorker {
           stageSignal,
         );
         console.info(`[chatgpt-web] browser turn ${turn.traceId} submission accepted evidence=${evidence}`);
+        turn.onSubmitted?.();
         retrySubmitted?.();
         retrySubmitted = undefined;
         });

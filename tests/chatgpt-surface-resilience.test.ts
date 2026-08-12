@@ -48,7 +48,7 @@ describe("ChatGPT Web surface resilience", () => {
     expect(chatGptSessionFailureDisposition(request)).toBe("replay");
   });
 
-  test("retries one fresh surface only before any text was streamed", async () => {
+  test("retries one fresh surface only before the prompt was submitted", async () => {
     const Worker = ChatGptBrowserWorker as unknown as new (config: object) => ChatGptBrowserWorker;
     const worker = new Worker({ browserHost: "managed-chrome" });
     let attempts = 0;
@@ -86,6 +86,25 @@ describe("ChatGPT Web surface resilience", () => {
       code: "chatgpt_surface_changed",
       retryable: false,
     });
+    expect(attempts).toBe(1);
+  });
+
+  test("does not retry a fresh surface after the prompt was submitted", async () => {
+    const Worker = ChatGptBrowserWorker as unknown as new (config: object) => ChatGptBrowserWorker;
+    const worker = new Worker({ browserHost: "managed-chrome" });
+    let attempts = 0;
+    (worker as unknown as { runExclusive: (turn: BrowserTurn) => Promise<string> }).runExclusive = async turn => {
+      attempts += 1;
+      turn.onSubmitted?.();
+      throw chatGptWebSurfaceError("surface changed", false);
+    };
+
+    await expect(worker.run({
+      traceId: "surface-submitted-no-retry",
+      modelId: CHATGPT_WEB_MODEL_ID,
+      reasoning: "high",
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+    } as BrowserTurn)).rejects.toMatchObject({ code: "chatgpt_surface_changed" });
     expect(attempts).toBe(1);
   });
 
