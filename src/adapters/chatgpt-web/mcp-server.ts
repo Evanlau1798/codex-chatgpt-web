@@ -22,6 +22,21 @@ export function matchesToolInventoryQuery(haystack: string, query?: string): boo
   return terms.length === 0 || terms.some(term => normalized.includes(term));
 }
 
+export function matchingToolInventory(tools: CodexTool[], query?: string): CodexTool[] {
+  const terms = query?.trim().toLowerCase().split(/[\s,]+/).filter(Boolean) ?? [];
+  return tools.map((tool, index) => ({
+    tool,
+    index,
+    exact: terms.some(term => term === wireName(tool).toLowerCase() || term === tool.name.toLowerCase()),
+  })).filter(({ tool }) => matchesToolInventoryQuery([
+    wireName(tool),
+    tool.name,
+    tool.namespace ?? "",
+    tool.description,
+  ].join("\n"), query)).sort((left, right) => Number(right.exact) - Number(left.exact) || left.index - right.index)
+    .map(({ tool }) => tool);
+}
+
 function scopeHash(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
@@ -422,12 +437,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       }
       const claimed = await claimTurn("codex_tool_inventory", turn_token, extra);
       const bound = claimed.environment;
-      const matches = bound.tools.filter(tool => matchesToolInventoryQuery([
-        wireName(tool),
-        tool.name,
-        tool.namespace ?? "",
-        tool.description,
-      ].join("\n"), query));
+      const matches = matchingToolInventory(bound.tools, query);
       const page = matches.slice(offset, offset + limit).map(tool => ({
         wire_name: wireName(tool),
         name: tool.name,
