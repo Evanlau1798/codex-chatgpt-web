@@ -160,6 +160,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.conversationKey ? { conversationKey: message.turn.conversationKey } : {}),
     abortSignal: abortController.signal,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
+    onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "submitted" }),
     onReasoningSummary: (text, continuation) => writeProtocol({
       type: "event",
       id: message.id,

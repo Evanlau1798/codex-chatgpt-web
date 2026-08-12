@@ -32,6 +32,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
         return;
       }
       send({ type: "event", id: message.id, event: "reasoning", text: "Reading project" });
+      send({ type: "event", id: message.id, event: "submitted" });
       send({ type: "event", id: message.id, event: "reasoning", text: " files", continuation: true });
       send({ type: "event", id: message.id, event: "text", text: "done" });
       if (message.turn.captureLunaCheckpoint) send({
@@ -80,6 +81,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
   const reasoning: Array<{ text: string; continuation: boolean }> = [];
   const deltas: string[] = [];
   const checkpoints: unknown[] = [];
+  let submitted = false;
   let released = false;
   let resumeReleased = false;
   const client = new LauncherBrowserHelperClient(config);
@@ -94,6 +96,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       retainConversation: true,
       conversationKey: "a".repeat(64),
       onReasoningSummary: (text, continuation) => reasoning.push({ text, continuation: continuation === true }),
+      onSubmitted: () => { submitted = true; },
       onTextDelta: text => deltas.push(text),
       captureLunaCheckpoint: true,
       onLunaCheckpoint: checkpoint => checkpoints.push(checkpoint),
@@ -104,6 +107,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       { text: " files", continuation: true },
     ]);
     expect(deltas).toEqual(["done"]);
+    expect(submitted).toBe(true);
     expect(checkpoints).toEqual([{
       answerHash: "a".repeat(64),
       checkpoint: {

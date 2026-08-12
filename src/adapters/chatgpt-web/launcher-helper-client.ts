@@ -19,7 +19,7 @@ interface PendingTurn {
 
 type HelperMessage =
   | { type: "ready" }
-  | { type: "event"; id: string; event: "heartbeat" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
+  | { type: "event"; id: string; event: "heartbeat" | "submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
   | { type: "event"; id: string; event: "answer" | "error_retry"; text: string; attempt: number }
   | { type: "event"; id: string; event: "luna_checkpoint"; checkpoint: ChatGptLunaCheckpoint; answerHash: string }
   | { type: "result"; id: string; text: string }
@@ -67,7 +67,7 @@ function parseHelperMessage(line: string): HelperMessage {
     }
     const text = message.text;
     const continuation = message.continuation;
-    if (!["heartbeat", "reasoning", "commentary", "text"].includes(String(event))) {
+    if (!["heartbeat", "submitted", "reasoning", "commentary", "text"].includes(String(event))) {
       throw new Error("Launcher browser helper emitted an unknown event");
     }
     if (text !== undefined && typeof text !== "string") {
@@ -79,7 +79,7 @@ function parseHelperMessage(line: string): HelperMessage {
     return {
       type: "event",
       id: message.id,
-      event: event as "heartbeat" | "reasoning" | "commentary" | "text",
+      event: event as "heartbeat" | "submitted" | "reasoning" | "commentary" | "text",
       ...(text !== undefined ? { text: text as string } : {}),
       ...(continuation !== undefined ? { continuation: continuation as boolean } : {}),
     };
@@ -321,6 +321,7 @@ export class LauncherBrowserHelperClient {
     if (!pending) return;
     if (message.type === "event") {
       if (message.event === "heartbeat") pending.turn.onHeartbeat?.();
+      else if (message.event === "submitted") pending.turn.onSubmitted?.();
       else if (message.event === "answer") {
         void Promise.resolve().then(() => pending.turn.retryPromptForAnswer?.(message.text, message.attempt))
           .then(prompt => this.send({ type: "answer_retry", id: message.id, ...(prompt ? { prompt } : {}) }))
