@@ -94,8 +94,16 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const text = new ChatGptTextFeed();
     const steering = captureLunaCheckpoint ? undefined : new ChatGptSteeringFeed();
     let activeToken: string | undefined;
+    let toolResultDelivered = false;
     const handoffPrompts = useNewCompactMode ? createActiveCompactionHandoffPrompts() : undefined;
-    const { retainConversation, retryPromptForAnswer: upstreamRetry } = claudeBrowserTurnOptions(checkpointInput.parsed, handoffPrompts?.retryPromptForAnswer);
+    const { retainConversation, retryPromptForAnswer: upstreamRetry } = claudeBrowserTurnOptions(
+      checkpointInput.parsed,
+      handoffPrompts?.retryPromptForAnswer,
+      {
+        nativeActionObserved: () => Boolean(activeToken && broker.isClaimed(activeToken)),
+        toolResultDelivered: () => toolResultDelivered,
+      },
+    );
     const conversationKey = retainConversation ? chatGptConversationKey(checkpointInput.parsed, executionNamespace) : undefined;
     const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
     const retryPromptForAnswer = parsed._compactionRequest || !steering ? upstreamRetry : browserSteeringRetry(steering, traceId, upstreamRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, Boolean(claudeRootSessionThreadId(checkpointInput.parsed)));
@@ -203,6 +211,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       text,
       ...(steering ? { steering } : {}),
       usageInput: checkpointInput.parsed,
+      onToolResultDelivered: () => { toolResultDelivered = true; },
       ...(handoffPrompts ? { requestHandoff: handoffPrompts.request } : {}),
       cancel: () => {
         browserAbort.abort();

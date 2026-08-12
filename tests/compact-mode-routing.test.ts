@@ -154,6 +154,8 @@ describe("compact mode routing", () => {
     });
     metadata.claude_subagent = true;
     metadata.claude_retain_conversation = false;
+    let nativeActionObserved = false;
+    let toolResultDelivered = false;
 
     try {
       await createChatGptWebAdapter(config).runTurn!(request, { headers: new Headers() }, () => {});
@@ -164,7 +166,11 @@ describe("compact mode routing", () => {
       expect(() => browserTurn?.retryPromptForAnswer?.("Gathering the same diff", 2)).toThrow(
         "subagent completed with only a progress update",
       );
-      const refusedRetry = browserTurn?.retryPromptForAnswer?.(
+      const retry = claudeBrowserTurnOptions(request, undefined, {
+        nativeActionObserved: () => nativeActionObserved,
+        toolResultDelivered: () => toolResultDelivered,
+      }).retryPromptForAnswer;
+      const refusedRetry = retry?.(
         "無法執行 git status：目前這個 Codex turn 沒有提供可用的原生命令執行工具。",
         1,
       );
@@ -173,23 +179,28 @@ describe("compact mode routing", () => {
       expect(refusedRetry).toContain("codex_tool_inventory");
       expect(refusedRetry).toContain('query "PowerShell"');
       expect(refusedRetry).toContain("Do not answer before that Native2 call returns");
-      expect(browserTurn?.retryPromptForAnswer?.(
+      expect(retry?.(
         "The native shell gateway is unavailable, so I could not run the command.",
         1,
       )).toContain("Advertised client tools are available");
-      expect(browserTurn?.retryPromptForAnswer?.(
+      expect(retry?.(
         "This Codex turn did not advertise a native command tool or the native exec gateway",
         1,
       )).toContain("Advertised client tools are available");
-      expect(browserTurn?.retryPromptForAnswer?.(
+      expect(retry?.(
         "其執行環境未提供 command/exec gateway，因此沒有實際輸出。",
         1,
       )).toContain("Advertised client tools are available");
-      expect(browserTurn?.retryPromptForAnswer?.(
+      expect(retry?.(
+        "The deployment action did not execute because approval was not requested.",
+        1,
+      )).toBeUndefined();
+      nativeActionObserved = true;
+      expect(retry?.(
         "The read-only inspection action did not execute, so I do not have a native tool result to report.",
         1,
       )).toContain("Advertised client tools are available");
-      expect(() => browserTurn?.retryPromptForAnswer?.(
+      expect(() => retry?.(
         "重試後仍未提供 native command/exec 工具。",
         2,
       )).toThrow("subagent refused advertised client tools");
@@ -201,8 +212,9 @@ describe("compact mode routing", () => {
         isError: true,
         timestamp: Date.now(),
       });
-      expect(browserTurn?.retryPromptForAnswer?.(
-        "Codex Native 連線逾時，因此無法執行命令。",
+      toolResultDelivered = true;
+      expect(retry?.(
+        "The native shell gateway is unavailable, so I could not run the command.",
         1,
       )).toBeUndefined();
       expect(browserTurn?.retryPromptForAnswer?.("No findings.", 1)).toBeUndefined();

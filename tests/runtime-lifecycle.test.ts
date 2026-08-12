@@ -57,3 +57,21 @@ test("tool surface recovery requires one complete unstreamed batch and runs only
   text.push("partial answer");
   expect(recoverableToolSurfaceResultCount(failure, session, requestWithResults(["call_1", "call_2"]), 0)).toBeUndefined();
 });
+
+test("tool result delivery updates the live browser runtime state", () => {
+  let delivered = false;
+  const session = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_test"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    onToolResultDelivered: () => { delivered = true; },
+    cancel: () => {},
+  });
+  session.setOutstanding([{ callId: "call_1", wireName: "Read", freeform: false, arguments: {} }]);
+
+  session.markResultDelivered("call_1");
+
+  expect(delivered).toBe(true);
+});

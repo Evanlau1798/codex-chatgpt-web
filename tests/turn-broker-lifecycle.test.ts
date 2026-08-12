@@ -146,6 +146,26 @@ test("turn broker tokens do not expire while their browser turn is still alive",
   }
 });
 
+test("turn broker exposes whether Native2 claimed the active turn", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-broker-claim-state-"));
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
+  try {
+    const token = await broker.register({
+      cwd: root,
+      roots: [root],
+      writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" },
+      tools: [],
+    });
+    expect(broker.isClaimed(token)).toBe(false);
+    await callTurnBroker(broker.socketPath, { method: "claim", token });
+    expect(broker.isClaimed(token)).toBe(true);
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("turn broker delivers steering once through the active tool loop", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-broker-steering-"));
   const socketPath = defaultBrokerEndpoint(root);

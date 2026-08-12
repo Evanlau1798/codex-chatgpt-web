@@ -121,6 +121,7 @@ interface ChatGptTurnRuntimeBase {
   usageInput?: CodexParsedRequest;
   steering?: ChatGptSteeringFeed;
   requestHandoff?: (instructionDelivered?: boolean) => void;
+  onToolResultDelivered?: () => void;
   cancel: () => void;
 }
 
@@ -274,6 +275,7 @@ export class ChatGptTurnSession {
   markResultDelivered(callId: string): void {
     if (!this.outstandingById.delete(callId)) throw new Error(`ChatGPT bridge tool result does not match an outstanding call: ${callId}`);
     this.deliveredResultIds.add(callId);
+    this.runtime.onToolResultDelivered?.();
     if (this.outstandingById.size === 0) {
       this.outstandingReasoning = [];
       this.outstandingPrelude = [];
