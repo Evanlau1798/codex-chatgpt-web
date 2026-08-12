@@ -33,6 +33,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
         return;
       }
       send({ type: "event", id: message.id, event: "reasoning", text: "Reading project" });
+      send({ type: "event", id: message.id, event: "prepared_selected", reused: true });
       send({ type: "event", id: message.id, event: "submitted" });
       send({ type: "event", id: message.id, event: "reasoning", text: " files", continuation: true });
       send({ type: "event", id: message.id, event: "text", text: "done" });
@@ -85,6 +86,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
   let submitted = false;
   let released = false;
   let resumeReleased = false;
+  let fullReleasedBeforeResult = false;
   const client = new LauncherBrowserHelperClient(config);
   try {
     const result = await client.run({
@@ -92,7 +94,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       modelId: "gpt-5.6-sol",
       reasoning: "high",
       capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
-      prepare: async () => ({ text: "inspect", images: [], release: () => { released = true; } }),
+      prepare: async () => ({ text: "inspect", images: [], release: () => { released = true; fullReleasedBeforeResult = true; } }),
       prepareResume: async () => ({ text: "continue", images: [], release: () => { resumeReleased = true; } }),
       retainConversation: true,
       requireRetainedConversation: true,
@@ -104,6 +106,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       onLunaCheckpoint: checkpoint => checkpoints.push(checkpoint),
     });
     expect(result).toBe("done");
+    expect(fullReleasedBeforeResult).toBe(true);
     expect(reasoning).toEqual([
       { text: "Reading project", continuation: false },
       { text: " files", continuation: true },

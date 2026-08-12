@@ -15,11 +15,13 @@ interface PendingTurn {
   reject: (error: Error) => void;
   abortListener?: () => void;
   sent?: boolean;
+  releaseUnselected?: (reused: boolean) => void;
 }
 
 type HelperMessage =
   | { type: "ready" }
   | { type: "event"; id: string; event: "heartbeat" | "submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
+  | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
   | { type: "event"; id: string; event: "answer" | "error_retry"; text: string; attempt: number }
   | { type: "event"; id: string; event: "luna_checkpoint"; checkpoint: ChatGptLunaCheckpoint; answerHash: string }
   | { type: "result"; id: string; text: string }
@@ -64,6 +66,10 @@ function parseHelperMessage(line: string): HelperMessage {
         checkpoint: parseChatGptLunaCheckpoint(message.checkpoint),
         answerHash: message.answerHash,
       };
+    }
+    if (event === "prepared_selected") {
+      if (typeof message.reused !== "boolean") throw new Error("Launcher browser helper prepared-selection event is invalid");
+      return { type: "event", id: message.id, event, reused: message.reused };
     }
     const text = message.text;
     const continuation = message.continuation;
@@ -157,7 +163,12 @@ export class LauncherBrowserHelperClient {
           rejectResult(new Error(`Duplicate launcher browser turn: ${turn.traceId}`));
           return;
         }
-        const pending: PendingTurn = { turn, resolve: resolveResult, reject: rejectResult };
+        const pending: PendingTurn = {
+          turn,
+          resolve: resolveResult,
+          reject: rejectResult,
+          releaseUnselected: reused => (reused ? prepared : resumePrepared)?.release(),
+        };
         this.pending.set(turn.traceId, pending);
         if (turn.abortSignal) {
           const abortListener = () => {
@@ -323,6 +334,10 @@ export class LauncherBrowserHelperClient {
     if (message.type === "event") {
       if (message.event === "heartbeat") pending.turn.onHeartbeat?.();
       else if (message.event === "submitted") pending.turn.onSubmitted?.();
+      else if (message.event === "prepared_selected") {
+        pending.releaseUnselected?.(message.reused);
+        pending.releaseUnselected = undefined;
+      }
       else if (message.event === "answer") {
         void Promise.resolve().then(() => pending.turn.retryPromptForAnswer?.(message.text, message.attempt))
           .then(prompt => this.send({ type: "answer_retry", id: message.id, ...(prompt ? { prompt } : {}) }))

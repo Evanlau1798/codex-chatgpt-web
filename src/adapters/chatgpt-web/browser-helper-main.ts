@@ -167,6 +167,7 @@ async function run(message: RunMessage): Promise<void> {
     abortSignal: abortController.signal,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
     onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "submitted" }),
+    onPreparedSelected: reused => writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused }),
     onReasoningSummary: (text, continuation) => writeProtocol({
       type: "event",
       id: message.id,

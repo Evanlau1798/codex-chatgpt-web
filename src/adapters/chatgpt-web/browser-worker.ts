@@ -309,6 +309,8 @@ export interface BrowserTurn {
   onProgress?: () => void;
   /** The current prompt is visible to ChatGPT and must never be replayed on another surface. */
   onSubmitted?: () => void;
+  /** Release the unselected full/resume transport after the launcher resolves the retained lease. */
+  onPreparedSelected?: (reused: boolean) => void;
   /** Visible ChatGPT reasoning-summary step titles only; never hidden chain-of-thought. */
   onReasoningSummary?: (text: string, continuation?: boolean) => void;
   /** Stable visible ChatGPT prose between status/tool rows. */
@@ -1780,6 +1782,7 @@ export class ChatGptBrowserWorker {
       if (turn.requireRetainedConversation && lease.reused !== true) {
         throw new Error("The retained ChatGPT conversation is no longer available");
       }
+      turn.onPreparedSelected?.(lease.reused === true);
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
       return await this.runBrowserTurn(
