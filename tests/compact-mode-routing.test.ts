@@ -481,4 +481,5 @@ describe("compact mode routing", () => {
       await broker.close();
     }
   });
+
 });

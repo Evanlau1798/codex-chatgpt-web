@@ -1396,6 +1396,16 @@ test("browser completion scopes its primary action evidence to ChatGPT's copy co
   expect(workerSource).not.toContain('root.querySelectorAll<HTMLElement>("button")');
 });
 
+test("retained-only turns fail before prompt preparation on a fresh launcher surface", () => {
+  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const lease = workerSource.indexOf("const surfaceId = lease.surfaceId");
+  const guard = workerSource.indexOf("turn.requireRetainedConversation && lease.reused !== true", lease);
+  const run = workerSource.indexOf("return await this.runBrowserTurn", guard);
+  expect(lease).toBeGreaterThan(-1);
+  expect(guard).toBeGreaterThan(lease);
+  expect(run).toBeGreaterThan(guard);
+});
+
 test("browser completion accepts a stable stopped generation before the delayed copy action", () => {
   const tracker = new ChatGptCompletionTracker(2_000);
   const stopped = {

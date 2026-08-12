@@ -13,7 +13,7 @@ const ACTIVE_HANDOFF_TIMEOUT_MESSAGE = "active browser handoff timed out";
 const ACTIVE_HANDOFF_IDLE_TIMEOUT_MS = 60_000;
 const ACTIVE_HANDOFF_ACTIVITY_POLL_MS = 1_000;
 
-const HANDOFF_INSTRUCTION = `Automatic Codex context compaction has started. Do not call any more tools.
+export const HANDOFF_INSTRUCTION = `Automatic Codex context compaction has started. Do not call any more tools.
 ${COMPACT_PROMPT}
 Return only the checkpoint summary. Start the response with exactly ${COMPACTION_HANDOFF_MARKER} on its own line.`;
 
@@ -109,7 +109,7 @@ export function canonicalizeCompactionHandoff(parsed: CodexParsedRequest, summar
   return `${summary.trimEnd()}\n\n${appendix}`;
 }
 
-function handoffSummary(answer: string): string | undefined {
+export function parseCompactionHandoff(answer: string): string | undefined {
   const normalized = answer.trim();
   const lineEnd = normalized.indexOf("\n");
   if (lineEnd < 0) return undefined;
@@ -120,7 +120,7 @@ function handoffSummary(answer: string): string | undefined {
 }
 
 export function retryActiveCompactionHandoff(answer: string, attempt: number): string | undefined {
-  if (handoffSummary(answer) || attempt >= ACTIVE_HANDOFF_ATTEMPTS) return undefined;
+  if (parseCompactionHandoff(answer) || attempt >= ACTIVE_HANDOFF_ATTEMPTS) return undefined;
   return `Your checkpoint response was rejected because it did not use the required format. Do not call tools.
 Retry the checkpoint summary now and start the response with exactly ${COMPACTION_HANDOFF_MARKER} on its own line.`;
 }
@@ -170,7 +170,7 @@ function assistantFinalText(parsed: CodexParsedRequest): string | undefined {
 
 export function recoverCompactionHandoff(parsed: CodexParsedRequest): string | undefined {
   const text = assistantFinalText(parsed);
-  return text ? handoffSummary(text) : undefined;
+  return text ? parseCompactionHandoff(text) : undefined;
 }
 
 function streamedHandoffBlock(answer: string): string | undefined {
@@ -184,7 +184,7 @@ function streamedHandoffBlock(answer: string): string | undefined {
 
 function streamedHandoffSummary(answer: string): string | undefined {
   const block = streamedHandoffBlock(answer);
-  return block ? handoffSummary(block) : undefined;
+  return block ? parseCompactionHandoff(block) : undefined;
 }
 
 function retryableBrowserFailure(error: unknown): boolean {
@@ -296,7 +296,7 @@ export async function requestActiveCompactionHandoff(
         : undefined;
       return recovered;
     }
-    const summary = handoffSummary(outcome.answer);
+    const summary = parseCompactionHandoff(outcome.answer);
     if (summary) session.setCompactionHandoff(summary);
     return summary;
   } catch (error) {

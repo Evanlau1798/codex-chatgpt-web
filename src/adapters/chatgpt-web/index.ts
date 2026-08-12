@@ -8,7 +8,7 @@ import { ChatGptWebAdapterError, chatGptSessionFailureDisposition } from "./adap
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { claudeBrowserTurnOptions, claudeRootSessionThreadId } from "./claude-subagent";
 import { prepareChatGptWebContext } from "./context-bootstrap";
-import { canonicalizeCompactionHandoff, codexToolResultsById, createActiveCompactionHandoffPrompts, recoverCompactionHandoff, requestActiveCompactionHandoff } from "./compaction-handoff";
+import { canonicalizeCompactionHandoff, codexToolResultsById, createActiveCompactionHandoffPrompts, recoverCompactionHandoff } from "./compaction-handoff";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { compileChatGptWebPrompt } from "./prompt";
@@ -23,7 +23,7 @@ import { browserSteeringRetry, deliverPendingChatGptSteering, retainedConversati
 import { completeChatGptToolResults } from "./tool-result-delivery";
 import { submittedBrowserFailure, submittedStallFailure } from "./submitted-turn";
 import { ChatGptLunaCheckpointStore, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint";
-
+import { requestCompactionHandoff } from "./retained-compaction-handoff";
 export function createChatGptWebAdapter(provider: CodexProviderConfig): ProviderAdapter {
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = TurnBroker.forSocket(brokerSocketPath(provider));
@@ -240,10 +240,10 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       if (parsed._compactionRequest) {
         const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
         if (useNewCompactMode) {
-          const sourceSession = chatGptTurnSessions.find(responseExecutionKey);
-          const activeHandoff = sourceSession
-            ? await requestActiveCompactionHandoff(parsed, sourceSession, broker, incoming.abortSignal, timeoutMs)
-            : undefined;
+          const sourceSession = chatGptTurnSessions.find(responseExecutionKey); const activeHandoff = sourceSession ? await requestCompactionHandoff(
+            worker, parsed, sourceSession, broker, executionNamespace, turnCapabilities,
+            createHash("sha256").update(`${responseExecutionKey}:handoff`).digest("hex").slice(0, 12), incoming.abortSignal, timeoutMs,
+          ) : undefined;
           const handoff = canonicalizeCompactionHandoff(
             parsed,
             activeHandoff ?? recoverCompactionHandoff(parsed) ?? "",

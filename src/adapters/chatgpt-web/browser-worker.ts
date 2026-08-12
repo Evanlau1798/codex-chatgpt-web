@@ -300,6 +300,8 @@ export interface BrowserTurn {
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   retainConversation?: boolean;
+  /** Fail closed unless launcher reused the matching retained conversation. */
+  requireRetainedConversation?: boolean;
   conversationKey?: string;
   abortSignal?: AbortSignal;
   onHeartbeat?: () => void;
@@ -1749,6 +1751,9 @@ export class ChatGptBrowserWorker {
     });
     const surfaceId = lease.surfaceId;
     if (!surfaceId) throw new Error("Launcher did not lease a browser tab for the ChatGPT turn");
+    if (turn.requireRetainedConversation && lease.reused !== true) {
+      throw new Error("The retained ChatGPT conversation is no longer available");
+    }
     let terminal: "completed" | "failed" | "aborted" = "completed";
     let terminalMessage: string | undefined;
     let originalError: unknown;

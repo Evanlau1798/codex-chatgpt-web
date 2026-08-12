@@ -24,6 +24,7 @@ interface RunMessage {
     prepared: CompiledChatGptWebPrompt;
     resumePrepared?: CompiledChatGptWebPrompt;
     retainConversation?: boolean;
+    requireRetainedConversation?: boolean;
     conversationKey?: string;
     captureLunaCheckpoint?: boolean;
   };
@@ -127,6 +128,10 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.retainConversation !== undefined && typeof message.turn.retainConversation !== "boolean") {
     throw new Error("Browser helper conversation retention flag is invalid");
   }
+  if (message.turn.requireRetainedConversation !== undefined
+    && typeof message.turn.requireRetainedConversation !== "boolean") {
+    throw new Error("browser helper retained-conversation requirement is invalid");
+  }
   if (message.turn.conversationKey !== undefined
     && !/^[a-f0-9]{64}$/.test(message.turn.conversationKey)) {
     throw new Error("Browser helper conversation key is invalid");
@@ -157,6 +162,7 @@ async function run(message: RunMessage): Promise<void> {
       prepareResume: async () => ({ ...message.turn.resumePrepared!, release: () => {} }),
     } : {}),
     ...(message.turn.retainConversation ? { retainConversation: true } : {}),
+    ...(message.turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     ...(message.turn.conversationKey ? { conversationKey: message.turn.conversationKey } : {}),
     abortSignal: abortController.signal,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
