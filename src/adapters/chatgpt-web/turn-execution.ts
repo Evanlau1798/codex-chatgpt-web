@@ -7,6 +7,7 @@ import {
   extractChatGptTurnIdentity,
   extractChatGptTurnUserRevision,
 } from "./environment";
+export { chatGptConversationKey } from "./conversation-key";
 export { ChatGptSteeringFeed } from "./steering-feed";
 
 export type ChatGptBrowserOutcome =
@@ -159,24 +160,6 @@ export function chatGptTurnExecutionKey(parsed: CodexParsedRequest): string {
     purpose: parsed._compactionRequest ? "compaction" : "response",
     ...(parsed._compactionRequest ? { revision: compactionInputRevision(parsed) } : {}),
   });
-}
-
-export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: string): string | undefined {
-  const identity = extractChatGptTurnIdentity(parsed);
-  if (!identity.threadId) return undefined;
-  const raw = parsed._rawBody as { input?: unknown[] } | undefined;
-  const compaction = raw?.input?.findLast(item => {
-    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
-    const type = (item as { type?: unknown }).type;
-    return type === "compaction" || type === "compaction_summary" || type === "context_compaction";
-  });
-  return createHash("sha256").update(JSON.stringify({
-    namespace,
-    threadId: identity.threadId,
-    modelId: parsed.modelId,
-    reasoning: parsed.options.reasoning,
-    compaction: compaction ?? null,
-  })).digest("hex");
 }
 
 export function chatGptTurnSteeringId(threadId: string, turnId: string): string {
