@@ -94,9 +94,10 @@ export function buildChatGptWebModel(
     // provider cannot decrypt that cross-backend payload, so every routed Web model must stay on
     // the native V1 surface where `message` and `fork_context` remain ordinary Codex context.
     multi_agent_version: "v1",
-    // Full mode must remain in Codex code mode so orchestration tools such as spawn_agent are
-    // registered; the bridge still relays the resulting client tools through Native2.
-    tool_mode: config.mode === "full" ? template.tool_mode : null,
+    // Codex code mode assumes OpenAI's backend owns command execution and therefore omits client
+    // tools from Responses requests. This local browser backend needs those tools on the wire so
+    // Native2 can relay them back to the originating CLI.
+    tool_mode: null,
     use_responses_lite: false,
     prefer_websockets: false,
     upgrade: null,
