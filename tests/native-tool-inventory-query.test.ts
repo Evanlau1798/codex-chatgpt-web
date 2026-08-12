@@ -1,14 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { matchingToolInventory, matchesToolInventoryQuery } from "../src/adapters/chatgpt-web/mcp-server";
+import { matchingToolInventory } from "../src/adapters/chatgpt-web/mcp-server";
 
-const glob = "Glob\nGlob\n\nFind files by pattern";
-const read = "Read\nRead\n\nRead a file";
+const tool = (name: string, description: string) => ({ name, description, parameters: {} });
 
 describe("Native2 tool inventory query", () => {
   test("matches any requested capability instead of treating the query as one phrase", () => {
-    expect(matchesToolInventoryQuery(glob, "Glob Read Agent")).toBe(true);
-    expect(matchesToolInventoryQuery(read, "Glob, Read, Agent")).toBe(true);
-    expect(matchesToolInventoryQuery(glob, "Edit Write")).toBe(false);
+    expect(matchingToolInventory([tool("Glob", "Find files by pattern")], "Glob Read Agent")).toHaveLength(1);
+    expect(matchingToolInventory([tool("Read", "Read a file")], "Glob, Read, Agent")).toHaveLength(1);
+    expect(matchingToolInventory([tool("Glob", "Find files by pattern")], "Edit Write")).toHaveLength(0);
   });
 
   test("keeps exact wire and tool names ahead of broad description matches", () => {

@@ -16,24 +16,19 @@ const turnTokenSchema = z.string().min(20).max(256);
 const contextTokenSchema = z.string().min(20).max(256);
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 
-export function matchesToolInventoryQuery(haystack: string, query?: string): boolean {
-  const terms = query?.trim().toLowerCase().split(/[\s,]+/).filter(Boolean) ?? [];
-  const normalized = haystack.toLowerCase();
-  return terms.length === 0 || terms.some(term => normalized.includes(term));
-}
-
 export function matchingToolInventory(tools: CodexTool[], query?: string): CodexTool[] {
   const terms = query?.trim().toLowerCase().split(/[\s,]+/).filter(Boolean) ?? [];
-  return tools.map((tool, index) => ({
-    tool,
-    index,
-    exact: terms.some(term => term === wireName(tool).toLowerCase() || term === tool.name.toLowerCase()),
-  })).filter(({ tool }) => matchesToolInventoryQuery([
-    wireName(tool),
-    tool.name,
-    tool.namespace ?? "",
-    tool.description,
-  ].join("\n"), query)).sort((left, right) => Number(right.exact) - Number(left.exact) || left.index - right.index)
+  return tools.map((tool, index) => {
+    const name = wireName(tool).toLowerCase();
+    const haystack = [name, tool.name, tool.namespace ?? "", tool.description].join("\n").toLowerCase();
+    return {
+      tool,
+      index,
+      exact: terms.some(term => term === name || term === tool.name.toLowerCase()),
+      matches: terms.length === 0 || terms.some(term => haystack.includes(term)),
+    };
+  }).filter(({ matches }) => matches)
+    .sort((left, right) => Number(right.exact) - Number(left.exact) || left.index - right.index)
     .map(({ tool }) => tool);
 }
 
