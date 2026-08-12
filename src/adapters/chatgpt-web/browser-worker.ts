@@ -1931,7 +1931,7 @@ export class ChatGptBrowserWorker {
         await settleChatGptUi();
         await diagnostics.capture(page, "send-ready");
         await throwIfChatGptSessionFailureAlert(page);
-        await sendButton.press("Enter");
+        await sendButton.click();
         const evidence = await this.waitForSubmissionAccepted(
           page,
           userTurns,

@@ -16,7 +16,8 @@ test("Codex context uses the owned CDP composer transport, never the operating-s
 test("completed prompts activate the scoped semantic send control", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   expect(workerSource).toContain('.getByTestId("send-button")');
-  expect(workerSource).toContain('await sendButton.press("Enter")');
+  expect(workerSource).toContain("await sendButton.click()");
+  expect(workerSource).not.toContain('await sendButton.press("Enter")');
   expect(workerSource).not.toContain('getByTestId("send-button").dispatchEvent("click")');
 });
 
