@@ -78,6 +78,7 @@ function rawMessageText(value: Record<string, unknown>): string {
 function contextualUserMessage(value: Record<string, unknown>): boolean {
   const text = rawMessageText(value).trim();
   return /^<environment_context>[\s\S]*<\/environment_context>$/.test(text)
+    || /^<subagent_notification>[\s\S]*<\/subagent_notification>$/.test(text)
     || isReadableCompactionSummaryText(text)
     || text === OPAQUE_COMPACTION_NOTE;
 }
