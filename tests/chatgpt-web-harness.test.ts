@@ -1455,6 +1455,42 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
+  test("a post-submit browser failure is replayed without resending the Web prompt", async () => {
+    const socketPath = brokerTestEndpoint(`cgw-h4-submitted-retry-${process.pid}-${Date.now()}`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web",
+      baseUrl: "browser://chatgpt-submitted-retry-test",
+      chatgptWeb: { brokerSocketPath: socketPath, localToolsEnabled: false, solAvailable: true, proAvailable: true },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run.bind(worker);
+    let browserStarts = 0;
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+      browserStarts += 1;
+      turn.onSubmitted?.();
+      throw new Error("ChatGPT browser turn stalled after submission");
+    };
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const events: AdapterEvent[] = [];
+        await createChatGptWebAdapter(provider).runTurn!(
+          rawWireRequest(environmentXml),
+          { headers: new Headers() },
+          event => events.push(event),
+        );
+        expect(events.at(-1)).toMatchObject({
+          type: "error",
+          code: "chatgpt_submitted_turn_failed",
+          retryable: false,
+        });
+      }
+      expect(browserStarts).toBe(1);
+    } finally {
+      (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      await TurnBroker.forSocket(socketPath).close();
+    }
+  });
+
   test("keeps a conversation key across Codex turns and rotates it after compaction", () => {
     const first = rawWireRequest(environmentXml);
     const next = structuredClone(first);

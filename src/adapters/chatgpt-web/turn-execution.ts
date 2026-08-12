@@ -122,9 +122,9 @@ interface ChatGptTurnRuntimeBase {
   steering?: ChatGptSteeringFeed;
   requestHandoff?: (instructionDelivered?: boolean) => void;
   onToolResultDelivered?: () => void;
+  submission?: { accepted: boolean };
   cancel: () => void;
 }
-
 export type ChatGptTurnRuntime =
   | (ChatGptTurnRuntimeBase & { mode: "tools"; token: Promise<string> })
   | (ChatGptTurnRuntimeBase & { mode: "read-only" });
@@ -224,8 +224,8 @@ export class ChatGptTurnSession {
       .catch(error => ({ type: "error", error: error instanceof Error ? error : new Error(String(error)) }) as ChatGptBrowserOutcome)
       .then(outcome => {
       if (this.claudeRootThreadId) this.steering.settleClaude(outcome.type === "final");
-      this.settledBrowserOutcome = outcome;
-      return outcome;
+      this.settledBrowserOutcome ??= outcome;
+      return this.settledBrowserOutcome;
     });
   }
 
@@ -251,7 +251,7 @@ export class ChatGptTurnSession {
   settledOutcome(): ChatGptBrowserOutcome | undefined {
     return this.settledBrowserOutcome;
   }
-
+  setTerminalError(error: Error): void { this.settledBrowserOutcome = { type: "error", error }; }
   isActive(): boolean {
     return this.settledBrowserOutcome === undefined;
   }

@@ -7,6 +7,8 @@
  */
 export const DEFAULT_STALL_TIMEOUT_SEC = 300;
 
+export class StallTimeoutError extends Error {}
+
 /**
  * Resolve the effective bridge stall deadline for a turn.
  * - unset / non-finite config → {@link DEFAULT_STALL_TIMEOUT_SEC}
@@ -21,7 +23,7 @@ export function resolveStallTimeoutSec(configuredSec: number | undefined): numbe
 
 export function withStallTimeout<T>(work: Promise<T>, timeoutMs = DEFAULT_STALL_TIMEOUT_SEC * 1000): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Upstream made no progress for ${timeoutMs}ms`)), timeoutMs);
+    const timer = setTimeout(() => reject(new StallTimeoutError(`Upstream made no progress for ${timeoutMs}ms`)), timeoutMs);
     work.then(
       value => { clearTimeout(timer); resolve(value); },
       error => { clearTimeout(timer); reject(error); },
