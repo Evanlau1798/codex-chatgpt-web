@@ -1751,9 +1751,6 @@ export class ChatGptBrowserWorker {
     });
     const surfaceId = lease.surfaceId;
     if (!surfaceId) throw new Error("Launcher did not lease a browser tab for the ChatGPT turn");
-    if (turn.requireRetainedConversation && lease.reused !== true) {
-      throw new Error("The retained ChatGPT conversation is no longer available");
-    }
     let terminal: "completed" | "failed" | "aborted" = "completed";
     let terminalMessage: string | undefined;
     let originalError: unknown;
@@ -1779,6 +1776,9 @@ export class ChatGptBrowserWorker {
       });
     };
     try {
+      if (turn.requireRetainedConversation && lease.reused !== true) {
+        throw new Error("The retained ChatGPT conversation is no longer available");
+      }
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
       return await this.runBrowserTurn(
