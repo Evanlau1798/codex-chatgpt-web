@@ -100,7 +100,6 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       checkpointInput.parsed,
       handoffPrompts?.retryPromptForAnswer,
       {
-        nativeActionObserved: () => Boolean(activeToken && broker.isClaimed(activeToken)),
         toolResultDelivered: () => toolResultDelivered,
       },
     );

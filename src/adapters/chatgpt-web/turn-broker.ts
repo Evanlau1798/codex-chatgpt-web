@@ -286,11 +286,6 @@ export class TurnBroker {
     }
   }
 
-  isClaimed(token: string): boolean {
-    this.prune();
-    return Boolean(this.channels.get(token)?.bindingId);
-  }
-
   requestSteering(token: string, instruction: string): "queued" | "delivered" {
     this.prune();
     const channel = this.channels.get(token);

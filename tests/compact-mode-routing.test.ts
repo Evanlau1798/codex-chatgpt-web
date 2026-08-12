@@ -154,7 +154,6 @@ describe("compact mode routing", () => {
     });
     metadata.claude_subagent = true;
     metadata.claude_retain_conversation = false;
-    let nativeActionObserved = false;
     let toolResultDelivered = false;
 
     try {
@@ -167,7 +166,6 @@ describe("compact mode routing", () => {
         "subagent completed with only a progress update",
       );
       const retry = claudeBrowserTurnOptions(request, undefined, {
-        nativeActionObserved: () => nativeActionObserved,
         toolResultDelivered: () => toolResultDelivered,
       }).retryPromptForAnswer;
       const refusedRetry = retry?.(
@@ -195,9 +193,16 @@ describe("compact mode routing", () => {
         "The deployment action did not execute because approval was not requested.",
         1,
       )).toBeUndefined();
-      nativeActionObserved = true;
+      expect(retry?.(
+        "The native Read tool invocation was blocked by OpenAI safety checks.",
+        1,
+      )).toBeUndefined();
       expect(retry?.(
         "The read-only inspection action did not execute, so I do not have a native tool result to report.",
+        1,
+      )).toBeUndefined();
+      expect(retry?.(
+        "The Codex Native2 invocation tool is not exposed in this turn.",
         1,
       )).toContain("Advertised client tools are available");
       expect(() => retry?.(
