@@ -79,6 +79,7 @@ import {
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
 import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "./adapter-error";
+import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import {
   ChatGptLunaCheckpointStream,
   type CapturedChatGptLunaCheckpoint,
@@ -1913,7 +1914,7 @@ export class ChatGptBrowserWorker {
         ));
       await diagnostics.capture(page, "effort-selection-complete");
       let finalText = "";
-      let emittedText = "";
+      const answerBuffer = new ChatGptAnswerBuffer();
       let responsePrompt = prepared.text;
       let retrySubmitted: (() => void) | undefined;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
@@ -1986,7 +1987,7 @@ export class ChatGptBrowserWorker {
         const emitMarkdownDelta = (delta: string): void => {
           const visible = checkpointStream ? checkpointStream.push(delta) : delta;
           if (visible) {
-            emittedText += visible;
+            answerBuffer.append(visible);
             turn.onTextDelta(visible);
           }
         };
@@ -1994,7 +1995,7 @@ export class ChatGptBrowserWorker {
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
         for (;;) {
         if (page.isClosed()) {
-          throw chatGptWebSurfaceError("ChatGPT browser tab was closed while the turn was active", emittedText.length > 0);
+          throw chatGptWebSurfaceError("ChatGPT browser tab was closed while the turn was active", answerBuffer.value().length > 0);
         }
         if (turn.abortSignal?.aborted) {
           const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
@@ -2012,7 +2013,7 @@ export class ChatGptBrowserWorker {
         if (!isTemporaryChatGptUrl(page.url())) {
           throw chatGptWebSurfaceError(
             `ChatGPT left the isolated Temporary Chat surface while the turn was active (${page.url()})`,
-            emittedText.length > 0,
+            answerBuffer.value().length > 0,
           );
         }
 
@@ -2090,7 +2091,7 @@ export class ChatGptBrowserWorker {
             currentText: snapshot.visibleText,
             completionActionVisible: snapshot.completionActionVisible,
           });
-          if (domError) throw chatGptWebSurfaceError(domError, emittedText.length > 0);
+          if (domError) throw chatGptWebSurfaceError(domError, answerBuffer.value().length > 0);
           if (completionTracker.update({
             responsePresent: snapshot.responsePresent,
             running,
@@ -2149,20 +2150,21 @@ export class ChatGptBrowserWorker {
             currentText: "",
             completionActionVisible: false,
           });
-          if (domError) throw chatGptWebSurfaceError(domError, emittedText.length > 0);
+          if (domError) throw chatGptWebSurfaceError(domError, answerBuffer.value().length > 0);
         }
           await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
         }
         } catch (error) {
           const failure = error instanceof Error ? error : new Error(String(error));
           if (failure instanceof ChatGptWebAdapterError && failure.retireSession) throw failure;
-          const retryPrompt = chatGptTerminalErrorRetryPrompt(failure, responseAttempt, emittedText)
+          const retryPrompt = chatGptTerminalErrorRetryPrompt(failure, responseAttempt, answerBuffer.value())
             ?? await turn.retryPromptForError?.(failure, responseAttempt);
           if (!retryPrompt) throw error;
           if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry browser failures");
           const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
           if (await stop.isVisible().catch(() => false)) await stop.press("Enter").catch(() => {});
           responsePrompt = retryPrompt;
+          answerBuffer.continueAfterError();
           retrySubmitted = undefined;
           const reason = failure instanceof ChatGptWebAdapterError
             ? `${failure.name}:${failure.code}`
@@ -2175,6 +2177,7 @@ export class ChatGptBrowserWorker {
         if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry their final answer");
         const retry = typeof retryPrompt === "string" ? { text: retryPrompt } : retryPrompt;
         responsePrompt = retry.text;
+        answerBuffer.retryReplacement();
         retrySubmitted = retry.onSubmitted;
         console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying final answer attempt=${responseAttempt + 1}`);
       }
@@ -2184,8 +2187,9 @@ export class ChatGptBrowserWorker {
         atomicWriteFile(this.config.storageStatePath, `${JSON.stringify(state)}\n`);
       }
       await diagnostics.capture(page, "turn-completed");
-      console.info(`[chatgpt-web] browser turn ${turn.traceId} completed (markdownChars=${emittedText.length})`);
-      return emittedText;
+      const answer = answerBuffer.value();
+      console.info(`[chatgpt-web] browser turn ${turn.traceId} completed (markdownChars=${answer.length})`);
+      return answer;
     } catch (error) {
       if (diagnosticPage && !diagnosticPage.isClosed()) {
         await diagnostics.capture(diagnosticPage, "turn-failed", error);
