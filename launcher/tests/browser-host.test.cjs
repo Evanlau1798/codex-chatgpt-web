@@ -1227,6 +1227,42 @@ test("a retained conversation is not reused for a different connector identity",
   assert.equal(retained.status, "ready");
 });
 
+test("a required retained conversation fails before creating a browser tab", () => {
+  const retained = {
+    id: "retained",
+    traceId: "trace_old",
+    status: "ready",
+    conversationKey: "conversation-a",
+    connectorIdentity: "Codex Native2",
+    connectorBound: true,
+  };
+  let created = false;
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    manualOperation: null,
+    turnTabs: new Map([[retained.id, retained]]),
+    createTurnTab: () => {
+      created = true;
+      throw new Error("must not create a replacement tab");
+    },
+  });
+
+  assert.throws(
+    () => BrowserHost.prototype.beginTurn.call(
+      fixture,
+      "trace_next",
+      false,
+      222,
+      true,
+      "missing-conversation",
+      "Codex Native2",
+      true,
+    ),
+    /retained ChatGPT conversation is no longer available/,
+  );
+  assert.equal(created, false);
+  assert.equal(retained.status, "ready");
+});
+
 test("ending one browser turn does not stop another running tab", async () => {
   let closedViews = 0;
   let removedViews = 0;

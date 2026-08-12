@@ -46,6 +46,7 @@ test("browser control server authenticates and owns turn visibility", async () =
         helperPid: process.pid,
         conversationKey: "a".repeat(64),
         connectorIdentity: "Codex Native2",
+        requireRetainedConversation: true,
       }),
     });
     assert.equal(start.status, 200);
@@ -78,7 +79,7 @@ test("browser control server authenticates and owns turn visibility", async () =
     });
     assert.equal(end.status, 200);
     assert.deepEqual(calls, [
-      ["start", "abcdef123456", true, process.pid, true, "a".repeat(64), "Codex Native2"],
+      ["start", "abcdef123456", true, process.pid, true, "a".repeat(64), "Codex Native2", true],
       ["heartbeat", "abcdef123456", process.pid],
       ["end", "abcdef123456", process.pid, "completed", true, undefined, true, true],
     ]);

@@ -1072,7 +1072,7 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  beginTurn(traceId, reveal, helperPid, interactionLocked = true, conversationKey, connectorIdentity) {
+  beginTurn(traceId, reveal, helperPid, interactionLocked = true, conversationKey, connectorIdentity, requireRetainedConversation = false) {
     if (this.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.manualOperation}`);
     }
@@ -1128,6 +1128,9 @@ class BrowserHost {
         reused,
         ...(existing.connectorBound === true ? { connectorBound: true } : {}),
       };
+    }
+    if (requireRetainedConversation) {
+      throw new Error("The retained ChatGPT conversation is no longer available");
     }
     const tab = this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity);
     this.selectedTabId = tab.id;

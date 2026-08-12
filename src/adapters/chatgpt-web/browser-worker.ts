@@ -1748,6 +1748,7 @@ export class ChatGptBrowserWorker {
       helperPid: process.pid,
       ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
       ...(localTools ? { connectorIdentity: this.config.appName } : {}),
+      ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     });
     const surfaceId = lease.surfaceId;
     if (!surfaceId) throw new Error("Launcher did not lease a browser tab for the ChatGPT turn");

@@ -277,6 +277,7 @@ export type LauncherTurnActivity =
       helperPid: number;
       conversationKey?: string;
       connectorIdentity?: string;
+      requireRetainedConversation?: boolean;
     }
   | { phase: "heartbeat"; traceId: string; helperPid: number }
   | {

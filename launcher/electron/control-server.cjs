@@ -147,6 +147,10 @@ class BrowserControlServer {
         && (typeof body.connectorIdentity !== "string" || !body.connectorIdentity.trim() || body.connectorIdentity.length > 80)) {
         throw new Error("connectorIdentity is invalid");
       }
+      if (body.requireRetainedConversation !== undefined
+        && typeof body.requireRetainedConversation !== "boolean") {
+        throw new Error("requireRetainedConversation is invalid");
+      }
       const preferences = this.getPreferences();
       if (request.url === "/v1/turn/start") {
         const lease = host.beginTurn(
@@ -156,6 +160,7 @@ class BrowserControlServer {
           preferences.lockBrowserDuringTurns !== false,
           body.conversationKey,
           body.connectorIdentity,
+          body.requireRetainedConversation === true,
         );
         this.logger.info("browser.turn_started", { traceId: body.traceId });
         writeJson(response, 200, { ok: true, ...lease });
