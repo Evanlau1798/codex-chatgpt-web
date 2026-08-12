@@ -83,7 +83,7 @@ export function claudeBrowserTurnOptions(
           .slice(0, 12);
         const advertised = advertisedNames.join(", ");
         return refusedTools
-          ? `Advertised client tools are available in this turn: ${advertised}. Call the attached Codex Native2 codex_tool_inventory now with one exact name at a time, for example query ${JSON.stringify(advertisedNames[0])}; never combine several names into one query. Use the current turn_token from codex_native_turn_binding, invoke the returned wire_name with codex_tool_call, and return the actual result. Do not answer before that Native2 call returns, and do not claim the native command or shell gateway is missing unless a tool invocation returns that concrete error.`
+          ? `Advertised client tools are available in this turn: ${advertised}. Call the exact advertised client tool directly through its attached shortcut. Only if that shortcut is absent, call Codex Native2 codex_tool_inventory with one exact name at a time, for example query ${JSON.stringify(advertisedNames[0])}; never combine several names into one query. Use the current turn_token from codex_native_turn_binding, invoke the returned wire_name with codex_tool_call, and return the actual result. Do not answer before the tool call returns, and do not claim the native command or shell gateway is missing unless a tool invocation returns that concrete error.`
           : "Your previous response was only a progress update, not the requested subagent result. Continue the task now, use tools as needed, and return the requested result or an explicit no-findings result. Do not finish with another plan or progress update.";
       }
     : undefined;
