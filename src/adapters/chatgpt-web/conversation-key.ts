@@ -25,10 +25,11 @@ function compactionEpoch(input: unknown[] | undefined): unknown {
 export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: string): string | undefined {
   const identity = extractChatGptTurnIdentity(parsed);
   if (!identity.threadId) return undefined;
-  const raw = parsed._rawBody as { input?: unknown[] } | undefined;
+  const raw = parsed._rawBody as { input?: unknown[]; client_metadata?: { claude_subagent?: unknown } } | undefined;
   return createHash("sha256").update(JSON.stringify({
     namespace,
     threadId: identity.threadId,
+    claudeAgent: raw?.client_metadata?.claude_subagent === true ? identity.turnId : null,
     modelId: parsed.modelId,
     reasoning: parsed.options.reasoning,
     compaction: compactionEpoch(raw?.input),

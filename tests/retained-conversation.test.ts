@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { claudeBrowserTurnOptions } from "../src/adapters/chatgpt-web/claude-subagent";
+import { chatGptConversationKey } from "../src/adapters/chatgpt-web/conversation-key";
 import { retainedConversationResumeRequest, sessionForChatGptRequest } from "../src/adapters/chatgpt-web/steering";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import type { CodexParsedRequest } from "../src/types";
@@ -45,7 +46,7 @@ test("trusted Codex root and subagent threads retain their Web conversation", ()
   expect(claudeBrowserTurnOptions(compact).retainConversation).toBeFalse();
 });
 
-test("Claude root retention remains opt-in while Claude subagents stay isolated", () => {
+test("Claude root and subagent retention remain opt-in", () => {
   expect(claudeBrowserTurnOptions(request({
     claude_subagent: false,
     claude_retain_conversation: true,
@@ -53,7 +54,26 @@ test("Claude root retention remains opt-in while Claude subagents stay isolated"
   expect(claudeBrowserTurnOptions(request({
     claude_subagent: true,
     claude_retain_conversation: true,
-  })).retainConversation).toBeFalse();
+  })).retainConversation).toBeTrue();
+});
+
+test("Claude subagent conversation keys include the stable agent identity", () => {
+  const root = request({ claude_subagent: false, claude_retain_conversation: true });
+  const child = request({
+    claude_subagent: true,
+    claude_retain_conversation: true,
+    "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread-retained", turn_id: "claude_child-a" }),
+  });
+  const sameChild = structuredClone(child);
+  const otherChild = request({
+    claude_subagent: true,
+    claude_retain_conversation: true,
+    "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread-retained", turn_id: "claude_child-b" }),
+  });
+
+  expect(chatGptConversationKey(child, "messages")).toBe(chatGptConversationKey(sameChild, "messages"));
+  expect(chatGptConversationKey(child, "messages")).not.toBe(chatGptConversationKey(root, "messages"));
+  expect(chatGptConversationKey(child, "messages")).not.toBe(chatGptConversationKey(otherChild, "messages"));
 });
 
 test("retained conversations send only the suffix after the latest assistant turn", () => {

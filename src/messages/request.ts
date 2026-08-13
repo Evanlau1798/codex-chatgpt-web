@@ -299,7 +299,7 @@ export function translateClaudeMessages(
         "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: turnId, request_kind: "turn", sandbox: "none", workspaces: { [root]: {} } }),
         claude_request_hash: createHash("sha256").update(JSON.stringify(request.messages)).digest("hex"),
         claude_subagent: subagent,
-        claude_retain_conversation: !auxiliaryResponse && headers.has("x-claude-code-session-id") && !subagent,
+        claude_retain_conversation: !auxiliaryResponse && headers.has("x-claude-code-session-id"),
       },
     },
   };
