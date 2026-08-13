@@ -14,7 +14,7 @@ import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebC
 import { compileChatGptWebPrompt } from "./prompt";
 import { brokerSocketPath, deferred, recoverableToolSurfaceResultCount, withAbort } from "./runtime-lifecycle";
 import { TurnBroker } from "./turn-broker";
-import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
+import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, chatGptTurnTraceId, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
 import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
@@ -276,7 +276,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       }
       const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
       await chatGptTurnSessions.waitForRetirement(executionKey);
-      const traceId = createHash("sha256").update(executionKey).digest("hex").slice(0, 12);
+      const traceId = chatGptTurnTraceId(parsed, executionNamespace);
       let session = await sessionForChatGptRequest(
         chatGptTurnSessions,
         executionKey,

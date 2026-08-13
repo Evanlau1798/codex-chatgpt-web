@@ -35,3 +35,14 @@ export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: st
     compaction: compactionEpoch(raw?.input),
   })).digest("hex");
 }
+
+export function chatGptTurnTraceId(parsed: CodexParsedRequest, namespace: string): string {
+  const identity = extractChatGptTurnIdentity(parsed);
+  if (!identity.turnId) throw new Error("ChatGPT web requires native Codex turn_id metadata for browser-session replay");
+  return createHash("sha256").update(JSON.stringify({
+    namespace,
+    threadId: identity.threadId,
+    turnId: identity.turnId,
+    conversationKey: chatGptConversationKey(parsed, namespace),
+  })).digest("hex").slice(0, 12);
+}

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chatGptConversationKey } from "../src/adapters/chatgpt-web/turn-execution";
+import { chatGptConversationKey, chatGptTurnTraceId } from "../src/adapters/chatgpt-web/turn-execution";
 import { SUMMARY_PREFIX } from "../src/responses/compaction";
 import type { CodexParsedRequest } from "../src/types";
 
@@ -30,4 +30,6 @@ test("v1 compact replacement rotates the Web conversation once and then remains 
 
   expect(chatGptConversationKey(compacted, "provider")).not.toBe(chatGptConversationKey(before, "provider"));
   expect(chatGptConversationKey(continued, "provider")).toBe(chatGptConversationKey(compacted, "provider"));
+  expect(chatGptTurnTraceId(compacted, "provider")).not.toBe(chatGptTurnTraceId(before, "provider"));
+  expect(chatGptTurnTraceId(continued, "provider")).toBe(chatGptTurnTraceId(compacted, "provider"));
 });

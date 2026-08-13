@@ -7,7 +7,7 @@ import {
   extractChatGptTurnIdentity,
   extractChatGptTurnUserRevision,
 } from "./environment";
-export { chatGptConversationKey } from "./conversation-key";
+export { chatGptConversationKey, chatGptTurnTraceId } from "./conversation-key";
 export { ChatGptSteeringFeed } from "./steering-feed";
 
 export type ChatGptBrowserOutcome =
