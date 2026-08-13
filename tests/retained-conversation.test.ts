@@ -134,3 +134,21 @@ test("active Claude root transcript revisions do not become duplicate steering",
   expect(session.peekPendingSteering()).toBeUndefined();
   sessions.clear();
 });
+
+test("groups Codex sessions by their trusted thread identity", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const parsed = request();
+  setRevision(parsed, "initial prompt");
+  let cancelled = 0;
+  await sessionForChatGptRequest(sessions, "codex-root", parsed, () => ({
+    mode: "tools" as const,
+    browser: new Promise<string>(() => {}),
+    token: Promise.resolve("turn-token"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel() { cancelled += 1; },
+  }));
+
+  expect(sessions.retireGroup("thread-retained")).toBe(1);
+  expect(cancelled).toBe(1);
+});

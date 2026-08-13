@@ -39,9 +39,9 @@ export async function sessionForChatGptRequest(
 ): Promise<ChatGptTurnSession> {
   const revision = JSON.stringify(extractChatGptTurnUserRevision(parsed));
   const text = extractChatGptTurnUserText(parsed) ?? "The user added a new instruction.";
-  const group = claudeBrowserSessionGroup(parsed);
-  const claudeRootThreadId = claudeRootSessionThreadId(parsed);
   const identity = extractChatGptTurnIdentity(parsed);
+  const group = claudeBrowserSessionGroup(parsed) ?? identity.threadId;
+  const claudeRootThreadId = claudeRootSessionThreadId(parsed);
   const steeringId = identity.threadId && identity.turnId
     ? chatGptTurnSteeringId(identity.threadId, identity.turnId)
     : undefined;

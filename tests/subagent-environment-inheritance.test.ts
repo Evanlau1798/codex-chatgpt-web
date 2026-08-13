@@ -67,3 +67,37 @@ test("does not inherit malformed, failed, or non-spawn tool results", () => {
     expect(inherited).toBe(0);
   }
 });
+
+test("retires a closed Codex agent before delivering its tool result", () => {
+  const childThreadId = "019ff0ff-1438-7a00-9aa2-0f1887d92a6c";
+  const session = new ChatGptTurnSession({
+    mode: "tools",
+    browser: new Promise<string>(() => {}),
+    token: Promise.resolve("turn-token"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  session.setOutstanding([{
+    callId: "call-close",
+    wireName: "multi_agent_v1__close_agent",
+    freeform: false,
+    arguments: { target: childThreadId },
+  }]);
+  const events: string[] = [];
+
+  completeChatGptToolResults(session, {
+    completeTool() { events.push("deliver"); },
+  }, "turn-token", [{
+    role: "toolResult",
+    toolCallId: "call-close",
+    toolName: "close_agent",
+    content: JSON.stringify({ previous_status: "running" }),
+    isError: false,
+    timestamp: 1,
+  }], {
+    onClosedCodexAgent(agentId) { events.push(`retire:${agentId}`); },
+  });
+
+  expect(events).toEqual([`retire:${childThreadId}`, "deliver"]);
+});

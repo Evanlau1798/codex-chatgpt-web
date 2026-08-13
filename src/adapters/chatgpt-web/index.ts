@@ -354,6 +354,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
               }
               completeChatGptToolResults(session, broker, turnToken, results, {
                 onSpawnedCodexAgent: childThreadId => inheritSpawnedCodexEnvironment(environmentStore, parsed, childThreadId),
+                onClosedCodexAgent: childThreadId => { chatGptTurnSessions.retireGroup(childThreadId); },
               });
             }
           } else if (session.outstanding().length > 0) {

@@ -10,6 +10,7 @@ const CODEX_AGENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 export interface ChatGptToolResultDeliveryOptions {
   onSpawnedCodexAgent?: (agentId: string) => void;
+  onClosedCodexAgent?: (agentId: string) => void;
 }
 
 export function claudeSteeringMarker(turnToken: string): string {
@@ -73,6 +74,15 @@ function spawnedCodexAgentId(
   return typeof agentId === "string" && CODEX_AGENT_ID.test(agentId) ? agentId : undefined;
 }
 
+function closedCodexAgentId(
+  request: BrokerToolRequest | undefined,
+  result: BrokerToolResult,
+): string | undefined {
+  if (request?.wireName !== "multi_agent_v1__close_agent" || result.isError) return undefined;
+  const target = request.arguments?.target;
+  return typeof target === "string" && CODEX_AGENT_ID.test(target) ? target : undefined;
+}
+
 export function completeChatGptToolResults(
   session: ChatGptTurnSession,
   broker: Pick<TurnBroker, "completeTool">,
@@ -91,6 +101,8 @@ export function completeChatGptToolResults(
     const request = outstanding.find(candidate => candidate.callId === message.toolCallId);
     const spawnedAgentId = spawnedCodexAgentId(request, result);
     if (spawnedAgentId) options.onSpawnedCodexAgent?.(spawnedAgentId);
+    const closedAgentId = closedCodexAgentId(request, result);
+    if (closedAgentId) options.onClosedCodexAgent?.(closedAgentId);
     broker.completeTool(token, message.toolCallId, isBoundary
       ? withClaudeSteering(result, steering.messages, token, message.toolCallId)
       : result);
