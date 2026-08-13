@@ -6,6 +6,7 @@ import { ChatGptWebAdapterError } from "./adapter-error";
 import type { ChatGptWebCapabilities } from "./model";
 import { createProcessLineWriter } from "./process-line-writer";
 import type { CompiledChatGptWebPrompt } from "./prompt";
+import type { ChatGptRetryPrompt } from "./steering";
 
 interface RunMessage {
   type: "run";
@@ -57,8 +58,11 @@ interface AnswerRetryMessage {
   type: "answer_retry";
   id: string;
   prompt?: string;
+  acknowledge?: boolean;
 }
-type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage | { type: "abort"; id: string } | { type: "shutdown" };
+type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage
+  | { type: "prepared_selected_ack"; id: string }
+  | { type: "abort"; id: string } | { type: "shutdown" };
 
 let outputFailure: Error | undefined;
 const handleOutputFailure = (error: Error): void => {
@@ -81,7 +85,8 @@ console.warn = diagnostic;
 console.error = diagnostic;
 
 const abortControllers = new Map<string, AbortController>();
-const answerRetryWaiters = new Map<string, (prompt?: string) => void>();
+const answerRetryWaiters = new Map<string, (prompt?: string | ChatGptRetryPrompt) => void>();
+const preparedSelectionWaiters = new Map<string, () => void>();
 let shuttingDown = false;
 let shutdownPromise: Promise<void> | undefined;
 
@@ -97,6 +102,8 @@ function requestShutdown(): Promise<void> {
   for (const controller of abortControllers.values()) controller.abort();
   for (const resolve of answerRetryWaiters.values()) resolve();
   answerRetryWaiters.clear();
+  for (const resolve of preparedSelectionWaiters.values()) resolve();
+  preparedSelectionWaiters.clear();
   input.close();
   void closeChatGptBrowserWorkers().then(
     () => {
@@ -167,7 +174,10 @@ async function run(message: RunMessage): Promise<void> {
     abortSignal: abortController.signal,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
     onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "submitted" }),
-    onPreparedSelected: reused => writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused }),
+    onPreparedSelected: reused => new Promise<void>(resolve => {
+      preparedSelectionWaiters.set(message.id, resolve);
+      writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused });
+    }),
     onReasoningSummary: (text, continuation) => writeProtocol({
       type: "event",
       id: message.id,
@@ -177,12 +187,12 @@ async function run(message: RunMessage): Promise<void> {
     }),
     onCommentary: (text, continuation) => writeProtocol({ type: "event", id: message.id, event: "commentary", text, ...(continuation ? { continuation: true } : {}) }),
     onTextDelta: text => writeProtocol({ type: "event", id: message.id, event: "text", text }),
-    retryPromptForAnswer: (text, attempt) => new Promise<string | undefined>(resolve => {
+    retryPromptForAnswer: (text, attempt) => new Promise(resolve => {
       answerRetryWaiters.set(message.id, resolve);
       writeProtocol({ type: "event", id: message.id, event: "answer", text, attempt });
     }),
     retryPromptForError: (error, attempt) => new Promise<string | undefined>(resolve => {
-      answerRetryWaiters.set(message.id, resolve);
+      answerRetryWaiters.set(message.id, prompt => resolve(typeof prompt === "string" ? prompt : prompt?.text));
       writeProtocol({ type: "event", id: message.id, event: "error_retry", text: error.message, attempt });
     }),
     ...(message.turn.captureLunaCheckpoint ? {
@@ -214,6 +224,7 @@ async function run(message: RunMessage): Promise<void> {
     });
   } finally {
     answerRetryWaiters.delete(message.id);
+    preparedSelectionWaiters.delete(message.id);
     abortControllers.delete(message.id);
   }
 }
@@ -284,11 +295,17 @@ input.on("line", line => {
     answerRetryWaiters.get(message.id)?.();
     answerRetryWaiters.delete(message.id);
     abortControllers.get(message.id)?.abort();
+  } else if (message.type === "prepared_selected_ack") {
+    preparedSelectionWaiters.get(message.id)?.();
+    preparedSelectionWaiters.delete(message.id);
   } else if (message.type === "answer_retry") {
     const resolve = answerRetryWaiters.get(message.id);
     if (resolve) {
       answerRetryWaiters.delete(message.id);
-      resolve(typeof message.prompt === "string" && message.prompt ? message.prompt : undefined);
+      const prompt = typeof message.prompt === "string" && message.prompt ? message.prompt : undefined;
+      resolve(prompt && message.acknowledge
+        ? { text: prompt, onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "retry_submitted" }) }
+        : prompt);
     }
   } else if (message.type === "shutdown") {
     void requestShutdown();

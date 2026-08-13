@@ -19,10 +19,35 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
   writeFileSync(helper, `
     const readline = require("node:readline").createInterface({ input: process.stdin });
     const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
+    let selected;
     send({ type: "ready" });
     readline.on("line", line => {
-      const message = JSON.parse(line);
+      let message = JSON.parse(line);
       if (message.type === "shutdown") process.exit(0);
+      if (message.type === "prepared_selected_ack") {
+        if (!selected || message.id !== selected.id) process.exit(2);
+        message = selected;
+        selected = undefined;
+        send({ type: "event", id: message.id, event: "submitted" });
+        send({ type: "event", id: message.id, event: "reasoning", text: " files", continuation: true });
+        send({ type: "event", id: message.id, event: "text", text: "done" });
+        if (message.turn.captureLunaCheckpoint) send({
+          type: "event",
+          id: message.id,
+          event: "luna_checkpoint",
+          answerHash: "a".repeat(64),
+          checkpoint: {
+            version: 1,
+            objective: "Finish the helper test.",
+            state: ["The answer streamed."],
+            evidence: ["The helper emitted a checkpoint event."],
+            decisions: [],
+            pending: [],
+          },
+        });
+        send({ type: "result", id: message.id, text: "done" });
+        return;
+      }
       if (message.type !== "run") return;
       if (message.turn.prepared.text !== "inspect"
         || message.turn.resumePrepared.text !== "continue"
@@ -34,24 +59,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       }
       send({ type: "event", id: message.id, event: "reasoning", text: "Reading project" });
       send({ type: "event", id: message.id, event: "prepared_selected", reused: true });
-      send({ type: "event", id: message.id, event: "submitted" });
-      send({ type: "event", id: message.id, event: "reasoning", text: " files", continuation: true });
-      send({ type: "event", id: message.id, event: "text", text: "done" });
-      if (message.turn.captureLunaCheckpoint) send({
-        type: "event",
-        id: message.id,
-        event: "luna_checkpoint",
-        answerHash: "a".repeat(64),
-        checkpoint: {
-          version: 1,
-          objective: "Finish the helper test.",
-          state: ["The answer streamed."],
-          evidence: ["The helper emitted a checkpoint event."],
-          decisions: [],
-          pending: [],
-        },
-      });
-      send({ type: "result", id: message.id, text: "done" });
+      selected = message;
     });
   `, { mode: 0o700 });
   const descriptorPath = join(root, "launcher.json");
@@ -338,4 +346,42 @@ test("launcher helper retries recoverable browser failures in the same turn", as
     id: "compact-retry-123",
     prompt: "retry checkpoint",
   }]);
+});
+
+test("launcher helper preserves retry submission acknowledgement across the process boundary", async () => {
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
+    storageStatePath: "/durable/unused-state.json", chromeExecutablePath: "/durable/unused-chrome",
+    turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
+  });
+  const sent: unknown[] = [];
+  let acknowledged = false;
+  const internal = client as unknown as {
+    child?: unknown;
+    pending: Map<string, { turn: BrowserTurn; resolve: (value: string) => void; reject: (error: Error) => void }>;
+    handleLine(child: unknown, line: string): void;
+    send(message: unknown): Promise<void>;
+  };
+  const child = {};
+  internal.child = child;
+  internal.send = async message => { sent.push(message); };
+  internal.pending.set("steering-retry-123", {
+    turn: {
+      traceId: "steering-retry-123", modelId: "chatgpt-web/medium",
+      capabilities: { localToolsEnabled: true, solAvailable: true, proAvailable: false },
+      prepare: async () => ({ text: "inspect", images: [], release() {} }), onTextDelta() {},
+      retryPromptForAnswer: () => ({ text: "apply steering", onSubmitted: () => { acknowledged = true; } }),
+    },
+    resolve() {}, reject() {},
+  });
+
+  internal.handleLine(child, JSON.stringify({
+    type: "event", id: "steering-retry-123", event: "answer", text: "initial answer", attempt: 1,
+  }));
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  expect(sent).toEqual([{ type: "answer_retry", id: "steering-retry-123", prompt: "apply steering", acknowledge: true }]);
+  expect(acknowledged).toBe(false);
+  internal.handleLine(child, JSON.stringify({ type: "event", id: "steering-retry-123", event: "retry_submitted" }));
+  expect(acknowledged).toBe(true);
 });

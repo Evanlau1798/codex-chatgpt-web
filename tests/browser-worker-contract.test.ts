@@ -205,6 +205,11 @@ test("browser stage timeout aborts late page acquisition", async () => {
   expect(acquisitionAborted).toBeTrue();
 });
 
+test("browser send stage allows slow retained composers to settle", () => {
+  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  expect(workerSource).toContain("send: 60_000");
+});
+
 test("browser stage aborts immediately when the owning turn is cancelled", async () => {
   const owner = new AbortController();
   let stageAborted = false;

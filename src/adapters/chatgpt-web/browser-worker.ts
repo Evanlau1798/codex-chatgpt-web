@@ -279,7 +279,7 @@ const browserStageTimeouts = {
   effortSelection: 120_000,
   promptAttachment: 60_000,
   fileAttachment: 120_000,
-  send: 20_000,
+  send: 60_000,
 } as const;
 
 /**
@@ -311,7 +311,7 @@ export interface BrowserTurn {
   /** The current prompt is visible to ChatGPT and must never be replayed on another surface. */
   onSubmitted?: () => void;
   /** Release the unselected full/resume transport after the launcher resolves the retained lease. */
-  onPreparedSelected?: (reused: boolean) => void;
+  onPreparedSelected?: (reused: boolean) => void | Promise<void>;
   /** Visible ChatGPT reasoning-summary step titles only; never hidden chain-of-thought. */
   onReasoningSummary?: (text: string, continuation?: boolean) => void;
   /** Stable visible ChatGPT prose between status/tool rows. */
@@ -1783,7 +1783,7 @@ export class ChatGptBrowserWorker {
       if (turn.requireRetainedConversation && lease.reused !== true) {
         throw new Error("The retained ChatGPT conversation is no longer available");
       }
-      turn.onPreparedSelected?.(lease.reused === true);
+      await turn.onPreparedSelected?.(lease.reused === true);
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
       return await this.runBrowserTurn(
@@ -1988,7 +1988,8 @@ export class ChatGptBrowserWorker {
           const visible = checkpointStream ? checkpointStream.push(delta) : delta;
           if (visible) {
             answerBuffer.append(visible);
-            turn.onTextDelta(visible);
+            const deliverable = answerBuffer.takeDeliverable(!turn.retryPromptForAnswer);
+            if (deliverable) turn.onTextDelta(deliverable);
           }
         };
         const completionTracker = new ChatGptCompletionTracker();
@@ -2173,7 +2174,11 @@ export class ChatGptBrowserWorker {
           continue;
         }
         const retryPrompt = await turn.retryPromptForAnswer?.(finalText, responseAttempt);
-        if (!retryPrompt) break;
+        if (!retryPrompt) {
+          const deliverable = answerBuffer.takeDeliverable(true);
+          if (deliverable) turn.onTextDelta(deliverable);
+          break;
+        }
         if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry their final answer");
         const retry = typeof retryPrompt === "string" ? { text: retryPrompt } : retryPrompt;
         responsePrompt = retry.text;
