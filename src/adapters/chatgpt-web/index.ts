@@ -197,7 +197,9 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         onLunaCheckpoint: captureCheckpoint,
       } : {}),
     }));
-    void browser.catch(() => activeToken && broker.revoke(activeToken));
+    // Let an active runTurn observe the authoritative browser outcome before revoking its broker
+    // waiter. Detached browser failures still release the token on the next event-loop turn.
+    void browser.catch(() => setTimeout(() => activeToken && broker.revoke(activeToken), 0));
     void browser.catch(error => {
       if (!tokenSettled) {
         tokenSettled = true;

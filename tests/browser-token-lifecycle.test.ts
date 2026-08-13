@@ -88,3 +88,35 @@ test("a failed browser surface revokes an outstanding native tool invocation wit
     await broker.close();
   }
 }, 10_000);
+
+test("a browser failure remains the authoritative turn error while its token is revoked", async () => {
+  const socketPath = process.platform === "win32"
+    ? defaultBrokerEndpoint(join(tmpdir(), `cgw-browser-error-${process.pid}-${Date.now()}`), "win32")
+    : join(root, "browser-error.sock");
+  const provider: CodexProviderConfig = {
+    adapter: "chatgpt-web",
+    baseUrl: "browser://chatgpt-error-authority-test",
+    chatgptWeb: { brokerSocketPath: socketPath, localToolsEnabled: true, solAvailable: true, proAvailable: true },
+  };
+  const broker = TurnBroker.forSocket(socketPath);
+  const worker = ChatGptBrowserWorker.forProvider(provider);
+  const originalRun = worker.run.bind(worker);
+  let failSurface!: (error: Error) => void;
+  const surfaceFailure = new Promise<never>((_resolve, reject) => { failSurface = reject; });
+
+  (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+    const prepared = await turn.prepare();
+    try { return await surfaceFailure; }
+    finally { prepared.release(); }
+  };
+
+  try {
+    const running = createChatGptWebAdapter(provider).runTurn!(request(), { headers: new Headers() }, () => {});
+    await Bun.sleep(10);
+    failSurface(new Error("browser surface closed"));
+    await expect(running).rejects.toThrow("browser surface closed");
+  } finally {
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+    await broker.close();
+  }
+}, 10_000);
