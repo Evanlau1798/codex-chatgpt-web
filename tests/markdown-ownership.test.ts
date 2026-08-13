@@ -82,6 +82,17 @@ describe("ChatGPT Markdown phase ownership", () => {
     ]);
   });
 
+  test("reconnects a replaced commentary node that remounts from a shorter prefix", () => {
+    const tracker = new ChatGptMarkdownOwnershipTracker();
+    tracker.observe([root("node-1", "commentary", "ROUND_2_START\n\n上一輪已完成", 5)]);
+    tracker.observe([]);
+
+    expect(tracker.observe([root("node-2", "commentary", "ROUND_2_START", 5)])
+      .commentaryBlocks.map(block => block.text)).toEqual(["ROUND\\_2\\_START"]);
+    expect(tracker.observe([root("node-2", "commentary", "ROUND_2_START\n\n上一輪已完成新的範圍", 5)])
+      .commentaryBlocks.map(block => block.text)).toEqual(["ROUND\\_2\\_START 上一輪已完成新的範圍"]);
+  });
+
   test("coalesces simultaneous append-only commentary roots into the longest version", () => {
     const tracker = new ChatGptMarkdownOwnershipTracker();
     const observed = tracker.observe([

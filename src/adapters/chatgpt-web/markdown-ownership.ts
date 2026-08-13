@@ -55,8 +55,11 @@ export class ChatGptMarkdownOwnershipTracker {
             && root.toolEpoch === snapshot.toolEpoch
             && root.lastSeenObservation >= observation - 2
             && root.text.length > 0
-            && snapshot.text.length > root.text.length
-            && snapshot.text.startsWith(root.text))
+            && snapshot.text.length !== root.text.length
+            && (snapshot.text.startsWith(root.text)
+              || (!root.visible
+                && root.lastSeenObservation < observation
+                && root.text.startsWith(snapshot.text))))
           .sort((left, right) => right.text.length - left.text.length || right.order - left.order)
           .at(0)?.id;
       }
