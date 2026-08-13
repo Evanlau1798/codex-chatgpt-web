@@ -36,7 +36,7 @@ function hasUnclosedStrongMarkdown(text: string): boolean {
 }
 
 function hasUnrenderedMarkdown(text: string): boolean {
-  return /\\[*_`~[\]]/.test(text) || hasUnclosedStrongMarkdown(text);
+  return /\\[*`~[\]]/.test(text) || hasUnclosedStrongMarkdown(text);
 }
 
 function coalescedCommentary(blocks: ChatGptVisibleTraceBlock[]): ChatGptVisibleTraceBlock | undefined {
