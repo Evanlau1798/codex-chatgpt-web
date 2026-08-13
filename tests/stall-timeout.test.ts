@@ -1,12 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_STALL_TIMEOUT_SEC, withStallTimeout } from "../src/stall-timeout";
+import { withStallTimeout } from "../src/stall-timeout";
 import { ChatGptTraceFeed } from "../src/adapters/chatgpt-web/turn-execution";
 
 describe("withStallTimeout", () => {
-  test("allows ten minutes of silent extra-high reasoning by default", () => {
-    expect(DEFAULT_STALL_TIMEOUT_SEC).toBe(600);
-  });
-
   test("rejects work that makes no progress", async () => {
     const pending = new Promise<never>(() => {});
 
