@@ -72,7 +72,7 @@ test("does not treat Codex contextual user fragments as steering", () => {
   expect(extractChatGptTurnUserText(parsed)).toBe("Original task");
 });
 
-test("keeps a user message that also contains a contextual fragment", () => {
+test("ignores a user message when any content part is contextual", () => {
   const turnId = "turn-root";
   const parsed = {
     modelId: "chatgpt-web/medium",
@@ -86,8 +86,13 @@ test("keeps a user message that also contains a contextual fragment", () => {
       input: [{
         type: "message",
         role: "user",
+        content: [{ type: "input_text", text: "Original user prompt" }],
+        internal_chat_message_metadata_passthrough: { turn_id: turnId },
+      }, {
+        type: "message",
+        role: "user",
         content: [
-          { type: "input_text", text: "Actual user prompt" },
+          { type: "input_text", text: "This part must not become steering" },
           { type: "input_text", text: "<turn_aborted>interrupted</turn_aborted>" },
         ],
         internal_chat_message_metadata_passthrough: { turn_id: turnId },
@@ -95,7 +100,7 @@ test("keeps a user message that also contains a contextual fragment", () => {
     },
   } satisfies CodexParsedRequest;
 
-  expect(extractChatGptTurnUserText(parsed)).toBe("Actual user prompt\n<turn_aborted>interrupted</turn_aborted>");
+  expect(extractChatGptTurnUserText(parsed)).toBe("Original user prompt");
 });
 
 test("does not redeliver a native revision after a transient transcript rollback", () => {

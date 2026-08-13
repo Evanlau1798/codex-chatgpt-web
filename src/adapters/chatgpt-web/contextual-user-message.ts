@@ -30,7 +30,7 @@ function contextualText(text: string): boolean {
 export function isContextualCodexUserMessage(content: unknown): boolean {
   if (typeof content === "string") return contextualText(content);
   if (!Array.isArray(content) || content.length === 0) return false;
-  return content.every(part => {
+  return content.some(part => {
     if (part === null || typeof part !== "object" || Array.isArray(part)) return false;
     const value = part as Record<string, unknown>;
     return (value.type === "input_text" || value.type === "text")
