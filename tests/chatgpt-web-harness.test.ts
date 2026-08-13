@@ -1923,6 +1923,7 @@ describe("ChatGPT outer-native harness v4", () => {
     gatewayOnlyEnvironment.tools = [
       { name: "exec", description: "Run nested Codex tools, including exec_command", parameters: {}, freeform: true },
       { name: "wait", description: "Wait for an exec cell", parameters: { type: "object" } },
+      { namespace: "multi_agent_v1", name: "wait_agent", description: "Wait for agents", parameters: { type: "object" } },
       { name: "request_user_input", description: "Request user input", parameters: { type: "object" } },
     ];
     const token = await broker.register(gatewayOnlyEnvironment, 60_000);
@@ -2077,6 +2078,19 @@ describe("ChatGPT outer-native harness v4", () => {
       expect(waitRequest?.input).toBeUndefined();
       broker.completeTool(token, waitRequest!.callId, toolResult({ output: "completed" }));
       expect((await waitPromise).structuredContent).toEqual({ output: "completed" });
+
+      const agentWaitPromise = call("codex_tool_call", {
+        turn_token: token,
+        wire_name: "multi_agent_v1__wait_agent",
+        arguments: { targets: ["child"], timeout_ms: 300_000 },
+      });
+      const [agentWaitRequest] = await broker.nextToolBatch(token);
+      expect(agentWaitRequest).toMatchObject({
+        wireName: "multi_agent_v1__wait_agent",
+        arguments: { targets: ["child"], timeout_ms: 30_000 },
+      });
+      broker.completeTool(token, agentWaitRequest!.callId, toolResult({ status: "timeout" }));
+      expect((await agentWaitPromise).structuredContent).toEqual({ status: "timeout" });
     } finally {
       await client.close().catch(() => {});
       broker.revoke(token);

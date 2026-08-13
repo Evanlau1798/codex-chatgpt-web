@@ -124,6 +124,15 @@ function gatewayNestedToolName(toolName: string): string {
 }
 
 const ONE_SHOT_SHELL_TTY_ERROR = "The one-shot shell_command cannot provide a TTY or accept later stdin. Pipe input inside the same command and use APIs compatible with the active platform shell.";
+const CONNECTOR_LONG_POLL_SLICE_MS = 30_000;
+
+function boundedConnectorToolArguments(tool: CodexTool, args: Record<string, unknown>): Record<string, unknown> {
+  if (!/(?:^|__)wait(?:_agent)?$/.test(wireName(tool))) return args;
+  const timeoutKey = typeof args.timeout_ms === "number" ? "timeout_ms"
+    : typeof args.yield_time_ms === "number" ? "yield_time_ms" : undefined;
+  if (!timeoutKey || (args[timeoutKey] as number) <= CONNECTOR_LONG_POLL_SLICE_MS) return args;
+  return { ...args, [timeoutKey]: CONNECTOR_LONG_POLL_SLICE_MS };
+}
 
 function execGatewayResultProgram(invocation: string[]): string {
   return [
@@ -472,7 +481,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
         return invoke(claimed.bindingId, bound, tool, { input });
       }
       if (input !== undefined) throw new Error(`Function Codex tool ${wire_name} does not accept freeform input`);
-      return invoke(claimed.bindingId, bound, tool, { arguments: args ?? {} });
+      return invoke(claimed.bindingId, bound, tool, { arguments: boundedConnectorToolArguments(tool, args ?? {}) });
     },
   );
 
