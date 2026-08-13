@@ -1952,7 +1952,7 @@ export class ChatGptBrowserWorker {
         await settleChatGptUi();
         await diagnostics.capture(page, "send-ready");
         await throwIfChatGptSessionFailureAlert(page);
-        await sendButton.click();
+        await sendButton.click({ force: true });
         const evidence = await this.waitForSubmissionAccepted(
           page,
           userTurns,
