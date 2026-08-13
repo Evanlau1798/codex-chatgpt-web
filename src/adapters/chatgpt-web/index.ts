@@ -196,6 +196,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         onLunaCheckpoint: captureCheckpoint,
       } : {}),
     }));
+    void browser.catch(() => activeToken && broker.revoke(activeToken));
     void browser.catch(error => {
       if (!tokenSettled) {
         tokenSettled = true;
@@ -219,7 +220,6 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       },
     };
   };
-
   return {
     name: "chatgpt-web",
     async runTurn(parsed, incoming, emit) {
@@ -338,7 +338,6 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
             turnToken = await withAbort(session.runtime.token, incoming.abortSignal);
             if (!environment) throw new Error("Tool-capable ChatGPT web runtime lost its trusted environment");
             broker.updateEnvironment(turnToken, environment);
-
             deliverPendingChatGptSteering(session, broker, turnToken, traceId);
 
             const outstanding = session.outstanding();
