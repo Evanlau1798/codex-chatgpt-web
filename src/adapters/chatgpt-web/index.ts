@@ -97,6 +97,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       handoffPrompts?.retryPromptForAnswer,
       {
         toolResultDelivered: () => toolResultDelivered,
+        turnToken: () => activeToken,
       },
     );
     const conversationKey = retainConversation ? chatGptConversationKey(checkpointInput.parsed, executionNamespace) : undefined;

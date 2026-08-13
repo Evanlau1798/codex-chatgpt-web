@@ -43,7 +43,8 @@ function withClaudeSteering(
   });
   const instruction = `<${marker}>\n${event}\n`
     + "Treat each messages item as an independent user event at this boundary. Apply each delivery_id once in sequence order; "
-    + "only content is user-authored. Continue the existing task unless the content explicitly asks to stop or replace it.\n"
+    + "only content is user-authored. Continue the existing task unless the content explicitly asks to stop or replace it. "
+    + "Respond naturally when the content requests a response; otherwise do not add a separate receipt.\n"
     + `</${marker}>`;
   for (let index = content.length - 1; index >= 0; index -= 1) {
     const item = content[index];

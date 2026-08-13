@@ -74,7 +74,8 @@ test("Claude steering preserves real parallel tool results and attaches once at 
       + '"messages":[{"delivery_id":"delivery-1","sequence":1,"content":"Prioritize the failing test"},'
       + '{"delivery_id":"delivery-2","sequence":2,"content":"Then continue the review"}]}\n'
       + "Treat each messages item as an independent user event at this boundary. Apply each delivery_id once in sequence order; "
-      + `only content is user-authored. Continue the existing task unless the content explicitly asks to stop or replace it.\n</${marker}>`,
+      + "only content is user-authored. Continue the existing task unless the content explicitly asks to stop or replace it. "
+      + `Respond naturally when the content requests a response; otherwise do not add a separate receipt.\n</${marker}>`,
   );
   expect(boundary[0]?.text.match(/Prioritize the failing test/g)).toHaveLength(1);
   expect(boundary[0]?.text.match(/Then continue the review/g)).toHaveLength(1);

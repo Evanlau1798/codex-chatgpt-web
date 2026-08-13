@@ -167,6 +167,7 @@ describe("compact mode routing", () => {
       );
       const retry = claudeBrowserTurnOptions(request, undefined, {
         toolResultDelivered: () => toolResultDelivered,
+        turnToken: () => "current-retry-token",
       }).retryPromptForAnswer;
       const refusedRetry = retry?.(
         "無法執行 git status：目前這個 Codex turn 沒有提供可用的原生命令執行工具。",
@@ -174,10 +175,15 @@ describe("compact mode routing", () => {
       );
       expect(refusedRetry).toContain("Advertised client tools are available");
       expect(refusedRetry).toContain("PowerShell");
-      expect(refusedRetry).toContain("Call the exact advertised client tool directly");
       expect(refusedRetry).toContain("codex_tool_inventory");
       expect(refusedRetry).toContain('query "PowerShell"');
+      expect(refusedRetry).toContain("invoke the returned wire_name");
       expect(refusedRetry).toContain("Do not answer before the tool call returns");
+      expect(refusedRetry).toContain("turn_token current-retry-token");
+      expect(retry?.(
+        "這個回合沒有可用的 PowerShell 執行結果，因此不能執行請求。",
+        1,
+      )).toContain("codex_tool_inventory");
       expect(retry?.(
         "The native shell gateway is unavailable, so I could not run the command.",
         1,
@@ -210,10 +216,14 @@ describe("compact mode routing", () => {
         "The Codex Native2 invocation tool is not exposed in this turn.",
         1,
       )).toContain("Advertised client tools are available");
-      expect(() => retry?.(
+      expect(retry?.(
         "重試後仍未提供 native command/exec 工具。",
         2,
-      )).toThrow("subagent refused advertised client tools");
+      )).toBeUndefined();
+      expect(retry?.(
+        "我目前這個回合可用的工具介面中沒有 codex_tool_inventory 或 codex_tool_call。",
+        2,
+      )).toBeUndefined();
       request.context.messages.push({
         role: "toolResult",
         toolCallId: "call_failed",
@@ -249,10 +259,12 @@ describe("compact mode routing", () => {
       "This Codex turn did not advertise a native command tool or the native exec gateway",
       1,
     )).toContain("Read, Glob, Task");
+    expect(retry?.(
+      "Task is unavailable in this turn.",
+      1,
+    )).toContain("Advertised client tools are available");
     expect(retry?.("Gathering repository context", 1)).toBeUndefined();
-    expect(() => retry?.("The native shell gateway is unavailable", 2)).toThrow(
-      "Claude root refused advertised client tools",
-    );
+    expect(retry?.("The native shell gateway is unavailable", 2)).toBeUndefined();
   });
 
   test("forces Claude Agent dispatches into the background", () => {

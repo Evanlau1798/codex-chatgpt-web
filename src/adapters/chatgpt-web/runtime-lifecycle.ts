@@ -57,7 +57,7 @@ export function recoverableToolSurfaceResultCount(
     || signal?.aborted
     || session.runtime.mode !== "tools"
     || !(error instanceof ChatGptWebAdapterError)
-    || error.code !== "chatgpt_surface_changed"
+    || (error.code !== "chatgpt_surface_changed" && error.code !== "chatgpt_connector_unavailable")
     || !error.retryable
     || session.runtime.text.value().length > 0) return undefined;
   const outstanding = session.outstanding();

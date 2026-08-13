@@ -95,7 +95,7 @@ export async function closeTurnBrokers(): Promise<void> {
 }
 
 function opaqueId(prefix: string): string {
-  return `${prefix}_${randomBytes(24).toString("base64url")}`;
+  return `${prefix}_${randomBytes(16).toString("hex")}`;
 }
 
 function errorOf(value: unknown): Error {

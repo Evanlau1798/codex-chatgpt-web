@@ -137,6 +137,7 @@ test("turn broker tokens do not expire while their browser turn is still alive",
       sandboxPolicy: { type: "dangerFullAccess" },
       tools: [],
     });
+    expect(token).toMatch(/^turn_[a-f0-9]{32}$/);
     await Bun.sleep(5);
     await expect(callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token }))
       .resolves.toMatchObject({ bindingId: expect.any(String) });

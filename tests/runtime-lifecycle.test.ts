@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
+import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
 import { recoverableToolSurfaceResultCount } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
 import type { CodexParsedRequest } from "../src/types";
@@ -39,10 +39,18 @@ test("tool surface recovery requires one complete unstreamed batch and runs only
     { callId: "call_2", wireName: "exec_command", freeform: false, arguments: {} },
   ]);
   const failure = chatGptWebSurfaceError("surface changed", false);
+  const connectorFailure = new ChatGptWebAdapterError("connector unavailable", {
+    status: 502,
+    errorType: "server_error",
+    code: "chatgpt_connector_unavailable",
+    retryable: true,
+    retireSession: true,
+  });
 
   expect(recoverableToolSurfaceResultCount(failure, session, requestWithResults(["call_1"]), 0)).toBeUndefined();
   expect(recoverableToolSurfaceResultCount(failure, session, requestWithResults(["call_1", "call_2"]), 0)).toBe(2);
   expect(recoverableToolSurfaceResultCount(failure, session, requestWithResults(["call_1", "call_2"]), 1)).toBeUndefined();
+  expect(recoverableToolSurfaceResultCount(connectorFailure, session, requestWithResults(["call_1", "call_2"]), 0)).toBe(2);
 
   const abort = new AbortController();
   abort.abort();
