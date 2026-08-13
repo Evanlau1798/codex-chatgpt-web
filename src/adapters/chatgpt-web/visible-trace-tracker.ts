@@ -103,7 +103,9 @@ export class ChatGptVisibleTraceTracker {
         && !hasUnrenderedMarkdown(candidate.text)
         && text.startsWith(candidate.text)
         && now - candidate.changedAt >= this.traceStabilityMs;
-      const stableRawMarkdown = candidate?.text === text
+      const stableRawMarkdown = candidate !== undefined
+        && hasUnrenderedMarkdown(candidate.text)
+        && text.startsWith(candidate.text)
         && now - candidate.changedAt >= this.traceStabilityMs * 2;
       if (block.kind === "commentary"
         && !completionActionVisible
@@ -111,7 +113,7 @@ export class ChatGptVisibleTraceTracker {
         && hasUnrenderedMarkdown(text)
         && !stableRenderedPrefix
         && !stableRawMarkdown) {
-        if (candidate?.text !== text) this.traceCandidates.set(slot, { text, changedAt: now });
+        if (!candidate || !text.startsWith(candidate.text)) this.traceCandidates.set(slot, { text, changedAt: now });
         continue;
       }
       let stableText: string | undefined;

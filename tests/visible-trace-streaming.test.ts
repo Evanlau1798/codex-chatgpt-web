@@ -131,6 +131,17 @@ test("streams escaped Markdown that remains stable across a bounded renderer gra
   }]);
 });
 
+test("streams a stable escaped prefix while its raw Markdown tail keeps growing", () => {
+  const tracker = new ChatGptVisibleTraceTracker(100);
+
+  expect(tracker.observe([{ kind: "commentary", text: "Reviewing \\*one" }], false, 1_000)).toEqual([]);
+  expect(tracker.observe([{ kind: "commentary", text: "Reviewing \\*one and two" }], false, 1_100)).toEqual([]);
+  expect(tracker.observe([{ kind: "commentary", text: "Reviewing \\*one and two and three" }], false, 1_200)).toEqual([{
+    kind: "commentary",
+    text: "Reviewing \\*one",
+  }]);
+});
+
 test("streams stable commentary containing escaped filename punctuation", () => {
   const tracker = new ChatGptVisibleTraceTracker(100);
   const commentary = [{ kind: "commentary" as const, text: "正在讀取 `browser\\_worker.ts`" }];
