@@ -147,6 +147,30 @@ test("turn broker tokens do not expire while their browser turn is still alive",
   }
 });
 
+test("context archive reads report progress to the owning browser turn", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-broker-progress-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  let progress = 0;
+  try {
+    const token = await broker.register({
+      cwd: root,
+      roots: [root],
+      writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" },
+      tools: [],
+    }, 10_000, "progress-turn", () => { progress += 1; });
+    const context = await broker.registerContext("archived context", 10_000, "progress-turn", token);
+
+    await callTurnBroker(socketPath, { method: "read_context", token: context });
+
+    expect(progress).toBe(1);
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("turn broker delivers steering once through the active tool loop", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-broker-steering-"));
   const socketPath = defaultBrokerEndpoint(root);

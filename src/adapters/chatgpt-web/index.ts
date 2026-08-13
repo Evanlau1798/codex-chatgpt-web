@@ -159,6 +159,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         environment,
         timeoutMs === undefined ? undefined : timeoutMs + 60_000,
         traceId,
+        () => trace.signalProgress(),
       );
       activeToken = turnToken;
       if (!tokenSettled) {

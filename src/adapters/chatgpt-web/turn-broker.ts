@@ -39,6 +39,7 @@ interface ToolWaiter {
 
 interface TurnChannel {
   traceId: string;
+  onProgress?: () => void;
   environment: PendingTurn;
   bindingId?: string;
   queuedCallIds: string[];
@@ -174,7 +175,12 @@ export class TurnBroker {
     await this.start();
   }
 
-  async register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId = "unknown"): Promise<string> {
+  async register(
+    environment: ChatGptTurnEnvironment,
+    ttlMs?: number,
+    traceId = "unknown",
+    onProgress?: () => void,
+  ): Promise<string> {
     await this.start();
     this.prune();
     if (ttlMs !== undefined && (!Number.isFinite(ttlMs) || ttlMs <= 0)) {
@@ -183,6 +189,7 @@ export class TurnBroker {
     const token = opaqueId("turn");
     const channel: TurnChannel = {
       traceId,
+      ...(onProgress ? { onProgress } : {}),
       environment: {
         ...environment,
         ...(ttlMs !== undefined ? { expiresAt: Date.now() + ttlMs } : {}),
@@ -508,6 +515,7 @@ export class TurnBroker {
       if (inherited.length > 1) throw new Error("turn token has multiple active context archives");
       const context = direct ?? inherited[0];
       if (!context) throw new Error("context token is invalid, expired, or revoked");
+      if (context.turnToken) this.channels.get(context.turnToken)?.onProgress?.();
       if (request.index === undefined && request.chunkChars === undefined) {
         context.complete = true;
         console.info(`[chatgpt-web] broker trace=${context.traceId} served context chars=${context.text.length} chunks=1`);
