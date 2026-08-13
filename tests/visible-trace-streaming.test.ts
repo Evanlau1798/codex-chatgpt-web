@@ -119,6 +119,30 @@ test("waits out escaped raw Markdown until the renderer exposes stable Markdown"
   }]);
 });
 
+test("streams a stable rendered prefix while the growing tail still contains raw Markdown", () => {
+  const tracker = new ChatGptVisibleTraceTracker(100);
+
+  expect(tracker.observe([
+    { kind: "commentary", text: "已完成第一段" },
+  ], false, 1_000)).toEqual([]);
+  expect(tracker.observe([
+    { kind: "commentary", text: "已完成第一段 \\*\\*正在補上第二段" },
+  ], false, 1_100)).toEqual([{
+    kind: "commentary",
+    text: "已完成第一段",
+  }]);
+  expect(tracker.observe([
+    { kind: "commentary", text: "已完成第一段 **正在補上第二段**" },
+  ], false, 1_200)).toEqual([]);
+  expect(tracker.observe([
+    { kind: "commentary", text: "已完成第一段 **正在補上第二段**" },
+  ], false, 1_300)).toEqual([{
+    kind: "commentary",
+    text: " **正在補上第二段**",
+    continuation: true,
+  }]);
+});
+
 test("does not treat a transient tool-adjacent status as a commentary flush boundary", () => {
   const tracker = new ChatGptVisibleTraceTracker(10_000);
   const blocks = [

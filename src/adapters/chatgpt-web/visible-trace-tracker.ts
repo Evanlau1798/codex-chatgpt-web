@@ -98,10 +98,16 @@ export class ChatGptVisibleTraceTracker {
       const immediate = completionActionVisible
         || this.traceStabilityMs === 0
         || (block.complete === true && candidate?.text === text);
+      const stableRenderedPrefix = block.kind === "commentary"
+        && candidate !== undefined
+        && !hasUnrenderedMarkdown(candidate.text)
+        && text.startsWith(candidate.text)
+        && now - candidate.changedAt >= this.traceStabilityMs;
       if (block.kind === "commentary"
         && !completionActionVisible
         && block.complete !== true
-        && hasUnrenderedMarkdown(text)) {
+        && hasUnrenderedMarkdown(text)
+        && !stableRenderedPrefix) {
         this.traceCandidates.set(slot, { text, changedAt: now });
         continue;
       }
