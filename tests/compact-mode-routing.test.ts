@@ -243,7 +243,7 @@ describe("compact mode routing", () => {
     }
   });
 
-  test("recovers a Claude root that mistakes an unavailable shortcut for missing client tools", () => {
+  test("does not inject a hidden tool-recovery turn after a Claude root answer", () => {
     const request = compactRequest();
     delete request._compactionRequest;
     request.context.tools = [
@@ -258,11 +258,11 @@ describe("compact mode routing", () => {
     expect(retry?.(
       "This Codex turn did not advertise a native command tool or the native exec gateway",
       1,
-    )).toContain("Read, Glob, Task");
+    )).toBeUndefined();
     expect(retry?.(
       "Task is unavailable in this turn.",
       1,
-    )).toContain("Advertised client tools are available");
+    )).toBeUndefined();
     expect(retry?.("Gathering repository context", 1)).toBeUndefined();
     expect(retry?.("The native shell gateway is unavailable", 2)).toBeUndefined();
   });

@@ -76,7 +76,7 @@ export function claudeBrowserTurnOptions(
           .slice(0, 12);
         const namedToolRefusal = TOOL_UNAVAILABLE_CLAIM.test(answer)
           && advertisedNames.some(name => answer.toLowerCase().includes(name.toLowerCase()));
-        const refusedTools = claudeClient && Boolean(parsed.context.tools?.length)
+        const refusedTools = subagent && Boolean(parsed.context.tools?.length)
           && runtimeState.toolResultDelivered?.() !== true
           && (MISSING_TOOL.test(answer) || namedToolRefusal);
         const incompleteProgress = subagent && progressOnly(answer);
