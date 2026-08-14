@@ -33,6 +33,12 @@ export interface CapturedChatGptLunaCheckpoint {
   answerHash: string;
 }
 
+export interface CompletedChatGptLunaCheckpoint {
+  answer: string;
+  visibleRemainder: string;
+  captured?: CapturedChatGptLunaCheckpoint;
+}
+
 interface StoredChatGptLunaCheckpoint extends CapturedChatGptLunaCheckpoint {
   threadId: string;
   sourceTurnId: string;
@@ -126,17 +132,27 @@ export class ChatGptLunaCheckpointStream {
     return visible;
   }
 
-  hasCheckpointMarker(): boolean {
-    return this.markerSeen;
-  }
-
-  /** Flush only when failing explicitly for a missing marker, so the answer tail is not lost. */
-  flushVisibleRemainder(): string {
+  private flushVisibleRemainder(): string {
     if (this.markerSeen || !this.pending) return "";
     const visible = this.pending;
     this.pending = "";
     this.visibleAnswer += visible;
     return visible;
+  }
+
+  /** A missing checkpoint skips the private cache; a present checkpoint still validates strictly. */
+  finishOptional(rawResponseText: string): CompletedChatGptLunaCheckpoint {
+    if (this.markerSeen) {
+      const completed = this.finish(rawResponseText);
+      return { ...completed, visibleRemainder: "" };
+    }
+    if (rawResponseText.includes(CHATGPT_LUNA_CHECKPOINT_MARKER)) {
+      throw new Error("ChatGPT Luna rolling checkpoint marker was not preserved in the Markdown stream");
+    }
+    const visibleRemainder = this.flushVisibleRemainder();
+    const answer = canonicalAnswer(this.visibleAnswer);
+    if (!answer) throw new Error("ChatGPT Luna completed without a user-facing answer");
+    return { answer, visibleRemainder };
   }
 
   finish(rawResponseText: string): { answer: string; captured: CapturedChatGptLunaCheckpoint } {
@@ -188,7 +204,10 @@ function assistantItemText(value: unknown): string | undefined {
   return text.trim() ? text : undefined;
 }
 
-function parentAssistantAnswer(parsed: CodexParsedRequest, turnId: string): string | undefined {
+function parentAssistantAnswer(
+  parsed: CodexParsedRequest,
+  turnId: string,
+): { answer: string; turnId: string } | undefined {
   const body = record(parsed._rawBody);
   const input = Array.isArray(body?.input) ? body.input : undefined;
   if (!input) return undefined;
@@ -196,7 +215,8 @@ function parentAssistantAnswer(parsed: CodexParsedRequest, turnId: string): stri
   if (boundary === undefined) return undefined;
   for (let index = boundary - 1; index >= 0; index -= 1) {
     const text = assistantItemText(input[index]);
-    if (text) return text;
+    const parentTurnId = itemTurnId(input[index]);
+    if (text && parentTurnId) return { answer: text, turnId: parentTurnId };
   }
   return undefined;
 }
@@ -251,12 +271,15 @@ export class ChatGptLunaCheckpointStore {
   apply(parsed: CodexParsedRequest): { parsed: CodexParsedRequest; applied: boolean; reason?: string } {
     const identity = extractChatGptTurnIdentity(parsed);
     if (!identity.threadId || !identity.turnId) return { parsed, applied: false, reason: "missing native thread identity" };
-    const parentAnswer = parentAssistantAnswer(parsed, identity.turnId);
-    if (!parentAnswer) return { parsed, applied: false, reason: "no completed parent assistant answer" };
+    const parent = parentAssistantAnswer(parsed, identity.turnId);
+    if (!parent) return { parsed, applied: false, reason: "no proven completed parent assistant answer" };
 
-    const parentHash = hashChatGptLunaAnswer(parentAnswer);
+    const parentHash = hashChatGptLunaAnswer(parent.answer);
     const stored = this.get(identity.threadId, parentHash);
     if (!stored) return { parsed, applied: false, reason: "no checkpoint for the exact parent answer" };
+    if (stored.sourceTurnId !== parent.turnId) {
+      return { parsed, applied: false, reason: "checkpoint source turn does not match the exact parent answer" };
+    }
 
     const currentInput = currentTurnInput(parsed, identity.turnId);
     const body = record(parsed._rawBody);

@@ -247,6 +247,23 @@ describe("native /models augmentation", () => {
     expect(web.every(model => model.prefer_websockets === false)).toBe(true);
   });
 
+  test("uses a ChatGPT-visible template even when it is not available to API-key auth", () => {
+    const native = source();
+    const models = native.models as Array<Record<string, unknown>>;
+    for (const model of models) model.supported_in_api = false;
+
+    const result = augmentNativeModelCatalog(native, defaultConfig("browser-only"));
+    const web = (result.models as Array<Record<string, unknown>>)
+      .filter(model => String(model.slug).startsWith("chatgpt-web/"));
+
+    expect(web).toHaveLength(3);
+    expect(web.every(model => model.supported_in_api === true)).toBe(true);
+    expect((result.models as Array<Record<string, unknown>>).slice(0, models.length))
+      .toEqual(models.map(model => model.multi_agent_version === "disabled"
+        ? model
+        : { ...model, multi_agent_version: "v1" }));
+  });
+
   test("follows official catalog order instead of preferring a named paid-tier model", () => {
     const native = source();
     const sourceModels = native.models as Array<Record<string, unknown>>;
@@ -274,6 +291,6 @@ describe("native /models augmentation", () => {
         supported_reasoning_levels: [],
         tool_mode: null,
       }],
-    }, defaultConfig("full"))).toThrow("no list-visible, API-supported, tool-capable model");
+    }, defaultConfig("full"))).toThrow("no list-visible, tool-capable model");
   });
 });

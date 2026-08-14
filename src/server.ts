@@ -106,7 +106,7 @@ export class HttpTurnCounter {
         });
       }
 
-      // OpenCodex's Windows-safe Bun#32111 shape: the client gets a native tee branch,
+      // Windows-safe Bun#32111 shape: the client gets a native tee branch,
       // never a JS ReadableStream with async pull(). The second branch is consumed only
       // to observe completion. The request signal releases lifecycle ownership immediately
       // when the client disconnects and cancels the observer branch.

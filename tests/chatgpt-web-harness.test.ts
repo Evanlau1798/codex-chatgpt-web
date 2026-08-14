@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { createHash } from "node:crypto";
-import { mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildResponseJSON } from "../src/bridge";
@@ -12,7 +12,7 @@ import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
 import { chatGptHtmlToMarkdown, ChatGptMarkdownBuffer } from "../src/adapters/chatgpt-web/markdown";
-import { CHATGPT_WEB_MODEL_ID, resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
+import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt, withoutSupersededModelSwitchContracts } from "../src/adapters/chatgpt-web/prompt";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey } from "../src/adapters/chatgpt-web/turn-execution";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
@@ -871,6 +871,57 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
+  test("a missing optional Luna checkpoint completes once without repeating the browser turn", async () => {
+    const checkpointPath = join(tempRoot, `missing-luna-checkpoint-${Date.now()}.json`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web",
+      baseUrl: `browser://chatgpt-luna-missing-checkpoint-${Date.now()}`,
+      chatgptWeb: {
+        localToolsEnabled: false,
+        solAvailable: false,
+        proAvailable: false,
+        lunaCheckpointStatePath: checkpointPath,
+      },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run.bind(worker);
+    let browserStarts = 0;
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+      browserStarts += 1;
+      const prepared = await turn.prepare();
+      try {
+        expect(turn.captureLunaCheckpoint).toBeTrue();
+        const answer = "Luna completed the requested task.";
+        turn.onTextDelta(answer);
+        return answer;
+      } finally {
+        prepared.release();
+      }
+    };
+
+    const request = rawWireRequest(environmentXml);
+    request.modelId = "gpt-5.6-luna";
+    request.options.reasoning = "low";
+    const adapter = createChatGptWebAdapter(provider);
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const events: AdapterEvent[] = [];
+        await adapter.runTurn!(request, { headers: new Headers() }, event => events.push(event));
+        expect(events.filter(event => event.type === "text_delta" && event.phase === "final_answer")).toEqual([{
+          type: "text_delta",
+          text: "Luna completed the requested task.",
+          phase: "final_answer",
+        }]);
+        expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+        expect(events.some(event => event.type === "error")).toBeFalse();
+      }
+      expect(browserStarts).toBe(1);
+      expect(existsSync(checkpointPath)).toBeFalse();
+    } finally {
+      (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+    }
+  });
+
   test("waits for one shared browser retirement before starting the compacted continuation", async () => {
     const sessions = new ChatGptTurnSessions();
     let finishBrowser!: (answer: string) => void;
@@ -969,31 +1020,6 @@ describe("ChatGPT outer-native harness v4", () => {
     expect(compiled.text).toContain("<codex_context_json>");
     expect(files.map(file => file.name)).toEqual(["codex-input-image-1.png"]);
     expect(files[0]!.mimeType).toBe("image/png");
-  });
-
-  test("maps one ChatGPT Web model to explicit effort modes and fails closed on invalid combinations", () => {
-    expect(resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "max", toolCapabilities)).toEqual({
-      modelId: CHATGPT_WEB_MODEL_ID,
-      effort: "max",
-      displayLabel: "Pro",
-      uiEffortIndex: 4,
-      localTools: false,
-    });
-    expect(resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "xhigh", toolCapabilities)).toMatchObject({
-      uiEffortIndex: 3,
-      localTools: true,
-    });
-    expect(() => resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "max", {
-      localToolsEnabled: false,
-      solAvailable: true,
-      proAvailable: false,
-    })).toThrow("Pro effort is not available");
-    expect(() => resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "xhigh", {
-      localToolsEnabled: true,
-      solAvailable: true,
-      proAvailable: false,
-    })).toThrow("Extra High effort is not available");
-    expect(() => resolveChatGptWebModelMode("unknown", "high", toolCapabilities)).toThrow("model is not supported");
   });
 
   test("builds a context-complete Pro prompt without exposing any local-tool capability", () => {

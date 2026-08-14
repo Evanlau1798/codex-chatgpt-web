@@ -373,7 +373,3 @@ export async function waitForTunnelReady(
   }
   return status;
 }
-
-export function tunnelClientVersion(): string {
-  return TUNNEL_VERSION;
-}

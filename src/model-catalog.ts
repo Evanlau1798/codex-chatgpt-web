@@ -38,7 +38,11 @@ function nativeTemplateCandidate(value: unknown, requireTools: boolean): value i
   const model = value as JsonObject;
   const modelSlug = slug(model);
   if (!modelSlug || modelSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX)) return false;
-  if (model.visibility !== "list" || model.supported_in_api !== true) return false;
+  // This route forwards ChatGPT authentication. Codex's own model manager keeps every list-visible
+  // model in ChatGPT mode even when `supported_in_api` is false; that flag gates API-key mode, not
+  // whether the backend row is a valid catalog template. The routed Web row overrides the flag to
+  // true because this local Responses endpoint implements it.
+  if (model.visibility !== "list") return false;
   if (!Array.isArray(model.supported_reasoning_levels)) return false;
   return !requireTools || (typeof model.tool_mode === "string" && model.tool_mode.length > 0);
 }
@@ -50,8 +54,8 @@ function selectNativeTemplate(models: unknown[], config: AppConfig): JsonObject 
   if (template) return template;
   throw new Error(
     requireTools
-      ? "Native Codex models response has no list-visible, API-supported, tool-capable model with reasoning metadata"
-      : "Native Codex models response has no list-visible, API-supported model with reasoning metadata",
+      ? "Native Codex models response has no list-visible, tool-capable model with reasoning metadata"
+      : "Native Codex models response has no list-visible model with reasoning metadata",
   );
 }
 

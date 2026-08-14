@@ -69,20 +69,14 @@ ChatGPT DOM and labels are not a stable API. Selectors are narrow and completion
 completed-turn evidence. UI drift fails the turn; it never chooses another model, starts another
 transport, or returns a fabricated success.
 
-### Login-state transfer
+### Login-state isolation
 
-Platform passkeys and identity verification run only in a configured system Google Chrome or
-Chromium process with a dedicated temporary profile. The launcher does not treat opening that
-browser as authentication evidence. A helper attaches over a loopback-only randomly reserved
-DevTools port,
-proves a real ChatGPT Temporary Chat composer in that same browser, captures the session, verifies
-the serialized state in a fresh context inside the same owned process, and closes the dedicated
-browser. The launcher then imports only allowlisted ChatGPT/OpenAI cookies and ChatGPT local storage
-into its private Electron partition and independently proves the composer there.
-Third-party identity-provider state is not imported into the persistent Electron
-partition. Invalid or oversized state, a
-partial import, failed embedded verification, or failed temporary-state cleanup clears the imported
-Electron state and fails closed.
+The launcher keeps ChatGPT login, identity-provider navigation, and model turns in one private
+Electron partition. Allowed login popups are adopted into an in-launcher `WebContentsView` that
+shares that partition; unrelated external links remain outside it. A visible composer alone is not
+authentication evidence: the launcher also requires a valid server session and an exact Temporary
+Chat URL before setup can continue. No cookies, local storage, or browser profile are copied from an
+external browser.
 
 ### Cross-turn data leakage
 
@@ -99,10 +93,8 @@ response; the bridge does not fabricate or install a Codex history checkpoint.
 - Responses and health listeners bind to `127.0.0.1` only.
 - Full mode uses OpenAI's outbound HTTPS Secure MCP Tunnel; it opens no public listener or inbound
   firewall rule.
-- The dedicated system Chrome/Chromium login profile connects to ChatGPT and its selected identity
-  provider only during an explicit sign-in operation.
-- The embedded browser connects to ChatGPT and user-authorized attachment URLs through normal
-  browser networking.
+- The embedded browser connects to ChatGPT, the selected identity provider during explicit sign-in,
+  and user-authorized attachment URLs through normal browser networking.
 
 ## Non-goals
 

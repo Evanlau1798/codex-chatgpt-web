@@ -54,17 +54,12 @@ inspectable until closed. Closing a running tab destroys its page and terminates
 A sixth concurrent turn fails explicitly; the cap avoids excessive parallel traffic that could
 trigger account abuse controls.
 
-Sign-in is the deliberate exception. The launcher opens the configured system Google Chrome or
-Chromium in a dedicated temporary profile so platform passkeys and identity verification remain
-available. The runtime attaches to that same browser over a loopback-only randomly reserved
-DevTools port,
-waits for an authenticated Temporary Chat composer, captures the session, and closes the dedicated
-browser without relaunching its profile or starting a second browser process. Before closing it, the
-runtime verifies the serialized capture in a fresh context inside that same owned Chrome process.
-The launcher then filters the capture to ChatGPT/OpenAI cookies plus ChatGPT local storage, imports
-it into the launcher-owned Electron partition, independently proves the embedded composer, and
-deletes the temporary transfer. Any validation,
-import, verification, or cleanup failure clears the partial Electron session and fails explicitly.
+Sign-in uses that same persistent Electron partition. ChatGPT login pages and allowed identity-
+provider popups are adopted into a temporary `WebContentsView` inside the launcher instead of being
+redirected to another browser. After the provider returns to ChatGPT, the launcher requires both a
+server-authenticated session and the Temporary Chat composer in the primary owned view, then closes
+the temporary auth view. There is no browser-profile handoff, cookie import, CDP login port, or
+temporary session-transfer directory.
 
 The current compiled Codex task context is inserted as one inline JSON envelope. Image bytes stay
 out of the JSON and are attached natively with stable references. The runtime does not create a
@@ -87,10 +82,10 @@ reasoning summaries, while stable prose between rows becomes native Codex commen
 
 Each native desktop package contains Electron, a platform-matched pinned Bun executable, the
 Responses bridge, Playwright client code, MCP server, setup, doctor, and the browser helper.
-Browser-only mode downloads no browser and requires no system Node/Bun. It uses an installed system
-Google Chrome or Chromium only for the passkey-compatible sign-in handoff; model turns remain in
-Electron. Full mode separately downloads the official pinned `openai/tunnel-client` build for the
-current OS/architecture and verifies it against the release SHA-256 manifest.
+Browser-only mode downloads no browser and requires no installed Chrome/Chromium or system Node/Bun;
+sign-in and model turns both remain in Electron. Full mode separately downloads the official pinned
+`openai/tunnel-client` build for the current OS/architecture and verifies it against the release
+SHA-256 manifest.
 
 On first launch, the embedded runtime is identity-checked and copied atomically into a private
 versioned directory under the application home. Daemon and MCP commands use that durable copy,

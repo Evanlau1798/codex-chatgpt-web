@@ -79,8 +79,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const finalizeCheckpoint = (browser: Promise<string>): Promise<string> => browser.then(answer => {
       if (!captureLunaCheckpoint) return answer;
       if (checkpointCaptureError) throw checkpointCaptureError;
-      if (!capturedCheckpoint) throw new Error("ChatGPT Luna completed without a captured rolling checkpoint");
-      lunaCheckpointStore.commit(parsed, capturedCheckpoint, answer);
+      if (capturedCheckpoint) lunaCheckpointStore.commit(parsed, capturedCheckpoint, answer);
       return answer;
     });
     const browserAbort = new AbortController();

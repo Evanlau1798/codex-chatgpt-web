@@ -1,8 +1,18 @@
 import { expect, test } from "bun:test";
 import {
+  CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   detectChatGptAccountCapabilities,
 } from "../src/chatgpt-session";
+
+test("login keeps the established turn composer contract", () => {
+  const turnSelectors = CHATGPT_COMPOSER_SELECTOR.split(",").map(selector => selector.trim());
+  expect(turnSelectors).toContain('[data-testid="prompt-textarea"]');
+  expect(turnSelectors).toContain("#prompt-textarea");
+  expect(turnSelectors).toContain('[contenteditable="true"][data-lexical-editor="true"]');
+  expect(turnSelectors).not.toContain('form [contenteditable="true"]');
+  expect(turnSelectors).not.toContain("form textarea[placeholder]");
+});
 
 test("the effort selector identifies the model slider instead of any composer menu button", () => {
   expect(CHATGPT_EFFORT_CONTROL_SELECTOR).toContain('[data-animated-slider-trigger="true"]');

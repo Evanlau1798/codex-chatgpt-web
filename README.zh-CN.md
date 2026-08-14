@@ -83,9 +83,8 @@ irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install
 
 然后在应用中完成三项检查：
 
-1. 在启动器打开的专用系统 Chrome/Chromium 窗口中登录并保持窗口打开。启动器检测到已认证的
-   Temporary Chat 输入框后，会捕获会话并关闭该专用窗口。随后只将允许的 ChatGPT 状态导入私有的
-   内置浏览器 profile，并在其中独立验证已认证的输入框。
+1. 直接在启动器内置的 ChatGPT 浏览器中登录。登录页和身份提供商窗口都保留在同一个由启动器
+   管理的私有浏览器配置中；会话不会在不同浏览器之间复制。
 2. 运行浏览器冒烟测试。
 3. 点击 **安装模型**，重启一次 Codex，然后选择一个 **ChatGPT Web — …** 模型。
 
@@ -93,9 +92,8 @@ irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install
 支持 Pro 时，Pro 才会显示。独立的 **MCP** 页面是可选项，它会在不需要终端命令的情况下引导你
 完成完整 harness 设置。
 
-打包后的启动器只在兼容 passkey 的登录交接过程中使用已安装的 Google Chrome 或 Chromium。
-ChatGPT 模型轮次仍在启动器的内置浏览器中运行，不需要模型 API 密钥、系统级 Node/Bun，也不会
-由本项目另行下载浏览器。
+打包后的启动器在其内置浏览器中完成登录并运行 ChatGPT 模型轮次，不需要模型 API 密钥、已安装的
+Chrome/Chromium、系统级 Node/Bun，也不会由本项目另行下载浏览器。
 
 **从源码运行**
 

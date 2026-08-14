@@ -3,10 +3,9 @@ import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { timingSafeEqual } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
-import { isAbsolute } from "node:path";
 import { stdin, stdout } from "node:process";
 import { checkBrowserEngine, loginToChatGpt } from "./browser-login";
-import { CHATGPT_CONNECTOR_NAME, defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
+import { CHATGPT_CONNECTOR_NAME, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
 import { inspectLauncherBrowserHost, readLauncherBrowserHostDescriptor } from "./launcher-browser-host";
 import {
   activateCodexIntegration,
@@ -135,34 +134,13 @@ function authorizeLauncherControl(operation: string): void {
 }
 
 async function loginCommand(args: string[]): Promise<void> {
-  const launcherControl = takeFlag(args, "--launcher-control");
-  if (!launcherControl) {
-    assertNoArgs(args);
-    const config = loadConfig();
-    if (config.browserHost === "launcher") {
-      throw new Error("ChatGPT login is owned by the launcher; open Codex Web GPT and use its Sign in step");
-    }
-    const result = await loginToChatGpt(config);
-    stdout.write(`ChatGPT login stored at ${result.storageStatePath}\n`);
-    return;
-  }
-
-  const chromeExecutablePath = takeOption(args, "--chrome");
-  const storageStatePath = takeOption(args, "--storage-state");
   assertNoArgs(args);
-  authorizeLauncherControl("login");
-  if (!chromeExecutablePath || !isAbsolute(chromeExecutablePath)) {
-    throw new Error("Launcher-controlled login requires --chrome with an absolute executable path");
+  const config = loadConfig();
+  if (config.browserHost === "launcher") {
+    throw new Error("ChatGPT login is owned by the launcher; open Codex Web GPT and use its Sign in step");
   }
-  if (!storageStatePath || !isAbsolute(storageStatePath)) {
-    throw new Error("Launcher-controlled login requires --storage-state with an absolute path");
-  }
-  await loginToChatGpt({
-    ...defaultConfig(),
-    chromeExecutablePath,
-    storageStatePath,
-  });
-  stdout.write("Launcher-controlled ChatGPT login captured for private-profile verification.\n");
+  const result = await loginToChatGpt(config);
+  stdout.write(`ChatGPT login stored at ${result.storageStatePath}\n`);
 }
 
 async function setupCommand(args: string[]): Promise<void> {

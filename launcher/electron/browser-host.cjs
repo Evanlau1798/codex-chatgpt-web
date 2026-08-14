@@ -31,13 +31,10 @@ const TURN_HEARTBEAT_TIMEOUT_MS = 60_000;
 const TURN_TAB_BOOTSTRAP_TIMEOUT_MS = 120_000;
 const RETAINED_TURN_TAB_TTL_MS = 30 * 60 * 1000;
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
+const CHATGPT_AUTH_SESSION_TIMEOUT_MS = 5_000;
 const CHATGPT_PARTITION = "persist:codex-web-gpt-chatgpt";
 const CHATGPT_BACKEND_REQUEST_FILTER = { urls: [`${CHATGPT_ORIGIN}/backend-api/*`] };
 const ZOOM_FACTORS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
-const MAX_LOGIN_COOKIES = 4_096;
-const MAX_LOGIN_ORIGINS = 128;
-const MAX_LOGIN_LOCAL_STORAGE_ENTRIES = 4_096;
-const MAX_LOGIN_STATE_STRING_CHARS = 2 * 1024 * 1024;
 const AUTH_PROVIDER_HOSTS = new Set([
   "auth.openai.com",
   "auth0.openai.com",
@@ -79,7 +76,10 @@ const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, mil
 function visibleElementScript(selector) {
   return `Array.from(document.querySelectorAll(${JSON.stringify(selector)})).find((element) => {
     const style = getComputedStyle(element);
+    const bounds = element.getBoundingClientRect();
     return element.isConnected
+      && bounds.width > 0
+      && bounds.height > 0
       && style.display !== "none"
       && style.visibility !== "hidden"
       && style.opacity !== "0";
@@ -151,116 +151,6 @@ function isChatGptCloudflareChallengeResponse(details) {
     && responseHeaderIncludes(details.responseHeaders, "cf-mitigated", "challenge");
 }
 
-function isAllowedLoginCookieDomain(domain) {
-  const hostname = domain.replace(/^\./, "").toLowerCase();
-  return hostname === "chatgpt.com"
-    || hostname.endsWith(".chatgpt.com")
-    || hostname === "openai.com"
-    || hostname.endsWith(".openai.com");
-}
-
-function boundedLoginStateString(value, label, { allowEmpty = true } = {}) {
-  if (typeof value !== "string" || (!allowEmpty && !value)) {
-    throw new Error(`System-browser login state has an invalid ${label}`);
-  }
-  if (value.length > MAX_LOGIN_STATE_STRING_CHARS) {
-    throw new Error(`System-browser login state ${label} is too large`);
-  }
-  return value;
-}
-
-function validateChatGptStorageState(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("System-browser login returned an invalid storage-state object");
-  }
-  if (!Array.isArray(value.cookies) || value.cookies.length > MAX_LOGIN_COOKIES) {
-    throw new Error("System-browser login returned an invalid cookie collection");
-  }
-  if (!Array.isArray(value.origins) || value.origins.length > MAX_LOGIN_ORIGINS) {
-    throw new Error("System-browser login returned an invalid origin collection");
-  }
-
-  const sameSiteValues = new Map([
-    ["Strict", "strict"],
-    ["Lax", "lax"],
-    ["None", "no_restriction"],
-  ]);
-  const cookies = [];
-  for (const raw of value.cookies) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-      throw new Error("System-browser login returned an invalid cookie");
-    }
-    const domain = boundedLoginStateString(raw.domain, "cookie domain", { allowEmpty: false });
-    if (!isAllowedLoginCookieDomain(domain)) continue;
-    if (raw.partitionKey !== undefined) {
-      throw new Error("System-browser login state contains an unsupported partitioned ChatGPT/OpenAI cookie");
-    }
-    const name = boundedLoginStateString(raw.name, "cookie name", { allowEmpty: false });
-    const cookieValue = boundedLoginStateString(raw.value, "cookie value");
-    const cookiePath = boundedLoginStateString(raw.path, "cookie path", { allowEmpty: false });
-    if (!cookiePath.startsWith("/")) throw new Error("System-browser login state has an invalid cookie path");
-    if (typeof raw.secure !== "boolean" || typeof raw.httpOnly !== "boolean") {
-      throw new Error("System-browser login state has invalid cookie security attributes");
-    }
-    const sameSite = sameSiteValues.get(raw.sameSite);
-    if (!sameSite) throw new Error("System-browser login state has an invalid cookie SameSite value");
-    if (typeof raw.expires !== "number" || !Number.isFinite(raw.expires)) {
-      throw new Error("System-browser login state has an invalid cookie expiry");
-    }
-    const hostname = domain.replace(/^\./, "").toLowerCase();
-    const normalizedDomain = `${domain.startsWith(".") ? "." : ""}${hostname}`;
-    const url = new URL(`https://${hostname}${cookiePath}`).toString();
-    cookies.push({
-      url,
-      name,
-      value: cookieValue,
-      ...(domain.startsWith(".") ? { domain: normalizedDomain } : {}),
-      path: cookiePath,
-      secure: raw.secure,
-      httpOnly: raw.httpOnly,
-      sameSite,
-      ...(raw.expires > 0 ? { expirationDate: raw.expires } : {}),
-    });
-  }
-  if (cookies.length === 0) {
-    throw new Error("System-browser login state contains no ChatGPT/OpenAI cookies");
-  }
-
-  const localStorage = [];
-  for (const raw of value.origins) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof raw.origin !== "string") {
-      throw new Error("System-browser login returned an invalid origin state");
-    }
-    if (raw.origin !== CHATGPT_ORIGIN) continue;
-    if (!Array.isArray(raw.localStorage) || raw.localStorage.length > MAX_LOGIN_LOCAL_STORAGE_ENTRIES) {
-      throw new Error("System-browser login returned invalid ChatGPT local storage");
-    }
-    for (const entry of raw.localStorage) {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-        throw new Error("System-browser login returned an invalid ChatGPT local-storage entry");
-      }
-      localStorage.push({
-        name: boundedLoginStateString(entry.name, "local-storage name"),
-        value: boundedLoginStateString(entry.value, "local-storage value"),
-      });
-    }
-  }
-  if (localStorage.length > MAX_LOGIN_LOCAL_STORAGE_ENTRIES) {
-    throw new Error("System-browser login returned too many ChatGPT local-storage entries");
-  }
-  return { cookies, localStorage };
-}
-
-function javaScriptLiteral(value) {
-  return JSON.stringify(value).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
-}
-
-function appendFailure(primary, label, secondary) {
-  const first = primary instanceof Error ? primary.message : String(primary);
-  const second = secondary instanceof Error ? secondary.message : String(secondary);
-  return new Error(`${first}; ${label}: ${second}`);
-}
-
 class BrowserHost {
   constructor({
     window,
@@ -270,14 +160,10 @@ class BrowserHost {
     getConnectorName,
     helper,
     logger,
-    loginWithSystemBrowser,
     publishState,
   }) {
     if (typeof getConnectorName !== "function") {
       throw new Error("Browser host connector-name resolver is unavailable");
-    }
-    if (typeof loginWithSystemBrowser !== "function") {
-      throw new Error("Browser host system-browser login operation is unavailable");
     }
     this.window = window;
     this.descriptorPath = descriptorPath;
@@ -286,7 +172,6 @@ class BrowserHost {
     this.getConnectorName = getConnectorName;
     this.helper = helper;
     this.logger = logger;
-    this.loginWithSystemBrowser = loginWithSystemBrowser;
     this.publishState = publishState;
     this.runBrowserHelperOperation = runBrowserHelperOperation;
     this.verifyConnectorWithBrowserHelper = verifyConnectorWithBrowserHelper;
@@ -303,6 +188,8 @@ class BrowserHost {
     this.cloudflareChallengeRecoveryDelayMs = CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS;
     this.cloudflareChallengeRecoverySettleMs = CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS;
     this.viewportCssKey = null;
+    this.authView = null;
+    this.authNavigationError = null;
     this.homeNavigationTimeout = null;
     this.turnLeaseSweep = setInterval(() => this.reapExpiredTurnTabs(), TURN_HEARTBEAT_SWEEP_MS);
     this.turnLeaseSweep.unref?.();
@@ -554,8 +441,10 @@ class BrowserHost {
     const contents = this.view.webContents;
     contents.setWindowOpenHandler(({ url }) => {
       if (allowedAuthUrl(url)) {
-        this.routeAuthenticationToSystemBrowser(url);
-        return { action: "deny" };
+        return {
+          action: "allow",
+          createWindow: (options) => this.createAuthView(options, url),
+        };
       }
       let parsed;
       try { parsed = new URL(url); } catch { return { action: "deny" }; }
@@ -570,11 +459,6 @@ class BrowserHost {
       }
       return { action: "deny" };
     });
-    const routeNavigation = (event, url) => {
-      if (this.routeAuthenticationToSystemBrowser(url)) event.preventDefault();
-    };
-    contents.on("will-navigate", routeNavigation);
-    contents.on("will-redirect", routeNavigation);
     contents.on("did-start-navigation", (_event, url, _inPlace, mainFrame) => {
       if (!mainFrame) return;
       this.armHomeNavigationTimeout(contents, url);
@@ -619,16 +503,6 @@ class BrowserHost {
     });
   }
 
-  routeAuthenticationToSystemBrowser(url) {
-    if (!allowedAuthUrl(url)) return false;
-    void this.openLogin({ force: true }).catch((error) => {
-      this.logger.error("browser.system_login_failed", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    });
-    return true;
-  }
-
   armHomeNavigationTimeout(contents, url) {
     this.clearHomeNavigationTimeout();
     this.homeNavigationTimeout = setTimeout(() => {
@@ -660,8 +534,11 @@ class BrowserHost {
     });
     await new Promise((resolve, reject) => {
       let settled = false;
+      let reloadStarted = false;
       const cleanup = () => {
         clearTimeout(timeout);
+        contents.off("did-start-loading", onStarted);
+        contents.off("did-stop-loading", onStopped);
         contents.off("did-finish-load", onFinished);
         contents.off("did-fail-load", onFailed);
         contents.off("render-process-gone", onRendererGone);
@@ -674,7 +551,9 @@ class BrowserHost {
         if (error) reject(error);
         else resolve();
       };
-      const onFinished = () => finish();
+      const onStarted = () => { reloadStarted = true; };
+      const onStopped = () => { if (reloadStarted) finish(); };
+      const onFinished = () => { if (reloadStarted) finish(); };
       const onFailed = (_event, errorCode, errorDescription, url, mainFrame) => {
         if (!mainFrame || errorCode === -3) return;
         finish(new Error(`ChatGPT hard refresh failed: ${errorDescription} (${url})`));
@@ -684,10 +563,12 @@ class BrowserHost {
       };
       const onDestroyed = () => finish(new Error("ChatGPT closed during hard refresh"));
       const timeout = setTimeout(() => {
-        if (!contents.isDestroyed()) contents.stop();
         finish(new Error("ChatGPT hard refresh did not finish within 60 seconds"));
+        if (!contents.isDestroyed()) contents.stop();
       }, timeoutMs);
       timeout.unref?.();
+      contents.on("did-start-loading", onStarted);
+      contents.on("did-stop-loading", onStopped);
       contents.on("did-finish-load", onFinished);
       contents.on("did-fail-load", onFailed);
       contents.on("render-process-gone", onRendererGone);
@@ -883,12 +764,16 @@ class BrowserHost {
       tab.view.setBounds(this.bounds);
       tab.interactionShield?.setBounds(this.bounds);
     }
+    this.authView?.setBounds(this.bounds);
     this.syncViewVisibility();
     void this.view.webContents.executeJavaScript("window.dispatchEvent(new Event('resize'))", true).catch(() => {});
+    if (this.authView && !this.authView.webContents.isDestroyed()) {
+      void this.authView.webContents.executeJavaScript("window.dispatchEvent(new Event('resize'))", true).catch(() => {});
+    }
   }
 
   activeView() {
-    return this.selectedTurnTab()?.view || this.view;
+    return this.authView || this.selectedTurnTab()?.view || this.view;
   }
 
   focusActiveSurface() {
@@ -912,12 +797,13 @@ class BrowserHost {
   syncViewVisibility() {
     const visible = browserViewVisible(this.visible, this.surfaceActive, this.boundsReady);
     const selected = this.selectedTurnTab();
-    this.view.setVisible(visible && !selected);
+    this.view.setVisible(visible && !this.authView && !selected);
     for (const tab of this.turnTabs.values()) {
-      const selectedVisible = visible && selected?.id === tab.id;
+      const selectedVisible = visible && !this.authView && selected?.id === tab.id;
       tab.view.setVisible(selectedVisible);
       tab.interactionShield?.setVisible(selectedVisible && tab.interactionLocked !== false);
     }
+    this.authView?.setVisible(visible);
   }
 
   setInteractionLocked(locked) {
@@ -927,6 +813,7 @@ class BrowserHost {
 
   selectTab(tabId) {
     if (tabId !== "home" && !this.turnTabs.has(tabId)) throw new Error("Browser tab does not exist");
+    if (this.authView) this.closeAuthView(this.authView, true);
     this.selectedTabId = tabId;
     this.syncViewVisibility();
     if (this.visible && this.surfaceActive) BrowserHost.prototype.focusActiveSurface.call(this);
@@ -972,6 +859,128 @@ class BrowserHost {
     this.removeTurnTab(tab, true);
     this.logger.info("browser.tab_closed", { tabId, traceId: tab.traceId, status: tab.status });
     return this.snapshot();
+  }
+
+  createAuthView(options = {}, requestedUrl = "") {
+    this.closeAuthView(this.authView, true);
+    const authView = new WebContentsView({ webContents: options.webContents });
+    this.authView = authView;
+    this.authNavigationError = null;
+    this.window.contentView.addChildView(authView);
+    authView.setBounds(this.bounds);
+    authView.setVisible(false);
+    authView.webContents.setZoomFactor(this.state.zoomFactor);
+    const contents = authView.webContents;
+    const clearNavigationTimeout = () => {
+      if (!authView.navigationTimeout) return;
+      clearTimeout(authView.navigationTimeout);
+      authView.navigationTimeout = null;
+    };
+    const armNavigationTimeout = (url) => {
+      clearNavigationTimeout();
+      authView.navigationTimeout = setTimeout(() => {
+        authView.navigationTimeout = null;
+        if (this.authView !== authView || contents.isDestroyed()) return;
+        contents.stop();
+        const message = "The ChatGPT sign-in page did not finish loading within 60 seconds. Check your connection and try again.";
+        this.authNavigationError = new Error(message);
+        this.logger.error("browser.auth_navigation_timeout", { url });
+        this.closeAuthView(authView, true, false);
+        this.setState({ status: "error", message, url, loading: false });
+      }, BROWSER_NAVIGATION_TIMEOUT_MS);
+      authView.navigationTimeout.unref?.();
+    };
+    armNavigationTimeout(requestedUrl);
+    this.setState({
+      status: "loading",
+      message: "Opening ChatGPT sign-in",
+      url: requestedUrl || contents.getURL(),
+      loading: true,
+    });
+    contents.on("did-start-navigation", (_event, url, _inPlace, mainFrame) => {
+      if (mainFrame) armNavigationTimeout(url);
+    });
+    contents.on("did-start-loading", () => this.setState({ loading: true }));
+    contents.on("did-stop-loading", () => {
+      clearNavigationTimeout();
+      this.setState({ loading: false });
+    });
+    contents.on("did-finish-load", () => {
+      clearNavigationTimeout();
+      this.setState({ url: contents.getURL(), loading: false });
+      void this.probeAuthentication();
+    });
+    contents.on("page-title-updated", (_event, title) => {
+      this.setState({ title: typeof title === "string" && title.trim() ? title.trim() : "ChatGPT" });
+    });
+    contents.on("close", () => this.closeAuthView(authView, true));
+    contents.on("destroyed", () => this.closeAuthView(authView, false));
+    contents.on("did-fail-load", (_event, errorCode, errorDescription, url, mainFrame) => {
+      if (!mainFrame || errorCode === -3) return;
+      clearNavigationTimeout();
+      const message = `ChatGPT sign-in page failed to load: ${errorDescription}`;
+      this.authNavigationError = new Error(message);
+      this.logger.error("browser.auth_navigation_failed", { errorCode, errorDescription, url });
+      this.closeAuthView(authView, true, false);
+      this.setState({ status: "error", message, url, loading: false });
+    });
+    contents.on("render-process-gone", (_event, details) => {
+      clearNavigationTimeout();
+      const message = `ChatGPT sign-in renderer stopped: ${details.reason}`;
+      this.authNavigationError = new Error(message);
+      this.logger.error("browser.auth_renderer_gone", { reason: details.reason, exitCode: details.exitCode });
+      this.closeAuthView(authView, false);
+      this.setState({ status: "error", message, loading: false });
+    });
+    contents.setWindowOpenHandler(({ url }) => {
+      if (allowedAuthUrl(url)) {
+        armNavigationTimeout(url);
+        void contents.loadURL(url).catch((error) => {
+          if (error && typeof error === "object" && error.code === "ERR_ABORTED") return;
+          if (this.authView !== authView || contents.isDestroyed()) return;
+          clearNavigationTimeout();
+          const message = `ChatGPT sign-in page failed to open: ${error instanceof Error ? error.message : String(error)}`;
+          this.authNavigationError = new Error(message);
+          this.logger.error("browser.auth_window_open_failed", { url, message });
+          this.closeAuthView(authView, true, false);
+          this.setState({ status: "error", message, url, loading: false });
+        });
+      } else {
+        let parsed;
+        try { parsed = new URL(url); } catch { return { action: "deny" }; }
+        if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+          void shell.openExternal(parsed.toString()).catch((error) => {
+            const message = `Could not open the external link: ${error instanceof Error ? error.message : String(error)}`;
+            this.logger.error("browser.external_url_open_failed", { url: parsed.toString(), message });
+            this.setState({ status: "error", message, loading: false });
+          });
+        }
+      }
+      return { action: "deny" };
+    });
+    this.syncViewVisibility();
+    this.logger.info("browser.auth_surface_opened");
+    return contents;
+  }
+
+  closeAuthView(authView, closeContents, refreshMain = true) {
+    if (!authView || this.authView !== authView) return;
+    if (authView.navigationTimeout) {
+      clearTimeout(authView.navigationTimeout);
+      authView.navigationTimeout = null;
+    }
+    this.authView = null;
+    try { this.window.contentView.removeChildView(authView); } catch {}
+    if (closeContents && !authView.webContents.isDestroyed()) authView.webContents.close();
+    this.syncViewVisibility();
+    this.logger.info("browser.auth_surface_closed");
+    if (refreshMain && this.manualOperation === "ChatGPT login" && !this.view.webContents.isDestroyed()) {
+      void this.view.webContents.loadURL(TEMPORARY_CHAT_URL).catch((error) => {
+        this.logger.error("browser.auth_refresh_failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
   }
 
   async applyViewportCss() {
@@ -1193,8 +1202,8 @@ class BrowserHost {
     });
   }
 
-  openLogin({ force = false } = {}) {
-    if (this.state.authenticated && !force) {
+  openLogin() {
+    if (this.state.authenticated) {
       this.activateHomeSurface();
       this.show();
       return Promise.resolve(this.snapshot());
@@ -1205,16 +1214,15 @@ class BrowserHost {
       return this.loginOperation;
     }
     const operation = this.withManualOperation("ChatGPT login", async () => {
+      this.authNavigationError = null;
       this.show();
-      this.setState({
-        authenticated: false,
-        status: "loading",
-        message: "Waiting for sign-in in system Chrome/Chromium",
-        loading: true,
-      });
-      this.logger.info("browser.system_login_started");
-      const transfer = await this.loginWithSystemBrowser();
-      return await this.installSystemBrowserLogin(transfer);
+      this.logger.info("browser.login_opened");
+      const current = this.view.webContents.getURL();
+      if (!current.startsWith(CHATGPT_ORIGIN)) {
+        await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+      }
+      await this.probeAuthentication();
+      return await this.waitForAuthenticated();
     });
     const tracked = operation.finally(() => {
       if (this.loginOperation === tracked) this.loginOperation = null;
@@ -1223,115 +1231,9 @@ class BrowserHost {
     return tracked;
   }
 
-  async clearOwnedChatGptSession() {
-    if (!(this.turnTabs instanceof Map)) throw new Error("Owned ChatGPT browser tab registry is unavailable");
-    const ownedContents = [this.view, ...[...this.turnTabs.values()].map((tab) => tab.view)]
-      .map((view) => view?.webContents)
-      .filter((contents) => contents && !contents.isDestroyed());
-    if (ownedContents.length === 0) throw new Error("Owned ChatGPT browser session is unavailable");
-    const parked = await Promise.allSettled(
-      ownedContents.map((contents) => contents.loadURL(IDLE_BROWSER_URL)),
-    );
-    const parkFailures = parked
-      .filter((result) => result.status === "rejected")
-      .map((result) => result.reason instanceof Error ? result.reason.message : String(result.reason));
-    if (parkFailures.length > 0) {
-      throw new Error(`Could not isolate every owned ChatGPT renderer before clearing login state: ${parkFailures.join("; ")}`);
-    }
-    const browserSession = ownedContents[0].session;
-    await browserSession.clearStorageData();
-    browserSession.flushStorageData();
-    await browserSession.cookies.flushStore();
-  }
-
-  async discardImportedChatGptSession() {
-    let failure = null;
-    try {
-      await this.clearOwnedChatGptSession();
-    } catch (error) {
-      failure = error;
-    }
-    this.setState({ authenticated: false, loading: false, url: IDLE_BROWSER_URL });
-    if (failure) throw failure;
-  }
-
-  async installSystemBrowserLogin(transfer) {
-    if (!transfer || typeof transfer !== "object" || typeof transfer.cleanup !== "function") {
-      throw new Error("System-browser login returned an invalid transfer handle");
-    }
-    let primaryError = null;
-    let browser = null;
-    let sessionMutated = false;
-    let sessionDiscarded = false;
-    let state;
-    try {
-      state = validateChatGptStorageState(transfer.storageState);
-    } catch (error) {
-      primaryError = error;
-    }
-
-    const contents = this.view?.webContents;
-    if (!primaryError) {
-      try {
-        if (!contents || contents.isDestroyed()) throw new Error("Owned ChatGPT browser session is unavailable");
-        sessionMutated = true;
-        await this.clearOwnedChatGptSession();
-        for (const cookie of state.cookies) await contents.session.cookies.set(cookie);
-        contents.session.flushStorageData();
-        await contents.session.cookies.flushStore();
-        await contents.loadURL(TEMPORARY_CHAT_URL);
-        if (state.localStorage.length > 0) {
-          const entries = javaScriptLiteral(state.localStorage);
-          await contents.executeJavaScript(`(() => {
-            if (location.origin !== ${JSON.stringify(CHATGPT_ORIGIN)}) {
-              throw new Error("ChatGPT storage import reached an unexpected origin");
-            }
-            for (const entry of ${entries}) localStorage.setItem(entry.name, entry.value);
-          })()`, true);
-          await contents.loadURL(TEMPORARY_CHAT_URL);
-        }
-        browser = await this.waitForAuthenticated(60_000);
-        if (browser?.authenticated !== true) {
-          throw new Error("Imported ChatGPT session did not produce an authenticated Electron composer");
-        }
-        await this.persistSession();
-        this.activateHomeSurface();
-        this.show();
-        this.logger.info("browser.system_login_imported");
-      } catch (error) {
-        primaryError = error;
-      }
-    }
-
-    if (primaryError && sessionMutated) {
-      try {
-        sessionDiscarded = true;
-        await this.discardImportedChatGptSession();
-      } catch (error) {
-        primaryError = appendFailure(primaryError, "clearing the partial Electron login failed", error);
-      }
-    }
-    try {
-      await transfer.cleanup();
-    } catch (error) {
-      primaryError = primaryError
-        ? appendFailure(primaryError, "removing temporary system-browser login state failed", error)
-        : new Error(`Removing temporary system-browser login state failed: ${error instanceof Error ? error.message : String(error)}`);
-      if (sessionMutated && !sessionDiscarded) {
-        try {
-          sessionDiscarded = true;
-          await this.discardImportedChatGptSession();
-        } catch (clearError) {
-          primaryError = appendFailure(primaryError, "clearing Electron login after cleanup failure failed", clearError);
-        }
-      }
-    }
-    if (primaryError) throw primaryError;
-    return browser;
-  }
-
   async logout() {
     return await this.withManualOperation("ChatGPT logout", async () => {
+      if (this.authView) this.closeAuthView(this.authView, true, false);
       const contents = this.view.webContents;
       await contents.session.clearStorageData();
       this.setState({
@@ -1377,27 +1279,95 @@ class BrowserHost {
       this.setState({ status: "signed-out", message: "Sign in to ChatGPT", authenticated: false, url });
       return this.snapshot();
     }
-    const probe = (contents) => contents.executeJavaScript(`(() => {
-      const composer = ${visibleElementScript(COMPOSER_SELECTOR)};
-      return { composer: Boolean(composer), readyState: document.readyState };
-    })()`, true).catch(() => ({ composer: false, readyState: "unknown" }));
-    const result = await probe(this.view.webContents);
-    if (result.composer) {
+    const probe = (contents) => contents.executeJavaScript(`(async () => {
+      const expectedUrl = new URL(${JSON.stringify(TEMPORARY_CHAT_URL)});
+      const readSurface = () => {
+        const composer = ${visibleElementScript(COMPOSER_SELECTOR)};
+        const actualUrl = new URL(location.href);
+        return {
+          url: actualUrl.href,
+          composer: Boolean(composer),
+          temporary: actualUrl.origin === expectedUrl.origin
+            && actualUrl.pathname === expectedUrl.pathname
+            && actualUrl.searchParams.get("temporary-chat") === "true",
+          readyState: document.readyState,
+        };
+      };
+      const initialSurface = readSurface();
+      let sessionAuthenticated = false;
+      if (new URL(initialSurface.url).origin === expectedUrl.origin) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), ${CHATGPT_AUTH_SESSION_TIMEOUT_MS});
+        try {
+          const response = await fetch("/api/auth/session", {
+            credentials: "include",
+            cache: "no-store",
+            headers: { accept: "application/json" },
+            signal: controller.signal,
+          });
+          const responseUrl = new URL(response.url);
+          const payload = response.ok
+            && responseUrl.origin === expectedUrl.origin
+            && responseUrl.pathname === "/api/auth/session"
+            && response.headers.get("content-type")?.includes("application/json")
+            ? await response.json()
+            : null;
+          const user = payload?.user && typeof payload.user === "object" && !Array.isArray(payload.user)
+            ? payload.user
+            : null;
+          const sessionHasUser = user !== null && Object.keys(user).length > 0;
+          const sessionHasNoError = payload?.error === undefined || payload.error === null || payload.error === "";
+          const sessionExpiryIsValid = payload?.expires === undefined || payload.expires === null
+            ? true
+            : typeof payload.expires === "string"
+              && Number.isFinite(Date.parse(payload.expires))
+              && Date.parse(payload.expires) > Date.now();
+          sessionAuthenticated = sessionHasUser
+            && sessionHasNoError
+            && sessionExpiryIsValid;
+        } catch {}
+        finally { clearTimeout(timeout); }
+      }
+      return { ...readSurface(), sessionAuthenticated };
+    })()`, true).catch(() => ({
+      url: "",
+      composer: false,
+      temporary: false,
+      sessionAuthenticated: false,
+      readyState: "unknown",
+    }));
+    let result = await probe(this.view.webContents);
+    if (!(result.composer && result.temporary && result.sessionAuthenticated)
+      && this.authView
+      && !this.authView.webContents.isDestroyed()) {
+      const authResult = await probe(this.authView.webContents);
+      if (authResult.sessionAuthenticated) {
+        const completedAuthView = this.authView;
+        this.closeAuthView(completedAuthView, true, false);
+        await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+        url = this.view.webContents.getURL();
+        result = await probe(this.view.webContents);
+      }
+    }
+    if (result.composer && result.temporary && result.sessionAuthenticated) {
+      if (this.authView && !this.authView.webContents.isDestroyed()) {
+        this.closeAuthView(this.authView, true, false);
+      }
       const wasAuthenticated = this.state.authenticated;
       const availability = this.activeTraceId
         ? { status: "running", message: "ChatGPT is working" }
         : this.manualOperation
           ? {}
           : { status: "ready", message: "ChatGPT is ready" };
-      this.setState({ ...availability, authenticated: true, url });
-      if (!wasAuthenticated) this.logger.info("browser.authenticated", { url });
+      this.setState({ ...availability, authenticated: true, url: result.url });
+      if (!wasAuthenticated) this.logger.info("browser.authenticated", { url: result.url });
     } else {
       const loaded = result.readyState === "complete";
       this.setState({
         status: loaded ? "signed-out" : "loading",
         message: loaded ? "Sign in to ChatGPT" : "Waiting for ChatGPT",
         authenticated: false,
-        url,
+        url: result.url || url,
       });
     }
     return this.snapshot();
@@ -1406,6 +1376,11 @@ class BrowserHost {
   async waitForAuthenticated(timeoutMs = 180_000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
+      if (this.authNavigationError) {
+        const error = this.authNavigationError;
+        this.authNavigationError = null;
+        throw error;
+      }
       const state = await this.probeAuthentication();
       if (state.authenticated) return state;
       await sleep(750);
@@ -1553,6 +1528,7 @@ class BrowserHost {
       const current = readJsonFile(this.descriptorPath);
       if (current.pid === process.pid) fs.rmSync(this.descriptorPath, { force: true });
     } catch {}
+    this.closeAuthView(this.authView, true);
     this.clearHomeNavigationTimeout();
     if (this.turnLeaseSweep) clearInterval(this.turnLeaseSweep);
     for (const tab of this.turnTabs.values()) {
@@ -1576,5 +1552,4 @@ module.exports = {
   isChatGptCloudflareChallengeResponse,
   isTemporaryChatUrl,
   TEMPORARY_CHAT_URL,
-  validateChatGptStorageState,
 };

@@ -118,12 +118,22 @@ test("Luna checkpoint treats the malformed quoted payload from issue 89 as opaqu
   });
 });
 
-test("Luna checkpoint stream fails closed when the model omits its private tail", () => {
+test("Luna checkpoint stream preserves the answer and skips the cache when the model omits its private tail", () => {
   const stream = new ChatGptLunaCheckpointStream();
   const visible = stream.push("A normal answer without a checkpoint.");
   expect(visible).toBe("");
-  expect(stream.flushVisibleRemainder()).toBe("A normal answer without a checkpoint.");
-  expect(() => stream.finish("A normal answer without a checkpoint.")).toThrow("without the required");
+  expect(stream.finishOptional("A normal answer without a checkpoint.")).toEqual({
+    answer: "A normal answer without a checkpoint.",
+    visibleRemainder: "A normal answer without a checkpoint.",
+  });
+});
+
+test("Luna checkpoint stream still rejects a marker that was lost by Markdown serialization", () => {
+  const stream = new ChatGptLunaCheckpointStream();
+  stream.push("A normal answer whose Markdown stream omitted the marker.");
+  expect(() => stream.finishOptional(
+    `A normal answer.\n\n${CHATGPT_LUNA_CHECKPOINT_MARKER}\nState:\n- preserved only in DOM text`,
+  )).toThrow("not preserved in the Markdown stream");
 });
 
 test("Luna prompt requests the strict private checkpoint only when capture is enabled", () => {
@@ -215,6 +225,14 @@ test("Luna checkpoint replaces only exact-parent history and preserves the curre
   const rejected = new ChatGptLunaCheckpointStore(path).apply(branch);
   expect(rejected.applied).toBe(false);
   expect(rejected.reason).toContain("exact parent");
+
+  const repeatedAnswerWithoutCheckpoint = request(threadId, "turn_after_repeat", [
+    message("assistant", answer, "turn_without_checkpoint"),
+    message("user", "Continue after the repeated answer", "turn_after_repeat"),
+  ]);
+  const stale = new ChatGptLunaCheckpointStore(path).apply(repeatedAnswerWithoutCheckpoint);
+  expect(stale.applied).toBe(false);
+  expect(stale.reason).toContain("source turn");
 });
 
 test("Luna checkpoint preserves the server-resolved backend model when the raw body carries a route slug", () => {

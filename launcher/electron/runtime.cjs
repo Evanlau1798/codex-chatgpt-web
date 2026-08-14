@@ -23,7 +23,6 @@ const CORE_SETUP_TIMEOUT_MS = 5 * 60_000;
 const MCP_SETUP_TIMEOUT_MS = 10 * 60_000;
 const UNINSTALL_TIMEOUT_MS = 2 * 60_000;
 const MAX_CHECKPOINT_FILE_BYTES = 16 * 1024 * 1024;
-const MAX_LOGIN_STATE_FILE_BYTES = 16 * 1024 * 1024;
 function collect(stream, chunks, onLine, onError) {
   let buffered = "";
   let bytes = 0;
@@ -56,71 +55,6 @@ function resolveUserPath(value) {
     return path.resolve(os.homedir(), value.slice(2));
   }
   return path.resolve(value);
-}
-
-function browserLoginCandidates(platform = process.platform, env = process.env) {
-  if (platform === "darwin") {
-    return [
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    ];
-  }
-  if (platform === "win32") {
-    const roots = [env.PROGRAMFILES, env["PROGRAMFILES(X86)"], env.LOCALAPPDATA].filter(Boolean);
-    return roots.flatMap((root) => [
-      path.win32.join(root, "Google", "Chrome", "Application", "chrome.exe"),
-      path.win32.join(root, "Chromium", "Application", "chrome.exe"),
-    ]);
-  }
-  return [
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-    "/opt/google/chrome/google-chrome",
-  ];
-}
-
-function executablePathIsAbsolute(candidate, platform = process.platform) {
-  return platform === "win32" ? path.win32.isAbsolute(candidate) : path.posix.isAbsolute(candidate);
-}
-
-function usableBrowserExecutable(candidate, platform = process.platform) {
-  if (typeof candidate !== "string" || !candidate || !executablePathIsAbsolute(candidate, platform)) return false;
-  try {
-    if (!fs.statSync(candidate).isFile()) return false;
-    if (platform !== "win32") fs.accessSync(candidate, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function resolveBrowserLoginExecutable({
-  configuredPath,
-  platform = process.platform,
-  candidates = browserLoginCandidates(platform),
-  isUsable = (candidate) => usableBrowserExecutable(candidate, platform),
-} = {}) {
-  if (configuredPath !== undefined && configuredPath !== null) {
-    if (typeof configuredPath !== "string" || !configuredPath.trim() || !executablePathIsAbsolute(configuredPath, platform)) {
-      throw new Error(`Configured Chrome/Chromium executable path is invalid: ${String(configuredPath)}`);
-    }
-    if (!isUsable(configuredPath)) {
-      throw new Error(
-        `Configured Chrome/Chromium executable is unavailable: ${configuredPath}. Set chromeExecutablePath to an absolute`
-        + " Google Chrome or Chromium executable path and retry; the launcher will not substitute another browser.",
-      );
-    }
-    return configuredPath;
-  }
-  for (const candidate of [...new Set(candidates)]) {
-    if (isUsable(candidate)) return candidate;
-  }
-  throw new Error(
-    `No supported system Chrome/Chromium executable was found. Install Google Chrome or Chromium, or configure`
-    + ` chromeExecutablePath explicitly. Checked: ${candidates.join(", ")}`,
-  );
 }
 
 function captureRegularFile(filePath) {
@@ -228,15 +162,6 @@ class RuntimeHost {
     this.activeChild = null;
     this.lifecycleOperation = null;
     this.cleanupEphemeralSecrets();
-    this.browserLoginCleanupError = null;
-    try {
-      this.cleanupBrowserLoginTransfers();
-    } catch (error) {
-      this.browserLoginCleanupError = error;
-      this.logger.warn("runtime.browser_login_cleanup_failed", {
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
   }
 
   currentOperation() {
@@ -260,21 +185,6 @@ class RuntimeHost {
           message: error instanceof Error ? error.message : String(error),
         });
       }
-    }
-  }
-
-  cleanupBrowserLoginTransfers() {
-    const parent = path.join(this.app.getPath("userData"), "browser-login");
-    let entries;
-    try {
-      entries = fs.readdirSync(parent, { withFileTypes: true });
-    } catch (error) {
-      if (error?.code === "ENOENT") return;
-      throw error;
-    }
-    for (const entry of entries) {
-      if (!/^transfer-[A-Za-z0-9]+$/.test(entry.name)) continue;
-      fs.rmSync(path.join(parent, entry.name), { recursive: true, force: true });
     }
   }
 
@@ -302,78 +212,6 @@ class RuntimeHost {
       throw new Error("Launcher browser ownership descriptor does not belong to this launcher process");
     }
     return { CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: token };
-  }
-
-  resolveBrowserLoginExecutable() {
-    const setupConfig = this.supervisor.readSetupConfig
-      ? this.supervisor.readSetupConfig()
-      : this.supervisor.readConfig();
-    return resolveBrowserLoginExecutable({
-      configuredPath: setupConfig?.chromeExecutablePath,
-      platform: this.platform,
-    });
-  }
-
-  async captureSystemBrowserLogin() {
-    try {
-      this.cleanupBrowserLoginTransfers();
-      this.browserLoginCleanupError = null;
-    } catch (error) {
-      this.browserLoginCleanupError = error;
-      throw new Error(
-        `Refusing to start system-browser login because stale private transfer state could not be removed:`
-        + ` ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-    const executable = this.resolveBrowserLoginExecutable();
-    const parent = path.join(this.app.getPath("userData"), "browser-login");
-    fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(parent, 0o700); } catch {}
-    const transferRoot = fs.mkdtempSync(path.join(parent, "transfer-"));
-    try { fs.chmodSync(transferRoot, 0o700); } catch {}
-    const storageStatePath = path.join(transferRoot, "storage-state.json");
-    const cleanup = async () => fs.rmSync(transferRoot, { recursive: true, force: true });
-    try {
-      await this.run(
-        "browser-login",
-        [
-          "login",
-          "--launcher-control",
-          "--chrome",
-          executable,
-          "--storage-state",
-          storageStatePath,
-        ],
-        {
-          env: this.launcherControlEnvironment(),
-          message: "Sign in to ChatGPT in the dedicated system Chrome/Chromium window; transfer continues automatically",
-          successMessage: "Authenticated system-browser ChatGPT session captured",
-        },
-      );
-      const stateStat = fs.lstatSync(storageStatePath);
-      if (!stateStat.isFile() || stateStat.size <= 0 || stateStat.size > MAX_LOGIN_STATE_FILE_BYTES) {
-        throw new Error("System-browser login returned an invalid storage-state file");
-      }
-      const markerPath = `${storageStatePath}.verified.json`;
-      const markerStat = fs.lstatSync(markerPath);
-      if (!markerStat.isFile() || markerStat.size <= 0 || markerStat.size > 64 * 1024) {
-        throw new Error("System-browser login returned an invalid verification marker");
-      }
-      const marker = readJsonFile(markerPath);
-      if (
-        marker?.version !== 2
-        || marker?.authenticated !== true
-        || marker?.source !== "authenticated-system-browser"
-        || typeof marker?.capturedAt !== "string"
-      ) {
-        throw new Error("System-browser login did not return authenticated capture evidence");
-      }
-      const storageState = readJsonFile(storageStatePath);
-      return { storageState, cleanup };
-    } catch (error) {
-      await cleanup();
-      throw error;
-    }
   }
 
   runtimeConfigSnapshot() {
@@ -432,6 +270,7 @@ class RuntimeHost {
       this.supervisor.configPath,
       path.join(coreHome, "codex", "integration-journal.json"),
       path.join(coreHome, "claude", "integration-journal.json"),
+      path.join(coreHome, "codex", "integration-journal.recovery.json"),
       path.join(this.codexHome, "config.toml"),
       path.join(this.codexHome, "models_cache.json"),
       path.join(this.claudeHome, "settings.json"),
@@ -724,8 +563,13 @@ class RuntimeHost {
       successMessage: "Previous Codex route restored",
       timeoutMs: 15_000,
     });
+    const result = parseBridgeRouteResult(disconnected.stdout, { expectedActive: false });
+    const verified = await this.bridgeStatus(operationName);
+    if (!verified.installed || verified.active) {
+      throw new Error("Codex bridge route restore did not persist in the active config");
+    }
     return {
-      ...parseBridgeRouteResult(disconnected.stdout, { expectedActive: false }),
+      ...result,
       installed: true,
     };
   }
@@ -761,7 +605,12 @@ class RuntimeHost {
             successMessage: "Codex bridge connected",
             timeoutMs: 15_000,
           });
-          return parseBridgeRouteResult(connected.stdout, { expectedActive: true });
+          const result = parseBridgeRouteResult(connected.stdout, { expectedActive: true });
+          const verified = await this.bridgeStatus(name);
+          if (!verified.installed || !verified.active) {
+            throw new Error("Codex bridge route connection did not persist in the active config");
+          }
+          return result;
         } catch (error) {
           let cleanupError;
           try { await this.supervisor.stopForSetup(); } catch (caught) { cleanupError = caught; }
@@ -782,7 +631,12 @@ class RuntimeHost {
           successMessage: "Codex bridge disconnected",
           timeoutMs: 15_000,
         });
-        return parseBridgeRouteResult(disconnected.stdout, { expectedActive: false });
+        const result = parseBridgeRouteResult(disconnected.stdout, { expectedActive: false });
+        const verified = await this.bridgeStatus(name);
+        if (!verified.installed || verified.active) {
+          throw new Error("Codex bridge route restore did not persist in the active config");
+        }
+        return result;
       } catch (error) {
         let recoveryError;
         try {
@@ -899,13 +753,18 @@ class RuntimeHost {
         );
       }
       try {
-        return await this.run(name, ["uninstall", "--yes", "--launcher-control"], {
+        const result = await this.run(name, ["uninstall", "--yes", "--launcher-control"], {
           embedded: true,
           env: this.launcherControlEnvironment(),
           message: "Restoring the previous Codex route",
           successMessage: "Codex Web GPT integration removed",
           timeoutMs: UNINSTALL_TIMEOUT_MS,
         });
+        const verified = await this.bridgeStatus(name);
+        if (verified.installed || verified.active) {
+          throw new Error("Codex integration removal did not persist in the active config");
+        }
+        return result;
       } catch (error) {
         try {
           await this.restoreBridgeRouteWithinOperation(name);
@@ -940,7 +799,6 @@ class RuntimeHost {
     if (integration === "claude") args.push("--claude-only");
     args.push("--replace-codex-route");
     args.push("--acknowledge-unofficial", "--restart-service");
-    if (!existing.configured) args.push("--chrome", this.resolveBrowserLoginExecutable());
     if (mode === "full") args.push("--app-name", this.browserConnectorName());
     const result = await this.runSetup("core-setup", args, {
       message: integration === "claude"
@@ -1108,4 +966,4 @@ class RuntimeHost {
   }
 }
 
-module.exports = { CURRENT_CONNECTOR_NAME, resolveBrowserLoginExecutable, RuntimeHost };
+module.exports = { CURRENT_CONNECTOR_NAME, RuntimeHost };

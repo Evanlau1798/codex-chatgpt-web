@@ -117,3 +117,31 @@ test("Luna-only account exposes no paid ChatGPT Web routes", async () => {
   expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/")).map(model => model.slug))
     .toEqual(["chatgpt-web/luna"]);
 });
+
+test("ChatGPT-only native catalog rows do not turn model discovery into a 502", async () => {
+  const config = defaultConfig("browser-only");
+  const response = await modelsRequest(
+    new Request("http://127.0.0.1:17841/v1/models?client_version=0.147.0", {
+      headers: { authorization: "Bearer chatgpt-session-token" },
+    }),
+    config,
+    async () => Response.json({
+      models: [{
+        slug: "gpt-chatgpt-only",
+        display_name: "ChatGPT only",
+        visibility: "list",
+        supported_in_api: false,
+        supported_reasoning_levels: [{ effort: "medium", description: "Medium" }],
+        tool_mode: null,
+      }],
+    }),
+  );
+
+  expect(response.status).toBe(200);
+  const body = await response.json() as { models: Array<{ slug: string; supported_in_api?: boolean }> };
+  expect(body.models[0]).toMatchObject({ slug: "gpt-chatgpt-only", supported_in_api: false });
+  expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/")))
+    .toHaveLength(3);
+  expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/"))
+    .every(model => model.supported_in_api === true)).toBe(true);
+});

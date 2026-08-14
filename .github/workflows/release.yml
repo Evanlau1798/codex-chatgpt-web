@@ -92,8 +92,6 @@ jobs:
       - name: Add licenses, installers, and demo
         run: |
           cp LICENSE release-assets/LICENSE
-          cp LICENSES/NOTICE.md release-assets/NOTICE.md
-          cp LICENSES/OpenCodex-MIT.txt release-assets/OpenCodex-MIT.txt
           cp LICENSES/Bun.md release-assets/Bun.md
           cp dist/THIRD_PARTY_NOTICES.txt release-assets/THIRD_PARTY_NOTICES.txt
           cp scripts/install.sh release-assets/install.sh

@@ -23,21 +23,6 @@ interface StoredResponseState {
 
 const states = new Map<string, StoredResponseState>();
 let storedResponseBytes = 0;
-let byteCapOverride: number | null = null;
-
-function byteCap(): number {
-  return byteCapOverride ?? MAX_STORED_RESPONSE_BYTES;
-}
-
-/** Test-only: lower/restore the in-memory byte cap (null restores the default). */
-export function setResponseStateByteCapForTests(bytes: number | null): void {
-  byteCapOverride = bytes;
-}
-
-/** Test-only: current in-memory byte accounting (proves evictions release their bytes). */
-export function getStoredResponseBytesForTests(): number {
-  return storedResponseBytes;
-}
 
 /** The ONLY size computation: approximate entry weight from its items payload. */
 function measuredEntry(entry: Omit<StoredResponseState, "sizeBytes">): StoredResponseState {
@@ -68,7 +53,8 @@ function deleteEntry(id: string): void {
 }
 // Expansion provenance must stay proxy-private: a WeakMap distinguishes replayed history from the
 // newly appended input suffix without adding an unknown field that native passthrough could send
-// upstream. The parser uses this boundary to acknowledge historical compaction markers exactly once.
+// upstream. Consumers use the prefix length to bind trusted history and rolling checkpoints to the
+// exact replayed portion of this request.
 const replayedInputPrefixLengths = new WeakMap<object, number>();
 let loaded = false;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -189,7 +175,7 @@ function pruneResponses(at = now()): void {
     deleteEntry(oldest);
   }
   // Byte high-water eviction, oldest-first (Map preserves insertion order).
-  while (storedResponseBytes > byteCap() && states.size > 1) {
+  while (storedResponseBytes > MAX_STORED_RESPONSE_BYTES && states.size > 1) {
     const oldest = states.keys().next().value;
     if (!oldest) break;
     deleteEntry(oldest);
@@ -258,7 +244,7 @@ export function rememberResponseState(
   schedulePersist();
 }
 
-/** Memory-only reset (simulates a process restart: the snapshot file survives). */
+/** Memory-only reset (simulates a process restart while preserving the snapshot). */
 export function clearResponseStateMemoryForTests(): void {
   if (persistTimer) {
     clearTimeout(persistTimer);
@@ -274,6 +260,6 @@ export function clearResponseStateForTests(): void {
   try {
     unlinkSync(snapshotPath());
   } catch {
-    /* no snapshot on disk */
+    // No snapshot exists.
   }
 }

@@ -158,6 +158,10 @@ export function getCodexJournalPath(): string {
   return join(getConfigDir(), "codex", "integration-journal.json");
 }
 
+export function getCodexJournalRecoveryPath(): string {
+  return join(getConfigDir(), "codex", "integration-journal.recovery.json");
+}
+
 function routeUrl(config: AppConfig): string {
   return `http://${config.host}:${config.port}/v1`;
 }
@@ -206,6 +210,25 @@ function writeFilesWithCompensation(
         : primary,
     );
   }
+}
+
+function serializeJournal(journal: AnyCodexIntegrationJournal): string {
+  return `${JSON.stringify(journal, null, 2)}\n`;
+}
+
+function writeIntegrationState(
+  journal: AnyCodexIntegrationJournal,
+  configWrite?: { path: string; data: string },
+  removals: string[] = [],
+): void {
+  const data = serializeJournal(journal);
+  // The recovery copy records intent and the primary copy records commit. If the process stops
+  // between those writes, the physical config unambiguously selects the completed state.
+  writeFilesWithCompensation([
+    { path: getCodexJournalRecoveryPath(), data },
+    ...(configWrite ? [configWrite] : []),
+    { path: getCodexJournalPath(), data },
+  ], removals);
 }
 
 function firstTableIndex(lines: string[]): number {
@@ -960,9 +983,7 @@ function restoreLegacyV2(text: string, journal: LegacyCodexIntegrationJournal): 
   return renderDocument(document);
 }
 
-function readJournal(): AnyCodexIntegrationJournal | undefined {
-  const path = getCodexJournalPath();
-  if (!existsSync(path)) return undefined;
+function parseJournal(path: string): AnyCodexIntegrationJournal {
   const value = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
   if (value.version === 6
     && typeof value.active === "boolean"
@@ -997,6 +1018,68 @@ function readJournal(): AnyCodexIntegrationJournal | undefined {
     return value as unknown as LegacyCodexIntegrationJournal;
   }
   throw new Error(`Invalid Codex integration journal: ${path}`);
+}
+
+function journalMatchesConfig(journal: AnyCodexIntegrationJournal): boolean {
+  try {
+    assertJournalTargetsConfig(journal, getCodexConfigPath());
+    if (!existsSync(journal.configPath)) return false;
+    const text = readFileSync(journal.configPath, "utf8");
+    if (journal.version === 2) return text.includes(journal.providerBlock);
+    verifyManagedJournalState(text, journal);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readJournal(): AnyCodexIntegrationJournal | undefined {
+  const primaryPath = getCodexJournalPath();
+  const recoveryPath = getCodexJournalRecoveryPath();
+  let primary: AnyCodexIntegrationJournal | undefined;
+  let recovery: AnyCodexIntegrationJournal | undefined;
+  let primaryError: unknown;
+  let recoveryError: unknown;
+  if (existsSync(primaryPath)) {
+    try { primary = parseJournal(primaryPath); } catch (error) { primaryError = error; }
+  }
+  if (existsSync(recoveryPath)) {
+    try { recovery = parseJournal(recoveryPath); } catch (error) { recoveryError = error; }
+  }
+  if (!primary && !recovery) {
+    if (primaryError) throw primaryError;
+    if (recoveryError) throw recoveryError;
+    return undefined;
+  }
+  if (primary && recovery && serializeJournal(primary) === serializeJournal(recovery)) return primary;
+  if (primary && !recovery && !recoveryError) {
+    atomicWriteFile(recoveryPath, serializeJournal(primary));
+    return primary;
+  }
+  if (recovery && !primary && !primaryError) {
+    if (!journalMatchesConfig(recovery)) {
+      throw new Error("Codex integration recovery journal does not match the active config");
+    }
+    atomicWriteFile(primaryPath, serializeJournal(recovery));
+    return recovery;
+  }
+
+  const primaryMatches = primary ? journalMatchesConfig(primary) : false;
+  const recoveryMatches = recovery ? journalMatchesConfig(recovery) : false;
+  if (primaryMatches === recoveryMatches) {
+    throw new Error(
+      primaryMatches
+        ? "Codex integration journal copies contain different baselines for the same config"
+        : "Codex integration journal copies do not match the active config",
+    );
+  }
+  const selected = primaryMatches ? primary! : recovery!;
+  const data = serializeJournal(selected);
+  writeFilesWithCompensation([
+    { path: recoveryPath, data },
+    { path: primaryPath, data },
+  ]);
+  return selected;
 }
 
 function assertJournalTargetsConfig(
@@ -1103,10 +1186,7 @@ export function installCodexIntegration(
         previousMultiAgentV2: patched.previousMultiAgentV2,
         format: textFormat(baseline),
       };
-      writeFilesWithCompensation([
-        { path: configPath, data: patched.text },
-        { path: getCodexJournalPath(), data: `${JSON.stringify(replacement, null, 2)}\n` },
-      ], [getCodexModelsCachePath()]);
+      writeIntegrationState(replacement, { path: configPath, data: patched.text }, [getCodexModelsCachePath()]);
       return replacement;
     }
   }
@@ -1157,10 +1237,7 @@ export function installCodexIntegration(
       previousMultiAgent,
       previousMultiAgentV2,
     };
-    writeFilesWithCompensation([
-      { path: configPath, data: installedText },
-      { path: getCodexJournalPath(), data: `${JSON.stringify(updated, null, 2)}\n` },
-    ], [getCodexModelsCachePath()]);
+    writeIntegrationState(updated, { path: configPath, data: installedText }, [getCodexModelsCachePath()]);
     return updated;
   }
 
@@ -1209,10 +1286,7 @@ export function installCodexIntegration(
       previousMultiAgentV2,
       ...(existing.format ? { format: existing.format } : {}),
     };
-    writeFilesWithCompensation([
-      { path: configPath, data: installedText },
-      { path: getCodexJournalPath(), data: `${JSON.stringify(updated, null, 2)}\n` },
-    ], [getCodexModelsCachePath()]);
+    writeIntegrationState(updated, { path: configPath, data: installedText }, [getCodexModelsCachePath()]);
     return updated;
   }
 
@@ -1243,10 +1317,7 @@ export function installCodexIntegration(
       previousMultiAgentV2: features.previousMultiAgentV2,
       ...(existing.format ? { format: existing.format } : {}),
     };
-    writeFilesWithCompensation([
-      { path: configPath, data: features.text },
-      { path: getCodexJournalPath(), data: `${JSON.stringify(updated, null, 2)}\n` },
-    ], [getCodexModelsCachePath()]);
+    writeIntegrationState(updated, { path: configPath, data: features.text }, [getCodexModelsCachePath()]);
     return updated;
   }
 
@@ -1274,10 +1345,7 @@ export function installCodexIntegration(
     previousMultiAgentV2: patched.previousMultiAgentV2,
     format: textFormat(baseline),
   };
-  writeFilesWithCompensation([
-    { path: configPath, data: patched.text },
-    { path: getCodexJournalPath(), data: `${JSON.stringify(journal, null, 2)}\n` },
-  ], [getCodexModelsCachePath()]);
+  writeIntegrationState(journal, { path: configPath, data: patched.text }, [getCodexModelsCachePath()]);
   if (existing?.version === 2 && existsSync(existing.catalogPath)) rmSync(existing.catalogPath);
   return journal;
 }
@@ -1302,10 +1370,7 @@ export function deactivateCodexIntegration(): SetCodexIntegrationActiveResult {
     | LegacyCodexIntegrationJournalV4 = existing.version === 6 || existing.version === 5
       ? { ...existing, active: false }
       : { ...existing, version: 4, active: false };
-  writeFilesWithCompensation([
-    { path: existing.configPath, data: restored },
-    { path: getCodexJournalPath(), data: `${JSON.stringify(disconnected, null, 2)}\n` },
-  ], [getCodexModelsCachePath()]);
+  writeIntegrationState(disconnected, { path: existing.configPath, data: restored }, [getCodexModelsCachePath()]);
   return { changed: true, active: false };
 }
 
@@ -1341,10 +1406,7 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
       previousMultiAgentV2: multiAgentV2.previous,
       ...(existing.format ? { format: existing.format } : {}),
     };
-    writeFilesWithCompensation([
-      { path: existing.configPath, data: multiAgentV2.text },
-      { path: getCodexJournalPath(), data: `${JSON.stringify(connected, null, 2)}\n` },
-    ], [getCodexModelsCachePath()]);
+    writeIntegrationState(connected, { path: existing.configPath, data: multiAgentV2.text }, [getCodexModelsCachePath()]);
     return { changed: true, active: true };
   }
   let routedText: string;
@@ -1393,10 +1455,7 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
     previousMultiAgentV2: features.previousMultiAgentV2,
     ...(existing.format ? { format: existing.format } : {}),
   };
-  writeFilesWithCompensation([
-    { path: existing.configPath, data: features.text },
-    { path: getCodexJournalPath(), data: `${JSON.stringify(connected, null, 2)}\n` },
-  ], [getCodexModelsCachePath()]);
+  writeIntegrationState(connected, { path: existing.configPath, data: features.text }, [getCodexModelsCachePath()]);
   return { changed: true, active: true };
 }
 
@@ -1420,14 +1479,17 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   const configSnapshot = snapshotFile(journal.configPath);
   const catalogSnapshot = journal.version === 2 ? snapshotFile(journal.catalogPath) : undefined;
   const modelsCacheSnapshot = snapshotFile(getCodexModelsCachePath());
+  const journalSnapshot = snapshotFile(getCodexJournalPath());
+  const recoverySnapshot = snapshotFile(getCodexJournalRecoveryPath());
   try {
     atomicWriteFile(journal.configPath, restored);
     if (catalogSnapshot?.exists) rmSync(catalogSnapshot.path);
     rmSync(modelsCacheSnapshot.path, { force: true });
     rmSync(getCodexJournalPath(), { force: true });
+    rmSync(getCodexJournalRecoveryPath(), { force: true });
   } catch (error) {
     const rollbackFailures: string[] = [];
-    for (const snapshot of [modelsCacheSnapshot, catalogSnapshot, configSnapshot]) {
+    for (const snapshot of [recoverySnapshot, journalSnapshot, modelsCacheSnapshot, catalogSnapshot, configSnapshot]) {
       if (!snapshot) continue;
       try {
         restoreFileSnapshot(snapshot);

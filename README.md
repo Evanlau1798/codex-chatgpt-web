@@ -92,10 +92,9 @@ irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install
 
 Then complete the three checks in the app:
 
-1. Sign in through the dedicated system Chrome/Chromium window opened by the launcher and leave it
-   open. The launcher detects the authenticated Temporary Chat composer, captures the session, and
-   closes that dedicated window. It then imports only allowlisted ChatGPT state into its private
-   embedded-browser profile and independently proves the authenticated composer there.
+1. Sign in directly in the launcher's embedded ChatGPT browser. Login pages and identity-provider
+   windows stay inside the same launcher-owned private browser profile; no session is copied between
+   browsers.
 2. Run the browser smoke test.
 3. Press **Install models**, restart Codex once, and select a **ChatGPT Web — …** model.
 
@@ -103,9 +102,8 @@ The launcher detects the current account's ChatGPT controls during setup: Free/G
 only Luna, while Pro appears only when the signed-in account exposes it. The separate **MCP** page
 is optional and guides the full-harness setup without terminal commands.
 
-The packaged launcher uses an installed Google Chrome or Chromium only for the passkey-compatible
-sign-in handoff. ChatGPT model turns still run in the launcher's embedded browser and need no model
-API key, system Node/Bun, or project-managed browser download.
+The packaged launcher keeps sign-in and ChatGPT model turns in its embedded browser. It needs no
+model API key, installed Chrome/Chromium, system Node/Bun, or project-managed browser download.
 
 **Run from source**
 

@@ -4,34 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { CURRENT_CONNECTOR_NAME } = require("../electron/connector-identity.cjs");
-const { resolveBrowserLoginExecutable, RuntimeHost } = require("../electron/runtime.cjs");
-
-test("browser login uses configured Chromium exactly and never falls back", () => {
-  const checked = [];
-  assert.equal(resolveBrowserLoginExecutable({
-    configuredPath: "/opt/custom/chromium",
-    candidates: ["/usr/bin/google-chrome", "/usr/bin/chromium"],
-    isUsable: (candidate) => {
-      checked.push(candidate);
-      return candidate === "/opt/custom/chromium";
-    },
-  }), "/opt/custom/chromium");
-  assert.deepEqual(checked, ["/opt/custom/chromium"]);
-
-  assert.throws(() => resolveBrowserLoginExecutable({
-    configuredPath: "/opt/missing/chromium",
-    candidates: ["/usr/bin/google-chrome", "/usr/bin/chromium"],
-    isUsable: (candidate) => candidate === "/usr/bin/chromium",
-  }), /Configured Chrome\/Chromium executable is unavailable: \/opt\/missing\/chromium/);
-});
-
-test("unconfigured Arch login deterministically discovers Chromium", () => {
-  assert.equal(resolveBrowserLoginExecutable({
-    platform: "linux",
-    candidates: ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium"],
-    isUsable: (candidate) => candidate === "/usr/bin/chromium",
-  }), "/usr/bin/chromium");
-});
+const { RuntimeHost } = require("../electron/runtime.cjs");
 
 function hostFor(existingConfig) {
   const host = new RuntimeHost({
@@ -52,7 +25,6 @@ function hostFor(existingConfig) {
     invocation = { name, args };
     return { code: 0, stdout: "", stderr: "" };
   };
-  host.resolveBrowserLoginExecutable = () => "/usr/bin/chromium";
   return { host, invocation: () => invocation };
 }
 
@@ -87,7 +59,7 @@ test("core setup starts in browser-only mode when no installation exists", async
   assert.deepEqual(fixture.invocation().args.slice(0, 2), ["setup", "--browser-only"]);
   assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), true);
   assert.equal(fixture.invocation().args.includes("--replace-codex-route"), true);
-  assert.deepEqual(fixture.invocation().args.slice(-2), ["--chrome", "/usr/bin/chromium"]);
+  assert.equal(fixture.invocation().args.includes("--chrome"), false);
 });
 
 test("launcher setup targets Codex and Claude Code independently", async () => {
@@ -102,93 +74,6 @@ test("launcher setup targets Codex and Claude Code independently", async () => {
   assert.equal(claude.invocation().args.includes("--claude-only"), true);
   assert.equal(claude.invocation().args.includes("--codex-only"), false);
   assert.equal(claude.invocation().args.includes("--replace-codex-route"), true);
-});
-
-test("launcher login accepts authenticated capture evidence in a private transfer and returns explicit cleanup", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-browser-login-"));
-  const descriptorPath = path.join(root, "launcher-browser.json");
-  const staleTransfer = path.join(root, "browser-login", "transfer-stale123");
-  fs.mkdirSync(staleTransfer, { recursive: true });
-  fs.writeFileSync(path.join(staleTransfer, "storage-state.json"), "stale secret\n");
-  const host = new RuntimeHost({
-    app: { getPath: () => root },
-    logger: { info() {}, warn() {}, error() {} },
-    sourceRoot: "/source",
-    browserDescriptorPath: descriptorPath,
-    platform: "linux",
-    supervisor: { readConfig: () => null, readSetupConfig: () => null },
-  });
-  host.resolveBrowserLoginExecutable = () => "/usr/bin/chromium";
-  host.launcherControlEnvironment = () => ({ CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "private-token" });
-  let invocation;
-  let marker = {
-    version: 2,
-    authenticated: true,
-    source: "authenticated-system-browser",
-    capturedAt: new Date().toISOString(),
-  };
-  host.run = async (name, args, options) => {
-    invocation = { name, args, options };
-    const statePath = args[args.indexOf("--storage-state") + 1];
-    fs.writeFileSync(statePath, `${JSON.stringify({ cookies: [], origins: [] })}\n`, { mode: 0o600 });
-    fs.writeFileSync(`${statePath}.verified.json`, `${JSON.stringify(marker)}\n`, { mode: 0o600 });
-    return { code: 0, stdout: "", stderr: "" };
-  };
-
-  try {
-    assert.equal(fs.existsSync(staleTransfer), false);
-    const transfer = await host.captureSystemBrowserLogin();
-    assert.equal(invocation.name, "browser-login");
-    assert.deepEqual(invocation.args.slice(0, 5), [
-      "login",
-      "--launcher-control",
-      "--chrome",
-      "/usr/bin/chromium",
-      "--storage-state",
-    ]);
-    assert.deepEqual(invocation.options.env, { CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "private-token" });
-    assert.deepEqual(transfer.storageState, { cookies: [], origins: [] });
-    const transferRoot = path.dirname(invocation.args.at(-1));
-    assert.equal(fs.existsSync(transferRoot), true);
-    await transfer.cleanup();
-    assert.equal(fs.existsSync(transferRoot), false);
-
-    marker = { version: 1, authenticated: true, verifiedAt: new Date().toISOString() };
-    await assert.rejects(
-      host.captureSystemBrowserLogin(),
-      /did not return authenticated capture evidence/,
-    );
-    assert.equal(fs.existsSync(path.dirname(invocation.args.at(-1))), false);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("launcher login refuses to proceed when stale private transfer state cannot be removed", async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-browser-login-cleanup-"));
-  const host = new RuntimeHost({
-    app: { getPath: () => root },
-    logger: { info() {}, warn() {}, error() {} },
-    sourceRoot: "/source",
-    browserDescriptorPath: path.join(root, "launcher-browser.json"),
-    platform: "linux",
-    supervisor: { readConfig: () => null, readSetupConfig: () => null },
-  });
-  let resolvedExecutable = false;
-  host.cleanupBrowserLoginTransfers = () => { throw new Error("synthetic cleanup denial"); };
-  host.resolveBrowserLoginExecutable = () => {
-    resolvedExecutable = true;
-    return "/usr/bin/chromium";
-  };
-  try {
-    await assert.rejects(
-      host.captureSystemBrowserLogin(),
-      /Refusing to start system-browser login.*synthetic cleanup denial/,
-    );
-    assert.equal(resolvedExecutable, false);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test("launcher update transaction upgrades its owned full runtime with saved configuration", async () => {
@@ -361,6 +246,7 @@ test("mutating launcher operations are serialized before lifecycle changes begin
 
 function bridgeFixture({ active }) {
   const calls = [];
+  let routeActive = active;
   const supervisor = {
     readConfig: () => ({ mode: "browser-only" }),
     readSetupConfig: () => ({ mode: "browser-only" }),
@@ -384,10 +270,16 @@ function bridgeFixture({ active }) {
     const action = args.join(" ");
     calls.push(action);
     if (action === "route status") {
-      return { stdout: JSON.stringify({ installed: true, active, errors: [] }) };
+      return { stdout: JSON.stringify({ installed: true, active: routeActive, errors: [] }) };
     }
-    if (action === "route connect") return { stdout: JSON.stringify({ changed: true, active: true }) };
-    if (action === "route disconnect") return { stdout: JSON.stringify({ changed: true, active: false }) };
+    if (action === "route connect") {
+      routeActive = true;
+      return { stdout: JSON.stringify({ changed: true, active: true }) };
+    }
+    if (action === "route disconnect") {
+      routeActive = false;
+      return { stdout: JSON.stringify({ changed: true, active: false }) };
+    }
     throw new Error(`Unexpected command: ${action}`);
   };
   return { calls, host, supervisor };
@@ -397,14 +289,14 @@ test("bridge connection starts a healthy runtime before routing Codex to it", as
   const fixture = bridgeFixture({ active: false });
   const result = await fixture.host.setBridgeEnabled(true);
   assert.equal(result.active, true);
-  assert.deepEqual(fixture.calls, ["route status", "runtime:start", "route connect"]);
+  assert.deepEqual(fixture.calls, ["route status", "runtime:start", "route connect", "route status"]);
 });
 
 test("bridge disconnection proves idleness and stops the runtime before restoring the prior route", async () => {
   const fixture = bridgeFixture({ active: true });
   const result = await fixture.host.setBridgeEnabled(false);
   assert.equal(result.active, false);
-  assert.deepEqual(fixture.calls, ["route status", "runtime:stop", "route disconnect"]);
+  assert.deepEqual(fixture.calls, ["route status", "runtime:stop", "route disconnect", "route status"]);
 });
 
 test("bridge connection rejects a route command that did not reach the requested state", async () => {
@@ -435,11 +327,38 @@ test("bridge disconnection restarts the existing runtime if restoring the prior 
   assert.deepEqual(fixture.calls, ["route status", "runtime:stop", "route disconnect", "runtime:start"]);
 });
 
+test("bridge disconnection rejects a command that reports success without changing the active config", async () => {
+  const fixture = bridgeFixture({ active: true });
+  fixture.host.run = async (_name, args) => {
+    const action = args.join(" ");
+    fixture.calls.push(action);
+    if (action === "route status") {
+      return { stdout: JSON.stringify({ installed: true, active: true, errors: [] }) };
+    }
+    if (action === "route disconnect") {
+      return { stdout: JSON.stringify({ changed: true, active: false }) };
+    }
+    throw new Error(`Unexpected command: ${action}`);
+  };
+
+  await assert.rejects(
+    fixture.host.setBridgeEnabled(false),
+    /route restore did not persist in the active config/,
+  );
+  assert.deepEqual(fixture.calls, [
+    "route status",
+    "runtime:stop",
+    "route disconnect",
+    "route status",
+    "runtime:start",
+  ]);
+});
+
 test("startup recovery can restore the Codex route without requiring a healthy local runtime", async () => {
   const fixture = bridgeFixture({ active: true });
   const result = await fixture.host.restoreBridgeRoute("runtime-start-fail-safe");
   assert.equal(result.active, false);
-  assert.deepEqual(fixture.calls, ["route status", "route disconnect"]);
+  assert.deepEqual(fixture.calls, ["route status", "route disconnect", "route status"]);
 });
 
 test("failed runtime cleanup during removal still restores the previous Codex route", async () => {
@@ -459,13 +378,15 @@ test("failed runtime cleanup during removal still restores the previous Codex ro
       },
     },
   });
+  let routeActive = true;
   host.run = async (_name, args) => {
     const action = args.join(" ");
     calls.push(action);
     if (action === "route status") {
-      return { stdout: JSON.stringify({ installed: true, active: true, errors: [] }) };
+      return { stdout: JSON.stringify({ installed: true, active: routeActive, errors: [] }) };
     }
     if (action === "route disconnect") {
+      routeActive = false;
       return { stdout: JSON.stringify({ changed: true, active: false }) };
     }
     throw new Error(`Unexpected command: ${action}`);
@@ -475,7 +396,81 @@ test("failed runtime cleanup during removal still restores the previous Codex ro
     host.uninstallIntegration(),
     /previous Codex route was restored, but launcher runtime cleanup did not complete/,
   );
-  assert.deepEqual(calls, ["runtime:stop", "route status", "route disconnect"]);
+  assert.deepEqual(calls, ["runtime:stop", "route status", "route disconnect", "route status"]);
+});
+
+test("integration removal is accepted only after a new status process observes it absent", async () => {
+  const calls = [];
+  const config = { mode: "browser-only", browserHost: "launcher", releaseVersion: "2.1.8" };
+  const host = new RuntimeHost({
+    app: { getPath: () => path.join(os.tmpdir(), "codex-web-gpt-uninstall-success") },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: "/source",
+    browserDescriptorPath: "/runtime/launcher-browser.json",
+    supervisor: {
+      readConfig: () => config,
+      readSetupConfig: () => config,
+      stopForSetup: async () => { calls.push("runtime:stop"); },
+    },
+  });
+  host.launcherControlEnvironment = () => ({ CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "test-token" });
+  host.run = async (_name, args) => {
+    const action = args.join(" ");
+    calls.push(action);
+    if (action === "uninstall --yes --launcher-control") {
+      return { stdout: "uninstalled\n" };
+    }
+    if (action === "route status") {
+      return { stdout: JSON.stringify({ installed: false, active: false, errors: [] }) };
+    }
+    throw new Error(`Unexpected command: ${action}`);
+  };
+
+  await host.uninstallIntegration();
+  assert.deepEqual(calls, [
+    "runtime:stop",
+    "uninstall --yes --launcher-control",
+    "route status",
+  ]);
+});
+
+test("integration removal rejects a command that leaves an inactive journal behind", async () => {
+  const calls = [];
+  const config = { mode: "browser-only", browserHost: "launcher", releaseVersion: "2.1.8" };
+  const host = new RuntimeHost({
+    app: { getPath: () => path.join(os.tmpdir(), "codex-web-gpt-uninstall-stale") },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: "/source",
+    browserDescriptorPath: "/runtime/launcher-browser.json",
+    supervisor: {
+      readConfig: () => config,
+      readSetupConfig: () => config,
+      stopForSetup: async () => { calls.push("runtime:stop"); },
+    },
+  });
+  host.launcherControlEnvironment = () => ({ CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "test-token" });
+  host.run = async (_name, args) => {
+    const action = args.join(" ");
+    calls.push(action);
+    if (action === "uninstall --yes --launcher-control") {
+      return { stdout: "uninstalled\n" };
+    }
+    if (action === "route status") {
+      return { stdout: JSON.stringify({ installed: true, active: false, errors: [] }) };
+    }
+    throw new Error(`Unexpected command: ${action}`);
+  };
+
+  await assert.rejects(
+    host.uninstallIntegration(),
+    /integration removal did not persist in the active config/,
+  );
+  assert.deepEqual(calls, [
+    "runtime:stop",
+    "uninstall --yes --launcher-control",
+    "route status",
+    "route status",
+  ]);
 });
 
 test("connector verification uses the current identity and rejects a legacy local runtime", () => {
@@ -526,6 +521,7 @@ test("failed first-time setup removes its route before restoring the unconfigure
   const coreHome = path.join(root, "core");
   const codexHome = path.join(root, "codex");
   const journalPath = path.join(coreHome, "codex", "integration-journal.json");
+  const recoveryJournalPath = path.join(coreHome, "codex", "integration-journal.recovery.json");
   const configPath = path.join(root, "config.json");
   const codexConfigPath = path.join(codexHome, "config.toml");
   const codexModelsCachePath = path.join(codexHome, "models_cache.json");
@@ -567,6 +563,7 @@ test("failed first-time setup removes its route before restoring the unconfigure
     fs.mkdirSync(path.dirname(claudeJournalPath), { recursive: true });
     fs.writeFileSync(claudeJournalPath, "partial claude integration journal\n");
     fs.writeFileSync(claudeSettingsPath, "partially changed claude settings\n");
+    fs.writeFileSync(recoveryJournalPath, "partial recovery journal\n");
     fs.writeFileSync(codexConfigPath, "partially changed codex config\n");
     fs.rmSync(codexModelsCachePath);
     throw new Error("synthetic setup failure");
@@ -579,6 +576,7 @@ test("failed first-time setup removes its route before restoring the unconfigure
     assert.deepEqual(calls.map((args) => args[0]), ["setup"]);
     assert.equal(fs.existsSync(configPath), false);
     assert.equal(fs.existsSync(journalPath), false);
+    assert.equal(fs.existsSync(recoveryJournalPath), false);
     assert.equal(fs.readFileSync(codexConfigPath, "utf8"), "original codex config\n");
     assert.equal(fs.readFileSync(codexModelsCachePath, "utf8"), "original codex models cache\n");
     assert.equal(fs.readFileSync(claudeSettingsPath, "utf8"), "original claude settings\n");
@@ -664,6 +662,7 @@ test("failed launcher update restores every mutable setup file before restarting
   const codexHome = path.join(root, "codex");
   const configPath = path.join(coreHome, "config.json");
   const journalPath = path.join(coreHome, "codex", "integration-journal.json");
+  const recoveryJournalPath = path.join(coreHome, "codex", "integration-journal.recovery.json");
   const keyPath = path.join(coreHome, "secrets", "tunnel-runtime.key");
   const profileDir = path.join(coreHome, "tunnel", "profiles");
   const profilePath = path.join(profileDir, "custom.yaml");
@@ -679,11 +678,12 @@ test("failed launcher update restores every mutable setup file before restarting
       profileName: "custom",
     },
   };
-  for (const file of [configPath, journalPath, keyPath, profilePath, codexConfigPath, codexModelsCachePath]) {
+  for (const file of [configPath, journalPath, recoveryJournalPath, keyPath, profilePath, codexConfigPath, codexModelsCachePath]) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
   }
   fs.writeFileSync(configPath, `${JSON.stringify(oldConfig)}\n`, { mode: 0o600 });
   fs.writeFileSync(journalPath, "old journal\n", { mode: 0o600 });
+  fs.writeFileSync(recoveryJournalPath, "old recovery journal\n", { mode: 0o600 });
   fs.writeFileSync(keyPath, "old key\n", { mode: 0o600 });
   fs.writeFileSync(profilePath, "old profile\n", { mode: 0o600 });
   fs.writeFileSync(codexConfigPath, "old codex config\n", { mode: 0o600 });
@@ -716,6 +716,7 @@ test("failed launcher update restores every mutable setup file before restarting
   host.run = async () => {
     fs.writeFileSync(configPath, `${JSON.stringify({ ...oldConfig, releaseVersion: "0.2.0" })}\n`);
     fs.writeFileSync(journalPath, "new journal\n");
+    fs.writeFileSync(recoveryJournalPath, "new recovery journal\n");
     fs.writeFileSync(keyPath, "new key\n");
     fs.writeFileSync(profilePath, "new profile\n");
     fs.writeFileSync(codexConfigPath, "new codex config\n");
@@ -731,6 +732,7 @@ test("failed launcher update restores every mutable setup file before restarting
     assert.equal(startAttempts, 2);
     assert.deepEqual(readConfig(), oldConfig);
     assert.equal(fs.readFileSync(journalPath, "utf8"), "old journal\n");
+    assert.equal(fs.readFileSync(recoveryJournalPath, "utf8"), "old recovery journal\n");
     assert.equal(fs.readFileSync(keyPath, "utf8"), "old key\n");
     assert.equal(fs.readFileSync(profilePath, "utf8"), "old profile\n");
     assert.equal(fs.readFileSync(codexConfigPath, "utf8"), "old codex config\n");

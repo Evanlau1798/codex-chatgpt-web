@@ -768,7 +768,6 @@ async function start() {
     getConnectorName: () => runtimeHost.browserConnectorName(),
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
-    loginWithSystemBrowser: () => runtimeHost.captureSystemBrowserLogin(),
     publishState: (state) => send("launcher:browser-state", state),
   });
   await browserHost.ready();
