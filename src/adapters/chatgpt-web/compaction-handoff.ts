@@ -124,7 +124,6 @@ export function retryActiveCompactionHandoff(answer: string, attempt: number): s
   return `Your checkpoint response was rejected because it did not use the required format. Do not call tools.
 Retry the checkpoint summary now and start the response with exactly ${COMPACTION_HANDOFF_MARKER} on its own line.`;
 }
-
 export function createActiveCompactionHandoffPrompts() {
   let requested = false;
   let instructionDelivered = false;

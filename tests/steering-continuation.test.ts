@@ -14,10 +14,8 @@ import {
   chatGptTurnSteeringId,
 } from "../src/adapters/chatgpt-web/turn-execution";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig } from "../src/types";
-
 const turnId = `turn_steering_${Date.now()}`;
 const threadId = `thread_steering_${Date.now()}`;
-
 function request(...userPrompts: string[]): CodexParsedRequest {
   return {
     modelId: CHATGPT_WEB_MODEL_ID,

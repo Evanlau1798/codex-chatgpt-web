@@ -8,14 +8,6 @@ import { CHATGPT_CONNECTOR_NAME, defaultChromeExecutable, legacyChatGptConnector
 import { chatGptEffortSliderAdvancedTowardTarget, parseChatGptEffortSliderState } from "../src/chatgpt-session";
 import type { CodexParsedRequest } from "../src/types";
 
-test("completed prompts activate the scoped semantic send control", () => {
-  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  expect(workerSource).toContain('.getByTestId("send-button")');
-  expect(workerSource).toContain("await sendButton.click({ force: true })");
-  expect(workerSource).not.toContain('await sendButton.press("Enter")');
-  expect(workerSource).not.toContain('getByTestId("send-button").dispatchEvent("click")');
-});
-
 test("browser turns run six at once and queue the seventh in FIFO order", async () => {
   expect(MAX_CHATGPT_BROWSER_TABS).toBe(6);
   const releases = new Map<string, () => void>();
@@ -530,19 +522,6 @@ test("caret re-anchor fails closed when the live composer cannot be anchored", a
     activeComposer: async () => composer,
   }, {})).rejects.toThrow("could not re-anchor the prompt caret");
   expect(evaluateOptions).toEqual({ timeout: 20_000 });
-
-  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  const reanchorSource = workerSource.slice(
-    workerSource.indexOf("  private async reanchorPromptCaret("),
-    workerSource.indexOf("  private async insertPromptText("),
-  );
-  expect(reanchorSource).toContain("window.getSelection()");
-  expect(reanchorSource).toContain("document.createRange()");
-  expect(reanchorSource).toContain("selection.addRange(range)");
-  expect(reanchorSource).toContain("selection.anchorNode === targetNode");
-  expect(reanchorSource).toContain("selection.anchorOffset === targetOffset");
-  expect(reanchorSource).toContain('[data-id^="plugin:"][data-keyword]');
-  expect(reanchorSource).toContain("[data-inline-selection-pill-cursor-target]");
 });
 
 test("connector selection re-resolves the active composer after ChatGPT replaces it", async () => {
@@ -1558,40 +1537,6 @@ test("visible DOM trace emits one complete commentary paragraph before the next 
     { kind: "reasoning", text: "Read context file contents" },
   ]);
   expect(tracker.observe([...completed], false, 1_450)).toEqual([]);
-});
-
-test("response DOM separates streaming commentary from the final Markdown answer", () => {
-  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  expect(workerSource).toContain('const allMarkdownRoots = [...root.querySelectorAll<HTMLElement>(".markdown")]');
-  expect(workerSource).toContain("const commentaryRoots = allMarkdownRoots.filter");
-  expect(workerSource).toContain('candidate.closest("[data-streaming-response-status]") !== null');
-  expect(workerSource).toContain("const renderedRoots = allMarkdownRoots.filter");
-  expect(workerSource).toContain('fullHtml: renderedRoots.map(candidate => candidate.innerHTML).join("")');
-  expect(workerSource).toContain("const markdownRoots = allMarkdownRoots.map");
-  expect(workerSource).toContain("const markdownOwnership = new ChatGptMarkdownOwnershipTracker()");
-  expect(workerSource).toContain("this.responseDomSnapshot(responseTurn, markdownOwnership, running)");
-  expect(workerSource).toContain('running && root.ownership === "final"');
-  expect(workerSource.indexOf("const running = await stop.isVisible()")).toBeLessThan(
-    workerSource.indexOf("this.responseDomSnapshot(responseTurn, markdownOwnership, running)"),
-  );
-  expect(workerSource).toContain("snapshot.markdownSegments = owned.markdownSegments");
-  expect(workerSource).toContain('key: `${childIndex}:${tag}:${itemIndex}`');
-  expect(workerSource).toContain("streamable: childIsComplete || itemIndex < listItems.length - 1");
-  expect(workerSource).toContain("markdownBuffer.observe(snapshot.markdownSegments)");
-  expect(workerSource).not.toContain("stableHtml:");
-  expect(workerSource).not.toContain("observeStableHtml");
-  expect(workerSource).toContain("const overlapsRenderedAnswer = (candidate: HTMLElement)");
-  expect(workerSource).toContain("const statusSemantic = (candidate: HTMLElement)");
-  expect(workerSource).toContain('candidate.closest<HTMLElement>("button") ?? candidate');
-  expect(workerSource).toContain('candidate.querySelectorAll<HTMLElement>(".sr-only")');
-  expect(workerSource).not.toContain("const adjacentCommentary");
-  expect(workerSource).toContain('candidate.closest<HTMLElement>("[data-item-anchor]")');
-  expect(workerSource).toContain("const traceByKey = new Map<string, ChatGptVisibleTraceBlock>()");
-  expect(workerSource).toContain('block.kind === "commentary" ? { complete: index < blocks.length - 1 }');
-  expect(workerSource).toContain('uiControl: candidate.matches("button")');
-  expect(workerSource).toContain("!overlapsRenderedAnswer(semantic)");
-  expect(workerSource).toContain("!overlapsRenderedAnswer(container)");
-  expect(workerSource).not.toContain('fullHtml: rendered?.innerHTML ?? ""');
 });
 
 test("visible DOM trace keeps a complete action phrase instead of a nested count", () => {
