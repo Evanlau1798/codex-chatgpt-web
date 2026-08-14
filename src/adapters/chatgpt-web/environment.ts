@@ -2,12 +2,10 @@ import { isAbsolute, relative, resolve } from "node:path";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
 import { isContextualCodexUserMessage } from "./contextual-user-message";
 import { withoutRecursiveChatGptConnectorTools } from "./native-tool-filter";
-
 export type ChatGptSandboxPolicy =
   | { type: "dangerFullAccess" }
   | { type: "readOnly"; networkAccess: boolean }
   | { type: "workspaceWrite"; writableRoots: string[]; networkAccess: boolean };
-
 export interface ChatGptTurnEnvironment {
   cwd: string;
   roots: string[];
@@ -15,14 +13,12 @@ export interface ChatGptTurnEnvironment {
   sandboxPolicy: ChatGptSandboxPolicy;
   tools: CodexTool[];
 }
-
 export interface ChatGptTurnIdentity {
   threadId?: string;
   parentThreadId?: string;
   turnId?: string;
   promptCacheKey?: string;
 }
-
 export interface ChatGptTurnUserRevision {
   content: unknown;
   turnId?: string;
@@ -104,7 +100,8 @@ function latestChatGptTurnUserRevision(parsed: CodexParsedRequest): ChatGptTurnU
   const input = Array.isArray(body?.input) ? body.input : [];
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = record(input[index]);
-    if (item?.type !== "message" || item.role !== "user") continue;
+    const ordinaryUser = item?.type === "message" && item.role === "user";
+    if (!ordinaryUser && item?.type !== "agent_message") continue;
     if (isContextualCodexUserMessage(item.content)) continue;
     const messageTurnId = itemTurnId(item);
     const serverOwnedId = typeof item.id === "string" && item.id.length > 0;

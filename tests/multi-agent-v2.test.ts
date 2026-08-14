@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bridgeToResponsesSSE, buildResponseJSON } from "../src/bridge";
 import { defaultConfig } from "../src/config";
+import { extractChatGptTurnUserText } from "../src/adapters/chatgpt-web/environment";
 import { parseRequest } from "../src/responses/parser";
 import { responseRequest } from "../src/server";
 import type { AdapterEvent } from "../src/types";
@@ -182,5 +183,21 @@ describe("Codex Multi-Agent V2 plaintext transport", () => {
       role: "user",
       content: "Inspect the test directory",
     }));
+  });
+
+  test("uses a native V2 agent message as the child turn revision", () => {
+    const parsed = parseRequest({
+      model: "chatgpt-web/extra-high",
+      client_metadata: { "x-codex-turn-metadata": JSON.stringify({
+        thread_id: "thread_child", parent_thread_id: "thread_parent", turn_id: "turn_child",
+      }) },
+      input: [{
+        type: "agent_message", author: "root", recipient: "child",
+        content: [{ type: "input_text", text: "Inspect the test directory" }],
+        internal_chat_message_metadata_passthrough: { turn_id: "turn_child" },
+      }],
+    });
+
+    expect(extractChatGptTurnUserText(parsed)).toBe("Inspect the test directory");
   });
 });
