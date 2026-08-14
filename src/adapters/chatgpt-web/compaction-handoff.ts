@@ -35,7 +35,6 @@ function structuredContent(text: string): unknown | undefined {
     return undefined;
   }
 }
-
 export function codexToolResultToBrokerResult(message: CodexToolResultMessage): BrokerToolResult {
   const content = brokerContent(message.content);
   const text = typeof message.content === "string"
