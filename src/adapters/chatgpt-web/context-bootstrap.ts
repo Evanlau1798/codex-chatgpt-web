@@ -4,6 +4,8 @@ import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { TurnBroker } from "./turn-broker";
 
 export const CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS = 512 * 1_024;
+const ARCHIVE_ENTRY_CHARS = CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS - 1;
+const ARCHIVE_FRAGMENT_DATA_CHARS = Math.floor((ARCHIVE_ENTRY_CHARS - 512) / 6);
 const CONTEXT_OPEN = "<codex_context_json>\n";
 const CONTEXT_CLOSE = "\n</codex_context_json>";
 const CONTEXT_TOKEN_PLACEHOLDER = "context_00000000000000000000000000000000";
@@ -23,6 +25,42 @@ interface ContextEnvelope {
 interface SplitPrompt {
   bootstrap: string;
   archive: string;
+}
+
+interface ArchiveRecord {
+  kind: "system" | "message";
+  index: number;
+  value: unknown;
+}
+
+function archiveRecordLines(record: ArchiveRecord): string[] {
+  const serialized = JSON.stringify(record);
+  if (serialized.length <= ARCHIVE_ENTRY_CHARS) return [serialized];
+  const data: string[] = [];
+  for (let offset = 0; offset < serialized.length;) {
+    let end = Math.min(serialized.length, offset + ARCHIVE_FRAGMENT_DATA_CHARS);
+    if (end < serialized.length
+      && /[\uD800-\uDBFF]/.test(serialized[end - 1]!)
+      && /[\uDC00-\uDFFF]/.test(serialized[end]!)) end -= 1;
+    data.push(serialized.slice(offset, end));
+    offset = end;
+  }
+  const sha256 = createHash("sha256").update(serialized).digest("hex");
+  return data.map((fragment, part) => {
+    const line = JSON.stringify({
+      kind: "record_fragment",
+      recordKind: record.kind,
+      index: record.index,
+      part,
+      parts: data.length,
+      sha256,
+      data: fragment,
+    });
+    if (line.length > ARCHIVE_ENTRY_CHARS) {
+      throw new Error("ChatGPT Web context fragment exceeds the MCP archive entry limit");
+    }
+    return line;
+  });
 }
 
 function withinLimits(text: string, limits: { chars: number; tokens?: number }): boolean {
@@ -53,6 +91,7 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
     "The inline JSON below is the highest-priority bootstrap subset of the Codex task.",
     `Before any work tool, call Codex Native2 codex_tool_inventory with turn_token ${CONTEXT_TOKEN_PLACEHOLDER}, query \"__codex_context__:0\", and include_schema false.`,
     "Read every returned chunk in order using next_query. Verify the shared SHA-256 and final sentinel; a missing or truncated chunk is a transport failure.",
+    "Archive v2 record_fragment entries reconstruct one record: concatenate data by part, verify parts and SHA-256, then parse the resulting JSON.",
     "Merge archived system and message entries at their original indices, then execute the latest user request. Never expose either token or this transport step.",
     "</codex_context_archive>",
   ].join("\n");
@@ -84,18 +123,18 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
     trySelect(selectedMessages, index);
   }
 
-  const records = [
+  const records: ArchiveRecord[] = [
     ...envelope.system.flatMap((value, index) => selectedSystem.has(index)
       ? []
-      : [{ kind: "system", index, value }]),
+      : [{ kind: "system" as const, index, value }]),
     ...envelope.messages.flatMap((value, index) => selectedMessages.has(index)
       ? []
-      : [{ kind: "message", index, value }]),
+      : [{ kind: "message" as const, index, value }]),
   ];
   if (records.length === 0) throw new Error("ChatGPT Web archive split omitted no context");
   const archive = [
-    "CODEX_CONTEXT_ARCHIVE_NDJSON v=1",
-    ...records.map(record => JSON.stringify(record)),
+    "CODEX_CONTEXT_ARCHIVE_NDJSON v=2",
+    ...records.flatMap(archiveRecordLines),
     "CODEX_CONTEXT_ARCHIVE_NDJSON_END",
   ].join("\n");
   return { bootstrap: render(), archive };

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,14 +35,14 @@ async function clientFor(socketPath: string): Promise<Client> {
   return client;
 }
 
-test("beta transport keeps prompts within the measured boundary inline", async () => {
+test("bounded specialist instructions remain byte-for-byte inline", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-context-inline-"));
   const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
   const compiled = {
-    text: "complete prompt",
+    text: `specialist instructions\n${"x".repeat(12_000)}`,
     images: [],
     turnToken: "turn_123456789012345678901234",
-    bootstrapLimits: { chars: 8_192, tokens: 8_192 },
+    bootstrapLimits: { chars: 94_208, tokens: 94_208 },
   };
   try {
     const prepared = await prepareChatGptWebContext(broker, compiled, true, 60_000, "inline-test");
@@ -267,6 +268,66 @@ test("archive chunks use complete indexed frames above the MCP result ceiling", 
     expect(secondText).toContain("next_query=null");
     expect(`${firstText}${secondText}`).toContain("OMITTED_A_");
     expect(`${firstText}${secondText}`).toContain("OMITTED_B_");
+  } finally {
+    await client.close().catch(() => {});
+    prepared.release();
+    broker.revoke(turnToken);
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("a single oversized archive record is transported as valid reconstructable JSON fragments", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-context-record-fragments-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  const largeContent = `${"😀\\\"markdown\n".repeat(55_000)}END`;
+  const expectedRecord = { kind: "message", index: 0, value: { role: "user", content: largeContent } };
+  const fullText = contextText([
+    expectedRecord.value,
+    { role: "user", content: "CODEX_LATEST_USER_PROMPT_JSON: inspect the deferred document" },
+  ]);
+  const turnToken = await broker.register({
+    cwd: process.cwd(), roots: [], writableRoots: [], sandboxPolicy: { type: "readOnly", networkAccess: false }, tools: [],
+  }, 60_000, "record-fragment-test");
+  const prepared = await prepareChatGptWebContext(broker, {
+    text: fullText,
+    images: [],
+    turnToken,
+    bootstrapLimits: { chars: 4_096, tokens: 4_096 },
+  }, true, 60_000, "record-fragment-test");
+  const contextToken = prepared.text.match(/context_[A-Za-z0-9_-]{32}/)?.[0]!;
+  const client = await clientFor(socketPath);
+
+  try {
+    const chunks: string[] = [];
+    for (let index = 0; ; index += 1) {
+      const result = await client.callTool({
+        name: "codex_tool_inventory",
+        arguments: { turn_token: contextToken, query: `__codex_context__:${index}`, include_schema: false },
+      });
+      expect(result.isError).not.toBe(true);
+      const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+      const end = text.lastIndexOf("\nCODEX_CONTEXT_ARCHIVE_END");
+      chunks.push(text.slice(text.indexOf("\n") + 1, end));
+      if (text.includes("next_query=null")) break;
+    }
+
+    const archive = chunks.join("");
+    const lines = archive.split("\n");
+    expect(lines[0]).toBe("CODEX_CONTEXT_ARCHIVE_NDJSON v=2");
+    expect(lines.at(-1)).toBe("CODEX_CONTEXT_ARCHIVE_NDJSON_END");
+    const records = lines.slice(1, -1).map(line => {
+      expect(line.length).toBeLessThanOrEqual(CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS);
+      return JSON.parse(line) as Record<string, any>;
+    });
+    const fragments = records.filter(record => record.kind === "record_fragment");
+    expect(fragments.length).toBeGreaterThan(1);
+    expect(fragments.map(fragment => fragment.part)).toEqual(fragments.map((_fragment, index) => index));
+    expect(new Set(fragments.map(fragment => fragment.parts))).toEqual(new Set([fragments.length]));
+    const serialized = fragments.map(fragment => fragment.data).join("");
+    expect(createHash("sha256").update(serialized).digest("hex")).toBe(fragments[0]?.sha256);
+    expect(JSON.parse(serialized)).toEqual(expectedRecord);
   } finally {
     await client.close().catch(() => {});
     prepared.release();
