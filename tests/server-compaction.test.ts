@@ -293,6 +293,55 @@ test("refuses a ChatGPT Web continuation when local previous-response state is u
   expect(body.error.message).toContain("partial Codex context");
 });
 
+test("keeps native Responses and compact traffic outside every Web session mode", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const useNewCompactMode of [false, true]) {
+      const config = { ...defaultConfig("full"), useNewCompactMode };
+      for (const [path, requestHandler, input] of [
+        ["responses", responseRequest, [{ type: "compaction_trigger" }, { type: "compaction", encrypted_content: "gAAAA-native-v2" }]],
+        ["responses/compact", compactRequest, [{ type: "compaction", encrypted_content: "gAAAA-native-v1" }]],
+      ] as const) {
+        const body = JSON.stringify({ model: "gpt-5.6-sol", stream: true, input });
+        let upstream: { url: string; body: string; authorization: string | null } | undefined;
+        globalThis.fetch = async request => {
+          const native = request instanceof Request ? request : new Request(request);
+          upstream = {
+            url: native.url,
+            body: await native.text(),
+            authorization: native.headers.get("authorization"),
+          };
+          return new Response("native-stream", {
+            status: 206,
+            headers: { "content-type": "text/event-stream", "x-native": "preserved" },
+          });
+        };
+        let adapterStarted = false;
+        const response = await requestHandler(new Request(`http://127.0.0.1:17841/v1/${path}`, {
+          method: "POST",
+          headers: { "authorization": "Bearer native-token", "content-type": "application/json" },
+          body,
+        }), config, () => {
+          adapterStarted = true;
+          throw new Error("native requests must not create a Web adapter");
+        });
+
+        expect(adapterStarted).toBeFalse();
+        expect(upstream).toEqual({
+          url: `https://chatgpt.com/backend-api/codex/${path}`,
+          body,
+          authorization: "Bearer native-token",
+        });
+        expect(response.status).toBe(206);
+        expect(response.headers.get("x-native")).toBe("preserved");
+        expect(await response.text()).toBe("native-stream");
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("accepts a self-contained compaction replacement when continuation state is unavailable", async () => {
   let adapterStarted = false;
   const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
