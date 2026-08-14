@@ -27,11 +27,6 @@ interface SplitPrompt {
   archive: string;
 }
 
-export interface ChatGptWebContextPlan {
-  bootstrap: string;
-  archive?: string;
-}
-
 interface ArchiveRecord {
   kind: "system" | "message";
   index: number;
@@ -145,17 +140,6 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
   return { bootstrap: render(), archive };
 }
 
-export function planChatGptWebContext(
-  compiled: CompiledChatGptWebPrompt,
-  enabled: boolean,
-): ChatGptWebContextPlan {
-  const limits = compiled.bootstrapLimits;
-  if (!enabled || !compiled.turnToken || !limits || withinLimits(compiled.text, limits)) {
-    return { bootstrap: compiled.text };
-  }
-  return splitOversizePrompt(compiled.text, limits);
-}
-
 export async function prepareChatGptWebContext(
   broker: TurnBroker,
   compiled: CompiledChatGptWebPrompt,
@@ -163,20 +147,21 @@ export async function prepareChatGptWebContext(
   ttlMs: number | undefined,
   traceId: string,
 ): Promise<CompiledChatGptWebPrompt & { release: () => void }> {
-  const plan = planChatGptWebContext(compiled, enabled);
-  if (!plan.archive) {
+  const limits = compiled.bootstrapLimits;
+  if (!enabled || !compiled.turnToken || !limits || withinLimits(compiled.text, limits)) {
     return { ...compiled, transport: "inline", inlineChars: compiled.text.length, release: () => {} };
   }
-  const contextToken = await broker.registerContext(plan.archive, ttlMs, traceId, compiled.turnToken);
-  const bootstrap = plan.bootstrap.replaceAll(CONTEXT_TOKEN_PLACEHOLDER, contextToken);
-  if (!withinLimits(bootstrap, compiled.bootstrapLimits!)) {
+  const split = splitOversizePrompt(compiled.text, limits);
+  const contextToken = await broker.registerContext(split.archive, ttlMs, traceId, compiled.turnToken);
+  const bootstrap = split.bootstrap.replaceAll(CONTEXT_TOKEN_PLACEHOLDER, contextToken);
+  if (!withinLimits(bootstrap, limits)) {
     broker.revokeContext(contextToken);
     throw new Error("ChatGPT Web bootstrap exceeds its measured browser transport boundary");
   }
-  const archiveHash = createHash("sha256").update(plan.archive).digest("hex");
+  const archiveHash = createHash("sha256").update(split.archive).digest("hex");
   console.info(
     `[chatgpt-web] context trace=${traceId} transport=native2-archive canonicalChars=${compiled.text.length}`
-    + ` bootstrapChars=${bootstrap.length} archiveChars=${plan.archive.length} archiveSha256=${archiveHash}`,
+    + ` bootstrapChars=${bootstrap.length} archiveChars=${split.archive.length} archiveSha256=${archiveHash}`,
   );
   return {
     ...compiled,
@@ -184,7 +169,7 @@ export async function prepareChatGptWebContext(
     modelInputText: compiled.text,
     transport: "native2-archive",
     inlineChars: bootstrap.length,
-    archiveChars: plan.archive.length,
+    archiveChars: split.archive.length,
     archiveSha256: archiveHash,
     release: () => broker.revokeContext(contextToken),
   };

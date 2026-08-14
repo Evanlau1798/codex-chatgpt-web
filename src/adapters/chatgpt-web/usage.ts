@@ -1,7 +1,6 @@
 import { estimateTokens } from "../../lib/token-estimate";
 import type { CodexParsedRequest, CodexUsage } from "../../types";
 import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
-import { planChatGptWebContext } from "./context-bootstrap";
 import { compileChatGptWebPrompt } from "./prompt";
 import { extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
@@ -15,24 +14,6 @@ export interface ChatGptWebRoundEvidence {
   answer?: string;
   reasoning?: string[];
   toolRequests?: BrokerToolRequest[];
-}
-
-function compileForUsage(parsed: CodexParsedRequest, capabilities: ChatGptWebCapabilities) {
-  const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
-  const identity = extractChatGptTurnIdentity(parsed);
-  return {
-    localTools: mode.localTools,
-    compiled: compileChatGptWebPrompt(
-      parsed,
-      capabilities,
-      mode.localTools ? ESTIMATE_TURN_TOKEN : undefined,
-      {
-        captureLunaCheckpoint: parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID
-          && !parsed._compactionRequest
-          && Boolean(identity.threadId && identity.turnId),
-      },
-    ),
-  };
 }
 
 export function chatGptUsageInputForRound(
@@ -50,17 +31,19 @@ export function estimateChatGptWebInputTokens(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
 ): number {
-  const { compiled } = compileForUsage(parsed, capabilities);
+  const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
+  const identity = extractChatGptTurnIdentity(parsed);
+  const compiled = compileChatGptWebPrompt(
+    parsed,
+    capabilities,
+    mode.localTools ? ESTIMATE_TURN_TOKEN : undefined,
+    {
+      captureLunaCheckpoint: parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID
+        && !parsed._compactionRequest
+        && Boolean(identity.threadId && identity.turnId),
+    },
+  );
   return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId);
-}
-
-export function estimateChatGptWebResidentInputTokens(
-  parsed: CodexParsedRequest,
-  capabilities: ChatGptWebCapabilities,
-): number {
-  const { compiled, localTools } = compileForUsage(parsed, capabilities);
-  const plan = planChatGptWebContext(compiled, localTools);
-  return estimateCompiledChatGptWebInputTokens({ ...compiled, text: plan.bootstrap }, parsed.modelId);
 }
 
 function roundEvidenceText(evidence: ChatGptWebRoundEvidence): string {
