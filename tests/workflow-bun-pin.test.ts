@@ -7,8 +7,8 @@ test("CI and release workflows install the pinned Bun canary", () => {
   const packageManager = (JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")) as {
     packageManager: string;
   }).packageManager;
-  const setupVersion = packageManager.match(/^bun@(\d+\.\d+\.\d+-canary\.\d+)\+/)?.[1];
-  expect(setupVersion).toBe("1.4.0-canary.1");
+  const setupVersion = packageManager.match(/^bun@\d+\.\d+\.\d+-canary\.\d+\+([0-9a-f]+)$/)?.[1];
+  expect(setupVersion).toBe("52bf09cb1");
 
   const workflows = [".github/workflows/ci.yml", ".github/workflows/release.yml"]
     .map(path => readFileSync(resolve(root, path), "utf8"))

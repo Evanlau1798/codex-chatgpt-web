@@ -9,11 +9,11 @@ const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8
 };
 const packageVersion = packageJson.version;
 if (!packageVersion) throw new Error("package.json has no version");
-const packageManagerMatch = /^bun@((\d+\.\d+\.\d+)-canary\.\d+\+[0-9a-f]+)$/.exec(packageJson.packageManager ?? "");
+const packageManagerMatch = /^bun@((\d+\.\d+\.\d+)-canary\.\d+\+([0-9a-f]+))$/.exec(packageJson.packageManager ?? "");
 if (!packageManagerMatch) throw new Error("package.json must pin an exact Bun canary revision");
 const bunRevision = packageManagerMatch[1];
 const bunVersion = packageManagerMatch[2];
-const setupBunVersion = bunRevision.split("+")[0]!;
+const setupBunVersion = packageManagerMatch[3];
 const revision = Bun.spawnSync([process.execPath, "--revision"], { stdout: "pipe", stderr: "pipe" });
 const reportedRevision = revision.stdout.toString().trim();
 if (revision.exitCode !== 0 || Bun.version !== bunVersion || reportedRevision !== bunRevision) {
