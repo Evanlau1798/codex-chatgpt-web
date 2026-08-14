@@ -223,7 +223,7 @@ describe("ChatGPT outer-native harness v4", () => {
         request,
         { headers: new Headers() },
         () => {},
-      )).rejects.toThrow("existing V2 task cannot migrate surfaces");
+      )).rejects.toThrow("legacy or provider-private encrypted agent message");
       expect(browserStarts).toBe(0);
     } finally {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;

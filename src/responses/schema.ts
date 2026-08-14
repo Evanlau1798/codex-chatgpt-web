@@ -75,6 +75,7 @@ const functionCallItemSchema = z.object({
   name: z.string().min(1),
   namespace: z.string().optional(),
   arguments: z.string().optional(),
+  encrypted_function_args: z.array(z.unknown()).optional(),
 });
 const functionCallOutputItemSchema = z.object({
   type: z.literal("function_call_output"),

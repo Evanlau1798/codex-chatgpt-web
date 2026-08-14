@@ -68,7 +68,7 @@ export type ResponsesTerminalStatus = "completed" | "failed" | "incomplete";
 export function bridgeToResponsesSSE(
   events: AsyncIterable<AdapterEvent>,
   modelId: string,
-  toolNsMap?: Map<string, { namespace: string; name: string }>,
+  toolNsMap?: Map<string, { namespace: string; name: string; plaintextArguments?: boolean }>,
   freeformToolNames?: Set<string>,
   toolSearchToolNames?: Set<string>,
   onCancel?: () => void,
@@ -241,7 +241,7 @@ export function bridgeToResponsesSSE(
       // Full assistant text of a compaction turn (across message boundaries) — becomes the
       // synthetic compaction item's payload on done.
       let compactionText = "";
-      let currentToolCall: { itemId: string; outputIndex: number; callId: string; name: string; args: string; namespace?: string; freeform?: boolean; toolSearch?: boolean; inputEmitted?: string } | null = null;
+      let currentToolCall: { itemId: string; outputIndex: number; callId: string; name: string; args: string; namespace?: string; plaintextArguments?: boolean; freeform?: boolean; toolSearch?: boolean; inputEmitted?: string } | null = null;
       const closeCurrentMessage = () => {
         if (!currentMsg) return;
         // Finalize the text part (Responses protocol). Without these .done events Codex never
@@ -332,6 +332,7 @@ export function bridgeToResponsesSSE(
               call_id: currentToolCall.callId, name: currentToolCall.name,
               arguments: argsStr, status: "completed",
               ...(currentToolCall.namespace ? { namespace: currentToolCall.namespace } : {}),
+              ...(currentToolCall.plaintextArguments ? { encrypted_function_args: [] } : {}),
             };
         emit("response.output_item.done", { output_index: currentToolCall.outputIndex, item });
         finishedItems.push(item as OutputItem);
@@ -518,9 +519,9 @@ export function bridgeToResponsesSSE(
                 ? { type: "tool_search_call", id: itemId, call_id: event.id, execution: "client", arguments: {}, status: "in_progress" }
                 : freeform
                 ? { type: "custom_tool_call", id: itemId, call_id: event.id, name: realName, input: "", status: "in_progress" }
-                : { type: "function_call", id: itemId, call_id: event.id, name: realName, arguments: "", status: "in_progress", ...(ns ? { namespace: ns } : {}) };
+                : { type: "function_call", id: itemId, call_id: event.id, name: realName, arguments: "", status: "in_progress", ...(ns ? { namespace: ns } : {}), ...(mapped?.plaintextArguments ? { encrypted_function_args: [] } : {}) };
               emit("response.output_item.added", { output_index: outputIndex, item });
-              currentToolCall = { itemId, outputIndex, callId: event.id, name: realName, args: "", namespace: ns, freeform, toolSearch };
+              currentToolCall = { itemId, outputIndex, callId: event.id, name: realName, args: "", namespace: ns, plaintextArguments: mapped?.plaintextArguments, freeform, toolSearch };
               break;
             }
             case "tool_call_delta": {
@@ -805,7 +806,7 @@ export function buildResponseJSON(
   modelId: string,
   options?: {
     hideThinkingSummary?: boolean;
-    toolNsMap?: Map<string, { namespace: string; name: string }>;
+    toolNsMap?: Map<string, { namespace: string; name: string; plaintextArguments?: boolean }>;
     freeformToolNames?: Set<string>;
     toolSearchToolNames?: Set<string>;
     /** Remote compaction v2 turn — append one synthetic compaction output item (see bridgeToResponsesSSE). */
@@ -910,6 +911,7 @@ export function buildResponseJSON(
         call_id: currentToolCallId, name: realName,
         arguments: currentToolCallArgs || "{}", status: "completed",
         ...(ns ? { namespace: ns } : {}),
+        ...(mapped?.plaintextArguments ? { encrypted_function_args: [] } : {}),
       });
     }
     currentToolCallId = "";

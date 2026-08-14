@@ -228,9 +228,8 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     async runTurn(parsed, incoming, emit) {
       if (parsed._opaqueMultiAgentV2Payload) {
         throw new Error(
-          "ChatGPT Web subagents currently require a V1-rooted task. "
-          + "Refresh the Codex model catalog and start a new task; an existing V2 task cannot migrate surfaces. "
-          + "Codex MultiAgent V2 encrypts cross-backend task payloads.",
+          "ChatGPT Web cannot read this legacy or provider-private encrypted agent message. "
+          + "Start a new enhanced Web task so Codex can use direct plaintext Multi-Agent V2 transport.",
         );
       }
       const turnCapabilities = parsed._compactionRequest

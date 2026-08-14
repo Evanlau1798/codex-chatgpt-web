@@ -190,15 +190,19 @@ export async function nativeSearchRequest(
 }
 
 function toolBridgeMaps(parsed: CodexParsedRequest): {
-  toolNsMap: Map<string, { namespace: string; name: string }>;
+  toolNsMap: Map<string, { namespace: string; name: string; plaintextArguments?: boolean }>;
   freeformToolNames: Set<string>;
   toolSearchToolNames: Set<string>;
 } {
-  const toolNsMap = new Map<string, { namespace: string; name: string }>();
+  const toolNsMap = new Map<string, { namespace: string; name: string; plaintextArguments?: boolean }>();
   const freeformToolNames = new Set<string>();
   const toolSearchToolNames = new Set<string>();
   for (const tool of parsed.context.tools ?? []) {
-    if (tool.namespace) toolNsMap.set(namespacedToolName(tool.namespace, tool.name), { namespace: tool.namespace, name: tool.name });
+    if (tool.namespace) toolNsMap.set(namespacedToolName(tool.namespace, tool.name), {
+      namespace: tool.namespace,
+      name: tool.name,
+      ...(tool.plaintextArguments ? { plaintextArguments: true } : {}),
+    });
     if (tool.freeform) freeformToolNames.add(tool.name);
     if (tool.toolSearch) toolSearchToolNames.add(tool.name);
   }

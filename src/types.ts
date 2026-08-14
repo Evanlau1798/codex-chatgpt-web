@@ -118,6 +118,8 @@ export interface CodexTool {
   toolSearch?: boolean;
   /** Tool definition restored from a prior tool_search output. */
   loadedFromToolSearch?: boolean;
+  /** Emit Codex's empty encrypted_function_args marker for direct plaintext collaboration calls. */
+  plaintextArguments?: boolean;
 }
 
 /**

@@ -15,6 +15,7 @@ import { responsesRequestSchema } from "./schema";
 import { compactionItemToText } from "./compaction";
 import { previousResponseReplayPrefixLength } from "./state";
 import { decodeReasoningEnvelope } from "./reasoning-envelope";
+import { prepareMultiAgentV2Tool } from "./multi-agent-v2";
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -123,7 +124,7 @@ function buildTools(tools: unknown[] | undefined): CodexTool[] | undefined {
     };
     if (t.strict !== undefined) tool.strict = t.strict as boolean;
     if (namespace) tool.namespace = namespace;
-    out.push(tool);
+    out.push(prepareMultiAgentV2Tool(tool));
   };
   const pushFreeform = (t: Record<string, unknown>) => {
     const tool: CodexTool = {
