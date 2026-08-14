@@ -18,6 +18,7 @@ export interface ChatGptTurnEnvironment {
 
 export interface ChatGptTurnIdentity {
   threadId?: string;
+  parentThreadId?: string;
   turnId?: string;
   promptCacheKey?: string;
 }
@@ -495,6 +496,7 @@ export function extractChatGptTurnIdentity(parsed: CodexParsedRequest): ChatGptT
   const metadata = clientTurnMetadata(parsed);
   return {
     ...(typeof metadata?.thread_id === "string" ? { threadId: metadata.thread_id } : {}),
+    ...(typeof metadata?.parent_thread_id === "string" ? { parentThreadId: metadata.parent_thread_id } : {}),
     ...(typeof metadata?.turn_id === "string" ? { turnId: metadata.turn_id } : {}),
     ...(typeof body?.prompt_cache_key === "string" ? { promptCacheKey: body.prompt_cache_key } : {}),
   };

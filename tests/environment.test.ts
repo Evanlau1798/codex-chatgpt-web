@@ -8,7 +8,6 @@ import type { CodexParsedRequest, CodexTool } from "../src/types";
 
 const root = resolve(process.cwd());
 const temporaryRoots: string[] = [];
-
 afterEach(() => {
   for (const path of temporaryRoots.splice(0)) rmSync(path, { recursive: true, force: true });
 });
@@ -28,7 +27,6 @@ const dangerFullAccessProfileXml = `<permission_profile type="disabled"><file_sy
 const workspaceWriteProfileXml = `<permission_profile type="managed"><file_system type="restricted"><entry access="read"><special>:root</special></entry><entry access="write"><path>${root}</path></entry><entry access="write"><special>:slash_tmp</special></entry><entry access="write"><special>:tmpdir</special></entry><entry access="read"><path>${root}/.git</path></entry></file_system></permission_profile>`;
 const readOnlyProfileXml = `<permission_profile type="managed"><file_system type="restricted"><entry access="read"><special>:root</special></entry></file_system></permission_profile>`;
 const externalProfileXml = `<permission_profile type="external"><file_system type="external" /></permission_profile>`;
-
 function currentWire(
   options: { workspace?: string; sandbox?: string; includeIds?: boolean; environmentXml?: string } = {},
 ): CodexParsedRequest {
@@ -468,6 +466,18 @@ describe("trusted Codex task environment continuity", () => {
       sandboxPolicy: { type: "dangerFullAccess" },
       tools: nextTools,
     });
+  });
+
+  test("inherits V2 child authority from native parent thread metadata", () => {
+    const store = new ChatGptThreadEnvironmentStore();
+    store.resolve(currentWire());
+    const child = currentWire();
+    child._rawBody = {
+      client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread_child",
+        turn_id: "turn_child", parent_thread_id: "thread_current" }) },
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Inspect tests" }] }],
+    };
+    expect(store.resolve(child).cwd).toBe(root);
   });
 
   test("does not borrow authority across threads or hide an invalid trusted update", () => {

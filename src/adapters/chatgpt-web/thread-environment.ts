@@ -130,7 +130,11 @@ export class ChatGptThreadEnvironmentStore {
       return environment;
     } catch (error) {
       if (!(error instanceof MissingTrustedCodexEnvironmentError) || !identity.threadId) throw error;
-      const stored = this.get(identity.threadId);
+      let stored = this.get(identity.threadId);
+      if (!stored && identity.parentThreadId && identity.parentThreadId !== identity.threadId
+        && this.inherit(identity.parentThreadId, identity.threadId)) {
+        stored = this.get(identity.threadId);
+      }
       if (!stored) throw error;
       return {
         cwd: stored.cwd,
