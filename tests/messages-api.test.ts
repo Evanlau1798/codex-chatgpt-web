@@ -3,7 +3,7 @@ import type { ProviderAdapter } from "../src/adapters/base";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
 import { defaultConfig } from "../src/config";
-import { messagesRequest } from "../src/messages";
+import { messagesCountTokensRequest, messagesRequest } from "../src/messages";
 import { translateClaudeMessages } from "../src/messages/request";
 import type { CodexProviderConfig } from "../src/types";
 
@@ -380,6 +380,20 @@ test("replays Claude thinking and tool results into the existing tool loop", asy
 
   expect(response.status).toBe(200);
   expect(await response.json()).toMatchObject({ stop_reason: "end_turn" });
+});
+
+test("counts the resident browser bootstrap instead of an archived oversized message", async () => {
+  const response = await messagesCountTokensRequest(request({
+    model: "chatgpt-web/high",
+    messages: [
+      { role: "user", content: `large generic resource\n${"😀\\\"markdown\n".repeat(55_000)}` },
+      { role: "user", content: "Inspect only the relevant sections" },
+    ],
+  }, "/v1/messages/count_tokens"), defaultConfig("full"));
+  expect(response.status).toBe(200);
+  const body = await response.json() as { input_tokens: number };
+  expect(body.input_tokens).toBeGreaterThan(0);
+  expect(body.input_tokens).toBeLessThan(100_000);
 });
 
 test("preserves structured browser failures in the Anthropic error envelope", async () => {

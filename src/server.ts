@@ -27,7 +27,7 @@ import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "
 import type { CodexProviderConfig } from "./types";
 import type { ProviderAdapter } from "./adapters/base";
 import { VERSION } from "./version";
-import { messagesRequest } from "./messages";
+import { messagesCountTokensRequest, messagesRequest } from "./messages";
 import { claudeGatewayModelsResponse, isClaudeGatewayModelsRequest } from "./messages/models";
 
 export class HttpTurnCounter {
@@ -453,6 +453,10 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/v1/messages/steering") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         return handleClaudeSteeringHook(req);
+      }
+      if (req.method === "POST" && url.pathname === "/v1/messages/count_tokens") {
+        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        return httpTurns.track(() => messagesCountTokensRequest(req, config), req.signal);
       }
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");

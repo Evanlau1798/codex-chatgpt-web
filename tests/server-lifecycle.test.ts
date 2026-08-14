@@ -111,7 +111,7 @@ test("HTTP turn tracking releases a stream requested by an already disconnected 
   expect(turns.count()).toBe(0);
 });
 
-test("does not advertise the optional Claude token-count endpoint", async () => {
+test("advertises the Claude token-count endpoint only after compatibility requires it", async () => {
   const server = startServer({ ...defaultConfig("browser-only"), port: 0 });
   try {
     const response = await fetch(`http://127.0.0.1:${server.port}/v1/messages/count_tokens`, {
@@ -122,8 +122,8 @@ test("does not advertise the optional Claude token-count endpoint", async () => 
         messages: [{ role: "user", content: "Inspect the repository" }],
       }),
     });
-    expect(response.status).toBe(404);
-    expect(await response.text()).toBe("Not found");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ input_tokens: expect.any(Number) });
   } finally {
     await server.stop(true);
   }

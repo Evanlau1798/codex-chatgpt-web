@@ -3,7 +3,7 @@ import { createChatGptWebAdapter } from "../adapters/chatgpt-web";
 import { ChatGptWebAdapterError } from "../adapters/chatgpt-web/adapter-error";
 import { bindClaudeSessionAbort } from "../adapters/chatgpt-web/claude-subagent";
 import { chatGptTurnSessions } from "../adapters/chatgpt-web/turn-execution";
-import { estimateChatGptWebInputTokens } from "../adapters/chatgpt-web/usage";
+import { estimateChatGptWebInputTokens, estimateChatGptWebResidentInputTokens } from "../adapters/chatgpt-web/usage";
 import { requireChatGptWebModelRoute } from "../chatgpt-web-models";
 import { providerConfig, type AppConfig } from "../config";
 import { AsyncEventQueue } from "../event-queue";
@@ -42,6 +42,16 @@ function capabilities(config: AppConfig) {
     solAvailable: config.solAvailable,
     proAvailable: config.proAvailable,
   };
+}
+
+export async function messagesCountTokensRequest(req: Request, config: AppConfig): Promise<Response> {
+  try {
+    const raw = await readJsonRequestBody(req);
+    const { parsed } = parsedClaudeRequest(raw, req, config);
+    return Response.json({ input_tokens: estimateChatGptWebResidentInputTokens(parsed, capabilities(config)) });
+  } catch (error) {
+    return anthropicError(error instanceof Error ? error.message : String(error));
+  }
 }
 
 export async function messagesRequest(
