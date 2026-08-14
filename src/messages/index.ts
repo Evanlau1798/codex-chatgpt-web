@@ -44,16 +44,6 @@ function capabilities(config: AppConfig) {
   };
 }
 
-export async function messagesCountTokensRequest(req: Request, config: AppConfig): Promise<Response> {
-  try {
-    const raw = await readJsonRequestBody(req);
-    const { parsed } = parsedClaudeRequest(raw, req, config);
-    return Response.json({ input_tokens: estimateChatGptWebInputTokens(parsed, capabilities(config)) });
-  } catch (error) {
-    return anthropicError(error instanceof Error ? error.message : String(error));
-  }
-}
-
 export async function messagesRequest(
   req: Request,
   config: AppConfig,
