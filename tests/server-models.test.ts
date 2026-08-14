@@ -16,10 +16,21 @@ test("serves the account-scoped Claude gateway model catalog without proxying up
   expect(isClaudeGatewayModelsRequest(request)).toBe(true);
   expect(await claudeGatewayModelsResponse(config).json()).toEqual({
     data: [
-      { id: "claude-chatgpt-web-light", display_name: "ChatGPT Web — Instant" },
-      { id: "claude-chatgpt-web-medium", display_name: "ChatGPT Web — Medium" },
-      { id: "claude-chatgpt-web-high", display_name: "ChatGPT Web — High" },
+      { id: "claude-chatgpt-web-light", display_name: "ChatGPT Web — Instant", max_input_tokens: 41_000 },
+      { id: "claude-chatgpt-web-medium", display_name: "ChatGPT Web — Medium", max_input_tokens: 90_000 },
+      { id: "claude-chatgpt-web-high", display_name: "ChatGPT Web — High", max_input_tokens: 90_000 },
     ],
+  });
+});
+
+test("advertises the routed Claude model context window used by client preflight", async () => {
+  const config = { ...defaultConfig("full"), proAvailable: true, useNewCompactMode: true };
+  const body = await claudeGatewayModelsResponse(config).json() as { data: Array<Record<string, unknown>> };
+
+  expect(body.data.find(model => model.id === "claude-chatgpt-web-extra-high")).toEqual({
+    id: "claude-chatgpt-web-extra-high",
+    display_name: "ChatGPT Web — Extra High",
+    max_input_tokens: 256_000,
   });
 });
 

@@ -1,11 +1,12 @@
 import type { AppConfig } from "../config";
-import { availableChatGptWebModelRoutes } from "../chatgpt-web-models";
+import { availableChatGptWebModelRoutes, resolveChatGptWebContextLimits } from "../chatgpt-web-models";
 
 const CLAUDE_GATEWAY_MODEL_PREFIX = "claude-chatgpt-web-";
 
 export interface ClaudeGatewayModel {
   id: string;
   display_name: string;
+  max_input_tokens: number;
 }
 
 export function claudeGatewayModelId(routeSlug: string): string {
@@ -22,6 +23,12 @@ export function claudeGatewayModels(config: AppConfig): ClaudeGatewayModel[] {
   return availableChatGptWebModelRoutes(config).map(route => ({
     id: claudeGatewayModelId(route.slug),
     display_name: route.displayName,
+    max_input_tokens: resolveChatGptWebContextLimits(
+      route.backendModel,
+      route.adapterEffort,
+      config,
+      config.useNewCompactMode,
+    ).contextWindow,
   }));
 }
 
