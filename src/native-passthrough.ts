@@ -1,4 +1,5 @@
 import { readJsonRequestBody } from "./http-body";
+import { BRIDGE_COMPACTION_PREFIX, compactionItemToText } from "./responses/compaction";
 import { BRIDGE_REASONING_PREFIX } from "./responses/reasoning-envelope";
 
 const CODEX_BACKEND = "https://chatgpt.com/backend-api/codex";
@@ -33,6 +34,13 @@ function isBridgeReasoningItem(value: unknown): value is JsonObject {
     && (Array.isArray(value.summary) || Array.isArray(value.content));
 }
 
+function isBridgeCompactionItem(value: unknown): boolean {
+  return isObject(value)
+    && value.type === "compaction"
+    && typeof value.encrypted_content === "string"
+    && value.encrypted_content.startsWith(BRIDGE_COMPACTION_PREFIX);
+}
+
 /**
  * Response item ids are scoped to the backend that created them. A ChatGPT Web response is
  * generated locally, so replaying its `rs_*` id after switching back to native Codex makes the
@@ -40,12 +48,21 @@ function isBridgeReasoningItem(value: unknown): value is JsonObject {
  * the history crossed providers, send the complete item content without any provider-local ids.
  */
 export function scrubBridgeArtifactsForNative(value: unknown): { value: unknown; changed: boolean } {
-  if (!isObject(value) || !Array.isArray(value.input) || !value.input.some(isBridgeReasoningItem)) {
+  if (!isObject(value)
+    || !Array.isArray(value.input)
+    || !value.input.some(item => isBridgeReasoningItem(item) || isBridgeCompactionItem(item))) {
     return { value, changed: false };
   }
 
   const input = value.input.flatMap(item => {
     if (!isObject(item)) return [item];
+    if (isBridgeCompactionItem(item)) {
+      return [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: compactionItemToText(item.encrypted_content as string) }],
+      }];
+    }
     const clean = { ...item };
     delete clean.id;
     if (clean.type !== "reasoning") return [clean];

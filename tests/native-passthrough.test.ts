@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { forwardNativeCodexRequest } from "../src/native-passthrough";
+import { encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
 
 test("forwards native Codex requests verbatim to the official backend", async () => {
   const originalBody = Bun.zstdCompressSync(Buffer.from('{"model":"gpt-5.6-sol","stream":true}'));
@@ -210,6 +211,43 @@ test("keeps native encrypted reasoning requests byte-for-byte intact", async () 
 
   expect(upstreamRequest!.headers.get("content-encoding")).toBe("zstd");
   expect(Buffer.from(await upstreamRequest!.arrayBuffer())).toEqual(Buffer.from(originalBody));
+});
+
+test("converts a bridge compact summary before switching to native Codex", async () => {
+  const body = {
+    model: "gpt-5.6-sol",
+    previous_response_id: "resp_local_web_compact",
+    input: [
+      { type: "compaction", id: "cmp_local", encrypted_content: encodeCompactionSummary("Retained Web handoff") },
+      { type: "compaction", id: "cmp_native", encrypted_content: "gAAAAABnative-opaque-compaction" },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "Continue natively" }] },
+    ],
+  };
+  const request = new Request("http://127.0.0.1:17841/v1/responses", {
+    method: "POST",
+    headers: { authorization: "Bearer codex-oauth-token", "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  let upstreamRequest: Request | undefined;
+  await forwardNativeCodexRequest(request, "responses", async input => {
+    upstreamRequest = input;
+    return new Response("data: native\n\n", { headers: { "content-type": "text/event-stream" } });
+  });
+
+  const forwarded = await upstreamRequest!.json() as {
+    previous_response_id?: string;
+    input: Array<Record<string, unknown>>;
+  };
+  expect(forwarded).not.toHaveProperty("previous_response_id");
+  expect(forwarded.input[0]).toEqual({
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: `${SUMMARY_PREFIX}\n\nRetained Web handoff` }],
+  });
+  expect(forwarded.input[1]).toEqual({
+    type: "compaction",
+    encrypted_content: "gAAAAABnative-opaque-compaction",
+  });
 });
 
 test("native passthrough fails closed without Codex bearer authentication", async () => {
