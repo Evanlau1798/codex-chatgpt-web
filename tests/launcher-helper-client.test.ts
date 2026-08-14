@@ -12,7 +12,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-test("Bun daemon streams a prepared browser turn through the persistent Node helper", async () => {
+test("Bun daemon prepares only the resume prompt selected by the persistent Node helper", async () => {
   const root = mkdtempSync(join(tmpdir(), "codex-launcher-helper-client-"));
   roots.push(root);
   const helper = join(root, "helper.cjs");
@@ -26,6 +26,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       if (message.type === "shutdown") process.exit(0);
       if (message.type === "prepared_selected_ack") {
         if (!selected || message.id !== selected.id) process.exit(2);
+        if (message.prepared?.text !== "continue") process.exit(3);
         message = selected;
         selected = undefined;
         send({ type: "event", id: message.id, event: "submitted" });
@@ -49,8 +50,8 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
         return;
       }
       if (message.type !== "run") return;
-      if (message.turn.prepared.text !== "inspect"
-        || message.turn.resumePrepared.text !== "continue"
+      if (message.turn.prepared !== undefined
+        || message.turn.resumePrepared !== undefined
         || message.turn.retainConversation !== true
         || message.turn.requireRetainedConversation !== true
         || message.turn.conversationKey !== "a".repeat(64)) {
@@ -94,7 +95,8 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
   let submitted = false;
   let released = false;
   let resumeReleased = false;
-  let fullReleasedBeforeResult = false;
+  let fullPrepareCount = 0;
+  let resumePrepareCount = 0;
   const client = new LauncherBrowserHelperClient(config);
   try {
     const result = await client.run({
@@ -102,8 +104,14 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       modelId: "gpt-5.6-sol",
       reasoning: "high",
       capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
-      prepare: async () => ({ text: "inspect", images: [], release: () => { released = true; fullReleasedBeforeResult = true; } }),
-      prepareResume: async () => ({ text: "continue", images: [], release: () => { resumeReleased = true; } }),
+      prepare: async () => {
+        fullPrepareCount += 1;
+        return { text: "inspect", images: [], release: () => { released = true; } };
+      },
+      prepareResume: async () => {
+        resumePrepareCount += 1;
+        return { text: "continue", images: [], release: () => { resumeReleased = true; } };
+      },
       retainConversation: true,
       requireRetainedConversation: true,
       conversationKey: "a".repeat(64),
@@ -114,7 +122,8 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
       onLunaCheckpoint: checkpoint => checkpoints.push(checkpoint),
     });
     expect(result).toBe("done");
-    expect(fullReleasedBeforeResult).toBe(true);
+    expect(fullPrepareCount).toBe(0);
+    expect(resumePrepareCount).toBe(1);
     expect(reasoning).toEqual([
       { text: "Reading project", continuation: false },
       { text: " files", continuation: true },
@@ -132,7 +141,7 @@ test("Bun daemon streams a prepared browser turn through the persistent Node hel
         pending: [],
       },
     }]);
-    expect(released).toBe(true);
+    expect(released).toBe(false);
     expect(resumeReleased).toBe(true);
   } finally {
     await client.close();
@@ -185,7 +194,7 @@ test("an abort dispatched during run submission cannot overtake the run frame", 
   })).rejects.toMatchObject({ name: "AbortError" });
 
   expect(messages).toEqual(["run", "abort"]);
-  expect(released).toBe(true);
+  expect(released).toBe(false);
 });
 
 test("structured helper errors preserve the ChatGPT adapter failure contract", async () => {

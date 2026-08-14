@@ -22,8 +22,7 @@ interface RunMessage {
     modelId: string;
     reasoning?: string;
     capabilities: ChatGptWebCapabilities;
-    prepared: CompiledChatGptWebPrompt;
-    resumePrepared?: CompiledChatGptWebPrompt;
+    resumeAvailable?: boolean;
     retainConversation?: boolean;
     requireRetainedConversation?: boolean;
     conversationKey?: string;
@@ -61,7 +60,7 @@ interface AnswerRetryMessage {
   acknowledge?: boolean;
 }
 type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage
-  | { type: "prepared_selected_ack"; id: string }
+  | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
   | { type: "abort"; id: string } | { type: "shutdown" };
 
 let outputFailure: Error | undefined;
@@ -86,7 +85,7 @@ console.error = diagnostic;
 
 const abortControllers = new Map<string, AbortController>();
 const answerRetryWaiters = new Map<string, (prompt?: string | ChatGptRetryPrompt) => void>();
-const preparedSelectionWaiters = new Map<string, () => void>();
+const preparedSelectionWaiters = new Map<string, (prepared?: CompiledChatGptWebPrompt) => void>();
 let shuttingDown = false;
 let shutdownPromise: Promise<void> | undefined;
 
@@ -124,13 +123,8 @@ async function run(message: RunMessage): Promise<void> {
     throw new Error("Browser helper turn identity is invalid");
   }
   if (abortControllers.has(message.id)) throw new Error(`Browser helper turn already exists: ${message.id}`);
-  if (!message.turn.prepared || typeof message.turn.prepared.text !== "string" || !Array.isArray(message.turn.prepared.images)) {
-    throw new Error("Browser helper prompt is invalid");
-  }
-  if (message.turn.resumePrepared !== undefined && (
-    typeof message.turn.resumePrepared.text !== "string" || !Array.isArray(message.turn.resumePrepared.images)
-  )) {
-    throw new Error("Browser helper resume prompt is invalid");
+  if (message.turn.resumeAvailable !== undefined && typeof message.turn.resumeAvailable !== "boolean") {
+    throw new Error("Browser helper resume availability is invalid");
   }
   if (message.turn.retainConversation !== undefined && typeof message.turn.retainConversation !== "boolean") {
     throw new Error("Browser helper conversation retention flag is invalid");
@@ -159,25 +153,29 @@ async function run(message: RunMessage): Promise<void> {
   };
   const abortController = new AbortController();
   abortControllers.set(message.id, abortController);
+  const selectedPrompt = new Promise<CompiledChatGptWebPrompt>((resolve, reject) => {
+    preparedSelectionWaiters.set(message.id, prepared => prepared
+      ? resolve(prepared)
+      : reject(new DOMException("Browser helper prompt selection aborted", "AbortError")));
+  });
+  const prepareSelected = async () => ({ ...await selectedPrompt, release: () => {} });
   const turn: BrowserTurn = {
     traceId: message.turn.traceId,
     modelId: message.turn.modelId,
     reasoning: message.turn.reasoning,
     capabilities: message.turn.capabilities,
-    prepare: async () => ({ ...message.turn.prepared, release: () => {} }),
-    ...(message.turn.resumePrepared ? {
-      prepareResume: async () => ({ ...message.turn.resumePrepared!, release: () => {} }),
-    } : {}),
+    prepare: prepareSelected,
+    ...(message.turn.resumeAvailable ? { prepareResume: prepareSelected } : {}),
     ...(message.turn.retainConversation ? { retainConversation: true } : {}),
     ...(message.turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     ...(message.turn.conversationKey ? { conversationKey: message.turn.conversationKey } : {}),
     abortSignal: abortController.signal,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
     onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "submitted" }),
-    onPreparedSelected: reused => new Promise<void>(resolve => {
-      preparedSelectionWaiters.set(message.id, resolve);
+    onPreparedSelected: reused => {
       writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused });
-    }),
+      return selectedPrompt.then(() => {});
+    },
     onReasoningSummary: (text, continuation) => writeProtocol({
       type: "event",
       id: message.id,
@@ -296,7 +294,12 @@ input.on("line", line => {
     answerRetryWaiters.delete(message.id);
     abortControllers.get(message.id)?.abort();
   } else if (message.type === "prepared_selected_ack") {
-    preparedSelectionWaiters.get(message.id)?.();
+    if (!message.prepared || typeof message.prepared.text !== "string" || !Array.isArray(message.prepared.images)) {
+      writeProtocol({ type: "error", id: message.id, message: "Browser helper selected prompt is invalid" });
+      preparedSelectionWaiters.get(message.id)?.();
+    } else {
+      preparedSelectionWaiters.get(message.id)?.(message.prepared);
+    }
     preparedSelectionWaiters.delete(message.id);
   } else if (message.type === "answer_retry") {
     const resolve = answerRetryWaiters.get(message.id);

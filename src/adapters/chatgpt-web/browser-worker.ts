@@ -1783,14 +1783,15 @@ export class ChatGptBrowserWorker {
       if (turn.requireRetainedConversation && lease.reused !== true) {
         throw new Error("The retained ChatGPT conversation is no longer available");
       }
-      await turn.onPreparedSelected?.(lease.reused === true);
+      const reuseConversation = lease.reused === true && (!localTools || lease.connectorBound === true);
+      await turn.onPreparedSelected?.(reuseConversation && turn.prepareResume !== undefined);
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
       return await this.runBrowserTurn(
         turn,
         surfaceId,
         undefined,
-        lease.reused === true && (!localTools || lease.connectorBound === true),
+        reuseConversation,
       );
     } catch (error) {
       originalError = error;

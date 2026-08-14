@@ -15,7 +15,7 @@ interface PendingTurn {
   reject: (error: Error) => void;
   abortListener?: () => void;
   sent?: boolean;
-  releaseUnselected?: (reused: boolean) => void;
+  prepared?: CompiledChatGptWebPrompt & { release: () => void };
   acknowledgeRetry?: () => void;
 }
 
@@ -153,13 +153,9 @@ export class LauncherBrowserHelperClient {
 
   async run(turn: BrowserTurn): Promise<string> {
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-    const prepared = await turn.prepare();
-    let resumePrepared: (CompiledChatGptWebPrompt & { release: () => void }) | undefined;
-    try {
-      resumePrepared = turn.prepareResume ? await turn.prepareResume() : undefined;
-      await this.ensureChild();
-      if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-      return await new Promise<string>((resolveResult, rejectResult) => {
+    await this.ensureChild();
+    if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+    return new Promise<string>((resolveResult, rejectResult) => {
         if (this.pending.has(turn.traceId)) {
           rejectResult(new Error(`Duplicate launcher browser turn: ${turn.traceId}`));
           return;
@@ -168,7 +164,6 @@ export class LauncherBrowserHelperClient {
           turn,
           resolve: resolveResult,
           reject: rejectResult,
-          releaseUnselected: reused => (reused ? prepared : resumePrepared)?.release(),
         };
         this.pending.set(turn.traceId, pending);
         if (turn.abortSignal) {
@@ -211,10 +206,7 @@ export class LauncherBrowserHelperClient {
             modelId: turn.modelId,
             reasoning: turn.reasoning,
             capabilities: turn.capabilities,
-            prepared: { text: prepared.text, images: prepared.images } satisfies CompiledChatGptWebPrompt,
-            ...(resumePrepared ? {
-              resumePrepared: { text: resumePrepared.text, images: resumePrepared.images } satisfies CompiledChatGptWebPrompt,
-            } : {}),
+            ...(turn.prepareResume ? { resumeAvailable: true } : {}),
             ...(turn.retainConversation ? { retainConversation: true } : {}),
             ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
             ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
@@ -222,10 +214,6 @@ export class LauncherBrowserHelperClient {
           },
         }).catch(error => this.finishWithError(turn.traceId, error instanceof Error ? error : new Error(String(error))));
       });
-    } finally {
-      prepared.release();
-      resumePrepared?.release();
-    }
   }
 
   async close(): Promise<void> {
@@ -340,10 +328,22 @@ export class LauncherBrowserHelperClient {
         pending.acknowledgeRetry = undefined;
       }
       else if (message.event === "prepared_selected") {
-        pending.releaseUnselected?.(message.reused);
-        pending.releaseUnselected = undefined;
-        void Promise.resolve(pending.turn.onPreparedSelected?.(message.reused))
-          .then(() => this.send({ type: "prepared_selected_ack", id: message.id }))
+        const prepare = message.reused ? pending.turn.prepareResume : pending.turn.prepare;
+        void Promise.resolve().then(() => prepare?.())
+          .then(prepared => {
+            if (!prepared) throw new Error("Launcher browser helper selected an unavailable resume prompt");
+            if (this.pending.get(message.id) !== pending) {
+              prepared.release();
+              return;
+            }
+            pending.prepared = prepared;
+            return Promise.resolve(pending.turn.onPreparedSelected?.(message.reused))
+              .then(() => this.send({
+                type: "prepared_selected_ack",
+                id: message.id,
+                prepared: { text: prepared.text, images: prepared.images } satisfies CompiledChatGptWebPrompt,
+              }));
+          })
           .catch(error => this.finishWithError(message.id, error instanceof Error ? error : new Error(String(error))));
       }
       else if (message.event === "answer") {
@@ -401,6 +401,7 @@ export class LauncherBrowserHelperClient {
     if (pending.abortListener && pending.turn.abortSignal) {
       pending.turn.abortSignal.removeEventListener("abort", pending.abortListener);
     }
+    pending.prepared?.release();
     this.pending.delete(id);
   }
 
