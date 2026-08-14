@@ -81,7 +81,7 @@ test("saved ChatGPT authentication is refreshed before setup is presented", () =
 });
 
 test("completed model setup remains a repeatable capability probe", () => {
-  assert.match(appSource, /<SetupRow[\s\S]*?onAction=\{install\}[\s\S]*?repeatable/);
+  assert.match(appSource, /<SetupRow[\s\S]*?onAction=\{installCodex\}[\s\S]*?onSecondaryAction=\{installClaude\}[\s\S]*?repeatable/);
   assert.match(appSource, /complete && !repeatable/);
   assert.match(
     electronMain,
