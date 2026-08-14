@@ -33,13 +33,15 @@ function configFor(descriptorPath, overrides = {}) {
   };
 }
 
-function compactFixture({ startResults = [{ status: "ready" }] } = {}) {
+function compactFixture({ startResults = [{ status: "ready" }], enhanced } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-new-compact-"));
   const descriptorPath = path.join(root, "launcher-browser.json");
   const configPath = path.join(root, "config.json");
-  fs.writeFileSync(configPath, `${JSON.stringify(configFor(descriptorPath), null, 2)}\n`);
+  const mode = typeof enhanced === "boolean" ? { useEnhancedWebSessionMode: enhanced } : {};
+  fs.writeFileSync(configPath, `${JSON.stringify(configFor(descriptorPath, mode), null, 2)}\n`);
   const calls = [];
   let startIndex = 0;
+  let retainedReleases = 0;
   const read = () => validateConfig(JSON.parse(fs.readFileSync(configPath, "utf8")), descriptorPath);
   const supervisor = {
     configPath,
@@ -57,8 +59,9 @@ function compactFixture({ startResults = [{ status: "ready" }] } = {}) {
     sourceRoot: root,
     browserDescriptorPath: descriptorPath,
     supervisor,
+    browserHostProvider: () => ({ releaseRetainedTurnTabs: () => { retainedReleases += 1; } }),
   });
-  return { calls, configPath, host, root };
+  return { calls, configPath, host, root, retainedReleases: () => retainedReleases };
 }
 
 test("launcher runtime config defaults enhanced Web session mode off", () => {
@@ -109,6 +112,15 @@ test("launcher restores the prior enhanced mode when runtime restart fails", asy
   );
   assert.equal(JSON.parse(fs.readFileSync(fixture.configPath, "utf8")).useEnhancedWebSessionMode, undefined);
   assert.deepEqual(fixture.calls, ["stop", "start", "start"]);
+});
+
+test("disabling enhanced mode releases only completed retained browser sessions", async (t) => {
+  const fixture = compactFixture({ enhanced: true });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+
+  assert.equal(await fixture.host.setUseEnhancedWebSessionMode(false), false);
+  assert.equal(fixture.retainedReleases(), 1);
+  assert.deepEqual(fixture.calls, ["stop", "start"]);
 });
 
 test("launcher exposes enhanced Web session mode through UI and IPC", () => {

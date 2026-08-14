@@ -752,6 +752,7 @@ async function start() {
     sourceRoot: SOURCE_ROOT,
     installedRuntimeRoot,
     runtimeRootProvider,
+    browserHostProvider: () => browserHost,
     browserDescriptorPath: BROWSER_DESCRIPTOR_PATH,
     publishOperation,
     supervisor: runtimeSupervisor,

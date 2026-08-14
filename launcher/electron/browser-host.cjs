@@ -348,6 +348,12 @@ class BrowserHost {
     return true;
   }
 
+  releaseRetainedTurnTabs() {
+    const retained = [...this.turnTabs.values()].filter(tab => tab.status === "ready");
+    for (const tab of retained) this.removeTurnTab(tab, false);
+    return retained.length;
+  }
+
   bindTurnContents(tab) {
     const contents = tab.view.webContents;
     contents.setWindowOpenHandler(({ url }) => {

@@ -1344,6 +1344,19 @@ test("a new turn evicts the oldest retained conversation before a running tab", 
   assert.deepEqual(removed, [["oldest", false]]);
 });
 
+test("disabling enhanced sessions releases retained tabs without stopping running turns", () => {
+  const retained = { id: "retained", status: "ready" };
+  const running = { id: "running", status: "running" };
+  const removed = [];
+  const fixture = {
+    turnTabs: new Map([[retained.id, retained], [running.id, running]]),
+    removeTurnTab: (tab, abortRunning) => removed.push([tab.id, abortRunning]),
+  };
+
+  assert.equal(BrowserHost.prototype.releaseRetainedTurnTabs.call(fixture), 1);
+  assert.deepEqual(removed, [["retained", false]]);
+});
+
 test("failed and aborted browser turns release their tab slots", async () => {
   for (const status of ["failed", "aborted"]) {
     let closed = false;

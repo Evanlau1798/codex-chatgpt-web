@@ -131,6 +131,7 @@ class RuntimeHost {
     sourceRoot,
     installedRuntimeRoot,
     runtimeRootProvider,
+    browserHostProvider,
     browserDescriptorPath,
     codexHome,
     launchAgentsDir,
@@ -143,6 +144,7 @@ class RuntimeHost {
     this.sourceRoot = sourceRoot;
     this.installedRuntimeRoot = installedRuntimeRoot;
     this.runtimeRootProvider = runtimeRootProvider;
+    this.browserHostProvider = browserHostProvider;
     this.browserDescriptorPath = browserDescriptorPath;
     this.platform = platform;
     this.codexHome = codexHome
@@ -685,6 +687,7 @@ class RuntimeHost {
         if (runtime.status !== "ready") {
           throw new Error(`Local runtime is ${runtime.status}${runtime.detail ? `: ${runtime.detail}` : ""}`);
         }
+        if (!desired) this.browserHostProvider?.()?.releaseRetainedTurnTabs?.();
         return desired;
       } catch (error) {
         let recoveryError;
