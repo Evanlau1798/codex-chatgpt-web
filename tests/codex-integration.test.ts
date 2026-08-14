@@ -55,7 +55,7 @@ describe("reversible native Codex route integration", () => {
     });
   });
 
-  test("keeps the built-in openai provider and manages the bounded V1 Web surface", () => {
+  test("keeps the built-in openai provider without changing native feature defaults", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     const original = `model = "gpt-5.6-sol"\n\n[features]\nmulti_agent = false # user choice\ngoals = true\n`;
@@ -63,12 +63,11 @@ describe("reversible native Codex route integration", () => {
 
     const journal = installCodexIntegration(defaultConfig("browser-only"));
     const installed = readFileSync(configPath, "utf8");
-    expect(journal.version).toBe(6);
+    expect(journal.version).toBe(7);
     expect(installed).toContain('openai_base_url = "http://127.0.0.1:17841/v1"');
-    expect(installed).toContain("remote_compaction_v2 = false # Managed by codex-chatgpt-web");
-    expect(installed).toContain("multi_agent = true # Managed by codex-chatgpt-web");
-    expect(installed).toContain("multi_agent_v2 = false # Managed by codex-chatgpt-web");
-    expect(installed).not.toContain("multi_agent = false");
+    expect(installed).not.toContain("remote_compaction_v2");
+    expect(installed).toContain("multi_agent = false # user choice");
+    expect(installed).not.toContain("multi_agent_v2");
     expect(installed).toContain("goals = true");
     expect(installed).not.toMatch(/^\s*model_provider\s*=/m);
     expect(installed).not.toMatch(/^\s*model_catalog_json\s*=/m);
@@ -80,6 +79,31 @@ describe("reversible native Codex route integration", () => {
     expect(readFileSync(configPath, "utf8")).toBe(original);
     expect(existsSync(getCodexJournalRecoveryPath())).toBe(false);
     expect(uninstallCodexIntegration()).toEqual({ changed: false });
+  });
+
+  test("routes Codex without changing native compact or multi-agent feature flags", () => {
+    const { codexHome } = fixture();
+    const configPath = join(codexHome, "config.toml");
+    const original = [
+      'model = "gpt-5.6-sol"',
+      "",
+      "[features]",
+      "remote_compaction_v2 = true # native choice",
+      "multi_agent = false # native choice",
+      "multi_agent_v2 = true # native choice",
+      "",
+    ].join("\n");
+    writeFileSync(configPath, original);
+
+    const journal = installCodexIntegration(defaultConfig("browser-only"));
+    const installed = readFileSync(configPath, "utf8");
+    expect(installed).toContain("remote_compaction_v2 = true # native choice");
+    expect(installed).toContain("multi_agent = false # native choice");
+    expect(installed).toContain("multi_agent_v2 = true # native choice");
+    expect(journal.installed).toEqual({ openai_base_url: "http://127.0.0.1:17841/v1" });
+
+    uninstallCodexIntegration();
+    expect(readFileSync(configPath, "utf8")).toBe(original);
   });
 
   test("restores a missing primary journal from its exact recovery copy", () => {
@@ -146,7 +170,7 @@ describe("reversible native Codex route integration", () => {
     expect(readFileSync(configPath, "utf8")).toBe(original);
   });
 
-  test("restores an explicit remote_compaction_v2 setting byte-for-byte", () => {
+  test("preserves an explicit remote_compaction_v2 setting byte-for-byte", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     const original = 'model = "gpt-5.6-sol"\n\n[features]\nremote_compaction_v2 = true # user choice\ngoals = true\n';
@@ -154,14 +178,13 @@ describe("reversible native Codex route integration", () => {
 
     installCodexIntegration(defaultConfig("browser-only"));
     const installed = readFileSync(configPath, "utf8");
-    expect(installed).toContain("remote_compaction_v2 = false # Managed by codex-chatgpt-web");
-    expect(installed).not.toContain("remote_compaction_v2 = true");
+    expect(installed).toContain("remote_compaction_v2 = true # user choice");
 
     uninstallCodexIntegration();
     expect(readFileSync(configPath, "utf8")).toBe(original);
   });
 
-  test("restores an explicit multi_agent setting byte-for-byte", () => {
+  test("preserves an explicit multi_agent setting byte-for-byte", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     const original = 'model = "gpt-5.6-sol"\n\n[features]\nmulti_agent = false # user choice\ngoals = true\n';
@@ -169,14 +192,13 @@ describe("reversible native Codex route integration", () => {
 
     installCodexIntegration(defaultConfig("full"));
     const installed = readFileSync(configPath, "utf8");
-    expect(installed).toContain("multi_agent = true # Managed by codex-chatgpt-web");
-    expect(installed).not.toContain("multi_agent = false");
+    expect(installed).toContain("multi_agent = false # user choice");
 
     uninstallCodexIntegration();
     expect(readFileSync(configPath, "utf8")).toBe(original);
   });
 
-  test("restores an explicit multi_agent_v2 setting byte-for-byte", () => {
+  test("preserves an explicit multi_agent_v2 setting byte-for-byte", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     const original = 'model = "gpt-5.6-sol"\n\n[features]\nmulti_agent_v2 = true # user choice\ngoals = true\n';
@@ -184,14 +206,13 @@ describe("reversible native Codex route integration", () => {
 
     installCodexIntegration(defaultConfig("full"));
     const installed = readFileSync(configPath, "utf8");
-    expect(installed).toContain("multi_agent_v2 = false # Managed by codex-chatgpt-web");
-    expect(installed).not.toContain("multi_agent_v2 = true");
+    expect(installed).toContain("multi_agent_v2 = true # user choice");
 
     uninstallCodexIntegration();
     expect(readFileSync(configPath, "utf8")).toBe(original);
   });
 
-  test("manages and restores the structured multi_agent_v2 feature table", () => {
+  test("preserves the structured multi_agent_v2 feature table", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     const original = [
@@ -209,10 +230,7 @@ describe("reversible native Codex route integration", () => {
 
     installCodexIntegration(defaultConfig("full"));
     const installed = readFileSync(configPath, "utf8");
-    expect(installed).not.toMatch(/^multi_agent_v2\s*=/m);
-    expect(installed).toContain(
-      "enabled = false # Managed by codex-chatgpt-web: keeps routed Web subagent payloads readable.",
-    );
+    expect(installed).toContain("enabled = true # user choice");
     expect(installed).toContain("hide_spawn_agent_metadata = true");
 
     uninstallCodexIntegration();
@@ -293,9 +311,8 @@ describe("reversible native Codex route integration", () => {
     expect(activateCodexIntegration()).toEqual({ changed: true, active: true });
     const reconnected = readFileSync(configPath, "utf8");
     expect(reconnected).toContain('openai_base_url = "http://127.0.0.1:17841/v1"');
-    expect(reconnected).toContain("remote_compaction_v2 = false # Managed by codex-chatgpt-web");
-    expect(reconnected).toContain("multi_agent = true # Managed by codex-chatgpt-web");
-    expect(reconnected).toContain("multi_agent_v2 = false # Managed by codex-chatgpt-web");
+    expect(reconnected).not.toContain("remote_compaction_v2");
+    expect(reconnected).not.toContain("multi_agent");
     expect(reconnected).toContain('approval_policy = "never"');
     expect(inspectCodexIntegration()).toMatchObject({ installed: true, active: true });
     expect(activateCodexIntegration()).toEqual({ changed: false, active: true });
@@ -312,7 +329,7 @@ describe("reversible native Codex route integration", () => {
     deactivateCodexIntegration();
 
     expect(JSON.parse(readFileSync(getCodexJournalPath(), "utf8"))).toMatchObject({
-      version: 6,
+      version: 7,
       active: false,
     });
     expect(inspectCodexIntegration()).toMatchObject({ installed: true, active: false, errors: [] });
@@ -337,7 +354,9 @@ describe("reversible native Codex route integration", () => {
     delete previous.installed.multi_agent;
     delete previous.installed.multi_agent_v2;
     previous.version = 3;
-    writeFileSync(getCodexJournalPath(), `${JSON.stringify(previous, null, 2)}\n`);
+    const legacyJournal = `${JSON.stringify(previous, null, 2)}\n`;
+    writeFileSync(getCodexJournalPath(), legacyJournal);
+    writeFileSync(getCodexJournalRecoveryPath(), legacyJournal);
 
     expect(deactivateCodexIntegration()).toEqual({ changed: true, active: false });
     expect(readFileSync(configPath, "utf8")).toBe(original);
@@ -347,7 +366,7 @@ describe("reversible native Codex route integration", () => {
     });
   });
 
-  test("upgrades an active v4 route journal to the managed V1 Web surface", () => {
+  test("upgrades an active v4 route journal without changing native features", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     writeFileSync(configPath, 'model = "gpt-5.6-sol"\n\n[features]\ngoals = true\n');
@@ -360,7 +379,9 @@ describe("reversible native Codex route integration", () => {
     delete legacy.installed.multi_agent;
     delete legacy.installed.multi_agent_v2;
     legacy.version = 4;
-    writeFileSync(getCodexJournalPath(), `${JSON.stringify(legacy, null, 2)}\n`);
+    const legacyJournal = `${JSON.stringify(legacy, null, 2)}\n`;
+    writeFileSync(getCodexJournalPath(), legacyJournal);
+    writeFileSync(getCodexJournalRecoveryPath(), legacyJournal);
     writeFileSync(
       configPath,
       readFileSync(configPath, "utf8")
@@ -368,42 +389,42 @@ describe("reversible native Codex route integration", () => {
     );
 
     const upgraded = installCodexIntegration(defaultConfig("browser-only"));
-    expect(upgraded.version).toBe(6);
-    expect(readFileSync(configPath, "utf8")).toContain(
-      "remote_compaction_v2 = false # Managed by codex-chatgpt-web",
-    );
-    expect(readFileSync(configPath, "utf8")).toContain(
-      "multi_agent = true # Managed by codex-chatgpt-web",
-    );
-    expect(readFileSync(configPath, "utf8")).toContain(
-      "multi_agent_v2 = false # Managed by codex-chatgpt-web",
-    );
+    expect(upgraded.version).toBe(7);
+    expect(readFileSync(configPath, "utf8")).toContain("goals = true");
+    expect(readFileSync(configPath, "utf8")).not.toContain("remote_compaction_v2");
+    expect(readFileSync(configPath, "utf8")).not.toContain("multi_agent");
   });
 
-  test("upgrades an active v5 journal without losing its preserved feature baseline", () => {
+  test("upgrades an active v5 journal and restores its managed feature baseline", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     const original = 'model = "gpt-5.6-sol"\n\n[features]\nmulti_agent_v2 = true # user choice\ngoals = true\n';
     writeFileSync(configPath, original);
-    installCodexIntegration(defaultConfig("full"));
-    const legacy = JSON.parse(readFileSync(getCodexJournalPath(), "utf8"));
-    delete legacy.previousMultiAgentV2;
-    delete legacy.installed.multi_agent_v2;
-    legacy.version = 5;
-    writeFileSync(getCodexJournalPath(), `${JSON.stringify(legacy, null, 2)}\n`);
-    writeFileSync(
-      configPath,
-      readFileSync(configPath, "utf8").replace(
-        /^multi_agent_v2 = false.*$/m,
-        "multi_agent_v2 = true # user choice",
-      ),
+    const routeJournal = installCodexIntegration(defaultConfig("full"));
+    const installedUrl = "http://127.0.0.1:17841/v1";
+    const managed = readFileSync(configPath, "utf8").replace(
+      "[features]",
+      `[features]\nremote_compaction_v2 = false # Managed by codex-chatgpt-web: bounds retained Web image history.\nmulti_agent = true # Managed by codex-chatgpt-web: enables routed Web subagents.`,
     );
+    writeFileSync(configPath, managed);
+    const legacy = {
+      version: 5,
+      active: true,
+      configPath,
+      installed: { openai_base_url: installedUrl, remote_compaction_v2: false, multi_agent: true },
+      previous: routeJournal.previous,
+      previousRemoteCompactionV2: { present: false, tablePresent: true, tableName: "features" },
+      previousMultiAgent: { present: false, tablePresent: true, tableName: "features" },
+      format: routeJournal.format,
+    };
+    const legacyJournal = `${JSON.stringify(legacy, null, 2)}\n`;
+    writeFileSync(getCodexJournalPath(), legacyJournal);
+    writeFileSync(getCodexJournalRecoveryPath(), legacyJournal);
 
     const upgraded = installCodexIntegration(defaultConfig("full"));
-    expect(upgraded.version).toBe(6);
-    expect(readFileSync(configPath, "utf8")).toContain(
-      "multi_agent_v2 = false # Managed by codex-chatgpt-web",
-    );
+    expect(upgraded.version).toBe(7);
+    expect(readFileSync(configPath, "utf8")).toContain("multi_agent_v2 = true # user choice");
+    expect(readFileSync(configPath, "utf8")).not.toContain("Managed by codex-chatgpt-web: enables routed Web subagents");
 
     uninstallCodexIntegration();
     expect(readFileSync(configPath, "utf8")).toBe(original);
@@ -635,45 +656,6 @@ describe("reversible native Codex route integration", () => {
     expect(restored).toContain('model_provider = "custom-provider"');
     expect(restored).toContain('model_catalog_json = "/tmp/original-models.json"');
     expect(restored).not.toContain("127.0.0.1:17841");
-  });
-
-  test("fails closed when the managed compaction feature changes after setup", () => {
-    const { codexHome } = fixture();
-    const configPath = join(codexHome, "config.toml");
-    writeFileSync(configPath, 'model = "gpt-5.6-sol"\n');
-    installCodexIntegration(defaultConfig("browser-only"));
-    const changed = readFileSync(configPath, "utf8")
-      .replace(/^remote_compaction_v2 = false.*$/m, "remote_compaction_v2 = true");
-    writeFileSync(configPath, changed);
-
-    expect(() => uninstallCodexIntegration()).toThrow("remote_compaction_v2 changed after setup");
-    expect(readFileSync(configPath, "utf8")).toBe(changed);
-  });
-
-  test("fails closed when the managed multi-agent feature changes after setup", () => {
-    const { codexHome } = fixture();
-    const configPath = join(codexHome, "config.toml");
-    writeFileSync(configPath, 'model = "gpt-5.6-sol"\n');
-    installCodexIntegration(defaultConfig("full"));
-    const changed = readFileSync(configPath, "utf8")
-      .replace(/^multi_agent = true.*$/m, "multi_agent = false");
-    writeFileSync(configPath, changed);
-
-    expect(() => uninstallCodexIntegration()).toThrow("multi_agent changed after setup");
-    expect(readFileSync(configPath, "utf8")).toBe(changed);
-  });
-
-  test("fails closed when the managed V1 subagent transport changes after setup", () => {
-    const { codexHome } = fixture();
-    const configPath = join(codexHome, "config.toml");
-    writeFileSync(configPath, 'model = "gpt-5.6-sol"\n');
-    installCodexIntegration(defaultConfig("full"));
-    const changed = readFileSync(configPath, "utf8")
-      .replace(/^multi_agent_v2 = false.*$/m, "multi_agent_v2 = true");
-    writeFileSync(configPath, changed);
-
-    expect(() => uninstallCodexIntegration()).toThrow("multi_agent_v2 changed after setup");
-    expect(readFileSync(configPath, "utf8")).toBe(changed);
   });
 
   test("keeps every user line byte-for-byte when line endings are mixed", () => {
