@@ -127,7 +127,7 @@ const ONE_SHOT_SHELL_TTY_ERROR = "The one-shot shell_command cannot provide a TT
 const CONNECTOR_LONG_POLL_SLICE_MS = 30_000;
 
 function boundedConnectorToolArguments(tool: CodexTool, args: Record<string, unknown>): Record<string, unknown> {
-  if (!/(?:^|__)wait(?:_agent)?$/.test(wireName(tool))) return args;
+  if (!["wait", "multi_agent_v1__wait_agent"].includes(wireName(tool))) return args;
   const timeoutKey = typeof args.timeout_ms === "number" ? "timeout_ms"
     : typeof args.yield_time_ms === "number" ? "yield_time_ms" : undefined;
   if (!timeoutKey || (args[timeoutKey] as number) <= CONNECTOR_LONG_POLL_SLICE_MS) return args;

@@ -2091,6 +2091,18 @@ describe("ChatGPT outer-native harness v4", () => {
       });
       broker.completeTool(token, agentWaitRequest!.callId, toolResult({ status: "timeout" }));
       expect((await agentWaitPromise).structuredContent).toEqual({ status: "timeout" });
+
+      gatewayOnlyEnvironment.tools.push({ namespace: "database", name: "wait", description: "Wait for data", parameters: { type: "object" } });
+      broker.updateEnvironment(token, gatewayOnlyEnvironment);
+      const databaseWaitPromise = call("codex_tool_call", {
+        turn_token: token,
+        wire_name: "database__wait",
+        arguments: { timeout_ms: 120_000 },
+      });
+      const [databaseWaitRequest] = await broker.nextToolBatch(token);
+      expect(databaseWaitRequest).toMatchObject({ wireName: "database__wait", arguments: { timeout_ms: 120_000 } });
+      broker.completeTool(token, databaseWaitRequest!.callId, toolResult({ status: "ready" }));
+      expect((await databaseWaitPromise).structuredContent).toEqual({ status: "ready" });
     } finally {
       await client.close().catch(() => {});
       broker.revoke(token);
