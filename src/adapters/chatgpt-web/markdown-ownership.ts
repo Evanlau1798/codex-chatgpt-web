@@ -29,6 +29,10 @@ function textHash(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+function ownershipText(text: string): string {
+  return text.replace(/\\([\\`*_\[\]~])/g, "$1").replace(/[`*_~]+/g, "");
+}
+
 /** Preserve the first semantic phase assigned to a ChatGPT Markdown root across DOM rewrites. */
 export class ChatGptMarkdownOwnershipTracker {
   private readonly nodeOwners = new Map<string, string>();
@@ -49,17 +53,19 @@ export class ChatGptMarkdownOwnershipTracker {
       occurrences.set(signature, occurrence + 1);
       const fallbackKey = `${signature}:${occurrence}`;
       let id = this.nodeOwners.get(snapshot.nodeId) ?? this.fallbackOwners.get(fallbackKey);
-      if (!id && snapshot.ownership === "commentary") {
+      if (!id) {
+        const comparable = ownershipText(snapshot.text);
         id = [...this.roots.values()]
           .filter(root => root.ownership === "commentary"
             && root.toolEpoch === snapshot.toolEpoch
+            && (snapshot.ownership === "commentary" || !root.visible)
             && root.lastSeenObservation >= observation - 2
             && root.text.length > 0
             && snapshot.text.length !== root.text.length
-            && (snapshot.text.startsWith(root.text)
+            && (comparable.startsWith(ownershipText(root.text))
               || (!root.visible
                 && root.lastSeenObservation < observation
-                && root.text.startsWith(snapshot.text))))
+                && ownershipText(root.text).startsWith(comparable))))
           .sort((left, right) => right.text.length - left.text.length || right.order - left.order)
           .at(0)?.id;
       }

@@ -119,15 +119,18 @@ test("waits out escaped raw Markdown until the renderer exposes stable Markdown"
   }]);
 });
 
-test("streams escaped Markdown that remains stable across a bounded renderer grace", () => {
+test("does not commit escaped incomplete Markdown before the renderer settles", () => {
   const tracker = new ChatGptVisibleTraceTracker(100);
-  const commentary = [{ kind: "commentary" as const, text: "Reviewing \\*literal\\* and `file.ts`" }];
+  const raw = [{ kind: "commentary" as const, text: "Reviewing \\*\\*147 files, about +" }];
+  const rendered = [{ kind: "commentary" as const, text: "Reviewing **147 files, about +12.8k lines**" }];
 
-  expect(tracker.observe(commentary, false, 1_000)).toEqual([]);
-  expect(tracker.observe(commentary, false, 1_100)).toEqual([]);
-  expect(tracker.observe(commentary, false, 1_200)).toEqual([{
+  expect(tracker.observe(raw, false, 1_000)).toEqual([]);
+  expect(tracker.observe(raw, false, 1_200)).toEqual([]);
+  expect(tracker.observe(raw, false, 2_000)).toEqual([]);
+  expect(tracker.observe(rendered, false, 2_001)).toEqual([]);
+  expect(tracker.observe(rendered, false, 2_101)).toEqual([{
     kind: "commentary",
-    text: "Reviewing \\*literal\\* and `file.ts`",
+    text: "Reviewing **147 files, about +12.8k lines**",
   }]);
 });
 

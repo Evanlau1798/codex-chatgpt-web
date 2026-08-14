@@ -69,6 +69,25 @@ describe("ChatGPT Markdown phase ownership", () => {
     expect(growing.commentaryBlocks.map(block => block.text)).toEqual(["第一個唯讀記憶查詢"]);
   });
 
+  test("keeps growing commentary owned after a replaced node is reclassified as final", () => {
+    const tracker = new ChatGptMarkdownOwnershipTracker();
+    tracker.observe([root("node-1", "commentary", "Reviewing **147 files, about +", 2)]);
+    const completed = root("node-2", "final", "Reviewing 147 files, about +12.8k lines", 2);
+    completed.html = "<p>Reviewing <strong>147 files, about +12.8k lines</strong></p>";
+    completed.segments = [{
+      key: "p",
+      html: completed.html,
+      text: completed.text,
+      streamable: false,
+    }];
+
+    const reclassified = tracker.observe([completed]);
+    expect(reclassified.markdownSegments).toEqual([]);
+    expect(reclassified.commentaryBlocks.map(block => block.text)).toEqual([
+      "Reviewing **147 files, about +12.8k lines**",
+    ]);
+  });
+
   test("reconnects commentary after one empty DOM observation without replaying its prefix", () => {
     const tracker = new ChatGptMarkdownOwnershipTracker();
     tracker.observe([root("node-1", "commentary", "正在檢查", 5)]);

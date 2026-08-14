@@ -32,7 +32,8 @@ function normalizeTrace(block: ChatGptVisibleTraceBlock): string {
 
 function hasUnclosedStrongMarkdown(text: string): boolean {
   const markerCount = (marker: string): number => text.split(marker).length - 1;
-  return markerCount("**") % 2 === 1 || markerCount("__") % 2 === 1;
+  return (markerCount("**") + markerCount("\\*\\*")) % 2 === 1
+    || (markerCount("__") + markerCount("\\_\\_")) % 2 === 1;
 }
 
 function hasUnrenderedMarkdown(text: string): boolean {
@@ -105,6 +106,7 @@ export class ChatGptVisibleTraceTracker {
         && now - candidate.changedAt >= this.traceStabilityMs;
       const stableRawMarkdown = candidate !== undefined
         && hasUnrenderedMarkdown(candidate.text)
+        && !hasUnclosedStrongMarkdown(candidate.text)
         && text.startsWith(candidate.text)
         && now - candidate.changedAt >= this.traceStabilityMs * 2;
       if (block.kind === "commentary"
