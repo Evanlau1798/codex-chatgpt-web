@@ -147,8 +147,28 @@ test("groups Codex sessions by their trusted thread identity", async () => {
     trace: new ChatGptTraceFeed(),
     text: new ChatGptTextFeed(),
     cancel() { cancelled += 1; },
-  }));
+  }), "provider-a");
 
-  expect(sessions.retireGroup("thread-retained")).toBe(1);
+  expect(sessions.retireGroup("provider-a:thread-retained")).toBe(1);
+  expect(sessions.retireGroup("provider-b:thread-retained")).toBe(0);
   expect(cancelled).toBe(1);
+});
+
+test("retires a closed Codex agent group and all descendant groups", () => {
+  const sessions = new ChatGptTurnSessions();
+  const cancelled: string[] = [];
+  for (const group of ["provider:child", "provider:grandchild", "other:child"]) {
+    sessions.getOrCreate(group, () => ({
+      mode: "read-only",
+      browser: new Promise<string>(() => {}),
+      trace: new ChatGptTraceFeed(),
+      text: new ChatGptTextFeed(),
+      cancel() { cancelled.push(group); },
+    }), group);
+  }
+  sessions.linkGroups("provider:root", "provider:child");
+  sessions.linkGroups("provider:child", "provider:grandchild");
+
+  expect(sessions.retireGroupTree("provider:child")).toBe(2);
+  expect(cancelled).toEqual(["provider:child", "provider:grandchild"]);
 });

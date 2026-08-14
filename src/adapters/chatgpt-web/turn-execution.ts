@@ -347,6 +347,7 @@ export class ChatGptTurnSession {
 export class ChatGptTurnSessions {
   private readonly entries = new Map<string, ChatGptTurnSession>();
   private readonly retirements = new Map<string, Promise<void>>();
+  private readonly childGroups = new Map<string, Set<string>>();
 
   constructor(
     private readonly ttlMs = 30 * 60_000,
@@ -455,6 +456,20 @@ export class ChatGptTurnSessions {
     for (const [key, session] of this.entries) {
       if (session.group === group && this.retire(key, session)) retired += 1;
     }
+    return retired;
+  }
+
+  linkGroups(parent: string, child: string): void {
+    const children = this.childGroups.get(parent) ?? new Set<string>();
+    children.add(child); this.childGroups.set(parent, children);
+  }
+
+  retireGroupTree(group: string): number {
+    const groups = [group];
+    for (let index = 0; index < groups.length; index += 1) groups.push(...(this.childGroups.get(groups[index]!) ?? []));
+    let retired = 0;
+    for (const target of new Set(groups)) { retired += this.retireGroup(target); this.childGroups.delete(target); }
+    for (const children of this.childGroups.values()) for (const target of groups) children.delete(target);
     return retired;
   }
 

@@ -36,11 +36,13 @@ export async function sessionForChatGptRequest(
   key: string,
   parsed: CodexParsedRequest,
   start: () => ChatGptTurnRuntime,
+  groupNamespace?: string,
 ): Promise<ChatGptTurnSession> {
   const revision = JSON.stringify(extractChatGptTurnUserRevision(parsed));
   const text = extractChatGptTurnUserText(parsed) ?? "The user added a new instruction.";
   const identity = extractChatGptTurnIdentity(parsed);
-  const group = claudeBrowserSessionGroup(parsed) ?? identity.threadId;
+  const rawGroup = claudeBrowserSessionGroup(parsed) ?? identity.threadId;
+  const group = rawGroup && groupNamespace ? `${groupNamespace}:${rawGroup}` : rawGroup;
   const claudeRootThreadId = claudeRootSessionThreadId(parsed);
   const steeringId = identity.threadId && identity.turnId
     ? chatGptTurnSteeringId(identity.threadId, identity.turnId)

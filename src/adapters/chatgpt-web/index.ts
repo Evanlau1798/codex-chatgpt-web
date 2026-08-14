@@ -280,12 +280,8 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
       await chatGptTurnSessions.waitForRetirement(executionKey);
       const traceId = chatGptTurnTraceId(parsed, executionNamespace);
-      let session = await sessionForChatGptRequest(
-        chatGptTurnSessions,
-        executionKey,
-        parsed,
-        () => startRuntime(parsed, environment, traceId, turnCapabilities),
-      );
+      let session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
+        () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace);
       const heartbeat = setInterval(() => emit({ type: "heartbeat" }), 10_000);
       let surfaceRecoveries = 0;
       try {
@@ -353,8 +349,11 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                 return;
               }
               completeChatGptToolResults(session, broker, turnToken, results, {
-                onSpawnedCodexAgent: childThreadId => inheritSpawnedCodexEnvironment(environmentStore, parsed, childThreadId),
-                onClosedCodexAgent: childThreadId => { chatGptTurnSessions.retireGroup(childThreadId); },
+                onSpawnedCodexAgent: childThreadId => { inheritSpawnedCodexEnvironment(environmentStore, parsed, childThreadId);
+                  const parentThreadId = extractChatGptTurnIdentity(parsed).threadId;
+                  if (parentThreadId) chatGptTurnSessions.linkGroups(`${executionNamespace}:${parentThreadId}`, `${executionNamespace}:${childThreadId}`);
+                },
+                onClosedCodexAgent: childThreadId => { chatGptTurnSessions.retireGroupTree(`${executionNamespace}:${childThreadId}`); },
               });
             }
           } else if (session.outstanding().length > 0) {
@@ -463,12 +462,8 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
             + ` completedResults=${recoveredResultCount}`,
           );
           await chatGptTurnSessions.retireAndWait(executionKey);
-          session = await sessionForChatGptRequest(
-            chatGptTurnSessions,
-            executionKey,
-            parsed,
-            () => startRuntime(parsed, environment, traceId, turnCapabilities),
-          );
+          session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
+            () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace);
         }
       } catch (error) {
         error = submittedStallFailure(session, incoming.abortSignal?.aborted === true, error) ?? error;

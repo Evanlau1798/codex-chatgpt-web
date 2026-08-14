@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { completeChatGptToolResults } from "../src/adapters/chatgpt-web/tool-result-delivery";
-import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
+import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import type { BrokerToolResult, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 
 test("inherits a spawned Codex agent before delivering its tool result", () => {
@@ -84,6 +84,18 @@ test("retires a closed Codex agent before delivering its tool result", () => {
     freeform: false,
     arguments: { target: childThreadId },
   }]);
+  const sessions = new ChatGptTurnSessions();
+  sessions.getOrCreate("provider:child", () => ({
+    mode: "read-only", browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(),
+    cancel: () => events.push("cancel:child"),
+  }), "provider:child");
+  sessions.getOrCreate("provider:grandchild", () => ({
+    mode: "read-only", browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(),
+    cancel: () => events.push("cancel:grandchild"),
+  }), "provider:grandchild");
+  sessions.linkGroups("provider:child", "provider:grandchild");
   const events: string[] = [];
 
   completeChatGptToolResults(session, {
@@ -96,8 +108,11 @@ test("retires a closed Codex agent before delivering its tool result", () => {
     isError: false,
     timestamp: 1,
   }], {
-    onClosedCodexAgent(agentId) { events.push(`retire:${agentId}`); },
+    onClosedCodexAgent(agentId) {
+      events.push(`retire:${agentId}`);
+      sessions.retireGroupTree(`provider:${agentId === childThreadId ? "child" : agentId}`);
+    },
   });
 
-  expect(events).toEqual([`retire:${childThreadId}`, "deliver"]);
+  expect(events).toEqual([`retire:${childThreadId}`, "cancel:child", "cancel:grandchild", "deliver"]);
 });
