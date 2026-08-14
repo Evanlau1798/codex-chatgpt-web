@@ -45,7 +45,12 @@ test("continues queued prompts in the active Web conversation without replaying 
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: `browser://steering-continuation-${Date.now()}`,
-    chatgptWeb: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+    chatgptWeb: {
+      localToolsEnabled: false,
+      solAvailable: true,
+      proAvailable: true,
+      useEnhancedWebSessionMode: true,
+    },
   };
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const originalRun = worker.run.bind(worker);

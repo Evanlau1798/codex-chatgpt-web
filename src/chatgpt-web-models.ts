@@ -75,7 +75,7 @@ export function resolveChatGptWebContextLimits(
   backendModel: ChatGptWebBackendModel,
   effort: ChatGptWebAdapterEffort,
   capabilities: ChatGptWebAccountCapabilities,
-  useNewCompactMode = false,
+  useEnhancedWebSessionMode = false,
 ): ChatGptWebContextLimits {
   if (backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
     // Luna carries continuity through a private checkpoint on every completed browser turn. Codex
@@ -85,7 +85,7 @@ export function resolveChatGptWebContextLimits(
   }
 
   if (capabilities.proAvailable) {
-    if (useNewCompactMode) {
+    if (useEnhancedWebSessionMode) {
       const contextWindow = effort === "low"
         ? CHATGPT_WEB_PRO_INSTANT_CONTEXT_WINDOW
         : effort === "max"

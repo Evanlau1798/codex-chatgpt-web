@@ -77,7 +77,7 @@ import {
   resolveChatGptWebTransportLimits,
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
-import { MAX_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
+import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
 import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import {
@@ -363,6 +363,7 @@ export interface ResolvedBrowserConfig {
   turnTimeoutMs?: number;
   headed: boolean;
   autoApproveToolCalls: boolean;
+  maxBrowserTabs?: number;
 }
 
 export function chatGptTurnIsComplete(state: {
@@ -678,6 +679,9 @@ export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBro
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
     headed: configured.headed !== false,
     autoApproveToolCalls: configured.autoApproveToolCalls === true,
+    maxBrowserTabs: configured.useEnhancedWebSessionMode === true
+      ? MAX_CHATGPT_BROWSER_TABS
+      : ORIGINAL_CHATGPT_BROWSER_TABS,
   };
 }
 
@@ -748,7 +752,7 @@ export class ChatGptBrowserWorker {
     }
     const run = runWithChatGptBrowserSlot(turn.abortSignal, () => (
       useHelper ? this.launcherHelper!.run(turn) : this.runWithSurfaceRetry(turn)
-    ));
+    ), this.config.maxBrowserTabs ?? MAX_CHATGPT_BROWSER_TABS);
     this.activeRuns.set(turn.traceId, run);
     void run.finally(() => {
       if (this.activeRuns.get(turn.traceId) === run) this.activeRuns.delete(turn.traceId);

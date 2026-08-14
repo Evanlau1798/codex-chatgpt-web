@@ -85,9 +85,9 @@ export function appendCompactionUserPrompt(
   parsed: CodexParsedRequest,
   answer: string,
   emit: (event: AdapterEvent) => void,
-  useNewCompactMode: boolean,
+  useEnhancedWebSessionMode: boolean,
 ): string {
-  if (!parsed._compactionRequest || !useNewCompactMode) return answer;
+  if (!parsed._compactionRequest || !useEnhancedWebSessionMode) return answer;
   const canonical = canonicalizeCompactionHandoff(parsed, answer);
   if (!canonical || !canonical.startsWith(answer)) {
     throw new Error("ChatGPT compaction could not preserve the latest user prompt");

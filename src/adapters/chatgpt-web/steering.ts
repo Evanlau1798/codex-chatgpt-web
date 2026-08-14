@@ -37,6 +37,7 @@ export async function sessionForChatGptRequest(
   parsed: CodexParsedRequest,
   start: () => ChatGptTurnRuntime,
   groupNamespace?: string,
+  allowSteering = true,
 ): Promise<ChatGptTurnSession> {
   const revision = JSON.stringify(extractChatGptTurnUserRevision(parsed));
   const text = extractChatGptTurnUserText(parsed) ?? "The user added a new instruction.";
@@ -51,6 +52,12 @@ export async function sessionForChatGptRequest(
   const settled = session.settledOutcome();
   const activeClaudeRoot = Boolean(claudeRootThreadId && !settled);
   const steering = session.updateUserRevision(revision, text, !activeClaudeRoot);
+  if (!allowSteering && steering) {
+    await sessions.retireAndWait(key);
+    session = sessions.getOrCreate(key, start, group, steeringId, claudeRootThreadId);
+    session.updateUserRevision(revision, text);
+    return session;
+  }
   if (activeClaudeRoot) return session;
   if (!steering || (!settled && (session.runtime.mode === "tools" || session.runtime.steering))) return session;
 

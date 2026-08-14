@@ -493,9 +493,9 @@ function registerIpc({ logger, stateStore }) {
     else stopCatalogVerificationMonitor();
     return state;
   });
-  handle("launcher:new-compact-mode", async (_event, enabled) => {
-    const useNewCompactMode = await runtimeHost.setUseNewCompactMode(enabled === true);
-    const state = stateStore.update({ useNewCompactMode, codexRestartRequired: true });
+  handle("launcher:enhanced-web-session-mode", async (_event, enabled) => {
+    const useEnhancedWebSessionMode = await runtimeHost.setUseEnhancedWebSessionMode(enabled === true);
+    const state = stateStore.update({ useEnhancedWebSessionMode, codexRestartRequired: true });
     send("launcher:state-changed", state);
     return state;
   });
@@ -756,9 +756,9 @@ async function start() {
     publishOperation,
     supervisor: runtimeSupervisor,
   });
-  const configuredCompactMode = runtimeHost.runtimeConfigSnapshot().config?.useNewCompactMode === true;
-  if (stateStore.read().useNewCompactMode !== configuredCompactMode) {
-    stateStore.update({ useNewCompactMode: configuredCompactMode });
+  const configuredEnhancedMode = runtimeHost.runtimeConfigSnapshot().config?.useEnhancedWebSessionMode === true;
+  if (stateStore.read().useEnhancedWebSessionMode !== configuredEnhancedMode) {
+    stateStore.update({ useEnhancedWebSessionMode: configuredEnhancedMode });
   }
   browserHost = new BrowserHost({
     window: mainWindow,

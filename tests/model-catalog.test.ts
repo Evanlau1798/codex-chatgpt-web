@@ -84,12 +84,12 @@ describe("native /models augmentation", () => {
     }
   });
 
-  test("publishes the beta compact threshold only when explicitly enabled", () => {
+  test("publishes the enhanced compact threshold only when explicitly enabled", () => {
     const originalConfig = defaultConfig("full");
     originalConfig.proAvailable = true;
     const original = augmentNativeModelCatalog(source(), originalConfig).models as Array<Record<string, unknown>>;
 
-    const betaConfig = { ...originalConfig, useNewCompactMode: true };
+    const betaConfig = { ...originalConfig, useEnhancedWebSessionMode: true };
     const beta = augmentNativeModelCatalog(source(), betaConfig).models as Array<Record<string, unknown>>;
     const originalPro = original.find(model => model.slug === "chatgpt-web/pro");
     const betaPro = beta.find(model => model.slug === "chatgpt-web/pro");
@@ -112,8 +112,8 @@ describe("native /models augmentation", () => {
   test("keeps native model capabilities identical in both Web session modes", () => {
     const native = source();
     const expected = structuredClone(native.models as Array<Record<string, unknown>>);
-    for (const useNewCompactMode of [false, true]) {
-      const config = { ...defaultConfig("full"), useNewCompactMode };
+    for (const useEnhancedWebSessionMode of [false, true]) {
+      const config = { ...defaultConfig("full"), useEnhancedWebSessionMode };
       const models = augmentNativeModelCatalog(native, config).models as Array<Record<string, unknown>>;
       expect(models.slice(0, expected.length)).toEqual(expected);
     }

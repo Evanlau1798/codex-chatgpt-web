@@ -61,43 +61,57 @@ function compactFixture({ startResults = [{ status: "ready" }] } = {}) {
   return { calls, configPath, host, root };
 }
 
-test("launcher runtime config defaults the Beta compact mode off", () => {
+test("launcher runtime config defaults enhanced Web session mode off", () => {
   const descriptorPath = path.join(os.tmpdir(), "launcher-browser.json");
   const config = validateConfig(configFor(descriptorPath), descriptorPath);
-  assert.equal(config.useNewCompactMode, false);
+  assert.equal(config.useEnhancedWebSessionMode, false);
   assert.throws(
-    () => validateConfig(configFor(descriptorPath, { useNewCompactMode: "yes" }), descriptorPath),
-    /invalid useNewCompactMode/,
+    () => validateConfig(configFor(descriptorPath, { useEnhancedWebSessionMode: "yes" }), descriptorPath),
+    /invalid useEnhancedWebSessionMode/,
   );
 });
 
-test("launcher atomically changes compact mode and restarts the configured runtime", async (t) => {
+test("launcher migrates the legacy compact key and rejects conflicting mode keys", () => {
+  const descriptorPath = path.join(os.tmpdir(), "launcher-browser.json");
+  const migrated = validateConfig(configFor(descriptorPath, { useNewCompactMode: true }), descriptorPath);
+  assert.equal(migrated.useEnhancedWebSessionMode, true);
+  assert.equal(migrated.useNewCompactMode, undefined);
+  assert.throws(
+    () => validateConfig(configFor(descriptorPath, {
+      useNewCompactMode: true,
+      useEnhancedWebSessionMode: false,
+    }), descriptorPath),
+    /conflicting Web session mode settings/,
+  );
+});
+
+test("launcher atomically changes enhanced Web session mode and restarts the configured runtime", async (t) => {
   const fixture = compactFixture();
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
 
-  assert.equal(await fixture.host.setUseNewCompactMode(true), true);
-  assert.equal(JSON.parse(fs.readFileSync(fixture.configPath, "utf8")).useNewCompactMode, true);
+  assert.equal(await fixture.host.setUseEnhancedWebSessionMode(true), true);
+  assert.equal(JSON.parse(fs.readFileSync(fixture.configPath, "utf8")).useEnhancedWebSessionMode, true);
   assert.deepEqual(fixture.calls, ["stop", "start"]);
 
-  assert.equal(await fixture.host.setUseNewCompactMode(true), true);
+  assert.equal(await fixture.host.setUseEnhancedWebSessionMode(true), true);
   assert.deepEqual(fixture.calls, ["stop", "start"]);
 });
 
-test("launcher restores the prior compact mode when runtime restart fails", async (t) => {
+test("launcher restores the prior enhanced mode when runtime restart fails", async (t) => {
   const fixture = compactFixture({
     startResults: [{ status: "error", detail: "synthetic startup failure" }, { status: "ready" }],
   });
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
 
   await assert.rejects(
-    fixture.host.setUseNewCompactMode(true),
+    fixture.host.setUseEnhancedWebSessionMode(true),
     /synthetic startup failure/,
   );
-  assert.equal(JSON.parse(fs.readFileSync(fixture.configPath, "utf8")).useNewCompactMode, undefined);
+  assert.equal(JSON.parse(fs.readFileSync(fixture.configPath, "utf8")).useEnhancedWebSessionMode, undefined);
   assert.deepEqual(fixture.calls, ["stop", "start", "start"]);
 });
 
-test("launcher exposes the Beta compact toggle through UI and IPC", () => {
+test("launcher exposes enhanced Web session mode through UI and IPC", () => {
   const root = path.join(__dirname, "..");
   const app = fs.readFileSync(path.join(root, "src", "App.tsx"), "utf8");
   const types = fs.readFileSync(path.join(root, "src", "types.ts"), "utf8");
@@ -105,13 +119,13 @@ test("launcher exposes the Beta compact toggle through UI and IPC", () => {
   const main = fs.readFileSync(path.join(root, "electron", "main.cjs"), "utf8");
   const preload = fs.readFileSync(path.join(root, "electron", "preload.cjs"), "utf8");
 
-  assert.match(types, /useNewCompactMode: boolean/);
-  assert.match(types, /setUseNewCompactMode\(enabled: boolean\)/);
-  assert.match(i18n, /Use new compact mode \(Beta\)/);
-  assert.match(i18n, /使用新版 compact 壓縮方式（Beta）/);
-  assert.match(app, /checked=\{snapshot\.state\.useNewCompactMode\}/);
-  assert.match(app, /api!\.setUseNewCompactMode\(enabled\)/);
-  assert.match(main, /launcher:new-compact-mode/);
-  assert.match(main, /runtimeHost\.setUseNewCompactMode\(enabled === true\)/);
-  assert.match(preload, /setUseNewCompactMode: \(enabled\).*launcher:new-compact-mode/);
+  assert.match(types, /useEnhancedWebSessionMode: boolean/);
+  assert.match(types, /setUseEnhancedWebSessionMode\(enabled: boolean\)/);
+  assert.match(i18n, /Enhanced Web session mode \(Beta\)/);
+  assert.match(i18n, /增強型 Web 工作階段模式（Beta）/);
+  assert.match(app, /checked=\{snapshot\.state\.useEnhancedWebSessionMode\}/);
+  assert.match(app, /api!\.setUseEnhancedWebSessionMode\(enabled\)/);
+  assert.match(main, /launcher:enhanced-web-session-mode/);
+  assert.match(main, /runtimeHost\.setUseEnhancedWebSessionMode\(enabled === true\)/);
+  assert.match(preload, /setUseEnhancedWebSessionMode: \(enabled\).*launcher:enhanced-web-session-mode/);
 });

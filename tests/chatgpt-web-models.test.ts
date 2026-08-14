@@ -126,7 +126,7 @@ describe("fixed ChatGPT Web model routes", () => {
     });
   });
 
-  test("uses the native 90 percent threshold when the beta compact mode is enabled", () => {
+  test("uses the native 90 percent threshold when enhanced Web session mode is enabled", () => {
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "low", pro, true)).toEqual({
       contextWindow: 137_000,
       effectiveContextWindowPercent: 90,

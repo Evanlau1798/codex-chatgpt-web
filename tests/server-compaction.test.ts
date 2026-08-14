@@ -296,15 +296,15 @@ test("refuses a ChatGPT Web continuation when local previous-response state is u
 test("keeps native Responses and compact traffic outside every Web session mode", async () => {
   const originalFetch = globalThis.fetch;
   try {
-    for (const useNewCompactMode of [false, true]) {
-      const config = { ...defaultConfig("full"), useNewCompactMode };
+    for (const useEnhancedWebSessionMode of [false, true]) {
+      const config = { ...defaultConfig("full"), useEnhancedWebSessionMode };
       for (const [path, requestHandler, input] of [
         ["responses", responseRequest, [{ type: "compaction_trigger" }, { type: "compaction", encrypted_content: "gAAAA-native-v2" }]],
         ["responses/compact", compactRequest, [{ type: "compaction", encrypted_content: "gAAAA-native-v1" }]],
       ] as const) {
         const body = JSON.stringify({ model: "gpt-5.6-sol", stream: true, input });
         let upstream: { url: string; body: string; authorization: string | null } | undefined;
-        globalThis.fetch = async request => {
+        globalThis.fetch = (async request => {
           const native = request instanceof Request ? request : new Request(request);
           upstream = {
             url: native.url,
@@ -315,7 +315,7 @@ test("keeps native Responses and compact traffic outside every Web session mode"
             status: 206,
             headers: { "content-type": "text/event-stream", "x-native": "preserved" },
           });
-        };
+        }) as typeof fetch;
         let adapterStarted = false;
         const response = await requestHandler(new Request(`http://127.0.0.1:17841/v1/${path}`, {
           method: "POST",

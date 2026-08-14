@@ -266,8 +266,8 @@ export interface CodexProviderConfig {
     solAvailable?: boolean;
     /** Account capability proven by the authenticated browser probe. */
     proAvailable?: boolean;
-    /** Opt into the beta compact path that requests a handoff from the active Web conversation. */
-    useNewCompactMode?: boolean;
+    /** Opt into retained Web sessions, handoff compaction, steering, and archive transport. */
+    useEnhancedWebSessionMode?: boolean;
     /** Authorize per-call "Allow once" confirmation clicks for this connector. */
     autoApproveToolCalls?: boolean;
   };

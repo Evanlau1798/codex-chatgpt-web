@@ -24,7 +24,7 @@ test("serves the account-scoped Claude gateway model catalog without proxying up
 });
 
 test("advertises the routed Claude model context window used by client preflight", async () => {
-  const config = { ...defaultConfig("full"), proAvailable: true, useNewCompactMode: true };
+  const config = { ...defaultConfig("full"), proAvailable: true, useEnhancedWebSessionMode: true };
   const body = await claudeGatewayModelsResponse(config).json() as { data: Array<Record<string, unknown>> };
 
   expect(body.data.find(model => model.id === "claude-chatgpt-web-extra-high")).toEqual({
@@ -81,7 +81,7 @@ test("proxies official /models auth and query, then appends the fixed ChatGPT We
     "chatgpt-web/pro",
   ]);
   expect(body.models[0]!.max_context_window).toBe(371_851);
-  expect(body.models[0]!.multi_agent_version).toBe("v1");
+  expect(body.models[0]!.multi_agent_version).toBeUndefined();
   for (const [index, model] of body.models.slice(1).entries()) {
     const route = CHATGPT_WEB_MODEL_ROUTES[index]!;
     const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config);

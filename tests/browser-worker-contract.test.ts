@@ -263,6 +263,15 @@ test("new ChatGPT chats select the requested effort and submit the first real tu
   expect(promptAttachment).toBeGreaterThan(requestedSelection);
 });
 
+test("enhanced Web session mode alone raises browser concurrency from five to six", () => {
+  const provider = { adapter: "chatgpt-web" as const, baseUrl: "browser://chatgpt" };
+  expect(resolveBrowserConfig(provider).maxBrowserTabs).toBe(5);
+  expect(resolveBrowserConfig({
+    ...provider,
+    chatgptWeb: { useEnhancedWebSessionMode: true },
+  }).maxBrowserTabs).toBe(6);
+});
+
 test("active composer resolution waits for exactly one visible editor", async () => {
   const composer = { id: "active" };
   const counts = [2, 1];

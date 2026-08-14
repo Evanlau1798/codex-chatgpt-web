@@ -658,15 +658,15 @@ class RuntimeHost {
     }
   }
 
-  async setUseNewCompactMode(enabled) {
+  async setUseEnhancedWebSessionMode(enabled) {
     const desired = enabled === true;
-    const name = "compact-mode-change";
+    const name = "enhanced-web-session-mode-change";
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const current = this.runtimeConfigSnapshot();
     if (!current.configured || current.owner !== "launcher") {
-      throw new Error("Install the launcher-owned runtime before changing compact mode");
+      throw new Error("Install the launcher-owned runtime before changing enhanced Web session mode");
     }
-    if (current.config.useNewCompactMode === desired) return desired;
+    if (current.config.useEnhancedWebSessionMode === desired) return desired;
     if (typeof this.supervisor.configPath !== "string" || !path.isAbsolute(this.supervisor.configPath)) {
       throw new Error("Launcher runtime supervisor has no absolute configuration path");
     }
@@ -676,9 +676,10 @@ class RuntimeHost {
     try {
       await this.supervisor.stopForSetup();
       try {
+        const { useNewCompactMode: _legacyMode, ...canonicalConfig } = current.config;
         writePrivateFileAtomic(
           this.supervisor.configPath,
-          `${JSON.stringify({ ...current.config, useNewCompactMode: desired }, null, 2)}\n`,
+          `${JSON.stringify({ ...canonicalConfig, useEnhancedWebSessionMode: desired }, null, 2)}\n`,
         );
         const runtime = await this.supervisor.startIfConfigured();
         if (runtime.status !== "ready") {
@@ -698,7 +699,7 @@ class RuntimeHost {
         }
         if (!recoveryError) throw error;
         throw new Error(
-          `${error instanceof Error ? error.message : String(error)}; restoring the previous compact mode also failed:`
+          `${error instanceof Error ? error.message : String(error)}; restoring the previous Web session mode also failed:`
           + ` ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
         );
       }

@@ -34,7 +34,7 @@ export async function requestRetainedCompactionHandoff(
     retryPromptForAnswer: retryActiveCompactionHandoff,
   });
   const handoff = parseCompactionHandoff(answer);
-  console.info("[chatgpt-web] compact mode=beta path=retained_handoff"
+  console.info("[chatgpt-web] Web session mode=enhanced path=retained_handoff"
     + ` result=${handoff ? "completed" : "unavailable"}`);
   return handoff;
 }

@@ -13,7 +13,7 @@ const DEFAULT_STATE = Object.freeze({
   xOpened: false,
   autoStart: true,
   bridgeEnabled: true,
-  useNewCompactMode: false,
+  useEnhancedWebSessionMode: false,
   keepRunningOnClose: true,
   showBrowserDuringTurns: true,
   lockBrowserDuringTurns: true,
@@ -38,6 +38,10 @@ function readState(filePath) {
     const parsed = readJsonFile(filePath);
     if (!parsed || parsed.version !== 1) return { ...DEFAULT_STATE };
     const state = { ...DEFAULT_STATE, ...parsed };
+    if (parsed.useEnhancedWebSessionMode === undefined && typeof parsed.useNewCompactMode === "boolean") {
+      state.useEnhancedWebSessionMode = parsed.useNewCompactMode;
+    }
+    delete state.useNewCompactMode;
     if (parsed.coreSetupComplete === true
       && parsed.codexSetupComplete === undefined
       && parsed.claudeSetupComplete === undefined) {
@@ -53,7 +57,7 @@ function readState(filePath) {
       "xOpened",
       "autoStart",
       "bridgeEnabled",
-      "useNewCompactMode",
+      "useEnhancedWebSessionMode",
       "keepRunningOnClose",
       "showBrowserDuringTurns",
       "lockBrowserDuringTurns",

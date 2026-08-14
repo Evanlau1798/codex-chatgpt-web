@@ -52,15 +52,15 @@ function compactRequest(): CodexParsedRequest {
   };
 }
 
-function provider(useNewCompactMode: boolean): CodexProviderConfig {
+function provider(useEnhancedWebSessionMode: boolean): CodexProviderConfig {
   return {
     adapter: "chatgpt-web",
-    baseUrl: `browser://compact-mode-${useNewCompactMode}`,
+    baseUrl: `browser://enhanced-session-${useEnhancedWebSessionMode}`,
     chatgptWeb: {
       localToolsEnabled: false,
       solAvailable: true,
       proAvailable: true,
-      useNewCompactMode,
+      useEnhancedWebSessionMode,
     },
   };
 }
@@ -83,13 +83,13 @@ describe("compact mode routing", () => {
     expect(response.output[0]?.type).toBe("compaction");
   });
 
-  test("fails closed instead of opening the original compact path when beta handoff is unavailable", async () => {
+  test("fails closed instead of opening the original compact path when enhanced handoff is unavailable", async () => {
     const adapter = createChatGptWebAdapter(provider(true));
     const events: AdapterEvent[] = [];
 
     try {
       await adapter.runTurn!(compactRequest(), { headers: new Headers() }, event => events.push(event));
-      throw new Error("expected beta compact handoff to fail");
+      throw new Error("expected enhanced compact handoff to fail");
     } catch (error) {
       expect(error).toMatchObject({
         status: 409,
@@ -100,7 +100,7 @@ describe("compact mode routing", () => {
     expect(events).toEqual([]);
   });
 
-  test("does not attach beta handoff behavior to original-mode browser turns", async () => {
+  test("does not attach enhanced handoff behavior to original-mode browser turns", async () => {
     const config = provider(false);
     const worker = ChatGptBrowserWorker.forProvider(config);
     const originalRun = worker.run.bind(worker);
@@ -122,6 +122,9 @@ describe("compact mode routing", () => {
       await createChatGptWebAdapter(config).runTurn!(request, { headers: new Headers() }, () => {});
       expect(browserTurn?.retryPromptForAnswer?.("ordinary answer", 1)).toBeUndefined();
       expect(browserTurn?.retryPromptForError).toBeUndefined();
+      expect(browserTurn?.retainConversation).toBeUndefined();
+      expect(browserTurn?.conversationKey).toBeUndefined();
+      expect(browserTurn?.prepareResume).toBeUndefined();
     } finally {
       worker.run = originalRun;
     }
@@ -434,7 +437,7 @@ describe("compact mode routing", () => {
     expect(prompts.retryPromptForAnswer("still malformed")).toBeUndefined();
   });
 
-  test("routes a beta compact request through the matching active session", async () => {
+  test("routes an enhanced compact request through the matching active session", async () => {
     const request = compactRequest();
     const socketPath = defaultBrokerEndpoint(join(
       tmpdir(),

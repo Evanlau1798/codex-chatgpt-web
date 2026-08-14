@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   doctor: () => ipcRenderer.invoke("launcher:doctor"),
   cancelTurns: () => ipcRenderer.invoke("launcher:cancel-turns"),
   setBridgeEnabled: (enabled) => ipcRenderer.invoke("launcher:bridge-enabled", enabled),
-  setUseNewCompactMode: (enabled) => ipcRenderer.invoke("launcher:new-compact-mode", enabled),
+    setUseEnhancedWebSessionMode: (enabled) => ipcRenderer.invoke("launcher:enhanced-web-session-mode", enabled),
   uninstallIntegration: () => ipcRenderer.invoke("launcher:uninstall-integration"),
   setupCodex: () => ipcRenderer.invoke("launcher:setup-codex"),
   setupClaude: () => ipcRenderer.invoke("launcher:setup-claude"),

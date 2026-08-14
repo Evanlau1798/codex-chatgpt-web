@@ -9,7 +9,7 @@ export interface LauncherState {
   xOpened: boolean;
   autoStart: boolean;
   bridgeEnabled: boolean;
-  useNewCompactMode: boolean;
+  useEnhancedWebSessionMode: boolean;
   keepRunningOnClose: boolean;
   showBrowserDuringTurns: boolean;
   lockBrowserDuringTurns: boolean;
@@ -130,7 +130,7 @@ export interface LauncherApi {
   doctor(): Promise<DoctorReport>;
   cancelTurns(): Promise<{ stdout: string }>;
   setBridgeEnabled(enabled: boolean): Promise<LauncherState>;
-  setUseNewCompactMode(enabled: boolean): Promise<LauncherState>;
+  setUseEnhancedWebSessionMode(enabled: boolean): Promise<LauncherState>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCodex(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
   setupClaude(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;

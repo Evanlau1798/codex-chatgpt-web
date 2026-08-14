@@ -88,12 +88,33 @@ test("user-home expansion accepts native Unix and Windows separators", () => {
 
 test("the direct-turn connector identity migrates known legacy setup without overwriting custom names", () => {
   expect(defaultConfig("full").appName).toBe(CHATGPT_CONNECTOR_NAME);
-  expect(defaultConfig("full").useNewCompactMode).toBe(false);
+  expect(defaultConfig("full").useEnhancedWebSessionMode).toBe(false);
   expect(resolveSetupConnectorName("Codex Native")).toBe("Codex Native2");
   expect(resolveSetupConnectorName("Team Codex Harness")).toBe("Team Codex Harness");
   expect(resolveSetupConnectorName(undefined, "Team Codex Harness")).toBe("Team Codex Harness");
   expect(() => resolveSetupConnectorName(undefined, "Codex Native"))
     .toThrow(/requires a newly created connector named "Codex Native2"/);
+});
+
+test("enhanced Web session mode migrates the legacy key and rejects conflicting values", () => {
+  const root = join(tmpdir(), `codex-chatgpt-web-enhanced-mode-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const legacy = { ...defaultConfig("browser-only") } as Record<string, unknown>;
+  delete legacy.useEnhancedWebSessionMode;
+  legacy.useNewCompactMode = true;
+  writeFileSync(join(root, "config.json"), `${JSON.stringify(legacy)}\n`);
+
+  const migrated = loadConfig() as unknown as Record<string, unknown>;
+  expect(migrated.useEnhancedWebSessionMode).toBe(true);
+  expect(migrated.useNewCompactMode).toBeUndefined();
+
+  writeFileSync(join(root, "config.json"), `${JSON.stringify({
+    ...legacy,
+    useEnhancedWebSessionMode: false,
+  })}\n`);
+  expect(() => loadConfig()).toThrow("conflicting Web session mode settings");
 });
 
 test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", () => {
@@ -125,7 +146,7 @@ test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", 
     mode: "browser-only",
     browserHost: "managed-chrome",
     solAvailable: true,
-    useNewCompactMode: false,
+    useEnhancedWebSessionMode: false,
   });
 });
 

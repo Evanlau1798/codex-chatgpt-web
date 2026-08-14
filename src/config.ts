@@ -57,7 +57,7 @@ export interface AppConfig {
   host: "127.0.0.1";
   port: number;
   contextWindow: number;
-  useNewCompactMode: boolean;
+  useEnhancedWebSessionMode: boolean;
   appName: string;
   browserHost: BrowserHostMode;
   browserHostDescriptorPath?: string;
@@ -158,7 +158,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     host: "127.0.0.1",
     port: 17841,
     contextWindow: 256_000,
-    useNewCompactMode: false,
+    useEnhancedWebSessionMode: false,
     appName: CHATGPT_CONNECTOR_NAME,
     browserHost: "managed-chrome",
     chromeExecutablePath: defaultChromeExecutable(),
@@ -312,7 +312,7 @@ export function loadConfigForSetup(): AppConfig {
 
 function parseConfig(value: unknown, path: string): AppConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Invalid configuration object in ${path}`);
-  const parsed = value as Partial<AppConfig>;
+  const parsed = value as Partial<AppConfig> & { useNewCompactMode?: unknown };
   if (parsed.version !== 3) throw new Error(`Unsupported configuration version in ${path}; rerun setup to migrate it`);
   if (typeof parsed.releaseVersion !== "string" || !parsed.releaseVersion.trim()) throw new Error(`Missing releaseVersion in ${path}`);
   if (parsed.mode !== "browser-only" && parsed.mode !== "full") throw new Error(`Invalid runtime mode in ${path}`);
@@ -324,8 +324,16 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (!Number.isSafeInteger(parsed.contextWindow) || parsed.contextWindow! <= 0) {
     throw new Error(`Invalid contextWindow in ${path}`);
   }
+  if (parsed.useEnhancedWebSessionMode !== undefined && typeof parsed.useEnhancedWebSessionMode !== "boolean") {
+    throw new Error(`Invalid useEnhancedWebSessionMode in ${path}`);
+  }
   if (parsed.useNewCompactMode !== undefined && typeof parsed.useNewCompactMode !== "boolean") {
     throw new Error(`Invalid useNewCompactMode in ${path}`);
+  }
+  if (typeof parsed.useEnhancedWebSessionMode === "boolean"
+    && typeof parsed.useNewCompactMode === "boolean"
+    && parsed.useEnhancedWebSessionMode !== parsed.useNewCompactMode) {
+    throw new Error(`Invalid configuration in ${path}: conflicting Web session mode settings`);
   }
   if (typeof parsed.headed !== "boolean") throw new Error(`Invalid headed in ${path}`);
   if (typeof parsed.autoApproveToolCalls !== "boolean") {
@@ -392,9 +400,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (proAvailable && !solAvailable) {
     throw new Error(`Invalid ChatGPT account capabilities in ${path}: Pro requires Sol`);
   }
+  const { useNewCompactMode, ...canonical } = parsed;
   return {
-    ...parsed,
-    useNewCompactMode: parsed.useNewCompactMode === true,
+    ...canonical,
+    useEnhancedWebSessionMode: parsed.useEnhancedWebSessionMode ?? (useNewCompactMode === true),
     solAvailable,
     proAvailable,
   } as AppConfig;
@@ -436,7 +445,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       localToolsEnabled: config.mode === "full",
       solAvailable: config.solAvailable,
       proAvailable: config.proAvailable,
-      useNewCompactMode: config.useNewCompactMode,
+      useEnhancedWebSessionMode: config.useEnhancedWebSessionMode,
       autoApproveToolCalls: config.autoApproveToolCalls,
     },
   };

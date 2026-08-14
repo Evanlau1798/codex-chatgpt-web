@@ -73,7 +73,7 @@ export function buildChatGptWebModel(
     route.backendModel,
     route.adapterEffort,
     config,
-    config.useNewCompactMode,
+    config.useEnhancedWebSessionMode,
   );
   const model: JsonObject = {
     ...structuredClone(template),

@@ -177,7 +177,23 @@ function managedTunnelConnectArgs(config, invocation) {
 function validateConfig(config, descriptorPath, platform = process.platform) {
   if (!config || config.version !== 3) throw new Error("Runtime configuration is missing or unsupported");
   if (config.solAvailable === undefined) config = { ...config, solAvailable: true };
-  if (config.useNewCompactMode === undefined) config = { ...config, useNewCompactMode: false };
+  if (config.useEnhancedWebSessionMode !== undefined && typeof config.useEnhancedWebSessionMode !== "boolean") {
+    throw new Error("Runtime configuration has an invalid useEnhancedWebSessionMode");
+  }
+  if (config.useNewCompactMode !== undefined && typeof config.useNewCompactMode !== "boolean") {
+    throw new Error("Runtime configuration has an invalid useNewCompactMode");
+  }
+  if (typeof config.useEnhancedWebSessionMode === "boolean"
+    && typeof config.useNewCompactMode === "boolean"
+    && config.useEnhancedWebSessionMode !== config.useNewCompactMode) {
+    throw new Error("Runtime configuration has conflicting Web session mode settings");
+  }
+  if (config.useNewCompactMode !== undefined) {
+    const { useNewCompactMode, ...canonicalConfig } = config;
+    config = { ...canonicalConfig, useEnhancedWebSessionMode: config.useEnhancedWebSessionMode ?? useNewCompactMode };
+  } else if (config.useEnhancedWebSessionMode === undefined) {
+    config = { ...config, useEnhancedWebSessionMode: false };
+  }
   if (config.mode !== "browser-only" && config.mode !== "full") {
     throw new Error("Runtime configuration has an invalid mode");
   }
@@ -216,7 +232,7 @@ function validateConfig(config, descriptorPath, platform = process.platform) {
   } else if (!absolutePath(config.brokerSocketPath, platform) || windowsPipeEndpoint(config.brokerSocketPath)) {
     throw new Error("Runtime configuration has an invalid Unix broker socket");
   }
-  for (const key of ["headed", "solAvailable", "proAvailable", "autoApproveToolCalls", "useNewCompactMode"]) {
+  for (const key of ["headed", "solAvailable", "proAvailable", "autoApproveToolCalls", "useEnhancedWebSessionMode"]) {
     if (typeof config[key] !== "boolean") {
       throw new Error(`Runtime configuration has an invalid ${key}`);
     }

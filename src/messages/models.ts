@@ -27,7 +27,7 @@ export function claudeGatewayModels(config: AppConfig): ClaudeGatewayModel[] {
       route.backendModel,
       route.adapterEffort,
       config,
-      config.useNewCompactMode,
+      config.useEnhancedWebSessionMode,
     ).contextWindow,
   }));
 }

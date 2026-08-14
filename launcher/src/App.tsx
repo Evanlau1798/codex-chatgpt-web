@@ -1306,11 +1306,11 @@ function SettingsSurface({
       setBusy(false);
     }
   };
-  const setUseNewCompactMode = async (enabled: boolean) => {
+  const setUseEnhancedWebSessionMode = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
     try {
-      updateState(await api!.setUseNewCompactMode(enabled));
+      updateState(await api!.setUseEnhancedWebSessionMode(enabled));
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -1352,11 +1352,11 @@ function SettingsSurface({
             onChange={(checked) => void setBridgeEnabled(checked)}
           />
         </SettingRow>
-        <SettingRow body={copy.newCompactModeBody} label={copy.newCompactMode}>
+        <SettingRow body={copy.enhancedWebSessionModeBody} label={copy.enhancedWebSessionMode}>
           <Switch
-            checked={snapshot.state.useNewCompactMode}
+            checked={snapshot.state.useEnhancedWebSessionMode}
             disabled={busy || snapshot.state.coreSetupComplete !== true}
-            onChange={(enabled) => void setUseNewCompactMode(enabled)}
+            onChange={(enabled) => void setUseEnhancedWebSessionMode(enabled)}
           />
         </SettingRow>
         <SettingRow body={copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>

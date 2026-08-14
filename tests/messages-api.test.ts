@@ -407,7 +407,7 @@ test("preserves structured browser failures in the Anthropic error envelope", as
 });
 
 test("recognizes the Claude Code compact harness and returns its summary envelope", async () => {
-  const config = { ...defaultConfig("full"), useNewCompactMode: true };
+  const config = { ...defaultConfig("full"), useEnhancedWebSessionMode: true };
   const response = await messagesRequest(request({
     model: "chatgpt-web/high",
     max_tokens: 4096,
@@ -417,7 +417,7 @@ test("recognizes the Claude Code compact harness and returns its summary envelop
   }), config, provider => ({
     name: "messages-compact-test",
     async runTurn(parsed, _incoming, emit) {
-      expect(provider.chatgptWeb?.useNewCompactMode).toBe(true);
+      expect(provider.chatgptWeb?.useEnhancedWebSessionMode).toBe(true);
       expect(parsed._compactionRequest).toBeUndefined();
       expect(parsed.context.tools).toBeUndefined();
       emit({ type: "text_delta", text: "Continue from the existing working tree." });
