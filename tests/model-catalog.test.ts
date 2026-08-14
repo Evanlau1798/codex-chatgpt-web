@@ -99,14 +99,21 @@ describe("native /models augmentation", () => {
     expect(betaPro?.effective_context_window_percent).toBe(90);
   });
 
-  test("keeps routed Web models on the readable V1 surface without rewriting native models", () => {
+  test("advertises V2 only for enhanced Web sessions without rewriting native models", () => {
     const config = defaultConfig("full");
     config.proAvailable = true;
     const native = source();
     const nativeModels = structuredClone(native.models as Array<Record<string, unknown>>);
-    const models = augmentNativeModelCatalog(native, config).models as Array<Record<string, unknown>>;
-    expect(models.slice(0, nativeModels.length)).toEqual(nativeModels);
-    expect(models.slice(nativeModels.length).every(model => model.multi_agent_version === "v1")).toBeTrue();
+    const original = augmentNativeModelCatalog(native, config).models as Array<Record<string, unknown>>;
+    const enhanced = augmentNativeModelCatalog(native, {
+      ...config,
+      useEnhancedWebSessionMode: true,
+    }).models as Array<Record<string, unknown>>;
+
+    expect(original.slice(0, nativeModels.length)).toEqual(nativeModels);
+    expect(enhanced.slice(0, nativeModels.length)).toEqual(nativeModels);
+    expect(original.slice(nativeModels.length).every(model => model.multi_agent_version === "v1")).toBeTrue();
+    expect(enhanced.slice(nativeModels.length).every(model => model.multi_agent_version === "v2")).toBeTrue();
   });
 
   test("keeps native model capabilities identical in both Web session modes", () => {

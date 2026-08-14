@@ -86,10 +86,9 @@ export function buildChatGptWebModel(
     // makes Codex drop them from spawn_agent whenever openai_base_url points at the bridge.
     supported_in_api: true,
     priority: CHATGPT_WEB_MODEL_PRIORITY,
-    // Codex MultiAgent V2 encrypts delegated task payloads for native OpenAI models. A browser
-    // provider cannot decrypt that cross-backend payload, so every routed Web model must stay on
-    // the native V1 surface where `message` and `fork_context` remain ordinary Codex context.
-    multi_agent_version: "v1",
+    // Enhanced mode preserves collaboration messages as readable Responses arguments and marks
+    // returned calls with Codex's official direct-plaintext V2 signal.
+    multi_agent_version: config.useEnhancedWebSessionMode ? "v2" : "v1",
     // Codex code mode assumes OpenAI's backend owns command execution and therefore omits client
     // tools from Responses requests. This local browser backend needs those tools on the wire so
     // Native2 can relay them back to the originating CLI.
