@@ -20,6 +20,26 @@ turndown.addRule("removeSvg", {
   filter: node => node.nodeName === "SVG",
   replacement: () => "",
 });
+turndown.addRule("nestedPreformattedBlock", {
+  filter: node => node.nodeName === "PRE" && node.firstChild?.nodeName !== "CODE",
+  replacement: (_content, node, options) => {
+    const blockTags = new Set(["DIV", "P", "LI"]);
+    const renderedText = (current: Node): string => {
+      if (current.nodeType === 3) return current.nodeValue ?? "";
+      if (current.nodeName === "BR") return "\n";
+      if (["BUTTON", "SCRIPT", "STYLE", "SVG", "IMG", "PICTURE", "SOURCE"].includes(current.nodeName)) return "";
+      const children = Array.from(current.childNodes);
+      const text = children.map(renderedText).join("");
+      const leafBlock = blockTags.has(current.nodeName)
+        && !children.some(child => blockTags.has(child.nodeName));
+      return leafBlock && text && !text.endsWith("\n") ? `${text}\n` : text;
+    };
+    const code = renderedText(node).replace(/\n+$/, "");
+    const longestFence = Math.max(2, ...Array.from(code.matchAll(/`{3,}/g), match => match[0].length));
+    const fence = (options.fence ?? "```").charAt(0).repeat(longestFence + 1);
+    return `\n\n${fence}\n${code}\n${fence}\n\n`;
+  },
+});
 turndown.addRule("compactListItem", {
   filter: "li",
   replacement: (content, node, options) => {
