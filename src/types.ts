@@ -16,6 +16,8 @@ export interface CodexParsedRequest {
    * (see src/responses/compaction.ts).
    */
   _compactionRequest?: boolean;
+  /** True for Codex local compaction identified by structured turn metadata. */
+  _localCompactionRequest?: boolean;
   /** True when the request input contains a new provider compaction replacement boundary. */
   _contextCompactionBoundary?: boolean;
   /**

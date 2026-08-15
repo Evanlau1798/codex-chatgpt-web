@@ -16,6 +16,7 @@ import { compactionItemToText } from "./compaction";
 import { previousResponseReplayPrefixLength } from "./state";
 import { decodeReasoningEnvelope } from "./reasoning-envelope";
 import { prepareMultiAgentV2Tool } from "./multi-agent-v2";
+import { codexResponsesRequestKind } from "./request-metadata";
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -610,6 +611,9 @@ export function parseRequest(body: unknown): CodexParsedRequest {
     ...(replayedInputPrefixLength > 0 ? { _replayPrefixLen: replayedInputPrefixLength } : {}),
     ...(contextCompactionBoundary ? { _contextCompactionBoundary: true } : {}),
     ...(compactionRequest ? { _compactionRequest: true } : {}),
+    ...(!compactionRequest && codexResponsesRequestKind(body) === "compaction"
+      ? { _localCompactionRequest: true }
+      : {}),
     ...(opaqueMultiAgentV2Payload ? { _opaqueMultiAgentV2Payload: true } : {}),
   };
 }

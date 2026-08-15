@@ -28,8 +28,7 @@ import { requestCompactionHandoff } from "./retained-compaction-handoff";
 export function createChatGptWebAdapter(provider: CodexProviderConfig): ProviderAdapter {
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = TurnBroker.forSocket(brokerSocketPath(provider));
-  const { timeoutMs, useEnhancedWebSessionMode, configuredCapabilities, executionNamespace }
-    = chatGptAdapterRuntimeConfig(provider);
+  const { timeoutMs, useEnhancedWebSessionMode, configuredCapabilities, executionNamespace } = chatGptAdapterRuntimeConfig(provider);
   const environmentStore = new ChatGptThreadEnvironmentStore(
     provider.chatgptWeb?.threadEnvironmentStatePath
       ? resolve(expandUserPath(provider.chatgptWeb.threadEnvironmentStatePath))
@@ -136,7 +135,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         mode: "read-only",
         browser,
         trace,
-        text,
+        text, conversationKey,
         ...(steering ? { steering } : {}),
         usageInput: checkpointInput.parsed,
         submission,
@@ -205,7 +204,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       token: token.promise,
       browser,
       trace,
-      text,
+      text, conversationKey,
       ...(steering ? { steering } : {}),
       usageInput: checkpointInput.parsed,
       submission,
@@ -466,6 +465,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
             () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode);
           await session.runExclusive(async () => { session.observeCanonicalRequest(parsed); });
         }
+        if (useEnhancedWebSessionMode && parsed._localCompactionRequest) { const key = chatGptConversationKey(parsed, executionNamespace); if (key) await chatGptTurnSessions.retireConversationAndWait(key); }
       } catch (error) {
         error = submittedStallFailure(session, incoming.abortSignal?.aborted === true, error) ?? error;
         if (chatGptSessionFailureDisposition(error) === "replay") {

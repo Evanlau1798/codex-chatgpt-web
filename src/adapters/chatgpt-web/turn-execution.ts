@@ -19,6 +19,7 @@ interface ChatGptTurnRuntimeBase {
   browser: Promise<string>;
   trace: ChatGptTraceFeed;
   text: ChatGptTextFeed;
+  conversationKey?: string;
   /** Exact bounded request used to prepare this browser turn and report Codex usage. */
   usageInput?: CodexParsedRequest;
   steering?: ChatGptSteeringFeed;
@@ -354,6 +355,30 @@ export class ChatGptTurnSessions {
     this.entries.delete(key);
     await this.beginRetirement(key, session);
     return true;
+  }
+
+  async retireConversationAndWait(conversationKey: string): Promise<number> {
+    const owned = [...this.entries].filter(([, session]) => (
+      session.runtime.conversationKey === conversationKey
+    ));
+    if (owned.length === 0) return 0;
+    for (const [key, session] of owned) {
+      if (this.entries.get(key) !== session) continue;
+      this.entries.delete(key);
+      session.cancel();
+    }
+    const release = owned.find(([, session]) => session.runtime.release)?.[1].runtime.release;
+    const retirement = Promise.all(owned.map(([, session]) => session.browserOutcome))
+      .then(async () => { await release?.(); });
+    for (const [key] of owned) this.retirements.set(key, retirement);
+    try {
+      await retirement;
+    } finally {
+      for (const [key] of owned) {
+        if (this.retirements.get(key) === retirement) this.retirements.delete(key);
+      }
+    }
+    return owned.length;
   }
 
   retire(key: string, session: ChatGptTurnSession): boolean {
