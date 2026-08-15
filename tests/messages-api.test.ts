@@ -432,3 +432,29 @@ test("recognizes the Claude Code compact harness and returns its summary envelop
     text: "<analysis>Conversation compacted by the active ChatGPT Web agent.</analysis>\n<summary>Continue from the existing working tree.</summary>",
   }]);
 });
+
+test("anchors retained Claude conversations to their canonical history prefix", () => {
+  const translate = (messages: unknown[]) => translateClaudeMessages({
+    model: "chatgpt-web/high",
+    max_tokens: 1024,
+    messages,
+  }, new Headers({ "x-claude-code-session-id": "history-anchor-session" }));
+  const original = { role: "user", content: "Original task" };
+  const initial = translate([original]);
+  const continued = translate([
+    original,
+    { role: "assistant", content: "Initial answer" },
+    { role: "user", content: "Continue" },
+  ]);
+  const replacement = translate([
+    { role: "user", content: "Canonical replacement history" },
+    { role: "assistant", content: "Replacement acknowledgement" },
+    { role: "user", content: "Continue" },
+  ]);
+  const metadata = (value: ReturnType<typeof translateClaudeMessages>) =>
+    (value.body.client_metadata as Record<string, unknown>).claude_history_anchor;
+
+  expect(metadata(initial)).toBeString();
+  expect(metadata(continued)).toBe(metadata(initial));
+  expect(metadata(replacement)).not.toBe(metadata(initial));
+});

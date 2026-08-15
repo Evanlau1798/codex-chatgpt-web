@@ -25,7 +25,14 @@ function compactionEpoch(input: unknown[] | undefined): unknown {
 export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: string): string | undefined {
   const identity = extractChatGptTurnIdentity(parsed);
   if (!identity.threadId) return undefined;
-  const raw = parsed._rawBody as { input?: unknown[]; client_metadata?: { claude_subagent?: unknown } } | undefined;
+  const raw = parsed._rawBody as {
+    input?: unknown[];
+    client_metadata?: { claude_subagent?: unknown; claude_history_anchor?: unknown };
+  } | undefined;
+  const claudeHistoryAnchor = typeof raw?.client_metadata?.claude_subagent === "boolean"
+    && typeof raw.client_metadata.claude_history_anchor === "string"
+    ? raw.client_metadata.claude_history_anchor
+    : null;
   return createHash("sha256").update(JSON.stringify({
     namespace,
     threadId: identity.threadId,
@@ -33,6 +40,7 @@ export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: st
     modelId: parsed.modelId,
     reasoning: parsed.options.reasoning,
     compaction: compactionEpoch(raw?.input),
+    claudeHistoryAnchor,
   })).digest("hex");
 }
 

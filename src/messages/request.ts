@@ -279,6 +279,9 @@ export function translateClaudeMessages(
     };
   }) : undefined;
   const compact = isClaudeCompactRequest(system, request.messages);
+  const historyAnchor = createHash("sha256")
+    .update(JSON.stringify(request.messages[0]))
+    .digest("hex");
   const choice = toolChoice(request.tool_choice);
   const harness = "You are serving Claude Code through ChatGPT Web. Follow the supplied system and user instructions. Use only advertised client tools; the client owns tool execution and permission decisions.";
   return {
@@ -300,6 +303,7 @@ export function translateClaudeMessages(
       client_metadata: {
         "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: turnId, request_kind: "turn", sandbox: "none", workspaces: { [root]: {} } }),
         claude_request_hash: createHash("sha256").update(JSON.stringify(request.messages)).digest("hex"),
+        claude_history_anchor: historyAnchor,
         claude_subagent: subagent,
         claude_retain_conversation: !auxiliaryResponse && headers.has("x-claude-code-session-id"),
       },
