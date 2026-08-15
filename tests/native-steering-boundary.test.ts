@@ -69,7 +69,7 @@ function textOf(result: BrokerToolResult): string {
     .join("\n");
 }
 
-test("tracks superseded tool calls until their canonical results arrive", () => {
+test("reconciles superseded calls against complete canonical request generations", () => {
   const session = new ChatGptTurnSession({
     mode: "tools",
     token: Promise.resolve("turn_superseded"),
@@ -78,18 +78,69 @@ test("tracks superseded tool calls until their canonical results arrive", () => 
     text: new ChatGptTextFeed(),
     cancel: () => {},
   });
+  session.observeCanonicalRequest({ ...initialRequest(), _canonicalContextComplete: true });
   session.setOutstanding([
     { callId: "call_one", wireName: "exec_command", freeform: false, arguments: { cmd: "one" } },
     { callId: "call_two", wireName: "exec_command", freeform: false, arguments: { cmd: "two" } },
   ]);
 
+  const revision = initialRequest();
+  revision._canonicalContextComplete = true;
+  revision.context.messages.push({
+    role: "assistant",
+    content: [{ type: "toolCall", id: "call_two", name: "exec_command", arguments: { cmd: "two" } }],
+    timestamp: 3,
+  });
+  session.observeCanonicalRequest(revision);
+
   expect(session.supersedeOutstanding()).toEqual(["call_one", "call_two"]);
   expect(session.outstanding()).toEqual([]);
-  expect(session.unresolvedSupersededResultIds()).toEqual(["call_one", "call_two"]);
-  expect(session.reconcileSupersededResults(["call_one"])).toBe(1);
   expect(session.unresolvedSupersededResultIds()).toEqual(["call_two"]);
-  expect(session.reconcileSupersededResults(["call_two", "call_two"])).toBe(1);
+
+  const resolved = structuredClone(revision);
+  resolved.context.messages.push({
+    role: "toolResult",
+    toolCallId: "call_two",
+    toolName: "exec_command",
+    content: "done",
+    isError: false,
+    timestamp: 4,
+  });
+  session.observeCanonicalRequest(resolved);
   expect(session.unresolvedSupersededResultIds()).toEqual([]);
+});
+
+test("keeps same-generation and incomplete superseded calls fail-closed", () => {
+  const sameGeneration = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_same_generation"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  sameGeneration.observeCanonicalRequest({ ...initialRequest(), _canonicalContextComplete: true });
+  sameGeneration.setOutstanding([
+    { callId: "call_same", wireName: "exec_command", freeform: false, arguments: {} },
+  ]);
+  sameGeneration.supersedeOutstanding();
+  expect(sameGeneration.unresolvedSupersededResultIds()).toEqual(["call_same"]);
+
+  const incomplete = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_incomplete"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  incomplete.observeCanonicalRequest({ ...initialRequest(), _canonicalContextComplete: true });
+  incomplete.setOutstanding([
+    { callId: "call_incomplete", wireName: "exec_command", freeform: false, arguments: {} },
+  ]);
+  incomplete.observeCanonicalRequest(initialRequest());
+  incomplete.supersedeOutstanding();
+  expect(incomplete.unresolvedSupersededResultIds()).toEqual(["call_incomplete"]);
 });
 
 test("does not consume steering or outstanding calls for a partial parallel result batch", () => {

@@ -23,6 +23,19 @@ function requestWithResults(callIds: string[]): CodexParsedRequest {
   };
 }
 
+function completeRequest(callIds: string[] = [], resultIds: string[] = []): CodexParsedRequest {
+  const request = requestWithResults(resultIds);
+  request._canonicalContextComplete = true;
+  if (callIds.length > 0) {
+    request.context.messages.unshift({
+      role: "assistant",
+      content: callIds.map(id => ({ type: "toolCall" as const, id, name: "exec_command", arguments: {} })),
+      timestamp: 0,
+    });
+  }
+  return request;
+}
+
 test("tool surface recovery requires one complete unstreamed batch and runs only once", () => {
   const text = new ChatGptTextFeed();
   const session = new ChatGptTurnSession({
@@ -81,15 +94,37 @@ test("surface recovery waits for superseded calls to receive canonical results",
     usageInput: requestWithResults([]),
     cancel: () => {},
   });
+  session.observeCanonicalRequest(completeRequest());
   session.setOutstanding([{ callId: "call_1", wireName: "exec_command", freeform: false, arguments: {} }]);
+  session.observeCanonicalRequest(completeRequest(["call_1"]));
   session.supersedeOutstanding();
   const failure = chatGptWebSurfaceError("surface changed", false);
 
   expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults([]), 0))
     .toMatchObject({ eligible: false, reason: "superseded_results_pending", unresolvedSupersededCount: 1 });
-  session.reconcileSupersededResults(["call_1"]);
-  expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults(["call_1"]), 0))
+  session.observeCanonicalRequest(completeRequest(["call_1"], ["call_1"]));
+  expect(chatGptSurfaceRecoveryDecision(failure, session, completeRequest(["call_1"], ["call_1"]), 0))
     .toMatchObject({ eligible: true, reason: "eligible", unresolvedSupersededCount: 0 });
+});
+
+test("surface recovery ignores a superseded call excluded by a newer complete canonical request", () => {
+  const session = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_noncanonical"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  session.observeCanonicalRequest(completeRequest());
+  session.setOutstanding([{ callId: "call_not_accepted", wireName: "exec_command", freeform: false, arguments: {} }]);
+  session.observeCanonicalRequest(completeRequest());
+  session.supersedeOutstanding();
+
+  expect(session.unresolvedSupersededResultIds()).toEqual([]);
+  expect(chatGptSurfaceRecoveryDecision(
+    chatGptWebSurfaceError("surface changed", false), session, completeRequest(), 0,
+  )).toMatchObject({ eligible: true, reason: "eligible", unresolvedSupersededCount: 0 });
 });
 
 test("surface recovery rejects read-only and non-retryable turns", () => {

@@ -118,12 +118,16 @@ export class ChatGptSurfaceRecoveryTracker {
     const decision = chatGptSurfaceRecoveryDecision(error, session, parsed, recoveries, signal);
     if (!this.diagnosticLogged) {
       this.diagnosticLogged = true;
+      const canonical = session.canonicalCallDiagnostics();
       console.warn(
         `[chatgpt-web] browser turn ${this.traceId} surface recovery eligible=${decision.eligible}`
         + ` reason=${decision.reason} generation=${recoveries}`
         + ` finalChars=${session.runtime.text.value().length}`
         + ` canonicalResults=${decision.canonicalResultCount}`
-        + ` unresolvedSuperseded=${decision.unresolvedSupersededCount}`,
+        + ` unresolvedSuperseded=${decision.unresolvedSupersededCount}`
+        + ` canonicalGeneration=${canonical.generation} canonicalComplete=${canonical.complete}`
+        + ` canonicalCalls=${canonical.calls} cancelledBeforeCanonical=${canonical.cancelledBeforeCanonical}`
+        + ` resolvedSuperseded=${canonical.resolvedSuperseded}`,
       );
     }
     return decision.eligible ? decision.canonicalResultCount : undefined;

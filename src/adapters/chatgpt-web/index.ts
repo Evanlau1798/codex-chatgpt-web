@@ -286,12 +286,10 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       const surfaceRecovery = new ChatGptSurfaceRecoveryTracker(traceId);
       try {
         emit({ type: "heartbeat" });
+        await session.runExclusive(async () => { session.observeCanonicalRequest(parsed); });
         for (;;) {
           let recoveredResultCount: number | undefined;
           await session.runExclusive(async () => {
-          session.reconcileSupersededResults(parsed.context.messages.flatMap(message => (
-            message.role === "toolResult" ? [message.toolCallId] : []
-          )));
           const settled = session.settledOutcome();
           if (settled) {
             if (settled.type === "error") {
@@ -465,6 +463,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           await chatGptTurnSessions.retireAndWait(executionKey);
           session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
             () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode);
+          await session.runExclusive(async () => { session.observeCanonicalRequest(parsed); });
         }
       } catch (error) {
         error = submittedStallFailure(session, incoming.abortSignal?.aborted === true, error) ?? error;

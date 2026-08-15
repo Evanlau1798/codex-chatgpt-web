@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import type { BrokerToolRequest } from "./turn-broker";
 import { ChatGptSteeringFeed, steeringFingerprint, type ClaudeSteeringDelivery } from "./steering-feed";
+import { ChatGptTextFeed, ChatGptTraceFeed } from "./turn-feeds";
 import {
   extractChatGptCompactionSourceRevision,
   extractChatGptTurnIdentity,
@@ -9,111 +10,11 @@ import {
 } from "./environment";
 export { chatGptConversationKey, chatGptTurnTraceId } from "./conversation-key";
 export { ChatGptSteeringFeed } from "./steering-feed";
+export { ChatGptTextFeed, ChatGptTraceFeed, type ChatGptTraceEvent } from "./turn-feeds";
 
 export type ChatGptBrowserOutcome =
   | { type: "final"; answer: string }
   | { type: "error"; error: Error };
-export interface ChatGptTraceEvent {
-  kind: "reasoning" | "commentary";
-  text: string;
-  continuation?: boolean;
-}
-
-interface FeedWaiter {
-  resolve: () => void;
-  reject: (error: Error) => void;
-  signal?: AbortSignal;
-  onAbort?: () => void;
-}
-
-export class ChatGptTraceFeed {
-  private readonly queued: ChatGptTraceEvent[] = [];
-  private readonly waiters = new Set<FeedWaiter>();
-  private progressPending = false;
-
-  push(event: ChatGptTraceEvent): void {
-    const normalized = event.continuation ? event.text : event.text.trim();
-    if (!normalized) return;
-    const normalizedEvent = { ...event, text: normalized };
-    this.queued.push(normalizedEvent);
-    const waiter = this.waiters.values().next().value as FeedWaiter | undefined;
-    if (!waiter) return;
-    this.waiters.delete(waiter);
-    if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
-    waiter.resolve();
-  }
-
-  drain(): ChatGptTraceEvent[] {
-    this.progressPending = false;
-    return this.queued.splice(0);
-  }
-
-  signalProgress(): void {
-    this.progressPending = true;
-    const waiter = this.waiters.values().next().value as FeedWaiter | undefined;
-    if (!waiter) return;
-    this.waiters.delete(waiter);
-    if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
-    waiter.resolve();
-  }
-
-  wait(signal?: AbortSignal): Promise<void> {
-    if (this.queued.length > 0 || this.progressPending) return Promise.resolve();
-    if (signal?.aborted) return Promise.reject(new DOMException("trace wait aborted", "AbortError"));
-    return new Promise<void>((resolveWait, rejectWait) => {
-      const waiter: FeedWaiter = { resolve: resolveWait, reject: rejectWait, ...(signal ? { signal } : {}) };
-      if (signal) {
-        waiter.onAbort = () => {
-          this.waiters.delete(waiter);
-          rejectWait(new DOMException("trace wait aborted", "AbortError"));
-        };
-        signal.addEventListener("abort", waiter.onAbort, { once: true });
-      }
-      this.waiters.add(waiter);
-    });
-  }
-}
-/** Append-only browser Markdown feed. Waiters are notifications; `drain` owns consumption. */
-export class ChatGptTextFeed {
-  private readonly queued: string[] = [];
-  private readonly waiters = new Set<FeedWaiter>();
-  private text = "";
-
-  push(delta: string): void {
-    if (!delta) return;
-    this.text += delta;
-    this.queued.push(delta);
-    const waiter = this.waiters.values().next().value as FeedWaiter | undefined;
-    if (!waiter) return;
-    this.waiters.delete(waiter);
-    if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
-    waiter.resolve();
-  }
-
-  drain(): string[] {
-    return this.queued.splice(0);
-  }
-
-  value(): string {
-    return this.text;
-  }
-
-  wait(signal?: AbortSignal): Promise<void> {
-    if (this.queued.length > 0) return Promise.resolve();
-    if (signal?.aborted) return Promise.reject(new DOMException("text wait aborted", "AbortError"));
-    return new Promise<void>((resolveWait, rejectWait) => {
-      const waiter: FeedWaiter = { resolve: resolveWait, reject: rejectWait, ...(signal ? { signal } : {}) };
-      if (signal) {
-        waiter.onAbort = () => {
-          this.waiters.delete(waiter);
-          rejectWait(new DOMException("text wait aborted", "AbortError"));
-        };
-        signal.addEventListener("abort", waiter.onAbort, { once: true });
-      }
-      this.waiters.add(waiter);
-    });
-  }
-}
 interface ChatGptTurnRuntimeBase {
   browser: Promise<string>;
   trace: ChatGptTraceFeed;
@@ -188,7 +89,14 @@ export class ChatGptTurnSession {
   private finalReasoning: string[] = [];
   private outstandingPrelude: AdapterEvent[] = [];
   private finalPrelude: AdapterEvent[] = [];
-  private readonly supersededResultIds = new Set<string>();
+  private readonly outstandingGenerationById = new Map<string, number>();
+  private readonly supersededResultIds = new Map<string, number>();
+  private canonicalGeneration = 0;
+  private canonicalComplete = false;
+  private canonicalCallIds = new Set<string>();
+  private canonicalResultIds = new Set<string>();
+  private cancelledBeforeCanonical = 0;
+  private resolvedSuperseded = 0;
   private handoff?: string;
   private userRevision?: string; private readonly seenUserRevisions: string[] = [];
   private readonly hookedSteeringReplays: string[] = [];
@@ -247,6 +155,7 @@ export class ChatGptTurnSession {
         throw new Error(`duplicate ChatGPT bridge tool call id: ${request.callId}`);
       }
       this.outstandingById.set(request.callId, request);
+      this.outstandingGenerationById.set(request.callId, this.canonicalGeneration);
     }
     this.outstandingReasoning = [...reasoning];
     this.outstandingPrelude = [...prelude];
@@ -258,6 +167,7 @@ export class ChatGptTurnSession {
 
   markResultDelivered(callId: string): void {
     if (!this.outstandingById.delete(callId)) throw new Error(`ChatGPT bridge tool result does not match an outstanding call: ${callId}`);
+    this.outstandingGenerationById.delete(callId);
     this.deliveredResultIds.add(callId);
     this.runtime.onToolResultDelivered?.();
     if (this.outstandingById.size === 0) {
@@ -338,23 +248,54 @@ export class ChatGptTurnSession {
 
   supersedeOutstanding(): string[] {
     const superseded = [...this.outstandingById.keys()];
-    for (const callId of superseded) this.supersededResultIds.add(callId);
+    for (const callId of superseded) {
+      this.supersededResultIds.set(callId, this.outstandingGenerationById.get(callId) ?? this.canonicalGeneration);
+    }
     this.outstandingById.clear();
+    this.outstandingGenerationById.clear();
     this.outstandingReasoning = [];
     this.outstandingPrelude = [];
+    this.reconcileSupersededCalls();
     return superseded;
   }
 
-  reconcileSupersededResults(callIds: Iterable<string>): number {
-    let reconciled = 0;
-    for (const callId of callIds) {
-      if (!this.supersededResultIds.delete(callId)) continue;
-      reconciled += 1;
-    }
-    return reconciled;
+  observeCanonicalRequest(parsed: CodexParsedRequest): void {
+    this.canonicalGeneration += 1;
+    this.canonicalComplete = parsed._canonicalContextComplete === true;
+    this.canonicalCallIds = new Set(parsed.context.messages.flatMap(message => (
+      message.role === "assistant" ? message.content.flatMap(part => part.type === "toolCall" ? [part.id] : []) : []
+    )));
+    this.canonicalResultIds = new Set(parsed.context.messages.flatMap(message => (
+      message.role === "toolResult" ? [message.toolCallId] : []
+    )));
+    this.reconcileSupersededCalls();
   }
 
-  unresolvedSupersededResultIds(): string[] { return [...this.supersededResultIds]; }
+  unresolvedSupersededResultIds(): string[] { return [...this.supersededResultIds.keys()]; }
+
+  canonicalCallDiagnostics() {
+    return {
+      generation: this.canonicalGeneration,
+      complete: this.canonicalComplete,
+      calls: this.canonicalCallIds.size,
+      results: this.canonicalResultIds.size,
+      cancelledBeforeCanonical: this.cancelledBeforeCanonical,
+      resolvedSuperseded: this.resolvedSuperseded,
+    };
+  }
+
+  private reconcileSupersededCalls(): void {
+    for (const [callId, createdGeneration] of this.supersededResultIds) {
+      if (this.canonicalResultIds.has(callId)) {
+        this.supersededResultIds.delete(callId);
+        this.resolvedSuperseded += 1;
+      } else if (this.canonicalComplete && createdGeneration < this.canonicalGeneration
+        && !this.canonicalCallIds.has(callId)) {
+        this.supersededResultIds.delete(callId);
+        this.cancelledBeforeCanonical += 1;
+      }
+    }
+  }
 
   cancel(): void { this.runtime.cancel(); }
 }

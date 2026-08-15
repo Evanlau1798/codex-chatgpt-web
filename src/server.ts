@@ -243,6 +243,9 @@ export async function responseRequest(
   let route: ChatGptWebModelRoute;
   try {
     parsed = parseRequest(expanded);
+    parsed._canonicalContextComplete = typeof requestedPreviousResponseId !== "string"
+      || expanded !== raw
+      || parsed._contextCompactionBoundary === true;
     route = routeChatGptWebRequest(parsed, config);
   } catch (error) {
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));

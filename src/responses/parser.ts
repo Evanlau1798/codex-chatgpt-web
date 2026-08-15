@@ -281,6 +281,7 @@ export function parseRequest(body: unknown): CodexParsedRequest {
   // Remote compaction v2: the input tail carries `{type:"compaction_trigger"}` and Codex expects a
   // synthetic `{type:"compaction"}` output item (src/responses/compaction.ts). Flagged for the server.
   let compactionRequest = false;
+  let contextCompactionBoundary = false;
   let opaqueMultiAgentV2Payload = false;
 
   if (typeof data.instructions === "string" && data.instructions.length > 0) {
@@ -311,6 +312,7 @@ export function parseRequest(body: unknown): CodexParsedRequest {
       }
 
       if (effectiveType === "compaction" || effectiveType === "compaction_summary" || effectiveType === "context_compaction") {
+        contextCompactionBoundary = true;
         // A stored summary from a previous compaction. Decode our ocx1 envelope into plain text so
         // the routed model keeps the compacted context; real OpenAI-encrypted blobs degrade to a note.
         // `context_compaction` (encrypted_content optional) is codex-rs's local-compaction marker;
@@ -606,6 +608,7 @@ export function parseRequest(body: unknown): CodexParsedRequest {
     options,
     _rawBody: body,
     ...(replayedInputPrefixLength > 0 ? { _replayPrefixLen: replayedInputPrefixLength } : {}),
+    ...(contextCompactionBoundary ? { _contextCompactionBoundary: true } : {}),
     ...(compactionRequest ? { _compactionRequest: true } : {}),
     ...(opaqueMultiAgentV2Payload ? { _opaqueMultiAgentV2Payload: true } : {}),
   };
