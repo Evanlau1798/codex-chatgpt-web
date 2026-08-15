@@ -105,12 +105,27 @@ test("completed Claude steering suppression follows a successful retained root s
 
   const secondRequest = request({ claude_subagent: false, claude_retain_conversation: true });
   setRevision(secondRequest, "next prompt");
-  const latest = secondRequest.context.messages.at(-1);
-  if (latest?.role === "user") latest.content = "next prompt";
+  secondRequest.context.messages = [
+    { role: "user", content: "initial prompt", timestamp: 1 },
+    {
+      role: "assistant",
+      content: [{ type: "toolCall", id: "tool-1", name: "Read", arguments: {} }],
+      timestamp: 2,
+    },
+    { role: "toolResult", toolCallId: "tool-1", toolName: "Read", content: "read result", isError: false, timestamp: 3 },
+    { role: "assistant", content: [{ type: "text", text: "completed answer" }], timestamp: 4 },
+    { role: "user", content: "next prompt", timestamp: 5 },
+  ];
   const second = await sessionForChatGptRequest(sessions, "claude-root", secondRequest, start);
 
   expect(second).not.toBe(first);
   expect(second.claudeSteeringSuppressionCount("Apply the retained guidance")).toBe(1);
+  const toolResult = secondRequest.context.messages.find(message => message.role === "toolResult");
+  expect(JSON.stringify(toolResult?.content).match(/Apply the retained guidance/g)).toHaveLength(1);
+  expect(JSON.stringify(toolResult?.content)).toContain("Historical mid-turn user guidance (already applied):");
+  expect(retainedConversationResumeRequest(secondRequest)?.context.messages).toEqual([
+    { role: "user", content: "next prompt", timestamp: 5 },
+  ]);
   sessions.clear();
 });
 

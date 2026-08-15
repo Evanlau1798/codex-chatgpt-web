@@ -243,8 +243,10 @@ export class ChatGptTurnSession {
 
   acknowledgePendingClaudeSteering(count: number): string | undefined { return this.steering.acknowledgeClaude(count); }
   claudeSteeringSuppressionCount(instruction: string): number { return this.steering.claudeSuppressionCount(instruction); }
-  completedClaudeSteeringFingerprints(): string[] { return this.steering.completedClaudeFingerprints(); }
-  inheritCompletedClaudeSteering(fingerprints: string[]): void { this.steering.inheritCompletedClaude(fingerprints); }
+  completedClaudeSteering() { return this.steering.completedClaudeSteering(); }
+  inheritCompletedClaudeSteering(deliveries: ReturnType<ChatGptSteeringFeed["completedClaudeSteering"]>): void {
+    this.steering.inheritCompletedClaude(deliveries);
+  }
 
   supersedeOutstanding(): string[] {
     const superseded = [...this.outstandingById.keys()];

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { cwd } from "node:process";
 import { isClaudeCompactRequest } from "./compact";
+import { historicalClaudeGuidance } from "./claude-steering-history";
 import { resolveClaudeGatewayModelId } from "./models";
 
 type Json = Record<string, unknown>;
@@ -165,8 +166,6 @@ type ClaudeSteeringSuppressionCount = (threadId: string, instruction: string) =>
 
 const CLAUDE_MID_TURN_HEADER = "The user sent a new message while you were working:";
 const CLAUDE_MID_TURN_TAIL = "This is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.";
-const CLAUDE_HISTORICAL_GUIDANCE_HEADER = "Historical mid-turn user guidance (already applied):";
-const CLAUDE_HISTORICAL_GUIDANCE_TAIL = "This guidance was delivered during an earlier tool boundary. Preserve it as conversation history only. Do not apply or acknowledge it again, and do not stop the current task because of this record.";
 
 function claudeQueuedCommandInstruction(text: string): string | undefined {
   const trimmed = text.trim();
@@ -184,10 +183,6 @@ function claudeQueuedCommandInstruction(text: string): string | undefined {
     }
   }
   return undefined;
-}
-
-function historicalClaudeGuidance(instruction: string): string {
-  return `${CLAUDE_HISTORICAL_GUIDANCE_HEADER}\n${instruction}\n\n${CLAUDE_HISTORICAL_GUIDANCE_TAIL}`;
 }
 
 function filterClaudeQueuedCommandReplays(text: string, suppress: (instruction: string) => boolean): string | undefined {

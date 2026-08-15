@@ -1,13 +1,50 @@
 import { namespacedToolName, type CodexParsedRequest } from "../../types";
+import { historicalClaudeGuidance } from "../../messages/claude-steering-history";
 import { extractChatGptTurnIdentity, extractChatGptTurnUserRevision, extractChatGptTurnUserText } from "./environment";
 import type { BrokerToolRequest, TurnBroker } from "./turn-broker";
 import { claudeBrowserSessionGroup, claudeRootSessionThreadId, normalizeClaudeToolRequests } from "./claude-subagent";
 import { claudeAdditiveSteeringInstruction } from "./tool-result-delivery";
 import { chatGptTurnSteeringId, type ChatGptSteeringFeed, type ChatGptTurnRuntime, type ChatGptTurnSession, type ChatGptTurnSessions } from "./turn-execution";
+import type { CompletedClaudeSteering } from "./steering-feed";
 
 export interface ChatGptRetryPrompt { text: string; onSubmitted?: () => void }
 type AnswerRetryValue = string | ChatGptRetryPrompt | undefined;
 type AnswerRetry = (answer: string, attempt: number) => AnswerRetryValue | Promise<AnswerRetryValue>;
+
+function contentText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap(part => part && typeof part === "object" && !Array.isArray(part)
+    && (part as { type?: unknown; text?: unknown }).type === "text"
+    && typeof (part as { text?: unknown }).text === "string"
+    ? [(part as { text: string }).text] : []).join("\n");
+}
+
+function preserveCompletedClaudeSteering(
+  parsed: CodexParsedRequest,
+  completed: CompletedClaudeSteering[],
+): void {
+  const historical = completed.map(item => historicalClaudeGuidance(item.text)).filter(record => (
+    !parsed.context.messages.some(message => contentText(message.content).includes(record))
+  ));
+  if (historical.length === 0) return;
+  const text = historical.join("\n\n");
+  const lastAssistant = parsed.context.messages.findLastIndex(message => message.role === "assistant");
+  const toolResult = parsed.context.messages.findLastIndex((message, index) => (
+    index < lastAssistant && message.role === "toolResult"
+  ));
+  if (toolResult >= 0) {
+    const message = parsed.context.messages[toolResult]!;
+    if (message.role !== "toolResult") return;
+    message.content = typeof message.content === "string"
+      ? `${message.content}\n\n${text}`
+      : [...message.content, { type: "text", text }];
+    return;
+  }
+  const insertion = lastAssistant < 0 ? 0 : lastAssistant;
+  const timestamp = lastAssistant < 0 ? 0 : parsed.context.messages[lastAssistant]!.timestamp - 1;
+  parsed.context.messages.splice(insertion, 0, { role: "user", content: text, timestamp });
+}
 
 export function browserSteeringRetry(
   steering: ChatGptSteeringFeed,
@@ -61,7 +98,8 @@ export async function sessionForChatGptRequest(
   if (activeClaudeRoot) return session;
   if (!steering || (!settled && (session.runtime.mode === "tools" || session.runtime.steering))) return session;
 
-  const completedClaudeSteering = session.completedClaudeSteeringFingerprints();
+  const completedClaudeSteering = session.completedClaudeSteering();
+  if (claudeRootThreadId) preserveCompletedClaudeSteering(parsed, completedClaudeSteering);
   await sessions.retireAndWait(key);
   session = sessions.getOrCreate(key, start, group, steeringId, claudeRootThreadId);
   if (claudeRootThreadId) session.inheritCompletedClaudeSteering(completedClaudeSteering);

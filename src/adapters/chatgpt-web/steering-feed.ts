@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 const MAX_CLAUDE_STEERING_FINGERPRINTS = 32;
 interface QueuedSteering { text: string; claude: boolean; eventId: string; deliveryId?: string }
-interface DeliveredClaudeSteering { fingerprint: string; deliveryId?: string }
+export interface CompletedClaudeSteering { fingerprint: string; text: string; deliveryId?: string }
 export interface ClaudeSteeringDelivery { deliveryId: string; prompt: string }
 export interface PendingSteeringMessage { deliveryId: string; sequence: number; content: string }
 
@@ -13,8 +13,8 @@ export function steeringFingerprint(instruction: string): string {
 export class ChatGptSteeringFeed {
   private readonly queued: QueuedSteering[] = [];
   private readonly seenClaudeDeliveryIds: string[] = [];
-  private readonly provisionalClaude: DeliveredClaudeSteering[] = [];
-  private readonly completedClaude: DeliveredClaudeSteering[] = [];
+  private readonly provisionalClaude: CompletedClaudeSteering[] = [];
+  private readonly completedClaude: CompletedClaudeSteering[] = [];
   private nextEventId = 1;
 
   push(instruction: string): void {
@@ -79,6 +79,7 @@ export class ChatGptSteeringFeed {
     const submitted = this.queued.splice(0, count);
     this.provisionalClaude.push(...submitted.map(item => ({
       fingerprint: steeringFingerprint(item.text),
+      text: item.text,
       deliveryId: item.deliveryId,
     })));
     this.trim(this.provisionalClaude);
@@ -99,12 +100,12 @@ export class ChatGptSteeringFeed {
       + this.completedClaude.filter(value => value.fingerprint === fingerprint).length;
   }
 
-  completedClaudeFingerprints(): string[] {
-    return this.completedClaude.map(item => item.fingerprint);
+  completedClaudeSteering(): CompletedClaudeSteering[] {
+    return this.completedClaude.map(item => ({ ...item }));
   }
 
-  inheritCompletedClaude(fingerprints: string[]): void {
-    this.completedClaude.push(...fingerprints.map(fingerprint => ({ fingerprint })));
+  inheritCompletedClaude(deliveries: CompletedClaudeSteering[]): void {
+    this.completedClaude.push(...deliveries.map(delivery => ({ ...delivery })));
     this.trim(this.completedClaude);
   }
 
