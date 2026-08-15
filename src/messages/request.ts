@@ -165,6 +165,8 @@ type ClaudeSteeringSuppressionCount = (threadId: string, instruction: string) =>
 
 const CLAUDE_MID_TURN_HEADER = "The user sent a new message while you were working:";
 const CLAUDE_MID_TURN_TAIL = "This is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.";
+const CLAUDE_HISTORICAL_GUIDANCE_HEADER = "Historical mid-turn user guidance (already applied):";
+const CLAUDE_HISTORICAL_GUIDANCE_TAIL = "This guidance was delivered during an earlier tool boundary. Preserve it as conversation history only. Do not apply or acknowledge it again, and do not stop the current task because of this record.";
 
 function claudeQueuedCommandInstruction(text: string): string | undefined {
   const trimmed = text.trim();
@@ -184,16 +186,20 @@ function claudeQueuedCommandInstruction(text: string): string | undefined {
   return undefined;
 }
 
+function historicalClaudeGuidance(instruction: string): string {
+  return `${CLAUDE_HISTORICAL_GUIDANCE_HEADER}\n${instruction}\n\n${CLAUDE_HISTORICAL_GUIDANCE_TAIL}`;
+}
+
 function filterClaudeQueuedCommandReplays(text: string, suppress: (instruction: string) => boolean): string | undefined {
   const whole = claudeQueuedCommandInstruction(text);
-  if (whole !== undefined && suppress(whole)) return undefined;
+  if (whole !== undefined && suppress(whole)) return historicalClaudeGuidance(whole);
   let cursor = 0;
   let filtered = "";
   let changed = false;
   for (const match of text.matchAll(/<system-reminder>\r?\n[\s\S]*?\r?\n<\/system-reminder>/g)) {
     const instruction = claudeQueuedCommandInstruction(match[0]);
     if (instruction === undefined || !suppress(instruction)) continue;
-    filtered += text.slice(cursor, match.index);
+    filtered += text.slice(cursor, match.index) + historicalClaudeGuidance(instruction);
     cursor = match.index + match[0].length;
     changed = true;
   }
@@ -203,7 +209,8 @@ function filterClaudeQueuedCommandReplays(text: string, suppress: (instruction: 
     const instruction = claudeQueuedCommandInstruction(filtered.slice(bareStart + 1));
     if (instruction !== undefined && suppress(instruction)) {
       const cut = bareStart > 0 && filtered[bareStart - 1] === "\r" ? bareStart - 1 : bareStart;
-      filtered = filtered.slice(0, cut);
+      const prefix = filtered.slice(0, cut);
+      filtered = `${prefix}${prefix ? "\n" : ""}${historicalClaudeGuidance(instruction)}`;
     }
   }
   return filtered || undefined;
