@@ -392,6 +392,7 @@ export class ChatGptTurnDomHealthTracker {
   private missingResponseSince?: number;
   private emptyCompletionSince?: number;
   private missingCompletionAction?: { text: string; since: number };
+  private missingCompletionActionExpired = false;
 
   constructor(
     private readonly missingResponseMs = CHATGPT_RESPONSE_DOM_GRACE_MS,
@@ -436,10 +437,15 @@ export class ChatGptTurnDomHealthTracker {
       && !state.completionActionVisible;
     if (!missingCompletionAction) {
       this.missingCompletionAction = undefined;
+      this.missingCompletionActionExpired = false;
     } else if (this.missingCompletionAction?.text !== state.currentText) {
       this.missingCompletionAction = { text: state.currentText, since: now };
+      this.missingCompletionActionExpired = false;
     } else if (now - this.missingCompletionAction.since >= this.missingCompletionActionMs) {
-      return "ChatGPT stopped generating but did not expose its completed-turn action; the ChatGPT DOM may have changed";
+      if (this.missingCompletionActionExpired) {
+        return "ChatGPT stopped generating but did not expose its completed-turn action; the ChatGPT DOM may have changed";
+      }
+      this.missingCompletionActionExpired = true;
     }
     return undefined;
   }

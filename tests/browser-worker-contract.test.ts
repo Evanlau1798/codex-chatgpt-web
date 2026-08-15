@@ -1706,7 +1706,16 @@ test("browser DOM health fails closed on a vanished or empty ChatGPT response", 
   };
   expect(missingCompletionAction.update(completedWithoutMarker, 1_000)).toBeUndefined();
   expect(missingCompletionAction.update(completedWithoutMarker, 1_749)).toBeUndefined();
-  expect(missingCompletionAction.update(completedWithoutMarker, 1_750)).toContain("DOM may have changed");
+  expect(missingCompletionAction.update(completedWithoutMarker, 1_750)).toBeUndefined();
+  expect(missingCompletionAction.update(completedWithoutMarker, 1_751)).toContain("DOM may have changed");
+
+  const actionAppearsAtBoundary = new ChatGptTurnDomHealthTracker(1_000, 500, 750);
+  expect(actionAppearsAtBoundary.update(completedWithoutMarker, 1_000)).toBeUndefined();
+  expect(actionAppearsAtBoundary.update(completedWithoutMarker, 1_750)).toBeUndefined();
+  expect(actionAppearsAtBoundary.update({
+    ...completedWithoutMarker,
+    completionActionVisible: true,
+  }, 1_751)).toBeUndefined();
 });
 
 test("stalled-turn diagnostics record DOM metrics without response or overlay content", () => {
