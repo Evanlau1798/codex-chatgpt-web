@@ -1,4 +1,5 @@
 import type { Locator } from "playwright-core";
+import { chatGptWebSurfaceError } from "./adapter-error";
 
 export interface ChatGptCaretEvidence {
   collapsed: boolean;
@@ -8,6 +9,21 @@ export interface ChatGptCaretEvidence {
 }
 
 const ZERO_WIDTH_TEXT = /[\u200B\u200C\u200D\u2060\uFEFF]/g;
+
+export function chatGptPromptAttachmentMismatch(
+  message: string,
+  expected: string,
+  observed: string,
+): Error {
+  let commonPrefix = 0;
+  while (commonPrefix < expected.length && expected[commonPrefix] === observed[commonPrefix]) {
+    commonPrefix += 1;
+  }
+  return chatGptWebSurfaceError(
+    `${message} (expectedChars=${expected.length}, actualChars=${observed.length}, commonPrefixChars=${commonPrefix})`,
+    false,
+  );
+}
 
 export function chatGptCaretAtLogicalEnd(evidence: ChatGptCaretEvidence): boolean {
   return evidence.collapsed

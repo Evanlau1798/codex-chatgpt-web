@@ -96,7 +96,7 @@ import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGpt
 import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, redactChatGptUiDiagnostic } from "./browser-diagnostics";
-import { reanchorChatGptComposerCaret } from "./prompt-caret";
+import { chatGptPromptAttachmentMismatch, reanchorChatGptComposerCaret } from "./prompt-caret";
 import {
   ChatGptLunaCheckpointStream,
   type CapturedChatGptLunaCheckpoint,
@@ -1037,10 +1037,10 @@ export class ChatGptBrowserWorker {
       await new Promise(resolveSleep => setTimeout(resolveSleep, 50));
     }
     throwIfPromptAttachmentAborted(abortSignal);
-    let commonPrefix = 0;
-    while (commonPrefix < prompt.length && prompt[commonPrefix] === observed[commonPrefix]) commonPrefix += 1;
-    throw new Error(
-      `ChatGPT composer did not preserve the complete prompt (expectedChars=${prompt.length}, actualChars=${observed.length}, commonPrefixChars=${commonPrefix})`,
+    throw chatGptPromptAttachmentMismatch(
+      "ChatGPT composer did not preserve the complete prompt",
+      prompt,
+      observed,
     );
   }
 
@@ -1253,11 +1253,10 @@ export class ChatGptBrowserWorker {
       await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
     } while (Date.now() < deadline);
     throwIfPromptAttachmentAborted(abortSignal);
-    let commonPrefix = 0;
-    while (commonPrefix < expected.length && expected[commonPrefix] === observed[commonPrefix]) commonPrefix += 1;
-    throw new Error(
-      `ChatGPT composer did not commit a complete prompt insertion chunk`
-      + ` (expectedChars=${expected.length}, actualChars=${observed.length}, commonPrefixChars=${commonPrefix})`,
+    throw chatGptPromptAttachmentMismatch(
+      "ChatGPT composer did not commit a complete prompt insertion chunk",
+      expected,
+      observed,
     );
   }
 
