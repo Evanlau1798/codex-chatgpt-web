@@ -108,6 +108,42 @@ test("completes a stable terminal renderer that exposes no projection-boundary p
   expect(tracker.update(plainRenderer, 3_000).status).toBe("complete");
 });
 
+test("does not treat unrelated start and end metadata as the final-node protocol", () => {
+  const tracker = new ChatGptCompletionTracker(2_000, 60_000);
+  const plainRenderer = completedState("complete plain renderer answer", {
+    currentHtml: '<pre><code data-start="0" data-end="30">complete plain renderer answer</code></pre>',
+    projection: {
+      ...completedState("").projection,
+      boundaryProtocolPresent: false,
+      lastNodePresent: false,
+      boundaryStart: undefined,
+      boundaryEnd: undefined,
+    },
+  });
+
+  expect(tracker.update(plainRenderer, 1_000).status).toBe("waiting");
+  expect(tracker.update(plainRenderer, 3_000).status).toBe("complete");
+});
+
+test("remembers that a final root used the boundary protocol before its marker disappeared", () => {
+  const tracker = new ChatGptCompletionTracker(2_000, 5_000);
+  const streaming = completedState("projecting", { running: true });
+  expect(tracker.update(streaming, 1_000).status).toBe("waiting");
+
+  const missingMarker = completedState("apparently stable", {
+    projection: {
+      ...streaming.projection,
+      boundaryProtocolPresent: false,
+      lastNodePresent: false,
+      boundaryStart: undefined,
+      boundaryEnd: undefined,
+      lastMutationAt: 2_000,
+    },
+  });
+  expect(tracker.update(missingMarker, 2_000).status).toBe("waiting");
+  expect(tracker.update(missingMarker, 7_000).status).toBe("stalled");
+});
+
 test("requires stable public start and end boundaries", () => {
   const tracker = new ChatGptCompletionTracker(2_000, 60_000);
   const missingEnd = completedState("apparently stable", {

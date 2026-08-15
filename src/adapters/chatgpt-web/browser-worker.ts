@@ -1481,10 +1481,6 @@ export class ChatGptBrowserWorker {
           runtimeWindow.__codexFinalProjectionStates!.set(rendered, created);
           state = created;
         }
-        const boundaryNodes = [
-          ...(rendered.matches("[data-start], [data-end], [data-is-last-node]") ? [rendered] : []),
-          ...rendered.querySelectorAll<HTMLElement>("[data-start], [data-end], [data-is-last-node]"),
-        ];
         const lastNodes = [
           ...(rendered.matches("[data-is-last-node]") ? [rendered] : []),
           ...rendered.querySelectorAll<HTMLElement>("[data-is-last-node]"),
@@ -1510,7 +1506,7 @@ export class ChatGptBrowserWorker {
           : [];
         return {
           rootId: nodeId(rendered),
-          boundaryProtocolPresent: boundaryNodes.length > 0,
+          boundaryProtocolPresent: lastNodes.length > 0,
           lastNodePresent: lastNode !== undefined,
           boundaryStart: lastNode?.getAttribute("data-start") ?? undefined,
           boundaryEnd: lastNode?.getAttribute("data-end") ?? undefined,
