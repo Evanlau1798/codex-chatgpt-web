@@ -84,7 +84,6 @@ function projectionSignature(
 export class ChatGptCompletionTracker {
   private candidate?: { signature: string; since: number };
   private progress?: { signature: string; at: number };
-  private readonly boundedRoots = new Set<string>();
 
   constructor(
     private readonly stableMs = CHATGPT_COMPLETION_SETTLE_MS,
@@ -99,10 +98,6 @@ export class ChatGptCompletionTracker {
   }
 
   update(state: ChatGptCompletionState, now = Date.now()): ChatGptCompletionDecision {
-    const rootId = state.projection.rootId;
-    if (rootId && state.projection.boundaryProtocolPresent === true) {
-      this.boundedRoots.add(rootId);
-    }
     if (!chatGptTurnIsComplete(state)) {
       this.candidate = undefined;
       this.progress = undefined;
@@ -115,7 +110,7 @@ export class ChatGptCompletionTracker {
       this.progress = { signature, at: now };
     }
 
-    const boundaryReady = !rootId || !this.boundedRoots.has(rootId)
+    const boundaryReady = state.projection.boundaryProtocolPresent === false
       || (state.projection.lastNodePresent
         && state.projection.boundaryStart !== undefined
         && state.projection.boundaryEnd !== undefined);

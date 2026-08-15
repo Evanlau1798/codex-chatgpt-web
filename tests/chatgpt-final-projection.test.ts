@@ -125,8 +125,8 @@ test("does not treat unrelated start and end metadata as the final-node protocol
   expect(tracker.update(plainRenderer, 3_000).status).toBe("complete");
 });
 
-test("remembers that a final root used the boundary protocol before its marker disappeared", () => {
-  const tracker = new ChatGptCompletionTracker(2_000, 5_000);
+test("settles a removed final-node marker but rejects a transient disappearance", () => {
+  const tracker = new ChatGptCompletionTracker(2_000, 10_000);
   const streaming = completedState("projecting", { running: true });
   expect(tracker.update(streaming, 1_000).status).toBe("waiting");
 
@@ -141,7 +141,9 @@ test("remembers that a final root used the boundary protocol before its marker d
     },
   });
   expect(tracker.update(missingMarker, 2_000).status).toBe("waiting");
-  expect(tracker.update(missingMarker, 7_000).status).toBe("stalled");
+  expect(tracker.update(streaming, 3_000).status).toBe("waiting");
+  expect(tracker.update(missingMarker, 4_000).status).toBe("waiting");
+  expect(tracker.update(missingMarker, 6_000).status).toBe("complete");
 });
 
 test("requires stable public start and end boundaries", () => {
