@@ -5,11 +5,11 @@ import type { TurnBroker } from "./turn-broker";
 
 export const CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS = 512 * 1_024;
 /**
- * Current ChatGPT Lexical composers can reject an edit once one uninterrupted text run approaches
- * 32K UTF-16 units even though the complete message remains far below its measured total limit.
- * Keep the same 95%-then-4K alignment policy as the overall bootstrap boundary.
+ * Current ChatGPT Lexical composers reject an append once one uninterrupted text run reaches the
+ * observed 15,999 UTF-16-unit boundary even though the complete message remains well below its
+ * measured total limit. Apply the same 95%-then-4K alignment policy as the overall bootstrap.
  */
-export const CHATGPT_STABLE_COMPOSER_TEXT_RUN_CHARS = 28_672;
+export const CHATGPT_STABLE_COMPOSER_TEXT_RUN_CHARS = 12_288;
 const ARCHIVE_ENTRY_CHARS = CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS - 1;
 const ARCHIVE_FRAGMENT_DATA_CHARS = Math.floor((ARCHIVE_ENTRY_CHARS - 512) / 6);
 const CONTEXT_OPEN = "<codex_context_json>\n";

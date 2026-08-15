@@ -70,7 +70,7 @@ test("a single oversized serialized text run uses the archive below the total bo
     {
       role: "toolResult",
       toolCallId: "large-result",
-      content: "x".repeat(40_049),
+      content: "x".repeat(20_049),
       isError: false,
     },
     { role: "user", content: "summarize the completed probe" },
@@ -86,9 +86,9 @@ test("a single oversized serialized text run uses the archive below the total bo
     }, true, 60_000, "text-run-test");
 
     expect(prepared.transport).toBe("native2-archive");
-    expect(Math.max(...prepared.text.split(/\r?\n/).map(line => line.length))).toBeLessThan(32_000);
-    expect(prepared.text).not.toContain("x".repeat(32_000));
-    expect(prepared.archiveChars).toBeGreaterThan(40_049);
+    expect(Math.max(...prepared.text.split(/\r?\n/).map(line => line.length))).toBeLessThanOrEqual(12_288);
+    expect(prepared.text).not.toContain("x".repeat(12_289));
+    expect(prepared.archiveChars).toBeGreaterThan(20_049);
     prepared.release();
   } finally {
     broker.revoke(turnToken);
