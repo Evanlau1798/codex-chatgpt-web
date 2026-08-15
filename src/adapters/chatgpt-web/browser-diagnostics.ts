@@ -1,0 +1,223 @@
+import { randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import { join } from "node:path";
+import type { Page } from "playwright-core";
+import { atomicWriteFile, getConfigDir } from "../../config";
+import {
+  CHATGPT_ASSISTANT_TURN_SELECTOR,
+  CHATGPT_COMPLETION_ACTION_SELECTOR,
+  CHATGPT_COMPOSER_SELECTOR,
+  CHATGPT_EFFORT_CONTROL_SELECTOR,
+  CHATGPT_EFFORT_ITEM_SELECTOR,
+} from "../../chatgpt-session";
+
+const CHATGPT_BROWSER_DIAGNOSTIC_TRACE_LIMIT = 10;
+
+export function redactChatGptUiDiagnostic(value: string): string {
+  return value
+    .replace(/<codex_context_json>[\s\S]*?<\/codex_context_json>/gi, "<codex_context_json>[redacted]</codex_context_json>")
+    .replace(/\b(turn|binding|call)_[A-Za-z0-9_-]{12,}\b/g, "$1_[redacted]");
+}
+
+export function browserDiagnosticCheckpoint(value: string): string {
+  const safe = value.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+  return safe || "checkpoint";
+}
+
+export function browserDiagnosticIncludesScreenshot(
+  checkpoint: string,
+  captureAll = process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS === "1",
+): boolean {
+  return captureAll || checkpoint === "response-stalled-30s" || checkpoint === "turn-failed";
+}
+
+function privateDirectory(path: string): void {
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  try { chmodSync(path, 0o700); } catch { /* Windows ACLs are managed by the installer. */ }
+}
+
+function pruneBrowserDiagnostics(root: string): void {
+  const traces = readdirSync(root, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && /^[A-Za-z0-9_-]{6,128}$/.test(entry.name))
+    .map(entry => {
+      const path = join(root, entry.name);
+      return { path, modifiedAt: statSync(path).mtimeMs };
+    })
+    .sort((left, right) => right.modifiedAt - left.modifiedAt);
+  for (const trace of traces.slice(CHATGPT_BROWSER_DIAGNOSTIC_TRACE_LIMIT)) {
+    rmSync(trace.path, { recursive: true, force: true });
+  }
+}
+
+function diagnosticError(error: unknown): string {
+  return redactChatGptUiDiagnostic(error instanceof Error ? error.message : String(error));
+}
+
+export class ChatGptBrowserDiagnostics {
+  private readonly directory: string;
+  private sequence = 0;
+  private initialized = false;
+
+  constructor(
+    private readonly traceId: string,
+    private readonly root = join(getConfigDir(), "diagnostics", "browser-turns"),
+  ) {
+    if (!/^[A-Za-z0-9_-]{6,128}$/.test(traceId)) {
+      throw new Error("ChatGPT browser diagnostic trace id is invalid");
+    }
+    this.directory = join(this.root, `${traceId}-${randomUUID().slice(0, 8)}`);
+  }
+
+  async capture(page: Page, checkpoint: string, error?: unknown): Promise<void> {
+    try {
+      this.initialize();
+      const sequence = String(++this.sequence).padStart(2, "0");
+      const stem = `${sequence}-${browserDiagnosticCheckpoint(checkpoint)}`;
+      const capturedAt = new Date().toISOString();
+      let state: unknown = null;
+      let stateError: string | undefined;
+      try {
+        state = await captureBrowserDiagnosticState(page);
+      } catch (captureError) {
+        stateError = diagnosticError(captureError);
+      }
+
+      const envelope: Record<string, unknown> = {
+        version: 1,
+        capturedAt,
+        traceId: this.traceId,
+        checkpoint,
+        ...(error !== undefined ? { error: diagnosticError(error) } : {}),
+        state,
+        ...(stateError ? { stateError } : {}),
+      };
+      const jsonPath = join(this.directory, `${stem}.json`);
+      this.writeEnvelope(jsonPath, envelope);
+
+      if (browserDiagnosticIncludesScreenshot(checkpoint)) {
+        try {
+          const screenshot = await page.screenshot({ animations: "disabled", caret: "hide", timeout: 5_000, type: "png" });
+          atomicWriteFile(join(this.directory, `${stem}.png`), screenshot);
+        } catch (screenshotCaptureError) {
+          envelope.screenshotError = diagnosticError(screenshotCaptureError);
+          this.writeEnvelope(jsonPath, envelope);
+          console.warn(
+            `[chatgpt-web] browser diagnostic screenshot failed trace=${this.traceId}`
+            + ` checkpoint=${browserDiagnosticCheckpoint(checkpoint)}: ${envelope.screenshotError}`,
+          );
+        }
+      }
+      console.info(`[chatgpt-web] browser diagnostic trace=${this.traceId} checkpoint=${stem} path=${this.directory}`);
+    } catch (captureError) {
+      console.warn(
+        `[chatgpt-web] browser diagnostic capture failed trace=${this.traceId}`
+        + ` checkpoint=${browserDiagnosticCheckpoint(checkpoint)}: ${diagnosticError(captureError)}`,
+      );
+    }
+  }
+
+  private initialize(): void {
+    if (this.initialized) return;
+    privateDirectory(this.root);
+    privateDirectory(this.directory);
+    pruneBrowserDiagnostics(this.root);
+    this.initialized = true;
+  }
+
+  private writeEnvelope(path: string, envelope: Record<string, unknown>): void {
+    atomicWriteFile(path, `${JSON.stringify(envelope, null, 2)}\n`);
+  }
+}
+
+async function captureBrowserDiagnosticState(page: Page): Promise<unknown> {
+  return page.evaluate((selectors) => {
+    const rendered = (element: Element): boolean => {
+      const candidate = element as HTMLElement;
+      const style = getComputedStyle(candidate);
+      return candidate.isConnected && style.display !== "none"
+        && style.visibility !== "hidden" && style.opacity !== "0";
+    };
+    const boundedText = (element: Element): string => (
+      ((element as HTMLElement).innerText || element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 1_000)
+    );
+    const rows = (selector: string, limit = 40) => [...document.querySelectorAll(selector)]
+      .filter(rendered).slice(-limit).map(element => ({
+        tag: element.tagName.toLowerCase(),
+        role: element.getAttribute("role"),
+        testId: element.getAttribute("data-testid"),
+        ariaExpanded: element.getAttribute("aria-expanded"),
+        ariaChecked: element.getAttribute("aria-checked"),
+        dataState: element.getAttribute("data-state"),
+        text: boundedText(element),
+      }));
+    const scopedRows = (root: Element | null, selector: string, limit = 40) => root
+      ? [...root.querySelectorAll(selector)].filter(rendered).slice(-limit).map(element => ({
+          tag: element.tagName.toLowerCase(),
+          dataKeyword: element.getAttribute("data-keyword"),
+          text: boundedText(element),
+        }))
+      : [];
+    const composers = [...document.querySelectorAll(selectors.composer)].filter(rendered);
+    const composerForm = composers.length === 1 ? composers[0]!.closest("form") : null;
+    const assistantTurns = [...document.querySelectorAll(selectors.assistantTurn)].filter(rendered);
+    const latestAssistant = assistantTurns.at(-1);
+    const finalRoot = latestAssistant
+      ? [...latestAssistant.querySelectorAll<HTMLElement>(".markdown")]
+        .filter(candidate => !candidate.parentElement?.closest(".markdown"))
+        .filter(candidate => candidate.closest("[data-streaming-response-status]") === null)
+        .filter(rendered).at(-1)
+      : undefined;
+    const lastNode = finalRoot
+      ? [...(finalRoot.matches("[data-is-last-node]") ? [finalRoot] : []), ...finalRoot.querySelectorAll<HTMLElement>("[data-is-last-node]")].at(-1)
+      : undefined;
+    const animations = finalRoot && typeof finalRoot.getAnimations === "function"
+      ? finalRoot.getAnimations({ subtree: true })
+      : [];
+    const infiniteAnimations = animations.filter(animation => {
+      const timing = animation.effect?.getTiming();
+      const endTime = animation.effect?.getComputedTiming().endTime;
+      return timing?.iterations === Infinity || endTime === Infinity;
+    }).length;
+    const finiteAnimations = animations.filter(animation => {
+      const timing = animation.effect?.getTiming();
+      const endTime = animation.effect?.getComputedTiming().endTime;
+      const infinite = timing?.iterations === Infinity || endTime === Infinity;
+      return !infinite && (animation.playState === "running" || animation.pending);
+    }).length;
+    return {
+      url: location.href,
+      title: document.title,
+      surfaceId: (globalThis as typeof globalThis & { __CODEX_WEB_GPT_SURFACE_ID__?: unknown }).__CODEX_WEB_GPT_SURFACE_ID__ ?? null,
+      bodyTextChars: document.body?.innerText.length ?? 0,
+      composer: {
+        visibleCount: composers.length,
+        textChars: composers.map(element => (element.textContent ?? "").length),
+        composerSelectedConnectors: scopedRows(composerForm, '[data-id^="plugin:"][data-keyword]', 20),
+        mentionMenuConnectors: rows('.__menu-item[tabindex="0"][data-id^="plugin:"][data-keyword], .__menu-item[tabindex="0"] [data-id^="plugin:"][data-keyword]', 20),
+      },
+      effortControls: rows(selectors.effortControl, 10),
+      effortItems: rows(selectors.effortItem, 20),
+      menus: rows('[role="menu"], [role="listbox"], [data-testid="composer-intelligence-picker-content"]', 20),
+      connectorRows: rows('.__menu-item[tabindex="0"]', 40),
+      overlays: rows('[role="dialog"], [role="alert"], [role="status"]', 30),
+      turns: {
+        user: document.querySelectorAll('[data-testid^="conversation-turn-"][data-message-author-role="user"]').length,
+        assistant: assistantTurns.map(element => ({ textChars: (element.textContent ?? "").length, htmlChars: (element as HTMLElement).innerHTML.length })),
+      },
+      completion: {
+        actionVisible: [...document.querySelectorAll(selectors.completionAction)].some(rendered),
+        lastNodePresent: lastNode !== undefined,
+        boundaryStart: lastNode?.getAttribute("data-start") ?? null,
+        boundaryEnd: lastNode?.getAttribute("data-end") ?? null,
+        finiteAnimations,
+        infiniteAnimations,
+      },
+    };
+  }, {
+    composer: CHATGPT_COMPOSER_SELECTOR,
+    effortControl: CHATGPT_EFFORT_CONTROL_SELECTOR,
+    effortItem: CHATGPT_EFFORT_ITEM_SELECTOR,
+    assistantTurn: CHATGPT_ASSISTANT_TURN_SELECTOR,
+    completionAction: CHATGPT_COMPLETION_ACTION_SELECTOR,
+  });
+}

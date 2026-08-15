@@ -97,10 +97,10 @@ test("retained tool conversations attach plain suffix text without reopening the
 });
 
 test("browser diagnostics distinguish composer pills from connector menu rows", () => {
-  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  expect(workerSource).toContain("composerSelectedConnectors:");
-  expect(workerSource).toContain("mentionMenuConnectors:");
-  expect(workerSource).not.toContain("selectedConnectors: rows(");
+  const diagnosticSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-diagnostics.ts", import.meta.url), "utf8");
+  expect(diagnosticSource).toContain("composerSelectedConnectors:");
+  expect(diagnosticSource).toContain("mentionMenuConnectors:");
+  expect(diagnosticSource).not.toContain("selectedConnectors: rows(");
 });
 
 test("browser turns have no absolute deadline unless one is explicitly configured", () => {
