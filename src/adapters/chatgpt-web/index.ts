@@ -288,6 +288,9 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         for (;;) {
           let recoveredResultCount: number | undefined;
           await session.runExclusive(async () => {
+          session.reconcileSupersededResults(parsed.context.messages.flatMap(message => (
+            message.role === "toolResult" ? [message.toolCallId] : []
+          )));
           const settled = session.settledOutcome();
           if (settled) {
             if (settled.type === "error") {
@@ -336,25 +339,31 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
             turnToken = await withAbort(session.runtime.token, incoming.abortSignal);
             if (!environment) throw new Error("Tool-capable ChatGPT web runtime lost its trusted environment");
             broker.updateEnvironment(turnToken, environment);
-            if (useEnhancedWebSessionMode) deliverPendingChatGptSteering(session, broker, turnToken, traceId);
 
             const outstanding = session.outstanding();
             if (outstanding.length > 0) {
               const results = [...codexToolResultsById(parsed, session).values()];
               if (results.length === 0) {
-                const reasoning = session.reasoningForOutstandingReplay();
-                replayEvents(session.eventsForOutstandingReplay(), emit);
-                emitToolBatch(outstanding, estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning, toolRequests: outstanding }, turnCapabilities), emit);
-                return;
+                const steering = useEnhancedWebSessionMode
+                  ? deliverPendingChatGptSteering(session, broker, turnToken, traceId)
+                  : undefined;
+                if (!steering) {
+                  const reasoning = session.reasoningForOutstandingReplay();
+                  replayEvents(session.eventsForOutstandingReplay(), emit);
+                  emitToolBatch(outstanding, estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning, toolRequests: outstanding }, turnCapabilities), emit);
+                  return;
+                }
+              } else {
+                completeChatGptToolResults(session, broker, turnToken, results, {
+                  onSpawnedCodexAgent: childThreadId => { inheritSpawnedCodexEnvironment(environmentStore, parsed, childThreadId);
+                    const parentThreadId = extractChatGptTurnIdentity(parsed).threadId;
+                    if (parentThreadId) chatGptTurnSessions.linkGroups(`${executionNamespace}:${parentThreadId}`, `${executionNamespace}:${childThreadId}`);
+                  },
+                  onClosedCodexAgent: childThreadId => { chatGptTurnSessions.retireGroupTree(`${executionNamespace}:${childThreadId}`); },
+                });
+                if (useEnhancedWebSessionMode) deliverPendingChatGptSteering(session, broker, turnToken, traceId);
               }
-              completeChatGptToolResults(session, broker, turnToken, results, {
-                onSpawnedCodexAgent: childThreadId => { inheritSpawnedCodexEnvironment(environmentStore, parsed, childThreadId);
-                  const parentThreadId = extractChatGptTurnIdentity(parsed).threadId;
-                  if (parentThreadId) chatGptTurnSessions.linkGroups(`${executionNamespace}:${parentThreadId}`, `${executionNamespace}:${childThreadId}`);
-                },
-                onClosedCodexAgent: childThreadId => { chatGptTurnSessions.retireGroupTree(`${executionNamespace}:${childThreadId}`); },
-              });
-            }
+            } else if (useEnhancedWebSessionMode) deliverPendingChatGptSteering(session, broker, turnToken, traceId);
           } else if (session.outstanding().length > 0) {
             throw new Error("Read-only ChatGPT Web runtime cannot own local tool calls");
           }

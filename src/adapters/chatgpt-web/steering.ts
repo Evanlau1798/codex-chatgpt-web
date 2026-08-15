@@ -74,13 +74,14 @@ export function deliverPendingChatGptSteering(
   broker: TurnBroker,
   token: string,
   traceId: string,
-): void {
-  if (session.claudeRootThreadId) return;
+): "queued" | "delivered" | undefined {
+  if (session.claudeRootThreadId) return undefined;
   const steering = session.takePendingSteering();
-  if (!steering) return;
+  if (!steering) return undefined;
   const delivery = broker.requestSteering(token, `The user added this instruction while you were working:\n\n${steering}`);
-  session.clearOutstanding();
+  session.supersedeOutstanding();
   console.info(`[chatgpt-web] browser turn ${traceId} ${delivery} native steering without opening a replacement tab`);
+  return delivery;
 }
 
 export function claudeConversationResumeRequest(parsed: CodexParsedRequest): CodexParsedRequest | undefined {

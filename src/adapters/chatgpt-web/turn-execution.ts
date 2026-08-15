@@ -188,6 +188,7 @@ export class ChatGptTurnSession {
   private finalReasoning: string[] = [];
   private outstandingPrelude: AdapterEvent[] = [];
   private finalPrelude: AdapterEvent[] = [];
+  private readonly supersededResultIds = new Set<string>();
   private handoff?: string;
   private userRevision?: string; private readonly seenUserRevisions: string[] = [];
   private readonly hookedSteeringReplays: string[] = [];
@@ -335,11 +336,25 @@ export class ChatGptTurnSession {
   completedClaudeSteeringFingerprints(): string[] { return this.steering.completedClaudeFingerprints(); }
   inheritCompletedClaudeSteering(fingerprints: string[]): void { this.steering.inheritCompletedClaude(fingerprints); }
 
-  clearOutstanding(): void {
+  supersedeOutstanding(): string[] {
+    const superseded = [...this.outstandingById.keys()];
+    for (const callId of superseded) this.supersededResultIds.add(callId);
     this.outstandingById.clear();
     this.outstandingReasoning = [];
     this.outstandingPrelude = [];
+    return superseded;
   }
+
+  reconcileSupersededResults(callIds: Iterable<string>): number {
+    let reconciled = 0;
+    for (const callId of callIds) {
+      if (!this.supersededResultIds.delete(callId)) continue;
+      reconciled += 1;
+    }
+    return reconciled;
+  }
+
+  unresolvedSupersededResultIds(): string[] { return [...this.supersededResultIds]; }
 
   cancel(): void { this.runtime.cancel(); }
 }
