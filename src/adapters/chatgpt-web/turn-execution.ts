@@ -26,6 +26,8 @@ interface ChatGptTurnRuntimeBase {
   onToolResultDelivered?: () => void;
   submission?: { accepted: boolean };
   cancel: () => void;
+  /** Release a completed retained browser surface when this canonical session is superseded. */
+  release?: () => Promise<void>;
 }
 export type ChatGptTurnRuntime =
   | (ChatGptTurnRuntimeBase & { mode: "tools"; token: Promise<string> })
@@ -351,7 +353,7 @@ export class ChatGptTurnSessions {
 
     this.entries.delete(key);
     session.cancel();
-    const retirement = session.browserOutcome.then(() => undefined);
+    const retirement = session.browserOutcome.then(async () => { await session.runtime.release?.(); });
     this.retirements.set(key, retirement);
     try {
       await retirement;

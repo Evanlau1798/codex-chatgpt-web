@@ -345,3 +345,36 @@ export async function notifyLauncherTurn(
     clearTimeout(timer);
   }
 }
+
+export async function releaseLauncherRetainedConversation(
+  descriptorPath: string,
+  conversationKey: string,
+  timeoutMs = LAUNCHER_TURN_END_TIMEOUT_MS,
+): Promise<number> {
+  if (!/^[a-f0-9]{64}$/.test(conversationKey)) {
+    throw new Error("Launcher retained conversation key is invalid");
+  }
+  const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${descriptor.control.endpoint}/v1/turn/release`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${descriptor.control.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ conversationKey }),
+      signal: controller.signal,
+    });
+    const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok || !Number.isSafeInteger(body.released) || Number(body.released) < 0) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return Number(body.released);
+  } catch (error) {
+    throw new Error(`Launcher retained conversation release failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}

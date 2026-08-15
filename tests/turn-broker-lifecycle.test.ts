@@ -33,6 +33,24 @@ test("explicit browser-turn cancellation aborts and removes every registered ses
   expect(sessions.activeCount()).toBe(0);
 });
 
+test("retiring a completed session waits for its retained browser surface to release", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const lifecycle: string[] = [];
+  const session = sessions.getOrCreate("compacted-turn", () => ({
+    mode: "read-only",
+    browser: Promise.resolve("handoff"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => { lifecycle.push("cancel"); },
+    release: async () => { lifecycle.push("release"); },
+  }));
+  await session.browserOutcome;
+
+  expect(await sessions.retireAndWait("compacted-turn")).toBeTrue();
+  expect(lifecycle).toEqual(["cancel", "release"]);
+  expect(sessions.find("compacted-turn")).toBeUndefined();
+});
+
 test("session cache expiry never cancels a still-active long browser turn", async () => {
   const sessions = new ChatGptTurnSessions(1);
   let cancelled = 0;

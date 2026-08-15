@@ -8,6 +8,7 @@ import {
   inspectLauncherBrowserHost,
   notifyLauncherTurn,
   readLauncherBrowserHostDescriptor,
+  releaseLauncherRetainedConversation,
   selectLauncherPage,
 } from "../src/launcher-browser-host";
 import type { Browser, BrowserContext, Page } from "playwright-core";
@@ -105,6 +106,38 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
       helperPid: process.pid,
       status: "completed",
       retain: true,
+    });
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
+test("launcher retained-conversation release uses its authenticated lifecycle endpoint", async () => {
+  let received: { url?: string; authorization?: string; body?: unknown } = {};
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    received = {
+      url: request.url,
+      authorization: request.headers.authorization,
+      body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+    };
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end('{"ok":true,"released":1}\n');
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server has no port");
+    const path = descriptorFile(`http://127.0.0.1:${address.port}`);
+    await expect(releaseLauncherRetainedConversation(path, "a".repeat(64))).resolves.toBe(1);
+    expect(received).toEqual({
+      url: "/v1/turn/release",
+      authorization: "Bearer launcher-control-token-0123456789abcdefghijklmnop",
+      body: { conversationKey: "a".repeat(64) },
     });
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));

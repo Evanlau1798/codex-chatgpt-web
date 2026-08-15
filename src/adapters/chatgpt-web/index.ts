@@ -5,6 +5,7 @@ import { withStallTimeout } from "../../stall-timeout";
 import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
 import type { ProviderAdapter } from "../base";
 import { ChatGptWebAdapterError, chatGptSessionFailureDisposition } from "./adapter-error";
+import { chatGptAdapterRuntimeConfig, retainedConversationRelease } from "./adapter-runtime-config";
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { claudeBrowserTurnOptions, claudeRootSessionThreadId } from "./claude-subagent";
 import { prepareChatGptWebContext } from "./context-bootstrap";
@@ -27,17 +28,8 @@ import { requestCompactionHandoff } from "./retained-compaction-handoff";
 export function createChatGptWebAdapter(provider: CodexProviderConfig): ProviderAdapter {
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = TurnBroker.forSocket(brokerSocketPath(provider));
-  const timeoutMs = provider.chatgptWeb?.turnTimeoutMs;
-  const useEnhancedWebSessionMode = provider.chatgptWeb?.useEnhancedWebSessionMode === true;
-  const configuredCapabilities: ChatGptWebCapabilities = {
-    localToolsEnabled: provider.chatgptWeb?.localToolsEnabled === true,
-    solAvailable: provider.chatgptWeb?.solAvailable !== false,
-    proAvailable: provider.chatgptWeb?.proAvailable === true,
-  };
-  const executionNamespace = createHash("sha256").update(JSON.stringify({
-    baseUrl: provider.baseUrl,
-    chatgptWeb: provider.chatgptWeb ?? {},
-  })).digest("hex");
+  const { timeoutMs, useEnhancedWebSessionMode, configuredCapabilities, executionNamespace }
+    = chatGptAdapterRuntimeConfig(provider);
   const environmentStore = new ChatGptThreadEnvironmentStore(
     provider.chatgptWeb?.threadEnvironmentStatePath
       ? resolve(expandUserPath(provider.chatgptWeb.threadEnvironmentStatePath))
@@ -101,6 +93,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     );
     const retainConversation = useEnhancedWebSessionMode && requestedRetention;
     const conversationKey = retainConversation ? chatGptConversationKey(checkpointInput.parsed, executionNamespace) : undefined;
+    const releaseRetainedConversation = retainedConversationRelease(provider, conversationKey);
     const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
     const retryPromptForAnswer = parsed._compactionRequest || !steering ? upstreamRetry : browserSteeringRetry(steering, traceId, upstreamRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, Boolean(claudeRootSessionThreadId(checkpointInput.parsed)));
     if (!mode.localTools) {
@@ -149,6 +142,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         submission,
         ...(handoffPrompts ? { requestHandoff: handoffPrompts.request } : {}),
         cancel: () => browserAbort.abort(),
+        ...(releaseRetainedConversation ? { release: releaseRetainedConversation } : {}),
       };
     }
     if (!environment) throw new Error("Tool-capable ChatGPT web mode requires a trusted Codex environment");
@@ -221,6 +215,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         browserAbort.abort();
         if (activeToken) broker.revoke(activeToken);
       },
+      ...(releaseRetainedConversation ? { release: releaseRetainedConversation } : {}),
     };
   };
   return {

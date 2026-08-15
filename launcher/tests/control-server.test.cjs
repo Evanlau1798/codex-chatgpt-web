@@ -138,3 +138,39 @@ test("browser control server cuts off exactly one authenticated debug surface", 
     await server.close();
   }
 });
+
+test("browser control server releases only ready tabs for an authenticated conversation key", async () => {
+  const removed = [];
+  const ready = { id: "ready-tab", status: "ready", conversationKey: "a".repeat(64) };
+  const running = { id: "running-tab", status: "running", conversationKey: "a".repeat(64) };
+  const host = {
+    turnTabs: new Map([[ready.id, ready], [running.id, running]]),
+    removeTurnTab: (tab, abortRunning) => {
+      assert.equal(abortRunning, false);
+      removed.push(tab.id);
+      host.turnTabs.delete(tab.id);
+    },
+  };
+  const server = await new BrowserControlServer({
+    logger: { info() {}, warn() {} },
+    getBrowserHost: () => host,
+    getPreferences: () => ({}),
+  }).start();
+  const descriptor = server.descriptor();
+  try {
+    const response = await fetch(`${descriptor.endpoint}/v1/turn/release`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${descriptor.token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ conversationKey: "a".repeat(64) }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, released: 1 });
+    assert.deepEqual(removed, ["ready-tab"]);
+    assert.deepEqual([...host.turnTabs.keys()], ["running-tab"]);
+  } finally {
+    await server.close();
+  }
+});

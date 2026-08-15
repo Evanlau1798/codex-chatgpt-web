@@ -1,5 +1,6 @@
 const { createServer } = require("node:http");
 const { randomBytes, timingSafeEqual } = require("node:crypto");
+const { releaseRetainedConversation } = require("./retained-turn-release.cjs");
 
 const MAX_BODY_BYTES = 16 * 1024;
 
@@ -93,9 +94,10 @@ class BrowserControlServer {
     const isTurn = request.url === "/v1/turn/start"
       || request.url === "/v1/turn/heartbeat"
       || request.url === "/v1/turn/end";
+    const isTurnRelease = request.url === "/v1/turn/release";
     const isSessionInspect = request.url === "/v1/session/inspect";
     const isDebugCutoff = request.url === "/v1/debug/turn/cutoff";
-    if (request.method !== "POST" || (!isTurn && !isSessionInspect && !isDebugCutoff)) {
+    if (request.method !== "POST" || (!isTurn && !isTurnRelease && !isSessionInspect && !isDebugCutoff)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -106,6 +108,15 @@ class BrowserControlServer {
       if (isSessionInspect) {
         const result = await host.inspectSession(body?.detectCapabilities === true);
         writeJson(response, 200, result);
+        return;
+      }
+      if (isTurnRelease) {
+        if (typeof body?.conversationKey !== "string" || !/^[a-f0-9]{64}$/.test(body.conversationKey)) {
+          throw new Error("conversationKey is invalid");
+        }
+        const released = releaseRetainedConversation(host, body.conversationKey);
+        this.logger.info("browser.retained_conversation_released", { released });
+        writeJson(response, 200, { ok: true, released });
         return;
       }
       if (isDebugCutoff) {
