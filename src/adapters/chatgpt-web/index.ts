@@ -363,7 +363,6 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           } else if (session.outstanding().length > 0) {
             throw new Error("Read-only ChatGPT Web runtime cannot own local tool calls");
           }
-
           const toolWaitAbort = new AbortController();
           try {
             const roundReasoning: string[] = [];
@@ -387,15 +386,16 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
             let nextTrace = session.runtime.trace.wait(toolWaitAbort.signal).then(() => ({ type: "trace" as const }));
             let nextText = session.runtime.text.wait(toolWaitAbort.signal).then(() => ({ type: "text" as const }));
             for (;;) {
-              const next = await withAbort(
-                withStallTimeout(Promise.race([
-                  ...(nextTools ? [nextTools] : []),
-                  browserOutcome,
-                  nextTrace,
-                  nextText,
-                ])),
-                incoming.abortSignal,
-              );
+              let next: Awaited<typeof browserOutcome | NonNullable<typeof nextTools> | typeof nextTrace | typeof nextText>;
+              try {
+                next = await withAbort(withStallTimeout(Promise.race([
+                  ...(nextTools ? [nextTools] : []), browserOutcome, nextTrace, nextText,
+                ])), incoming.abortSignal);
+              } catch (error) {
+                recoveredResultCount = surfaceRecovery.recoverableResultCount(error, session, parsed, surfaceRecoveries, incoming.abortSignal);
+                if (recoveredResultCount !== undefined) return;
+                throw error;
+              }
               if (next.type === "trace") {
                 emitNewTrace(session.runtime.trace.drain());
                 nextTrace = session.runtime.trace.wait(toolWaitAbort.signal).then(() => ({ type: "trace" as const }));

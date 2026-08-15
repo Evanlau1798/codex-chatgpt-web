@@ -125,6 +125,7 @@ test("rebuilds a submitted tool surface once from complete canonical state", asy
     expect(call?.name).toBe("exec_command");
 
     const continuation = structuredClone(first);
+    continuation._canonicalContextComplete = true;
     continuation.context.messages.push(
       {
         role: "assistant",

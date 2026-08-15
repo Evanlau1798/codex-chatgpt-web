@@ -3,6 +3,7 @@ import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "../src/adapters/
 import { chatGptSurfaceRecoveryDecision } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
 import type { CodexParsedRequest } from "../src/types";
+import { StallTimeoutError } from "../src/stall-timeout";
 
 function requestWithResults(callIds: string[]): CodexParsedRequest {
   return {
@@ -61,26 +62,36 @@ test("tool surface recovery requires one complete unstreamed batch and runs only
   });
 
   expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults(["call_1"]), 0))
-    .toMatchObject({ eligible: false, reason: "tool_results_incomplete", canonicalResultCount: 1 });
+    .toMatchObject({ eligible: false, reason: "canonical_incomplete", canonicalResultCount: 1 });
   expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults(["call_1", "call_2"]), 0))
+    .toMatchObject({ eligible: false, reason: "canonical_incomplete", canonicalResultCount: 2 });
+  expect(chatGptSurfaceRecoveryDecision(failure, session, completeRequest(["call_1", "call_2"], ["call_1"]), 0))
+    .toMatchObject({ eligible: false, reason: "tool_results_incomplete", canonicalResultCount: 1 });
+  expect(chatGptSurfaceRecoveryDecision(failure, session, completeRequest(["call_1", "call_2"], ["call_1", "call_2"]), 0))
     .toMatchObject({ eligible: true, reason: "eligible", canonicalResultCount: 2 });
-  expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults(["call_1", "call_2"]), 1))
+  expect(chatGptSurfaceRecoveryDecision(failure, session, completeRequest(["call_1", "call_2"], ["call_1", "call_2"]), 1))
     .toMatchObject({ eligible: false, reason: "already_recovered" });
-  expect(chatGptSurfaceRecoveryDecision(connectorFailure, session, requestWithResults(["call_1", "call_2"]), 0))
+  expect(chatGptSurfaceRecoveryDecision(connectorFailure, session, completeRequest(["call_1", "call_2"], ["call_1", "call_2"]), 0))
     .toMatchObject({ eligible: true, reason: "eligible", canonicalResultCount: 2 });
+  expect(chatGptSurfaceRecoveryDecision(
+    new StallTimeoutError("no progress"),
+    session,
+    completeRequest(["call_1", "call_2"], ["call_1", "call_2"]),
+    0,
+  )).toMatchObject({ eligible: true, reason: "eligible", canonicalResultCount: 2 });
 
   const abort = new AbortController();
   abort.abort();
   expect(chatGptSurfaceRecoveryDecision(
     failure,
     session,
-    requestWithResults(["call_1", "call_2"]),
+    completeRequest(["call_1", "call_2"], ["call_1", "call_2"]),
     0,
     abort.signal,
   )).toMatchObject({ eligible: false, reason: "aborted" });
 
   text.push("partial answer");
-  expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults(["call_1", "call_2"]), 0))
+  expect(chatGptSurfaceRecoveryDecision(failure, session, completeRequest(["call_1", "call_2"], ["call_1", "call_2"]), 0))
     .toMatchObject({ eligible: false, reason: "final_streamed" });
 });
 
@@ -100,7 +111,7 @@ test("surface recovery waits for superseded calls to receive canonical results",
   session.supersedeOutstanding();
   const failure = chatGptWebSurfaceError("surface changed", false);
 
-  expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults([]), 0))
+  expect(chatGptSurfaceRecoveryDecision(failure, session, completeRequest(["call_1"]), 0))
     .toMatchObject({ eligible: false, reason: "superseded_results_pending", unresolvedSupersededCount: 1 });
   session.observeCanonicalRequest(completeRequest(["call_1"], ["call_1"]));
   expect(chatGptSurfaceRecoveryDecision(failure, session, completeRequest(["call_1"], ["call_1"]), 0))

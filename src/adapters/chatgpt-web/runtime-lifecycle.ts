@@ -1,5 +1,6 @@
 import { defaultBrokerEndpoint, resolveBrokerEndpoint } from "../../config";
 import type { CodexParsedRequest, CodexProviderConfig } from "../../types";
+import { StallTimeoutError } from "../../stall-timeout";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { codexToolResultsById } from "./compaction-handoff";
 import type { ChatGptTurnSession } from "./turn-execution";
@@ -54,6 +55,7 @@ export type ChatGptSurfaceRecoveryReason =
   | "unsupported_error"
   | "non_retryable"
   | "final_streamed"
+  | "canonical_incomplete"
   | "superseded_results_pending"
   | "tool_results_incomplete";
 
@@ -82,12 +84,14 @@ export function chatGptSurfaceRecoveryDecision(
   if (recoveries > 0) return reject("already_recovered");
   if (signal?.aborted) return reject("aborted");
   if (session.runtime.mode !== "tools") return reject("read_only");
-  if (!(error instanceof ChatGptWebAdapterError)
-    || (error.code !== "chatgpt_surface_changed" && error.code !== "chatgpt_connector_unavailable")) {
+  const surfaceFailure = error instanceof ChatGptWebAdapterError
+    && (error.code === "chatgpt_surface_changed" || error.code === "chatgpt_connector_unavailable");
+  if (!surfaceFailure && !(error instanceof StallTimeoutError)) {
     return reject("unsupported_error");
   }
-  if (!error.retryable) return reject("non_retryable");
+  if (surfaceFailure && !error.retryable) return reject("non_retryable");
   if (session.runtime.text.value().length > 0) return reject("final_streamed");
+  if (parsed._canonicalContextComplete !== true) return reject("canonical_incomplete");
   if (unresolvedSupersededCount > 0) return reject("superseded_results_pending");
   const outstanding = session.outstanding();
   if (outstanding.length === 0) {

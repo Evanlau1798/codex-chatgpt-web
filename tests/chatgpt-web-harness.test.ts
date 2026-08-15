@@ -1612,6 +1612,7 @@ describe("ChatGPT outer-native harness v4", () => {
       await new Promise(resolveWait => setTimeout(resolveWait, 50));
 
       const continuation = structuredClone(initial);
+      continuation._canonicalContextComplete = true;
       continuation.context.messages.push(
         {
           role: "assistant",
