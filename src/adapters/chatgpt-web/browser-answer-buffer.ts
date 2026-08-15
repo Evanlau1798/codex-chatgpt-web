@@ -26,4 +26,8 @@ export class ChatGptAnswerBuffer {
   value(): string {
     return this.accepted + this.candidate;
   }
+
+  deliveredChars(): number {
+    return this.delivered;
+  }
 }

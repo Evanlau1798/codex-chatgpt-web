@@ -2004,7 +2004,7 @@ export class ChatGptBrowserWorker {
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
         for (;;) {
         if (page.isClosed()) {
-          throw chatGptWebSurfaceError("ChatGPT browser tab was closed while the turn was active", answerBuffer.value().length > 0);
+          throw chatGptWebSurfaceError("ChatGPT browser tab was closed while the turn was active", answerBuffer.deliveredChars() > 0);
         }
         if (turn.abortSignal?.aborted) {
           const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
@@ -2022,7 +2022,7 @@ export class ChatGptBrowserWorker {
         if (!isTemporaryChatGptUrl(page.url())) {
           throw chatGptWebSurfaceError(
             `ChatGPT left the isolated Temporary Chat surface while the turn was active (${page.url()})`,
-            answerBuffer.value().length > 0,
+            answerBuffer.deliveredChars() > 0,
           );
         }
 
@@ -2100,7 +2100,7 @@ export class ChatGptBrowserWorker {
             currentText: snapshot.visibleText,
             completionActionVisible: snapshot.completionActionVisible,
           });
-          if (domError) throw chatGptWebSurfaceError(domError, answerBuffer.value().length > 0);
+          if (domError) throw chatGptWebSurfaceError(domError, answerBuffer.deliveredChars() > 0);
           const completion = completionTracker.update({
             responsePresent: snapshot.responsePresent,
             running,
@@ -2169,7 +2169,7 @@ export class ChatGptBrowserWorker {
             currentText: "",
             completionActionVisible: false,
           });
-          if (domError) throw chatGptWebSurfaceError(domError, answerBuffer.value().length > 0);
+          if (domError) throw chatGptWebSurfaceError(domError, answerBuffer.deliveredChars() > 0);
         }
           await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
         }

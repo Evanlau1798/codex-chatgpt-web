@@ -26,3 +26,15 @@ test("browser error retries preserve the valid partial response", () => {
   expect(answers.takeDeliverable(true)).toBe("Final answer.");
   expect(answers.value()).toBe("Completed tool results. Final answer.");
 });
+
+test("buffered validation candidates are not classified as client-visible final text", () => {
+  const answers = new ChatGptAnswerBuffer();
+  answers.append("candidate waiting for completion evidence");
+
+  expect(answers.value()).not.toBe("");
+  expect(answers.takeDeliverable(false)).toBe("");
+  expect(answers.deliveredChars()).toBe(0);
+
+  expect(answers.takeDeliverable(true)).toBe("candidate waiting for completion evidence");
+  expect(answers.deliveredChars()).toBe("candidate waiting for completion evidence".length);
+});
