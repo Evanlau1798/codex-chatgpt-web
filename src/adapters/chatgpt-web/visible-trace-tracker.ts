@@ -46,10 +46,13 @@ function coalescedCommentary(blocks: ChatGptVisibleTraceBlock[]): ChatGptVisible
   if (commentary.length > 1 && !commentary.slice(0, -1).every(block => block.complete === true)) {
     return undefined;
   }
+  const text = commentary.reduce((combined, block) => (
+    block.text.startsWith(combined) ? block.text : combined + block.text
+  ), "");
   return {
     kind: "commentary",
     key: "stream",
-    text: commentary.map(block => block.text).join(""),
+    text,
     ...(commentary.at(-1)?.complete === true ? { complete: true } : {}),
   };
 }

@@ -105,6 +105,30 @@ test("coalesces commentary roots without interleaving animated reasoning", () =>
   }]);
 });
 
+test("does not replay a completed commentary root while its React replacement grows", () => {
+  const tracker = new ChatGptVisibleTraceTracker(100);
+  const output = [];
+
+  output.push(...tracker.observe([
+    { kind: "commentary", text: "Repository read-only guidance" },
+  ], false, 1_000));
+  output.push(...tracker.observe([
+    { kind: "commentary", text: "Repository read-only guidance stays scoped" },
+  ], false, 1_100));
+  output.push(...tracker.observe([
+    { kind: "commentary", text: "Repository read-only guidance stays scoped", complete: true },
+    { kind: "commentary", text: "Repository read-only guidance stays scoped to tests" },
+  ], false, 1_200));
+  output.push(...tracker.observe([
+    { kind: "commentary", text: "Repository read-only guidance stays scoped", complete: true },
+    { kind: "commentary", text: "Repository read-only guidance stays scoped to tests" },
+  ], false, 1_300));
+
+  expect(output.map(event => event.text).join("")).toBe(
+    "Repository read-only guidance stays scoped to tests",
+  );
+});
+
 test("waits out escaped raw Markdown until the renderer exposes stable Markdown", () => {
   const tracker = new ChatGptVisibleTraceTracker(100);
   const raw = [{ kind: "commentary" as const, text: "I am starting \\*\\*SMOKE_PROGRESS" }];
