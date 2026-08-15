@@ -51,6 +51,32 @@ test("retiring a completed session waits for its retained browser surface to rel
   expect(sessions.find("compacted-turn")).toBeUndefined();
 });
 
+test("a synchronous failure retirement remains joinable by a concurrent compact request", async () => {
+  const sessions = new ChatGptTurnSessions();
+  let finishBrowser!: (answer: string) => void;
+  const browser = new Promise<string>(resolve => { finishBrowser = resolve; });
+  let releases = 0;
+  const session = sessions.getOrCreate("compaction-race", () => ({
+    mode: "read-only",
+    browser,
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+    release: async () => { releases += 1; },
+  }));
+
+  expect(sessions.retire("compaction-race", session)).toBeTrue();
+  const compactRetirement = sessions.retireAndWait("compaction-race");
+  let settled = false;
+  void compactRetirement.then(() => { settled = true; });
+  await Bun.sleep(0);
+  expect(settled).toBeFalse();
+
+  finishBrowser("checkpoint");
+  expect(await compactRetirement).toBeTrue();
+  expect(releases).toBe(1);
+});
+
 test("session cache expiry never cancels a still-active long browser turn", async () => {
   const sessions = new ChatGptTurnSessions(1);
   let cancelled = 0;

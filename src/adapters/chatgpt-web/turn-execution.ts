@@ -352,22 +352,31 @@ export class ChatGptTurnSessions {
     if (!session) return false;
 
     this.entries.delete(key);
-    session.cancel();
-    const retirement = session.browserOutcome.then(async () => { await session.runtime.release?.(); });
-    this.retirements.set(key, retirement);
-    try {
-      await retirement;
-    } finally {
-      if (this.retirements.get(key) === retirement) this.retirements.delete(key);
-    }
+    await this.beginRetirement(key, session);
     return true;
   }
 
   retire(key: string, session: ChatGptTurnSession): boolean {
     if (this.entries.get(key) !== session) return false;
-    session.cancel();
     this.entries.delete(key);
+    void this.beginRetirement(key, session).catch(error => {
+      console.warn(`[chatgpt-web] failed to release retired browser session: ${error instanceof Error ? error.message : String(error)}`);
+    });
     return true;
+  }
+
+  private beginRetirement(key: string, session: ChatGptTurnSession): Promise<void> {
+    const existing = this.retirements.get(key);
+    if (existing) return existing;
+    session.cancel();
+    const retirement = session.browserOutcome.then(async () => { await session.runtime.release?.(); });
+    this.retirements.set(key, retirement);
+    void retirement.then(() => {
+      if (this.retirements.get(key) === retirement) this.retirements.delete(key);
+    }, () => {
+      if (this.retirements.get(key) === retirement) this.retirements.delete(key);
+    });
+    return retirement;
   }
 
   steer(steeringId: string, instruction: string): boolean {
