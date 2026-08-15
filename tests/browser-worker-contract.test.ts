@@ -4,6 +4,7 @@ import type { Page } from "playwright-core";
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_PROMPT_INSERT_CHUNK_CHARS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, assertChatGptWebInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, chatGptSubmissionEvidence, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
+import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
 import { CHATGPT_CONNECTOR_NAME, defaultChromeExecutable, legacyChatGptConnectorMigrationMessage } from "../src/config";
 import { chatGptEffortSliderAdvancedTowardTarget, parseChatGptEffortSliderState } from "../src/chatgpt-session";
 import type { CodexParsedRequest } from "../src/types";
@@ -509,19 +510,59 @@ test("caret re-anchor fails closed when the live composer cannot be anchored", a
   const reanchorPromptCaret = (ChatGptBrowserWorker.prototype as unknown as {
     reanchorPromptCaret(page: unknown): Promise<void>;
   }).reanchorPromptCaret;
-  let evaluateOptions: unknown;
+  const evaluateOptions: unknown[] = [];
+  let focusCalls = 0;
   const composer = {
-    focus: async () => {},
+    focus: async () => { focusCalls += 1; },
     evaluate: async (_fn: unknown, _arg: unknown, options: unknown) => {
-      evaluateOptions = options;
-      return false;
+      evaluateOptions.push(options);
+      return {
+        collapsed: true,
+        anchorInsideComposer: true,
+        focusInsideComposer: true,
+        trailingEditableText: "remaining",
+      };
     },
   };
 
-  await expect(reanchorPromptCaret.call({
+  const failure = reanchorPromptCaret.call({
     activeComposer: async () => composer,
-  }, {})).rejects.toThrow("could not re-anchor the prompt caret");
-  expect(evaluateOptions).toEqual({ timeout: 20_000 });
+  }, {});
+  await expect(failure).rejects.toBeInstanceOf(ChatGptWebAdapterError);
+  await expect(failure).rejects.toMatchObject({
+    code: "chatgpt_surface_changed",
+    retryable: true,
+    retireSession: true,
+  });
+  expect(focusCalls).toBe(2);
+  expect(evaluateOptions).toEqual([
+    { timeout: 20_000 },
+    { timeout: 20_000 },
+  ]);
+});
+
+test("caret re-anchor retries against the latest Lexical DOM before failing the surface", async () => {
+  const reanchorPromptCaret = (ChatGptBrowserWorker.prototype as unknown as {
+    reanchorPromptCaret(page: unknown): Promise<void>;
+  }).reanchorPromptCaret;
+  let evaluations = 0;
+  const composer = {
+    focus: async () => {},
+    evaluate: async () => {
+      evaluations += 1;
+      return {
+        collapsed: true,
+        anchorInsideComposer: true,
+        focusInsideComposer: true,
+        trailingEditableText: evaluations === 2 ? "" : "remaining",
+      };
+    },
+  };
+
+  await reanchorPromptCaret.call({
+    activeComposer: async () => composer,
+  }, {});
+  expect(evaluations).toBe(2);
 });
 
 test("connector selection re-resolves the active composer after ChatGPT replaces it", async () => {

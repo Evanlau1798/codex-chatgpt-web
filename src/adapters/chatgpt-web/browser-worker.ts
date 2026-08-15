@@ -95,6 +95,7 @@ import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
 import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
+import { reanchorChatGptComposerCaret } from "./prompt-caret";
 import {
   ChatGptLunaCheckpointStream,
   type CapturedChatGptLunaCheckpoint,
@@ -1360,72 +1361,20 @@ export class ChatGptBrowserWorker {
   private async reanchorPromptCaret(page: Page, abortSignal?: AbortSignal): Promise<void> {
     throwIfPromptAttachmentAborted(abortSignal);
     const composer = await this.activeComposer(page);
-    await composer.focus();
-    const anchored = await composer.evaluate(async element => {
-      const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
-      const editableRootNodes = [...element.childNodes].filter(node => (
-        node.nodeType === Node.TEXT_NODE
-          ? (node.textContent ?? "").length > 0
-          : node instanceof Element && !node.matches(ignoredSelector)
-      ));
-      const finalRootNode = editableRootNodes[editableRootNodes.length - 1];
-      if (!finalRootNode) return false;
-
-      const textNodes: Text[] = [];
-      const collectTextNodes = (node: Node): void => {
-        if (node instanceof Element && node.matches(ignoredSelector)) return;
-        if (node.nodeType === Node.TEXT_NODE) {
-          if ((node.textContent ?? "").length > 0) textNodes.push(node as Text);
-          return;
-        }
-        for (const child of node.childNodes) collectTextNodes(child);
-      };
-      collectTextNodes(finalRootNode);
-      const lastTextNode = textNodes[textNodes.length - 1];
-      const cursorTarget = finalRootNode instanceof Element
-        ? finalRootNode.querySelector("[data-inline-selection-pill-cursor-target]")
-        : null;
-
-      let targetNode: Node;
-      let targetOffset: number;
-      const cursorFollowsText = lastTextNode && cursorTarget
-        ? (lastTextNode.compareDocumentPosition(cursorTarget) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
-        : false;
-      if (cursorTarget?.parentNode && (!lastTextNode || cursorFollowsText)) {
-        targetNode = cursorTarget.parentNode;
-        targetOffset = [...targetNode.childNodes].indexOf(cursorTarget);
-      } else if (lastTextNode) {
-        targetNode = lastTextNode;
-        targetOffset = lastTextNode.data.length;
-      } else if (finalRootNode instanceof Element && !["AREA", "BR", "HR", "IMG", "INPUT"].includes(finalRootNode.tagName)) {
-        targetNode = finalRootNode;
-        targetOffset = finalRootNode.childNodes.length;
-      } else {
-        return false;
-      }
-
-      const selection = window.getSelection();
-      if (!selection) return false;
-      const selectionIsExact = (): boolean => selection.isCollapsed
-        && selection.anchorNode === targetNode
-        && selection.anchorOffset === targetOffset
-        && selection.focusNode === targetNode
-        && selection.focusOffset === targetOffset;
-      if (!selectionIsExact()) {
-        const range = document.createRange();
-        range.setStart(targetNode, targetOffset);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      }
-      // BrowserHost disables background throttling for active turn pages. One frame lets Lexical
-      // apply any selection observer before we accept the exact node-and-offset postcondition.
-      await new Promise<void>(resolveFrame => requestAnimationFrame(() => resolveFrame()));
-      return selectionIsExact();
-    }, undefined, { timeout: 20_000 });
+    let anchored = false;
+    try {
+      anchored = await reanchorChatGptComposerCaret(composer);
+    } catch (error) {
+      throwIfPromptAttachmentAborted(abortSignal);
+      const detail = error instanceof Error ? error.message : String(error);
+      throw chatGptWebSurfaceError(`ChatGPT composer caret re-anchor failed: ${detail}`, false);
+    }
     throwIfPromptAttachmentAborted(abortSignal);
     if (!anchored) {
-      throw new Error("ChatGPT composer could not re-anchor the prompt caret at the document end");
+      throw chatGptWebSurfaceError(
+        "ChatGPT composer could not re-anchor the prompt caret at the logical document end",
+        false,
+      );
     }
   }
 
