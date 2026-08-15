@@ -716,7 +716,9 @@ export async function callTurnBroker<T>(
       : setTimeout(() => finishError(new Error("ChatGPT web turn broker timed out")), timeoutMs);
     socket.setEncoding("utf8");
     socket.once("error", error => finishError(new Error(`ChatGPT web turn broker unavailable: ${error.message}`)));
-    socket.once("close", () => finishError(new Error("ChatGPT web turn broker closed the connection")));
+    const finishClosed = () => finishError(new Error("ChatGPT web turn broker closed the connection"));
+    socket.once("end", finishClosed);
+    socket.once("close", finishClosed);
     socket.once("connect", () => socket.write(`${JSON.stringify({ id, ...request })}\n`));
     socket.on("data", chunk => {
       if (settled) return;
