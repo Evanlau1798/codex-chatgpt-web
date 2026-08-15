@@ -297,6 +297,12 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                 settled.error, session, parsed, surfaceRecoveries, incoming.abortSignal,
               );
               if (recoveredResultCount !== undefined) return;
+              const submittedError = submittedBrowserFailure(
+                session,
+                incoming.abortSignal?.aborted === true,
+                settled.error,
+              );
+              if (submittedError) throw submittedError;
               throw settled.error;
             }
             let reasoning = session.reasoningForFinalReplay();
