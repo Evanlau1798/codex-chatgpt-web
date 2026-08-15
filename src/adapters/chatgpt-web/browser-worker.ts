@@ -679,7 +679,10 @@ export class ChatGptBrowserWorker {
       if (ownerSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       const timeout = new Promise<never>((_, rejectTimeout) => {
         timer = setTimeout(() => {
-          rejectTimeout(new Error(`ChatGPT browser stage timed out: ${stage}`));
+          const message = `ChatGPT browser stage timed out: ${stage}`;
+          rejectTimeout(stage === "prompt_attachment"
+            ? chatGptWebSurfaceError(message, false)
+            : new Error(message));
           controller.abort();
         }, timeoutMs);
       });

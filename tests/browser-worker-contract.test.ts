@@ -193,6 +193,33 @@ test("browser stage timeout aborts late page acquisition", async () => {
   expect(acquisitionAborted).toBeTrue();
 });
 
+test("prompt attachment timeout retires the unsubmitted surface for canonical recovery", async () => {
+  const runStage = (ChatGptBrowserWorker.prototype as unknown as {
+    runStage<T>(
+      traceId: string,
+      stage: string,
+      timeoutMs: number,
+      action: (signal: AbortSignal) => Promise<T>,
+    ): Promise<T>;
+  }).runStage;
+
+  const result = runStage.call(
+    {},
+    "trace_prompt_timeout",
+    "prompt_attachment",
+    10,
+    async (signal) => await new Promise<string>((resolve) => {
+      signal.addEventListener("abort", () => resolve("late prompt"), { once: true });
+    }),
+  );
+
+  await expect(result).rejects.toMatchObject({
+    code: "chatgpt_surface_changed",
+    retryable: true,
+    retireSession: true,
+  });
+});
+
 test("browser send stage allows slow retained composers to settle", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   expect(workerSource).toContain("send: 60_000");
