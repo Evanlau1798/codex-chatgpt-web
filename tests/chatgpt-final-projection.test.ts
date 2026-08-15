@@ -58,7 +58,7 @@ test("does not complete a terminal prefix while a finite projection animation is
   expect(tracker.update(projected, 14_500).status).toBe("complete");
 });
 
-test("resets completion stability after DOM mutation, root replacement, or resumed generation", () => {
+test("ignores semantically unchanged DOM churn but resets after projection changes or resumed generation", () => {
   const tracker = new ChatGptCompletionTracker(2_000, 60_000);
   const initial = completedState("complete answer");
 
@@ -66,14 +66,42 @@ test("resets completion stability after DOM mutation, root replacement, or resum
   expect(tracker.update({
     ...initial,
     projection: { ...initial.projection, lastMutationAt: 2_500 },
-  }, 3_000).status).toBe("waiting");
+  }, 3_000).status).toBe("complete");
+
+  const changed = completedState("complete answer with a semantic suffix", {
+    projection: { ...initial.projection, boundaryEnd: "38", lastMutationAt: 3_500 },
+  });
+  expect(tracker.update(changed, 3_500).status).toBe("waiting");
   expect(tracker.update({
-    ...initial,
-    projection: { ...initial.projection, rootId: "dom-2", lastMutationAt: 3_500 },
+    ...changed,
+    projection: { ...changed.projection, rootId: "dom-2", lastMutationAt: 4_000 },
   }, 4_000).status).toBe("waiting");
-  expect(tracker.update({ ...initial, running: true }, 6_000).status).toBe("waiting");
-  expect(tracker.update(initial, 7_000).status).toBe("waiting");
-  expect(tracker.update(initial, 9_000).status).toBe("complete");
+  expect(tracker.update({ ...changed, running: true }, 6_000).status).toBe("waiting");
+  expect(tracker.update(changed, 7_000).status).toBe("waiting");
+  expect(tracker.update(changed, 9_000).status).toBe("complete");
+});
+
+test("completes a plain terminal renderer while React repeats no-op mutations", () => {
+  const tracker = new ChatGptCompletionTracker(2_000, 60_000);
+  const plain = completedState("short completed response", {
+    projection: {
+      ...completedState("").projection,
+      boundaryProtocolPresent: false,
+      lastNodePresent: false,
+      boundaryStart: undefined,
+      boundaryEnd: undefined,
+    },
+  });
+
+  expect(tracker.update(plain, 1_000).status).toBe("waiting");
+  expect(tracker.update({
+    ...plain,
+    projection: { ...plain.projection, lastMutationAt: 2_900 },
+  }, 2_900).status).toBe("waiting");
+  expect(tracker.update({
+    ...plain,
+    projection: { ...plain.projection, lastMutationAt: 3_000 },
+  }, 3_000).status).toBe("complete");
 });
 
 test("requires a public final-node marker before completing", () => {

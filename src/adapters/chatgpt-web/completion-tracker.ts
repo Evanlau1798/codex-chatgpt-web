@@ -76,7 +76,6 @@ function projectionSignature(
     projection.lastNodePresent ? "last" : "incomplete",
     projection.boundaryStart ?? "",
     projection.boundaryEnd ?? "",
-    projection.lastMutationAt ?? "",
     ...blocking.map(animationProgress),
   ].join("\0");
 }
@@ -127,8 +126,10 @@ export class ChatGptCompletionTracker {
       this.candidate = { signature, since: now };
       return { status: "waiting" };
     }
-    const stableSince = Math.max(this.candidate.since, state.projection.lastMutationAt ?? now);
-    if (now - stableSince >= this.stableMs) return { status: "complete" };
+    // The observer proves that this is a tracked projection root, but React may replace children
+    // with byte-identical markup while the response is already terminal. Stability belongs to the
+    // observable projection signature above, not to every implementation-level DOM mutation.
+    if (now - this.candidate.since >= this.stableMs) return { status: "complete" };
     return this.stalledDecision(state, blocking.length, now);
   }
 
