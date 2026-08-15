@@ -680,7 +680,7 @@ export class ChatGptBrowserWorker {
       const timeout = new Promise<never>((_, rejectTimeout) => {
         timer = setTimeout(() => {
           const message = `ChatGPT browser stage timed out: ${stage}`;
-          rejectTimeout(stage === "prompt_attachment"
+          rejectTimeout(stage === "prompt_attachment" || stage === "send"
             ? chatGptWebSurfaceError(message, false)
             : new Error(message));
           controller.abort();

@@ -68,6 +68,30 @@ describe("ChatGPT Web surface resilience", () => {
     expect(attempts).toBe(2);
   });
 
+  test("classifies a frozen send stage as a recoverable unsubmitted surface failure", async () => {
+    const Worker = ChatGptBrowserWorker as unknown as new (config: object) => ChatGptBrowserWorker;
+    const worker = new Worker({ browserHost: "managed-chrome" });
+    const runStage = (worker as unknown as {
+      runStage<T>(
+        traceId: string,
+        stage: string,
+        timeoutMs: number,
+        action: (signal: AbortSignal) => Promise<T>,
+      ): Promise<T>;
+    }).runStage.bind(worker);
+
+    await expect(runStage(
+      "frozen-send",
+      "send",
+      1,
+      () => new Promise<string>(() => {}),
+    )).rejects.toMatchObject({
+      code: "chatgpt_surface_changed",
+      retryable: true,
+      retireSession: true,
+    });
+  });
+
   test("does not retry a fresh surface after text was streamed", async () => {
     const Worker = ChatGptBrowserWorker as unknown as new (config: object) => ChatGptBrowserWorker;
     const worker = new Worker({ browserHost: "managed-chrome" });
