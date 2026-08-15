@@ -4,6 +4,12 @@ import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { TurnBroker } from "./turn-broker";
 
 export const CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS = 512 * 1_024;
+/**
+ * Current ChatGPT Lexical composers can reject an edit once one uninterrupted text run approaches
+ * 32K UTF-16 units even though the complete message remains far below its measured total limit.
+ * Keep the same 95%-then-4K alignment policy as the overall bootstrap boundary.
+ */
+export const CHATGPT_STABLE_COMPOSER_TEXT_RUN_CHARS = 28_672;
 const ARCHIVE_ENTRY_CHARS = CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS - 1;
 const ARCHIVE_FRAGMENT_DATA_CHARS = Math.floor((ARCHIVE_ENTRY_CHARS - 512) / 6);
 const CONTEXT_OPEN = "<codex_context_json>\n";
@@ -63,8 +69,16 @@ function archiveRecordLines(record: ArchiveRecord): string[] {
   });
 }
 
+function longestTextRunChars(text: string): number {
+  let longest = 0;
+  for (const run of text.split(/\r\n|[\n\r\u2028\u2029]/)) longest = Math.max(longest, run.length);
+  return longest;
+}
+
 function withinLimits(text: string, limits: { chars: number; tokens?: number }): boolean {
-  return text.length <= limits.chars && (limits.tokens === undefined || estimateTokens(text) <= limits.tokens);
+  return text.length <= limits.chars
+    && longestTextRunChars(text) <= CHATGPT_STABLE_COMPOSER_TEXT_RUN_CHARS
+    && (limits.tokens === undefined || estimateTokens(text) <= limits.tokens);
 }
 
 function parseEnvelope(text: string): { before: string; after: string; envelope: ContextEnvelope } {

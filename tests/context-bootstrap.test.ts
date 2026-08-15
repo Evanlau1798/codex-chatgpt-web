@@ -56,6 +56,47 @@ test("bounded specialist instructions remain byte-for-byte inline", async () => 
   }
 });
 
+test("a single oversized serialized text run uses the archive below the total bootstrap limit", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-context-text-run-"));
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
+  const turnToken = await broker.register({
+    cwd: process.cwd(),
+    roots: [],
+    writableRoots: [],
+    sandboxPolicy: { type: "readOnly", networkAccess: false },
+    tools: [],
+  }, 60_000, "text-run-test");
+  const fullText = contextText([
+    {
+      role: "toolResult",
+      toolCallId: "large-result",
+      content: "x".repeat(40_049),
+      isError: false,
+    },
+    { role: "user", content: "summarize the completed probe" },
+  ]);
+
+  try {
+    expect(fullText.length).toBeLessThan(94_208);
+    const prepared = await prepareChatGptWebContext(broker, {
+      text: fullText,
+      images: [],
+      turnToken,
+      bootstrapLimits: { chars: 94_208, tokens: 94_208 },
+    }, true, 60_000, "text-run-test");
+
+    expect(prepared.transport).toBe("native2-archive");
+    expect(Math.max(...prepared.text.split(/\r?\n/).map(line => line.length))).toBeLessThan(32_000);
+    expect(prepared.text).not.toContain("x".repeat(32_000));
+    expect(prepared.archiveChars).toBeGreaterThan(40_049);
+    prepared.release();
+  } finally {
+    broker.revoke(turnToken);
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("tool-capable prompts above the stable 94208 character boundary use the archive", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-context-stable-limit-"));
   const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
