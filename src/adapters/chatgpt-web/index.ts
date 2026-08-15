@@ -19,9 +19,10 @@ import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompacti
 import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
-import { inheritSpawnedCodexEnvironment, resolveTrustedCodexEnvironment } from "./trusted-environment-lifecycle";
+import { resolveTrustedCodexEnvironment } from "./trusted-environment-lifecycle";
 import { browserSteeringRetry, deliverPendingChatGptSteering, retainedConversationResumeRequest, sessionForChatGptRequest, validateBatchTools } from "./steering";
 import { completeChatGptToolResults } from "./tool-result-delivery";
+import { chatGptAgentLifecycleOptions } from "./agent-session-lifecycle";
 import { submittedBrowserFailure, submittedStallFailure } from "./submitted-turn";
 import { ChatGptLunaCheckpointStore, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint";
 import { requestCompactionHandoff } from "./retained-compaction-handoff";
@@ -349,13 +350,8 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                   return;
                 }
               } else {
-                completeChatGptToolResults(session, broker, turnToken, results, {
-                  onSpawnedCodexAgent: childThreadId => { inheritSpawnedCodexEnvironment(environmentStore, parsed, childThreadId);
-                    const parentThreadId = extractChatGptTurnIdentity(parsed).threadId;
-                    if (parentThreadId) chatGptTurnSessions.linkGroups(`${executionNamespace}:${parentThreadId}`, `${executionNamespace}:${childThreadId}`);
-                  },
-                  onClosedCodexAgent: childThreadId => { chatGptTurnSessions.retireGroupTree(`${executionNamespace}:${childThreadId}`); },
-                });
+                completeChatGptToolResults(session, broker, turnToken, results,
+                  chatGptAgentLifecycleOptions(environmentStore, parsed, chatGptTurnSessions, executionNamespace));
                 if (useEnhancedWebSessionMode) deliverPendingChatGptSteering(session, broker, turnToken, traceId);
               }
             } else if (useEnhancedWebSessionMode) deliverPendingChatGptSteering(session, broker, turnToken, traceId);

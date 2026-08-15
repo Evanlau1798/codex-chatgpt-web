@@ -81,6 +81,11 @@ export async function sessionForChatGptRequest(
   const identity = extractChatGptTurnIdentity(parsed);
   const rawGroup = claudeBrowserSessionGroup(parsed) ?? identity.threadId;
   const group = rawGroup && groupNamespace ? `${groupNamespace}:${rawGroup}` : rawGroup;
+  if (identity.threadId && identity.parentThreadId && identity.threadId !== identity.parentThreadId) {
+    const parentGroup = groupNamespace ? `${groupNamespace}:${identity.parentThreadId}` : identity.parentThreadId;
+    const childGroup = groupNamespace ? `${groupNamespace}:${identity.threadId}` : identity.threadId;
+    sessions.linkGroups(parentGroup, childGroup);
+  }
   const claudeRootThreadId = claudeRootSessionThreadId(parsed);
   const steeringId = identity.threadId && identity.turnId
     ? chatGptTurnSteeringId(identity.threadId, identity.turnId)

@@ -3,6 +3,7 @@ import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import type { BrokerToolRequest } from "./turn-broker";
 import { ChatGptSteeringFeed, steeringFingerprint, type ClaudeSteeringDelivery } from "./steering-feed";
 import { ChatGptTextFeed, ChatGptTraceFeed } from "./turn-feeds";
+import { ChatGptAgentSessionGraph } from "./agent-session-graph";
 import {
   extractChatGptCompactionSourceRevision,
   extractChatGptTurnIdentity,
@@ -308,7 +309,7 @@ export class ChatGptTurnSession {
 export class ChatGptTurnSessions {
   private readonly entries = new Map<string, ChatGptTurnSession>();
   private readonly retirements = new Map<string, Promise<void>>();
-  private readonly childGroups = new Map<string, Set<string>>();
+  private readonly agentGraph = new ChatGptAgentSessionGraph();
 
   constructor(
     private readonly ttlMs = 30 * 60_000,
@@ -453,17 +454,20 @@ export class ChatGptTurnSessions {
     return retired;
   }
 
-  linkGroups(parent: string, child: string): void {
-    const children = this.childGroups.get(parent) ?? new Set<string>();
-    children.add(child); this.childGroups.set(parent, children);
+  linkGroups(parent: string, child: string): void { this.agentGraph.link(parent, child); }
+  linkAgentReference(parent: string, reference: string): void { this.agentGraph.linkReference(parent, reference); }
+
+  retireAgentReference(parent: string, reference: string, descendants: boolean): number {
+    const group = this.agentGraph.resolveReference(parent, reference);
+    if (!group) return 0;
+    return descendants ? this.retireGroupTree(group) : this.retireGroup(group);
   }
 
   retireGroupTree(group: string): number {
-    const groups = [group];
-    for (let index = 0; index < groups.length; index += 1) groups.push(...(this.childGroups.get(groups[index]!) ?? []));
+    const groups = this.agentGraph.descendants(group);
     let retired = 0;
-    for (const target of new Set(groups)) { retired += this.retireGroup(target); this.childGroups.delete(target); }
-    for (const children of this.childGroups.values()) for (const target of groups) children.delete(target);
+    for (const target of groups) retired += this.retireGroup(target);
+    this.agentGraph.forget(groups);
     return retired;
   }
 
@@ -471,6 +475,7 @@ export class ChatGptTurnSessions {
     const cancelled = this.entries.size;
     for (const session of this.entries.values()) session.cancel();
     this.entries.clear();
+    this.agentGraph.clear();
     return cancelled;
   }
   activeCount(): number {

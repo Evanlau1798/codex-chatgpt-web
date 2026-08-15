@@ -7,10 +7,18 @@ import type { ChatGptTurnSession } from "./turn-execution";
 import type { PendingSteeringMessage } from "./steering-feed";
 
 const CODEX_AGENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CODEX_AGENT_PATH = /^\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
+const CODEX_AGENT_REFERENCE = /^\/?[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
+
+export interface CodexAgentLifecycleTarget {
+  reference: string;
+  threadId?: string;
+}
 
 export interface ChatGptToolResultDeliveryOptions {
-  onSpawnedCodexAgent?: (agentId: string) => void;
-  onClosedCodexAgent?: (agentId: string) => void;
+  onSpawnedCodexAgent?: (agent: CodexAgentLifecycleTarget) => void;
+  onInterruptedCodexAgent?: (agent: CodexAgentLifecycleTarget) => void;
+  onClosedCodexAgent?: (agent: CodexAgentLifecycleTarget) => void;
 }
 
 export function claudeSteeringMarker(turnToken: string): string {
@@ -63,24 +71,47 @@ function withClaudeSteering(
   };
 }
 
-function spawnedCodexAgentId(
-  request: BrokerToolRequest | undefined,
-  result: BrokerToolResult,
-): string | undefined {
-  if (request?.wireName !== "multi_agent_v1__spawn_agent" || result.isError) return undefined;
-  const structured = result.structuredContent;
-  if (!structured || typeof structured !== "object" || Array.isArray(structured)) return undefined;
-  const agentId = (structured as { agent_id?: unknown }).agent_id;
-  return typeof agentId === "string" && CODEX_AGENT_ID.test(agentId) ? agentId : undefined;
+function validAgentReference(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 1024
+    && (CODEX_AGENT_ID.test(value) || CODEX_AGENT_REFERENCE.test(value));
 }
 
-function closedCodexAgentId(
+function spawnedCodexAgent(
   request: BrokerToolRequest | undefined,
   result: BrokerToolResult,
-): string | undefined {
-  if (request?.wireName !== "multi_agent_v1__close_agent" || result.isError) return undefined;
+): CodexAgentLifecycleTarget | undefined {
+  if (result.isError) return undefined;
+  const structured = result.structuredContent;
+  if (!structured || typeof structured !== "object" || Array.isArray(structured)) return undefined;
+  if (request?.wireName === "multi_agent_v1__spawn_agent") {
+    const agentId = (structured as { agent_id?: unknown }).agent_id;
+    return typeof agentId === "string" && CODEX_AGENT_ID.test(agentId)
+      ? { reference: agentId, threadId: agentId }
+      : undefined;
+  }
+  if (request?.wireName === "collaboration__spawn_agent") {
+    const taskName = (structured as { task_name?: unknown }).task_name;
+    return validAgentReference(taskName) && CODEX_AGENT_PATH.test(taskName)
+      ? { reference: taskName }
+      : undefined;
+  }
+  return undefined;
+}
+
+function lifecycleTarget(
+  request: BrokerToolRequest | undefined,
+  result: BrokerToolResult,
+  action: "interrupt_agent" | "close_agent",
+): CodexAgentLifecycleTarget | undefined {
+  if (result.isError) return undefined;
+  const expected = request?.wireName === `multi_agent_v1__${action}`
+    || request?.wireName === `collaboration__${action}`;
+  if (!expected) return undefined;
   const target = request.arguments?.target;
-  return typeof target === "string" && CODEX_AGENT_ID.test(target) ? target : undefined;
+  if (!validAgentReference(target)) return undefined;
+  return CODEX_AGENT_ID.test(target)
+    ? { reference: target, threadId: target }
+    : { reference: target };
 }
 
 export function completeChatGptToolResults(
@@ -99,10 +130,12 @@ export function completeChatGptToolResults(
     const isBoundary = steering && index === results.length - 1;
     const result = codexToolResultToBrokerResult(message);
     const request = outstanding.find(candidate => candidate.callId === message.toolCallId);
-    const spawnedAgentId = spawnedCodexAgentId(request, result);
-    if (spawnedAgentId) options.onSpawnedCodexAgent?.(spawnedAgentId);
-    const closedAgentId = closedCodexAgentId(request, result);
-    if (closedAgentId) options.onClosedCodexAgent?.(closedAgentId);
+    const spawnedAgent = spawnedCodexAgent(request, result);
+    if (spawnedAgent) options.onSpawnedCodexAgent?.(spawnedAgent);
+    const interruptedAgent = lifecycleTarget(request, result, "interrupt_agent");
+    if (interruptedAgent) options.onInterruptedCodexAgent?.(interruptedAgent);
+    const closedAgent = lifecycleTarget(request, result, "close_agent");
+    if (closedAgent) options.onClosedCodexAgent?.(closedAgent);
     broker.completeTool(token, message.toolCallId, isBoundary
       ? withClaudeSteering(result, steering.messages, token, message.toolCallId)
       : result);

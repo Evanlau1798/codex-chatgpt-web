@@ -169,6 +169,31 @@ test("groups Codex sessions by their trusted thread identity", async () => {
   expect(cancelled).toBe(1);
 });
 
+test("links a trusted Codex child thread to its parent session group", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const parsed = request({
+    "x-codex-turn-metadata": JSON.stringify({
+      thread_id: "child-thread",
+      parent_thread_id: "root-thread",
+      turn_id: "turn-current",
+    }),
+  });
+  setRevision(parsed, "child task");
+  let cancelled = 0;
+  sessions.linkAgentReference("provider-a:root-thread", "/root/worker");
+  await sessionForChatGptRequest(sessions, "codex-child", parsed, () => ({
+    mode: "tools" as const,
+    browser: new Promise<string>(() => {}),
+    token: Promise.resolve("turn-token"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel() { cancelled += 1; },
+  }), "provider-a");
+
+  expect(sessions.retireAgentReference("provider-a:root-thread", "/root/worker", false)).toBe(1);
+  expect(cancelled).toBe(1);
+});
+
 test("retires a closed Codex agent group and all descendant groups", () => {
   const sessions = new ChatGptTurnSessions();
   const cancelled: string[] = [];

@@ -30,7 +30,7 @@ test("inherits a spawned Codex agent before delivering its tool result", () => {
     isError: false,
     timestamp: 1,
   }], {
-    onSpawnedCodexAgent(agentId) { events.push(`inherit:${agentId}`); },
+    onSpawnedCodexAgent(agent) { events.push(`inherit:${agent.threadId}`); },
   });
 
   expect(events).toEqual([
@@ -108,11 +108,157 @@ test("retires a closed Codex agent before delivering its tool result", () => {
     isError: false,
     timestamp: 1,
   }], {
-    onClosedCodexAgent(agentId) {
-      events.push(`retire:${agentId}`);
-      sessions.retireGroupTree(`provider:${agentId === childThreadId ? "child" : agentId}`);
+    onClosedCodexAgent(agent) {
+      events.push(`retire:${agent.reference}`);
+      sessions.retireGroupTree(`provider:${agent.reference === childThreadId ? "child" : agent.reference}`);
     },
   });
 
   expect(events).toEqual([`retire:${childThreadId}`, "cancel:child", "cancel:grandchild", "deliver"]);
+});
+
+test("binds a native V2 task path to its child session before delivering spawn", () => {
+  const parentGroup = "provider:root-thread";
+  const childGroup = "provider:child-thread";
+  const sessions = new ChatGptTurnSessions();
+  const events: string[] = [];
+  sessions.getOrCreate("child-turn", () => ({
+    mode: "read-only",
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => events.push("cancel:child"),
+  }), childGroup);
+  sessions.linkGroups(parentGroup, childGroup);
+
+  const session = new ChatGptTurnSession({
+    mode: "tools",
+    browser: new Promise<string>(() => {}),
+    token: Promise.resolve("turn-token"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  session.setOutstanding([{
+    callId: "call-v2-spawn",
+    wireName: "collaboration__spawn_agent",
+    freeform: false,
+    arguments: { task_name: "worker", message: "bounded task" },
+  }]);
+
+  completeChatGptToolResults(session, {
+    completeTool() { events.push("deliver"); },
+  }, "turn-token", [{
+    role: "toolResult",
+    toolCallId: "call-v2-spawn",
+    toolName: "spawn_agent",
+    content: JSON.stringify({ task_name: "/root/worker" }),
+    isError: false,
+    timestamp: 1,
+  }], {
+    onSpawnedCodexAgent(agent) {
+      events.push(`link:${agent.reference}`);
+      sessions.linkAgentReference(parentGroup, agent.reference);
+    },
+  });
+
+  expect(events).toEqual(["link:/root/worker", "deliver"]);
+  expect(sessions.retireAgentReference(parentGroup, "/root/worker", false)).toBe(1);
+  expect(events).toEqual(["link:/root/worker", "deliver", "cancel:child"]);
+});
+
+test("accepts an unambiguous relative native V2 agent reference", () => {
+  const sessions = new ChatGptTurnSessions();
+  let cancelled = 0;
+  sessions.getOrCreate("child-turn", () => ({
+    mode: "read-only",
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => { cancelled += 1; },
+  }), "provider:child");
+  sessions.linkGroups("provider:root", "provider:child");
+  sessions.linkAgentReference("provider:root", "/root/worker");
+
+  expect(sessions.retireAgentReference("provider:root", "worker", false)).toBe(1);
+  expect(cancelled).toBe(1);
+});
+
+test("retires only the interrupted native V2 child before delivering its result", () => {
+  const parentGroup = "provider:root-thread";
+  const childGroup = "provider:child-thread";
+  const grandchildGroup = "provider:grandchild-thread";
+  const sessions = new ChatGptTurnSessions();
+  const events: string[] = [];
+  for (const [key, group] of [["child-turn", childGroup], ["grandchild-turn", grandchildGroup]] as const) {
+    sessions.getOrCreate(key, () => ({
+      mode: "read-only",
+      browser: new Promise<string>(() => {}),
+      trace: new ChatGptTraceFeed(),
+      text: new ChatGptTextFeed(),
+      cancel: () => events.push(`cancel:${group}`),
+    }), group);
+  }
+  sessions.linkGroups(parentGroup, childGroup);
+  sessions.linkGroups(childGroup, grandchildGroup);
+  sessions.linkAgentReference(parentGroup, "/root/worker");
+
+  const session = new ChatGptTurnSession({
+    mode: "tools",
+    browser: new Promise<string>(() => {}),
+    token: Promise.resolve("turn-token"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  session.setOutstanding([{
+    callId: "call-v2-interrupt",
+    wireName: "collaboration__interrupt_agent",
+    freeform: false,
+    arguments: { target: "/root/worker" },
+  }]);
+
+  completeChatGptToolResults(session, {
+    completeTool() { events.push("deliver"); },
+  }, "turn-token", [{
+    role: "toolResult",
+    toolCallId: "call-v2-interrupt",
+    toolName: "interrupt_agent",
+    content: JSON.stringify({ previous_status: "running" }),
+    isError: false,
+    timestamp: 1,
+  }], {
+    onInterruptedCodexAgent(agent) {
+      events.push(`interrupt:${agent.reference}`);
+      sessions.retireAgentReference(parentGroup, agent.reference, false);
+    },
+  });
+
+  expect(events).toEqual([
+    "interrupt:/root/worker",
+    `cancel:${childGroup}`,
+    "deliver",
+  ]);
+  expect(sessions.retireGroup(grandchildGroup)).toBe(1);
+});
+
+test("does not guess native V2 task paths when sibling bindings are ambiguous", () => {
+  const sessions = new ChatGptTurnSessions();
+  const cancelled: string[] = [];
+  for (const child of ["child-a", "child-b"]) {
+    sessions.getOrCreate(child, () => ({
+      mode: "read-only",
+      browser: new Promise<string>(() => {}),
+      trace: new ChatGptTraceFeed(),
+      text: new ChatGptTextFeed(),
+      cancel: () => cancelled.push(child),
+    }), `provider:${child}`);
+    sessions.linkGroups("provider:root", `provider:${child}`);
+  }
+  sessions.linkAgentReference("provider:root", "/root/worker-a");
+  sessions.linkAgentReference("provider:root", "/root/worker-b");
+
+  expect(sessions.retireAgentReference("provider:root", "/root/worker-a", false)).toBe(0);
+  expect(cancelled).toEqual([]);
+  sessions.clear();
 });
