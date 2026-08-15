@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
-import { recoverableToolSurfaceResultCount } from "../src/adapters/chatgpt-web/runtime-lifecycle";
+import { chatGptSurfaceRecoveryDecision } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
 import type { CodexParsedRequest } from "../src/types";
 
@@ -47,23 +47,74 @@ test("tool surface recovery requires one complete unstreamed batch and runs only
     retireSession: true,
   });
 
-  expect(recoverableToolSurfaceResultCount(failure, session, requestWithResults(["call_1"]), 0)).toBeUndefined();
-  expect(recoverableToolSurfaceResultCount(failure, session, requestWithResults(["call_1", "call_2"]), 0)).toBe(2);
-  expect(recoverableToolSurfaceResultCount(failure, session, requestWithResults(["call_1", "call_2"]), 1)).toBeUndefined();
-  expect(recoverableToolSurfaceResultCount(connectorFailure, session, requestWithResults(["call_1", "call_2"]), 0)).toBe(2);
+  expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults(["call_1"]), 0))
+    .toMatchObject({ eligible: false, reason: "tool_results_incomplete", canonicalResultCount: 1 });
+  expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults(["call_1", "call_2"]), 0))
+    .toMatchObject({ eligible: true, reason: "eligible", canonicalResultCount: 2 });
+  expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults(["call_1", "call_2"]), 1))
+    .toMatchObject({ eligible: false, reason: "already_recovered" });
+  expect(chatGptSurfaceRecoveryDecision(connectorFailure, session, requestWithResults(["call_1", "call_2"]), 0))
+    .toMatchObject({ eligible: true, reason: "eligible", canonicalResultCount: 2 });
 
   const abort = new AbortController();
   abort.abort();
-  expect(recoverableToolSurfaceResultCount(
+  expect(chatGptSurfaceRecoveryDecision(
     failure,
     session,
     requestWithResults(["call_1", "call_2"]),
     0,
     abort.signal,
-  )).toBeUndefined();
+  )).toMatchObject({ eligible: false, reason: "aborted" });
 
   text.push("partial answer");
-  expect(recoverableToolSurfaceResultCount(failure, session, requestWithResults(["call_1", "call_2"]), 0)).toBeUndefined();
+  expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults(["call_1", "call_2"]), 0))
+    .toMatchObject({ eligible: false, reason: "final_streamed" });
+});
+
+test("surface recovery waits for superseded calls to receive canonical results", () => {
+  const session = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_test"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    usageInput: requestWithResults([]),
+    cancel: () => {},
+  });
+  session.setOutstanding([{ callId: "call_1", wireName: "exec_command", freeform: false, arguments: {} }]);
+  session.supersedeOutstanding();
+  const failure = chatGptWebSurfaceError("surface changed", false);
+
+  expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults([]), 0))
+    .toMatchObject({ eligible: false, reason: "superseded_results_pending", unresolvedSupersededCount: 1 });
+  session.reconcileSupersededResults(["call_1"]);
+  expect(chatGptSurfaceRecoveryDecision(failure, session, requestWithResults(["call_1"]), 0))
+    .toMatchObject({ eligible: true, reason: "eligible", unresolvedSupersededCount: 0 });
+});
+
+test("surface recovery rejects read-only and non-retryable turns", () => {
+  const readOnly = new ChatGptTurnSession({
+    mode: "read-only",
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  expect(chatGptSurfaceRecoveryDecision(
+    chatGptWebSurfaceError("surface changed", false), readOnly, requestWithResults([]), 0,
+  )).toMatchObject({ eligible: false, reason: "read_only" });
+
+  const tools = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_test"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  expect(chatGptSurfaceRecoveryDecision(
+    chatGptWebSurfaceError("surface changed", true), tools, requestWithResults([]), 0,
+  )).toMatchObject({ eligible: false, reason: "non_retryable" });
 });
 
 test("tool result delivery updates the live browser runtime state", () => {

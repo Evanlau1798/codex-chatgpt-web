@@ -12,7 +12,7 @@ import { canonicalizeCompactionHandoff, codexToolResultsById, createActiveCompac
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { compileChatGptWebPrompt } from "./prompt";
-import { brokerSocketPath, deferred, recoverableToolSurfaceResultCount, withAbort } from "./runtime-lifecycle";
+import { brokerSocketPath, ChatGptSurfaceRecoveryTracker, deferred, withAbort } from "./runtime-lifecycle";
 import { TurnBroker } from "./turn-broker";
 import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, chatGptTurnTraceId, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
 import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
@@ -283,6 +283,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode);
       const heartbeat = setInterval(() => emit({ type: "heartbeat" }), 10_000);
       let surfaceRecoveries = 0;
+      const surfaceRecovery = new ChatGptSurfaceRecoveryTracker(traceId);
       try {
         emit({ type: "heartbeat" });
         for (;;) {
@@ -294,12 +295,8 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           const settled = session.settledOutcome();
           if (settled) {
             if (settled.type === "error") {
-              recoveredResultCount = recoverableToolSurfaceResultCount(
-                settled.error,
-                session,
-                parsed,
-                surfaceRecoveries,
-                incoming.abortSignal,
+              recoveredResultCount = surfaceRecovery.recoverableResultCount(
+                settled.error, session, parsed, surfaceRecoveries, incoming.abortSignal,
               );
               if (recoveredResultCount !== undefined) return;
               throw settled.error;
@@ -417,16 +414,12 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                 session.setFinalEvents(roundEvents);
                 if (turnToken) broker.revoke(turnToken);
                 if (next.outcome.type === "error") {
-                  const submittedError = submittedBrowserFailure(session, incoming.abortSignal?.aborted === true, next.outcome.error);
-                  if (submittedError) throw submittedError;
-                  recoveredResultCount = recoverableToolSurfaceResultCount(
-                    next.outcome.error,
-                    session,
-                    parsed,
-                    surfaceRecoveries,
-                    incoming.abortSignal,
+                  recoveredResultCount = surfaceRecovery.recoverableResultCount(
+                    next.outcome.error, session, parsed, surfaceRecoveries, incoming.abortSignal,
                   );
                   if (recoveredResultCount !== undefined) return;
+                  const submittedError = submittedBrowserFailure(session, incoming.abortSignal?.aborted === true, next.outcome.error);
+                  if (submittedError) throw submittedError;
                   throw next.outcome.error;
                 }
                 if (session.runtime.text.value() !== next.outcome.answer) {
