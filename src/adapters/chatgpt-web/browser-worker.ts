@@ -465,7 +465,7 @@ const absentResponseDomSnapshot = (): ChatGptResponseDomSnapshot => ({
   markdownSegments: [],
   markdownRoots: [],
   completionActionVisible: false,
-  projection: { lastNodePresent: false, animations: [] },
+  projection: { boundaryProtocolPresent: false, lastNodePresent: false, animations: [] },
   traceBlocks: [],
 });
 
@@ -1478,6 +1478,10 @@ export class ChatGptBrowserWorker {
           runtimeWindow.__codexFinalProjectionStates!.set(rendered, created);
           state = created;
         }
+        const boundaryNodes = [
+          ...(rendered.matches("[data-start], [data-end], [data-is-last-node]") ? [rendered] : []),
+          ...rendered.querySelectorAll<HTMLElement>("[data-start], [data-end], [data-is-last-node]"),
+        ];
         const lastNodes = [
           ...(rendered.matches("[data-is-last-node]") ? [rendered] : []),
           ...rendered.querySelectorAll<HTMLElement>("[data-is-last-node]"),
@@ -1503,13 +1507,14 @@ export class ChatGptBrowserWorker {
           : [];
         return {
           rootId: nodeId(rendered),
+          boundaryProtocolPresent: boundaryNodes.length > 0,
           lastNodePresent: lastNode !== undefined,
           boundaryStart: lastNode?.getAttribute("data-start") ?? undefined,
           boundaryEnd: lastNode?.getAttribute("data-end") ?? undefined,
           lastMutationAt: state.lastMutationAt,
           animations,
         };
-      })() : { lastNodePresent: false, animations: [] };
+      })() : { boundaryProtocolPresent: false, lastNodePresent: false, animations: [] };
       const completionActions = [...root.querySelectorAll<HTMLElement>(completionActionSelector)]
         .filter(renderedInDom);
       const completionAction = rendered

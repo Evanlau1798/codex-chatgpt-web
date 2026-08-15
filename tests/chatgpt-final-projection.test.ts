@@ -17,6 +17,7 @@ const completedState = (
   completionActionVisible: true,
   projection: {
     rootId: "dom-1",
+    boundaryProtocolPresent: true,
     lastNodePresent: true,
     boundaryStart: "0",
     boundaryEnd: String(text.length),
@@ -88,6 +89,23 @@ test("requires a public final-node marker before completing", () => {
 
   expect(tracker.update(missingBoundary, 1_000).status).toBe("waiting");
   expect(tracker.update(missingBoundary, 20_000).status).toBe("waiting");
+});
+
+test("completes a stable terminal renderer that exposes no projection-boundary protocol", () => {
+  const tracker = new ChatGptCompletionTracker(2_000, 60_000);
+  const plainRenderer = completedState("complete plain renderer answer", {
+    projection: {
+      ...completedState("").projection,
+      boundaryProtocolPresent: false,
+      lastNodePresent: false,
+      boundaryStart: undefined,
+      boundaryEnd: undefined,
+    },
+  });
+
+  expect(tracker.update(plainRenderer, 1_000).status).toBe("waiting");
+  expect(tracker.update(plainRenderer, 2_999).status).toBe("waiting");
+  expect(tracker.update(plainRenderer, 3_000).status).toBe("complete");
 });
 
 test("requires stable public start and end boundaries", () => {

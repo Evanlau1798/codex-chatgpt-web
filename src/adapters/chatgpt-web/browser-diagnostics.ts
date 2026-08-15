@@ -167,6 +167,9 @@ async function captureBrowserDiagnosticState(page: Page): Promise<unknown> {
         .filter(candidate => candidate.closest("[data-streaming-response-status]") === null)
         .filter(rendered).at(-1)
       : undefined;
+    const boundaryNodes = finalRoot
+      ? [...(finalRoot.matches("[data-start], [data-end], [data-is-last-node]") ? [finalRoot] : []), ...finalRoot.querySelectorAll<HTMLElement>("[data-start], [data-end], [data-is-last-node]")]
+      : [];
     const lastNode = finalRoot
       ? [...(finalRoot.matches("[data-is-last-node]") ? [finalRoot] : []), ...finalRoot.querySelectorAll<HTMLElement>("[data-is-last-node]")].at(-1)
       : undefined;
@@ -206,6 +209,7 @@ async function captureBrowserDiagnosticState(page: Page): Promise<unknown> {
       },
       completion: {
         actionVisible: [...document.querySelectorAll(selectors.completionAction)].some(rendered),
+        boundaryProtocolPresent: boundaryNodes.length > 0,
         lastNodePresent: lastNode !== undefined,
         boundaryStart: lastNode?.getAttribute("data-start") ?? null,
         boundaryEnd: lastNode?.getAttribute("data-end") ?? null,

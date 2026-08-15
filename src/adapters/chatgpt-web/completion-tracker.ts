@@ -10,6 +10,7 @@ export interface ChatGptProjectionAnimation {
 
 export interface ChatGptFinalProjectionState {
   rootId?: string;
+  boundaryProtocolPresent?: boolean;
   lastNodePresent: boolean;
   boundaryStart?: string;
   boundaryEnd?: string;
@@ -71,6 +72,7 @@ function projectionSignature(
     state.currentText,
     state.currentHtml ?? state.currentText,
     projection.rootId ?? "",
+    projection.boundaryProtocolPresent === false ? "plain" : "bounded",
     projection.lastNodePresent ? "last" : "incomplete",
     projection.boundaryStart ?? "",
     projection.boundaryEnd ?? "",
@@ -108,10 +110,12 @@ export class ChatGptCompletionTracker {
       this.progress = { signature, at: now };
     }
 
+    const boundaryReady = state.projection.boundaryProtocolPresent === false
+      || (state.projection.lastNodePresent
+        && state.projection.boundaryStart !== undefined
+        && state.projection.boundaryEnd !== undefined);
     const projectionReady = Boolean(state.projection.rootId)
-      && state.projection.lastNodePresent
-      && state.projection.boundaryStart !== undefined
-      && state.projection.boundaryEnd !== undefined
+      && boundaryReady
       && state.projection.lastMutationAt !== undefined
       && blocking.length === 0;
     if (!projectionReady) {
