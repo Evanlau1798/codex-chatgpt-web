@@ -1673,24 +1673,45 @@ test("retained-only turns fail before prompt preparation on a fresh launcher sur
   expect(run).toBeGreaterThan(guard);
 });
 
-test("browser completion accepts a stable stopped generation before the delayed copy action", () => {
+test("browser completion requires a stable public final projection", () => {
   const tracker = new ChatGptCompletionTracker(2_000);
   const stopped = {
     responsePresent: true,
     running: false,
-    sawRunning: true,
     currentText: "complete answer",
-    currentHtml: "<p>complete answer</p>",
+    currentHtml: '<p data-start="0" data-end="15" data-is-last-node>complete answer</p>',
     completionActionVisible: false,
+    projection: {
+      rootId: "dom-1",
+      lastNodePresent: true,
+      boundaryStart: "0",
+      boundaryEnd: "15",
+      lastMutationAt: 1_000,
+      animations: [],
+    },
   };
-  expect(tracker.update(stopped, 1_000)).toBeFalse();
-  expect(tracker.update(stopped, 2_999)).toBeFalse();
-  expect(tracker.update(stopped, 3_000)).toBeTrue();
+  expect(tracker.update(stopped, 1_000).status).toBe("waiting");
+  expect(tracker.update(stopped, 11_000).status).toBe("waiting");
 
-  const changed = { ...stopped, currentText: "complete answer updated" };
-  expect(tracker.update(changed, 3_001)).toBeFalse();
-  expect(tracker.update(changed, 5_001)).toBeTrue();
-  expect(new ChatGptCompletionTracker(0).update({ ...stopped, sawRunning: false }, 1_000)).toBeFalse();
+  const completed = { ...stopped, completionActionVisible: true };
+  expect(tracker.update(completed, 12_000).status).toBe("waiting");
+  expect(tracker.update(completed, 13_999).status).toBe("waiting");
+  expect(tracker.update(completed, 14_000).status).toBe("complete");
+});
+
+test("a stalled final projection retires the surface before Markdown is finalized", () => {
+  const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const decision = source.indexOf("const completion = completionTracker.update");
+  const stalled = source.indexOf('completion.status === "stalled"', decision);
+  const retirement = source.indexOf("retireSession: true", stalled);
+  const completed = source.indexOf('completion.status === "complete"', stalled);
+  const finish = source.indexOf("markdownBuffer.finish()", completed);
+
+  expect(decision).toBeGreaterThan(-1);
+  expect(stalled).toBeGreaterThan(decision);
+  expect(retirement).toBeGreaterThan(stalled);
+  expect(completed).toBeGreaterThan(retirement);
+  expect(finish).toBeGreaterThan(completed);
 });
 
 test("browser send accepts only conclusive ChatGPT submission evidence", () => {

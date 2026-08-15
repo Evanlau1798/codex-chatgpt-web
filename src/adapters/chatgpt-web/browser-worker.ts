@@ -33,6 +33,7 @@ import {
 import { CHATGPT_MAX_INPUT_IMAGES, type CompiledChatGptWebPrompt, type ChatGptWebPromptImage } from "./prompt";
 import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import { ChatGptVisibleTraceTracker, type ChatGptVisibleTraceBlock } from "./visible-trace-tracker";
+import { ChatGptCompletionTracker, type ChatGptFinalProjectionState } from "./completion-tracker";
 import type { ChatGptRetryPrompt } from "./steering";
 import { ChatGptTurnLatencyDiagnostics } from "./turn-latency";
 import {
@@ -47,6 +48,20 @@ export { ChatGptMarkdownOwnershipTracker } from "./markdown-ownership";
 export type { ChatGptVisibleTraceBlock, ChatGptVisibleTraceEvent } from "./visible-trace-tracker";
 export { chatGptSubmissionEvidence } from "./response-turn-boundary";
 export type { ChatGptSubmissionEvidence } from "./response-turn-boundary";
+export {
+  CHATGPT_COMPLETION_PROJECTION_STALL_MS,
+  CHATGPT_COMPLETION_SETTLE_MS,
+  ChatGptCompletionTracker,
+  blockingChatGptProjectionAnimations,
+  chatGptTurnIsComplete,
+} from "./completion-tracker";
+export type {
+  ChatGptCompletionDecision,
+  ChatGptCompletionState,
+  ChatGptFinalProjectionState,
+  ChatGptProjectionAnimation,
+  ChatGptProjectionStallDiagnostic,
+} from "./completion-tracker";
 import {
   assertAuthenticatedChatGptPage,
   assertTemporaryChatPage,
@@ -104,7 +119,6 @@ export async function closeChatGptBrowserWorkers(): Promise<void> {
 export const CHATGPT_RESPONSE_DOM_GRACE_MS = 60_000;
 export const CHATGPT_EMPTY_RESPONSE_GRACE_MS = 10_000;
 export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
-export const CHATGPT_COMPLETION_SETTLE_MS = 2_000;
 export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
 const CHATGPT_SMOKE_TEXT = "Reply with exactly: CODEX WEB GPT READY";
 const CHATGPT_SMOKE_EXPECTED = "CODEX WEB GPT READY";
@@ -366,39 +380,6 @@ export interface ResolvedBrowserConfig {
   maxBrowserTabs?: number;
 }
 
-export function chatGptTurnIsComplete(state: {
-  responsePresent: boolean;
-  running: boolean;
-  sawRunning?: boolean;
-  currentText: string;
-  currentHtml?: string;
-  completionActionVisible: boolean;
-}): boolean {
-  return state.responsePresent
-    && !state.running
-    && state.currentText.length > 0
-    && (state.completionActionVisible || state.sawRunning === true);
-}
-
-export class ChatGptCompletionTracker {
-  private candidate?: { signature: string; since: number };
-
-  constructor(private readonly stableMs = CHATGPT_COMPLETION_SETTLE_MS) {}
-
-  update(state: Parameters<typeof chatGptTurnIsComplete>[0], now = Date.now()): boolean {
-    if (!chatGptTurnIsComplete(state)) {
-      this.candidate = undefined;
-      return false;
-    }
-    const signature = `${state.currentText}\0${state.currentHtml ?? state.currentText}`;
-    if (this.candidate?.signature !== signature) {
-      this.candidate = { signature, since: now };
-      return false;
-    }
-    return now - this.candidate.since >= this.stableMs;
-  }
-}
-
 export class ChatGptTurnDomHealthTracker {
   private sawResponse = false;
   private missingResponseSince?: number;
@@ -465,6 +446,7 @@ interface ChatGptResponseDomSnapshot {
   markdownSegments: ChatGptMarkdownSegment[];
   markdownRoots: ChatGptMarkdownRootSnapshot[];
   completionActionVisible: boolean;
+  projection: ChatGptFinalProjectionState;
   traceBlocks: ChatGptVisibleTraceBlock[];
 }
 
@@ -476,6 +458,7 @@ const absentResponseDomSnapshot = (): ChatGptResponseDomSnapshot => ({
   markdownSegments: [],
   markdownRoots: [],
   completionActionVisible: false,
+  projection: { lastNodePresent: false, animations: [] },
   traceBlocks: [],
 });
 
@@ -1607,9 +1590,14 @@ export class ChatGptBrowserWorker {
       const runtimeWindow = window as typeof window & {
         __codexMarkdownRootIds?: WeakMap<HTMLElement, string>;
         __codexMarkdownRootSequence?: number;
+        __codexFinalProjectionStates?: WeakMap<HTMLElement, {
+          lastMutationAt: number;
+          observer: MutationObserver;
+        }>;
       };
       runtimeWindow.__codexMarkdownRootIds ??= new WeakMap<HTMLElement, string>();
       runtimeWindow.__codexMarkdownRootSequence ??= 0;
+      runtimeWindow.__codexFinalProjectionStates ??= new WeakMap();
       const nodeId = (markdownRoot: HTMLElement): string => {
         const existing = runtimeWindow.__codexMarkdownRootIds!.get(markdownRoot);
         if (existing) return existing;
@@ -1681,6 +1669,56 @@ export class ChatGptBrowserWorker {
         .filter(markdownRoot => markdownRoot.ownership === "final")
         .flatMap(markdownRoot => markdownRoot.segments);
       const rendered = renderedRoots.at(-1);
+      const projection = rendered ? (() => {
+        let state = runtimeWindow.__codexFinalProjectionStates!.get(rendered);
+        if (!state) {
+          const created = {
+            lastMutationAt: Date.now(),
+            observer: undefined as unknown as MutationObserver,
+          };
+          created.observer = new MutationObserver(() => { created.lastMutationAt = Date.now(); });
+          created.observer.observe(rendered, {
+            subtree: true,
+            childList: true,
+            characterData: true,
+            attributes: true,
+            attributeFilter: ["data-start", "data-end", "data-is-last-node"],
+          });
+          runtimeWindow.__codexFinalProjectionStates!.set(rendered, created);
+          state = created;
+        }
+        const lastNodes = [
+          ...(rendered.matches("[data-is-last-node]") ? [rendered] : []),
+          ...rendered.querySelectorAll<HTMLElement>("[data-is-last-node]"),
+        ];
+        const lastNode = lastNodes.at(-1);
+        const animations = typeof rendered.getAnimations === "function"
+          ? rendered.getAnimations({ subtree: true }).map(animation => {
+            const timing = animation.effect?.getTiming();
+            const computed = animation.effect?.getComputedTiming();
+            const rawEndTime = computed?.endTime;
+            const endTime = typeof rawEndTime === "number" && Number.isFinite(rawEndTime)
+              ? rawEndTime
+              : null;
+            return {
+              playState: animation.playState,
+              currentTime: typeof animation.currentTime === "number" && Number.isFinite(animation.currentTime)
+                ? animation.currentTime
+                : null,
+              endTime,
+              infinite: timing?.iterations === Infinity || rawEndTime === Infinity,
+            };
+          })
+          : [];
+        return {
+          rootId: nodeId(rendered),
+          lastNodePresent: lastNode !== undefined,
+          boundaryStart: lastNode?.getAttribute("data-start") ?? undefined,
+          boundaryEnd: lastNode?.getAttribute("data-end") ?? undefined,
+          lastMutationAt: state.lastMutationAt,
+          animations,
+        };
+      })() : { lastNodePresent: false, animations: [] };
       const completionActions = [...root.querySelectorAll<HTMLElement>(completionActionSelector)]
         .filter(renderedInDom);
       const completionAction = rendered
@@ -1792,6 +1830,7 @@ export class ChatGptBrowserWorker {
         markdownSegments,
         markdownRoots,
         completionActionVisible: completionAction !== undefined,
+        projection,
         traceBlocks,
       };
     }, CHATGPT_COMPLETION_ACTION_SELECTOR, { timeout: 2_000 }).catch(() => {
@@ -2267,14 +2306,27 @@ export class ChatGptBrowserWorker {
             completionActionVisible: snapshot.completionActionVisible,
           });
           if (domError) throw chatGptWebSurfaceError(domError, answerBuffer.value().length > 0);
-          if (completionTracker.update({
+          const completion = completionTracker.update({
             responsePresent: snapshot.responsePresent,
             running,
-            sawRunning,
             currentText: snapshot.visibleText,
             currentHtml: snapshot.fullHtml,
             completionActionVisible: snapshot.completionActionVisible,
-          })) {
+            projection: snapshot.projection,
+          });
+          if (completion.status === "stalled") {
+            throw new ChatGptWebAdapterError(
+              `ChatGPT final Markdown projection stopped before completion (${JSON.stringify(completion.diagnostic)})`,
+              {
+                status: 502,
+                errorType: "server_error",
+                code: "chatgpt_final_projection_stalled",
+                retryable: false,
+                retireSession: true,
+              },
+            );
+          }
+          if (completion.status === "complete") {
             if (snapshot.visibleText === "api_tool unavailable") {
               throw new ChatGptWebAdapterError(
                 "ChatGPT selected mode rejected the Codex Native MCP tool (api_tool unavailable)",

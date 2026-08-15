@@ -1199,17 +1199,34 @@ describe("ChatGPT outer-native harness v4", () => {
       responsePresent: true,
       running: false,
       currentText: "final answer",
+      currentHtml: '<p data-start="0" data-end="12" data-is-last-node>final answer</p>',
       completionActionVisible: true,
+      projection: {
+        rootId: "dom-1",
+        lastNodePresent: true,
+        boundaryStart: "0",
+        boundaryEnd: "12",
+        lastMutationAt: 1_000,
+        animations: [],
+      },
     };
     const tracker = new ChatGptCompletionTracker(2_000);
-    expect(tracker.update(state, 1_000)).toBe(false);
-    expect(tracker.update(state, 2_999)).toBe(false);
-    expect(tracker.update(state, 3_000)).toBe(true);
-    expect(tracker.update({ ...state, currentText: "final answer updated" }, 3_100)).toBe(false);
-    expect(tracker.update({ ...state, currentHtml: "<p>final answer</p>" }, 4_000)).toBe(false);
-    expect(tracker.update({ ...state, currentHtml: "<p>final answer</p><p>hydrated</p>" }, 6_000)).toBe(false);
-    expect(tracker.update({ ...state, currentHtml: "<p>final answer</p><p>hydrated</p>" }, 8_000)).toBe(true);
-    expect(tracker.update({ ...state, running: true }, 8_100)).toBe(false);
+    expect(tracker.update(state, 1_000).status).toBe("waiting");
+    expect(tracker.update(state, 2_999).status).toBe("waiting");
+    expect(tracker.update(state, 3_000).status).toBe("complete");
+    const hydrated = {
+      ...state,
+      currentText: "final answer updated",
+      currentHtml: '<p data-start="0" data-end="20" data-is-last-node>final answer updated</p>',
+      projection: {
+        ...state.projection,
+        boundaryEnd: "20",
+        lastMutationAt: 3_100,
+      },
+    };
+    expect(tracker.update(hydrated, 3_100).status).toBe("waiting");
+    expect(tracker.update(hydrated, 5_100).status).toBe("complete");
+    expect(tracker.update({ ...hydrated, running: true }, 5_200).status).toBe("waiting");
   });
 
   test("preserves GFM formatting while streaming only completed stable DOM blocks", () => {
