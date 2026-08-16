@@ -71,7 +71,7 @@ export function readTextFileCommand(filePath: string, platform: NodeJS.Platform 
   if (!pathApi.isAbsolute(filePath)) throw new Error("Codex read-only file path must be absolute");
   if (platform === "win32") {
     const literal = `'${filePath.replaceAll("'", "''")}'`;
-    return `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-Content -Raw -LiteralPath ${literal}`;
+    return `Get-Content -Raw -Encoding UTF8 -LiteralPath ${literal}`;
   }
   const literal = `'${filePath.replaceAll("'", `'"'"'`)}'`;
   return `cat -- ${literal}`;

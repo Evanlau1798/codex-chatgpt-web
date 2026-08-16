@@ -60,7 +60,7 @@ test("tool-capable prompts require evidence before assigning a failure cause", (
 
 test("fixed read-only file commands quote absolute paths on every supported shell family", () => {
   expect(readTextFileCommand("C:\\skills\\o'hara\\SKILL.md", "win32"))
-    .toBe("[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Get-Content -Raw -LiteralPath 'C:\\skills\\o''hara\\SKILL.md'");
+    .toBe("Get-Content -Raw -Encoding UTF8 -LiteralPath 'C:\\skills\\o''hara\\SKILL.md'");
   expect(readTextFileCommand("/skills/o'hara/SKILL.md", "darwin"))
     .toBe("cat -- '/skills/o'\"'\"'hara/SKILL.md'");
   expect(readTextFileCommand("/skills/o'hara/SKILL.md", "linux"))
@@ -184,7 +184,7 @@ test("read-only inventory operations relay deferred discovery and fixed local fi
     const [readRequest] = await broker.nextToolBatch(token, readAbort);
     expect(readRequest?.wireName).toBe("exec_command");
     const command = (readRequest?.arguments as { cmd?: string })?.cmd ?? "";
-    expect(command).toContain(process.platform === "win32" ? "Get-Content -Raw -LiteralPath" : "cat --");
+    expect(command).toContain(process.platform === "win32" ? "Get-Content -Raw -Encoding UTF8 -LiteralPath" : "cat --");
     expect(command).toContain("SKILL.md");
     expect(command).not.toContain("__codex_read_file__");
     broker.completeTool(token, readRequest!.callId, {
