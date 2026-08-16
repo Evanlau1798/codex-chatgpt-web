@@ -98,10 +98,11 @@ import {
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
-import { ChatGptWebAdapterError, chatGptCompletionEvidenceError, chatGptWebSurfaceError } from "./adapter-error";
+import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { chatGptPromptAttachmentMismatch, reanchorChatGptComposerCaret } from "./prompt-caret";
+import { chatGptCompletionEvidenceFailure } from "./same-surface-readiness";
 import {
   ChatGptLunaCheckpointStream,
   type CapturedChatGptLunaCheckpoint,
@@ -473,6 +474,7 @@ interface ChatGptResponseDomSnapshot {
   markdownSegments: ChatGptMarkdownSegment[];
   markdownRoots: ChatGptMarkdownRootSnapshot[];
   completionActionVisible: boolean;
+  globalCompletionActionVisible: boolean;
   projection: ChatGptFinalProjectionState;
   traceBlocks: ChatGptVisibleTraceBlock[];
 }
@@ -485,6 +487,7 @@ const absentResponseDomSnapshot = (): ChatGptResponseDomSnapshot => ({
   markdownSegments: [],
   markdownRoots: [],
   completionActionVisible: false,
+  globalCompletionActionVisible: false,
   projection: { boundaryProtocolPresent: false, lastNodePresent: false, animations: [] },
   traceBlocks: [],
 });
@@ -1645,6 +1648,8 @@ export class ChatGptBrowserWorker {
         markdownSegments,
         markdownRoots,
         completionActionVisible: completionAction !== undefined,
+        globalCompletionActionVisible: [...document.querySelectorAll<HTMLElement>(completionActionSelector)]
+          .some(renderedInDom),
         projection,
         traceBlocks,
       };
@@ -2135,9 +2140,35 @@ export class ChatGptBrowserWorker {
             completionActionVisible: snapshot.completionActionVisible,
           });
           if (domError) {
-            throw domHealthTracker.failureKind() === "completion_evidence"
-              ? chatGptCompletionEvidenceError(domError, answerBuffer.deliveredChars() > 0)
-              : chatGptWebSurfaceError(domError, answerBuffer.deliveredChars() > 0);
+            if (domHealthTracker.failureKind() === "completion_evidence") {
+              const composers = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
+              const composerVisibleCount = await composers.count().catch(() => 0);
+              const composerTextChars = composerVisibleCount === 1
+                ? [((await composers.first().textContent().catch(() => null)) ?? "").length]
+                : [];
+              const failure = chatGptCompletionEvidenceFailure(
+                domError,
+                answerBuffer.deliveredChars() > 0,
+                {
+                  responsePresent: snapshot.responsePresent,
+                  bindingPresent: responseTurnBinding !== undefined,
+                  completionActionVisible: snapshot.completionActionVisible,
+                  globalCompletionActionVisible: snapshot.globalCompletionActionVisible,
+                  composerVisibleCount,
+                  composerTextChars,
+                  running,
+                  aborted: turn.abortSignal?.aborted === true,
+                },
+              );
+              console.warn(
+                `[chatgpt-web] browser turn ${turn.traceId} same-surface readiness eligible=${failure.readiness.eligible}`
+                + ` reason=${failure.readiness.reason} boundAction=${snapshot.completionActionVisible}`
+                + ` globalAction=${snapshot.globalCompletionActionVisible}`
+                + ` composers=${composerVisibleCount}`,
+              );
+              throw failure.error;
+            }
+            throw chatGptWebSurfaceError(domError, answerBuffer.deliveredChars() > 0);
           }
           const completion = completionTracker.update({
             responsePresent: snapshot.responsePresent,
