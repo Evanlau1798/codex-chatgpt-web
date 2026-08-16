@@ -11,6 +11,7 @@ const {
 const { validateConnectorName } = require("./connector-identity.cjs");
 const { createTurnInteractionShield, TURN_INTERACTION_SHIELD_URL } = require("./interaction-shield.cjs");
 const { processRunning } = require("./process-tree.cjs");
+const { showBrowserWindow } = require("./window-activation.cjs");
 const {
   browserViewVisible,
   constrainBrowserBounds,
@@ -1012,13 +1013,12 @@ class BrowserHost {
     })()`, true);
   }
 
-  show() {
-    if (this.window.isMinimized()) this.window.restore();
-    if (!this.window.isVisible()) this.window.show();
+  show({ activate = true } = {}) {
+    showBrowserWindow(this.window, activate);
     this.visible = true;
     this.syncViewVisibility();
     this.setState({ visible: true });
-    if (this.surfaceActive && this.boundsReady) BrowserHost.prototype.focusActiveSurface.call(this);
+    if (activate && this.surfaceActive && this.boundsReady) BrowserHost.prototype.focusActiveSurface.call(this);
   }
 
   async reveal() {
@@ -1132,7 +1132,7 @@ class BrowserHost {
         existing.view.webContents.setBackgroundThrottling(false);
       }
       this.selectedTabId = existing.id;
-      if (reveal) this.show();
+      if (reveal) this.show({ activate: false });
       else this.syncViewVisibility();
       this.publishState?.(this.snapshot());
       this.writeDescriptor();
@@ -1149,7 +1149,7 @@ class BrowserHost {
     }
     const tab = this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity);
     this.selectedTabId = tab.id;
-    if (reveal) this.show();
+    if (reveal) this.show({ activate: false });
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
     this.logger.info("browser.tab_created", { tabId: tab.id, traceId, tabCount: this.turnTabs.size });
