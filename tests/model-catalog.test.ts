@@ -116,6 +116,21 @@ describe("native /models augmentation", () => {
     expect(enhanced.slice(nativeModels.length).every(model => model.multi_agent_version === "v2")).toBeTrue();
   });
 
+  test("advertises deferred tool discovery only for enhanced Web sessions", () => {
+    const config = defaultConfig("full");
+    config.proAvailable = true;
+    const native = source();
+    const nativeCount = (native.models as unknown[]).length;
+    const original = augmentNativeModelCatalog(native, config).models as Array<Record<string, unknown>>;
+    const enhanced = augmentNativeModelCatalog(native, {
+      ...config,
+      useEnhancedWebSessionMode: true,
+    }).models as Array<Record<string, unknown>>;
+
+    expect(original.slice(nativeCount).every(model => model.supports_search_tool === false)).toBeTrue();
+    expect(enhanced.slice(nativeCount).every(model => model.supports_search_tool === true)).toBeTrue();
+  });
+
   test("keeps native model capabilities identical in both Web session modes", () => {
     const native = source();
     const expected = structuredClone(native.models as Array<Record<string, unknown>>);
