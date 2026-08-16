@@ -29,6 +29,7 @@ test("translates a Claude Code message into the existing ChatGPT Web adapter", a
     return {
       name: "messages-test",
       async runTurn(parsed, _incoming, emit) {
+        expect(parsed._canonicalContextComplete).toBeTrue();
         expect(extractChatGptTurnIdentity(parsed)).toMatchObject({
           threadId: expect.stringContaining("claude_session-123"),
           turnId: expect.stringContaining("claude_agent-main"),

@@ -24,6 +24,7 @@ function parsedClaudeRequest(raw: unknown, req: Request, config: AppConfig) {
     (threadId, instruction) => chatGptTurnSessions.claudeSteeringSuppressionCount(threadId, instruction),
   );
   const parsed = parseRequest(translated.body);
+  parsed._canonicalContextComplete = true;
   const route = requireChatGptWebModelRoute(parsed.modelId, config);
   parsed.modelId = route.backendModel;
   parsed.options.reasoning = route.adapterEffort;
