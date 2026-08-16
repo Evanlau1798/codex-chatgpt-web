@@ -14,9 +14,10 @@ import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./env
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { reportChatGptPreparationFailure } from "./preparation-diagnostics";
 import { compileChatGptWebPrompt } from "./prompt";
+import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { brokerSocketPath, ChatGptSurfaceRecoveryTracker, deferred, withAbort } from "./runtime-lifecycle";
 import { TurnBroker } from "./turn-broker";
-import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, chatGptTurnTraceId, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
+import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnRetryKey, chatGptTurnSessions, chatGptTurnTraceId, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
 import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
@@ -234,6 +235,19 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         ? { ...configuredCapabilities, localToolsEnabled: false }
         : configuredCapabilities;
       const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
+      const retryKey = `${executionNamespace}:${chatGptTurnRetryKey(parsed)}`;
+      const exhaustedRetry = chatGptWebTurnRetryPolicy.exhaustedError(retryKey);
+      if (exhaustedRetry) {
+        emit({
+          type: "error",
+          message: exhaustedRetry.message,
+          status: exhaustedRetry.status,
+          errorType: exhaustedRetry.errorType,
+          code: exhaustedRetry.code,
+          retryable: false,
+        });
+        return;
+      }
       let environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined;
       if (mode.localTools) {
         environment = resolveTrustedCodexEnvironment(environmentStore, parsed);
@@ -330,6 +344,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
               estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning }, turnCapabilities),
               emit,
             );
+            chatGptWebTurnRetryPolicy.clear(retryKey);
             return;
           }
 
@@ -433,6 +448,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                   estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning: roundReasoning }, turnCapabilities),
                   emit,
                 );
+                chatGptWebTurnRetryPolicy.clear(retryKey);
                 return;
               }
               if (!turnToken || session.runtime.mode !== "tools") {
@@ -467,7 +483,13 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         if (useEnhancedWebSessionMode && parsed._localCompactionRequest) { const key = chatGptConversationKey(parsed, executionNamespace); if (key) await chatGptTurnSessions.retireConversationAndWait(key); }
       } catch (error) {
         error = submittedStallFailure(session, incoming.abortSignal?.aborted === true, error) ?? error;
-        if (chatGptSessionFailureDisposition(error) === "replay") {
+        const handledError = error instanceof ChatGptWebAdapterError && error.retryable
+          ? chatGptWebTurnRetryPolicy.recordRetryableFailure(retryKey, error)
+          : error;
+        if (!(error instanceof ChatGptWebAdapterError && error.retryable)) {
+          chatGptWebTurnRetryPolicy.clear(retryKey);
+        }
+        if (chatGptSessionFailureDisposition(handledError) === "replay") {
           // A deterministic request failure remains replayable so a native reconnect cannot burn
           // another browser attempt. Every other failure retires the browser session: client
           // disconnects, stage failures, and retryable ChatGPT errors must start a fresh surface
@@ -479,17 +501,18 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         if (session.runtime.mode === "tools") {
           void session.runtime.token.then(turnToken => broker.revoke(turnToken)).catch(() => {});
         }
-        if (error instanceof ChatGptWebAdapterError) {
+        if (handledError instanceof ChatGptWebAdapterError) {
           emit({
             type: "error",
-            message: error.message,
-            status: error.status,
-            errorType: error.errorType,
-            code: error.code,
-            retryable: error.retryable,
+            message: handledError.message,
+            status: handledError.status,
+            errorType: handledError.errorType,
+            code: handledError.code,
+            retryable: handledError.retryable,
           });
           return;
         }
+        chatGptWebTurnRetryPolicy.clear(retryKey);
         throw error;
       } finally {
         clearInterval(heartbeat);
