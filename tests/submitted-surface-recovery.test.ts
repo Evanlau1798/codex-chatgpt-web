@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
+import { chatGptCompletionEvidenceError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
+import { CHATGPT_SAME_SURFACE_RECOVERY_PROMPT } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig } from "../src/types";
 
 const environmentXml = `<environment_context>
@@ -66,6 +67,95 @@ function textOf(result: BrokerToolResult): string {
       : []
   )).join("\n");
 }
+
+test("recovers missing completion evidence once in the active Web conversation", async () => {
+  const socketPath = brokerTestEndpoint(`cgw-same-surface-${process.pid}-${Date.now()}`);
+  const provider: CodexProviderConfig = {
+    adapter: "chatgpt-web",
+    baseUrl: "browser://same-surface-recovery",
+    chatgptWeb: {
+      brokerSocketPath: socketPath,
+      localToolsEnabled: true,
+      solAvailable: true,
+      proAvailable: true,
+      useEnhancedWebSessionMode: true,
+    },
+  };
+  const worker = ChatGptBrowserWorker.forProvider(provider);
+  const originalRun = worker.run.bind(worker);
+  let browserStarts = 0;
+
+  (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+    browserStarts += 1;
+    const prepared = await turn.prepare();
+    prepared.release();
+    turn.onSubmitted?.();
+    const retry = await turn.retryPromptForError?.(
+      chatGptCompletionEvidenceError("completion evidence disappeared", false),
+      1,
+    );
+    expect(retry).toMatchObject({
+      text: CHATGPT_SAME_SURFACE_RECOVERY_PROMPT,
+      replaceCandidate: true,
+    });
+    const answer = "Recovered in the retained conversation.";
+    turn.onTextDelta(answer);
+    return answer;
+  };
+
+  try {
+    const request = initialRequest();
+    request._canonicalContextComplete = true;
+    const events: AdapterEvent[] = [];
+    await createChatGptWebAdapter(provider).runTurn!(request, { headers: new Headers() }, event => events.push(event));
+
+    expect(browserStarts).toBe(1);
+    expect(events.filter(event => event.type === "text_delta").map(event => event.text).join(""))
+      .toBe("Recovered in the retained conversation.");
+    expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+  } finally {
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+    await TurnBroker.forSocket(socketPath).close();
+  }
+});
+
+test("original Web session mode does not install same-conversation recovery", async () => {
+  const socketPath = brokerTestEndpoint(`cgw-original-surface-${process.pid}-${Date.now()}`);
+  const provider: CodexProviderConfig = {
+    adapter: "chatgpt-web",
+    baseUrl: "browser://original-surface-recovery",
+    chatgptWeb: {
+      brokerSocketPath: socketPath,
+      localToolsEnabled: true,
+      solAvailable: true,
+      proAvailable: true,
+      useEnhancedWebSessionMode: false,
+    },
+  };
+  const worker = ChatGptBrowserWorker.forProvider(provider);
+  const originalRun = worker.run.bind(worker);
+
+  (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+    expect(turn.retryPromptForError).toBeUndefined();
+    const prepared = await turn.prepare();
+    prepared.release();
+    const answer = "Original mode answer.";
+    turn.onTextDelta(answer);
+    return answer;
+  };
+
+  try {
+    const request = initialRequest();
+    request._canonicalContextComplete = true;
+    const events: AdapterEvent[] = [];
+    await createChatGptWebAdapter(provider).runTurn!(request, { headers: new Headers() }, event => events.push(event));
+    expect(events.filter(event => event.type === "text_delta").map(event => event.text).join(""))
+      .toBe("Original mode answer.");
+  } finally {
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+    await TurnBroker.forSocket(socketPath).close();
+  }
+});
 
 test("rebuilds a submitted tool surface once from complete canonical state", async () => {
   const socketPath = brokerTestEndpoint(`cgw-submitted-recovery-${process.pid}-${Date.now()}`);

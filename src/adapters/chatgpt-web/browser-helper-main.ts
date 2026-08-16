@@ -58,6 +58,7 @@ interface AnswerRetryMessage {
   id: string;
   prompt?: string;
   acknowledge?: boolean;
+  replaceCandidate?: boolean;
 }
 type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage
   | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
@@ -189,9 +190,18 @@ async function run(message: RunMessage): Promise<void> {
       answerRetryWaiters.set(message.id, resolve);
       writeProtocol({ type: "event", id: message.id, event: "answer", text, attempt });
     }),
-    retryPromptForError: (error, attempt) => new Promise<string | undefined>(resolve => {
-      answerRetryWaiters.set(message.id, prompt => resolve(typeof prompt === "string" ? prompt : prompt?.text));
-      writeProtocol({ type: "event", id: message.id, event: "error_retry", text: error.message, attempt });
+    retryPromptForError: (error, attempt) => new Promise<string | ChatGptRetryPrompt | undefined>(resolve => {
+      answerRetryWaiters.set(message.id, resolve);
+      writeProtocol({
+        type: "event", id: message.id, event: "error_retry", text: error.message, attempt,
+        ...(error instanceof ChatGptWebAdapterError ? {
+          status: error.status,
+          errorType: error.errorType,
+          code: error.code,
+          retryable: error.retryable,
+          retireSession: error.retireSession,
+        } : {}),
+      });
     }),
     ...(message.turn.captureLunaCheckpoint ? {
       captureLunaCheckpoint: true,
@@ -308,8 +318,14 @@ input.on("line", line => {
     if (resolve) {
       answerRetryWaiters.delete(message.id);
       const prompt = typeof message.prompt === "string" && message.prompt ? message.prompt : undefined;
-      resolve(prompt && message.acknowledge
-        ? { text: prompt, onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "retry_submitted" }) }
+      resolve(prompt && (message.acknowledge || message.replaceCandidate)
+        ? {
+            text: prompt,
+            ...(message.acknowledge
+              ? { onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "retry_submitted" }) }
+              : {}),
+            ...(message.replaceCandidate ? { replaceCandidate: true } : {}),
+          }
         : prompt);
     }
   } else if (message.type === "shutdown") {

@@ -34,6 +34,21 @@ export function chatGptWebSurfaceError(message: string, streamed: boolean): Chat
   });
 }
 
+export function chatGptCompletionEvidenceError(
+  message: string,
+  streamed: boolean,
+): ChatGptWebAdapterError {
+  return new ChatGptWebAdapterError(message, {
+    status: 502,
+    errorType: "server_error",
+    code: "chatgpt_completion_evidence_missing",
+    retryable: !streamed,
+    // The page may still be healthy. BrowserWorker asks the canonical session owner whether a
+    // same-conversation replacement is safe before the adapter retires this surface.
+    retireSession: false,
+  });
+}
+
 export function chatGptSessionFailureDisposition(error: unknown): "replay" | "retire" {
   return error instanceof ChatGptWebAdapterError && !error.retryable && !error.retireSession
     ? "replay"

@@ -7,7 +7,12 @@ import { claudeAdditiveSteeringInstruction } from "./tool-result-delivery";
 import { chatGptConversationKey, chatGptTurnSteeringId, type ChatGptSteeringFeed, type ChatGptTurnRuntime, type ChatGptTurnSession, type ChatGptTurnSessions } from "./turn-execution";
 import type { CompletedClaudeSteering } from "./steering-feed";
 
-export interface ChatGptRetryPrompt { text: string; onSubmitted?: () => void }
+export interface ChatGptRetryPrompt {
+  text: string;
+  onSubmitted?: () => void;
+  /** Discard an uncommitted candidate from the failed response instead of concatenating it. */
+  replaceCandidate?: boolean;
+}
 type AnswerRetryValue = string | ChatGptRetryPrompt | undefined;
 type AnswerRetry = (answer: string, attempt: number) => AnswerRetryValue | Promise<AnswerRetryValue>;
 

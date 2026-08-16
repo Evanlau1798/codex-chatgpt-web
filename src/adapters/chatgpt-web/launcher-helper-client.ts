@@ -233,7 +233,11 @@ export class LauncherBrowserHelperClient {
             if (!prompt) return this.send({ type: "answer_retry", id: message.id });
             const retry = typeof prompt === "string" ? { text: prompt } : prompt;
             pending.acknowledgeRetry = retry.onSubmitted;
-            return this.send({ type: "answer_retry", id: message.id, prompt: retry.text, ...(retry.onSubmitted ? { acknowledge: true } : {}) });
+            return this.send({
+              type: "answer_retry", id: message.id, prompt: retry.text,
+              ...(retry.onSubmitted ? { acknowledge: true } : {}),
+              ...(retry.replaceCandidate ? { replaceCandidate: true } : {}),
+            });
           })
           .catch(error => this.abortWithLocalFailure(
             message.id,
@@ -241,8 +245,26 @@ export class LauncherBrowserHelperClient {
           ));
       }
       else if (message.event === "error_retry") {
-        void Promise.resolve().then(() => pending.turn.retryPromptForError?.(new Error(message.text), message.attempt))
-          .then(prompt => this.send({ type: "answer_retry", id: message.id, ...(prompt ? { prompt } : {}) }))
+        const failure = message.status !== undefined
+          ? new ChatGptWebAdapterError(message.text, {
+            status: message.status,
+            errorType: message.errorType!,
+            code: message.code!,
+            retryable: message.retryable!,
+            retireSession: message.retireSession === true,
+          })
+          : new Error(message.text);
+        void Promise.resolve().then(() => pending.turn.retryPromptForError?.(failure, message.attempt))
+          .then(prompt => {
+            if (!prompt) return this.send({ type: "answer_retry", id: message.id });
+            const retry = typeof prompt === "string" ? { text: prompt } : prompt;
+            pending.acknowledgeRetry = retry.onSubmitted;
+            return this.send({
+              type: "answer_retry", id: message.id, prompt: retry.text,
+              ...(retry.onSubmitted ? { acknowledge: true } : {}),
+              ...(retry.replaceCandidate ? { replaceCandidate: true } : {}),
+            });
+          })
           .catch(error => this.abortWithLocalFailure(
             message.id,
             error instanceof Error ? error : new Error(String(error)),

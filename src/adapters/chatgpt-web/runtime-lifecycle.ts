@@ -67,6 +67,62 @@ export interface ChatGptSurfaceRecoveryDecision {
   unresolvedSupersededCount: number;
 }
 
+export type ChatGptSameSurfaceRecoveryReason =
+  | "eligible"
+  | "mode_disabled"
+  | "already_recovered"
+  | "aborted"
+  | "unsupported_error"
+  | "non_retryable"
+  | "final_streamed"
+  | "canonical_incomplete"
+  | "superseded_results_pending"
+  | "tool_results_pending";
+
+export interface ChatGptSameSurfaceRecoveryDecision {
+  eligible: boolean;
+  reason: ChatGptSameSurfaceRecoveryReason;
+  outstandingCount: number;
+  unresolvedSupersededCount: number;
+}
+
+export const CHATGPT_SAME_SURFACE_RECOVERY_PROMPT = [
+  "Continue the current task from the work already completed in this conversation.",
+  "Do not repeat completed tool calls.",
+  "Finish any remaining work and provide the final response.",
+].join(" ");
+
+export function chatGptSameSurfaceRecoveryDecision(
+  error: unknown,
+  session: ChatGptTurnSession,
+  attempt: number,
+  enhancedMode: boolean,
+  signal?: AbortSignal,
+): ChatGptSameSurfaceRecoveryDecision {
+  const outstandingCount = session.outstanding().length;
+  const unresolvedSupersededCount = session.unresolvedSupersededResultIds().length;
+  const reject = (
+    reason: Exclude<ChatGptSameSurfaceRecoveryReason, "eligible">,
+  ): ChatGptSameSurfaceRecoveryDecision => ({
+    eligible: false,
+    reason,
+    outstandingCount,
+    unresolvedSupersededCount,
+  });
+  if (!enhancedMode) return reject("mode_disabled");
+  if (attempt > 1) return reject("already_recovered");
+  if (signal?.aborted) return reject("aborted");
+  if (!(error instanceof ChatGptWebAdapterError)
+    || error.code !== "chatgpt_completion_evidence_missing") return reject("unsupported_error");
+  if (!error.retryable) return reject("non_retryable");
+  if (session.runtime.text.value().length > 0) return reject("final_streamed");
+  const canonical = session.canonicalCallDiagnostics();
+  if (!canonical.complete) return reject("canonical_incomplete");
+  if (unresolvedSupersededCount > 0) return reject("superseded_results_pending");
+  if (outstandingCount > 0) return reject("tool_results_pending");
+  return { eligible: true, reason: "eligible", outstandingCount, unresolvedSupersededCount };
+}
+
 export function chatGptSurfaceRecoveryDecision(
   error: unknown,
   session: ChatGptTurnSession,
@@ -86,7 +142,9 @@ export function chatGptSurfaceRecoveryDecision(
   if (signal?.aborted) return reject("aborted");
   if (session.runtime.mode !== "tools") return reject("read_only");
   const surfaceFailure = error instanceof ChatGptWebAdapterError
-    && (error.code === "chatgpt_surface_changed" || error.code === "chatgpt_connector_unavailable");
+    && (error.code === "chatgpt_surface_changed"
+      || error.code === "chatgpt_connector_unavailable"
+      || error.code === "chatgpt_completion_evidence_missing");
   if (!surfaceFailure && !(error instanceof StallTimeoutError)) {
     return reject("unsupported_error");
   }

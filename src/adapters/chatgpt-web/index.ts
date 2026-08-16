@@ -27,6 +27,7 @@ import { chatGptAgentLifecycleOptions } from "./agent-session-lifecycle";
 import { submittedBrowserFailure, submittedStallFailure } from "./submitted-turn";
 import { ChatGptLunaCheckpointStore, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint";
 import { requestCompactionHandoff } from "./retained-compaction-handoff";
+import { createChatGptSameSurfaceRetry } from "./same-surface-recovery";
 export function createChatGptWebAdapter(provider: CodexProviderConfig): ProviderAdapter {
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = TurnBroker.forSocket(brokerSocketPath(provider));
@@ -41,12 +42,9 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       ? resolve(expandUserPath(provider.chatgptWeb.lunaCheckpointStatePath))
       : undefined,
   );
-  const startRuntime = (
-    parsed: CodexParsedRequest,
+  const startRuntime = (parsed: CodexParsedRequest,
     environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined,
-    traceId: string,
-    turnCapabilities: ChatGptWebCapabilities,
-  ): ChatGptTurnRuntime => {
+    traceId: string, turnCapabilities: ChatGptWebCapabilities): ChatGptTurnRuntime => {
     const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
     const identity = extractChatGptTurnIdentity(parsed);
     const captureLunaCheckpoint = parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID
@@ -84,6 +82,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     let toolResultDelivered = false;
     const submission = { accepted: false };
     const handoffPrompts = useEnhancedWebSessionMode ? createActiveCompactionHandoffPrompts() : undefined;
+    const runtimeExecutionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
     const { retainConversation: requestedRetention, retryPromptForAnswer: upstreamRetry } = claudeBrowserTurnOptions(
       checkpointInput.parsed,
       handoffPrompts?.retryPromptForAnswer,
@@ -97,6 +96,9 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const releaseRetainedConversation = retainedConversationRelease(provider, conversationKey);
     const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
     const retryPromptForAnswer = parsed._compactionRequest || !steering ? upstreamRetry : browserSteeringRetry(steering, traceId, upstreamRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, isClaudeClientSession(checkpointInput.parsed));
+    const retryPromptForError = createChatGptSameSurfaceRetry({ traceId, executionKey: runtimeExecutionKey,
+      enhancedMode: useEnhancedWebSessionMode, abortSignal: browserAbort.signal,
+      upstream: handoffPrompts?.retryPromptForError });
     if (!mode.localTools) {
       const base = {
         modelId: parsed.modelId,
@@ -130,7 +132,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         onSubmitted: () => { submission.accepted = true; },
         onTextDelta: delta => text.push(delta),
         ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
-        ...(handoffPrompts ? { retryPromptForError: handoffPrompts.retryPromptForError } : {}),
+        ...(retryPromptForError ? { retryPromptForError } : {}),
       });
       const browser = finalizeCheckpoint(browserRun);
       return {
@@ -186,7 +188,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       onSubmitted: () => { submission.accepted = true; },
       onTextDelta: delta => text.push(delta),
       ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
-      ...(handoffPrompts ? { retryPromptForError: handoffPrompts.retryPromptForError } : {}),
+      ...(retryPromptForError ? { retryPromptForError } : {}),
       ...(captureLunaCheckpoint ? {
         captureLunaCheckpoint: true,
         onLunaCheckpoint: captureCheckpoint,

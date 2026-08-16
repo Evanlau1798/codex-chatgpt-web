@@ -431,6 +431,56 @@ test("launcher helper retries recoverable browser failures in the same turn", as
   }]);
 });
 
+test("launcher helper preserves structured replacement retries for completion evidence failures", async () => {
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
+    storageStatePath: "/durable/unused-state.json", chromeExecutablePath: "/durable/unused-chrome",
+    turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
+  });
+  const sent: unknown[] = [];
+  let received: unknown;
+  const internal = client as unknown as {
+    child?: unknown;
+    pending: Map<string, { turn: BrowserTurn; resolve: (value: string) => void; reject: (error: Error) => void }>;
+    handleLine(child: unknown, line: string): void;
+    send(message: unknown): Promise<void>;
+  };
+  const child = {};
+  internal.child = child;
+  internal.send = async message => { sent.push(message); };
+  internal.pending.set("completion-retry-123", {
+    turn: {
+      traceId: "completion-retry-123", modelId: "gpt-5.6-sol",
+      capabilities: { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+      prepare: async () => ({ text: "inspect", images: [], release() {} }), onTextDelta() {},
+      retryPromptForError: error => {
+        received = error;
+        return { text: "finish from the current conversation", replaceCandidate: true };
+      },
+    },
+    resolve() {}, reject() {},
+  });
+
+  internal.handleLine(child, JSON.stringify({
+    type: "event", id: "completion-retry-123", event: "error_retry",
+    text: "completion evidence disappeared", attempt: 1,
+    status: 502, errorType: "server_error", code: "chatgpt_completion_evidence_missing",
+    retryable: true, retireSession: false,
+  }));
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  expect(received).toMatchObject({
+    name: "ChatGptWebAdapterError",
+    code: "chatgpt_completion_evidence_missing",
+    retryable: true,
+    retireSession: false,
+  });
+  expect(sent).toEqual([{
+    type: "answer_retry", id: "completion-retry-123",
+    prompt: "finish from the current conversation", replaceCandidate: true,
+  }]);
+});
+
 test("launcher helper preserves retry submission acknowledgement across the process boundary", async () => {
   const client = new LauncherBrowserHelperClient({
     appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",

@@ -98,7 +98,7 @@ import {
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
-import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "./adapter-error";
+import { ChatGptWebAdapterError, chatGptCompletionEvidenceError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { chatGptPromptAttachmentMismatch, reanchorChatGptComposerCaret } from "./prompt-caret";
@@ -377,7 +377,7 @@ export interface BrowserTurn {
   /** Return a corrective follow-up prompt to retry the final answer in the same chat. */
   retryPromptForAnswer?: (answer: string, attempt: number) => string | ChatGptRetryPrompt | undefined | Promise<string | ChatGptRetryPrompt | undefined>;
   /** Return a corrective follow-up prompt after a recoverable response-reading failure. */
-  retryPromptForError?: (error: Error, attempt: number) => string | undefined | Promise<string | undefined>;
+  retryPromptForError?: (error: Error, attempt: number) => string | ChatGptRetryPrompt | undefined | Promise<string | ChatGptRetryPrompt | undefined>;
 }
 
 export interface ResolvedBrowserConfig {
@@ -398,6 +398,7 @@ export class ChatGptTurnDomHealthTracker {
   private emptyCompletionSince?: number;
   private missingCompletionAction?: { text: string; since: number };
   private missingCompletionActionExpired = false;
+  private lastFailureKind?: "response_dom" | "empty_completion" | "completion_evidence";
 
   constructor(
     private readonly missingResponseMs = CHATGPT_RESPONSE_DOM_GRACE_MS,
@@ -411,12 +412,14 @@ export class ChatGptTurnDomHealthTracker {
     currentText: string;
     completionActionVisible: boolean;
   }, now = Date.now()): string | undefined {
+    this.lastFailureKind = undefined;
     if (state.responsePresent) {
       this.sawResponse = true;
       this.missingResponseSince = undefined;
     } else {
       this.missingResponseSince ??= now;
       if (now - this.missingResponseSince >= this.missingResponseMs) {
+        this.lastFailureKind = "response_dom";
         return this.sawResponse
           ? "ChatGPT response DOM disappeared while the browser turn was active"
           : "ChatGPT did not create a response DOM after the message was sent";
@@ -432,6 +435,7 @@ export class ChatGptTurnDomHealthTracker {
     } else {
       this.emptyCompletionSince ??= now;
       if (now - this.emptyCompletionSince >= this.emptyCompletionMs) {
+        this.lastFailureKind = "empty_completion";
         return "ChatGPT browser turn completed without a final answer";
       }
     }
@@ -448,11 +452,16 @@ export class ChatGptTurnDomHealthTracker {
       this.missingCompletionActionExpired = false;
     } else if (now - this.missingCompletionAction.since >= this.missingCompletionActionMs) {
       if (this.missingCompletionActionExpired) {
+        this.lastFailureKind = "completion_evidence";
         return "ChatGPT stopped generating but did not expose its completed-turn action; the ChatGPT DOM may have changed";
       }
       this.missingCompletionActionExpired = true;
     }
     return undefined;
+  }
+
+  failureKind(): "response_dom" | "empty_completion" | "completion_evidence" | undefined {
+    return this.lastFailureKind;
   }
 }
 
@@ -2125,7 +2134,11 @@ export class ChatGptBrowserWorker {
             currentText: snapshot.visibleText,
             completionActionVisible: snapshot.completionActionVisible,
           });
-          if (domError) throw chatGptWebSurfaceError(domError, answerBuffer.deliveredChars() > 0);
+          if (domError) {
+            throw domHealthTracker.failureKind() === "completion_evidence"
+              ? chatGptCompletionEvidenceError(domError, answerBuffer.deliveredChars() > 0)
+              : chatGptWebSurfaceError(domError, answerBuffer.deliveredChars() > 0);
+          }
           const completion = completionTracker.update({
             responsePresent: snapshot.responsePresent,
             running,
@@ -2207,9 +2220,10 @@ export class ChatGptBrowserWorker {
           if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry browser failures");
           const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
           if (await stop.isVisible().catch(() => false)) await stop.press("Enter").catch(() => {});
-          responsePrompt = retryPrompt;
-          answerBuffer.continueAfterError();
-          retrySubmitted = undefined;
+          const retry = typeof retryPrompt === "string" ? { text: retryPrompt } : retryPrompt;
+          responsePrompt = retry.text;
+          answerBuffer.retryAfterError(retry.replaceCandidate === true);
+          retrySubmitted = retry.onSubmitted;
           const reason = failure instanceof ChatGptWebAdapterError
             ? `${failure.name}:${failure.code}`
             : failure.name;

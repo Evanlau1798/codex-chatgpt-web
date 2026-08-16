@@ -12,6 +12,11 @@ export class ChatGptAnswerBuffer {
     this.candidate = "";
   }
 
+  retryAfterError(replaceCandidate: boolean): void {
+    if (replaceCandidate) this.retryReplacement();
+    else this.continueAfterError();
+  }
+
   retryReplacement(): void {
     this.candidate = "";
   }

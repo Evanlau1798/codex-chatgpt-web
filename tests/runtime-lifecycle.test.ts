@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
-import { ChatGptSurfaceRecoveryTracker, chatGptSurfaceRecoveryDecision } from "../src/adapters/chatgpt-web/runtime-lifecycle";
+import { ChatGptWebAdapterError, chatGptCompletionEvidenceError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
+import { ChatGptSurfaceRecoveryTracker, chatGptSameSurfaceRecoveryDecision, chatGptSurfaceRecoveryDecision } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
 import type { CodexParsedRequest } from "../src/types";
 import { StallTimeoutError } from "../src/stall-timeout";
@@ -210,4 +210,51 @@ test("tool result delivery updates the live browser runtime state", () => {
   session.markResultDelivered("call_1");
 
   expect(delivered).toBe(true);
+});
+
+test("same-surface recovery requires complete canonical state and no pending effects", () => {
+  const session = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_same_surface"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  session.observeCanonicalRequest(completeRequest());
+  const failure = chatGptCompletionEvidenceError("completion evidence disappeared", false);
+
+  expect(chatGptSameSurfaceRecoveryDecision(failure, session, 1, true))
+    .toMatchObject({ eligible: true, reason: "eligible" });
+  expect(chatGptSameSurfaceRecoveryDecision(failure, session, 1, false))
+    .toMatchObject({ eligible: false, reason: "mode_disabled" });
+  expect(chatGptSameSurfaceRecoveryDecision(failure, session, 2, true))
+    .toMatchObject({ eligible: false, reason: "already_recovered" });
+
+  session.setOutstanding([{ callId: "call_pending", wireName: "exec_command", freeform: false, arguments: {} }]);
+  expect(chatGptSameSurfaceRecoveryDecision(failure, session, 1, true))
+    .toMatchObject({ eligible: false, reason: "tool_results_pending" });
+});
+
+test("same-surface recovery rejects partial final output, aborts, and unrelated failures", () => {
+  const text = new ChatGptTextFeed();
+  const session = new ChatGptTurnSession({
+    mode: "read-only",
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text,
+    cancel: () => {},
+  });
+  session.observeCanonicalRequest(completeRequest());
+  const failure = chatGptCompletionEvidenceError("completion evidence disappeared", false);
+  const abort = new AbortController();
+  abort.abort();
+
+  expect(chatGptSameSurfaceRecoveryDecision(failure, session, 1, true, abort.signal))
+    .toMatchObject({ eligible: false, reason: "aborted" });
+  expect(chatGptSameSurfaceRecoveryDecision(chatGptWebSurfaceError("page closed", false), session, 1, true))
+    .toMatchObject({ eligible: false, reason: "unsupported_error" });
+  text.push("already delivered");
+  expect(chatGptSameSurfaceRecoveryDecision(failure, session, 1, true))
+    .toMatchObject({ eligible: false, reason: "final_streamed" });
 });

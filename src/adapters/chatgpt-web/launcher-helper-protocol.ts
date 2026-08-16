@@ -7,7 +7,19 @@ export type LauncherHelperMessage =
   | { type: "ready" }
   | { type: "event"; id: string; event: "heartbeat" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
   | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
-  | { type: "event"; id: string; event: "answer" | "error_retry"; text: string; attempt: number }
+  | { type: "event"; id: string; event: "answer"; text: string; attempt: number }
+  | {
+      type: "event";
+      id: string;
+      event: "error_retry";
+      text: string;
+      attempt: number;
+      status?: number;
+      errorType?: string;
+      code?: string;
+      retryable?: boolean;
+      retireSession?: boolean;
+    }
   | { type: "event"; id: string; event: "luna_checkpoint"; checkpoint: ChatGptLunaCheckpoint; answerHash: string }
   | { type: "result"; id: string; text: string }
   | {
@@ -49,7 +61,34 @@ function parseEvent(message: Record<string, unknown> & { id: string }): Launcher
     if (typeof message.text !== "string" || !Number.isSafeInteger(message.attempt) || Number(message.attempt) < 1) {
       throw new Error("Launcher browser helper answer event is invalid");
     }
-    return { type: "event", id: message.id, event, text: message.text, attempt: Number(message.attempt) };
+    if (event === "answer") {
+      return { type: "event", id: message.id, event, text: message.text, attempt: Number(message.attempt) };
+    }
+    const structured = message.status !== undefined
+      || message.errorType !== undefined
+      || message.code !== undefined
+      || message.retryable !== undefined;
+    if (structured && (
+      !Number.isInteger(message.status)
+      || (message.status as number) < 400
+      || (message.status as number) > 599
+      || typeof message.errorType !== "string"
+      || !message.errorType
+      || typeof message.code !== "string"
+      || !message.code
+      || typeof message.retryable !== "boolean"
+      || (message.retireSession !== undefined && typeof message.retireSession !== "boolean")
+    )) throw new Error("Launcher browser helper error-retry event is invalid");
+    return {
+      type: "event", id: message.id, event, text: message.text, attempt: Number(message.attempt),
+      ...(structured ? {
+        status: message.status as number,
+        errorType: message.errorType as string,
+        code: message.code as string,
+        retryable: message.retryable as boolean,
+        ...(message.retireSession === true ? { retireSession: true } : {}),
+      } : {}),
+    };
   }
   if (event === "luna_checkpoint") {
     if (typeof message.answerHash !== "string" || !/^[a-f0-9]{64}$/.test(message.answerHash)) {

@@ -1708,6 +1708,7 @@ test("browser DOM health fails closed on a vanished or empty ChatGPT response", 
   expect(missingCompletionAction.update(completedWithoutMarker, 1_749)).toBeUndefined();
   expect(missingCompletionAction.update(completedWithoutMarker, 1_750)).toBeUndefined();
   expect(missingCompletionAction.update(completedWithoutMarker, 1_751)).toContain("DOM may have changed");
+  expect(missingCompletionAction.failureKind()).toBe("completion_evidence");
 
   const actionAppearsAtBoundary = new ChatGptTurnDomHealthTracker(1_000, 500, 750);
   expect(actionAppearsAtBoundary.update(completedWithoutMarker, 1_000)).toBeUndefined();

@@ -38,3 +38,13 @@ test("buffered validation candidates are not classified as client-visible final 
   expect(answers.takeDeliverable(true)).toBe("candidate waiting for completion evidence");
   expect(answers.deliveredChars()).toBe("candidate waiting for completion evidence".length);
 });
+
+test("same-surface error recovery replaces an uncommitted stale candidate", () => {
+  const answers = new ChatGptAnswerBuffer();
+  answers.append("stale incomplete final");
+  answers.retryAfterError(true);
+  answers.append("complete recovered final");
+
+  expect(answers.value()).toBe("complete recovered final");
+  expect(answers.takeDeliverable(true)).toBe("complete recovered final");
+});
