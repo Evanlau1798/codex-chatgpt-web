@@ -83,6 +83,15 @@ export class ChatGptVisibleTraceTracker {
       sawFirstCommentary = true;
       return { ...block, key: "stream" };
     });
+    const commentaryEmissionBaseline = commentary
+      ? blocks.filter(block => block.kind === "commentary").reduce((combined, block, index) => {
+          const sourceKey = index === 0
+            ? "commentary:stream"
+            : `commentary:${block.key ?? index}`;
+          const emitted = this.emittedTrace.get(sourceKey) ?? "";
+          return emitted.startsWith(combined) ? emitted : combined + emitted;
+        }, "")
+      : "";
     const observable = commentary
       ? [
           ...(!this.emittedTrace.has("commentary:stream") || commentarySettled
@@ -146,8 +155,15 @@ export class ChatGptVisibleTraceTracker {
       if (block.kind === "commentary" && previous && !stableText.startsWith(previous)) continue;
       this.emittedTrace.set(slot, stableText);
       const kind = block.kind === "commentary" ? "commentary" : "reasoning";
-      if (previous && stableText.startsWith(previous)) {
-        output.push({ kind, text: stableText.slice(previous.length), continuation: true });
+      const deliveredPrefix = block.kind === "commentary"
+        && slot === "commentary:stream"
+        && commentaryEmissionBaseline.length > (previous?.length ?? 0)
+        && stableText.startsWith(commentaryEmissionBaseline)
+        ? commentaryEmissionBaseline
+        : previous;
+      if (deliveredPrefix && stableText.startsWith(deliveredPrefix)) {
+        const suffix = stableText.slice(deliveredPrefix.length);
+        if (suffix) output.push({ kind, text: suffix, continuation: true });
       } else {
         output.push({ kind, text: stableText });
       }

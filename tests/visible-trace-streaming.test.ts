@@ -129,6 +129,28 @@ test("does not replay a completed commentary root while its React replacement gr
   );
 });
 
+test("does not replay a later commentary root when earlier roots become complete", () => {
+  const tracker = new ChatGptVisibleTraceTracker(100);
+  const output = [];
+  const bothIncomplete = [
+    { kind: "commentary" as const, key: "first", text: "First root:", complete: false },
+    { kind: "commentary" as const, key: "second", text: "second root", complete: false },
+  ];
+
+  output.push(...tracker.observe(bothIncomplete, false, 1_000));
+  output.push(...tracker.observe(bothIncomplete, false, 1_100));
+  output.push(...tracker.observe([
+    { ...bothIncomplete[0], complete: true },
+    bothIncomplete[1],
+  ], false, 1_200));
+  output.push(...tracker.observe([
+    { ...bothIncomplete[0], complete: true },
+    bothIncomplete[1],
+  ], false, 1_300));
+
+  expect(output.map(event => event.text).join("")).toBe("First root:second root");
+});
+
 test("waits out escaped raw Markdown until the renderer exposes stable Markdown", () => {
   const tracker = new ChatGptVisibleTraceTracker(100);
   const raw = [{ kind: "commentary" as const, text: "I am starting \\*\\*SMOKE_PROGRESS" }];
