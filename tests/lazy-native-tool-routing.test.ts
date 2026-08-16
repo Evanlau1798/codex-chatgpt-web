@@ -119,6 +119,79 @@ test("loads a deferred stateful tool into the same Native2 turn without an exec 
   }
 }, 30_000);
 
+test("the final context archive chunk resumes bound Native2 tool discovery", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-context-resume-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  const readTool: CodexTool = {
+    name: "read_file",
+    description: "Read a local instruction file",
+    parameters: { type: "object", properties: { path: { type: "string" } } },
+  };
+  const environment = {
+    cwd: process.cwd(),
+    roots: [process.cwd()],
+    writableRoots: [],
+    sandboxPolicy: { type: "readOnly" as const, networkAccess: false },
+    tools: [readTool],
+  };
+  const turnToken = await broker.register(environment, 60_000, "context-resume-test");
+  const archive = `${"A".repeat(300_000)}\n${"B".repeat(300_000)}\n`;
+  const contextToken = await broker.registerContext(archive, 60_000, "context-resume-test", turnToken);
+  const client = await clientFor(socketPath);
+
+  try {
+    const first = await client.callTool({
+      name: "codex_tool_inventory",
+      arguments: { turn_token: contextToken, query: "__codex_context__:0", include_schema: false },
+    });
+    const firstText = (first.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(first.isError).not.toBe(true);
+    expect(firstText).toContain("next_query=__codex_context__:1");
+    expect(firstText).not.toContain("CODEX_CONTEXT_ARCHIVE_READY");
+
+    const blocked = await client.callTool({
+      name: "codex_tool_inventory",
+      arguments: { turn_token: turnToken, query: "read_file", include_schema: false },
+    });
+    expect(blocked.isError).toBe(true);
+    expect((blocked.content as Array<{ text: string }>)[0]?.text).toContain("complete Codex context archive");
+
+    const second = await client.callTool({
+      name: "codex_tool_inventory",
+      arguments: { turn_token: contextToken, query: "__codex_context__:1", include_schema: false },
+    });
+    const secondText = (second.content as Array<{ text: string }>)[0]?.text ?? "";
+    expect(second.isError).not.toBe(true);
+    expect(secondText).toContain("next_query=null");
+    expect(secondText.match(/CODEX_CONTEXT_ARCHIVE_READY/g)).toHaveLength(1);
+    expect(secondText).toContain("codex_native_turn_binding");
+    expect(secondText).not.toContain(turnToken);
+    expect(secondText).not.toContain(contextToken);
+    const archiveBody = (text: string) => text.slice(
+      text.indexOf("\n") + 1,
+      text.lastIndexOf("\nCODEX_CONTEXT_ARCHIVE_END"),
+    );
+    expect(`${archiveBody(firstText)}${archiveBody(secondText)}`).toBe(archive);
+
+    const inventory = await client.callTool({
+      name: "codex_tool_inventory",
+      arguments: { turn_token: turnToken, query: "read_file", include_schema: false },
+    });
+    expect(inventory.isError).not.toBe(true);
+    expect(inventory.structuredContent).toMatchObject({
+      total: 1,
+      tools: [{ wire_name: "read_file", kind: "function" }],
+    });
+  } finally {
+    await client.close().catch(() => {});
+    broker.revokeContext(contextToken);
+    broker.revoke(turnToken);
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);
+
 test("routes codex_exec through Claude Code Bash when Codex command tools are absent", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-claude-bash-"));
   const socketPath = defaultBrokerEndpoint(root);

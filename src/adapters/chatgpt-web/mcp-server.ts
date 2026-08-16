@@ -5,6 +5,7 @@ import * as z from "zod/v4";
 import { namespacedToolName, type CodexTool } from "../../types";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS } from "./context-bootstrap";
+import { formatContextArchiveChunk } from "./context-archive-response";
 import { callTurnBroker, type BrokerToolResult } from "./turn-broker";
 
 interface ClaimedTurn {
@@ -429,14 +430,9 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
           index: requestedIndex,
           chunkChars: CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS,
         });
-        const nextQuery = archive.nextIndex === null ? "null" : `__codex_context__:${archive.nextIndex}`;
         return { content: [{
           type: "text" as const,
-          text: [
-            `CODEX_CONTEXT_ARCHIVE v=1 index=${archive.index} total=${archive.total} chars=${archive.context.length} sha256=${archive.sha256}`,
-            archive.context,
-            `CODEX_CONTEXT_ARCHIVE_END index=${archive.index} sha256=${archive.sha256} next_query=${nextQuery}`,
-          ].join("\n"),
+          text: formatContextArchiveChunk(archive),
         }] };
       }
       const claimed = await claimTurn("codex_tool_inventory", turn_token, extra);
