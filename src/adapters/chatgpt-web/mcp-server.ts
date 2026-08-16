@@ -6,6 +6,13 @@ import { namespacedToolName, type CodexTool } from "../../types";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS } from "./context-bootstrap";
 import { formatContextArchiveChunk } from "./context-archive-response";
+import {
+  claudeBashCommand,
+  execCommandGatewayProgram,
+  execGatewayProgram,
+  ONE_SHOT_SHELL_TTY_ERROR,
+  readTextFileCommand,
+} from "./native-command";
 import { callTurnBroker, type BrokerToolResult } from "./turn-broker";
 
 interface ClaimedTurn {
@@ -120,11 +127,6 @@ function execGateway(environment: ChatGptTurnEnvironment): CodexTool | undefined
   return tool?.freeform ? tool : undefined;
 }
 
-function gatewayNestedToolName(toolName: string): string {
-  return toolName.replace(/[^A-Za-z0-9_$]/g, "_");
-}
-
-const ONE_SHOT_SHELL_TTY_ERROR = "The one-shot shell_command cannot provide a TTY or accept later stdin. Pipe input inside the same command and use APIs compatible with the active platform shell.";
 const CONNECTOR_LONG_POLL_SLICE_MS = 30_000;
 
 export function boundedConnectorToolArguments(tool: CodexTool, args: Record<string, unknown>): Record<string, unknown> {
@@ -133,65 +135,6 @@ export function boundedConnectorToolArguments(tool: CodexTool, args: Record<stri
     : typeof args.yield_time_ms === "number" ? "yield_time_ms" : undefined;
   if (!timeoutKey || (args[timeoutKey] as number) <= CONNECTOR_LONG_POLL_SLICE_MS) return args;
   return { ...args, [timeoutKey]: CONNECTOR_LONG_POLL_SLICE_MS };
-}
-
-function execGatewayResultProgram(invocation: string[]): string {
-  return [
-    ...invocation,
-    "const emit = value => {",
-    "  if (Array.isArray(value)) { for (const item of value) emit(item); return; }",
-    "  if (value && typeof value === \"object\") {",
-    "    if (value.type === \"image\") { image(value); return; }",
-    "    if (value.type === \"audio\") { audio(value); return; }",
-    "    if (value.type === \"text\" && typeof value.text === \"string\") { text(value.text); return; }",
-    "    if (typeof value.image_url === \"string\" && typeof value.output_hint === \"string\") { generatedImage(value); return; }",
-    "    if (typeof value.image_url === \"string\") { image(value.image_url, value.detail ?? \"auto\"); return; }",
-    "    if (typeof value.audio_url === \"string\") { audio(value.audio_url); return; }",
-    "    if (Array.isArray(value.content)) { for (const item of value.content) emit(item); return; }",
-    "  }",
-    "  text(value);",
-    "};",
-    "emit(result);",
-  ].join("\n");
-}
-
-function execGatewayProgram(
-  nestedToolName: string,
-  freeform: boolean,
-  payload: { arguments?: Record<string, unknown>; input?: string },
-): string {
-  const nestedInput = freeform ? payload.input ?? "" : payload.arguments ?? {};
-  return execGatewayResultProgram([
-    `const result = await tools[${JSON.stringify(gatewayNestedToolName(nestedToolName))}](${JSON.stringify(nestedInput)});`,
-  ]);
-}
-
-function execCommandGatewayProgram(
-  execCommandArguments: Record<string, unknown>,
-  shellCommandArguments: Record<string, unknown>,
-): string {
-  const execCommandName = gatewayNestedToolName("exec_command");
-  const shellCommandName = gatewayNestedToolName("shell_command");
-  return execGatewayResultProgram([
-    "if (typeof ALL_TOOLS === \"undefined\" || !Array.isArray(ALL_TOOLS)) throw new Error(\"Native command tool registry is unavailable\");",
-    "const nativeCommandNames = new Set(ALL_TOOLS.map(tool => tool?.name));",
-    `const nativeCommandCandidates = ${JSON.stringify([execCommandName, shellCommandName])}.filter(name => nativeCommandNames.has(name));`,
-    "if (nativeCommandCandidates.length !== 1) throw new Error(\"Expected exactly one native command tool; found \" + (nativeCommandCandidates.join(\", \") || \"none\"));",
-    "const nativeCommandName = nativeCommandCandidates[0];",
-    "const nativeCommand = tools[nativeCommandName];",
-    "if (typeof nativeCommand !== \"function\") throw new Error(\"Native command tool \" + nativeCommandName + \" is listed but unavailable\");",
-    `if (nativeCommandName === ${JSON.stringify(shellCommandName)} && ${execCommandArguments.tty === true}) throw new Error(${JSON.stringify(ONE_SHOT_SHELL_TTY_ERROR)});`,
-    `const nativeCommandInput = nativeCommandName === ${JSON.stringify(execCommandName)} ? ${JSON.stringify(execCommandArguments)} : ${JSON.stringify(shellCommandArguments)};`,
-    "const result = await nativeCommand(nativeCommandInput);",
-  ]);
-}
-
-function claudeBashCommand(cmd: string, workdir?: string): string {
-  if (!workdir) return cmd;
-  const quoted = /^[A-Za-z0-9_./:@%+=,-]+$/.test(workdir)
-    ? workdir
-    : `'${workdir.replaceAll("'", `'"'"'`)}'`;
-  return `cd -- ${quoted} && ${cmd}`;
 }
 
 export async function runChatGptMcpServer(options: { brokerSocketPath: string }): Promise<void> {
@@ -254,6 +197,50 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     });
   };
 
+  const invokeNativeCommand = (
+    claimed: ClaimedTurn,
+    command: {
+      cmd: string;
+      workdir?: string;
+      yieldTimeMs?: number;
+      maxOutputTokens?: number;
+      tty?: boolean;
+    },
+  ) => {
+    const bound = claimed.environment;
+    const execCommandArguments = {
+      cmd: command.cmd,
+      ...(command.workdir ? { workdir: command.workdir } : {}),
+      ...(command.yieldTimeMs !== undefined ? { yield_time_ms: command.yieldTimeMs } : {}),
+      ...(command.maxOutputTokens !== undefined ? { max_output_tokens: command.maxOutputTokens } : {}),
+      ...(command.tty !== undefined ? { tty: command.tty } : {}),
+    };
+    const shellCommandArguments = {
+      command: command.cmd,
+      ...(command.workdir ? { workdir: command.workdir } : {}),
+      ...(command.yieldTimeMs !== undefined ? { timeout_ms: command.yieldTimeMs } : {}),
+    };
+    const tool = exactTool(bound, "exec_command") ?? exactTool(bound, "shell_command");
+    if (tool) {
+      if (tool.name === "shell_command" && command.tty === true) throw new Error(ONE_SHOT_SHELL_TTY_ERROR);
+      return invoke(claimed.bindingId, bound, tool, {
+        arguments: tool.name === "exec_command" ? execCommandArguments : shellCommandArguments,
+      });
+    }
+    const claudeBash = exactTool(bound, "Bash");
+    if (claudeBash && !claudeBash.freeform) {
+      if (command.tty === true) throw new Error(ONE_SHOT_SHELL_TTY_ERROR);
+      return invoke(claimed.bindingId, bound, claudeBash, {
+        arguments: { command: claudeBashCommand(command.cmd, command.workdir) },
+      });
+    }
+    const gateway = execGateway(bound);
+    if (!gateway) throw new Error("This Codex turn did not advertise a native command tool or the native exec gateway");
+    return invoke(claimed.bindingId, bound, gateway, {
+      input: execCommandGatewayProgram(execCommandArguments, shellCommandArguments),
+    });
+  };
+
   server.registerTool(
     "codex_read_context",
     {
@@ -288,40 +275,12 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     },
     async ({ turn_token, cmd, workdir, yield_time_ms, max_output_tokens, tty }, extra) => {
       const claimed = await claimTurn("codex_exec", turn_token, extra);
-      const bound = claimed.environment;
-      const execCommandArguments = {
+      return invokeNativeCommand(claimed, {
         cmd,
         ...(workdir ? { workdir } : {}),
-        ...(yield_time_ms !== undefined ? { yield_time_ms } : {}),
-        ...(max_output_tokens !== undefined ? { max_output_tokens } : {}),
+        ...(yield_time_ms !== undefined ? { yieldTimeMs: yield_time_ms } : {}),
+        ...(max_output_tokens !== undefined ? { maxOutputTokens: max_output_tokens } : {}),
         ...(tty !== undefined ? { tty } : {}),
-      };
-      const shellCommandArguments = {
-        command: cmd,
-        ...(workdir ? { workdir } : {}),
-        ...(yield_time_ms !== undefined ? { timeout_ms: yield_time_ms } : {}),
-      };
-      const tool = exactTool(bound, "exec_command") ?? exactTool(bound, "shell_command");
-      if (tool) {
-        if (tool.name === "shell_command" && tty === true) {
-          throw new Error(ONE_SHOT_SHELL_TTY_ERROR);
-        }
-        const args = tool.name === "exec_command" ? execCommandArguments : shellCommandArguments;
-        return invoke(claimed.bindingId, bound, tool, { arguments: args });
-      }
-      const claudeBash = exactTool(bound, "Bash");
-      if (claudeBash && !claudeBash.freeform) {
-        if (tty === true) throw new Error(ONE_SHOT_SHELL_TTY_ERROR);
-        return invoke(claimed.bindingId, bound, claudeBash, {
-          arguments: { command: claudeBashCommand(cmd, workdir) },
-        });
-      }
-      const gateway = execGateway(bound);
-      if (!gateway) {
-        throw new Error("This Codex turn did not advertise a native command tool or the native exec gateway");
-      }
-      return invoke(claimed.bindingId, bound, gateway, {
-        input: execCommandGatewayProgram(execCommandArguments, shellCommandArguments),
       });
     },
   );
@@ -415,6 +374,25 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async ({ turn_token, query, offset, limit, include_schema }, extra) => {
+      const deferredSearch = /^__codex_tool_search__:([\s\S]+)$/.exec(query ?? "");
+      const readFile = /^__codex_read_file__:([\s\S]+)$/.exec(query ?? "");
+      if (deferredSearch || readFile) {
+        const claimed = await claimTurn("codex_tool_inventory", turn_token, extra);
+        if (deferredSearch) {
+          const searchQuery = deferredSearch[1]!.trim();
+          if (!searchQuery) throw new Error("Codex deferred tool search query is empty");
+          const searchTool = exactTool(claimed.environment, "tool_search");
+          if (!searchTool?.toolSearch) throw new Error("This Codex turn did not advertise deferred tool search");
+          return invoke(claimed.bindingId, claimed.environment, searchTool, {
+            arguments: { query: searchQuery },
+          });
+        }
+        return invokeNativeCommand(claimed, {
+          cmd: readTextFileCommand(readFile![1]!),
+          yieldTimeMs: 30_000,
+          maxOutputTokens: 1_000_000,
+        });
+      }
       const archiveMatch = /^__codex_context__:(\d+)$/.exec(query?.trim() ?? "");
       if (archiveMatch) {
         const requestedIndex = Number(archiveMatch[1]);
