@@ -37,6 +37,7 @@ import { ChatGptCompletionTracker, type ChatGptFinalProjectionState } from "./co
 import type { ChatGptRetryPrompt } from "./steering";
 import { ChatGptTurnLatencyDiagnostics } from "./turn-latency";
 import {
+  activateChatGptSendControl,
   chatGptAssistantTurnChanged,
   chatGptSubmissionEvidence,
   readChatGptAssistantTurnState,
@@ -1966,7 +1967,7 @@ export class ChatGptBrowserWorker {
         await settleChatGptUi();
         await diagnostics.capture(page, "send-ready");
         await throwIfChatGptSessionFailureAlert(page);
-        await sendButton.click({ force: true });
+        await activateChatGptSendControl(sendButton);
         const evidence = await this.waitForSubmissionAccepted(
           page,
           userTurns,

@@ -1,8 +1,17 @@
 import { expect, test } from "bun:test";
 import {
+  activateChatGptSendControl,
   chatGptAssistantTurnChanged,
   chatGptSubmissionEvidence,
 } from "../src/adapters/chatgpt-web/response-turn-boundary";
+
+test("send control uses semantic keyboard activation", async () => {
+  const activations: string[] = [];
+  await activateChatGptSendControl({
+    press: async key => { activations.push(key); },
+  });
+  expect(activations).toEqual(["Enter"]);
+});
 
 test("assistant identity detects a virtualized retained response without count growth", () => {
   expect(chatGptAssistantTurnChanged(

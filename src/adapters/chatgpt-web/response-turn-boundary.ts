@@ -7,6 +7,12 @@ export interface ChatGptAssistantTurnState {
 
 export type ChatGptSubmissionEvidence = "user_turn" | "assistant_turn" | "generation_running";
 
+export async function activateChatGptSendControl(
+  sendButton: Pick<Locator, "press">,
+): Promise<void> {
+  await sendButton.press("Enter");
+}
+
 export async function readChatGptAssistantTurnState(turns: Locator): Promise<ChatGptAssistantTurnState> {
   const count = await turns.count();
   if (count === 0) return { count };
