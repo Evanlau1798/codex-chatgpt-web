@@ -4,7 +4,7 @@ import { extractChatGptTurnIdentity, extractChatGptTurnUserRevision, extractChat
 import type { BrokerToolRequest, TurnBroker } from "./turn-broker";
 import { claudeBrowserSessionGroup, claudeRootSessionThreadId, normalizeClaudeToolRequests } from "./claude-subagent";
 import { claudeAdditiveSteeringInstruction } from "./tool-result-delivery";
-import { chatGptTurnSteeringId, type ChatGptSteeringFeed, type ChatGptTurnRuntime, type ChatGptTurnSession, type ChatGptTurnSessions } from "./turn-execution";
+import { chatGptConversationKey, chatGptTurnSteeringId, type ChatGptSteeringFeed, type ChatGptTurnRuntime, type ChatGptTurnSession, type ChatGptTurnSessions } from "./turn-execution";
 import type { CompletedClaudeSteering } from "./steering-feed";
 
 export interface ChatGptRetryPrompt { text: string; onSubmitted?: () => void }
@@ -87,6 +87,9 @@ export async function sessionForChatGptRequest(
     sessions.linkGroups(parentGroup, childGroup);
   }
   const claudeRootThreadId = claudeRootSessionThreadId(parsed);
+  const replacementConversationKey = groupNamespace
+    ? chatGptConversationKey(parsed, groupNamespace)
+    : undefined;
   const steeringId = identity.threadId && identity.turnId
     ? chatGptTurnSteeringId(identity.threadId, identity.turnId)
     : undefined;
@@ -95,7 +98,7 @@ export async function sessionForChatGptRequest(
   const activeClaudeRoot = Boolean(claudeRootThreadId && !settled);
   const steering = session.updateUserRevision(revision, text, !activeClaudeRoot);
   if (!allowSteering && steering) {
-    await sessions.retireAndWait(key);
+    await sessions.retireAndWait(key, replacementConversationKey);
     session = sessions.getOrCreate(key, start, group, steeringId, claudeRootThreadId);
     session.updateUserRevision(revision, text);
     return session;
@@ -105,7 +108,7 @@ export async function sessionForChatGptRequest(
 
   const completedClaudeSteering = session.completedClaudeSteering();
   if (claudeRootThreadId) preserveCompletedClaudeSteering(parsed, completedClaudeSteering);
-  await sessions.retireAndWait(key);
+  await sessions.retireAndWait(key, replacementConversationKey);
   session = sessions.getOrCreate(key, start, group, steeringId, claudeRootThreadId);
   if (claudeRootThreadId) session.inheritCompletedClaudeSteering(completedClaudeSteering);
   session.updateUserRevision(revision, text);

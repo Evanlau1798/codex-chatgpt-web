@@ -344,7 +344,7 @@ export class ChatGptTurnSessions {
     await this.retirements.get(key);
   }
 
-  async retireAndWait(key: string): Promise<boolean> {
+  async retireAndWait(key: string, preserveConversationKey?: string): Promise<boolean> {
     const pending = this.retirements.get(key);
     if (pending) {
       await pending;
@@ -354,7 +354,7 @@ export class ChatGptTurnSessions {
     if (!session) return false;
 
     this.entries.delete(key);
-    await this.beginRetirement(key, session);
+    await this.beginRetirement(key, session, preserveConversationKey);
     return true;
   }
 
@@ -391,11 +391,14 @@ export class ChatGptTurnSessions {
     return true;
   }
 
-  private beginRetirement(key: string, session: ChatGptTurnSession): Promise<void> {
+  private beginRetirement(key: string, session: ChatGptTurnSession, preserveConversationKey?: string): Promise<void> {
     const existing = this.retirements.get(key);
     if (existing) return existing;
     session.cancel();
-    const retirement = session.browserOutcome.then(async () => { await session.runtime.release?.(); });
+    const preserveSurface = preserveConversationKey !== undefined
+      && session.runtime.conversationKey === preserveConversationKey;
+    const release = preserveSurface ? undefined : session.runtime.release;
+    const retirement = session.browserOutcome.then(async () => { await release?.(); });
     this.retirements.set(key, retirement);
     void retirement.then(() => {
       if (this.retirements.get(key) === retirement) this.retirements.delete(key);

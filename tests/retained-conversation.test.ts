@@ -87,17 +87,23 @@ test("completed Claude steering suppression follows a successful retained root s
   let resolveFirst!: (answer: string) => void;
   const firstBrowser = new Promise<string>(resolve => { resolveFirst = resolve; });
   let starts = 0;
+  let releases = 0;
+  const firstRequest = request({ claude_subagent: false, claude_retain_conversation: true });
+  const conversationKey = chatGptConversationKey(firstRequest, "messages");
   const start = () => ({
     mode: "tools" as const,
     browser: starts++ === 0 ? firstBrowser : new Promise<string>(() => {}),
     token: Promise.resolve("turn-token"),
     trace: new ChatGptTraceFeed(),
     text: new ChatGptTextFeed(),
+    conversationKey,
+    release: async () => { releases += 1; },
     cancel() {},
   });
-  const firstRequest = request({ claude_subagent: false, claude_retain_conversation: true });
   setRevision(firstRequest, "initial prompt");
-  const first = await sessionForChatGptRequest(sessions, "claude-root", firstRequest, start);
+  const first = await sessionForChatGptRequest(
+    sessions, "claude-root", firstRequest, start, "messages",
+  );
   first.queueSteering("Apply the retained guidance", true, "delivery-1");
   first.acknowledgePendingClaudeSteering(1);
   resolveFirst("completed answer");
@@ -116,9 +122,12 @@ test("completed Claude steering suppression follows a successful retained root s
     { role: "assistant", content: [{ type: "text", text: "completed answer" }], timestamp: 4 },
     { role: "user", content: "next prompt", timestamp: 5 },
   ];
-  const second = await sessionForChatGptRequest(sessions, "claude-root", secondRequest, start);
+  const second = await sessionForChatGptRequest(
+    sessions, "claude-root", secondRequest, start, "messages",
+  );
 
   expect(second).not.toBe(first);
+  expect(releases).toBe(0);
   expect(second.claudeSteeringSuppressionCount("Apply the retained guidance")).toBe(1);
   const toolResult = secondRequest.context.messages.find(message => message.role === "toolResult");
   expect(JSON.stringify(toolResult?.content).match(/Apply the retained guidance/g)).toHaveLength(1);
@@ -126,6 +135,42 @@ test("completed Claude steering suppression follows a successful retained root s
   expect(retainedConversationResumeRequest(secondRequest)?.context.messages).toEqual([
     { role: "user", content: "next prompt", timestamp: 5 },
   ]);
+  sessions.clear();
+});
+
+test("replacing a settled session releases a retained surface when its conversation identity changes", async () => {
+  const sessions = new ChatGptTurnSessions();
+  let resolveFirst!: (answer: string) => void;
+  let releases = 0;
+  let starts = 0;
+  const firstBrowser = new Promise<string>(resolve => { resolveFirst = resolve; });
+  const firstRequest = request({ claude_subagent: false, claude_retain_conversation: true });
+  const oldConversationKey = chatGptConversationKey(firstRequest, "messages");
+  const start = () => ({
+    mode: "tools" as const,
+    browser: starts++ === 0 ? firstBrowser : new Promise<string>(() => {}),
+    token: Promise.resolve("turn-token"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    conversationKey: oldConversationKey,
+    release: async () => { releases += 1; },
+    cancel() {},
+  });
+  setRevision(firstRequest, "initial prompt");
+  const first = await sessionForChatGptRequest(
+    sessions, "claude-root-changed", firstRequest, start, "messages",
+  );
+  resolveFirst("completed answer");
+  await first.browserOutcome;
+
+  const secondRequest = request({ claude_subagent: false, claude_retain_conversation: true });
+  secondRequest.options.reasoning = "medium";
+  setRevision(secondRequest, "next prompt");
+  await sessionForChatGptRequest(
+    sessions, "claude-root-changed", secondRequest, start, "messages",
+  );
+
+  expect(releases).toBe(1);
   sessions.clear();
 });
 
