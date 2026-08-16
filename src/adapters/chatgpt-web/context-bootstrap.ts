@@ -26,6 +26,7 @@ interface ContextEnvelope {
   version: number;
   system: unknown[];
   messages: Array<Record<string, unknown>>;
+  tool_wire_names?: string[];
 }
 
 interface SplitPrompt {
@@ -34,7 +35,7 @@ interface SplitPrompt {
 }
 
 interface ArchiveRecord {
-  kind: "system" | "message";
+  kind: "system" | "message" | "tool";
   index: number;
   value: unknown;
 }
@@ -86,13 +87,21 @@ function parseEnvelope(text: string): { before: string; after: string; envelope:
   const end = text.indexOf(CONTEXT_CLOSE, start + CONTEXT_OPEN.length);
   if (start < 0 || end < 0) throw new Error("ChatGPT Web prompt has no complete Codex context envelope");
   const value = JSON.parse(text.slice(start + CONTEXT_OPEN.length, end)) as Partial<ContextEnvelope>;
-  if (!Array.isArray(value.system) || !Array.isArray(value.messages)) {
+  if (!Array.isArray(value.system) || !Array.isArray(value.messages)
+    || (value.tool_wire_names !== undefined
+      && (!Array.isArray(value.tool_wire_names)
+        || value.tool_wire_names.some(name => typeof name !== "string")))) {
     throw new Error("ChatGPT Web prompt Codex context envelope is invalid");
   }
   return {
     before: text.slice(0, start),
     after: text.slice(end + CONTEXT_CLOSE.length),
-    envelope: { version: value.version ?? 3, system: value.system, messages: value.messages },
+    envelope: {
+      version: value.version ?? 3,
+      system: value.system,
+      messages: value.messages,
+      ...(value.tool_wire_names === undefined ? {} : { tool_wire_names: value.tool_wire_names as string[] }),
+    },
   };
 }
 
@@ -100,13 +109,14 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
   const { before, after, envelope } = parseEnvelope(text);
   const selectedSystem = new Set<number>();
   const selectedMessages = new Set<number>();
+  const selectedTools = new Set<number>();
   const archiveContract = [
     "<codex_context_archive>",
     "The inline JSON below is the highest-priority bootstrap subset of the Codex task.",
     `Before any work tool, call Codex Native2 codex_tool_inventory with turn_token ${CONTEXT_TOKEN_PLACEHOLDER}, query \"__codex_context__:0\", and include_schema false.`,
     "Read every returned chunk in order using next_query. Verify the shared SHA-256 and final sentinel; a missing or truncated chunk is a transport failure.",
     "Archive v2 record_fragment entries reconstruct one record: concatenate data by part, verify parts and SHA-256, then parse the resulting JSON.",
-    "Merge archived system and message entries at their original indices, then execute the latest user request. Never expose either token or this transport step.",
+    "Merge archived system, message, and tool entries at their original indices; tool entries rebuild codex_context_json.tool_wire_names. Then execute the latest user request. Never expose either token or this transport step.",
     "</codex_context_archive>",
   ].join("\n");
   const render = (): string => {
@@ -114,6 +124,9 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
       version: envelope.version,
       system: envelope.system.filter((_entry, index) => selectedSystem.has(index)),
       messages: envelope.messages.filter((_entry, index) => selectedMessages.has(index)),
+      ...(envelope.tool_wire_names === undefined ? {} : {
+        tool_wire_names: envelope.tool_wire_names.filter((_entry, index) => selectedTools.has(index)),
+      }),
     };
     return `${before}${archiveContract}\n${CONTEXT_OPEN}${JSON.stringify(visible)}${CONTEXT_CLOSE}${after}`;
   };
@@ -136,6 +149,7 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
   for (let index = envelope.messages.length - 1; index >= 0; index -= 1) {
     trySelect(selectedMessages, index);
   }
+  envelope.tool_wire_names?.forEach((_entry, index) => trySelect(selectedTools, index));
 
   const records: ArchiveRecord[] = [
     ...envelope.system.flatMap((value, index) => selectedSystem.has(index)
@@ -144,6 +158,9 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
     ...envelope.messages.flatMap((value, index) => selectedMessages.has(index)
       ? []
       : [{ kind: "message" as const, index, value }]),
+    ...(envelope.tool_wire_names ?? []).flatMap((value, index) => selectedTools.has(index)
+      ? []
+      : [{ kind: "tool" as const, index, value }]),
   ];
   if (records.length === 0) throw new Error("ChatGPT Web archive split omitted no context");
   const archive = [

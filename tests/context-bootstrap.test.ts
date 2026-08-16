@@ -97,6 +97,66 @@ test("a single oversized serialized text run uses the archive below the total bo
   }
 });
 
+test("large advertised tool inventories remain complete through the context archive", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-context-tools-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  const turnToken = await broker.register({
+    cwd: process.cwd(), roots: [], writableRoots: [], sandboxPolicy: { type: "readOnly", networkAccess: false }, tools: [],
+  }, 60_000, "tool-inventory-test");
+  const toolNames = Array.from({ length: 258 }, (_value, index) => (
+    `mcp__generic_surface_${String(index).padStart(3, "0")}_${"n".repeat(24)}__operation_${String(index).padStart(3, "0")}`
+  ));
+  const compiled = compileChatGptWebPrompt({
+    modelId: CHATGPT_WEB_MODEL_ID,
+    context: {
+      messages: [{ role: "user", content: "Inspect the repository with the available tools", timestamp: 1 }],
+      tools: toolNames.map(wireName => {
+        const splitAt = wireName.lastIndexOf("__");
+        return {
+          namespace: wireName.slice(0, splitAt),
+          name: wireName.slice(splitAt + 2),
+          description: "Generic read-only capability",
+          parameters: { type: "object", properties: {} },
+        };
+      }),
+    },
+    stream: true,
+    options: { reasoning: "high" },
+  }, { localToolsEnabled: true, solAvailable: true, proAvailable: true }, turnToken);
+
+  let client: Client | undefined;
+  try {
+    expect(Math.max(...compiled.text.split(/\r?\n/).map(line => line.length))).toBeGreaterThan(12_288);
+    const prepared = await prepareChatGptWebContext(broker, compiled, true, 60_000, "tool-inventory-test");
+    expect(prepared.transport).toBe("native2-archive");
+    expect(Math.max(...prepared.text.split(/\r?\n/).map(line => line.length))).toBeLessThanOrEqual(12_288);
+
+    const contextToken = prepared.text.match(/context_[A-Za-z0-9_-]{32}/)?.[0];
+    expect(contextToken).toBeDefined();
+    client = await clientFor(socketPath);
+    const archiveParts: string[] = [];
+    for (let index = 0; ; index += 1) {
+      const result = await client.callTool({
+        name: "codex_tool_inventory",
+        arguments: { turn_token: contextToken, query: `__codex_context__:${index}`, include_schema: false },
+      });
+      expect(result.isError).not.toBe(true);
+      const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+      archiveParts.push(text);
+      if (text.includes("next_query=null")) break;
+    }
+    const transported = `${prepared.text}\n${archiveParts.join("\n")}`;
+    for (const toolName of toolNames) expect(transported).toContain(toolName);
+    prepared.release();
+  } finally {
+    await client?.close().catch(() => {});
+    broker.revoke(turnToken);
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);
+
 test("tool-capable prompts above the stable 94208 character boundary use the archive", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-context-stable-limit-"));
   const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
