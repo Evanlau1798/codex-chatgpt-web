@@ -38,9 +38,13 @@ import type { ChatGptRetryPrompt } from "./steering";
 import { ChatGptTurnLatencyDiagnostics } from "./turn-latency";
 import {
   activateChatGptSendControl,
+  bindChatGptAssistantTurn,
   chatGptAssistantTurnChanged,
   chatGptSubmissionEvidence,
+  locateChatGptAssistantTurn,
   readChatGptAssistantTurnState,
+  reconcileChatGptAssistantTurnBinding,
+  type ChatGptAssistantTurnBinding,
   type ChatGptAssistantTurnState,
   type ChatGptSubmissionEvidence,
 } from "./response-turn-boundary";
@@ -1953,6 +1957,7 @@ export class ChatGptBrowserWorker {
         const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
         const initialResponseTurn = await readChatGptAssistantTurnState(responseTurns);
         let responseTurn = responseTurns.nth(initialResponseTurn.count);
+        let responseTurnBinding: ChatGptAssistantTurnBinding | undefined;
         const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
         const initialUserTurnCount = await userTurns.count();
         await this.runStage(turn.traceId, "send", browserStageTimeouts.send, async (stageSignal) => {
@@ -2034,12 +2039,25 @@ export class ChatGptBrowserWorker {
         }
 
         const currentResponseTurn = await readChatGptAssistantTurnState(responseTurns);
-        const firstResponseAppeared = !capturedResponse
-          && chatGptAssistantTurnChanged(initialResponseTurn, currentResponseTurn);
-        if (firstResponseAppeared || (capturedResponse && await responseTurn.count().catch(() => 0) === 0)) {
-          const rebound = responseTurns.last();
-          if (await rebound.count().catch(() => 0) > 0) {
-            responseTurn = rebound;
+        const responseTurnAttached = await responseTurn.count().catch(() => 0) > 0;
+        if (!responseTurnBinding) {
+          const binding = bindChatGptAssistantTurn(initialResponseTurn, currentResponseTurn);
+          if (binding) {
+            responseTurnBinding = binding;
+            responseTurn = locateChatGptAssistantTurn(responseTurns, binding);
+            diagnostics.bindAssistantTurn(binding);
+          }
+        } else if (!responseTurnAttached) {
+          const rebound = reconcileChatGptAssistantTurnBinding(
+            initialResponseTurn,
+            currentResponseTurn,
+            responseTurnBinding,
+            false,
+          );
+          if (rebound) {
+            responseTurnBinding = rebound;
+            responseTurn = locateChatGptAssistantTurn(responseTurns, rebound);
+            diagnostics.bindAssistantTurn(rebound);
             await diagnostics.capture(page, "response-dom-rebound");
           }
         }

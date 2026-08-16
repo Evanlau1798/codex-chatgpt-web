@@ -5,6 +5,12 @@ export interface ChatGptAssistantTurnState {
   lastId?: string;
 }
 
+export interface ChatGptAssistantTurnBinding {
+  id?: string;
+  ordinal: number;
+  generation: number;
+}
+
 export type ChatGptSubmissionEvidence = "user_turn" | "assistant_turn" | "generation_running";
 
 export async function activateChatGptSendControl(
@@ -26,6 +32,46 @@ export function chatGptAssistantTurnChanged(
 ): boolean {
   return current.count > initial.count
     || Boolean(initial.lastId && current.lastId && current.lastId !== initial.lastId);
+}
+
+export function bindChatGptAssistantTurn(
+  initial: ChatGptAssistantTurnState,
+  current: ChatGptAssistantTurnState,
+): ChatGptAssistantTurnBinding | undefined {
+  if (!chatGptAssistantTurnChanged(initial, current) || current.count < 1) return undefined;
+  return {
+    ...(current.lastId ? { id: current.lastId } : {}),
+    ordinal: current.count - 1,
+    generation: 0,
+  };
+}
+
+export function reconcileChatGptAssistantTurnBinding(
+  initial: ChatGptAssistantTurnState,
+  current: ChatGptAssistantTurnState,
+  binding: ChatGptAssistantTurnBinding,
+  attached: boolean,
+): ChatGptAssistantTurnBinding | undefined {
+  if (attached) return binding;
+  if (current.count < 1 || !chatGptAssistantTurnChanged(initial, current)) return undefined;
+  if (binding.id && current.lastId === binding.id) {
+    return { ...binding, ordinal: current.count - 1 };
+  }
+  if (!current.lastId || current.lastId === initial.lastId) return undefined;
+  return {
+    id: current.lastId,
+    ordinal: current.count - 1,
+    generation: binding.generation + 1,
+  };
+}
+
+export function locateChatGptAssistantTurn(
+  turns: Locator,
+  binding: ChatGptAssistantTurnBinding,
+): Locator {
+  return binding.id
+    ? turns.page().getByTestId(binding.id)
+    : turns.nth(binding.ordinal);
 }
 
 export function chatGptSubmissionEvidence(state: {

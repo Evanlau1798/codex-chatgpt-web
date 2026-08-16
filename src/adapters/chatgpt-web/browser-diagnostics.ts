@@ -10,6 +10,7 @@ import {
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   CHATGPT_EFFORT_ITEM_SELECTOR,
 } from "../../chatgpt-session";
+import type { ChatGptAssistantTurnBinding } from "./response-turn-boundary";
 
 const CHATGPT_BROWSER_DIAGNOSTIC_TRACE_LIMIT = 10;
 
@@ -57,6 +58,7 @@ export class ChatGptBrowserDiagnostics {
   private readonly directory: string;
   private sequence = 0;
   private initialized = false;
+  private assistantTurnBinding?: ChatGptAssistantTurnBinding;
 
   constructor(
     private readonly traceId: string,
@@ -68,6 +70,10 @@ export class ChatGptBrowserDiagnostics {
     this.directory = join(this.root, `${traceId}-${randomUUID().slice(0, 8)}`);
   }
 
+  bindAssistantTurn(binding: ChatGptAssistantTurnBinding): void {
+    this.assistantTurnBinding = { ...binding };
+  }
+
   async capture(page: Page, checkpoint: string, error?: unknown): Promise<void> {
     try {
       this.initialize();
@@ -77,7 +83,7 @@ export class ChatGptBrowserDiagnostics {
       let state: unknown = null;
       let stateError: string | undefined;
       try {
-        state = await captureBrowserDiagnosticState(page);
+        state = await captureBrowserDiagnosticState(page, this.assistantTurnBinding);
       } catch (captureError) {
         stateError = diagnosticError(captureError);
       }
@@ -129,8 +135,11 @@ export class ChatGptBrowserDiagnostics {
   }
 }
 
-async function captureBrowserDiagnosticState(page: Page): Promise<unknown> {
-  return page.evaluate((selectors) => {
+async function captureBrowserDiagnosticState(
+  page: Page,
+  binding?: ChatGptAssistantTurnBinding,
+): Promise<unknown> {
+  return page.evaluate(({ selectors, binding }) => {
     const rendered = (element: Element): boolean => {
       const candidate = element as HTMLElement;
       const style = getComputedStyle(candidate);
@@ -160,7 +169,9 @@ async function captureBrowserDiagnosticState(page: Page): Promise<unknown> {
     const composers = [...document.querySelectorAll(selectors.composer)].filter(rendered);
     const composerForm = composers.length === 1 ? composers[0]!.closest("form") : null;
     const assistantTurns = [...document.querySelectorAll(selectors.assistantTurn)].filter(rendered);
-    const latestAssistant = assistantTurns.at(-1);
+    const latestAssistant = binding?.id
+      ? assistantTurns.find(element => element.getAttribute("data-testid") === binding.id)
+      : assistantTurns.at(binding?.ordinal ?? -1);
     const finalRoot = latestAssistant
       ? [...latestAssistant.querySelectorAll<HTMLElement>(".markdown")]
         .filter(candidate => !candidate.parentElement?.closest(".markdown"))
@@ -205,10 +216,23 @@ async function captureBrowserDiagnosticState(page: Page): Promise<unknown> {
       overlays: rows('[role="dialog"], [role="alert"], [role="status"]', 30),
       turns: {
         user: document.querySelectorAll('[data-testid^="conversation-turn-"][data-message-author-role="user"]').length,
-        assistant: assistantTurns.map(element => ({ textChars: (element.textContent ?? "").length, htmlChars: (element as HTMLElement).innerHTML.length })),
+        boundAssistant: binding ? {
+          id: binding.id ?? null,
+          ordinal: binding.ordinal,
+          generation: binding.generation,
+          present: latestAssistant !== undefined,
+        } : null,
+        assistant: assistantTurns.map(element => ({
+          testId: element.getAttribute("data-testid"),
+          textChars: (element.textContent ?? "").length,
+          htmlChars: (element as HTMLElement).innerHTML.length,
+        })),
       },
       completion: {
-        actionVisible: [...document.querySelectorAll(selectors.completionAction)].some(rendered),
+        actionVisible: latestAssistant
+          ? [...latestAssistant.querySelectorAll(selectors.completionAction)].some(rendered)
+          : false,
+        globalActionVisible: [...document.querySelectorAll(selectors.completionAction)].some(rendered),
         boundaryProtocolPresent: boundaryNodes.length > 0,
         lastNodePresent: lastNode !== undefined,
         boundaryStart: lastNode?.getAttribute("data-start") ?? null,
@@ -218,10 +242,13 @@ async function captureBrowserDiagnosticState(page: Page): Promise<unknown> {
       },
     };
   }, {
-    composer: CHATGPT_COMPOSER_SELECTOR,
-    effortControl: CHATGPT_EFFORT_CONTROL_SELECTOR,
-    effortItem: CHATGPT_EFFORT_ITEM_SELECTOR,
-    assistantTurn: CHATGPT_ASSISTANT_TURN_SELECTOR,
-    completionAction: CHATGPT_COMPLETION_ACTION_SELECTOR,
+    selectors: {
+      composer: CHATGPT_COMPOSER_SELECTOR,
+      effortControl: CHATGPT_EFFORT_CONTROL_SELECTOR,
+      effortItem: CHATGPT_EFFORT_ITEM_SELECTOR,
+      assistantTurn: CHATGPT_ASSISTANT_TURN_SELECTOR,
+      completionAction: CHATGPT_COMPLETION_ACTION_SELECTOR,
+    },
+    binding,
   });
 }

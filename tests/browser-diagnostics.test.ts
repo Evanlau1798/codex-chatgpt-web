@@ -69,3 +69,26 @@ test("preserves screenshot and error envelope when DOM evaluation fails", async 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("scopes diagnostic capture to the bound assistant turn", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-browser-diagnostic-"));
+  try {
+    let evaluateArgument: unknown;
+    const page = {
+      evaluate: async (_callback: unknown, argument: unknown) => {
+        evaluateArgument = argument;
+        return diagnosticState;
+      },
+      screenshot: async () => Buffer.from("png"),
+    } as unknown as Page;
+    const diagnostics = new ChatGptBrowserDiagnostics("trace_bound_turn", root);
+    diagnostics.bindAssistantTurn({ id: "conversation-turn-9", ordinal: 3, generation: 1 });
+    await diagnostics.capture(page, "bound-turn");
+
+    expect(evaluateArgument).toMatchObject({
+      binding: { id: "conversation-turn-9", ordinal: 3, generation: 1 },
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
