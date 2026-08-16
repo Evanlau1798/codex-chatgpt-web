@@ -292,6 +292,8 @@ input.on("line", line => {
   if (message.type === "abort") {
     answerRetryWaiters.get(message.id)?.();
     answerRetryWaiters.delete(message.id);
+    preparedSelectionWaiters.get(message.id)?.();
+    preparedSelectionWaiters.delete(message.id);
     abortControllers.get(message.id)?.abort();
   } else if (message.type === "prepared_selected_ack") {
     if (!message.prepared || typeof message.prepared.text !== "string" || !Array.isArray(message.prepared.images)) {

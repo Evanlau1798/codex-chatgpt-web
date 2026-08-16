@@ -148,6 +148,80 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
   }
 });
 
+test("a rejected prompt preparation releases the helper turn before the trace can be reused", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-launcher-helper-release-"));
+  roots.push(root);
+  const helper = join(root, "helper.cjs");
+  writeFileSync(helper, `
+    const readline = require("node:readline").createInterface({ input: process.stdin });
+    const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
+    const active = new Set();
+    send({ type: "ready" });
+    readline.on("line", line => {
+      const message = JSON.parse(line);
+      if (message.type === "shutdown") process.exit(0);
+      if (message.type === "abort") {
+        if (!active.delete(message.id)) return;
+        send({ type: "error", id: message.id, name: "AbortError", message: "released" });
+        return;
+      }
+      if (message.type === "prepared_selected_ack") {
+        if (!active.delete(message.id)) process.exit(3);
+        send({ type: "result", id: message.id, text: "done" });
+        return;
+      }
+      if (message.type !== "run") return;
+      if (active.has(message.id)) {
+        send({ type: "error", id: message.id, message: "Browser helper turn already exists: " + message.id });
+        return;
+      }
+      active.add(message.id);
+      send({ type: "event", id: message.id, event: "prepared_selected", reused: false });
+    });
+  `, { mode: 0o700 });
+  const descriptorPath = join(root, "launcher.json");
+  writeFileSync(descriptorPath, `${JSON.stringify({
+    version: 1,
+    kind: LAUNCHER_BROWSER_HOST_KIND,
+    pid: process.pid,
+    endpoint: "http://127.0.0.1:39001",
+    control: {
+      endpoint: "http://127.0.0.1:39002",
+      token: "launcher-control-token-0123456789abcdefghijklmnop",
+    },
+    helper: { executable: process.execPath, script: helper },
+    partition: "persist:codex-web-gpt-chatgpt",
+    idleUrl: "about:blank#codex-web-gpt-browser-host",
+    surfaceId: "launcher_surface_id_0123456789AB",
+    createdAt: new Date().toISOString(),
+  })}\n`, { mode: 0o600 });
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native",
+    browserHost: "launcher",
+    browserHostDescriptorPath: descriptorPath,
+    storageStatePath: join(root, "unused-state.json"),
+    chromeExecutablePath: join(root, "unused-chrome"),
+    turnTimeoutMs: 60_000,
+    headed: true,
+    autoApproveToolCalls: false,
+  });
+  const turn = (prepare: BrowserTurn["prepare"]): BrowserTurn => ({
+    traceId: "reusable-trace-123",
+    modelId: "gpt-5.6-sol",
+    capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
+    prepare,
+    onTextDelta() {},
+  });
+  try {
+    await expect(client.run(turn(async () => { throw new Error("prompt preparation failed"); })))
+      .rejects.toThrow("prompt preparation failed");
+    await expect(client.run(turn(async () => ({ text: "inspect", images: [], release() {} }))))
+      .resolves.toBe("done");
+  } finally {
+    await client.close();
+  }
+});
+
 test("an abort dispatched during run submission cannot overtake the run frame", async () => {
   const controller = new AbortController();
   const messages: string[] = [];

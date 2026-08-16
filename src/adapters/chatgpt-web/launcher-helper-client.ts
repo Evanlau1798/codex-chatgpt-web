@@ -2,12 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { notifyLauncherTurn, readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 import { ChatGptWebAdapterError } from "./adapter-error";
+import {
+  parseLauncherHelperMessage,
+  type LauncherHelperMessage,
+} from "./launcher-helper-protocol";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { BrowserTurn, ResolvedBrowserConfig } from "./browser-worker";
-import {
-  parseChatGptLunaCheckpoint,
-  type ChatGptLunaCheckpoint,
-} from "./rolling-checkpoint";
 
 interface PendingTurn {
   turn: BrowserTurn;
@@ -17,129 +17,7 @@ interface PendingTurn {
   sent?: boolean;
   prepared?: CompiledChatGptWebPrompt & { release: () => void };
   acknowledgeRetry?: () => void;
-}
-
-type HelperMessage =
-  | { type: "ready" }
-  | { type: "event"; id: string; event: "heartbeat" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
-  | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
-  | { type: "event"; id: string; event: "answer" | "error_retry"; text: string; attempt: number }
-  | { type: "event"; id: string; event: "luna_checkpoint"; checkpoint: ChatGptLunaCheckpoint; answerHash: string }
-  | { type: "result"; id: string; text: string }
-  | {
-      type: "error";
-      id: string;
-      name?: string;
-      message: string;
-      status?: number;
-      errorType?: string;
-      code?: string;
-      retryable?: boolean;
-      retireSession?: boolean;
-    };
-
-function parseHelperMessage(line: string): HelperMessage {
-  const value = JSON.parse(line) as unknown;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Launcher browser helper message is not an object");
-  }
-  const message = value as Record<string, unknown>;
-  if (message.type === "ready") return { type: "ready" };
-  if (typeof message.id !== "string" || !message.id) {
-    throw new Error("Launcher browser helper message has no turn identity");
-  }
-  if (message.type === "event") {
-    const event = message.event;
-    if (event === "answer" || event === "error_retry") {
-      if (typeof message.text !== "string" || !Number.isSafeInteger(message.attempt) || Number(message.attempt) < 1) {
-        throw new Error("Launcher browser helper answer event is invalid");
-      }
-      return { type: "event", id: message.id, event, text: message.text, attempt: Number(message.attempt) };
-    }
-    if (event === "luna_checkpoint") {
-      if (typeof message.answerHash !== "string" || !/^[a-f0-9]{64}$/.test(message.answerHash)) {
-        throw new Error("Launcher browser helper Luna checkpoint answer hash is invalid");
-      }
-      return {
-        type: "event",
-        id: message.id,
-        event,
-        checkpoint: parseChatGptLunaCheckpoint(message.checkpoint),
-        answerHash: message.answerHash,
-      };
-    }
-    if (event === "prepared_selected") {
-      if (typeof message.reused !== "boolean") throw new Error("Launcher browser helper prepared-selection event is invalid");
-      return { type: "event", id: message.id, event, reused: message.reused };
-    }
-    const text = message.text;
-    const continuation = message.continuation;
-    if (!["heartbeat", "submitted", "retry_submitted", "reasoning", "commentary", "text"].includes(String(event))) {
-      throw new Error("Launcher browser helper emitted an unknown event");
-    }
-    if (text !== undefined && typeof text !== "string") {
-      throw new Error("Launcher browser helper event text is invalid");
-    }
-    if (continuation !== undefined && typeof continuation !== "boolean") {
-      throw new Error("Launcher browser helper continuation flag is invalid");
-    }
-    return {
-      type: "event",
-      id: message.id,
-      event: event as "heartbeat" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text",
-      ...(text !== undefined ? { text: text as string } : {}),
-      ...(continuation !== undefined ? { continuation: continuation as boolean } : {}),
-    };
-  }
-  if (message.type === "result") {
-    const text = message.text;
-    if (typeof text !== "string") {
-      throw new Error("Launcher browser helper result text is invalid");
-    }
-    return { type: "result", id: message.id, text };
-  }
-  if (message.type === "error") {
-    const errorMessage = message.message;
-    const errorName = message.name;
-    const status = message.status;
-    const errorType = message.errorType;
-    const code = message.code;
-    const retryable = message.retryable;
-    const retireSession = message.retireSession;
-    const structured = status !== undefined
-      || errorType !== undefined
-      || code !== undefined
-      || retryable !== undefined;
-    if (typeof errorMessage !== "string"
-      || (errorName !== undefined && typeof errorName !== "string")
-      || (structured && (
-        !Number.isInteger(status)
-        || (status as number) < 400
-        || (status as number) > 599
-        || typeof errorType !== "string"
-        || !errorType
-        || typeof code !== "string"
-        || !code
-        || typeof retryable !== "boolean"
-        || (retireSession !== undefined && typeof retireSession !== "boolean")
-      ))) {
-      throw new Error("Launcher browser helper error payload is invalid");
-    }
-    return {
-      type: "error",
-      id: message.id,
-      message: errorMessage,
-      ...(errorName !== undefined ? { name: errorName as string } : {}),
-      ...(structured ? {
-        status: status as number,
-        errorType: errorType as string,
-        code: code as string,
-        retryable: retryable as boolean,
-        ...(retireSession === true ? { retireSession: true } : {}),
-      } : {}),
-    };
-  }
-  throw new Error("Launcher browser helper emitted an unknown message type");
+  localFailure?: Error;
 }
 
 export class LauncherBrowserHelperClient {
@@ -302,8 +180,8 @@ export class LauncherBrowserHelperClient {
 
   private handleLine(child: ChildProcessWithoutNullStreams, line: string): void {
     if (this.child !== child) return;
-    let message: HelperMessage;
-    try { message = parseHelperMessage(line); }
+    let message: LauncherHelperMessage;
+    try { message = parseLauncherHelperMessage(line); }
     catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       this.handleExit(child, new Error(`Launcher browser helper emitted invalid protocol data: ${detail}`));
@@ -344,7 +222,10 @@ export class LauncherBrowserHelperClient {
                 prepared: { text: prepared.text, images: prepared.images } satisfies CompiledChatGptWebPrompt,
               }));
           })
-          .catch(error => this.finishWithError(message.id, error instanceof Error ? error : new Error(String(error))));
+          .catch(error => this.abortWithLocalFailure(
+            message.id,
+            error instanceof Error ? error : new Error(String(error)),
+          ));
       }
       else if (message.event === "answer") {
         void Promise.resolve().then(() => pending.turn.retryPromptForAnswer?.(message.text, message.attempt))
@@ -354,16 +235,25 @@ export class LauncherBrowserHelperClient {
             pending.acknowledgeRetry = retry.onSubmitted;
             return this.send({ type: "answer_retry", id: message.id, prompt: retry.text, ...(retry.onSubmitted ? { acknowledge: true } : {}) });
           })
-          .catch(error => this.finishWithError(message.id, error instanceof Error ? error : new Error(String(error))));
+          .catch(error => this.abortWithLocalFailure(
+            message.id,
+            error instanceof Error ? error : new Error(String(error)),
+          ));
       }
       else if (message.event === "error_retry") {
         void Promise.resolve().then(() => pending.turn.retryPromptForError?.(new Error(message.text), message.attempt))
           .then(prompt => this.send({ type: "answer_retry", id: message.id, ...(prompt ? { prompt } : {}) }))
-          .catch(error => this.finishWithError(message.id, error instanceof Error ? error : new Error(String(error))));
+          .catch(error => this.abortWithLocalFailure(
+            message.id,
+            error instanceof Error ? error : new Error(String(error)),
+          ));
       }
       else if (message.event === "luna_checkpoint") {
         if (!pending.turn.captureLunaCheckpoint || !pending.turn.onLunaCheckpoint) {
-          this.finishWithError(message.id, new Error("Launcher browser helper emitted an unexpected Luna checkpoint"));
+          this.abortWithLocalFailure(
+            message.id,
+            new Error("Launcher browser helper emitted an unexpected Luna checkpoint"),
+          );
           return;
         }
         pending.turn.onLunaCheckpoint({ checkpoint: message.checkpoint, answerHash: message.answerHash });
@@ -377,7 +267,8 @@ export class LauncherBrowserHelperClient {
     }
     if (message.type === "result") {
       this.finish(message.id);
-      pending.resolve(message.text);
+      if (pending.localFailure) pending.reject(pending.localFailure);
+      else pending.resolve(message.text);
     } else if (message.type === "error") {
       const error = message.status !== undefined
         ? new ChatGptWebAdapterError(message.message, {
@@ -391,7 +282,7 @@ export class LauncherBrowserHelperClient {
           ? new DOMException(message.message, "AbortError")
           : new Error(message.message);
       this.finish(message.id);
-      pending.reject(error);
+      pending.reject(pending.localFailure ?? error);
     }
   }
 
@@ -410,6 +301,23 @@ export class LauncherBrowserHelperClient {
     if (!pending) return;
     this.finish(id);
     pending.reject(error);
+  }
+
+  private abortWithLocalFailure(id: string, error: Error): void {
+    const pending = this.pending.get(id);
+    if (!pending || pending.localFailure) return;
+    pending.localFailure = error;
+    if (!pending.sent) {
+      this.finishWithError(id, error);
+      return;
+    }
+    void this.send({ type: "abort", id }).catch(cleanupError => {
+      this.finishWithError(id, new Error(
+        `${error.message}; launcher browser helper cleanup failed: ${
+          cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+        }`,
+      ));
+    });
   }
 
   private handleExit(child: ChildProcessWithoutNullStreams, error: Error): void {
