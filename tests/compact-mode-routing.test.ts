@@ -342,6 +342,39 @@ describe("compact mode routing", () => {
     )).resolves.toBe("The repository state and next action were preserved.");
   });
 
+  test("does not claim a queued active handoff instruction was delivered", async () => {
+    let completeBrowser!: (answer: string) => void;
+    const browser = new Promise<string>(resolve => { completeBrowser = resolve; });
+    const text = new ChatGptTextFeed();
+    const answer = `${COMPACTION_HANDOFF_MARKER}\nThe queued handoff used the full same-conversation prompt.`;
+    let instructionDelivered: boolean | undefined;
+    const session = new ChatGptTurnSession({
+      mode: "tools",
+      token: Promise.resolve("turn_queued_handoff"),
+      browser,
+      trace: new ChatGptTraceFeed(),
+      text,
+      usageInput: compactRequest(),
+      requestHandoff: delivered => {
+        instructionDelivered = delivered;
+        text.push(answer);
+        completeBrowser(answer);
+      },
+      cancel: () => {},
+    });
+    const broker = {
+      completeTool: () => {},
+      requestHandoff: () => "queued" as const,
+    };
+
+    await expect(requestActiveCompactionHandoff(
+      compactRequest(),
+      session,
+      broker as never,
+    )).resolves.toBe("The queued handoff used the full same-conversation prompt.");
+    expect(instructionDelivered).toBe(false);
+  });
+
   test("requests the beta checkpoint from the active read-only conversation", async () => {
     let completeBrowser!: (answer: string) => void;
     const browser = new Promise<string>(resolve => { completeBrowser = resolve; });

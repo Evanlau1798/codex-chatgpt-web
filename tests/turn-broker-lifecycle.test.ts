@@ -215,6 +215,43 @@ test("context archive reads report progress to the owning browser turn", async (
   }
 });
 
+test("turn broker distinguishes queued and immediately delivered handoff instructions", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-broker-handoff-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  const environment = {
+    cwd: root,
+    roots: [root],
+    writableRoots: [root],
+    sandboxPolicy: { type: "dangerFullAccess" as const },
+    tools: [],
+  };
+  try {
+    const queuedToken = await broker.register(environment);
+    expect(broker.requestHandoff(queuedToken, "queued handoff")).toBe("queued");
+
+    const deliveredToken = await broker.register(environment);
+    const { bindingId } = await callTurnBroker<{ bindingId: string }>(
+      socketPath,
+      { method: "claim", token: deliveredToken },
+    );
+    const invocation = callTurnBroker<{ content: Array<{ type: string; text: string }>; isError: boolean }>(
+      socketPath,
+      { method: "invoke", bindingId, wireName: "mcp__example__read", arguments: {} },
+    );
+    await broker.nextToolBatch(deliveredToken);
+
+    expect(broker.requestHandoff(deliveredToken, "delivered handoff")).toBe("delivered");
+    await expect(invocation).resolves.toMatchObject({
+      content: [{ type: "text", text: "delivered handoff" }],
+      isError: true,
+    });
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("turn broker delivers steering once through the active tool loop", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-broker-steering-"));
   const socketPath = defaultBrokerEndpoint(root);

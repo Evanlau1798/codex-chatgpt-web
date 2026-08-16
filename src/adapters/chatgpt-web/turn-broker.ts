@@ -281,16 +281,18 @@ export class TurnBroker {
     invocation.resolve(result);
   }
 
-  requestHandoff(token: string, instruction: string): void {
+  requestHandoff(token: string, instruction: string): "queued" | "delivered" {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
+    const delivered = channel.invocations.size > 0;
     channel.handoffInstruction = instruction;
     channel.queuedCallIds.length = 0;
     for (const [callId, invocation] of channel.invocations) {
       channel.invocations.delete(callId);
       invocation.resolve({ content: [{ type: "text", text: instruction }], isError: true });
     }
+    return delivered ? "delivered" : "queued";
   }
 
   requestSteering(token: string, instruction: string): "queued" | "delivered" {

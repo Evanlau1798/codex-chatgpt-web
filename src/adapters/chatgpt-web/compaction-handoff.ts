@@ -241,15 +241,17 @@ export async function requestActiveCompactionHandoff(
     if (session.runtime.mode === "tools") {
       const token = await session.runtime.token;
       const results = codexToolResultsById(parsed, session);
+      let instructionDelivered = false;
       for (const request of session.outstanding()) {
         const result = results.get(request.callId);
         broker.completeTool(token, request.callId, result
           ? withHandoffInstruction(codexToolResultToBrokerResult(result))
           : missingToolResult());
         session.markResultDelivered(request.callId);
+        instructionDelivered = true;
       }
-      broker.requestHandoff(token, HANDOFF_INSTRUCTION);
-      session.runtime.requestHandoff?.(true);
+      const handoffDelivery = broker.requestHandoff(token, HANDOFF_INSTRUCTION);
+      session.runtime.requestHandoff?.(instructionDelivered || handoffDelivery === "delivered");
     } else {
       if (!session.runtime.requestHandoff) return undefined;
       session.runtime.requestHandoff(false);
