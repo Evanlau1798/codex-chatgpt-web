@@ -119,7 +119,7 @@ export class ChatGptTurnSession {
       .then(answer => ({ type: "final", answer }) as ChatGptBrowserOutcome)
       .catch(error => ({ type: "error", error: error instanceof Error ? error : new Error(String(error)) }) as ChatGptBrowserOutcome)
       .then(outcome => {
-      if (this.claudeRootThreadId) this.steering.settleClaude(outcome.type === "final");
+      this.steering.settleClaude(outcome.type === "final");
       this.settledBrowserOutcome ??= outcome;
       return this.settledBrowserOutcome;
     });
@@ -227,9 +227,10 @@ export class ChatGptTurnSession {
   }
 
   peekPendingSteering() { return this.steering.peek(); }
+  peekPendingClaudeSteering() { return this.steering.peekClaude(); }
   takePendingSteering(count?: number): string | undefined { return this.steering.take(count); }
-  queueSteering(steering: string, hooked = false, deliveryId?: string): boolean {
-    if (hooked && !this.steering.pushClaude(steering, deliveryId)) return false;
+  queueSteering(steering: string, hooked = false, deliveryId?: string, source: "user" | "coordinator" = "user"): boolean {
+    if (hooked && !this.steering.pushClaude(steering, deliveryId, source)) return false;
     if (hooked) {
       this.hookedSteeringReplays.push(steeringFingerprint(steering));
       if (this.hookedSteeringReplays.length > 32) this.hookedSteeringReplays.shift();
@@ -434,6 +435,20 @@ export class ChatGptTurnSessions {
     return target.queueSteering(instruction, true, source?.deliveryId) ? "accepted" : "duplicate";
   }
 
+  steerClaudeAgent(
+    steeringId: string,
+    instruction: string,
+    deliveryId: string,
+  ): "accepted" | "inactive" | "ambiguous" | "duplicate" {
+    this.prune();
+    const targets = [...this.entries.values()].filter(session => (
+      session.isActive() && session.steeringId === steeringId
+    ));
+    if (targets.length === 0) return "inactive";
+    if (targets.length > 1) return "ambiguous";
+    return targets[0]!.queueSteering(instruction, true, deliveryId, "coordinator") ? "accepted" : "duplicate";
+  }
+
   syncClaudeRoot(threadId: string, active: Array<ClaudeSteeringDelivery & { occurredAt: number }>): number | "inactive" | "ambiguous" {
     this.prune();
     const targets = [...this.entries.values()].filter(session => session.isActive() && session.claudeRootThreadId === threadId);
@@ -446,6 +461,12 @@ export class ChatGptTurnSessions {
   claudeSteeringSuppressionCount(threadId: string, instruction: string): number {
     this.prune();
     const targets = [...this.entries.values()].filter(session => session.claudeRootThreadId === threadId);
+    return targets.length === 1 ? targets[0]!.claudeSteeringSuppressionCount(instruction) : 0;
+  }
+
+  claudeSteeringSuppressionCountBySteeringId(steeringId: string, instruction: string): number {
+    this.prune();
+    const targets = [...this.entries.values()].filter(session => session.steeringId === steeringId);
     return targets.length === 1 ? targets[0]!.claudeSteeringSuppressionCount(instruction) : 0;
   }
 

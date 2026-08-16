@@ -4,6 +4,7 @@ import type { ChatGptThreadEnvironmentStore } from "./thread-environment";
 import type { ChatGptToolResultDeliveryOptions } from "./tool-result-delivery";
 import type { ChatGptTurnSessions } from "./turn-execution";
 import { inheritSpawnedCodexEnvironment } from "./trusted-environment-lifecycle";
+import { claudeAgentMessagingOptions } from "./claude-agent-messaging";
 
 export function chatGptAgentLifecycleOptions(
   environmentStore: ChatGptThreadEnvironmentStore,
@@ -14,6 +15,7 @@ export function chatGptAgentLifecycleOptions(
   const parentThreadId = extractChatGptTurnIdentity(parsed).threadId;
   const parentGroup = parentThreadId ? `${executionNamespace}:${parentThreadId}` : undefined;
   return {
+    ...claudeAgentMessagingOptions(parsed, sessions),
     onSpawnedCodexAgent(agent) {
       if (agent.threadId) inheritSpawnedCodexEnvironment(environmentStore, parsed, agent.threadId);
       if (!parentGroup) return;

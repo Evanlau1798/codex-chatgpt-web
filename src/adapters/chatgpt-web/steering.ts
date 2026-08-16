@@ -121,7 +121,7 @@ export function deliverPendingChatGptSteering(
   token: string,
   traceId: string,
 ): "queued" | "delivered" | undefined {
-  if (session.claudeRootThreadId) return undefined;
+  if (session.claudeRootThreadId || session.peekPendingClaudeSteering()) return undefined;
   const steering = session.takePendingSteering();
   if (!steering) return undefined;
   const delivery = broker.requestSteering(token, `The user added this instruction while you were working:\n\n${steering}`);

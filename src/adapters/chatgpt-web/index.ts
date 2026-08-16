@@ -7,7 +7,7 @@ import type { ProviderAdapter } from "../base";
 import { ChatGptWebAdapterError, chatGptSessionFailureDisposition } from "./adapter-error";
 import { chatGptAdapterRuntimeConfig, retainedConversationRelease } from "./adapter-runtime-config";
 import { ChatGptBrowserWorker } from "./browser-worker";
-import { claudeBrowserTurnOptions, claudeRootSessionThreadId } from "./claude-subagent";
+import { claudeBrowserTurnOptions, isClaudeClientSession } from "./claude-subagent";
 import { prepareChatGptWebContext } from "./context-bootstrap";
 import { canonicalizeCompactionHandoff, codexToolResultsById, createActiveCompactionHandoffPrompts, recoverCompactionHandoff } from "./compaction-handoff";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
@@ -95,7 +95,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const conversationKey = retainConversation ? chatGptConversationKey(checkpointInput.parsed, executionNamespace) : undefined;
     const releaseRetainedConversation = retainedConversationRelease(provider, conversationKey);
     const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
-    const retryPromptForAnswer = parsed._compactionRequest || !steering ? upstreamRetry : browserSteeringRetry(steering, traceId, upstreamRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, Boolean(claudeRootSessionThreadId(checkpointInput.parsed)));
+    const retryPromptForAnswer = parsed._compactionRequest || !steering ? upstreamRetry : browserSteeringRetry(steering, traceId, upstreamRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, isClaudeClientSession(checkpointInput.parsed));
     if (!mode.localTools) {
       const base = {
         modelId: parsed.modelId,

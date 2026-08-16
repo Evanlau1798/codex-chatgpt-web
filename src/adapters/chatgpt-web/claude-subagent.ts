@@ -46,6 +46,10 @@ export function claudeRootSessionThreadId(parsed: CodexParsedRequest): string | 
   return extractChatGptTurnIdentity(parsed).threadId;
 }
 
+export function isClaudeClientSession(parsed: CodexParsedRequest): boolean {
+  return typeof clientMetadata(parsed)?.claude_subagent === "boolean";
+}
+
 export function bindClaudeSessionAbort(
   parsed: CodexParsedRequest,
   signal: AbortSignal,

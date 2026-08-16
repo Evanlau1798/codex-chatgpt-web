@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 
 const MAX_CLAUDE_STEERING_FINGERPRINTS = 32;
-interface QueuedSteering { text: string; claude: boolean; eventId: string; deliveryId?: string }
+type ClaudeSteeringSource = "user" | "coordinator";
+interface QueuedSteering { text: string; claude: boolean; source: ClaudeSteeringSource; eventId: string; deliveryId?: string }
 export interface CompletedClaudeSteering { fingerprint: string; text: string; deliveryId?: string }
 export interface ClaudeSteeringDelivery { deliveryId: string; prompt: string }
-export interface PendingSteeringMessage { deliveryId: string; sequence: number; content: string }
+export interface PendingSteeringMessage { deliveryId: string; sequence: number; source: ClaudeSteeringSource; content: string }
 
 export function steeringFingerprint(instruction: string): string {
   return createHash("sha256").update(instruction).digest("hex");
@@ -18,12 +19,12 @@ export class ChatGptSteeringFeed {
   private nextEventId = 1;
 
   push(instruction: string): void {
-    this.queued.push({ text: instruction, claude: false, eventId: `native-${this.nextEventId++}` });
+    this.queued.push({ text: instruction, claude: false, source: "user", eventId: `native-${this.nextEventId++}` });
   }
 
-  pushClaude(instruction: string, deliveryId?: string): boolean {
+  pushClaude(instruction: string, deliveryId?: string, source: ClaudeSteeringSource = "user"): boolean {
     if (!deliveryId) {
-      this.queued.push({ text: instruction, claude: true, eventId: `provisional-${this.nextEventId++}` });
+      this.queued.push({ text: instruction, claude: true, source, eventId: `provisional-${this.nextEventId++}` });
       return true;
     }
     if (this.seenClaudeDeliveryIds.includes(deliveryId)) return false;
@@ -33,7 +34,7 @@ export class ChatGptSteeringFeed {
       const delivered = this.provisionalClaude
         .find(entry => !entry.deliveryId && entry.fingerprint === steeringFingerprint(instruction));
       if (delivered) delivered.deliveryId = deliveryId;
-      else this.queued.push({ text: instruction, claude: true, eventId: deliveryId, deliveryId });
+      else this.queued.push({ text: instruction, claude: true, source, eventId: deliveryId, deliveryId });
       if (delivered) {
         this.seenClaudeDeliveryIds.push(deliveryId);
         this.trim(this.seenClaudeDeliveryIds);
@@ -64,9 +65,16 @@ export class ChatGptSteeringFeed {
       messages: this.queued.map((item, index) => ({
         deliveryId: item.deliveryId ?? item.eventId,
         sequence: index + 1,
+        source: item.source,
         content: item.text,
       })),
     };
+  }
+
+  peekClaude(): ReturnType<ChatGptSteeringFeed["peek"]> {
+    return this.queued.length > 0 && this.queued.every(item => item.claude)
+      ? this.peek()
+      : undefined;
   }
 
   take(count = this.queued.length): string | undefined {

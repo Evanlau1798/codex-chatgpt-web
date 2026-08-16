@@ -13,6 +13,7 @@ import { COMPACT_PROMPT } from "../responses/compaction";
 import type { AdapterEvent, CodexProviderConfig } from "../types";
 import { anthropicError, buildClaudeMessage, streamClaudeMessage } from "./response";
 import { translateClaudeMessages } from "./request";
+import { chatGptTurnSteeringId } from "../adapters/chatgpt-web/turn-execution";
 import { compactClaudeEvents, compactClaudeStream } from "./compact";
 
 type AdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
@@ -21,7 +22,10 @@ function parsedClaudeRequest(raw: unknown, req: Request, config: AppConfig) {
   const translated = translateClaudeMessages(
     raw,
     req.headers,
-    (threadId, instruction) => chatGptTurnSessions.claudeSteeringSuppressionCount(threadId, instruction),
+    (threadId, turnId, instruction) => chatGptTurnSessions.claudeSteeringSuppressionCountBySteeringId(
+      chatGptTurnSteeringId(threadId, turnId),
+      instruction,
+    ),
   );
   const parsed = parseRequest(translated.body);
   parsed._canonicalContextComplete = true;

@@ -3,15 +3,20 @@ import {
   claudeSteeringMarker,
   completeChatGptToolResults,
 } from "../src/adapters/chatgpt-web/tool-result-delivery";
+import { claudeAgentMessagingOptions } from "../src/adapters/chatgpt-web/claude-agent-messaging";
+import { claudeAgentTurnId } from "../src/claude-session-identity";
 import { browserSteeringRetry } from "../src/adapters/chatgpt-web/steering";
 import {
+  chatGptTurnSteeringId,
   ChatGptSteeringFeed,
   ChatGptTextFeed,
   ChatGptTraceFeed,
   ChatGptTurnSession,
+  ChatGptTurnSessions,
 } from "../src/adapters/chatgpt-web/turn-execution";
 import type { BrokerToolResult, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import type { CodexToolResultMessage } from "../src/types";
+import type { CodexParsedRequest } from "../src/types";
 
 function claudeRootSession() {
   const steering = new ChatGptSteeringFeed();
@@ -71,10 +76,10 @@ test("Claude steering preserves real parallel tool results and attaches once at 
     "second real result\n\n"
       + `<${marker}>\n`
       + '{"version":1,"kind":"mid_turn_user_messages","boundary":{"kind":"tool_result","tool_call_id":"call-2"},'
-      + '"messages":[{"delivery_id":"delivery-1","sequence":1,"content":"Prioritize the failing test"},'
-      + '{"delivery_id":"delivery-2","sequence":2,"content":"Then continue the review"}]}\n'
-      + "Treat each messages item as an independent user event at this boundary. Apply each delivery_id once in sequence order; "
-      + "only content is user-authored. Continue the existing task unless the content explicitly asks to stop or replace it. "
+      + '"messages":[{"delivery_id":"delivery-1","sequence":1,"source":"user","content":"Prioritize the failing test"},'
+      + '{"delivery_id":"delivery-2","sequence":2,"source":"user","content":"Then continue the review"}]}\n'
+      + "Treat each messages item as independent guidance at this boundary. Apply each delivery_id once in sequence order; "
+      + "source identifies whether content came from the user or the coordinating agent. Continue the existing task unless the content explicitly asks to stop or replace it. "
       + `Respond naturally when the content requests a response; otherwise do not add a separate receipt.\n</${marker}>`,
   );
   expect(boundary[0]?.text.match(/Prioritize the failing test/g)).toHaveLength(1);
@@ -173,4 +178,90 @@ test("Claude same-conversation continuation acknowledges steering only after sub
 test("a text-only Claude completion succeeds when no guidance is pending", async () => {
   const retry = browserSteeringRetry(new ChatGptSteeringFeed(), "claude-text-only", undefined, undefined, true);
   expect(await retry("Complete answer without a tool call", 1)).toBeUndefined();
+});
+
+test("Claude SendMessage reaches the active child at its next real tool-result boundary", () => {
+  const sessions = new ChatGptTurnSessions();
+  const threadId = "claude_session-1";
+  const agentId = "agent-1";
+  const child = sessions.getOrCreate(
+    "child",
+    () => ({
+      mode: "tools",
+      browser: new Promise<string>(() => {}),
+      token: Promise.resolve("child-token"),
+      trace: new ChatGptTraceFeed(),
+      text: new ChatGptTextFeed(),
+      cancel: () => {},
+    }),
+    threadId,
+    chatGptTurnSteeringId(threadId, claudeAgentTurnId(agentId)),
+  );
+  child.setOutstanding([{ callId: "child-tool", wireName: "Read", freeform: false }]);
+
+  const root = new ChatGptTurnSession({
+    mode: "tools",
+    browser: new Promise<string>(() => {}),
+    token: Promise.resolve("root-token"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  }, threadId, undefined, threadId);
+  root.setOutstanding([{ callId: "send-message", wireName: "SendMessage", freeform: false, arguments: {
+    to: agentId,
+    summary: "add final assertion",
+    message: "Also report the final test name",
+  } }]);
+  const parsed = {
+    _rawBody: { client_metadata: { claude_subagent: false } },
+    context: { messages: [] },
+    modelId: "gpt-5.6-sol",
+    options: {},
+  } as unknown as CodexParsedRequest;
+  Object.assign(parsed._rawBody as object, {
+    client_metadata: {
+      claude_subagent: false,
+      "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: "claude_root" }),
+    },
+  });
+
+  completeChatGptToolResults(root, { completeTool() {} }, "root-token", [
+    toolResult("send-message", '{"success":true,"message":"queued"}'),
+  ], claudeAgentMessagingOptions(parsed, sessions));
+
+  const completed: Array<{ callId: string; result: BrokerToolResult }> = [];
+  completeChatGptToolResults(child, {
+    completeTool: (_token, callId, result) => completed.push({ callId, result }),
+  }, "child-token", [toolResult("child-tool", "real child result")]);
+
+  const text = (completed[0]?.result.content as Array<{ text?: string }>)[0]?.text ?? "";
+  expect(text).toContain("real child result");
+  expect(text.match(/Also report the final test name/g)).toHaveLength(1);
+  expect(text).toContain('"source":"coordinator"');
+  expect(text).not.toContain("only content is user-authored");
+  expect(child.peekPendingSteering()).toBeUndefined();
+});
+
+test("Claude child routing waits until the SendMessage result reaches the active Web turn", () => {
+  const root = new ChatGptTurnSession({
+    mode: "tools",
+    browser: new Promise<string>(() => {}),
+    token: Promise.resolve("root-token"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  }, "claude-session", undefined, "claude-session");
+  root.setOutstanding([{ callId: "send-message", wireName: "SendMessage", freeform: false, arguments: {
+    to: "agent-1",
+    message: "Apply the added check",
+  } }]);
+  let routed = 0;
+
+  expect(() => completeChatGptToolResults(root, {
+    completeTool() { throw new Error("turn token is invalid or expired"); },
+  }, "root-token", [toolResult("send-message", '{"success":true}')], {
+    onClaudeAgentMessage() { routed += 1; },
+  })).toThrow("turn token is invalid or expired");
+
+  expect(routed).toBe(0);
 });

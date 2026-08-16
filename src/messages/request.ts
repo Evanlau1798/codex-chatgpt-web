@@ -4,6 +4,9 @@ import { cwd } from "node:process";
 import { isClaudeCompactRequest } from "./compact";
 import { historicalClaudeGuidance } from "./claude-steering-history";
 import { resolveClaudeGatewayModelId } from "./models";
+import { claudeAgentTurnId, claudeSessionThreadId } from "../claude-session-identity";
+
+export { claudeSessionThreadId } from "../claude-session-identity";
 
 type Json = Record<string, unknown>;
 type TextFilter = (text: string) => string | undefined;
@@ -96,15 +99,6 @@ function userItems(content: unknown, turnId: string, filterText?: TextFilter): J
   return items;
 }
 
-function safeId(value: string, fallback: string): string {
-  const safe = value.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 80);
-  return safe || fallback;
-}
-
-export function claudeSessionThreadId(sessionId: string): string {
-  return `claude_${safeId(sessionId, "ephemeral")}`;
-}
-
 function xml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
@@ -162,50 +156,59 @@ export interface TranslatedClaudeRequest {
   body: Json;
 }
 
-type ClaudeSteeringSuppressionCount = (threadId: string, instruction: string) => number;
+type ClaudeSteeringSuppressionCount = (threadId: string, turnId: string, instruction: string) => number;
 
 const CLAUDE_MID_TURN_HEADER = "The user sent a new message while you were working:";
+const CLAUDE_COORDINATOR_HEADER = "The coordinator sent a message while you were working:";
 const CLAUDE_MID_TURN_TAIL = "This is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn.";
+const CLAUDE_COORDINATOR_TAIL = "Address this before completing your current task.";
 
-function claudeQueuedCommandInstruction(text: string): string | undefined {
+interface ClaudeQueuedCommand { instruction: string; source: "user" | "coordinator" }
+
+function claudeQueuedCommand(text: string): ClaudeQueuedCommand | undefined {
   const trimmed = text.trim();
   const wrapper = trimmed.match(/^<system-reminder>\r?\n([\s\S]*)\r?\n<\/system-reminder>$/);
   if (trimmed.startsWith("<system-reminder>") && !wrapper) return undefined;
   const message = wrapper?.[1] ?? trimmed;
-  const header = message.match(new RegExp(`^${CLAUDE_MID_TURN_HEADER}\\r?\\n`));
+  const header = message.match(new RegExp(`^(?:${CLAUDE_MID_TURN_HEADER}|${CLAUDE_COORDINATOR_HEADER})\\r?\\n`));
   if (!header) return undefined;
+  const source = header[0].startsWith(CLAUDE_COORDINATOR_HEADER) ? "coordinator" : "user";
   const body = message.slice(header[0].length);
   const separators = [...body.matchAll(/\r?\n\r?\n/g)];
   for (const boundary of separators.reverse()) {
     const tail = body.slice(boundary.index! + boundary[0].length);
-    if (tail === CLAUDE_MID_TURN_TAIL || /^IMPORTANT:[\s\S]*\bmessage above\b/i.test(tail)) {
-      return body.slice(0, boundary.index);
+    if (tail === CLAUDE_MID_TURN_TAIL || tail === CLAUDE_COORDINATOR_TAIL
+      || /^IMPORTANT:[\s\S]*\bmessage above\b/i.test(tail)) {
+      return { instruction: body.slice(0, boundary.index), source };
     }
   }
   return undefined;
 }
 
 function filterClaudeQueuedCommandReplays(text: string, suppress: (instruction: string) => boolean): string | undefined {
-  const whole = claudeQueuedCommandInstruction(text);
-  if (whole !== undefined && suppress(whole)) return historicalClaudeGuidance(whole);
+  const whole = claudeQueuedCommand(text);
+  if (whole && suppress(whole.instruction)) return historicalClaudeGuidance(whole.instruction, whole.source);
   let cursor = 0;
   let filtered = "";
   let changed = false;
   for (const match of text.matchAll(/<system-reminder>\r?\n[\s\S]*?\r?\n<\/system-reminder>/g)) {
-    const instruction = claudeQueuedCommandInstruction(match[0]);
-    if (instruction === undefined || !suppress(instruction)) continue;
-    filtered += text.slice(cursor, match.index) + historicalClaudeGuidance(instruction);
+    const command = claudeQueuedCommand(match[0]);
+    if (!command || !suppress(command.instruction)) continue;
+    filtered += text.slice(cursor, match.index) + historicalClaudeGuidance(command.instruction, command.source);
     cursor = match.index + match[0].length;
     changed = true;
   }
   filtered = changed ? filtered + text.slice(cursor) : text;
-  const bareStart = filtered.lastIndexOf(`\n${CLAUDE_MID_TURN_HEADER}`);
+  const bareStart = Math.max(
+    filtered.lastIndexOf(`\n${CLAUDE_MID_TURN_HEADER}`),
+    filtered.lastIndexOf(`\n${CLAUDE_COORDINATOR_HEADER}`),
+  );
   if (bareStart >= 0) {
-    const instruction = claudeQueuedCommandInstruction(filtered.slice(bareStart + 1));
-    if (instruction !== undefined && suppress(instruction)) {
+    const command = claudeQueuedCommand(filtered.slice(bareStart + 1));
+    if (command && suppress(command.instruction)) {
       const cut = bareStart > 0 && filtered[bareStart - 1] === "\r" ? bareStart - 1 : bareStart;
       const prefix = filtered.slice(0, cut);
-      filtered = `${prefix}${prefix ? "\n" : ""}${historicalClaudeGuidance(instruction)}`;
+      filtered = `${prefix}${prefix ? "\n" : ""}${historicalClaudeGuidance(command.instruction, command.source)}`;
     }
   }
   return filtered || undefined;
@@ -232,11 +235,11 @@ export function translateClaudeMessages(
     throw new Error("max_tokens must be a positive number");
   }
 
-  const session = safeId(headers.get("x-claude-code-session-id") ?? randomUUID(), "ephemeral");
+  const session = headers.get("x-claude-code-session-id") ?? randomUUID();
   const subagent = headers.has("x-claude-code-agent-id");
-  const agent = safeId(headers.get("x-claude-code-agent-id") ?? "root", "root");
+  const agent = headers.get("x-claude-code-agent-id") ?? "root";
   const threadId = claudeSessionThreadId(session);
-  const turnId = `claude_${agent}`;
+  const turnId = claudeAgentTurnId(agent);
   const system = textBlocks(request.system);
   const auxiliaryResponse = claudeTitleResponse(request, system);
   const root = workingDirectory(system);
@@ -246,7 +249,7 @@ export function translateClaudeMessages(
   const consumeSuppression = (instruction: string): boolean => {
     if (!suppressionCount) return false;
     const used = suppressedByInstruction.get(instruction) ?? 0;
-    if (used >= suppressionCount(threadId, instruction)) return false;
+    if (used >= suppressionCount(threadId, turnId, instruction)) return false;
     suppressedByInstruction.set(instruction, used + 1);
     suppressedSteeringReplays += 1;
     return true;

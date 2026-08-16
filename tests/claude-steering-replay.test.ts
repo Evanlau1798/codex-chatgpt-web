@@ -15,7 +15,7 @@ test("acknowledged Claude queued-command reminders remain as inert conversation 
     { role: "user", content: "Inspect the repository" },
     { role: "assistant", content: "I started the review" },
     { role: "user", content: reminder },
-  ]), headers, (_threadId, prompt) => prompt === guidance ? 1 : 0);
+  ]), headers, (_threadId, _turnId, prompt) => prompt === guidance ? 1 : 0);
 
   const input = JSON.stringify(translated.body.input);
   expect(input.match(new RegExp(guidance, "g"))).toHaveLength(1);
@@ -43,7 +43,7 @@ test("Claude queued-command replay suppression is occurrence-counted and exact",
     { role: "user", content: reminder },
     { role: "user", content: reminder },
     { role: "user", content: unrelated },
-  ]), headers, (_threadId, prompt) => prompt === guidance ? 1 : 0);
+  ]), headers, (_threadId, _turnId, prompt) => prompt === guidance ? 1 : 0);
   const input = JSON.stringify(translated.body.input);
 
   expect(input.match(new RegExp(guidance, "g"))).toHaveLength(2);
@@ -58,7 +58,7 @@ test("Claude queued-command replay keeps the original prompt line endings for fi
   const translated = translateClaudeMessages(raw([
     { role: "user", content: "Inspect the repository" },
     { role: "user", content: crlfReminder },
-  ]), headers, (_threadId, prompt) => prompt === crlfGuidance ? 1 : 0);
+  ]), headers, (_threadId, _turnId, prompt) => prompt === crlfGuidance ? 1 : 0);
 
   const input = JSON.stringify(translated.body.input);
   expect(input).toContain("First constraint\\r\\nSecond constraint");
@@ -71,7 +71,7 @@ test("Claude queued-command replay preserves bare guidance without its active co
   const translated = translateClaudeMessages(raw([
     { role: "user", content: "Inspect the repository" },
     { role: "user", content: bareReminder(prompt) },
-  ]), headers, (_threadId, instruction) => instruction === prompt ? 1 : 0);
+  ]), headers, (_threadId, _turnId, instruction) => instruction === prompt ? 1 : 0);
 
   const input = JSON.stringify(translated.body.input);
   expect(input).toContain("First paragraph\\n\\nSecond paragraph");
@@ -86,7 +86,7 @@ test("Claude queued-command replay becomes inert tool-result history without dro
     { role: "user", content: "Inspect the repository" },
     { role: "assistant", content: [{ type: "tool_use", id: "tool-1", name: "Glob", input: {} }] },
     { role: "user", content: [{ type: "tool_result", tool_use_id: "tool-1", content: output }] },
-  ]), headers, (_threadId, prompt) => prompt === guidance ? 1 : 0);
+  ]), headers, (_threadId, _turnId, prompt) => prompt === guidance ? 1 : 0);
   const input = JSON.stringify(translated.body.input);
 
   expect(input).toContain("54 matching tests");
@@ -113,4 +113,33 @@ test("Claude replay leaves near-miss, incomplete, and unmatched reminders untouc
   expect(texts).toContain(incomplete);
   expect(input.match(new RegExp(guidance, "g"))).toHaveLength(3);
   expect(translated.suppressedSteeringReplays).toBe(0);
+});
+
+test("delivered coordinator guidance becomes inert in the matching Claude child transcript", () => {
+  const agentHeaders = new Headers({
+    "x-claude-code-session-id": "session-replay",
+    "x-claude-code-agent-id": "agent-7",
+  });
+  const coordinatorGuidance = "Also report the final test name";
+  const coordinatorReminder = `The coordinator sent a message while you were working:\n${coordinatorGuidance}\n\nAddress this before completing your current task.`;
+  const seen: Array<{ threadId: string; turnId: string; instruction: string }> = [];
+  const translated = translateClaudeMessages(raw([
+    { role: "user", content: "Inspect the test file" },
+    { role: "assistant", content: "I started the inspection" },
+    { role: "user", content: coordinatorReminder },
+  ]), agentHeaders, (threadId, turnId, instruction) => {
+    seen.push({ threadId, turnId, instruction });
+    return instruction === coordinatorGuidance ? 1 : 0;
+  });
+
+  expect(seen).toContainEqual({
+    threadId: "claude_session-replay",
+    turnId: "claude_agent-7",
+    instruction: coordinatorGuidance,
+  });
+  const input = JSON.stringify(translated.body.input);
+  expect(input).toContain("Historical coordinator guidance (already applied):");
+  expect(input).not.toContain("The coordinator sent a message while you were working:");
+  expect(input).not.toContain("Address this before completing your current task");
+  expect(translated.suppressedSteeringReplays).toBe(1);
 });
