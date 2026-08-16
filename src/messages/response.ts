@@ -30,6 +30,7 @@ export function buildClaudeMessage(events: AdapterEvent[], meta: ClaudeResponseM
   let thinkingSignature = "";
   let tool: { id: string; name: string; json: string } | undefined;
   let kind: "text" | "thinking" | "tool" | undefined;
+  let textPhase: "commentary" | "final_answer" | undefined;
   let usage: CodexUsage | undefined;
   let reason: string | undefined;
   const flush = () => {
@@ -45,6 +46,7 @@ export function buildClaudeMessage(events: AdapterEvent[], meta: ClaudeResponseM
       content.push({ type: "tool_use", id: tool.id, name: tool.name, input });
     }
     kind = undefined;
+    textPhase = undefined;
     text = "";
     thinking = "";
     thinkingSignature = "";
@@ -58,7 +60,11 @@ export function buildClaudeMessage(events: AdapterEvent[], meta: ClaudeResponseM
     else if (event.type === "thinking_signature") thinkingSignature = event.signature;
     else if (event.type === "redacted_thinking") { flush(); content.push({ type: "redacted_thinking", data: event.data }); }
     else if (event.type === "text_delta") {
-      if (kind !== "text") { flush(); kind = "text"; }
+      if (kind !== "text" || textPhase !== event.phase) {
+        flush();
+        kind = "text";
+        textPhase = event.phase;
+      }
       text += event.text;
     }
     else if (event.type === "tool_call_start") { flush(); kind = "tool"; tool = { id: event.id, name: event.name, json: "" }; }
@@ -101,6 +107,7 @@ export function streamClaudeMessage(
       };
       let index = -1;
       let kind: "text" | "thinking" | "tool" | undefined;
+      let textPhase: "commentary" | "final_answer" | undefined;
       let thinking = "";
       let thinkingSignature = "";
       let usage: CodexUsage | undefined;
@@ -110,6 +117,7 @@ export function streamClaudeMessage(
         if (kind === "thinking") send("content_block_delta", { type: "content_block_delta", index, delta: { type: "signature_delta", signature: thinkingSignature || createHash("sha256").update(thinking).digest("base64url") } });
         send("content_block_stop", { type: "content_block_stop", index });
         kind = undefined;
+        textPhase = undefined;
         thinking = "";
         thinkingSignature = "";
       };
@@ -133,7 +141,13 @@ export function streamClaudeMessage(
               firstTextLogged = true;
               console.info(`[chatgpt-web] Claude SSE latency stage=first_text_enqueue elapsedMs=${Date.now() - startedAt}`);
             }
-            if (kind !== "text") { closeBlock(); index += 1; kind = "text"; send("content_block_start", { type: "content_block_start", index, content_block: { type: "text", text: "" } }); }
+            if (kind !== "text" || textPhase !== event.phase) {
+              closeBlock();
+              index += 1;
+              kind = "text";
+              textPhase = event.phase;
+              send("content_block_start", { type: "content_block_start", index, content_block: { type: "text", text: "" } });
+            }
             send("content_block_delta", { type: "content_block_delta", index, delta: { type: "text_delta", text: event.text } });
           } else if (event.type === "tool_call_start") {
             closeBlock(); index += 1; kind = "tool";
