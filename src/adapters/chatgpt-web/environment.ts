@@ -2,6 +2,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
 import { isContextualCodexUserMessage } from "./contextual-user-message";
 import { withoutRecursiveChatGptConnectorTools } from "./native-tool-filter";
+import { currentTurnUserRevision } from "./turn-user-revision";
 export type ChatGptSandboxPolicy =
   | { type: "dangerFullAccess" }
   | { type: "readOnly"; networkAccess: boolean }
@@ -23,7 +24,6 @@ export interface ChatGptTurnUserRevision {
   content: unknown;
   turnId?: string;
 }
-
 export class MissingTrustedCodexEnvironmentError extends Error {
   constructor(field: string) {
     super(`ChatGPT web turn is missing ${field} in trusted Codex environment context`);
@@ -74,7 +74,7 @@ function itemTurnId(value: unknown): string | undefined {
 export function extractChatGptTurnUserRevision(parsed: CodexParsedRequest): unknown {
   const turnId = extractChatGptTurnIdentity(parsed).turnId;
   if (!turnId) throw new Error("ChatGPT web requires native Codex turn_id metadata for browser-session replay");
-  const revision = latestChatGptTurnUserRevision(parsed);
+  const revision = currentTurnUserRevision(parsed._rawBody, turnId);
   if (!revision) throw new Error("ChatGPT web requires a current-turn user message for browser-session replay");
   if (revision.turnId !== undefined && revision.turnId !== turnId) {
     throw new Error("ChatGPT web current user message conflicts with native Codex turn_id metadata");

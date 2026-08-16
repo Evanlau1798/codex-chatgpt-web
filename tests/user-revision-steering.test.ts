@@ -8,6 +8,50 @@ import {
 } from "../src/adapters/chatgpt-web/turn-execution";
 import type { CodexParsedRequest } from "../src/types";
 
+function contextualGoalTurn(currentTurnId: string, goalTurnId = currentTurnId): CodexParsedRequest {
+  const goal = '<codex_internal_context source="goal">\nContinue the active goal.\n</codex_internal_context>';
+  return {
+    modelId: "chatgpt-web/extra-high",
+    stream: true,
+    context: { systemPrompt: [], tools: [], messages: [] },
+    options: {},
+    _rawBody: {
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread-root", turn_id: currentTurnId }),
+      },
+      input: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Original task" }],
+        internal_chat_message_metadata_passthrough: { turn_id: "turn-previous" },
+      }, {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Previous turn completed" }],
+      }, {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: goal }],
+        internal_chat_message_metadata_passthrough: { turn_id: goalTurnId },
+      }],
+    },
+  } satisfies CodexParsedRequest;
+}
+
+test("uses a contextual-only goal message as the current native turn revision", () => {
+  const parsed = contextualGoalTurn("turn-goal");
+
+  expect(extractChatGptTurnUserText(parsed)).toBe(
+    '<codex_internal_context source="goal">\nContinue the active goal.\n</codex_internal_context>',
+  );
+});
+
+test("does not authorize a contextual goal message owned by another native turn", () => {
+  const parsed = contextualGoalTurn("turn-goal", "turn-foreign");
+
+  expect(() => extractChatGptTurnUserText(parsed)).toThrow(/current-turn user message|conflicts with native Codex turn_id/);
+});
+
 test("does not treat Codex subagent notifications as user steering", () => {
   const turnId = "turn-root";
   const message = (text: string) => ({
