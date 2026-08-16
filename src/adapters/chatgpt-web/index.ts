@@ -12,6 +12,7 @@ import { prepareChatGptWebContext } from "./context-bootstrap";
 import { canonicalizeCompactionHandoff, codexToolResultsById, createActiveCompactionHandoffPrompts, recoverCompactionHandoff } from "./compaction-handoff";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
+import { reportChatGptPreparationFailure } from "./preparation-diagnostics";
 import { compileChatGptWebPrompt } from "./prompt";
 import { brokerSocketPath, ChatGptSurfaceRecoveryTracker, deferred, withAbort } from "./runtime-lifecycle";
 import { TurnBroker } from "./turn-broker";
@@ -148,7 +149,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     if (!environment) throw new Error("Tool-capable ChatGPT web mode requires a trusted Codex environment");
     const token = deferred<string>();
     let tokenSettled = false;
-    const prepareWith = async (input: CodexParsedRequest) => {
+    const prepareWith = async (input: CodexParsedRequest, source: "full" | "resume") => {
       const turnToken = activeToken ?? await broker.register(
         environment,
         timeoutMs === undefined ? undefined : timeoutMs + 60_000,
@@ -165,8 +166,8 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           compileChatGptWebPrompt(input, turnCapabilities, turnToken, { captureLunaCheckpoint }),
           useEnhancedWebSessionMode, contextTtlMs, traceId);
       } catch (error) {
-        broker.revoke(turnToken);
-        throw error;
+        const failure = reportChatGptPreparationFailure(traceId, source, input, error);
+        throw failure;
       }
     };
     const browser = finalizeCheckpoint(worker.run({
@@ -174,8 +175,8 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       modelId: parsed.modelId,
       reasoning: parsed.options.reasoning,
       capabilities: turnCapabilities,
-      prepare: () => prepareWith(checkpointInput.parsed),
-      ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput) } : {}),
+      prepare: () => prepareWith(checkpointInput.parsed, "full"),
+      ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput, "resume") } : {}),
       ...(retainConversation ? { retainConversation: true } : {}),
       ...(conversationKey ? { conversationKey } : {}),
       abortSignal: browserAbort.signal,

@@ -3,6 +3,7 @@ import type { CodexParsedRequest, CodexProviderConfig } from "../../types";
 import { StallTimeoutError } from "../../stall-timeout";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { codexToolResultsById } from "./compaction-handoff";
+import { chatGptErrorDiagnosticIdentity } from "./preparation-diagnostics";
 import type { ChatGptTurnSession } from "./turn-execution";
 
 export function brokerSocketPath(provider: CodexProviderConfig): string {
@@ -125,7 +126,7 @@ export class ChatGptSurfaceRecoveryTracker {
       const canonical = session.canonicalCallDiagnostics();
       console.warn(
         `[chatgpt-web] browser turn ${this.traceId} surface recovery eligible=${decision.eligible}`
-        + ` reason=${decision.reason} generation=${recoveries}`
+        + ` reason=${decision.reason} ${chatGptErrorDiagnosticIdentity(error)} generation=${recoveries}`
         + ` finalChars=${session.runtime.text.value().length}`
         + ` canonicalResults=${decision.canonicalResultCount}`
         + ` unresolvedSuperseded=${decision.unresolvedSupersededCount}`

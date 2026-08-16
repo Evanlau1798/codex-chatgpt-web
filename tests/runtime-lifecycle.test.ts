@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
-import { chatGptSurfaceRecoveryDecision } from "../src/adapters/chatgpt-web/runtime-lifecycle";
+import { ChatGptSurfaceRecoveryTracker, chatGptSurfaceRecoveryDecision } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
 import type { CodexParsedRequest } from "../src/types";
 import { StallTimeoutError } from "../src/stall-timeout";
@@ -161,6 +161,37 @@ test("surface recovery rejects read-only and non-retryable turns", () => {
   expect(chatGptSurfaceRecoveryDecision(
     chatGptWebSurfaceError("surface changed", true), tools, requestWithResults([]), 0,
   )).toMatchObject({ eligible: false, reason: "non_retryable" });
+});
+
+test("surface recovery diagnostics identify the error that reached the decision boundary", () => {
+  const session = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_test"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  session.observeCanonicalRequest(completeRequest());
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...values: unknown[]) => warnings.push(values.map(String).join(" "));
+  try {
+    new ChatGptSurfaceRecoveryTracker("diagnostic-trace").recoverableResultCount(
+      new DOMException("ChatGPT web turn aborted", "AbortError"),
+      session,
+      completeRequest(),
+      0,
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain("reason=unsupported_error");
+  expect(warnings[0]).toContain("errorName=\"AbortError\"");
+  expect(warnings[0]).toContain("errorCode=\"none\"");
+  expect(warnings[0]).not.toContain("ChatGPT web turn aborted");
 });
 
 test("tool result delivery updates the live browser runtime state", () => {
