@@ -79,23 +79,25 @@ test("uses the Markdown buffer stability window before first commentary output",
   }]);
 });
 
-test("coalesces commentary roots without interleaving animated reasoning", () => {
+test("preserves commentary root boundaries without interleaving animated reasoning", () => {
   const tracker = new ChatGptVisibleTraceTracker(100);
   const blocks = [
     { kind: "status" as const, text: "正在思考" },
-    { kind: "commentary" as const, text: "目前 live Git 與", complete: true },
-    { kind: "commentary" as const, text: "舊 handoff 有差異" },
+    { kind: "commentary" as const, key: "first", text: "目前 live Git 與", complete: true },
+    { kind: "commentary" as const, key: "second", text: "舊 handoff 有差異" },
   ];
 
   expect(tracker.observe(blocks, false, 1_000)).toEqual([]);
   expect(tracker.observe(blocks, false, 1_100)).toEqual([
     { kind: "reasoning", text: "正在思考" },
-    { kind: "commentary", text: "目前 live Git 與舊 handoff 有差異" },
+    { kind: "commentary", text: "目前 live Git 與" },
+    { kind: "commentary", text: "舊 handoff 有差異" },
   ]);
 
   const growing = [
     { kind: "status" as const, text: "讀取記憶與部署摘要" },
-    { kind: "commentary" as const, text: "目前 live Git 與舊 handoff 有差異，正在重新驗證" },
+    { kind: "commentary" as const, key: "first", text: "目前 live Git 與", complete: true },
+    { kind: "commentary" as const, key: "second", text: "舊 handoff 有差異，正在重新驗證" },
   ];
   expect(tracker.observe(growing, false, 1_200)).toEqual([]);
   expect(tracker.observe(growing, false, 1_300)).toEqual([{
@@ -110,18 +112,16 @@ test("does not replay a completed commentary root while its React replacement gr
   const output = [];
 
   output.push(...tracker.observe([
-    { kind: "commentary", text: "Repository read-only guidance" },
+    { kind: "commentary", key: "root", text: "Repository read-only guidance" },
   ], false, 1_000));
   output.push(...tracker.observe([
-    { kind: "commentary", text: "Repository read-only guidance stays scoped" },
+    { kind: "commentary", key: "root", text: "Repository read-only guidance stays scoped" },
   ], false, 1_100));
   output.push(...tracker.observe([
-    { kind: "commentary", text: "Repository read-only guidance stays scoped", complete: true },
-    { kind: "commentary", text: "Repository read-only guidance stays scoped to tests" },
+    { kind: "commentary", key: "root", text: "Repository read-only guidance stays scoped to tests" },
   ], false, 1_200));
   output.push(...tracker.observe([
-    { kind: "commentary", text: "Repository read-only guidance stays scoped", complete: true },
-    { kind: "commentary", text: "Repository read-only guidance stays scoped to tests" },
+    { kind: "commentary", key: "root", text: "Repository read-only guidance stays scoped to tests", complete: true },
   ], false, 1_300));
 
   expect(output.map(event => event.text).join("")).toBe(
@@ -148,7 +148,10 @@ test("does not replay a later commentary root when earlier roots become complete
     bothIncomplete[1],
   ], false, 1_300));
 
-  expect(output.map(event => event.text).join("")).toBe("First root:second root");
+  expect(output).toEqual([
+    { kind: "commentary", text: "First root:" },
+    { kind: "commentary", text: "second root" },
+  ]);
 });
 
 test("waits out escaped raw Markdown until the renderer exposes stable Markdown", () => {

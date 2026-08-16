@@ -40,23 +40,6 @@ function hasUnrenderedMarkdown(text: string): boolean {
   return /\\[*`~[\]]/.test(text) || hasUnclosedStrongMarkdown(text);
 }
 
-function coalescedCommentary(blocks: ChatGptVisibleTraceBlock[]): ChatGptVisibleTraceBlock | undefined {
-  const commentary = blocks.filter(block => block.kind === "commentary");
-  if (commentary.length === 0) return undefined;
-  if (commentary.length > 1 && !commentary.slice(0, -1).every(block => block.complete === true)) {
-    return undefined;
-  }
-  const text = commentary.reduce((combined, block) => (
-    block.text.startsWith(combined) ? block.text : combined + block.text
-  ), "");
-  return {
-    kind: "commentary",
-    key: "stream",
-    text,
-    ...(commentary.at(-1)?.complete === true ? { complete: true } : {}),
-  };
-}
-
 /** Convert public ChatGPT trace DOM into append-only reasoning and commentary. */
 export class ChatGptVisibleTraceTracker {
   private readonly emittedTrace = new Map<string, string>();
@@ -72,34 +55,23 @@ export class ChatGptVisibleTraceTracker {
     const output: ChatGptVisibleTraceEvent[] = [];
     let statusSlot = 0;
     let commentarySlot = 0;
-    const commentary = coalescedCommentary(blocks);
-    const commentaryText = commentary ? normalizeTrace(commentary) : "";
-    const commentaryCandidate = this.traceCandidates.get("commentary:stream");
-    const commentarySettled = commentary?.complete === true
-      && commentaryCandidate?.text === commentaryText;
-    let sawFirstCommentary = false;
-    const stableFirstCommentary = blocks.map(block => {
-      if (block.kind !== "commentary" || sawFirstCommentary) return block;
-      sawFirstCommentary = true;
-      return { ...block, key: "stream" };
-    });
-    const commentaryEmissionBaseline = commentary
-      ? blocks.filter(block => block.kind === "commentary").reduce((combined, block, index) => {
-          const sourceKey = index === 0
-            ? "commentary:stream"
-            : `commentary:${block.key ?? index}`;
-          const emitted = this.emittedTrace.get(sourceKey) ?? "";
-          return emitted.startsWith(combined) ? emitted : combined + emitted;
-        }, "")
-      : "";
-    const observable = commentary
-      ? [
-          ...(!this.emittedTrace.has("commentary:stream") || commentarySettled
-            ? blocks.filter(block => block.kind === "status")
-            : []),
-          commentary,
-        ]
-      : stableFirstCommentary;
+    const commentaryBlocks = blocks.filter(block => block.kind === "commentary");
+    const commentaryStreaming = commentaryBlocks.some(block => block.complete !== true);
+    const commentaryPreviouslyEmitted = commentaryBlocks.some((block, index) => (
+      this.emittedTrace.has(block.key ? `commentary:${block.key}` : `commentary:${index}`)
+    ));
+    const precedingCommentaryComplete = commentaryBlocks
+      .slice(0, -1)
+      .every(block => block.complete === true);
+    const suppressAnimatedStatus = commentaryStreaming
+      && commentaryPreviouslyEmitted
+      && (commentaryBlocks.length === 1 || precedingCommentaryComplete);
+    const observable = suppressAnimatedStatus
+      ? blocks.filter(block => block.kind !== "status")
+      : [
+          ...blocks.filter(block => block.kind === "status"),
+          ...blocks.filter(block => block.kind !== "status"),
+        ];
     for (const block of observable) {
       if (block.kind === "answer") continue;
       const index = block.kind === "status" ? statusSlot++ : commentarySlot++;
@@ -155,14 +127,8 @@ export class ChatGptVisibleTraceTracker {
       if (block.kind === "commentary" && previous && !stableText.startsWith(previous)) continue;
       this.emittedTrace.set(slot, stableText);
       const kind = block.kind === "commentary" ? "commentary" : "reasoning";
-      const deliveredPrefix = block.kind === "commentary"
-        && slot === "commentary:stream"
-        && commentaryEmissionBaseline.length > (previous?.length ?? 0)
-        && stableText.startsWith(commentaryEmissionBaseline)
-        ? commentaryEmissionBaseline
-        : previous;
-      if (deliveredPrefix && stableText.startsWith(deliveredPrefix)) {
-        const suffix = stableText.slice(deliveredPrefix.length);
+      if (previous && stableText.startsWith(previous)) {
+        const suffix = stableText.slice(previous.length);
         if (suffix) output.push({ kind, text: suffix, continuation: true });
       } else {
         output.push({ kind, text: stableText });
