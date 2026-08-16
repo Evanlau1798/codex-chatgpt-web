@@ -172,13 +172,25 @@ export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
     } catch (error) {
       throw new ChatGptWebAdapterError(
         `ChatGPT rate-limit dialog is open, but its acknowledgement failed: ${error instanceof Error ? error.message : String(error)}`,
-        { status: 429, errorType: "rate_limit_error", code: "rate_limit_exceeded", retryable: true },
+        {
+          status: 429,
+          errorType: "rate_limit_error",
+          code: "rate_limit_exceeded",
+          retryable: false,
+          retireSession: true,
+        },
       );
     }
   }
   throw new ChatGptWebAdapterError(
     "ChatGPT rate limit: too many requests are being made too quickly. Wait before retrying.",
-    { status: 429, errorType: "rate_limit_error", code: "rate_limit_exceeded", retryable: true },
+    {
+      status: 429,
+      errorType: "rate_limit_error",
+      code: "rate_limit_exceeded",
+      retryable: false,
+      retireSession: true,
+    },
   );
 }
 

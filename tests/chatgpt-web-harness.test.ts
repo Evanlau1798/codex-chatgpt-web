@@ -1140,14 +1140,14 @@ describe("ChatGPT outer-native harness v4", () => {
     expect(imageUsage.inputTokens).toBeGreaterThanOrEqual(textUsage.inputTokens + 3_500);
   });
 
-  test("keeps the ChatGPT rate-limit dialog distinct from model capacity and UI failures", () => {
+  test("keeps the terminal ChatGPT rate-limit dialog distinct from model capacity and UI failures", () => {
     const rateLimit = buildResponseJSON([{
       type: "error",
       message: "ChatGPT rate limit: too many requests are being made too quickly. Wait before retrying.",
       status: 429,
       errorType: "rate_limit_error",
       code: "rate_limit_exceeded",
-      retryable: true,
+      retryable: false,
     }], CHATGPT_WEB_MODEL_ID) as {
       status: string;
       retryable: boolean;
@@ -1155,7 +1155,7 @@ describe("ChatGPT outer-native harness v4", () => {
     };
     expect(rateLimit).toMatchObject({
       status: "failed",
-      retryable: true,
+      retryable: false,
       error: { type: "rate_limit_error", code: "rate_limit_exceeded" },
     });
 

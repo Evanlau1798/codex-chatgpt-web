@@ -1181,7 +1181,8 @@ test("the known ChatGPT rate-limit dialog is acknowledged and returns a structur
     status: 429,
     errorType: "rate_limit_error",
     code: "rate_limit_exceeded",
-    retryable: true,
+    retryable: false,
+    retireSession: true,
   });
   expect(fixture.pressed).toEqual(["Enter"]);
 });
@@ -1196,7 +1197,8 @@ test("the Traditional Chinese ChatGPT rate-limit dialog returns the same structu
     status: 429,
     errorType: "rate_limit_error",
     code: "rate_limit_exceeded",
-    retryable: true,
+    retryable: false,
+    retireSession: true,
   });
   expect(fixture.pressed).toEqual(["Enter"]);
 });
