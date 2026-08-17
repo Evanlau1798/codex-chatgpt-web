@@ -9,7 +9,7 @@ import {
   type ChatGptSandboxPolicy,
   type ChatGptTurnEnvironment,
 } from "./environment";
-import { withoutRecursiveChatGptConnectorTools } from "./native-tool-filter";
+import { effectiveChatGptToolPolicy } from "./tool-policy";
 
 interface StoredThreadEnvironment {
   cwd: string;
@@ -141,7 +141,7 @@ export class ChatGptThreadEnvironmentStore {
         roots: stored.roots,
         writableRoots: stored.writableRoots,
         sandboxPolicy: stored.sandboxPolicy,
-        tools: withoutRecursiveChatGptConnectorTools(parsed.context.tools),
+        tools: effectiveChatGptToolPolicy(parsed).tools,
       };
     }
   }

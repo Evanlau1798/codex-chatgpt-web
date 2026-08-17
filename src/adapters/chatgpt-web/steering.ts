@@ -1,4 +1,4 @@
-import { namespacedToolName, type CodexParsedRequest } from "../../types";
+import type { CodexParsedRequest } from "../../types";
 import { historicalClaudeGuidance } from "../../messages/claude-steering-history";
 import { extractChatGptTurnIdentity, extractChatGptTurnUserRevision, extractChatGptTurnUserText } from "./environment";
 import type { BrokerToolRequest, TurnBroker } from "./turn-broker";
@@ -6,6 +6,7 @@ import { claudeBrowserSessionGroup, claudeRootSessionThreadId, normalizeClaudeTo
 import { claudeAdditiveSteeringInstruction } from "./tool-result-delivery";
 import { chatGptConversationKey, chatGptTurnSteeringId, type ChatGptSteeringFeed, type ChatGptTurnRuntime, type ChatGptTurnSession, type ChatGptTurnSessions } from "./turn-execution";
 import type { CompletedClaudeSteering } from "./steering-feed";
+import { effectiveChatGptToolPolicy } from "./tool-policy";
 
 export interface ChatGptRetryPrompt {
   text: string;
@@ -152,7 +153,7 @@ export function retainedConversationResumeRequest(parsed: CodexParsedRequest): C
 
 export function validateBatchTools(parsed: CodexParsedRequest, requests: BrokerToolRequest[]): void {
   normalizeClaudeToolRequests(parsed, requests);
-  const available = new Set((parsed.context.tools ?? []).map(tool => namespacedToolName(tool.namespace, tool.name)));
+  const available = effectiveChatGptToolPolicy(parsed).wireNames;
   for (const request of requests) {
     if (!available.has(request.wireName)) {
       throw new Error(`ChatGPT requested a tool that the active Codex round did not advertise: ${request.wireName}`);

@@ -1,7 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
 import { isContextualCodexUserMessage } from "./contextual-user-message";
-import { withoutRecursiveChatGptConnectorTools } from "./native-tool-filter";
+import { effectiveChatGptToolPolicy } from "./tool-policy";
 import { currentTurnUserRevision } from "./turn-user-revision";
 export type ChatGptSandboxPolicy =
   | { type: "dangerFullAccess" }
@@ -467,14 +467,14 @@ export function extractChatGptTurnEnvironment(parsed: CodexParsedRequest): ChatG
   }
 
   const sandboxType = sandboxTypeFromEnvironment(text);
-  const networkAccess = /<network_access>enabled<\/network_access>/i.test(text)
-    || /network access is enabled/i.test(text);
+  const networkAccess = /<network_access>enabled<\/network_access>/i.test(text) || /network access is enabled/i.test(text);
+  const tools = effectiveChatGptToolPolicy(parsed).tools;
 
   if (!sandboxType) {
     throw new Error("ChatGPT web turn requires one explicit trusted Codex sandbox mode");
   }
   if (sandboxType === "dangerFullAccess") {
-    return { cwd, roots, writableRoots: roots, sandboxPolicy: { type: "dangerFullAccess" }, tools: withoutRecursiveChatGptConnectorTools(parsed.context.tools) };
+    return { cwd, roots, writableRoots: roots, sandboxPolicy: { type: "dangerFullAccess" }, tools };
   }
   if (sandboxType === "workspaceWrite") {
     return {
@@ -482,10 +482,10 @@ export function extractChatGptTurnEnvironment(parsed: CodexParsedRequest): ChatG
       roots,
       writableRoots: roots,
       sandboxPolicy: { type: "workspaceWrite", writableRoots: roots, networkAccess },
-      tools: withoutRecursiveChatGptConnectorTools(parsed.context.tools),
+      tools,
     };
   }
-  return { cwd, roots, writableRoots: [], sandboxPolicy: { type: "readOnly", networkAccess }, tools: withoutRecursiveChatGptConnectorTools(parsed.context.tools) };
+  return { cwd, roots, writableRoots: [], sandboxPolicy: { type: "readOnly", networkAccess }, tools };
 }
 
 export function extractChatGptTurnIdentity(parsed: CodexParsedRequest): ChatGptTurnIdentity {

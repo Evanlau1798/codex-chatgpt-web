@@ -1,7 +1,7 @@
 import { createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import { handleClaudeSteeringHook } from "./messages/steering-hook";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
@@ -9,7 +9,6 @@ import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
 import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
-import { createHash } from "node:crypto";
 import { augmentNativeModelCatalog } from "./model-catalog";
 import { readCodexModelContextOverride, type CodexModelContextOverride } from "./codex-integration";
 import {
@@ -23,12 +22,12 @@ import { COMPACT_PROMPT } from "./responses/compaction";
 import { handleCompactRequest } from "./responses/compact-handler";
 import { parseRequest } from "./responses/parser";
 import { expandPreviousResponseInput, flushResponseState, rememberResponseState } from "./responses/state";
-import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
-import type { CodexProviderConfig } from "./types";
+import { namespacedToolName, type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "./types";
 import type { ProviderAdapter } from "./adapters/base";
 import { VERSION } from "./version";
 import { messagesRequest } from "./messages";
 import { claudeGatewayModelsResponse, isClaudeGatewayModelsRequest } from "./messages/models";
+import { enforceLocalDataRequestSecurity } from "./local-request-security";
 
 export class HttpTurnCounter {
   private active = 0;
@@ -178,10 +177,7 @@ export async function modelsRequest(
   return new Response(body, { status: upstream.status, statusText: upstream.statusText, headers });
 }
 
-export async function nativeSearchRequest(
-  req: Request,
-  fetchUpstream?: NativeFetch,
-): Promise<Response> {
+export async function nativeSearchRequest(req: Request, fetchUpstream?: NativeFetch): Promise<Response> {
   try {
     return await forwardNativeCodexRequest(req, "alpha/search", fetchUpstream);
   } catch (error) {
@@ -338,11 +334,7 @@ export async function responseRequest(
   return Response.json(json);
 }
 
-export async function compactRequest(
-  req: Request,
-  config: AppConfig,
-  adapterFactory: ChatGptWebAdapterFactory = createChatGptWebAdapter,
-): Promise<Response> {
+export async function compactRequest(req: Request, config: AppConfig, adapterFactory: ChatGptWebAdapterFactory = createChatGptWebAdapter): Promise<Response> {
   return handleCompactRequest(req, config, responseRequest, adapterFactory);
 }
 
@@ -379,6 +371,7 @@ export function startServer(
     idleTimeout: 0,
     fetch(req) {
       const url = new URL(req.url);
+      const securityRejection = enforceLocalDataRequestSecurity(req, url.pathname, server.port!); if (securityRejection) return securityRejection;
       if (req.method === "GET" && url.pathname === "/healthz") {
         return Response.json({
           status: "ok",

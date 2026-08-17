@@ -26,10 +26,19 @@ export function browserDiagnosticCheckpoint(value: string): string {
 }
 
 export function browserDiagnosticIncludesScreenshot(
-  checkpoint: string,
+  _checkpoint: string,
   captureAll = process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS === "1",
 ): boolean {
-  return captureAll || checkpoint === "response-stalled-30s" || checkpoint === "turn-failed";
+  return captureAll;
+}
+
+function diagnosticScreenshotMask(page: Page) {
+  return [
+    page.locator('[data-testid^="conversation-turn-"]'),
+    page.locator(CHATGPT_COMPOSER_SELECTOR),
+    page.locator('[role="dialog"], [role="alert"], [role="status"], [data-radix-popper-content-wrapper]'),
+    page.locator('[data-testid*="profile" i], [data-testid*="account" i], [aria-label*="profile" i], [aria-label*="account" i]'),
+  ];
 }
 
 function privateDirectory(path: string): void {
@@ -102,7 +111,8 @@ export class ChatGptBrowserDiagnostics {
 
       if (browserDiagnosticIncludesScreenshot(checkpoint)) {
         try {
-          const screenshot = await page.screenshot({ animations: "disabled", caret: "hide", timeout: 5_000, type: "png" });
+          const mask = diagnosticScreenshotMask(page);
+          const screenshot = await page.screenshot({ animations: "disabled", caret: "hide", mask, timeout: 5_000, type: "png" });
           atomicWriteFile(join(this.directory, `${stem}.png`), screenshot);
         } catch (screenshotCaptureError) {
           envelope.screenshotError = diagnosticError(screenshotCaptureError);

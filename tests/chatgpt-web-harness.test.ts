@@ -1503,6 +1503,7 @@ describe("ChatGPT outer-native harness v4", () => {
 
       const largeOutput = "abcdefghij0123456789 ".repeat(30_000);
       const continuation = structuredClone(initial);
+      continuation.options.toolChoice = "none";
       const toolCall = {
         role: "assistant" as const,
         content: [{

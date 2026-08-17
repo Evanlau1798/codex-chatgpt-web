@@ -1,4 +1,4 @@
-import { namespacedToolName, type CodexAssistantContentPart, type CodexContentPart, type CodexMessage, type CodexParsedRequest } from "../../types";
+import type { CodexAssistantContentPart, CodexContentPart, CodexMessage, CodexParsedRequest } from "../../types";
 import {
   CHATGPT_WEB_BACKEND_MODEL,
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
@@ -11,6 +11,7 @@ import {
   CHATGPT_LUNA_CHECKPOINT_MAX_TOKENS,
 } from "./rolling-checkpoint";
 import { claudeSteeringMarker } from "./tool-result-delivery";
+import { effectiveChatGptToolPolicy } from "./tool-policy";
 
 export interface ChatGptWebPromptImage {
   ref: string;
@@ -195,7 +196,9 @@ export function chatGptReadOnlyContextWarning(
   capabilities: ChatGptWebCapabilities,
 ): string | undefined {
   const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
-  if (mode.localTools) return undefined;
+  const toolPolicy = effectiveChatGptToolPolicy(parsed);
+  const localTools = mode.localTools && toolPolicy.tools.length > 0;
+  if (localTools) return undefined;
   const label = mode.effort === "max" ? "ChatGPT Pro" : `ChatGPT Web ${mode.displayLabel}`;
   const hasLocalEvidence = parsed.context.messages.some(message =>
     message.role === "toolResult"
@@ -220,6 +223,8 @@ export function compileChatGptWebPrompt(
   options?: CompileChatGptWebPromptOptions,
 ): CompiledChatGptWebPrompt {
   const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
+  const toolPolicy = effectiveChatGptToolPolicy(parsed);
+  const localTools = mode.localTools && toolPolicy.tools.length > 0;
   const transportLimits = resolveChatGptWebTransportLimits(
     parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_BACKEND_MODEL : CHATGPT_WEB_BACKEND_MODEL,
     mode.effort,
@@ -240,15 +245,14 @@ export function compileChatGptWebPrompt(
   if (captureLunaCheckpoint && (parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID || parsed._compactionRequest)) {
     throw new Error("Rolling checkpoints are supported only for normal ChatGPT Luna turns");
   }
-  if (mode.localTools && !turnToken) {
+  if (localTools && !turnToken) {
     throw new Error("Tool-capable ChatGPT web mode requires a broker turn token");
   }
-  if (!mode.localTools && turnToken !== undefined) {
+  if (!localTools && turnToken !== undefined) {
     throw new Error("A read-only ChatGPT Web effort must not receive a local-tool capability token");
   }
   const system = parsed.context.systemPrompt ?? [];
-  const advertisedToolNames = (parsed.context.tools ?? [])
-    .map(tool => namespacedToolName(tool.namespace, tool.name));
+  const advertisedToolNames = [...toolPolicy.wireNames];
   const claudeClient = typeof (parsed._rawBody as {
     client_metadata?: { claude_subagent?: unknown };
   } | undefined)?.client_metadata?.claude_subagent === "boolean";
@@ -271,7 +275,7 @@ export function compileChatGptWebPrompt(
       "Do not call local or ChatGPT-native tools. Summarize only the supplied task context according to the final compaction instruction.",
       "Return only the checkpoint summary that the next model needs to resume the task.",
     ]
-    : mode.localTools
+    : localTools
     ? [
       "For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.",
       "Exact outer client tool wire names for this turn are stored in codex_context_json.tool_wire_names. Connector shortcuts are routes to these capabilities, not additional permissions.",
@@ -287,6 +291,7 @@ export function compileChatGptWebPrompt(
       "Request independent tool calls together when their inputs do not depend on one another; keep dependent calls sequential.",
       "Use actual Codex Native results as evidence for local observations and effects, and keep calling tools until the requested work is complete and verified.",
       "Describe failed local actions using only observable tool evidence. If no native result was returned, state only that the action did not execute; never infer or name an unreported cause.",
+      ...(toolPolicy.requireTool ? ["You must execute at least one of the request-authorized local tools before returning a final answer."] : []),
     ]
     : [
       `This is ChatGPT Web ${mode.displayLabel} with no Codex Native bridge to the user's local computer attached to this response. This restriction applies only to local Codex files, commands, processes, and computer mutations.`,
@@ -311,7 +316,7 @@ export function compileChatGptWebPrompt(
       "The task context is complete. Produce the requested checkpoint summary now without calling tools.",
       "</codex_transport_resume>",
     ]
-    : mode.localTools
+    : localTools
     ? [
       "<codex_transport_resume>",
       "<codex_native_turn_binding>",
@@ -338,7 +343,7 @@ export function compileChatGptWebPrompt(
       version: 3,
       system,
       messages,
-      ...(mode.localTools ? { tool_wire_names: advertisedToolNames } : {}),
+      ...(localTools ? { tool_wire_names: advertisedToolNames } : {}),
     }));
     const text = [
       ...sharedContract,

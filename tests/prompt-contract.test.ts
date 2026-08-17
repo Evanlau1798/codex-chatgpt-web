@@ -23,6 +23,12 @@ function request(reasoning: "low" | "medium" | "high" | "xhigh" | "max"): CodexP
   };
 }
 
+function toolRequest(reasoning: "low" | "medium" | "high" | "xhigh"): CodexParsedRequest {
+  const parsed = request(reasoning);
+  parsed.context.tools = [{ name: "Read", description: "Read a file", parameters: {} }];
+  return parsed;
+}
+
 test("tool-capable prompts pass one stable turn token directly to native actions", () => {
   const token = "turn_12345678901234567890123456789012";
   const parsed = request("high");
@@ -119,7 +125,7 @@ test("browser-only Medium directs users to the full harness", () => {
   expect(warning).toContain("Browser-only mode");
   expect(warning).toContain("Full harness");
   expect(warning).not.toContain("tool-capable ChatGPT Web model first");
-  expect(chatGptReadOnlyContextWarning(request("medium"), {
+  expect(chatGptReadOnlyContextWarning(toolRequest("medium"), {
     ...capabilities,
     localToolsEnabled: true,
   })).toBeUndefined();
@@ -275,6 +281,7 @@ test("a long task keeps the newest images and drops the overflow instead of fail
     modelId: CHATGPT_WEB_MODEL_ID,
     context: {
       systemPrompt: ["preserve-system"],
+      tools: [{ name: "Read", description: "Read a file", parameters: {} }],
       messages: markers.map((marker, index) => ({
         role: "user" as const,
         content: [{ type: "text" as const, text: `step ${index + 1}` }, image(marker)],
@@ -368,6 +375,7 @@ test("the replayed context never carries a finished turn's broker handles", () =
     modelId: CHATGPT_WEB_MODEL_ID,
     context: {
       systemPrompt: ["preserve-system"],
+      tools: [{ name: "Read", description: "Read a file", parameters: {} }],
       messages: [
         { role: "user", content: "keep working", timestamp: 1 },
         {
@@ -414,7 +422,7 @@ test("requires ChatGPT-native rich results to include a safe Markdown answer for
 
 test("describes one-shot cross-platform shell limits without exposing secret values", () => {
   const compiled = compileChatGptWebPrompt(
-    request("xhigh"),
+    toolRequest("xhigh"),
     { localToolsEnabled: true, solAvailable: true, proAvailable: true },
     "turn_12345678901234567890123456789012",
   );
@@ -439,6 +447,7 @@ test("keeps large contexts intact in the inline text envelope", () => {
   const token = "turn_12345678901234567890123456789012";
   const largeContent = "x".repeat(600_000);
   const large = request("high");
+  large.context.tools = [{ name: "Read", description: "Read a file", parameters: {} }];
   large.context.messages.push({
     role: "toolResult",
     toolCallId: "call_large",

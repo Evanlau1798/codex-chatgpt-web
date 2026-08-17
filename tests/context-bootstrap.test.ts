@@ -166,6 +166,7 @@ test("tool-capable prompts above the stable 94208 character boundary use the arc
   const compiled = compileChatGptWebPrompt({
     modelId: CHATGPT_WEB_MODEL_ID,
     context: {
+      tools: [{ name: "Read", description: "Read a file", parameters: {} }],
       messages: [
         { role: "user", content: `old-${"x".repeat(308_616)}`, timestamp: 1 },
         { role: "user", content: "CODEX_LATEST_USER_PROMPT_JSON: continue", timestamp: 2 },
@@ -206,6 +207,7 @@ test("archive bootstrap preserves the lazy stateful tool contract", async () => 
   const compiled = compileChatGptWebPrompt({
     modelId: CHATGPT_WEB_MODEL_ID,
     context: {
+      tools: [{ name: "tool_search", description: "Load a stateful tool", parameters: {}, toolSearch: true }],
       messages: [
         { role: "toolResult", toolCallId: "old", toolName: "exec", content: "x".repeat(20_000), isError: false, timestamp: 1 },
         { role: "user", content: "use the requested stateful tool", timestamp: 2 },

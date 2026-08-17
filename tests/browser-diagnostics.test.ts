@@ -37,35 +37,80 @@ function artifact(root: string, extension: string): string {
 test("preserves DOM diagnostic JSON when screenshot capture times out", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-browser-diagnostic-"));
   try {
+    let screenshotCalls = 0;
     const page = {
       evaluate: async () => diagnosticState,
-      screenshot: async () => { throw new Error("screenshot timeout"); },
+      screenshot: async () => { screenshotCalls += 1; throw new Error("screenshot timeout"); },
     } as unknown as Page;
     await new ChatGptBrowserDiagnostics("trace_json_survives", root).capture(page, "turn-failed");
 
     const json = JSON.parse(readFileSync(artifact(root, ".json"), "utf8"));
     expect(json.state).toEqual(diagnosticState);
-    expect(json.screenshotError).toContain("screenshot timeout");
+    expect(json.screenshotError).toBeUndefined();
+    expect(screenshotCalls).toBe(0);
     expect(() => artifact(root, ".png")).toThrow("missing diagnostic .png");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test("preserves screenshot and error envelope when DOM evaluation fails", async () => {
+test("opt-in screenshots mask sensitive UI regions and preserve the error envelope", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-browser-diagnostic-"));
+  const previous = process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS;
   try {
+    process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS = "1";
+    const locatorSelectors: string[] = [];
+    let screenshotOptions: Record<string, unknown> | undefined;
     const page = {
       evaluate: async () => { throw new Error("execution context unavailable"); },
-      screenshot: async () => Buffer.from("png"),
+      locator: (selector: string) => {
+        locatorSelectors.push(selector);
+        return { selector };
+      },
+      screenshot: async (options: Record<string, unknown>) => {
+        screenshotOptions = options;
+        return Buffer.from("png");
+      },
     } as unknown as Page;
     await new ChatGptBrowserDiagnostics("trace_png_survives", root).capture(page, "turn-failed");
 
     const json = JSON.parse(readFileSync(artifact(root, ".json"), "utf8"));
     expect(json.state).toBeNull();
     expect(json.stateError).toContain("execution context unavailable");
+    expect(locatorSelectors.join(" ")).toContain("conversation-turn-");
+    expect(locatorSelectors.join(" ")).toMatch(/prompt-textarea|contenteditable/);
+    expect(locatorSelectors.join(" ")).toContain("dialog");
+    expect(locatorSelectors.join(" ")).toMatch(/account|profile/i);
+    expect(Array.isArray(screenshotOptions?.mask)).toBe(true);
+    expect((screenshotOptions?.mask as unknown[]).length).toBeGreaterThanOrEqual(4);
     expect(readFileSync(artifact(root, ".png")).toString()).toBe("png");
   } finally {
+    if (previous === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS;
+    else process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("opt-in screenshot fails closed when the redaction mask cannot be built", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-browser-diagnostic-"));
+  const previous = process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS;
+  try {
+    process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS = "1";
+    let screenshotCalls = 0;
+    const page = {
+      evaluate: async () => diagnosticState,
+      locator: () => { throw new Error("locator unavailable"); },
+      screenshot: async () => { screenshotCalls += 1; return Buffer.from("unsafe"); },
+    } as unknown as Page;
+    await new ChatGptBrowserDiagnostics("trace_mask_failure", root).capture(page, "turn-failed");
+
+    const json = JSON.parse(readFileSync(artifact(root, ".json"), "utf8"));
+    expect(json.screenshotError).toContain("locator unavailable");
+    expect(screenshotCalls).toBe(0);
+    expect(() => artifact(root, ".png")).toThrow("missing diagnostic .png");
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS;
+    else process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS = previous;
     rmSync(root, { recursive: true, force: true });
   }
 });

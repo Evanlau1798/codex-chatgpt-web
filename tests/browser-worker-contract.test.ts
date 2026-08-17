@@ -1479,11 +1479,11 @@ test("browser stage diagnostics use safe bounded artifact names", () => {
   expect(browserDiagnosticCheckpoint("x".repeat(200))).toHaveLength(80);
 });
 
-test("routine browser diagnostics avoid screenshots unless full capture is requested", () => {
+test("browser diagnostics avoid screenshots at every checkpoint unless full capture is requested", () => {
   expect(browserDiagnosticIncludesScreenshot("send-ready", false)).toBeFalse();
   expect(browserDiagnosticIncludesScreenshot("response-visible", false)).toBeFalse();
-  expect(browserDiagnosticIncludesScreenshot("response-stalled-30s", false)).toBeTrue();
-  expect(browserDiagnosticIncludesScreenshot("turn-failed", false)).toBeTrue();
+  expect(browserDiagnosticIncludesScreenshot("response-stalled-30s", false)).toBeFalse();
+  expect(browserDiagnosticIncludesScreenshot("turn-failed", false)).toBeFalse();
   expect(browserDiagnosticIncludesScreenshot("send-ready", true)).toBeTrue();
 });
 

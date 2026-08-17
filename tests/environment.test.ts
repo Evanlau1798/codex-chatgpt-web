@@ -468,6 +468,25 @@ describe("trusted Codex task environment continuity", () => {
     });
   });
 
+  test("restores trusted authority without reauthorizing tools disabled for the follow-up", () => {
+    const store = new ChatGptThreadEnvironmentStore();
+    const first = currentWire();
+    first.context.tools = [{ name: "exec_command", description: "Run a command", parameters: { type: "object" } }];
+    store.resolve(first);
+
+    const continuation = currentWire();
+    continuation.context.tools = first.context.tools;
+    continuation.options.toolChoice = "none";
+    continuation._rawBody = {
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread_current", turn_id: "turn_next" }),
+      },
+      input: [{ type: "function_call_output", call_id: "call_done", output: "completed" }],
+    };
+
+    expect(store.resolve(continuation)).toMatchObject({ cwd: root, tools: [] });
+  });
+
   test("inherits V2 child authority from native parent thread metadata", () => {
     const store = new ChatGptThreadEnvironmentStore();
     store.resolve(currentWire());

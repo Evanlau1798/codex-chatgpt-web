@@ -24,6 +24,12 @@ function parsedRequest(): CodexParsedRequest {
   };
 }
 
+function toolRequest(): CodexParsedRequest {
+  const parsed = parsedRequest();
+  parsed.context.tools = [{ name: "exec_command", description: "Run a command", parameters: {} }];
+  return parsed;
+}
+
 function brokerEndpoint(name: string): string {
   return process.platform === "win32"
     ? defaultBrokerEndpoint(join(tmpdir(), name), "win32")
@@ -41,7 +47,7 @@ async function waitForLog(read: () => string, text: string): Promise<void> {
 test("tool-capable prompts require evidence before assigning a failure cause", () => {
   const token = "turn_12345678901234567890123456789012";
   const compiled = compileChatGptWebPrompt(
-    parsedRequest(),
+    toolRequest(),
     { localToolsEnabled: true, solAvailable: true, proAvailable: true },
     token,
   );
@@ -54,7 +60,6 @@ test("tool-capable prompts require evidence before assigning a failure cause", (
   expect(compileChatGptWebPrompt(
     compact,
     { localToolsEnabled: true, solAvailable: true, proAvailable: true },
-    token,
   ).text).not.toContain(evidenceContract);
 });
 
