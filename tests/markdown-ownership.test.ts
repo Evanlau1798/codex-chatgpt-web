@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ChatGptMarkdownOwnershipTracker } from "../src/adapters/chatgpt-web/markdown-ownership";
+import { ChatGptVisibleTraceTracker } from "../src/adapters/chatgpt-web/visible-trace-tracker";
 
 const root = (
   nodeId: string,
@@ -67,6 +68,47 @@ describe("ChatGPT Markdown phase ownership", () => {
 
     const growing = tracker.observe([root("node-2", "commentary", "第一個唯讀記憶查詢", 2)]);
     expect(growing.commentaryBlocks.map(block => block.text)).toEqual(["第一個唯讀記憶查詢"]);
+  });
+
+  test("keeps append-only commentary identity when the global tool epoch advances", () => {
+    const ownership = new ChatGptMarkdownOwnershipTracker();
+    const trace = new ChatGptVisibleTraceTracker(0);
+
+    const prefix = ownership.observe([root("node-1", "commentary", "這是現", 2)]);
+    expect(trace.observe(prefix.commentaryBlocks, false)).toEqual([
+      { kind: "commentary", text: "這是現" },
+    ]);
+
+    const growing = ownership.observe([
+      root("node-2", "commentary", "這是現有 repository / runtime 的診斷工作", 3),
+    ]);
+    expect(trace.observe(growing.commentaryBlocks, false)).toEqual([{
+      kind: "commentary",
+      text: "有 repository / runtime 的診斷工作",
+      continuation: true,
+    }]);
+  });
+
+  test("keeps commentary identity when an unchanged React node remount crosses tool epochs", () => {
+    const ownership = new ChatGptMarkdownOwnershipTracker();
+    const trace = new ChatGptVisibleTraceTracker(0);
+
+    const prefix = ownership.observe([root("node-1", "commentary", "兩個 session", 2)]);
+    expect(trace.observe(prefix.commentaryBlocks, false)).toEqual([
+      { kind: "commentary", text: "兩個 session" },
+    ]);
+
+    const remounted = ownership.observe([root("node-2", "commentary", "兩個 session", 3)]);
+    expect(trace.observe(remounted.commentaryBlocks, false)).toEqual([]);
+
+    const growing = ownership.observe([
+      root("node-2", "commentary", "兩個 session 檔都已定位", 3),
+    ]);
+    expect(trace.observe(growing.commentaryBlocks, false)).toEqual([{
+      kind: "commentary",
+      text: " 檔都已定位",
+      continuation: true,
+    }]);
   });
 
   test("keeps growing commentary owned after a replaced node is reclassified as final", () => {

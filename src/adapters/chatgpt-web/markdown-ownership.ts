@@ -55,19 +55,29 @@ export class ChatGptMarkdownOwnershipTracker {
       let id = this.nodeOwners.get(snapshot.nodeId) ?? this.fallbackOwners.get(fallbackKey);
       if (!id) {
         const comparable = ownershipText(snapshot.text);
-        id = [...this.roots.values()]
-          .filter(root => root.ownership === "commentary"
-            && root.toolEpoch === snapshot.toolEpoch
-            && (snapshot.ownership === "commentary" || !root.visible)
-            && root.lastSeenObservation >= observation - 2
-            && root.text.length > 0
-            && snapshot.text.length !== root.text.length
-            && (comparable.startsWith(ownershipText(root.text))
-              || (!root.visible
-                && root.lastSeenObservation < observation
-                && ownershipText(root.text).startsWith(comparable))))
-          .sort((left, right) => right.text.length - left.text.length || right.order - left.order)
-          .at(0)?.id;
+        const candidates = [...this.roots.values()]
+          .filter(root => {
+            const previous = ownershipText(root.text);
+            const unchangedCrossEpochRemount = snapshot.ownership === "commentary"
+              && root.toolEpoch !== snapshot.toolEpoch
+              && root.lastSeenObservation === observation - 1
+              && comparable === previous;
+            return root.ownership === "commentary"
+              && (snapshot.ownership === "commentary" || !root.visible)
+              && root.lastSeenObservation >= observation - 2
+              && root.text.length > 0
+              && (snapshot.text.length !== root.text.length || unchangedCrossEpochRemount)
+              && (comparable.startsWith(previous)
+                || (!root.visible
+                  && root.lastSeenObservation < observation
+                  && previous.startsWith(comparable)));
+          })
+          .sort((left, right) => right.text.length - left.text.length || right.order - left.order);
+        const sameEpoch = candidates.find(root => root.toolEpoch === snapshot.toolEpoch);
+        const crossEpoch = snapshot.ownership === "commentary"
+          ? candidates.filter(root => root.toolEpoch !== snapshot.toolEpoch)
+          : [];
+        id = sameEpoch?.id ?? (crossEpoch.length === 1 ? crossEpoch[0]!.id : undefined);
       }
       if (!id) {
         id = `markdown-${this.nextId++}`;
