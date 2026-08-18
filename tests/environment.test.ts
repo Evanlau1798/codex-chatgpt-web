@@ -382,6 +382,48 @@ describe("permission_profile sandbox detection (Codex CLI 0.146+)", () => {
 });
 
 describe("trusted Codex task environment continuity", () => {
+  test("rebuilds trusted authority from a full native transcript without persisted thread state", () => {
+    const resumed = currentWire();
+    resumed.context.tools = [{ name: "exec_command", description: "Run", parameters: { type: "object" } }];
+    const body = resumed._rawBody as {
+      client_metadata: Record<string, string>;
+      input: Array<Record<string, any>>;
+    };
+    for (const item of body.input) {
+      item.internal_chat_message_metadata_passthrough = { turn_id: "turn_before_restart" };
+    }
+    body.input.push(
+      {
+        type: "message",
+        id: "msg_completed_before_restart",
+        role: "assistant",
+        content: [{ type: "output_text", text: "Completed before the runtime restart." }],
+      },
+      {
+        type: "message",
+        id: "msg_resume_after_restart",
+        role: "user",
+        content: [{ type: "input_text", text: "Continue after the runtime restart." }],
+        internal_chat_message_metadata_passthrough: { turn_id: "turn_after_restart" },
+      },
+    );
+    body.client_metadata["x-codex-turn-metadata"] = JSON.stringify({
+      thread_id: "thread_current",
+      turn_id: "turn_after_restart",
+      sandbox: "none",
+      workspaces: { [root]: { has_changes: true } },
+    });
+
+    const freshProcessStore = new ChatGptThreadEnvironmentStore();
+    expect(freshProcessStore.resolve(resumed)).toEqual({
+      cwd: root,
+      roots: [root],
+      writableRoots: [root],
+      sandboxPolicy: { type: "dangerFullAccess" },
+      tools: resumed.context.tools,
+    });
+  });
+
   test("inherits trusted authority for a spawned child without persisting tools", () => {
     const stateRoot = mkdtempSync(join(tmpdir(), "codex-chatgpt-child-environment-"));
     temporaryRoots.push(stateRoot);

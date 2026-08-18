@@ -237,3 +237,51 @@ test("routes codex_exec through Claude Code Bash when Codex command tools are ab
     rmSync(root, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("rejects PowerShell commands before either Native2 path can invoke Claude Code Bash", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-claude-bash-shell-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  const environment = {
+    cwd: process.cwd(),
+    roots: [process.cwd()],
+    writableRoots: [],
+    sandboxPolicy: { type: "readOnly" as const, networkAccess: false },
+    tools: [{
+      name: "Bash",
+      description: "Execute a command through Claude Code",
+      parameters: {
+        type: "object",
+        properties: { command: { type: "string" } },
+        required: ["command"],
+      },
+    }],
+  };
+  const token = await broker.register(environment, 60_000, "claude-bash-shell-test");
+  const client = await clientFor(socketPath);
+
+  try {
+    const execResult = await client.callTool({
+      name: "codex_exec",
+      arguments: { turn_token: token, cmd: "Get-Content -Raw file.txt" },
+    });
+    expect(execResult.isError).toBe(true);
+    expect((execResult.content as Array<{ text: string }>)[0]?.text).toContain("Claude Code Bash executes POSIX Bash");
+
+    const genericResult = await client.callTool({
+      name: "codex_tool_call",
+      arguments: {
+        turn_token: token,
+        wire_name: "Bash",
+        arguments: { command: "Test-Path C:\\temp" },
+      },
+    });
+    expect(genericResult.isError).toBe(true);
+    expect((genericResult.content as Array<{ text: string }>)[0]?.text).toContain("Claude Code Bash executes POSIX Bash");
+  } finally {
+    await client.close().catch(() => {});
+    broker.revoke(token);
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);

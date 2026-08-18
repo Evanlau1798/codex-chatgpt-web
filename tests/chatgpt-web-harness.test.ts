@@ -1123,6 +1123,25 @@ describe("ChatGPT outer-native harness v4", () => {
     expect(() => compileChatGptWebPrompt(parsed(), toolCapabilities)).toThrow("requires a broker turn token");
   });
 
+  test("describes Enhanced Native2 control-only attachment without granting read-only work capability", () => {
+    const pro = compileChatGptWebPrompt(proRequest(), toolCapabilities, undefined, {
+      nativeControlConnector: true,
+    });
+    expect(pro.text).toContain("no Codex Native work capability");
+    expect(pro.text).toContain("connector is attached only for bridge-authenticated control operations");
+    expect(pro.text).not.toContain("turn_token");
+
+    const work = compileChatGptWebPrompt(
+      parsed(),
+      toolCapabilities,
+      "turn_123456789012345678901234",
+      { nativeControlConnector: true },
+    );
+    expect(work.text).toContain("one-shot control_ token");
+    expect(work.text).toContain("reserved codex.control.* wire_name");
+    expect(work.text.match(/turn_123456789012345678901234/g)).toHaveLength(1);
+  });
+
   test("reports conservative nonzero usage for browser text and image context", () => {
     const textRequest = parsed();
     const textUsage = estimateChatGptWebUsage(textRequest, { answer: "done" }, toolCapabilities);
@@ -2105,6 +2124,27 @@ describe("ChatGPT outer-native harness v4", () => {
         idempotentHint: false,
         openWorldHint: true,
       });
+
+      const control = await broker.beginCompactionTransaction("mcp-structured-compaction", 60_000);
+      const controlWait = broker.waitForCompactionHandoff(control.token);
+      const controlResult = await call("codex_tool_call", {
+        turn_token: control.token,
+        wire_name: "codex.control.compaction_handoff",
+        arguments: {
+          handoff_id: control.handoffId,
+          summary: "Structured Native2 checkpoint completed through the control plane.",
+        },
+      });
+      expect(controlResult.structuredContent).toEqual({ submitted: true });
+      await expect(controlWait).resolves.toBe(
+        "Structured Native2 checkpoint completed through the control plane.",
+      );
+      const rejectedControlWork = await call("codex_exec", {
+        turn_token: control.token,
+        cmd: "pwd",
+      });
+      expect(rejectedControlWork.isError).toBe(true);
+      expect(JSON.stringify(rejectedControlWork.content)).toContain("turn token is invalid");
 
       const firstExec = call("codex_exec", {
         turn_token: token,

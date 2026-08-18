@@ -4,12 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
 import {
-  COMPACTION_HANDOFF_MARKER,
   createActiveCompactionHandoffPrompts,
-  requestActiveCompactionHandoff,
 } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
+import { runEnhancedCompaction } from "../src/adapters/chatgpt-web/enhanced-compaction";
 import { bindClaudeSessionAbort, claudeBrowserTurnOptions, normalizeClaudeToolRequests } from "../src/adapters/chatgpt-web/claude-subagent";
 import {
   ChatGptTextFeed,
@@ -19,7 +18,7 @@ import {
   chatGptCompactionSourceExecutionKey,
   chatGptTurnSessions,
 } from "../src/adapters/chatgpt-web/turn-execution";
-import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { callTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { buildResponseJSON } from "../src/bridge";
 import { defaultBrokerEndpoint } from "../src/config";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig } from "../src/types";
@@ -98,6 +97,95 @@ describe("compact mode routing", () => {
       });
     }
     expect(events).toEqual([]);
+  });
+
+  test("rebuilds a fresh Web compact turn when the enhanced source session was lost", async () => {
+    const config = provider(true);
+    config.baseUrl = `browser://enhanced-compact-rebuild-${process.pid}-${Date.now()}`;
+    config.chatgptWeb!.localToolsEnabled = true;
+    const worker = ChatGptBrowserWorker.forProvider(config);
+    const originalRun = worker.run.bind(worker);
+    const summary = "Checkpoint summary rebuilt from the complete supplied Codex task context.";
+    let browserTurn: BrowserTurn | undefined;
+    let preparedText = "";
+    worker.run = async turn => {
+      browserTurn = turn;
+      const prepared = await turn.prepare();
+      preparedText = prepared.text;
+      prepared.release();
+      turn.onTextDelta(summary);
+      return summary;
+    };
+    const events: AdapterEvent[] = [];
+
+    try {
+      await createChatGptWebAdapter(config).runTurn!(
+        compactRequest(),
+        { headers: new Headers() },
+        event => events.push(event),
+      );
+
+      expect(browserTurn).toBeDefined();
+      expect(browserTurn?.requireRetainedConversation).toBeUndefined();
+      expect(browserTurn?.nativeConnector).toBe(true);
+      expect(preparedText).toContain("This is a Codex history-compaction checkpoint");
+      expect(preparedText).toContain("Inspect the project");
+      expect(events.some(event => event.type === "text_delta" && event.text === summary)).toBe(true);
+      expect(events.some(event => event.type === "text_delta"
+        && event.text.includes("CODEX_LATEST_USER_PROMPT_JSON"))).toBe(true);
+      expect(events.at(-1)).toMatchObject({ type: "done", endTurn: true });
+    } finally {
+      worker.run = originalRun;
+    }
+  });
+
+  test("rebuilds when the retained source session outlives its browser conversation", async () => {
+    const sourceRequest = compactRequest();
+    delete sourceRequest._compactionRequest;
+    const parsed = compactRequest();
+    const socketPath = defaultBrokerEndpoint(join(
+      tmpdir(),
+      `compact-source-preserved-${process.pid}-${Date.now()}`,
+    ));
+    const broker = TurnBroker.forSocket(socketPath);
+    const responseExecutionKey = `preserved-source-${process.pid}-${Date.now()}`;
+    let cancelled = 0;
+    let released = 0;
+    const source = chatGptTurnSessions.getOrCreate(responseExecutionKey, () => ({
+      mode: "read-only",
+      browser: Promise.resolve("source completed"),
+      trace: new ChatGptTraceFeed(),
+      text: new ChatGptTextFeed(),
+      usageInput: sourceRequest,
+      conversationKey: createHash("sha256").update("preserved-source-conversation").digest("hex"),
+      cancel: () => { cancelled += 1; },
+      release: async () => { released += 1; },
+    }));
+    await source.browserOutcome;
+    const worker = {
+      run: async () => { throw new Error("The retained ChatGPT conversation is no longer available"); },
+    };
+
+    try {
+      await expect(runEnhancedCompaction({
+        worker: worker as never,
+        parsed,
+        broker,
+        executionNamespace: createHash("sha256").update("preserved-source-namespace").digest("hex"),
+        capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+        responseExecutionKey,
+        nativeConnectorAvailable: true,
+        timeoutMs: 20,
+        emit: () => {},
+      })).resolves.toBe("rebuild");
+
+      expect(chatGptTurnSessions.find(responseExecutionKey)).toBeUndefined();
+      expect(cancelled).toBe(1);
+      expect(released).toBe(1);
+    } finally {
+      await chatGptTurnSessions.retireAndWait(responseExecutionKey);
+      await broker.close();
+    }
   });
 
   test("does not attach enhanced handoff behavior to original-mode browser turns", async () => {
@@ -313,161 +401,14 @@ describe("compact mode routing", () => {
     sessions.clear();
   });
 
-  test("obtains the beta checkpoint from the active tools conversation", async () => {
-    let completeBrowser!: (answer: string) => void;
-    const browser = new Promise<string>(resolve => { completeBrowser = resolve; });
-    const text = new ChatGptTextFeed();
-    const session = new ChatGptTurnSession({
-      mode: "tools",
-      token: Promise.resolve("turn_beta_test"),
-      browser,
-      trace: new ChatGptTraceFeed(),
-      text,
-      usageInput: compactRequest(),
-      cancel: () => {},
-    });
-    const answer = `${COMPACTION_HANDOFF_MARKER}\nThe repository state and next action were preserved.`;
-    const broker = {
-      completeTool: () => {},
-      requestHandoff: () => {
-        text.push(answer);
-        completeBrowser(answer);
-      },
-    };
-
-    await expect(requestActiveCompactionHandoff(
-      compactRequest(),
-      session,
-      broker as never,
-    )).resolves.toBe("The repository state and next action were preserved.");
-  });
-
-  test("does not claim a queued active handoff instruction was delivered", async () => {
-    let completeBrowser!: (answer: string) => void;
-    const browser = new Promise<string>(resolve => { completeBrowser = resolve; });
-    const text = new ChatGptTextFeed();
-    const answer = `${COMPACTION_HANDOFF_MARKER}\nThe queued handoff used the full same-conversation prompt.`;
-    let instructionDelivered: boolean | undefined;
-    const session = new ChatGptTurnSession({
-      mode: "tools",
-      token: Promise.resolve("turn_queued_handoff"),
-      browser,
-      trace: new ChatGptTraceFeed(),
-      text,
-      usageInput: compactRequest(),
-      requestHandoff: delivered => {
-        instructionDelivered = delivered;
-        text.push(answer);
-        completeBrowser(answer);
-      },
-      cancel: () => {},
-    });
-    const broker = {
-      completeTool: () => {},
-      requestHandoff: () => "queued" as const,
-    };
-
-    await expect(requestActiveCompactionHandoff(
-      compactRequest(),
-      session,
-      broker as never,
-    )).resolves.toBe("The queued handoff used the full same-conversation prompt.");
-    expect(instructionDelivered).toBe(false);
-  });
-
-  test("requests the beta checkpoint from the active read-only conversation", async () => {
-    let completeBrowser!: (answer: string) => void;
-    const browser = new Promise<string>(resolve => { completeBrowser = resolve; });
-    const answer = `${COMPACTION_HANDOFF_MARKER}\nThe Pro conversation preserved its active state.`;
-    let requested = false;
-    const session = new ChatGptTurnSession({
-      mode: "read-only",
-      browser,
-      trace: new ChatGptTraceFeed(),
-      text: new ChatGptTextFeed(),
-      usageInput: compactRequest(),
-      requestHandoff: () => {
-        requested = true;
-        completeBrowser(answer);
-      },
-      cancel: () => {},
-    });
-
-    await expect(requestActiveCompactionHandoff(
-      compactRequest(),
-      session,
-      {} as TurnBroker,
-    )).resolves.toBe("The Pro conversation preserved its active state.");
-    expect(requested).toBe(true);
-  });
-
-  test("extends the handoff idle deadline while the streamed block keeps growing", async () => {
-    let completeBrowser!: (answer: string) => void;
-    const browser = new Promise<string>(resolve => { completeBrowser = resolve; });
-    const text = new ChatGptTextFeed();
-    const answer = `${COMPACTION_HANDOFF_MARKER}\nThe adaptive checkpoint kept growing until complete.`;
-    const session = new ChatGptTurnSession({
-      mode: "read-only",
-      browser,
-      trace: new ChatGptTraceFeed(),
-      text,
-      usageInput: compactRequest(),
-      requestHandoff: () => {
-        setTimeout(() => text.push(`${COMPACTION_HANDOFF_MARKER}\nThe adaptive checkpoint`), 10);
-        setTimeout(() => text.push(" kept growing"), 30);
-        setTimeout(() => {
-          text.push(" until complete.");
-          completeBrowser(answer);
-        }, 50);
-      },
-      cancel: () => {},
-    });
-
-    await expect(requestActiveCompactionHandoff(
-      compactRequest(),
-      session,
-      {} as TurnBroker,
-      undefined,
-      5,
-      30,
-      2,
-    )).resolves.toBe("The adaptive checkpoint kept growing until complete.");
-  });
-
-  test("recovers a valid handoff after it becomes idle when the browser outcome never settles", async () => {
-    const text = new ChatGptTextFeed();
-    const answer = `${COMPACTION_HANDOFF_MARKER}\nThe streamed checkpoint is safe to resume.`;
-    const session = new ChatGptTurnSession({
-      mode: "read-only",
-      browser: new Promise<string>(() => {}),
-      trace: new ChatGptTraceFeed(),
-      text,
-      usageInput: compactRequest(),
-      requestHandoff: () => setTimeout(() => text.push(answer), 20),
-      cancel: () => {},
-    });
-
-    await expect(requestActiveCompactionHandoff(
-      compactRequest(),
-      session,
-      {} as TurnBroker,
-      undefined,
-      5,
-      30,
-    )).resolves.toBe("The streamed checkpoint is safe to resume.");
-  });
-
-  test("retries malformed and recoverable handoff responses in the same conversation", () => {
+  test("delivers a structured active checkpoint instruction only once in the same conversation", () => {
     const prompts = createActiveCompactionHandoffPrompts();
     expect(prompts.retryPromptForAnswer("ordinary answer")).toBeUndefined();
 
-    prompts.request(false);
-    expect(prompts.retryPromptForAnswer("ordinary answer")).toContain("Automatic Codex context compaction");
-    expect(prompts.retryPromptForAnswer("malformed checkpoint")).toContain("checkpoint response was rejected");
-    expect(prompts.retryPromptForError(new Error("ChatGPT completed text block changed"))).toContain(
-      "Automatic Codex context compaction",
-    );
-    expect(prompts.retryPromptForAnswer("still malformed")).toBeUndefined();
+    prompts.request("structured control instruction", false);
+    expect(prompts.retryPromptForAnswer("ordinary answer")).toBe("structured control instruction");
+    expect(prompts.retryPromptForAnswer("another answer")).toBeUndefined();
+    expect(prompts.retryPromptForError(new Error("ChatGPT completed text block changed"))).toBeUndefined();
   });
 
   test("routes an enhanced compact request through the matching active session", async () => {
@@ -497,6 +438,17 @@ describe("compact mode routing", () => {
       trace: new ChatGptTraceFeed(),
       text,
       usageInput: request,
+      requestHandoff: instruction => {
+        const controlToken = instruction.match(/turn_token (control_[a-f0-9]{32})/)?.[1];
+        const handoffId = instruction.match(/handoff_id (handoff_[a-f0-9]{32})/)?.[1];
+        if (!controlToken || !handoffId) throw new Error("structured compaction binding was not supplied");
+        void callTurnBroker(broker.socketPath, {
+          method: "submit_compaction_handoff",
+          token: controlToken,
+          handoffId,
+          summary: "The active Web Agent preserved the implementation state.",
+        }).then(() => completeBrowser("The structured checkpoint Web response ended normally."));
+      },
       cancel: () => broker.revoke(token),
     });
     const namespace = createHash("sha256").update(JSON.stringify({
@@ -505,13 +457,6 @@ describe("compact mode routing", () => {
     })).digest("hex");
     const sessionKey = `${namespace}:${chatGptCompactionSourceExecutionKey(request)}`;
     chatGptTurnSessions.getOrCreate(sessionKey, () => session.runtime);
-    const answer = `${COMPACTION_HANDOFF_MARKER}\nThe active Web Agent preserved the implementation state.`;
-    const complete = setInterval(() => {
-      if (!broker.handoffRequested(token)) return;
-      clearInterval(complete);
-      text.push(answer);
-      completeBrowser(answer);
-    }, 1);
     const events: AdapterEvent[] = [];
 
     try {
@@ -524,7 +469,6 @@ describe("compact mode routing", () => {
         && event.text.includes("The active Web Agent preserved"))).toBe(true);
       expect(events.at(-1)).toMatchObject({ type: "done", endTurn: true });
     } finally {
-      clearInterval(complete);
       await chatGptTurnSessions.retireAndWait(sessionKey);
       await broker.close();
     }

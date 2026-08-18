@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { expandUserPath } from "../../config";
 import { withStallTimeout } from "../../stall-timeout";
@@ -9,7 +8,8 @@ import { chatGptAdapterRuntimeConfig, retainedConversationRelease } from "./adap
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { claudeBrowserTurnOptions, isClaudeClientSession } from "./claude-subagent";
 import { prepareChatGptWebContext } from "./context-bootstrap";
-import { canonicalizeCompactionHandoff, codexToolResultsById, createActiveCompactionHandoffPrompts, recoverCompactionHandoff } from "./compaction-handoff";
+import { activeCompactionRuntimeHooks, codexToolResultsById, createActiveCompactionHandoffPrompts } from "./compaction-handoff";
+import { runEnhancedCompaction } from "./enhanced-compaction";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { reportChatGptPreparationFailure } from "./preparation-diagnostics";
@@ -29,8 +29,8 @@ import { assertChatGptToolRequirementSatisfied, effectiveChatGptToolPolicy } fro
 import { chatGptAgentLifecycleOptions } from "./agent-session-lifecycle";
 import { submittedBrowserFailure, submittedStallFailure } from "./submitted-turn";
 import { ChatGptLunaCheckpointStore, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint";
-import { requestCompactionHandoff } from "./retained-compaction-handoff";
 import { createChatGptSameSurfaceRetry } from "./same-surface-recovery";
+import { ChatGptToolEvidenceGuard } from "./tool-evidence-guard";
 export function createChatGptWebAdapter(provider: CodexProviderConfig): ProviderAdapter {
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = TurnBroker.forSocket(brokerSocketPath(provider));
@@ -41,6 +41,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     traceId: string, turnCapabilities: ChatGptWebCapabilities): ChatGptTurnRuntime => {
     const toolPolicy = effectiveChatGptToolPolicy(parsed);
     const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
+    const nativeControlConnector = useEnhancedWebSessionMode && configuredCapabilities.localToolsEnabled;
     if (toolPolicy.requireTool && !mode.localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
     const identity = extractChatGptTurnIdentity(parsed);
     const captureLunaCheckpoint = parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !parsed._compactionRequest && Boolean(identity.threadId && identity.turnId);
@@ -69,6 +70,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const steering = captureLunaCheckpoint || !useEnhancedWebSessionMode ? undefined : new ChatGptSteeringFeed();
     let activeToken: string | undefined;
     let toolResultDelivered = false;
+    const toolEvidence = mode.localTools && !parsed._compactionRequest ? new ChatGptToolEvidenceGuard() : undefined;
     const submission = { accepted: false };
     const handoffPrompts = useEnhancedWebSessionMode ? createActiveCompactionHandoffPrompts() : undefined;
     const runtimeExecutionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
@@ -76,21 +78,36 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       checkpointInput.parsed, handoffPrompts?.retryPromptForAnswer,
       { toolResultDelivered: () => toolResultDelivered, turnToken: () => activeToken },
     );
+    const evidenceRetry = toolEvidence
+      ? async (answer: string, attempt: number) => (
+        await upstreamRetry?.(answer, attempt) ?? toolEvidence.retryPromptForAnswer(answer)
+      )
+      : upstreamRetry;
     const retainConversation = useEnhancedWebSessionMode && requestedRetention;
     const conversationKey = retainConversation ? chatGptConversationKey(checkpointInput.parsed, executionNamespace) : undefined;
     const releaseRetainedConversation = retainedConversationRelease(provider, conversationKey);
     const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
-    const retryPromptForAnswer = parsed._compactionRequest || !steering ? upstreamRetry : browserSteeringRetry(steering, traceId, upstreamRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, isClaudeClientSession(checkpointInput.parsed));
+    const retryPromptForAnswer = parsed._compactionRequest || !steering ? evidenceRetry : browserSteeringRetry(steering, traceId, evidenceRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, isClaudeClientSession(checkpointInput.parsed));
     const retryPromptForError = createChatGptSameSurfaceRetry({ traceId, executionKey: runtimeExecutionKey, enhancedMode: useEnhancedWebSessionMode, abortSignal: browserAbort.signal, upstream: handoffPrompts?.retryPromptForError });
+    const emitCommentary = (value: string, continuation?: boolean): void => {
+      if (toolEvidence && !toolEvidence.shouldEmitCommentary(value)) return;
+      trace.push({ kind: "commentary", text: value, ...(continuation ? { continuation: true } : {}) });
+    };
     if (!mode.localTools) {
       const base = {
         modelId: parsed.modelId,
         reasoning: parsed.options.reasoning,
         capabilities: turnCapabilities,
         prepare: async () => prepareChatGptWebContext(broker,
-          compileChatGptWebPrompt(checkpointInput.parsed, turnCapabilities, undefined, { captureLunaCheckpoint }), useEnhancedWebSessionMode, contextTtlMs, traceId),
+          compileChatGptWebPrompt(checkpointInput.parsed, turnCapabilities, undefined, {
+            captureLunaCheckpoint,
+            nativeControlConnector,
+          }), useEnhancedWebSessionMode, contextTtlMs, traceId),
         ...(resumeInput ? {
-          prepareResume: async () => prepareChatGptWebContext(broker, compileChatGptWebPrompt(resumeInput, turnCapabilities, undefined, { captureLunaCheckpoint }), useEnhancedWebSessionMode, contextTtlMs, traceId),
+          prepareResume: async () => prepareChatGptWebContext(broker, compileChatGptWebPrompt(resumeInput, turnCapabilities, undefined, {
+            captureLunaCheckpoint,
+            nativeControlConnector,
+          }), useEnhancedWebSessionMode, contextTtlMs, traceId),
         } : {}),
         ...(retainConversation ? { retainConversation: true } : {}),
         ...(conversationKey ? { conversationKey } : {}),
@@ -100,8 +117,9 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       const browserRun = worker.run({
         ...base,
         traceId,
+        ...(nativeControlConnector ? { nativeConnector: true } : {}),
         onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
-        onCommentary: (value, continuation) => trace.push({ kind: "commentary", text: value, ...(continuation ? { continuation: true } : {}) }),
+        onCommentary: emitCommentary,
         onProgress: () => trace.signalProgress(),
         onSubmitted: () => { submission.accepted = true; },
         onTextDelta: delta => text.push(delta),
@@ -117,7 +135,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         ...(steering ? { steering } : {}),
         usageInput: checkpointInput.parsed,
         submission,
-        ...(handoffPrompts ? { requestHandoff: handoffPrompts.request } : {}),
+        ...(handoffPrompts ? activeCompactionRuntimeHooks(handoffPrompts, instruction => worker.requestPreemptiveRetry(traceId, instruction)) : {}),
         cancel: () => browserAbort.abort(),
         ...(releaseRetainedConversation ? { release: releaseRetainedConversation } : {}),
       };
@@ -139,7 +157,10 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       }
       try {
         return await prepareChatGptWebContext(broker,
-          compileChatGptWebPrompt(input, turnCapabilities, turnToken, { captureLunaCheckpoint }),
+          compileChatGptWebPrompt(input, turnCapabilities, turnToken, {
+            captureLunaCheckpoint,
+            nativeControlConnector,
+          }),
           useEnhancedWebSessionMode, contextTtlMs, traceId);
       } catch (error) {
         const failure = reportChatGptPreparationFailure(traceId, source, input, error);
@@ -157,7 +178,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       ...(conversationKey ? { conversationKey } : {}),
       abortSignal: browserAbort.signal,
       onReasoningSummary: (text, continuation) => trace.push({ kind: "reasoning", text, ...(continuation ? { continuation: true } : {}) }),
-      onCommentary: (text, continuation) => trace.push({ kind: "commentary", text, ...(continuation ? { continuation: true } : {}) }),
+      onCommentary: emitCommentary,
       onProgress: () => trace.signalProgress(),
       onSubmitted: () => { submission.accepted = true; },
       onTextDelta: delta => text.push(delta),
@@ -186,8 +207,11 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       ...(steering ? { steering } : {}),
       usageInput: checkpointInput.parsed,
       submission,
-      onToolResultDelivered: () => { toolResultDelivered = true; },
-      ...(handoffPrompts ? { requestHandoff: handoffPrompts.request } : {}),
+      onToolResultDelivered: result => {
+        toolResultDelivered = true;
+        if (result) toolEvidence?.observeToolResult(result);
+      },
+      ...(handoffPrompts ? activeCompactionRuntimeHooks(handoffPrompts, instruction => worker.requestPreemptiveRetry(traceId, instruction)) : {}),
       cancel: () => {
         browserAbort.abort();
         if (activeToken) broker.revoke(activeToken);
@@ -204,9 +228,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           + "Start a new enhanced Web task so Codex can use direct plaintext Multi-Agent V2 transport.",
         );
       }
-      const toolPolicy = effectiveChatGptToolPolicy(parsed);
-      const turnCapabilities = parsed._compactionRequest
-        ? { ...configuredCapabilities, localToolsEnabled: false }
+      const toolPolicy = effectiveChatGptToolPolicy(parsed); const turnCapabilities = parsed._compactionRequest ? { ...configuredCapabilities, localToolsEnabled: false }
         : { ...configuredCapabilities, localToolsEnabled: configuredCapabilities.localToolsEnabled && toolPolicy.tools.length > 0 };
       const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
       if (toolPolicy.requireTool && !mode.localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
@@ -228,40 +250,18 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         environment = resolveTrustedCodexEnvironment(environmentStore, parsed);
       }
       if (parsed._compactionRequest) {
-        const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
-        if (useEnhancedWebSessionMode) {
-          const sourceSession = chatGptTurnSessions.find(responseExecutionKey); const activeHandoff = sourceSession ? await requestCompactionHandoff(
-            worker, parsed, sourceSession, broker, executionNamespace, turnCapabilities,
-            createHash("sha256").update(`${responseExecutionKey}:handoff`).digest("hex").slice(0, 12), incoming.abortSignal, timeoutMs,
-          ) : undefined;
-          const handoff = canonicalizeCompactionHandoff(
-            parsed,
-            activeHandoff ?? recoverCompactionHandoff(parsed) ?? "",
-          );
+        const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`; if (useEnhancedWebSessionMode) {
+          const enhancedCompaction = await runEnhancedCompaction({
+            worker, parsed, broker, executionNamespace, capabilities: turnCapabilities,
+            responseExecutionKey, nativeConnectorAvailable: configuredCapabilities.localToolsEnabled,
+            abortSignal: incoming.abortSignal, timeoutMs, emit,
+          });
+          if (enhancedCompaction === "completed") return;
+          console.info("[chatgpt-web] Web session mode=enhanced path=reconstructed_compact result=started");
+        } else {
+          console.info("[chatgpt-web] compact mode=original path=upstream_compact result=started");
           await chatGptTurnSessions.retireAndWait(responseExecutionKey);
-          if (handoff) {
-            console.info("[chatgpt-web] Web session mode=enhanced path=active_handoff result=completed");
-            emit({ type: "text_delta", text: handoff, phase: "final_answer" });
-            emitBrowserCompletion(
-              { type: "final", answer: handoff },
-              estimateChatGptWebUsage(parsed, { answer: handoff, reasoning: [] }, turnCapabilities),
-              emit,
-            );
-            return;
-          }
-          console.warn("[chatgpt-web] Web session mode=enhanced path=active_handoff result=unavailable");
-          throw new ChatGptWebAdapterError(
-            "Enhanced Web session mode could not obtain a checkpoint from the active ChatGPT Web conversation. Retry the compact request or disable enhanced mode to use the original compact path.",
-            {
-              status: 409,
-              errorType: "invalid_request_error",
-              code: "compaction_handoff_unavailable",
-              retryable: false,
-            },
-          );
         }
-        console.info("[chatgpt-web] compact mode=original path=upstream_compact result=started");
-        await chatGptTurnSessions.retireAndWait(responseExecutionKey);
       }
       const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
       await chatGptTurnSessions.waitForRetirement(executionKey);

@@ -7,6 +7,7 @@ import {
   getClaudeSettingsPath,
   installClaudeIntegration,
   preflightClaudeIntegration,
+  refreshClaudeIntegrationRuntimeCredentials,
   uninstallClaudeIntegration,
 } from "../src/claude-integration";
 import { defaultConfig } from "../src/config";
@@ -185,5 +186,36 @@ describe("reversible Claude Code integration", () => {
 
     expect(settings().model).toBe("claude-chatgpt-web-medium");
     expect(() => preflightClaudeIntegration(config)).not.toThrow();
+  });
+
+  test("refreshes a stale managed steering token after the runtime token rotates", () => {
+    fixture({ language: "traditional-chinese", env: { KEEP: "value" } });
+    const original = defaultConfig("browser-only");
+    installClaudeIntegration(original);
+    const rotated = { ...original, controlToken: "r".repeat(43) };
+
+    expect(refreshClaudeIntegrationRuntimeCredentials(rotated)).toBe(true);
+    expect(settings()).toMatchObject({
+      language: "traditional-chinese",
+      env: {
+        KEEP: "value",
+        CODEX_CHATGPT_WEB_CONTROL_TOKEN: rotated.controlToken,
+      },
+    });
+    const journal = JSON.parse(readFileSync(getClaudeIntegrationJournalPath(), "utf8"));
+    expect(journal.installed.env.CODEX_CHATGPT_WEB_CONTROL_TOKEN).toBe(rotated.controlToken);
+    expect(refreshClaudeIntegrationRuntimeCredentials(rotated)).toBe(false);
+  });
+
+  test("does not overwrite a steering token edited outside the managed integration", () => {
+    fixture();
+    const original = defaultConfig("browser-only");
+    installClaudeIntegration(original);
+    const edited = settings();
+    edited.env.CODEX_CHATGPT_WEB_CONTROL_TOKEN = "u".repeat(43);
+    writeFileSync(getClaudeSettingsPath(), `${JSON.stringify(edited, null, 2)}\n`);
+
+    expect(refreshClaudeIntegrationRuntimeCredentials({ ...original, controlToken: "r".repeat(43) })).toBe(false);
+    expect(settings().env.CODEX_CHATGPT_WEB_CONTROL_TOKEN).toBe("u".repeat(43));
   });
 });

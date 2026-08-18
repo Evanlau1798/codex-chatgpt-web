@@ -155,7 +155,7 @@ export function completeChatGptToolResults(
     broker.completeTool(token, message.toolCallId, isBoundary
       ? withClaudeSteering(result, steering.messages, token, message.toolCallId)
       : result);
-    session.markResultDelivered(message.toolCallId);
+    session.markResultDelivered(message.toolCallId, message);
     if (agentMessage) options.onClaudeAgentMessage?.(agentMessage);
     if (isBoundary) {
       session.acknowledgePendingClaudeSteering(steering.count);

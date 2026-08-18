@@ -4,14 +4,11 @@ import type { CodexContentPart, CodexParsedRequest, CodexToolResultMessage } fro
 import { extractChatGptCompactionSourceRevision } from "./environment";
 import type { BrokerToolResult, TurnBroker } from "./turn-broker";
 import type { ChatGptBrowserOutcome, ChatGptTurnSession } from "./turn-execution";
+import { structuredCompactionHandoffInstruction } from "./native-compaction-control";
 
 export const COMPACTION_HANDOFF_MARKER = "CODEX_COMPACTION_HANDOFF";
 export const LATEST_USER_PROMPT_MARKER = "CODEX_LATEST_USER_PROMPT_JSON";
-const ESCAPED_COMPACTION_HANDOFF_MARKER = "CODEX\\_COMPACTION\\_HANDOFF";
-const ACTIVE_HANDOFF_ATTEMPTS = 3;
 const ACTIVE_HANDOFF_TIMEOUT_MESSAGE = "active browser handoff timed out";
-const ACTIVE_HANDOFF_IDLE_TIMEOUT_MS = 60_000;
-const ACTIVE_HANDOFF_ACTIVITY_POLL_MS = 1_000;
 
 export const HANDOFF_INSTRUCTION = `Automatic Codex context compaction has started. Do not call any more tools.
 ${COMPACT_PROMPT}
@@ -48,18 +45,18 @@ export function codexToolResultToBrokerResult(message: CodexToolResultMessage): 
   };
 }
 
-function withHandoffInstruction(result: BrokerToolResult): BrokerToolResult {
+function withHandoffInstruction(result: BrokerToolResult, instruction = HANDOFF_INSTRUCTION): BrokerToolResult {
   return {
     ...result,
-    content: [...result.content, { type: "text", text: HANDOFF_INSTRUCTION }],
+    content: [...result.content, { type: "text", text: instruction }],
   };
 }
 
-function missingToolResult(): BrokerToolResult {
+function missingToolResult(instruction = HANDOFF_INSTRUCTION): BrokerToolResult {
   return {
     content: [{
       type: "text",
-      text: `Codex did not supply this tool result before compaction. Its execution status is unknown; do not assume success or failure.\n\n${HANDOFF_INSTRUCTION}`,
+      text: `Codex did not supply this tool result before compaction. Its execution status is unknown; do not assume success or failure.\n\n${instruction}`,
     }],
     isError: true,
   };
@@ -108,81 +105,34 @@ export function canonicalizeCompactionHandoff(parsed: CodexParsedRequest, summar
   return `${summary.trimEnd()}\n\n${appendix}`;
 }
 
-export function parseCompactionHandoff(answer: string): string | undefined {
-  const normalized = answer.trim();
-  const lineEnd = normalized.indexOf("\n");
-  if (lineEnd < 0) return undefined;
-  const marker = normalized.slice(0, lineEnd).replace(/\r$/, "");
-  if (marker !== COMPACTION_HANDOFF_MARKER && marker !== ESCAPED_COMPACTION_HANDOFF_MARKER) return undefined;
-  const summary = normalized.slice(lineEnd + 1).trim();
-  return isUsableCompactionSummary(summary) ? summary : undefined;
-}
-
-export function retryActiveCompactionHandoff(answer: string, attempt: number): string | undefined {
-  if (parseCompactionHandoff(answer) || attempt >= ACTIVE_HANDOFF_ATTEMPTS) return undefined;
-  return `Your checkpoint response was rejected because it did not use the required format. Do not call tools.
-Retry the checkpoint summary now and start the response with exactly ${COMPACTION_HANDOFF_MARKER} on its own line.`;
-}
 export function createActiveCompactionHandoffPrompts() {
   let requested = false;
+  let instruction: string | undefined;
   let instructionDelivered = false;
-  let attempts = 0;
   return {
-    request(delivered = false): void {
+    request(nextInstruction: string, delivered = false): void {
       requested = true;
+      instruction = nextInstruction;
       instructionDelivered ||= delivered;
     },
-    retryPromptForAnswer(answer: string): string | undefined {
-      if (!requested) return undefined;
-      if (!instructionDelivered) {
-        instructionDelivered = true;
-        return HANDOFF_INSTRUCTION;
-      }
-      attempts += 1;
-      return retryActiveCompactionHandoff(answer, attempts);
+    retryPromptForAnswer(_answer: string): string | undefined {
+      if (!requested || !instruction || instructionDelivered) return undefined;
+      instructionDelivered = true;
+      return instruction;
     },
     retryPromptForError(error: unknown): string | undefined {
-      if (!requested || !retryableBrowserFailure(error)) return undefined;
-      if (!instructionDelivered) {
-        instructionDelivered = true;
-        return HANDOFF_INSTRUCTION;
-      }
-      attempts += 1;
-      return attempts < ACTIVE_HANDOFF_ATTEMPTS ? HANDOFF_INSTRUCTION : undefined;
+      if (!requested || !instruction || instructionDelivered || !retryableBrowserFailure(error)) return undefined;
+      instructionDelivered = true;
+      return instruction;
     },
   };
 }
 
-function assistantFinalText(parsed: CodexParsedRequest): string | undefined {
-  for (let index = parsed.context.messages.length - 1; index >= 0; index -= 1) {
-    const message = parsed.context.messages[index]!;
-    if (message.role !== "assistant" || message.phase === "commentary") continue;
-    const text = message.content
-      .filter(part => part.type === "text")
-      .map(part => part.text)
-      .join("");
-    if (text.trim().length > 0) return text;
-  }
-  return undefined;
-}
-
-export function recoverCompactionHandoff(parsed: CodexParsedRequest): string | undefined {
-  const text = assistantFinalText(parsed);
-  return text ? parseCompactionHandoff(text) : undefined;
-}
-
-function streamedHandoffBlock(answer: string): string | undefined {
-  const markerOffset = Math.max(
-    answer.lastIndexOf(COMPACTION_HANDOFF_MARKER),
-    answer.lastIndexOf(ESCAPED_COMPACTION_HANDOFF_MARKER),
-  );
-  if (markerOffset < 0 || (markerOffset > 0 && answer[markerOffset - 1] !== "\n")) return undefined;
-  return answer.slice(markerOffset);
-}
-
-function streamedHandoffSummary(answer: string): string | undefined {
-  const block = streamedHandoffBlock(answer);
-  return block ? parseCompactionHandoff(block) : undefined;
+export function activeCompactionRuntimeHooks(
+  prompts: ReturnType<typeof createActiveCompactionHandoffPrompts>,
+  preemptHandoff: (instruction: string) => boolean,
+) {
+  return { preemptHandoff, requestHandoff: prompts.request };
 }
 
 function retryableBrowserFailure(error: unknown): boolean {
@@ -225,18 +175,16 @@ export async function requestActiveCompactionHandoff(
   broker: TurnBroker,
   signal?: AbortSignal,
   timeoutMs = 120_000,
-  lateCompletionIdleMs = ACTIVE_HANDOFF_IDLE_TIMEOUT_MS,
-  activityPollMs = ACTIVE_HANDOFF_ACTIVITY_POLL_MS,
 ): Promise<string | undefined> {
   const cached = session.compactionHandoff();
   if (cached) return cached;
   if (!session.isActive()) return undefined;
-  const handoffTextOffset = session.runtime.text.value().length;
-  const recoverStreamed = (): string | undefined => {
-    const recovered = streamedHandoffSummary(session.runtime.text.value().slice(handoffTextOffset));
-    if (recovered) session.setCompactionHandoff(recovered);
-    return recovered;
-  };
+  const transaction = await broker.beginCompactionTransaction(
+    session.runtime.conversationKey ?? "active-compaction",
+    timeoutMs,
+  );
+  const instruction = structuredCompactionHandoffInstruction(transaction);
+  const structuredHandoff = broker.waitForCompactionHandoff(transaction.token, signal);
   try {
     if (session.runtime.mode === "tools") {
       const token = await session.runtime.token;
@@ -245,64 +193,36 @@ export async function requestActiveCompactionHandoff(
       for (const request of session.outstanding()) {
         const result = results.get(request.callId);
         broker.completeTool(token, request.callId, result
-          ? withHandoffInstruction(codexToolResultToBrokerResult(result))
-          : missingToolResult());
-        session.markResultDelivered(request.callId);
+          ? withHandoffInstruction(codexToolResultToBrokerResult(result), instruction)
+          : missingToolResult(instruction));
+        session.markResultDelivered(request.callId, result);
         instructionDelivered = true;
       }
-      const handoffDelivery = broker.requestHandoff(token, HANDOFF_INSTRUCTION);
-      session.runtime.requestHandoff?.(instructionDelivered || handoffDelivery === "delivered");
+      const handoffDelivery = broker.requestHandoff(token, instruction);
+      const boundaryDelivered = instructionDelivered || handoffDelivery === "delivered";
+      const preempted = !boundaryDelivered && session.runtime.preemptHandoff?.(instruction) === true;
+      session.runtime.requestHandoff?.(instruction, boundaryDelivered || preempted);
     } else {
       if (!session.runtime.requestHandoff) return undefined;
-      session.runtime.requestHandoff(false);
+      const preempted = session.runtime.preemptHandoff?.(instruction) === true;
+      session.runtime.requestHandoff(instruction, preempted);
     }
-    let outcome: ChatGptBrowserOutcome;
-    try {
-      outcome = await waitForBrowser(session, signal, timeoutMs);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") throw error;
-      if (!(error instanceof Error)
-        || error.message !== ACTIVE_HANDOFF_TIMEOUT_MESSAGE
-        || lateCompletionIdleMs <= 0) throw error;
-      const handoffText = () => session.runtime.text.value().slice(handoffTextOffset);
-      let handoffChars = streamedHandoffBlock(handoffText())?.length ?? 0;
-      let idleDeadline = Date.now() + lateCompletionIdleMs;
-      for (;;) {
-        try {
-          outcome = await waitForBrowser(
-            session,
-            signal,
-            Math.max(1, Math.min(activityPollMs, idleDeadline - Date.now())),
-          );
-          break;
-        } catch (lateError) {
-          if (lateError instanceof DOMException && lateError.name === "AbortError") throw lateError;
-          if (!(lateError instanceof Error) || lateError.message !== ACTIVE_HANDOFF_TIMEOUT_MESSAGE) throw lateError;
-          const currentChars = streamedHandoffBlock(handoffText())?.length ?? 0;
-          if (currentChars > handoffChars) {
-            handoffChars = currentChars;
-            idleDeadline = Date.now() + lateCompletionIdleMs;
-          } else if (Date.now() >= idleDeadline) {
-            const lateRecovered = recoverStreamed();
-            if (lateRecovered) return lateRecovered;
-            throw new Error("active browser handoff stopped growing");
-          }
-        }
+    const browserCompleted = waitForBrowser(session, signal, timeoutMs).then(outcome => {
+      if (outcome.type === "error") {
+        broker.abortCompactionTransaction(transaction.token);
+        throw outcome.error;
       }
-    }
-    if (outcome.type === "error") {
-      const recovered = retryableBrowserFailure(outcome.error)
-        ? recoverStreamed()
-        : undefined;
-      return recovered;
-    }
-    const summary = parseCompactionHandoff(outcome.answer);
-    if (summary) session.setCompactionHandoff(summary);
+      return outcome;
+    });
+    const [summary] = await Promise.all([structuredHandoff, browserCompleted]);
+    session.setCompactionHandoff(summary);
     return summary;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     console.warn(`[chatgpt-web] active compact handoff unavailable: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
+  } finally {
+    broker.abortCompactionTransaction(transaction.token);
   }
 }
 

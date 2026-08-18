@@ -297,6 +297,26 @@ export function installClaudeIntegration(
   return journal;
 }
 
+export function refreshClaudeIntegrationRuntimeCredentials(config: AppConfig): boolean {
+  const journal = readJournal();
+  if (!journal) return false;
+  const settingsPath = getClaudeSettingsPath();
+  assertJournalPath(journal, settingsPath);
+  const current = readSettings(settingsPath);
+  if (!current.exists) return false;
+  const env = settingsEnv(current.value);
+  const key = "CODEX_CHATGPT_WEB_CONTROL_TOKEN";
+  const installedToken = journal.installed.env[key];
+  if (typeof installedToken !== "string" || env[key] !== installedToken) return false;
+  if (installedToken === config.controlToken) return false;
+
+  env[key] = config.controlToken;
+  current.value.env = env;
+  journal.installed.env[key] = config.controlToken;
+  writeWithCompensation(settingsPath, current.value, journal, current.raw);
+  return true;
+}
+
 export function uninstallClaudeIntegration(): { changed: boolean } {
   const journal = readJournal();
   if (!journal) return { changed: false };

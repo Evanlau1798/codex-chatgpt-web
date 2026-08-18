@@ -19,7 +19,11 @@ import {
   storedBrowserLoginCapabilities,
 } from "./browser-login";
 import { installCodexIntegration, preflightCodexIntegration } from "./codex-integration";
-import { installClaudeIntegration, preflightClaudeIntegration } from "./claude-integration";
+import {
+  installClaudeIntegration,
+  preflightClaudeIntegration,
+  refreshClaudeIntegrationRuntimeCredentials,
+} from "./claude-integration";
 import { inspectLauncherBrowserHost } from "./launcher-browser-host";
 import {
   assertServiceIdle,
@@ -433,6 +437,8 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     installClaudeIntegration(config, {
       replaceExistingRoute: options.replaceCodexRoute,
     });
+  } else {
+    refreshClaudeIntegrationRuntimeCredentials(config);
   }
 
   return {

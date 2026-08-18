@@ -129,17 +129,38 @@ function toolChoice(value: unknown): unknown {
   return undefined;
 }
 
+function isClaudeSessionTitleSchema(format: Json): boolean {
+  if (format.type !== "json_schema") return false;
+  const schema = format.schema;
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return false;
+  const schemaObject = schema as Json;
+  const properties = schemaObject.properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return false;
+  const propertyNames = Object.keys(properties);
+  if (propertyNames.length !== 1 || propertyNames[0] !== "title") return false;
+  const title = (properties as Json).title;
+  if (!title || typeof title !== "object" || Array.isArray(title) || (title as Json).type !== "string") return false;
+  const required = schemaObject.required;
+  return Array.isArray(required)
+    && required.length === 1
+    && required[0] === "title"
+    && schemaObject.additionalProperties === false;
+}
+
+function isClaudeSessionTitlePrompt(system: string): boolean {
+  if (!/\bcoding session\b/i.test(system) || !/return json\b/i.test(system)) return false;
+  return /sentence[- ]case title/i.test(system)
+    || /naming a coding session/i.test(system)
+    || /title is a name for what the session is about/i.test(system);
+}
+
 function claudeTitleResponse(request: Json, system: string): string | undefined {
   const outputConfig = request.output_config;
   if (!outputConfig || typeof outputConfig !== "object" || Array.isArray(outputConfig)) return undefined;
   const format = (outputConfig as Json).format;
-  if (!format || typeof format !== "object" || Array.isArray(format) || (format as Json).type !== "json_schema") return undefined;
-  const schema = (format as Json).schema;
-  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return undefined;
-  const properties = (schema as Json).properties;
-  if (!properties || typeof properties !== "object" || Array.isArray(properties) || !("title" in properties)) return undefined;
-  if (!system.includes("Generate a concise, sentence-case title")
-    || !system.includes("Return JSON with a single \"title\" field.")) return undefined;
+  if (!format || typeof format !== "object" || Array.isArray(format)
+    || !isClaudeSessionTitleSchema(format as Json)
+    || !isClaudeSessionTitlePrompt(system)) return undefined;
   const latestUser = [...request.messages as unknown[]].reverse().find(raw => raw && typeof raw === "object"
     && !Array.isArray(raw) && (raw as Json).role === "user") as Json | undefined;
   const session = textBlocks(latestUser?.content).match(/<session>\s*([\s\S]*?)\s*<\/session>/i)?.[1];

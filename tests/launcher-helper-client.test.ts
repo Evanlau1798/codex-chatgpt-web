@@ -52,6 +52,7 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
       if (message.type !== "run") return;
       if (message.turn.prepared !== undefined
         || message.turn.resumePrepared !== undefined
+        || message.turn.nativeConnector !== true
         || message.turn.retainConversation !== true
         || message.turn.requireRetainedConversation !== true
         || message.turn.conversationKey !== "a".repeat(64)) {
@@ -104,6 +105,7 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
       modelId: "gpt-5.6-sol",
       reasoning: "high",
       capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
+      nativeConnector: true,
       prepare: async () => {
         fullPrepareCount += 1;
         return { text: "inspect", images: [], release: () => { released = true; } };
@@ -269,6 +271,36 @@ test("an abort dispatched during run submission cannot overtake the run frame", 
 
   expect(messages).toEqual(["run", "abort"]);
   expect(released).toBe(false);
+});
+
+test("checkpoint preemption uses a non-aborting helper control frame", async () => {
+  const sent: unknown[] = [];
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
+    storageStatePath: "/durable/unused-state.json", chromeExecutablePath: "/durable/unused-chrome",
+    turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
+  });
+  const internal = client as unknown as {
+    pending: Map<string, { turn: BrowserTurn; resolve: (value: string) => void; reject: (error: Error) => void; sent?: boolean }>;
+    send(message: unknown): Promise<void>;
+  };
+  internal.send = async message => { sent.push(message); };
+  internal.pending.set("preempt-compact-123", {
+    turn: {
+      traceId: "preempt-compact-123", modelId: "gpt-5.6-sol",
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+      prepare: async () => ({ text: "inspect", images: [], release() {} }), onTextDelta() {},
+    },
+    resolve() {}, reject() {}, sent: true,
+  });
+
+  expect(client.requestPreemptiveRetry("preempt-compact-123", "structured checkpoint instruction")).toBeTrue();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(sent).toEqual([{
+    type: "preempt_retry",
+    id: "preempt-compact-123",
+    prompt: "structured checkpoint instruction",
+  }]);
 });
 
 test("structured helper errors preserve the ChatGPT adapter failure contract", async () => {

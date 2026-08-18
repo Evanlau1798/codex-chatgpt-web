@@ -82,6 +82,7 @@ export async function sessionForChatGptRequest(
   groupNamespace?: string,
   allowSteering = true,
 ): Promise<ChatGptTurnSession> {
+  if (parsed._compactionRequest) return sessions.getOrCreate(key, start);
   const revision = JSON.stringify(extractChatGptTurnUserRevision(parsed));
   const text = extractChatGptTurnUserText(parsed) ?? "The user added a new instruction.";
   const identity = extractChatGptTurnIdentity(parsed);

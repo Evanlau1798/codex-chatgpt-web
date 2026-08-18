@@ -133,6 +133,7 @@ export const CHATGPT_RESPONSE_DOM_GRACE_MS = 60_000;
 export const CHATGPT_EMPTY_RESPONSE_GRACE_MS = 10_000;
 export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
 export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
+const CHATGPT_PREEMPTIVE_RETRY_STOP_TIMEOUT_MS = 15_000;
 const CHATGPT_SMOKE_TEXT = "Reply with exactly: CODEX WEB GPT READY";
 const CHATGPT_SMOKE_EXPECTED = "CODEX WEB GPT READY";
 /**
@@ -364,6 +365,8 @@ export interface BrowserTurn {
   modelId: string;
   reasoning?: string;
   capabilities: ChatGptWebCapabilities;
+  /** Attach the Native2 connector for bridge control without granting outer Codex work capability. */
+  nativeConnector?: boolean;
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   retainConversation?: boolean;
@@ -601,6 +604,8 @@ export class ChatGptBrowserWorker {
   private launcherHelper?: LauncherBrowserHelperClient;
   private maintenanceTail: Promise<void> = Promise.resolve();
   private readonly activeRuns = new Map<string, Promise<string>>();
+  private readonly preemptiveRetries = new Map<string, string>();
+  private readonly preemptedRuns = new Set<string>();
 
   private constructor(private readonly config: ResolvedBrowserConfig) {}
 
@@ -618,8 +623,27 @@ export class ChatGptBrowserWorker {
     this.activeRuns.set(turn.traceId, run);
     void run.finally(() => {
       if (this.activeRuns.get(turn.traceId) === run) this.activeRuns.delete(turn.traceId);
+      this.preemptiveRetries.delete(turn.traceId);
+      this.preemptedRuns.delete(turn.traceId);
     }).catch(() => {});
     return run;
+  }
+
+  requestPreemptiveRetry(traceId: string, prompt: string): boolean {
+    if (!prompt.trim() || !this.activeRuns.has(traceId)) return false;
+    const useHelper = this.config.browserHost === "launcher"
+      && process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS !== "1";
+    if (useHelper) return this.launcherHelper?.requestPreemptiveRetry(traceId, prompt) === true;
+    if (this.preemptedRuns.has(traceId)) return false;
+    this.preemptedRuns.add(traceId);
+    this.preemptiveRetries.set(traceId, prompt);
+    return true;
+  }
+
+  private takePreemptiveRetry(traceId: string): string | undefined {
+    const prompt = this.preemptiveRetries.get(traceId);
+    if (prompt) this.preemptiveRetries.delete(traceId);
+    return prompt;
   }
 
   private async runWithSurfaceRetry(turn: BrowserTurn): Promise<string> {
@@ -1745,13 +1769,14 @@ export class ChatGptBrowserWorker {
       turn.reasoning,
       turn.capabilities,
     ).localTools;
+    const nativeConnector = turn.nativeConnector === true || localTools;
 
     const lease = await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
       phase: "start",
       traceId: turn.traceId,
       helperPid: process.pid,
       ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
-      ...(localTools ? { connectorIdentity: this.config.appName } : {}),
+      ...(nativeConnector ? { connectorIdentity: this.config.appName } : {}),
       ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     });
     const surfaceId = lease.surfaceId;
@@ -1784,7 +1809,7 @@ export class ChatGptBrowserWorker {
       if (turn.requireRetainedConversation && lease.reused !== true) {
         throw new Error("The retained ChatGPT conversation is no longer available");
       }
-      const reuseConversation = lease.reused === true && (!localTools || lease.connectorBound === true);
+      const reuseConversation = lease.reused === true && (!nativeConnector || lease.connectorBound === true);
       await turn.onPreparedSelected?.(reuseConversation && turn.prepareResume !== undefined);
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
@@ -1808,7 +1833,7 @@ export class ChatGptBrowserWorker {
           helperPid: process.pid,
           status: terminal,
           ...(terminal === "completed" && turn.retainConversation ? { retain: true } : {}),
-          ...(terminal === "completed" && localTools ? { connectorBound: true } : {}),
+          ...(terminal === "completed" && nativeConnector ? { connectorBound: true } : {}),
           ...(terminalMessage ? { message: terminalMessage } : {}),
         });
       } catch (controlError) {
@@ -1833,7 +1858,7 @@ export class ChatGptBrowserWorker {
     if (turn.captureLunaCheckpoint && turn.modelId !== CHATGPT_WEB_LUNA_MODEL_ID) {
       throw new Error("Private rolling checkpoint capture is valid only for ChatGPT Luna");
     }
-    const requestedMode = resolveChatGptWebModelMode(turn.modelId, turn.reasoning, turn.capabilities);
+      const requestedMode = resolveChatGptWebModelMode(turn.modelId, turn.reasoning, turn.capabilities);
     const prepared = reuseConversation && turn.prepareResume
       ? await turn.prepareResume()
       : await turn.prepare();
@@ -1914,12 +1939,14 @@ export class ChatGptBrowserWorker {
             checkpoint => diagnostics.capture(page, checkpoint),
           )
         ));
-      let catalogRefreshAvailable = !reuseConversation && mode.localTools;
+      let catalogRefreshAvailable = !reuseConversation && (turn.nativeConnector === true || mode.localTools);
       await diagnostics.capture(page, "effort-selection-complete");
       let finalText = "";
       const answerBuffer = new ChatGptAnswerBuffer();
       let responsePrompt = prepared.text;
       let retrySubmitted: (() => void) | undefined;
+      let preemptiveRetryPrompt: string | undefined;
+      let preemptiveStopDeadline: number | undefined;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
         try {
         for (;;) {
@@ -1931,7 +1958,7 @@ export class ChatGptBrowserWorker {
               stageSignal => this.attachPrompt(
                 page,
                 responsePrompt,
-                mode.localTools,
+                turn.nativeConnector === true || mode.localTools,
                 checkpoint => diagnostics.capture(page, checkpoint),
                 reuseConversation || responseAttempt > 1,
                 stageSignal,
@@ -2089,7 +2116,7 @@ export class ChatGptBrowserWorker {
         }
 
         await throwIfChatGptSessionFailureAlert(page);
-        if (mode.localTools && await resolveChatGptToolConfirmation(
+        if ((turn.nativeConnector === true || mode.localTools) && await resolveChatGptToolConfirmation(
           page,
           this.config.appName,
           this.config.autoApproveToolCalls,
@@ -2103,6 +2130,33 @@ export class ChatGptBrowserWorker {
 
         const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
         const running = await stop.isVisible().catch(() => false);
+        const requestedPreemption = preemptiveRetryPrompt ? undefined : this.takePreemptiveRetry(turn.traceId);
+        if (requestedPreemption) {
+          preemptiveRetryPrompt = requestedPreemption;
+          if (running) {
+            preemptiveStopDeadline = Date.now() + CHATGPT_PREEMPTIVE_RETRY_STOP_TIMEOUT_MS;
+            await stop.press("Enter");
+            console.info(`[chatgpt-web] browser turn ${turn.traceId} stopped the active generation for same-surface checkpoint continuation`);
+            await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+            continue;
+          }
+        }
+        if (preemptiveRetryPrompt && running) {
+          if (preemptiveStopDeadline !== undefined && Date.now() >= preemptiveStopDeadline) {
+            throw new ChatGptWebAdapterError(
+              "ChatGPT did not stop the active generation for structured compaction checkpoint continuation.",
+              {
+                status: 502,
+                errorType: "server_error",
+                code: "chatgpt_compaction_preemption_failed",
+                retryable: false,
+                retireSession: false,
+              },
+            );
+          }
+          await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+          continue;
+        }
         const snapshot = await this.responseDomSnapshot(responseTurn, markdownOwnership, running);
         await throwIfChatGptTerminalErrorAlert(
           responseTurn,
@@ -2273,7 +2327,9 @@ export class ChatGptBrowserWorker {
           console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying response failure attempt=${responseAttempt + 1} reason=${reason}`);
           continue;
         }
-        const retryPrompt = await turn.retryPromptForAnswer?.(finalText, responseAttempt);
+        const retryPrompt = preemptiveRetryPrompt ?? await turn.retryPromptForAnswer?.(finalText, responseAttempt);
+        preemptiveRetryPrompt = undefined;
+        preemptiveStopDeadline = undefined;
         if (!retryPrompt) {
           const deliverable = answerBuffer.takeDeliverable(true);
           if (deliverable) turn.onTextDelta(deliverable);

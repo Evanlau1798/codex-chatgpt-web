@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AdapterEvent, CodexParsedRequest } from "../../types";
+import type { AdapterEvent, CodexParsedRequest, CodexToolResultMessage } from "../../types";
 import type { BrokerToolRequest } from "./turn-broker";
 import { ChatGptSteeringFeed, steeringFingerprint, type ClaudeSteeringDelivery } from "./steering-feed";
 import { ChatGptTextFeed, ChatGptTraceFeed } from "./turn-feeds";
@@ -24,8 +24,10 @@ interface ChatGptTurnRuntimeBase {
   /** Exact bounded request used to prepare this browser turn and report Codex usage. */
   usageInput?: CodexParsedRequest;
   steering?: ChatGptSteeringFeed;
-  requestHandoff?: (instructionDelivered?: boolean) => void;
-  onToolResultDelivered?: () => void;
+  /** Stop only the active Web generation and continue on the same retained surface. */
+  preemptHandoff?: (instruction: string) => boolean;
+  requestHandoff?: (instruction: string, instructionDelivered?: boolean) => void;
+  onToolResultDelivered?: (result?: CodexToolResultMessage) => void;
   submission?: { accepted: boolean };
   cancel: () => void;
   /** Release a completed retained browser surface when this canonical session is superseded. */
@@ -169,11 +171,11 @@ export class ChatGptTurnSession {
     return this.outstandingById.has(callId);
   }
 
-  markResultDelivered(callId: string): void {
+  markResultDelivered(callId: string, result?: CodexToolResultMessage): void {
     if (!this.outstandingById.delete(callId)) throw new Error(`ChatGPT bridge tool result does not match an outstanding call: ${callId}`);
     this.outstandingGenerationById.delete(callId);
     this.deliveredResultIds.add(callId);
-    this.runtime.onToolResultDelivered?.();
+    this.runtime.onToolResultDelivered?.(result);
     if (this.outstandingById.size === 0) {
       this.outstandingReasoning = [];
       this.outstandingPrelude = [];

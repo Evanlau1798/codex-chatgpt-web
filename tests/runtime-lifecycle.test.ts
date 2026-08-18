@@ -195,21 +195,29 @@ test("surface recovery diagnostics identify the error that reached the decision 
 });
 
 test("tool result delivery updates the live browser runtime state", () => {
-  let delivered = false;
+  let delivered: CodexParsedRequest["context"]["messages"][number] | undefined;
   const session = new ChatGptTurnSession({
     mode: "tools",
     token: Promise.resolve("turn_test"),
     browser: new Promise<string>(() => {}),
     trace: new ChatGptTraceFeed(),
     text: new ChatGptTextFeed(),
-    onToolResultDelivered: () => { delivered = true; },
+    onToolResultDelivered: result => { delivered = result; },
     cancel: () => {},
   });
   session.setOutstanding([{ callId: "call_1", wireName: "Read", freeform: false, arguments: {} }]);
+  const result = {
+    role: "toolResult" as const,
+    toolCallId: "call_1",
+    toolName: "Read",
+    content: "The native tool returned an explicit policy rejection",
+    isError: true,
+    timestamp: 1,
+  };
 
-  session.markResultDelivered("call_1");
+  session.markResultDelivered("call_1", result);
 
-  expect(delivered).toBe(true);
+  expect(delivered).toEqual(result);
 });
 
 test("same-surface recovery requires complete canonical state and no pending effects", () => {

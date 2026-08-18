@@ -22,6 +22,7 @@ interface RunMessage {
     modelId: string;
     reasoning?: string;
     capabilities: ChatGptWebCapabilities;
+    nativeConnector?: boolean;
     resumeAvailable?: boolean;
     retainConversation?: boolean;
     requireRetainedConversation?: boolean;
@@ -62,6 +63,7 @@ interface AnswerRetryMessage {
 }
 type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage
   | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
+  | { type: "preempt_retry"; id: string; prompt: string }
   | { type: "abort"; id: string } | { type: "shutdown" };
 
 let outputFailure: Error | undefined;
@@ -87,6 +89,7 @@ console.error = diagnostic;
 const abortControllers = new Map<string, AbortController>();
 const answerRetryWaiters = new Map<string, (prompt?: string | ChatGptRetryPrompt) => void>();
 const preparedSelectionWaiters = new Map<string, (prepared?: CompiledChatGptWebPrompt) => void>();
+const activeWorkers = new Map<string, ChatGptBrowserWorker>();
 let shuttingDown = false;
 let shutdownPromise: Promise<void> | undefined;
 
@@ -127,6 +130,9 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.resumeAvailable !== undefined && typeof message.turn.resumeAvailable !== "boolean") {
     throw new Error("Browser helper resume availability is invalid");
   }
+  if (message.turn.nativeConnector !== undefined && typeof message.turn.nativeConnector !== "boolean") {
+    throw new Error("Browser helper Native2 connector flag is invalid");
+  }
   if (message.turn.retainConversation !== undefined && typeof message.turn.retainConversation !== "boolean") {
     throw new Error("Browser helper conversation retention flag is invalid");
   }
@@ -165,6 +171,7 @@ async function run(message: RunMessage): Promise<void> {
     modelId: message.turn.modelId,
     reasoning: message.turn.reasoning,
     capabilities: message.turn.capabilities,
+    ...(message.turn.nativeConnector ? { nativeConnector: true } : {}),
     prepare: prepareSelected,
     ...(message.turn.resumeAvailable ? { prepareResume: prepareSelected } : {}),
     ...(message.turn.retainConversation ? { retainConversation: true } : {}),
@@ -213,8 +220,10 @@ async function run(message: RunMessage): Promise<void> {
       }),
     } : {}),
   };
+  const worker = ChatGptBrowserWorker.forProvider(provider);
+  activeWorkers.set(message.id, worker);
   try {
-    const text = await ChatGptBrowserWorker.forProvider(provider).run(turn);
+    const text = await worker.run(turn);
     writeProtocol({ type: "result", id: message.id, text });
   } catch (error) {
     writeProtocol({
@@ -231,6 +240,7 @@ async function run(message: RunMessage): Promise<void> {
       } : {}),
     });
   } finally {
+    if (activeWorkers.get(message.id) === worker) activeWorkers.delete(message.id);
     answerRetryWaiters.delete(message.id);
     preparedSelectionWaiters.delete(message.id);
     abortControllers.delete(message.id);
@@ -305,6 +315,16 @@ input.on("line", line => {
     preparedSelectionWaiters.get(message.id)?.();
     preparedSelectionWaiters.delete(message.id);
     abortControllers.get(message.id)?.abort();
+  } else if (message.type === "preempt_retry") {
+    const worker = activeWorkers.get(message.id);
+    if (typeof message.prompt !== "string" || !message.prompt.trim()
+      || !worker?.requestPreemptiveRetry(message.id, message.prompt)) {
+      writeProtocol({
+        type: "error",
+        id: message.id,
+        message: "Browser helper could not preempt the active generation for same-surface retry",
+      });
+    }
   } else if (message.type === "prepared_selected_ack") {
     if (!message.prepared || typeof message.prepared.text !== "string" || !Array.isArray(message.prepared.images)) {
       writeProtocol({ type: "error", id: message.id, message: "Browser helper selected prompt is invalid" });

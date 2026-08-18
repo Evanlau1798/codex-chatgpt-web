@@ -252,6 +252,84 @@ test("turn broker distinguishes queued and immediately delivered handoff instruc
   }
 });
 
+test("compaction control transactions accept one structured handoff and consume it once", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-broker-compaction-control-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  try {
+    const transaction = await broker.beginCompactionTransaction("trace-compaction-control", 10_000);
+    expect(transaction.token).toMatch(/^control_[a-f0-9]{32}$/);
+    expect(transaction.handoffId).toMatch(/^handoff_[a-f0-9]{32}$/);
+
+    const waiting = broker.waitForCompactionHandoff(transaction.token);
+    await expect(callTurnBroker(socketPath, {
+      method: "submit_compaction_handoff",
+      token: transaction.token,
+      handoffId: transaction.handoffId,
+      summary: "Structured checkpoint preserved the current implementation state.",
+    })).resolves.toEqual({ submitted: true });
+
+    await expect(waiting).resolves.toBe("Structured checkpoint preserved the current implementation state.");
+    await expect(callTurnBroker(socketPath, {
+      method: "submit_compaction_handoff",
+      token: transaction.token,
+      handoffId: transaction.handoffId,
+      summary: "Duplicate checkpoint.",
+    })).rejects.toThrow();
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("compaction control tokens cannot claim work capability and reject mismatched handoff ids", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-broker-compaction-scope-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  try {
+    const transaction = await broker.beginCompactionTransaction("trace-compaction-scope", 10_000);
+    await expect(callTurnBroker(socketPath, { method: "claim", token: transaction.token }))
+      .rejects.toThrow("invalid");
+    await expect(callTurnBroker(socketPath, {
+      method: "submit_compaction_handoff",
+      token: transaction.token,
+      handoffId: "handoff_00000000000000000000000000000000",
+      summary: "Structured checkpoint.",
+    })).rejects.toThrow("handoff");
+    broker.abortCompactionTransaction(transaction.token);
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("compaction control transactions fail closed on unusable summaries, timeout, and abort", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-broker-compaction-terminal-"));
+  const socketPath = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socketPath);
+  try {
+    const invalid = await broker.beginCompactionTransaction("trace-compaction-invalid", 10_000);
+    await expect(callTurnBroker(socketPath, {
+      method: "submit_compaction_handoff",
+      token: invalid.token,
+      handoffId: invalid.handoffId,
+      summary: "I cannot create a checkpoint summary because the context is not accessible.",
+    })).rejects.toThrow("usable");
+    broker.abortCompactionTransaction(invalid.token);
+
+    const timed = await broker.beginCompactionTransaction("trace-compaction-timeout", 5);
+    await expect(broker.waitForCompactionHandoff(timed.token)).rejects.toThrow("timed out");
+
+    const aborted = await broker.beginCompactionTransaction("trace-compaction-abort", 10_000);
+    const waiting = broker.waitForCompactionHandoff(aborted.token);
+    broker.abortCompactionTransaction(aborted.token);
+    await expect(waiting).rejects.toThrow("aborted");
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("turn broker delivers steering once through the active tool loop", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-broker-steering-"));
   const socketPath = defaultBrokerEndpoint(root);

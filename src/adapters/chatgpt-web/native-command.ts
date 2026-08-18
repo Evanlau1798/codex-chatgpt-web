@@ -65,6 +65,14 @@ export function claudeBashCommand(cmd: string, workdir?: string): string {
   return `cd -- ${quoted} && ${cmd}`;
 }
 
+export function assertClaudeBashCommand(command: string): void {
+  if (/^\s*(?:Get-(?:Content|ChildItem)|Select-String|Test-Path|Set-Location)\b/i.test(command)) {
+    throw new Error(
+      "Claude Code Bash executes POSIX Bash; use a POSIX command such as cat instead of PowerShell cmdlets.",
+    );
+  }
+}
+
 export function readTextFileCommand(filePath: string, platform: NodeJS.Platform = process.platform): string {
   if (!filePath || /[\0\r\n]/.test(filePath)) throw new Error("Codex read-only file path is invalid");
   const pathApi = platform === "win32" ? win32 : posix;

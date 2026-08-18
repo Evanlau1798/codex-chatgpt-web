@@ -18,6 +18,7 @@ interface PendingTurn {
   prepared?: CompiledChatGptWebPrompt & { release: () => void };
   acknowledgeRetry?: () => void;
   localFailure?: Error;
+  preemptiveRetryRequested?: boolean;
 }
 
 export class LauncherBrowserHelperClient {
@@ -84,6 +85,7 @@ export class LauncherBrowserHelperClient {
             modelId: turn.modelId,
             reasoning: turn.reasoning,
             capabilities: turn.capabilities,
+            ...(turn.nativeConnector ? { nativeConnector: true } : {}),
             ...(turn.prepareResume ? { resumeAvailable: true } : {}),
             ...(turn.retainConversation ? { retainConversation: true } : {}),
             ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
@@ -92,6 +94,17 @@ export class LauncherBrowserHelperClient {
           },
         }).catch(error => this.finishWithError(turn.traceId, error instanceof Error ? error : new Error(String(error))));
       });
+  }
+
+  requestPreemptiveRetry(traceId: string, prompt: string): boolean {
+    const pending = this.pending.get(traceId);
+    if (!pending?.sent || pending.localFailure || pending.preemptiveRetryRequested || !prompt.trim()) return false;
+    pending.preemptiveRetryRequested = true;
+    void this.send({ type: "preempt_retry", id: traceId, prompt }).catch(error => this.abortWithLocalFailure(
+      traceId,
+      error instanceof Error ? error : new Error(String(error)),
+    ));
+    return true;
   }
 
   async close(): Promise<void> {
