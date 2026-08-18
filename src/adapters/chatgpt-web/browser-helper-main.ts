@@ -7,6 +7,7 @@ import type { ChatGptWebCapabilities } from "./model";
 import { createProcessLineWriter } from "./process-line-writer";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { ChatGptRetryPrompt } from "./steering";
+import { createBrowserHelperPromptSelection } from "./browser-helper-prompt-selection";
 
 interface RunMessage {
   type: "run";
@@ -160,12 +161,12 @@ async function run(message: RunMessage): Promise<void> {
   };
   const abortController = new AbortController();
   abortControllers.set(message.id, abortController);
-  const selectedPrompt = new Promise<CompiledChatGptWebPrompt>((resolve, reject) => {
-    preparedSelectionWaiters.set(message.id, prepared => prepared
-      ? resolve(prepared)
-      : reject(new DOMException("Browser helper prompt selection aborted", "AbortError")));
+  const promptSelection = createBrowserHelperPromptSelection();
+  preparedSelectionWaiters.set(message.id, prepared => {
+    if (prepared) promptSelection.select(prepared);
+    else promptSelection.cancel();
   });
-  const prepareSelected = async () => ({ ...await selectedPrompt, release: () => {} });
+  const prepareSelected = async () => ({ ...await promptSelection.wait(), release: () => {} });
   const turn: BrowserTurn = {
     traceId: message.turn.traceId,
     modelId: message.turn.modelId,
@@ -182,7 +183,7 @@ async function run(message: RunMessage): Promise<void> {
     onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "submitted" }),
     onPreparedSelected: reused => {
       writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused });
-      return selectedPrompt.then(() => {});
+      return promptSelection.wait().then(() => {});
     },
     onReasoningSummary: (text, continuation) => writeProtocol({
       type: "event",
