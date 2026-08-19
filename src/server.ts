@@ -1,7 +1,7 @@
 import { createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import { handleClaudeSteeringHook } from "./messages/steering-hook";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
@@ -28,6 +28,7 @@ import { VERSION } from "./version";
 import { messagesRequest } from "./messages";
 import { claudeGatewayModelsResponse, isClaudeGatewayModelsRequest } from "./messages/models";
 import { enforceLocalDataRequestSecurity } from "./local-request-security";
+import { lifecycleControlAuthorized } from "./lifecycle-control";
 
 export class HttpTurnCounter {
   private active = 0;
@@ -359,12 +360,6 @@ export function startServer(
     active_http_turns: httpTurns.count(),
     active_browser_turns: chatGptTurnSessions.activeCount(),
   });
-  const controlAuthorized = (req: Request): boolean => {
-    const header = req.headers.get("authorization") ?? "";
-    const expected = Buffer.from(`Bearer ${config.controlToken}`);
-    const actual = Buffer.from(header);
-    return actual.length === expected.length && timingSafeEqual(actual, expected);
-  };
   const server = Bun.serve({
     hostname: config.host,
     port: config.port,
@@ -388,17 +383,25 @@ export function startServer(
         });
       }
       if (req.method === "POST" && (url.pathname === "/admin/drain" || url.pathname === "/admin/resume")) {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
         draining = url.pathname === "/admin/drain";
         return Response.json({ status: "ok", accepting_turns: !draining, ...activity() });
       }
+      if (req.method === "POST" && url.pathname === "/admin/drain-if-idle") {
+        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
+        const current = activity();
+        if (draining) return Response.json({ status: "draining", acquired: false, accepting_turns: false, ...current });
+        if (current.active_http_turns > 0 || current.active_browser_turns > 0) return Response.json({ status: "busy", acquired: false, accepting_turns: true, ...current });
+        draining = true;
+        return Response.json({ status: "ok", acquired: true, accepting_turns: false, ...current });
+      }
       if (req.method === "POST" && url.pathname === "/admin/cancel-browser-turns") {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
         const cancelled = chatGptTurnSessions.clear();
         return Response.json({ status: "ok", cancelled_browser_turns: cancelled, ...activity() });
       }
       if (req.method === "POST" && url.pathname === "/admin/shutdown") {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
         const current = activity();
         if (!draining || current.active_http_turns > 0 || current.active_browser_turns > 0) {
           return Response.json(
@@ -451,7 +454,7 @@ export function startServer(
         return httpTurns.track(() => messagesRequest(req, config), req.signal);
       }
       if (req.method === "POST" && url.pathname === "/v1/messages/steering") {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
+        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
         return handleClaudeSteeringHook(req);
       }
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {

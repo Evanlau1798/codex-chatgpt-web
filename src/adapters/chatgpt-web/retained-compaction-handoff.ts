@@ -33,8 +33,13 @@ export async function requestRetainedCompactionHandoff(
   const transaction = await broker.beginCompactionTransaction(traceId, timeoutMs);
   const instruction = structuredCompactionHandoffInstruction(transaction);
   const structuredHandoff = broker.waitForCompactionHandoff(transaction.token, signal);
+  const browserAbort = new AbortController();
+  const abortBrowser = () => browserAbort.abort();
+  let browserCompleted: Promise<string> | undefined;
+  if (signal?.aborted) browserAbort.abort();
+  else signal?.addEventListener("abort", abortBrowser, { once: true });
   try {
-    const browserCompleted = worker.run({
+    browserCompleted = worker.run({
       traceId,
       modelId: parsed.modelId,
       reasoning: parsed.options.reasoning,
@@ -43,7 +48,7 @@ export async function requestRetainedCompactionHandoff(
       prepare: async () => ({ text: instruction, images: [], release: () => {} }),
       conversationKey,
       requireRetainedConversation: true,
-      abortSignal: signal,
+      abortSignal: browserAbort.signal,
       onTextDelta: () => {},
     });
     const [handoff] = await Promise.all([structuredHandoff, browserCompleted]);
@@ -57,7 +62,10 @@ export async function requestRetainedCompactionHandoff(
     console.warn(`[chatgpt-web] retained compact handoff unavailable: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
   } finally {
+    browserAbort.abort();
     broker.abortCompactionTransaction(transaction.token);
+    if (browserCompleted) await browserCompleted.catch(() => {});
+    signal?.removeEventListener("abort", abortBrowser);
   }
 }
 

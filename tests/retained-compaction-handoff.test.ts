@@ -72,3 +72,52 @@ test("retained Enhanced compact ignores marker-only Web finals and keeps the Nat
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("retained Enhanced compact releases a failed checkpoint browser run before the same-trace retry", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-retained-retry-cleanup-"));
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
+  const namespace = createHash("sha256").update("retained-compact-retry-test").digest("hex");
+  const source = new ChatGptTurnSession({
+    mode: "read-only", browser: Promise.resolve("done"), trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(), usageInput: request(false), cancel: () => {},
+  });
+  const active = new Set<string>();
+  let starts = 0;
+  const worker = { run: (turn: BrowserTurn) => {
+    if (active.has(turn.traceId)) {
+      return Promise.reject(new Error(`Duplicate ChatGPT web browser turn: ${turn.traceId}`));
+    }
+    active.add(turn.traceId);
+    starts += 1;
+    return new Promise<string>((_resolve, reject) => {
+      const abort = () => setTimeout(() => {
+        active.delete(turn.traceId);
+        reject(new DOMException("checkpoint browser run aborted", "AbortError"));
+      }, 5);
+      if (turn.abortSignal?.aborted) abort();
+      else turn.abortSignal?.addEventListener("abort", abort, { once: true });
+    });
+  } };
+  const compact = () => requestRetainedCompactionHandoff(
+    worker as never,
+    request(true),
+    source,
+    broker,
+    namespace,
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    "retrytrace12",
+    undefined,
+    20,
+  );
+
+  try {
+    expect(await compact()).toBeUndefined();
+    expect(active.size).toBe(0);
+    expect(await compact()).toBeUndefined();
+    expect(starts).toBe(2);
+    expect(active.size).toBe(0);
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

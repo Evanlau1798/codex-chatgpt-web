@@ -1568,28 +1568,41 @@ class RuntimeSupervisor {
   }
 
   async acquireDrain(config, timeoutMs = DRAIN_IDLE_TIMEOUT_MS) {
-    let attempted = false;
+    let resumeRequired = false;
     try {
-      attempted = true;
       const deadline = Date.now() + timeoutMs;
       for (;;) {
-        const health = await this.control(config, "drain");
-        if (health.accepting_turns !== false
-          || !Number.isInteger(health.active_http_turns)
-          || !Number.isInteger(health.active_browser_turns)) {
-          throw new Error("daemon did not acknowledge the drain contract");
+        resumeRequired = true;
+        const health = await this.control(config, "drain-if-idle");
+        resumeRequired = false;
+        const activeHttp = health.active_http_turns;
+        const activeBrowser = health.active_browser_turns;
+        if (!Number.isInteger(activeHttp) || !Number.isInteger(activeBrowser)) {
+          throw new Error("daemon did not acknowledge the atomic idle-drain contract");
         }
-        if (health.active_http_turns === 0 && health.active_browser_turns === 0) return true;
+        if (health.status === "ok"
+          && health.acquired === true
+          && health.accepting_turns === false
+          && activeHttp === 0
+          && activeBrowser === 0) {
+          return true;
+        }
+        if (health.status !== "busy"
+          || health.acquired !== false
+          || health.accepting_turns !== true) {
+          resumeRequired = health.acquired === true;
+          throw new Error("daemon did not acknowledge the atomic idle-drain contract");
+        }
         if (Date.now() >= deadline) {
           throw new Error(
-            `daemon has ${health.active_http_turns} active HTTP turn(s) and ${health.active_browser_turns} active browser turn(s)`,
+            `daemon has ${activeHttp} active HTTP turn(s) and ${activeBrowser} active browser turn(s)`,
           );
         }
         await sleep(Math.min(DRAIN_POLL_INTERVAL_MS, Math.max(1, deadline - Date.now())));
       }
     } catch (error) {
       let resumeError;
-      if (attempted) {
+      if (resumeRequired) {
         try {
           await this.control(config, "resume");
         } catch (caught) {

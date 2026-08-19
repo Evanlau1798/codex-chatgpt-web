@@ -913,7 +913,7 @@ test("crash-loop diagnostics include the last redacted child failure", () => {
   }
 });
 
-test("launcher supervisor refuses shutdown while a Codex turn is active and compensates the drain", async () => {
+test("launcher supervisor keeps admission open while a Codex turn is active", async () => {
   const actions = [];
   const supervisor = new RuntimeSupervisor({
     app: { getVersion: () => "0.2.0", isPackaged: false },
@@ -924,18 +924,44 @@ test("launcher supervisor refuses shutdown while a Codex turn is active and comp
   });
   supervisor.control = async (_config, action) => {
     actions.push(action);
-    return action === "drain"
-      ? { accepting_turns: false, active_http_turns: 1, active_browser_turns: 0 }
-      : { accepting_turns: true, active_http_turns: 1, active_browser_turns: 0 };
+    return {
+      status: "busy",
+      acquired: false,
+      accepting_turns: true,
+      active_http_turns: 1,
+      active_browser_turns: 0,
+    };
   };
   await assert.rejects(
     supervisor.acquireDrain({}, 0),
     /atomic idleness could not be proven.*1 active HTTP turn/,
   );
-  assert.deepEqual(actions, ["drain", "resume"]);
+  assert.deepEqual(actions, ["drain-if-idle"]);
 });
 
-test("launcher supervisor waits for an in-flight HTTP turn to finish after draining", async () => {
+test("launcher compensates an uncertain atomic idle-drain delivery", async () => {
+  const actions = [];
+  const supervisor = new RuntimeSupervisor({
+    app: { getVersion: () => "0.2.0", isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: os.tmpdir(),
+    coreHome: os.tmpdir(),
+    browserDescriptorPath: path.join(os.tmpdir(), "launcher.json"),
+  });
+  supervisor.control = async (_config, action) => {
+    actions.push(action);
+    if (action === "drain-if-idle") throw new Error("HTTP 404");
+    return { status: "ok", accepting_turns: true, active_http_turns: 0, active_browser_turns: 0 };
+  };
+
+  await assert.rejects(
+    supervisor.acquireDrain({}, 0),
+    /atomic idleness could not be proven.*HTTP 404/,
+  );
+  assert.deepEqual(actions, ["drain-if-idle", "resume"]);
+});
+
+test("launcher supervisor atomically drains only after the in-flight HTTP turn finishes", async () => {
   const actions = [];
   const supervisor = new RuntimeSupervisor({
     app: { getVersion: () => "0.2.0", isPackaged: false },
@@ -948,15 +974,25 @@ test("launcher supervisor waits for an in-flight HTTP turn to finish after drain
   supervisor.control = async (_config, action) => {
     actions.push(action);
     drainChecks += 1;
-    return {
-      accepting_turns: false,
-      active_http_turns: drainChecks === 1 ? 1 : 0,
-      active_browser_turns: 0,
-    };
+    return drainChecks === 1
+      ? {
+          status: "busy",
+          acquired: false,
+          accepting_turns: true,
+          active_http_turns: 1,
+          active_browser_turns: 0,
+        }
+      : {
+          status: "ok",
+          acquired: true,
+          accepting_turns: false,
+          active_http_turns: 0,
+          active_browser_turns: 0,
+        };
   };
 
   await supervisor.acquireDrain({}, 1_000);
-  assert.deepEqual(actions, ["drain", "drain"]);
+  assert.deepEqual(actions, ["drain-if-idle", "drain-if-idle"]);
 });
 
 test("launcher resumes an owned drained daemon before reporting it ready", async () => {
@@ -1370,6 +1406,11 @@ const server = http.createServer((request, response) => {
     }));
     return;
   }
+  if (request.method === "POST" && request.url === "/admin/drain-if-idle") {
+    draining = true;
+    response.end(JSON.stringify({ status: "ok", acquired: true, accepting_turns: false, active_http_turns: 0, active_browser_turns: 0 }));
+    return;
+  }
   if (request.method === "POST" && request.url === "/admin/drain") draining = true;
   else if (request.method === "POST" && request.url === "/admin/resume") draining = false;
   else if (request.method === "POST" && request.url === "/admin/shutdown" && draining) {
@@ -1460,6 +1501,11 @@ const server = http.createServer((request, response) => {
   if (request.headers.authorization !== "Bearer " + config.controlToken) {
     response.statusCode = 401;
     response.end("{}");
+    return;
+  }
+  if (request.method === "POST" && request.url === "/admin/drain-if-idle") {
+    draining = true;
+    response.end(JSON.stringify({ status: "ok", acquired: true, accepting_turns: false, active_http_turns: 0, active_browser_turns: 0 }));
     return;
   }
   if (request.method === "POST" && request.url === "/admin/drain") draining = true;
