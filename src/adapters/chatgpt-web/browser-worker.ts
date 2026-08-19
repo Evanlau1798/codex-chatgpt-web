@@ -1150,6 +1150,7 @@ export class ChatGptBrowserWorker {
     page: Page,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
     catalogRefreshAvailable = false,
+    catalogRefreshExhausted = false,
   ): Promise<Locator> {
     let composer = await this.activeComposer(page);
     await composer.fill("");
@@ -1188,14 +1189,23 @@ export class ChatGptBrowserWorker {
         if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
         if (Date.now() >= menuDeadline) {
           const visibleRows = await this.connectorMentionRowTitles(menuRows);
-          if (catalogRefreshAvailable && visibleRows.length > 0) {
+          if (visibleRows.length > 0) {
             const legacyName = LEGACY_CHATGPT_CONNECTOR_NAMES.find(name => visibleRows.includes(name));
             if (!legacyName && !visibleRows.includes(this.config.appName)) {
-              throw new ChatGptConnectorCatalogStaleError(
-                this.config.appName,
-                visibleRows,
-                triggerAttempts,
-              );
+              if (catalogRefreshAvailable) {
+                throw new ChatGptConnectorCatalogStaleError(
+                  this.config.appName,
+                  visibleRows,
+                  triggerAttempts,
+                );
+              }
+              if (catalogRefreshExhausted) {
+                await captureDiagnostic?.("connector-menu-missing");
+                throw chatGptWebSurfaceError(
+                  await this.connectorMentionFailure(menuRows, triggerAttempts),
+                  false,
+                );
+              }
             }
           }
           await captureDiagnostic?.("connector-menu-missing");
@@ -1239,6 +1249,7 @@ export class ChatGptBrowserWorker {
     reuseConnector = false,
     abortSignal?: AbortSignal,
     catalogRefreshAvailable = false,
+    catalogRefreshExhausted = false,
   ): Promise<void> {
     throwIfPromptAttachmentAborted(abortSignal);
     if (!localTools || reuseConnector) {
@@ -1256,6 +1267,7 @@ export class ChatGptBrowserWorker {
       page,
       captureDiagnostic,
       catalogRefreshAvailable,
+      catalogRefreshExhausted,
     );
     await selectedComposer.focus();
     await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
@@ -1940,6 +1952,7 @@ export class ChatGptBrowserWorker {
           )
         ));
       let catalogRefreshAvailable = !reuseConversation && (turn.nativeConnector === true || mode.localTools);
+      let catalogRefreshExhausted = false;
       await diagnostics.capture(page, "effort-selection-complete");
       let finalText = "";
       const answerBuffer = new ChatGptAnswerBuffer();
@@ -1963,6 +1976,7 @@ export class ChatGptBrowserWorker {
                 reuseConversation || responseAttempt > 1,
                 stageSignal,
                 catalogRefreshAvailable,
+                catalogRefreshExhausted,
               ),
               turn.abortSignal,
             );
@@ -1970,6 +1984,7 @@ export class ChatGptBrowserWorker {
           } catch (error) {
             if (!(error instanceof ChatGptConnectorCatalogStaleError) || !catalogRefreshAvailable) throw error;
             catalogRefreshAvailable = false;
+            catalogRefreshExhausted = true;
             await diagnostics.capture(page, "connector-catalog-stale");
             await this.runStage(
               turn.traceId,

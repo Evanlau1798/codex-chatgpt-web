@@ -912,6 +912,68 @@ test("connector catalog refresh stays fail-closed for absent, legacy, and exact 
   await expect(run([CHATGPT_CONNECTOR_NAME])).rejects.toThrow("exact row was not visible");
 });
 
+test("connector miss after one catalog refresh becomes an outer surface-recovery signal", async () => {
+  const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
+    selectConnector(
+      page: unknown,
+      capture?: unknown,
+      refresh?: boolean,
+      refreshExhausted?: boolean,
+    ): Promise<unknown>;
+  }).selectConnector;
+  const timeout = new Error("menu timeout");
+  timeout.name = "TimeoutError";
+  const visibleRows = ["Another connector"];
+  const realDateNow = Date.now;
+  let now = realDateNow();
+  const page = {
+    getByText: () => ({ exactConnectorLabel: true }),
+    locator: () => ({
+      filter: (options: { has?: unknown; visible?: boolean }) => options.visible
+        ? { allInnerTexts: async () => visibleRows }
+        : {
+            waitFor: async () => {
+              now += 20_001;
+              throw timeout;
+            },
+          },
+    }),
+  };
+
+  Date.now = () => now;
+  try {
+    let failure: unknown;
+    try {
+      await selectConnector.call({
+        config: { appName: CHATGPT_CONNECTOR_NAME },
+        activeComposer: async () => ({
+          fill: async () => {},
+          focus: async () => {},
+          press: async () => {},
+          pressSequentially: async () => {},
+        }),
+        connectorIsSelected: async () => false,
+        connectorMentionRowTitles: async () => visibleRows,
+        connectorMentionFailure: async (_rows: unknown, attempts: number) => (
+          `exact row was not visible after ${attempts}`
+        ),
+      }, page, undefined, false, true);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure).toBeInstanceOf(ChatGptWebAdapterError);
+    expect(failure).toMatchObject({
+      code: "chatgpt_surface_changed",
+      retryable: true,
+      retireSession: true,
+    });
+    expect((failure as Error).message).toContain("exact row was not visible");
+  } finally {
+    Date.now = realDateNow;
+  }
+});
+
 test("tool-capable prompts use the shared Playwright connector selection before inserting context", async () => {
   const calls: Array<[string, string?]> = [];
   let selected = false;
