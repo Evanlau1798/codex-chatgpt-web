@@ -302,6 +302,17 @@ test("oversize beta prompt maximizes a complete bootstrap and archives only omit
     expect(archiveText).not.toContain(latest);
     expect(archiveText).toContain("next_query=null");
 
+    const retriedArchive = await client.callTool({
+      name: "codex_tool_inventory",
+      arguments: {
+        turn_token: turnToken,
+        query: "__codex_context__:0",
+        include_schema: false,
+      },
+    });
+    expect(retriedArchive.isError).not.toBe(true);
+    expect((retriedArchive.content as Array<{ text: string }>)[0]?.text ?? "").toBe(archiveText);
+
     const allowed = await client.callTool({
       name: "codex_tool_inventory",
       arguments: { turn_token: turnToken, include_schema: false },
@@ -357,6 +368,12 @@ test("archive chunks use complete indexed frames above the MCP result ceiling", 
     const firstText = (first.content as Array<{ text: string }>)[0]?.text ?? "";
     expect(firstText).toContain("index=0 total=2");
     expect(firstText).toContain("next_query=__codex_context__:1");
+    const retriedFirst = await client.callTool({
+      name: "codex_tool_inventory",
+      arguments: { turn_token: contextToken, query: "__codex_context__:0", include_schema: false },
+    });
+    expect(retriedFirst.isError).not.toBe(true);
+    expect((retriedFirst.content as Array<{ text: string }>)[0]?.text ?? "").toBe(firstText);
     const skipped = await client.callTool({
       name: "codex_tool_inventory",
       arguments: { turn_token: contextToken, query: "__codex_context__:2", include_schema: false },

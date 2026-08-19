@@ -330,22 +330,25 @@ export class TurnBroker {
       if (context.chunkChars !== undefined && context.chunkChars !== chunkChars) {
         throw new Error("context archive chunk size changed during retrieval");
       }
-      if (index !== context.nextChunk) {
-        throw new Error(`context archive chunk is out of order; expected ${context.nextChunk}`);
-      }
       context.chunkChars = chunkChars;
       context.chunks ??= completeArchiveChunks(context.text, chunkChars!);
       const total = context.chunks.length;
       if (index! >= total) throw new Error("context archive chunk index is out of range");
+      if (index! > context.nextChunk) {
+        throw new Error(`context archive chunk is out of order; expected ${context.nextChunk}`);
+      }
       const chunk = context.chunks[index!]!;
-      context.nextChunk += 1;
-      context.complete = context.nextChunk === total;
+      const replayed = index! < context.nextChunk;
+      if (!replayed) {
+        context.nextChunk += 1;
+        context.complete = context.nextChunk === total;
+      }
       const sha256 = createHash("sha256").update(context.text).digest("hex");
       console.info(
-        `[chatgpt-web] broker trace=${context.traceId} served context chunk=${index! + 1}/${total}`
+        `[chatgpt-web] broker trace=${context.traceId} ${replayed ? "replayed" : "served"} context chunk=${index! + 1}/${total}`
         + ` chars=${chunk.length} complete=${context.complete}`,
       );
-      return { context: chunk, index, total, sha256, nextIndex: context.complete ? null : context.nextChunk };
+      return { context: chunk, index, total, sha256, nextIndex: index! + 1 === total ? null : index! + 1 };
     }
     if (request.method === "claim") {
       const token = request.token;
