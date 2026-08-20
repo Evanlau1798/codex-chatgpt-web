@@ -29,7 +29,11 @@ export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: st
     input?: unknown[];
     client_metadata?: { claude_subagent?: unknown; claude_history_anchor?: unknown };
   } | undefined;
-  const claudeHistoryAnchor = typeof raw?.client_metadata?.claude_subagent === "boolean"
+  // Claude Code replays a resumed subagent as a new partial request even though the agent id and
+  // its local transcript remain stable. Its first request message therefore is not a canonical
+  // history boundary. Root requests do replay their canonical prefix, so their anchor must still
+  // rotate the Web conversation after manual or automatic compaction.
+  const claudeHistoryAnchor = raw?.client_metadata?.claude_subagent === false
     && typeof raw.client_metadata.claude_history_anchor === "string"
     ? raw.client_metadata.claude_history_anchor
     : null;

@@ -1,15 +1,15 @@
-import { createHash } from "node:crypto";
 import type { AdapterEvent, CodexParsedRequest, CodexToolResultMessage } from "../../types";
 import type { BrokerToolRequest } from "./turn-broker";
 import { ChatGptSteeringFeed, steeringFingerprint, type ClaudeSteeringDelivery } from "./steering-feed";
 import { ChatGptTextFeed, ChatGptTraceFeed } from "./turn-feeds";
 import { ChatGptAgentSessionGraph } from "./agent-session-graph";
-import {
-  extractChatGptCompactionSourceRevision,
-  extractChatGptTurnIdentity,
-  extractChatGptTurnUserRevision,
-} from "./environment";
+import { trackConversationRetirement } from "./turn-retirement-state";
 export { chatGptConversationKey, chatGptTurnTraceId } from "./conversation-key";
+export {
+  chatGptCompactionSourceExecutionKey,
+  chatGptTurnExecutionKey,
+  chatGptTurnSteeringId,
+} from "./turn-execution-key";
 export { ChatGptSteeringFeed } from "./steering-feed";
 export { ChatGptTextFeed, ChatGptTraceFeed, type ChatGptTraceEvent } from "./turn-feeds";
 
@@ -36,54 +36,6 @@ interface ChatGptTurnRuntimeBase {
 export type ChatGptTurnRuntime =
   | (ChatGptTurnRuntimeBase & { mode: "tools"; token: Promise<string> })
   | (ChatGptTurnRuntimeBase & { mode: "read-only" });
-
-function executionKey(parsed: CodexParsedRequest, payload: unknown): string {
-  return createHash("sha256").update(JSON.stringify({
-    modelId: parsed.modelId,
-    reasoning: parsed.options.reasoning,
-    payload,
-  })).digest("hex");
-}
-
-function compactionInputRevision(parsed: CodexParsedRequest): unknown[] {
-  const body = parsed._rawBody;
-  if (!body || typeof body !== "object" || Array.isArray(body)) {
-    throw new Error("ChatGPT web compaction requires the complete native Codex request body");
-  }
-  const input = (body as { input?: unknown }).input;
-  if (!Array.isArray(input)) {
-    throw new Error("ChatGPT web compaction requires the complete native Codex input history");
-  }
-  return input;
-}
-
-export function chatGptTurnExecutionKey(parsed: CodexParsedRequest): string {
-  const identity = extractChatGptTurnIdentity(parsed);
-  if (!identity.turnId) throw new Error("ChatGPT web requires native Codex turn_id metadata for browser-session replay");
-  if (!parsed._compactionRequest) extractChatGptTurnUserRevision(parsed);
-  return executionKey(parsed, {
-    threadId: identity.threadId,
-    turnId: identity.turnId,
-    purpose: parsed._compactionRequest ? "compaction" : "response",
-    ...(parsed._compactionRequest ? { revision: compactionInputRevision(parsed) } : {}),
-  });
-}
-
-export function chatGptTurnSteeringId(threadId: string, turnId: string): string {
-  return `${threadId}:${turnId}`;
-}
-
-/** Locate the browser response that a native mid-turn compaction replaces. */
-export function chatGptCompactionSourceExecutionKey(parsed: CodexParsedRequest): string {
-  const identity = extractChatGptTurnIdentity(parsed);
-  if (!identity.turnId) throw new Error("ChatGPT web requires native Codex turn_id metadata for browser-session replay");
-  const source = extractChatGptCompactionSourceRevision(parsed);
-  return executionKey(parsed, {
-    threadId: identity.threadId,
-    turnId: source.turnId ?? identity.turnId,
-    purpose: "response",
-  });
-}
 
 export class ChatGptTurnSession {
   readonly createdAt = Date.now();
@@ -241,8 +193,8 @@ export class ChatGptTurnSession {
     return true;
   }
 
-  syncClaudeSteering(active: ClaudeSteeringDelivery[]): number {
-    const accepted = this.steering.syncClaude(active);
+  syncClaudeSteering(active: ClaudeSteeringDelivery[], observedThrough?: number): number {
+    const accepted = this.steering.syncClaude(active, observedThrough);
     this.hookedSteeringReplays.push(...accepted.map(steeringFingerprint));
     if (this.hookedSteeringReplays.length > 32) this.hookedSteeringReplays.splice(0, this.hookedSteeringReplays.length - 32);
     return accepted.length;
@@ -308,10 +260,10 @@ export class ChatGptTurnSession {
 
   cancel(): void { this.runtime.cancel(); }
 }
-
 export class ChatGptTurnSessions {
   private readonly entries = new Map<string, ChatGptTurnSession>();
   private readonly retirements = new Map<string, Promise<void>>();
+  private readonly conversationRetirements = new Map<string, Promise<void>>();
   private readonly agentGraph = new ChatGptAgentSessionGraph();
 
   constructor(
@@ -338,6 +290,21 @@ export class ChatGptTurnSessions {
     return session;
   }
 
+  async getOrCreateAfterConversationRetirement(
+    key: string,
+    conversationKey: string | undefined,
+    start: () => ChatGptTurnRuntime,
+    group?: string,
+    steeringId?: string,
+    claudeRootThreadId?: string,
+  ): Promise<ChatGptTurnSession> {
+    for (;;) {
+      const pending = this.retirements.get(key) ?? (conversationKey ? this.conversationRetirements.get(conversationKey) : undefined);
+      if (!pending) return this.getOrCreate(key, start, group, steeringId, claudeRootThreadId);
+      await pending;
+    }
+  }
+
   find(key: string): ChatGptTurnSession | undefined {
     this.prune();
     return this.entries.get(key);
@@ -348,20 +315,24 @@ export class ChatGptTurnSessions {
   }
 
   async retireAndWait(key: string, preserveConversationKey?: string): Promise<boolean> {
-    const pending = this.retirements.get(key);
-    if (pending) {
-      await pending;
+    const session = this.entries.get(key);
+    if (session) {
+      this.entries.delete(key);
+      await this.beginRetirement(key, session, preserveConversationKey);
       return true;
     }
-    const session = this.entries.get(key);
-    if (!session) return false;
-
-    this.entries.delete(key);
-    await this.beginRetirement(key, session, preserveConversationKey);
+    const pending = this.retirements.get(key);
+    if (!pending) return false;
+    await pending;
     return true;
   }
 
   async retireConversationAndWait(conversationKey: string): Promise<number> {
+    const pending = this.conversationRetirements.get(conversationKey);
+    if (pending) {
+      await pending;
+      return 0;
+    }
     const owned = [...this.entries].filter(([, session]) => (
       session.runtime.conversationKey === conversationKey
     ));
@@ -372,8 +343,11 @@ export class ChatGptTurnSessions {
       session.cancel();
     }
     const release = owned.find(([, session]) => session.runtime.release)?.[1].runtime.release;
-    const retirement = Promise.all(owned.map(([, session]) => session.browserOutcome))
-      .then(async () => { await release?.(); });
+    const retirement = trackConversationRetirement(
+      this.conversationRetirements,
+      conversationKey,
+      Promise.all(owned.map(([, session]) => session.browserOutcome)).then(async () => { await release?.(); }),
+    );
     for (const [key] of owned) this.retirements.set(key, retirement);
     try {
       await retirement;
@@ -395,19 +369,16 @@ export class ChatGptTurnSessions {
   }
 
   private beginRetirement(key: string, session: ChatGptTurnSession, preserveConversationKey?: string): Promise<void> {
-    const existing = this.retirements.get(key);
-    if (existing) return existing;
     session.cancel();
     const preserveSurface = preserveConversationKey !== undefined
       && session.runtime.conversationKey === preserveConversationKey;
     const release = preserveSurface ? undefined : session.runtime.release;
-    const retirement = session.browserOutcome.then(async () => { await release?.(); });
-    this.retirements.set(key, retirement);
-    void retirement.then(() => {
-      if (this.retirements.get(key) === retirement) this.retirements.delete(key);
-    }, () => {
-      if (this.retirements.get(key) === retirement) this.retirements.delete(key);
-    });
+    const retirement = trackConversationRetirement(
+      this.retirements, key, session.browserOutcome.then(async () => { await release?.(); }),
+    );
+    if (release && session.runtime.conversationKey) {
+      trackConversationRetirement(this.conversationRetirements, session.runtime.conversationKey, retirement);
+    }
     return retirement;
   }
 
@@ -451,13 +422,13 @@ export class ChatGptTurnSessions {
     return targets[0]!.queueSteering(instruction, true, deliveryId, "coordinator") ? "accepted" : "duplicate";
   }
 
-  syncClaudeRoot(threadId: string, active: Array<ClaudeSteeringDelivery & { occurredAt: number }>): number | "inactive" | "ambiguous" {
+  syncClaudeRoot(threadId: string, active: Array<ClaudeSteeringDelivery & { occurredAt: number }>, observedThrough?: number): number | "inactive" | "ambiguous" {
     this.prune();
     const targets = [...this.entries.values()].filter(session => session.isActive() && session.claudeRootThreadId === threadId);
     if (targets.length === 0) return "inactive";
     if (targets.length > 1) return "ambiguous";
     const target = targets[0]!;
-    return target.syncClaudeSteering(active.filter(item => item.occurredAt >= target.createdAt));
+    return target.syncClaudeSteering(active.filter(item => item.occurredAt >= target.createdAt), observedThrough);
   }
 
   claudeSteeringSuppressionCount(threadId: string, instruction: string): number {
@@ -499,8 +470,7 @@ export class ChatGptTurnSessions {
 
   clear(): number {
     const cancelled = this.entries.size;
-    for (const session of this.entries.values()) session.cancel();
-    this.entries.clear();
+    for (const [key, session] of [...this.entries]) this.retire(key, session);
     this.agentGraph.clear();
     return cancelled;
   }
@@ -514,8 +484,7 @@ export class ChatGptTurnSessions {
     const cutoff = Date.now() - this.ttlMs;
     for (const [key, session] of this.entries) {
       if (session.isActive() || session.lastUsedAt() >= cutoff) continue;
-      session.cancel();
-      this.entries.delete(key);
+      this.retire(key, session);
     }
   }
 }

@@ -37,6 +37,11 @@ import { ChatGptCompletionTracker, type ChatGptFinalProjectionState } from "./co
 import type { ChatGptRetryPrompt } from "./steering";
 import { ChatGptTurnLatencyDiagnostics } from "./turn-latency";
 import {
+  advancePreemptiveRetryStop,
+  beginPreemptiveRetryStop,
+  type PreemptiveRetryStopState,
+} from "./preemptive-retry-stop";
+import {
   activateChatGptSendControl,
   bindChatGptAssistantTurn,
   chatGptAssistantTurnChanged,
@@ -1959,7 +1964,7 @@ export class ChatGptBrowserWorker {
       let responsePrompt = prepared.text;
       let retrySubmitted: (() => void) | undefined;
       let preemptiveRetryPrompt: string | undefined;
-      let preemptiveStopDeadline: number | undefined;
+      let preemptiveStop: PreemptiveRetryStopState | undefined;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
         try {
         for (;;) {
@@ -2148,16 +2153,12 @@ export class ChatGptBrowserWorker {
         const requestedPreemption = preemptiveRetryPrompt ? undefined : this.takePreemptiveRetry(turn.traceId);
         if (requestedPreemption) {
           preemptiveRetryPrompt = requestedPreemption;
-          if (running) {
-            preemptiveStopDeadline = Date.now() + CHATGPT_PREEMPTIVE_RETRY_STOP_TIMEOUT_MS;
-            await stop.press("Enter");
-            console.info(`[chatgpt-web] browser turn ${turn.traceId} stopped the active generation for same-surface checkpoint continuation`);
-            await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
-            continue;
-          }
+          preemptiveStop = beginPreemptiveRetryStop(Date.now(), CHATGPT_PREEMPTIVE_RETRY_STOP_TIMEOUT_MS);
         }
-        if (preemptiveRetryPrompt && running) {
-          if (preemptiveStopDeadline !== undefined && Date.now() >= preemptiveStopDeadline) {
+        if (preemptiveRetryPrompt && preemptiveStop) {
+          const stopDecision = advancePreemptiveRetryStop(preemptiveStop, running, Date.now());
+          preemptiveStop = stopDecision.state;
+          if (stopDecision.action === "timed_out") {
             throw new ChatGptWebAdapterError(
               "ChatGPT did not stop the active generation for structured compaction checkpoint continuation.",
               {
@@ -2169,6 +2170,18 @@ export class ChatGptBrowserWorker {
               },
             );
           }
+          if (stopDecision.action === "press_stop") {
+            await stop.press("Enter");
+            console.info(`[chatgpt-web] browser turn ${turn.traceId} stopped the active generation for same-surface checkpoint continuation`);
+          }
+          if (stopDecision.action !== "proceed") {
+            await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+            continue;
+          }
+        }
+        // An ordinal locator is live and can silently retarget a historical turn after ChatGPT DOM
+        // virtualization. Do not inspect response content until the submitted turn has a stable ID.
+        if (!responseTurnBinding) {
           await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
           continue;
         }
@@ -2344,7 +2357,7 @@ export class ChatGptBrowserWorker {
         }
         const retryPrompt = preemptiveRetryPrompt ?? await turn.retryPromptForAnswer?.(finalText, responseAttempt);
         preemptiveRetryPrompt = undefined;
-        preemptiveStopDeadline = undefined;
+        preemptiveStop = undefined;
         if (!retryPrompt) {
           const deliverable = answerBuffer.takeDeliverable(true);
           if (deliverable) turn.onTextDelta(deliverable);

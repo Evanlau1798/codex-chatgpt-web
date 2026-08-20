@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
+import {
+  advancePreemptiveRetryStop,
+  beginPreemptiveRetryStop,
+} from "../src/adapters/chatgpt-web/preemptive-retry-stop";
 
 test("direct browser checkpoint preemption is one-shot and scoped to an active turn", () => {
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
@@ -35,6 +39,20 @@ test("active checkpoint preemption stops generation without taking the abort pat
   expect(control).toContain("CHATGPT_PREEMPTIVE_RETRY_STOP_TIMEOUT_MS");
   expect(control).toContain("chatgpt_compaction_preemption_failed");
   expect(control).not.toContain('throw new DOMException("ChatGPT web turn aborted"');
+});
+
+test("checkpoint preemption remains bounded when generation starts after the request is consumed", () => {
+  const initial = beginPreemptiveRetryStop(1_000, 15_000);
+  expect(advancePreemptiveRetryStop(initial, false, 1_000)).toEqual({
+    state: initial,
+    action: "proceed",
+  });
+
+  const started = advancePreemptiveRetryStop(initial, true, 2_000);
+  expect(started.action).toBe("press_stop");
+  expect(started.state.stopPressed).toBeTrue();
+  expect(advancePreemptiveRetryStop(started.state, true, 15_999).action).toBe("wait");
+  expect(advancePreemptiveRetryStop(started.state, true, 16_000).action).toBe("timed_out");
 });
 
 test("persistent helper preserves the control-only Native2 connector flag", () => {

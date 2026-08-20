@@ -2,7 +2,14 @@ import { createHash } from "node:crypto";
 
 const MAX_CLAUDE_STEERING_FINGERPRINTS = 32;
 type ClaudeSteeringSource = "user" | "coordinator";
-interface QueuedSteering { text: string; claude: boolean; source: ClaudeSteeringSource; eventId: string; deliveryId?: string }
+interface QueuedSteering {
+  text: string;
+  claude: boolean;
+  source: ClaudeSteeringSource;
+  eventId: string;
+  deliveryId?: string;
+  queuedAt?: number;
+}
 export interface CompletedClaudeSteering { fingerprint: string; text: string; deliveryId?: string }
 export interface ClaudeSteeringDelivery { deliveryId: string; prompt: string }
 export interface PendingSteeringMessage { deliveryId: string; sequence: number; source: ClaudeSteeringSource; content: string }
@@ -24,36 +31,46 @@ export class ChatGptSteeringFeed {
 
   pushClaude(instruction: string, deliveryId?: string, source: ClaudeSteeringSource = "user"): boolean {
     if (!deliveryId) {
-      this.queued.push({ text: instruction, claude: true, source, eventId: `provisional-${this.nextEventId++}` });
+      this.queued.push({
+        text: instruction,
+        claude: true,
+        source,
+        eventId: `provisional-${this.nextEventId++}`,
+        queuedAt: Date.now(),
+      });
       return true;
     }
     if (this.seenClaudeDeliveryIds.includes(deliveryId)) return false;
+    const delivered = this.provisionalClaude
+      .find(entry => !entry.deliveryId && entry.fingerprint === steeringFingerprint(instruction));
+    if (delivered) {
+      delivered.deliveryId = deliveryId;
+      this.seenClaudeDeliveryIds.push(deliveryId);
+      this.trim(this.seenClaudeDeliveryIds);
+      return false;
+    }
     const provisional = this.queued.find(entry => entry.claude && !entry.deliveryId && entry.text === instruction);
     if (provisional) provisional.deliveryId = deliveryId;
-    else {
-      const delivered = this.provisionalClaude
-        .find(entry => !entry.deliveryId && entry.fingerprint === steeringFingerprint(instruction));
-      if (delivered) delivered.deliveryId = deliveryId;
-      else this.queued.push({ text: instruction, claude: true, source, eventId: deliveryId, deliveryId });
-      if (delivered) {
-        this.seenClaudeDeliveryIds.push(deliveryId);
-        this.trim(this.seenClaudeDeliveryIds);
-        return false;
-      }
-    }
+    else this.queued.push({ text: instruction, claude: true, source, eventId: deliveryId, deliveryId });
     this.seenClaudeDeliveryIds.push(deliveryId);
     this.trim(this.seenClaudeDeliveryIds);
     if (provisional) return false;
     return true;
   }
 
-  syncClaude(active: ClaudeSteeringDelivery[]): string[] {
+  syncClaude(active: ClaudeSteeringDelivery[], observedThrough?: number): string[] {
     const activeIds = new Set(active.map(item => item.deliveryId));
     const accepted: string[] = [];
     for (const item of active) {
       if (this.pushClaude(item.prompt, item.deliveryId)) accepted.push(item.prompt);
     }
-    const retained = this.queued.filter(item => !item.claude || (item.deliveryId !== undefined && activeIds.has(item.deliveryId)));
+    // UserPromptSubmit can reach the server before Claude flushes the matching transcript record.
+    // Keep that identity-less delivery until either its late ID is paired or the Web boundary
+    // acknowledges it; known transcript deliveries still disappear when Claude removes them.
+    const retained = this.queued.filter(item => !item.claude
+      || (item.deliveryId === undefined
+        && (observedThrough === undefined || (item.queuedAt ?? Number.POSITIVE_INFINITY) > observedThrough))
+      || (item.deliveryId !== undefined && activeIds.has(item.deliveryId)));
     this.queued.splice(0, this.queued.length, ...retained);
     return accepted;
   }

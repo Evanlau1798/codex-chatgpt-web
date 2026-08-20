@@ -126,3 +126,29 @@ describe("Codex local compaction lifecycle", () => {
     }
   });
 });
+
+test("a new conversation owner waits until the prior retained surface is fully released", async () => {
+  const sessions = new ChatGptTurnSessions();
+  let finishRelease!: () => void;
+  const releasePending = new Promise<void>(resolve => { finishRelease = resolve; });
+  let replacementStarted = false;
+  sessions.getOrCreate("old", () => runtime("conversation-a", () => releasePending, () => {}));
+
+  const retirement = sessions.retireConversationAndWait("conversation-a");
+  const replacement = sessions.getOrCreateAfterConversationRetirement(
+    "replacement",
+    "conversation-a",
+    () => {
+      replacementStarted = true;
+      return runtime("conversation-a", async () => {}, () => {});
+    },
+  );
+  await Bun.sleep(10);
+  expect(replacementStarted).toBeFalse();
+
+  finishRelease();
+  expect(await retirement).toBe(1);
+  expect((await replacement).runtime.conversationKey).toBe("conversation-a");
+  expect(replacementStarted).toBeTrue();
+  sessions.clear();
+});

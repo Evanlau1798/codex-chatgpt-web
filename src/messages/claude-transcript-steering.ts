@@ -10,6 +10,11 @@ export interface ClaudeQueuedSteering {
   prompt: string;
 }
 
+export interface ClaudeQueuedSteeringSnapshot {
+  active: ClaudeQueuedSteering[];
+  observedThrough?: number;
+}
+
 function deliveryId(sessionId: string, timestamp: string, prompt: string): string {
   return createHash("sha256").update(sessionId).update("\0").update(timestamp).update("\0").update(prompt).digest("hex");
 }
@@ -55,15 +60,20 @@ function transcriptTail(path: string): string {
   return boundary < 0 ? "" : text.slice(boundary + 1);
 }
 
-export function readClaudeQueuedSteering(path: string, sessionId: string): ClaudeQueuedSteering[] {
-  if (basename(path) !== `${sessionId}.jsonl`) return [];
+export function readClaudeQueuedSteeringSnapshot(path: string, sessionId: string): ClaudeQueuedSteeringSnapshot {
+  if (basename(path) !== `${sessionId}.jsonl`) return { active: [] };
   const queued: ClaudeQueuedSteering[] = [];
+  let observedThrough: number | undefined;
   for (const line of transcriptTail(path).split(/\r?\n/)) {
     if (!line) continue;
     let value: Record<string, unknown>;
     try { value = JSON.parse(line) as Record<string, unknown>; }
     catch { continue; }
     if (value.sessionId !== sessionId) continue;
+    if (typeof value.timestamp === "string") {
+      const timestamp = Date.parse(value.timestamp);
+      if (Number.isFinite(timestamp)) observedThrough = Math.max(observedThrough ?? timestamp, timestamp);
+    }
     const attachment = queuedCommand(value, sessionId);
     if (attachment) {
       queued.push(attachment);
@@ -87,5 +97,9 @@ export function readClaudeQueuedSteering(path: string, sessionId: string): Claud
     const index = content ? queued.findIndex(item => item.prompt === content) : 0;
     if (index >= 0 && queued.length > 0) queued.splice(index, 1);
   }
-  return queued.slice(-32);
+  return { active: queued.slice(-32), ...(observedThrough === undefined ? {} : { observedThrough }) };
+}
+
+export function readClaudeQueuedSteering(path: string, sessionId: string): ClaudeQueuedSteering[] {
+  return readClaudeQueuedSteeringSnapshot(path, sessionId).active;
 }

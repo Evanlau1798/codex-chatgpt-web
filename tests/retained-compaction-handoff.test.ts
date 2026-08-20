@@ -121,3 +121,67 @@ test("retained Enhanced compact releases a failed checkpoint browser run before 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("retained Enhanced compact cleanup stays bounded when the browser ignores abort", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-retained-bounded-cleanup-"));
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
+  const namespace = createHash("sha256").update("retained-compact-bounded-cleanup-test").digest("hex");
+  const source = new ChatGptTurnSession({
+    mode: "read-only", browser: Promise.resolve("done"), trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(), usageInput: request(false), cancel: () => {},
+  });
+  const worker = { run: (_turn: BrowserTurn) => new Promise<string>(() => {}) };
+  const startedAt = performance.now();
+
+  try {
+    const handoff = await Promise.race([requestRetainedCompactionHandoff(
+      worker as never,
+      request(true),
+      source,
+      broker,
+      namespace,
+      { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+      "boundedtrace",
+      undefined,
+      20,
+    ), Bun.sleep(200).then(() => "cleanup-timeout" as const)]);
+    expect(handoff).not.toBe("cleanup-timeout");
+    expect(handoff).toBeUndefined();
+    expect(performance.now() - startedAt).toBeLessThan(250);
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("retained Enhanced compact stays bounded after structured handoff when the browser never completes", async () => {
+  const namespace = createHash("sha256").update("retained-compact-structured-timeout-test").digest("hex");
+  const source = new ChatGptTurnSession({
+    mode: "read-only", browser: Promise.resolve("done"), trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(), usageInput: request(false), cancel: () => {},
+  });
+  const worker = { run: (_turn: BrowserTurn) => new Promise<string>(() => {}) };
+  const broker = {
+    beginCompactionTransaction: async () => ({
+      token: "control_11111111111111111111111111111111",
+      handoffId: "handoff_22222222222222222222222222222222",
+    }),
+    waitForCompactionHandoff: async () => "Structured retained checkpoint is valid.",
+    abortCompactionTransaction: () => {},
+  } as unknown as TurnBroker;
+
+  const handoff = await Promise.race([requestRetainedCompactionHandoff(
+    worker as never,
+    request(true),
+    source,
+    broker,
+    namespace,
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    "structuredtimeout",
+    undefined,
+    20,
+  ), Bun.sleep(200).then(() => "browser-timeout" as const)]);
+
+  expect(handoff).not.toBe("browser-timeout");
+  expect(handoff).toBeUndefined();
+});

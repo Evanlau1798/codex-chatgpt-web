@@ -16,6 +16,7 @@ import {
   buildCompactV1Output,
   decodeCompactionSummary,
   extractCompactUserMessages,
+  isUsableCompactionSummary,
 } from "./compaction";
 
 type AdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
@@ -77,7 +78,10 @@ export async function handleCompactRequest(
       "ChatGPT Web Luna uses a rolling checkpoint on every completed browser turn; separate Codex compaction is disabled for this route.",
     );
   }
-  const input = Array.isArray(raw.input) ? raw.input : [];
+  if (!Array.isArray(raw.input)) {
+    return formatErrorResponse(400, "invalid_request_error", "Compaction request requires an input array");
+  }
+  const input = raw.input;
   const headers = new Headers(req.headers);
   headers.set("content-type", "application/json");
   const internal = new Request("http://127.0.0.1/v1/responses", {
@@ -121,6 +125,9 @@ export async function handleCompactRequest(
     : null;
   if (!summary?.trim()) {
     return formatErrorResponse(502, "invalid_response_error", "Compaction turn produced an empty summary");
+  }
+  if (!isUsableCompactionSummary(summary)) {
+    return formatErrorResponse(502, "invalid_response_error", "Compaction turn produced an unusable summary");
   }
   return Response.json({ output: buildCompactV1Output(extractCompactUserMessages(input), summary) });
 }

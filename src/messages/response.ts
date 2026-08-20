@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { AdapterEvent, CodexUsage } from "../types";
 
 type Content = Record<string, unknown>;
+const CLAUDE_MISSING_TERMINAL = "Claude upstream stream ended without a terminal event.";
 
 export interface ClaudeResponseMeta {
   model: string;
@@ -33,6 +34,7 @@ export function buildClaudeMessage(events: AdapterEvent[], meta: ClaudeResponseM
   let textPhase: "commentary" | "final_answer" | undefined;
   let usage: CodexUsage | undefined;
   let reason: string | undefined;
+  let terminalSeen = false;
   const flush = () => {
     if (kind === "thinking" && thinking) {
       content.push({ type: "thinking", thinking, signature: thinkingSignature || createHash("sha256").update(thinking).digest("base64url") });
@@ -70,10 +72,11 @@ export function buildClaudeMessage(events: AdapterEvent[], meta: ClaudeResponseM
     else if (event.type === "tool_call_start") { flush(); kind = "tool"; tool = { id: event.id, name: event.name, json: "" }; }
     else if (event.type === "tool_call_delta" && tool) tool.json += event.arguments;
     else if (event.type === "tool_call_end") flush();
-    else if (event.type === "done") { usage = event.usage; reason = event.stopReason; }
-    else if (event.type === "incomplete") { usage = event.usage; reason = event.reason; }
+    else if (event.type === "done") { terminalSeen = true; usage = event.usage; reason = event.stopReason; }
+    else if (event.type === "incomplete") { terminalSeen = true; usage = event.usage; reason = event.reason; }
     else if (event.type === "error") return anthropicError(event.message, event.status ?? 500, event.errorType ?? "api_error");
   }
+  if (!terminalSeen) return anthropicError(CLAUDE_MISSING_TERMINAL, 502, "api_error");
   flush();
   return Response.json({
     id: `msg_${randomUUID().replaceAll("-", "")}`,
@@ -112,6 +115,7 @@ export function streamClaudeMessage(
       let thinkingSignature = "";
       let usage: CodexUsage | undefined;
       let firstTextLogged = false;
+      let terminalSeen = false;
       const closeBlock = () => {
         if (!kind) return;
         if (kind === "thinking") send("content_block_delta", { type: "content_block_delta", index, delta: { type: "signature_delta", signature: thinkingSignature || createHash("sha256").update(thinking).digest("base64url") } });
@@ -162,16 +166,24 @@ export function streamClaudeMessage(
             return;
           }
           else if (event.type === "done") {
+            terminalSeen = true;
             usage = event.usage;
             closeBlock();
             send("message_delta", { type: "message_delta", delta: { stop_reason: stopReason(event.stopReason), stop_sequence: null }, usage: { output_tokens: usage?.outputTokens ?? 0 } });
           } else if (event.type === "incomplete") {
+            terminalSeen = true;
             usage = event.usage;
             closeBlock();
             send("message_delta", { type: "message_delta", delta: { stop_reason: stopReason(event.reason), stop_sequence: null }, usage: { output_tokens: usage?.outputTokens ?? 0 } });
           }
         }
         if (!cancelled) {
+          if (!terminalSeen) {
+            closeBlock();
+            send("error", { type: "error", error: { type: "api_error", message: CLAUDE_MISSING_TERMINAL } });
+            controller.close();
+            return;
+          }
           send("message_stop", { type: "message_stop" });
           controller.close();
         }

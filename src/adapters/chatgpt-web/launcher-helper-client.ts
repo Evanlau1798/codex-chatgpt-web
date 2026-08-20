@@ -51,6 +51,7 @@ export class LauncherBrowserHelperClient {
               this.finishWithError(
                 turn.traceId,
                 new DOMException("ChatGPT web turn aborted", "AbortError"),
+                pending,
               );
               return;
             }
@@ -58,6 +59,7 @@ export class LauncherBrowserHelperClient {
               this.finishWithError(
                 turn.traceId,
                 error instanceof Error ? error : new Error(String(error)),
+                pending,
               );
             });
           };
@@ -92,7 +94,9 @@ export class LauncherBrowserHelperClient {
             ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
             ...(turn.captureLunaCheckpoint ? { captureLunaCheckpoint: true } : {}),
           },
-        }).catch(error => this.finishWithError(turn.traceId, error instanceof Error ? error : new Error(String(error))));
+        }).catch(error => this.finishWithError(
+          turn.traceId, error instanceof Error ? error : new Error(String(error)), pending,
+        ));
       });
   }
 
@@ -103,6 +107,7 @@ export class LauncherBrowserHelperClient {
     void this.send({ type: "preempt_retry", id: traceId, prompt }).catch(error => this.abortWithLocalFailure(
       traceId,
       error instanceof Error ? error : new Error(String(error)),
+      pending,
     ));
     return true;
   }
@@ -212,11 +217,16 @@ export class LauncherBrowserHelperClient {
     const pending = this.pending.get(message.id);
     if (!pending) return;
     if (message.type === "event") {
-      if (message.event === "heartbeat") pending.turn.onHeartbeat?.();
-      else if (message.event === "submitted") pending.turn.onSubmitted?.();
+      if (message.event === "heartbeat") {
+        this.invokeEventCallback(message.id, pending, () => pending.turn.onHeartbeat?.());
+      }
+      else if (message.event === "submitted") {
+        this.invokeEventCallback(message.id, pending, () => pending.turn.onSubmitted?.());
+      }
       else if (message.event === "retry_submitted") {
-        pending.acknowledgeRetry?.();
+        const acknowledge = pending.acknowledgeRetry;
         pending.acknowledgeRetry = undefined;
+        if (acknowledge) this.invokeEventCallback(message.id, pending, acknowledge);
       }
       else if (message.event === "prepared_selected") {
         const prepare = message.reused ? pending.turn.prepareResume : pending.turn.prepare;
@@ -229,20 +239,27 @@ export class LauncherBrowserHelperClient {
             }
             pending.prepared = prepared;
             return Promise.resolve(pending.turn.onPreparedSelected?.(message.reused))
-              .then(() => this.send({
-                type: "prepared_selected_ack",
-                id: message.id,
-                prepared: { text: prepared.text, images: prepared.images } satisfies CompiledChatGptWebPrompt,
-              }));
+              .then(() => {
+                if (this.pending.get(message.id) !== pending) return;
+                return this.send({
+                  type: "prepared_selected_ack",
+                  id: message.id,
+                  prepared: { text: prepared.text, images: prepared.images } satisfies CompiledChatGptWebPrompt,
+                });
+              });
           })
-          .catch(error => this.abortWithLocalFailure(
-            message.id,
-            error instanceof Error ? error : new Error(String(error)),
-          ));
+          .catch(error => {
+            if (this.pending.get(message.id) === pending) this.abortWithLocalFailure(
+              message.id,
+              error instanceof Error ? error : new Error(String(error)),
+              pending,
+            );
+          });
       }
       else if (message.event === "answer") {
         void Promise.resolve().then(() => pending.turn.retryPromptForAnswer?.(message.text, message.attempt))
           .then(prompt => {
+            if (this.pending.get(message.id) !== pending) return;
             if (!prompt) return this.send({ type: "answer_retry", id: message.id });
             const retry = typeof prompt === "string" ? { text: prompt } : prompt;
             pending.acknowledgeRetry = retry.onSubmitted;
@@ -252,10 +269,12 @@ export class LauncherBrowserHelperClient {
               ...(retry.replaceCandidate ? { replaceCandidate: true } : {}),
             });
           })
-          .catch(error => this.abortWithLocalFailure(
-            message.id,
-            error instanceof Error ? error : new Error(String(error)),
-          ));
+          .catch(error => {
+            if (this.pending.get(message.id) === pending) this.abortWithLocalFailure(
+              message.id,
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          });
       }
       else if (message.event === "error_retry") {
         const failure = message.status !== undefined
@@ -269,6 +288,7 @@ export class LauncherBrowserHelperClient {
           : new Error(message.text);
         void Promise.resolve().then(() => pending.turn.retryPromptForError?.(failure, message.attempt))
           .then(prompt => {
+            if (this.pending.get(message.id) !== pending) return;
             if (!prompt) return this.send({ type: "answer_retry", id: message.id });
             const retry = typeof prompt === "string" ? { text: prompt } : prompt;
             pending.acknowledgeRetry = retry.onSubmitted;
@@ -278,10 +298,12 @@ export class LauncherBrowserHelperClient {
               ...(retry.replaceCandidate ? { replaceCandidate: true } : {}),
             });
           })
-          .catch(error => this.abortWithLocalFailure(
-            message.id,
-            error instanceof Error ? error : new Error(String(error)),
-          ));
+          .catch(error => {
+            if (this.pending.get(message.id) === pending) this.abortWithLocalFailure(
+              message.id,
+              error instanceof Error ? error : new Error(String(error)),
+            );
+          });
       }
       else if (message.event === "luna_checkpoint") {
         if (!pending.turn.captureLunaCheckpoint || !pending.turn.onLunaCheckpoint) {
@@ -291,13 +313,26 @@ export class LauncherBrowserHelperClient {
           );
           return;
         }
-        pending.turn.onLunaCheckpoint({ checkpoint: message.checkpoint, answerHash: message.answerHash });
+        this.invokeEventCallback(message.id, pending, () => {
+          pending.turn.onLunaCheckpoint!({ checkpoint: message.checkpoint, answerHash: message.answerHash });
+        });
       }
       else if (message.event === "reasoning" && message.text) {
-        pending.turn.onReasoningSummary?.(message.text, message.continuation === true);
+        const text = message.text;
+        this.invokeEventCallback(message.id, pending, () => {
+          pending.turn.onReasoningSummary?.(text, message.continuation === true);
+        });
       }
-      else if (message.event === "commentary" && message.text) pending.turn.onCommentary?.(message.text, message.continuation === true);
-      else if (message.event === "text" && message.text) pending.turn.onTextDelta(message.text);
+      else if (message.event === "commentary" && message.text) {
+        const text = message.text;
+        this.invokeEventCallback(message.id, pending, () => {
+          pending.turn.onCommentary?.(text, message.continuation === true);
+        });
+      }
+      else if (message.event === "text" && message.text) {
+        const text = message.text;
+        this.invokeEventCallback(message.id, pending, () => pending.turn.onTextDelta(text));
+      }
       return;
     }
     if (message.type === "result") {
@@ -321,6 +356,20 @@ export class LauncherBrowserHelperClient {
     }
   }
 
+  private invokeEventCallback(id: string, pending: PendingTurn, callback: () => void): void {
+    try {
+      callback();
+    } catch (error) {
+      if (this.pending.get(id) === pending) {
+        this.abortWithLocalFailure(
+          id,
+          error instanceof Error ? error : new Error(String(error)),
+          pending,
+        );
+      }
+    }
+  }
+
   private finish(id: string): void {
     const pending = this.pending.get(id);
     if (!pending) return;
@@ -331,19 +380,19 @@ export class LauncherBrowserHelperClient {
     this.pending.delete(id);
   }
 
-  private finishWithError(id: string, error: Error): void {
+  private finishWithError(id: string, error: Error, expected?: PendingTurn): void {
     const pending = this.pending.get(id);
-    if (!pending) return;
+    if (!pending || (expected && pending !== expected)) return;
     this.finish(id);
     pending.reject(error);
   }
 
-  private abortWithLocalFailure(id: string, error: Error): void {
+  private abortWithLocalFailure(id: string, error: Error, expected?: PendingTurn): void {
     const pending = this.pending.get(id);
-    if (!pending || pending.localFailure) return;
+    if (!pending || (expected && pending !== expected) || pending.localFailure) return;
     pending.localFailure = error;
     if (!pending.sent) {
-      this.finishWithError(id, error);
+      this.finishWithError(id, error, pending);
       return;
     }
     void this.send({ type: "abort", id }).catch(cleanupError => {
@@ -351,7 +400,7 @@ export class LauncherBrowserHelperClient {
         `${error.message}; launcher browser helper cleanup failed: ${
           cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
         }`,
-      ));
+      ), pending);
     });
   }
 

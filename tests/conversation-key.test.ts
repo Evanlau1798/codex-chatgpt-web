@@ -16,10 +16,10 @@ function request(input: unknown[]): CodexParsedRequest {
   } as unknown as CodexParsedRequest;
 }
 
-function claudeRequest(anchor: string): CodexParsedRequest {
+function claudeRequest(anchor: string, subagent = false): CodexParsedRequest {
   const parsed = request([{ type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] }]);
   const raw = parsed._rawBody as { client_metadata: Record<string, unknown> };
-  raw.client_metadata.claude_subagent = false;
+  raw.client_metadata.claude_subagent = subagent;
   raw.client_metadata.claude_history_anchor = anchor;
   return parsed;
 }
@@ -50,4 +50,12 @@ test("Claude canonical history replacement rotates its retained Web conversation
   expect(chatGptConversationKey(continued, "provider")).toBe(chatGptConversationKey(before, "provider"));
   expect(chatGptConversationKey(replaced, "provider")).not.toBe(chatGptConversationKey(before, "provider"));
   expect(chatGptTurnTraceId(replaced, "provider")).not.toBe(chatGptTurnTraceId(before, "provider"));
+});
+
+test("Claude subagent partial-history resume keeps its retained Web conversation", () => {
+  const initial = claudeRequest("initial-child-request", true);
+  const resumed = claudeRequest("resume-slice-only", true);
+
+  expect(chatGptConversationKey(resumed, "provider")).toBe(chatGptConversationKey(initial, "provider"));
+  expect(chatGptTurnTraceId(resumed, "provider")).toBe(chatGptTurnTraceId(initial, "provider"));
 });

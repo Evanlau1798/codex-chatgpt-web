@@ -25,7 +25,10 @@ Include:
 - Important context, constraints, or user preferences
 - What remains to be done (clear next steps)
 - Any critical data, examples, or references needed to continue
+- Any resumable delegated-agent state: canonical agent path, thread/session ID when visible, parent/child relationship, lifecycle status, pending message or follow-up, and whether an existing agent must be resumed rather than replaced
+- Lifecycle evidence needed for verification, including spawn, interaction, interrupt, completion, and retained or TTL resume events
 
+Do not claim that no work remains while a resumable agent or pending collaboration still exists.
 Be concise, structured, and focused on helping the next LLM seamlessly continue the work.`;
 
 /** Mirrors codex-rs core/templates/compact/summary_prefix.md (framing for a replayed summary). */
@@ -60,7 +63,11 @@ export function encodeCompactionSummary(summary: string): string {
 export function decodeCompactionSummary(encryptedContent: string): string | null {
   if (!encryptedContent.startsWith(BRIDGE_COMPACTION_PREFIX)) return null;
   try {
-    return Buffer.from(encryptedContent.slice(BRIDGE_COMPACTION_PREFIX.length), "base64").toString("utf-8");
+    const encoded = encryptedContent.slice(BRIDGE_COMPACTION_PREFIX.length);
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.toString("base64") !== encoded) return null;
+    const decoded = bytes.toString("utf-8");
+    return Buffer.from(decoded, "utf-8").equals(bytes) ? decoded : null;
   } catch {
     return null;
   }

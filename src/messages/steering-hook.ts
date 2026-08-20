@@ -2,7 +2,7 @@ import {
   chatGptTurnSessions,
   type ChatGptTurnSessions,
 } from "../adapters/chatgpt-web/turn-execution";
-import { readClaudeQueuedSteering } from "./claude-transcript-steering";
+import { readClaudeQueuedSteeringSnapshot } from "./claude-transcript-steering";
 import { claudeSessionThreadId } from "./request";
 
 const MAX_HOOK_BYTES = 2 * 1024 * 1024;
@@ -30,7 +30,8 @@ export async function handleClaudeSteeringHook(
       return new Response("Invalid Claude tool hook", { status: 400 });
     }
     try {
-      const result = sessions.syncClaudeRoot(threadId, readClaudeQueuedSteering(body.transcript_path, body.session_id));
+      const snapshot = readClaudeQueuedSteeringSnapshot(body.transcript_path, body.session_id);
+      const result = sessions.syncClaudeRoot(threadId, snapshot.active, snapshot.observedThrough);
       if (typeof result === "number" && result > 0) {
         console.info(`[chatgpt-web] accepted ${result} queued Claude steering prompt(s) for the active root Web conversation`);
       } else if (result === "ambiguous") {

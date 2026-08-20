@@ -7,6 +7,33 @@ import type { TurnBroker } from "./turn-broker";
 import { chatGptConversationKey, type ChatGptTurnSession } from "./turn-execution";
 
 const RETAINED_CONVERSATION_UNAVAILABLE = "The retained ChatGPT conversation is no longer available";
+const RETAINED_BROWSER_CLEANUP_TIMEOUT_MS = 15_000;
+const RETAINED_BROWSER_COMPLETION_TIMEOUT = "The retained checkpoint Web response did not complete before timeout";
+
+async function waitForBrowserCompletion(browser: Promise<string>, timeoutMs: number): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(RETAINED_BROWSER_COMPLETION_TIMEOUT)), timeoutMs);
+  });
+  try {
+    return await Promise.race([browser, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function waitForBrowserCleanup(browser: Promise<string>, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const settled = browser.then(() => true, () => true);
+  const deadline = new Promise<false>(resolve => {
+    timer = setTimeout(() => resolve(false), Math.min(timeoutMs, RETAINED_BROWSER_CLEANUP_TIMEOUT_MS));
+  });
+  try {
+    return await Promise.race([settled, deadline]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export class RetainedCompactionSourceUnavailableError extends Error {
   constructor() {
@@ -51,7 +78,10 @@ export async function requestRetainedCompactionHandoff(
       abortSignal: browserAbort.signal,
       onTextDelta: () => {},
     });
-    const [handoff] = await Promise.all([structuredHandoff, browserCompleted]);
+    const [handoff] = await Promise.all([
+      structuredHandoff,
+      waitForBrowserCompletion(browserCompleted, timeoutMs),
+    ]);
     console.info("[chatgpt-web] Web session mode=enhanced path=retained_handoff result=completed");
     return handoff;
   } catch (error) {
@@ -64,7 +94,9 @@ export async function requestRetainedCompactionHandoff(
   } finally {
     browserAbort.abort();
     broker.abortCompactionTransaction(transaction.token);
-    if (browserCompleted) await browserCompleted.catch(() => {});
+    if (browserCompleted && !await waitForBrowserCleanup(browserCompleted, timeoutMs)) {
+      console.warn(`[chatgpt-web] retained compact browser cleanup exceeded ${Math.min(timeoutMs, RETAINED_BROWSER_CLEANUP_TIMEOUT_MS)}ms`);
+    }
     signal?.removeEventListener("abort", abortBrowser);
   }
 }

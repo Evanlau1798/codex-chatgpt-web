@@ -10,7 +10,11 @@ import { chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey } from "..
 const model = "chatgpt-web/high";
 const summary = "The repository was inspected. Continue by implementing the bounded Web context contract.";
 
-function compactionAdapterFactory(seenProviders: CodexProviderConfig[] = []) {
+function compactionAdapterFactory(
+  seenProviders: CodexProviderConfig[] = [],
+  emittedSummary = summary,
+  stopReason = "stop",
+) {
   return (provider: CodexProviderConfig): ProviderAdapter => {
     seenProviders.push(structuredClone(provider));
     return {
@@ -21,10 +25,10 @@ function compactionAdapterFactory(seenProviders: CodexProviderConfig[] = []) {
         expect(parsed.options.toolChoice).toBeUndefined();
         expect(parsed.options.parallelToolCalls).toBeUndefined();
         expect(parsed.context.messages.at(-1)).toMatchObject({ role: "user", content: COMPACT_PROMPT });
-        emit({ type: "text_delta", text: summary, phase: "final_answer" });
+        emit({ type: "text_delta", text: emittedSummary, phase: "final_answer" });
         emit({
           type: "done",
-          stopReason: "stop",
+          stopReason,
           endTurn: true,
           usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120, estimated: true },
         });
@@ -165,6 +169,38 @@ test("streams one compaction item without leaking the summary as a normal assist
   expect(sse.match(/\"type\":\"compaction\"/g)).toHaveLength(2);
 });
 
+test.each(["max_tokens", "content_filter"])(
+  "does not stream a compaction replacement after a %s terminal",
+  async (stopReason) => {
+    const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model, stream: true, input: [{ type: "compaction_trigger" }] }),
+    }), defaultConfig("full"), compactionAdapterFactory([], summary, stopReason));
+
+    expect(response.status).toBe(200);
+    const sse = await response.text();
+    expect(sse).toContain("event: response.incomplete");
+    expect(sse).not.toContain('"type":"compaction"');
+  },
+);
+
+test.each(["max_tokens", "content_filter"])(
+  "does not return a compaction replacement after a %s terminal",
+  async (stopReason) => {
+    const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model, stream: false, input: [{ type: "compaction_trigger" }] }),
+    }), defaultConfig("full"), compactionAdapterFactory([], summary, stopReason));
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as { status: string; output: Array<{ type: string }> };
+    expect(body.status).toBe("incomplete");
+    expect(body.output).toEqual([]);
+  },
+);
+
 test("rejects an unknown routed compact model instead of treating it as ChatGPT Web", async () => {
   const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
     method: "POST",
@@ -291,6 +327,41 @@ test("refuses a ChatGPT Web continuation when local previous-response state is u
   expect(response.status).toBe(409);
   const body = await response.json() as { error: { message: string } };
   expect(body.error.message).toContain("partial Codex context");
+});
+
+test("rejects an unusable Web summary instead of installing it as canonical compacted history", async () => {
+  const unusable = "I cannot produce a checkpoint summary because context is not available.";
+  const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model,
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Keep this context" }] }],
+    }),
+  }), defaultConfig("full"), compactionAdapterFactory([], unusable));
+
+  expect(response.status).toBe(502);
+  const body = await response.json() as { error: { message: string } };
+  expect(body.error.message).toContain("unusable summary");
+});
+
+test("rejects missing or non-array compact input before opening a browser turn", async () => {
+  for (const requestBody of [
+    { model },
+    { model, input: { type: "message", role: "user", content: "not an array" } },
+  ]) {
+    const providers: CodexProviderConfig[] = [];
+    const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(requestBody),
+    }), defaultConfig("full"), compactionAdapterFactory(providers));
+
+    expect(response.status).toBe(400);
+    expect(providers).toHaveLength(0);
+    const body = await response.json() as { error: { message: string } };
+    expect(body.error.message).toContain("input array");
+  }
 });
 
 test("keeps native Responses and compact traffic outside every Web session mode", async () => {

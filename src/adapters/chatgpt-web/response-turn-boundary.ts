@@ -6,7 +6,7 @@ export interface ChatGptAssistantTurnState {
 }
 
 export interface ChatGptAssistantTurnBinding {
-  id?: string;
+  id: string;
   ordinal: number;
   generation: number;
 }
@@ -19,28 +19,34 @@ export async function activateChatGptSendControl(
   await sendButton.press("Enter");
 }
 
-export async function readChatGptAssistantTurnState(turns: Locator): Promise<ChatGptAssistantTurnState> {
-  const count = await turns.count();
-  if (count === 0) return { count };
-  const lastId = await turns.last().getAttribute("data-testid").catch(() => null);
-  return lastId ? { count, lastId } : { count };
+export async function readChatGptAssistantTurnState(
+  turns: Pick<Locator, "evaluateAll">,
+): Promise<ChatGptAssistantTurnState> {
+  return turns.evaluateAll(elements => {
+    const count = elements.length;
+    const lastId = count > 0 ? elements[count - 1]?.getAttribute("data-testid") : null;
+    return lastId ? { count, lastId } : { count };
+  });
 }
 
 export function chatGptAssistantTurnChanged(
   initial: ChatGptAssistantTurnState,
   current: ChatGptAssistantTurnState,
 ): boolean {
-  return current.count > initial.count
-    || Boolean(initial.lastId && current.lastId && current.lastId !== initial.lastId);
+  if (current.count < initial.count || current.count < 1) return false;
+  if (current.count > initial.count) {
+    return !initial.lastId || Boolean(current.lastId && current.lastId !== initial.lastId);
+  }
+  return Boolean(initial.lastId && current.lastId && current.lastId !== initial.lastId);
 }
 
 export function bindChatGptAssistantTurn(
   initial: ChatGptAssistantTurnState,
   current: ChatGptAssistantTurnState,
 ): ChatGptAssistantTurnBinding | undefined {
-  if (!chatGptAssistantTurnChanged(initial, current) || current.count < 1) return undefined;
+  if (!chatGptAssistantTurnChanged(initial, current) || current.count < 1 || !current.lastId) return undefined;
   return {
-    ...(current.lastId ? { id: current.lastId } : {}),
+    id: current.lastId,
     ordinal: current.count - 1,
     generation: 0,
   };
@@ -53,11 +59,11 @@ export function reconcileChatGptAssistantTurnBinding(
   attached: boolean,
 ): ChatGptAssistantTurnBinding | undefined {
   if (attached) return binding;
-  if (current.count < 1 || !chatGptAssistantTurnChanged(initial, current)) return undefined;
-  if (binding.id && current.lastId === binding.id) {
+  if (current.count < 1 || !current.lastId) return undefined;
+  if (current.lastId === binding.id) {
     return { ...binding, ordinal: current.count - 1 };
   }
-  if (!current.lastId || current.lastId === initial.lastId) return undefined;
+  if (!chatGptAssistantTurnChanged(initial, current)) return undefined;
   return {
     id: current.lastId,
     ordinal: current.count - 1,
@@ -69,9 +75,7 @@ export function locateChatGptAssistantTurn(
   turns: Locator,
   binding: ChatGptAssistantTurnBinding,
 ): Locator {
-  return binding.id
-    ? turns.page().getByTestId(binding.id)
-    : turns.nth(binding.ordinal);
+  return turns.page().getByTestId(binding.id);
 }
 
 export function chatGptSubmissionEvidence(state: {

@@ -8,7 +8,7 @@ import { requestActiveCompactionHandoff } from "../src/adapters/chatgpt-web/comp
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { requestRetainedCompactionHandoff } from "../src/adapters/chatgpt-web/retained-compaction-handoff";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
-import { callTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 import type { CodexParsedRequest } from "../src/types";
 
@@ -91,6 +91,126 @@ test("active structured compact waits for the Web conversation to end after a va
     await broker.close();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("active read-only compact without a handoff continuation does not create a control waiter", async () => {
+  let transactions = 0;
+  const broker = {
+    beginCompactionTransaction: async () => {
+      transactions += 1;
+      return {
+        token: "control_11111111111111111111111111111111",
+        handoffId: "handoff_22222222222222222222222222222222",
+      };
+    },
+    waitForCompactionHandoff: async () => "unreachable",
+    abortCompactionTransaction: () => {},
+  } as unknown as TurnBroker;
+  const session = new ChatGptTurnSession({
+    mode: "read-only",
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    usageInput: request(false),
+    cancel: () => {},
+  });
+
+  await expect(requestActiveCompactionHandoff(request(true), session, broker)).resolves.toBeUndefined();
+  expect(transactions).toBe(0);
+});
+
+test("active structured compact observes a signal that was aborted before browser waiting began", async () => {
+  const broker = {
+    beginCompactionTransaction: async () => ({
+      token: "control_11111111111111111111111111111111",
+      handoffId: "handoff_22222222222222222222222222222222",
+    }),
+    waitForCompactionHandoff: () => new Promise<string>(() => {}),
+    abortCompactionTransaction: () => {},
+  } as unknown as TurnBroker;
+  const session = new ChatGptTurnSession({
+    mode: "read-only",
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    usageInput: request(false),
+    requestHandoff: () => {},
+    cancel: () => {},
+  });
+  const abort = new AbortController();
+  abort.abort();
+
+  const outcome = await Promise.race([
+    requestActiveCompactionHandoff(request(true), session, broker, abort.signal, 1_000)
+      .then(() => "resolved", error => error instanceof DOMException ? error.name : "wrong-error"),
+    Bun.sleep(100).then(() => "abort-not-observed"),
+  ]);
+
+  expect(outcome).toBe("AbortError");
+});
+
+test("active structured compact attaches its one-shot handoff to only one result in a parallel tool batch", async () => {
+  let finishBrowser!: (answer: string) => void;
+  const completed: Array<{ callId: string; result: BrokerToolResult }> = [];
+  let queuedHandoffs = 0;
+  const broker = {
+    beginCompactionTransaction: async () => ({
+      token: "control_11111111111111111111111111111111",
+      handoffId: "handoff_22222222222222222222222222222222",
+    }),
+    waitForCompactionHandoff: async () => "Structured parallel checkpoint is valid.",
+    completeTool: (_token: string, callId: string, result: BrokerToolResult) => {
+      completed.push({ callId, result });
+    },
+    requestHandoff: () => {
+      queuedHandoffs += 1;
+      return "queued" as const;
+    },
+    abortCompactionTransaction: () => {},
+  } as unknown as TurnBroker;
+  const session = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_parallel"),
+    browser: new Promise<string>(resolve => { finishBrowser = resolve; }),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    usageInput: request(false),
+    cancel: () => {},
+  });
+  session.setOutstanding([
+    { callId: "call_first", wireName: "exec_command", freeform: false },
+    { callId: "call_second", wireName: "exec_command", freeform: false },
+  ]);
+  const parsed = request(true);
+  parsed.context.messages.push(
+    {
+      role: "toolResult",
+      toolCallId: "call_first",
+      toolName: "exec_command",
+      content: "first result",
+      isError: false,
+      timestamp: 2,
+    },
+    {
+      role: "toolResult",
+      toolCallId: "call_second",
+      toolName: "exec_command",
+      content: "second result",
+      isError: false,
+      timestamp: 3,
+    },
+  );
+
+  const compact = requestActiveCompactionHandoff(parsed, session, broker, undefined, 1_000);
+  while (completed.length < 2) await Bun.sleep(1);
+  finishBrowser("The parallel checkpoint Web turn has fully ended.");
+
+  await expect(compact).resolves.toBe("Structured parallel checkpoint is valid.");
+  expect(completed.map(entry => entry.callId)).toEqual(["call_first", "call_second"]);
+  expect(JSON.stringify(completed)).toContain("first result");
+  expect(JSON.stringify(completed)).toContain("second result");
+  expect(JSON.stringify(completed).match(/codex\.control\.compaction_handoff/g)?.length).toBe(1);
+  expect(queuedHandoffs).toBe(0);
 });
 
 test("retained structured compact requires both a valid control submission and a completed Web turn", async () => {

@@ -564,16 +564,6 @@ export function bridgeToResponsesSSE(
               // Redacted-only turns (or hidden thinking without a trailing signature event) still
               // need their envelope-only reasoning item so the blocks replay next turn.
               flushHiddenReasoningEnvelope();
-              if (options?.compaction) {
-                // Exactly one compaction item per turn; codex-rs takes the first and fatals on 0.
-                const item = {
-                  type: "compaction", id: `cmp_${uuid()}`,
-                  encrypted_content: encodeCompactionSummary(compactionText),
-                };
-                emit("response.output_item.done", { output_index: outputIndex, item });
-                finishedItems.push(item as OutputItem);
-                outputIndex++;
-              }
               if (event.stopReason === "max_tokens" || event.stopReason === "content_filter") {
                 // Upstream stopped before a normal completion. Surface as incomplete so the
                 // client can distinguish a truncated/filtered turn from a finished one.
@@ -590,6 +580,17 @@ export function bridgeToResponsesSSE(
                 emit("response.incomplete", { response });
                 reportTerminal("incomplete");
               } else {
+                if (options?.compaction) {
+                  // Exactly one compaction item per completed turn; codex-rs takes the first and
+                  // fatals on 0. Never install truncated or filtered text as replacement history.
+                  const item = {
+                    type: "compaction", id: `cmp_${uuid()}`,
+                    encrypted_content: encodeCompactionSummary(compactionText),
+                  };
+                  emit("response.output_item.done", { output_index: outputIndex, item });
+                  finishedItems.push(item as OutputItem);
+                  outputIndex++;
+                }
                 const response = { ...responseSnapshot("completed", finishedItems, event.endTurn), usage: responsesUsage(event.usage) };
                 options?.onCompletedResponse?.(response, event.providerState);
                 emit("response.completed", {
@@ -989,7 +990,7 @@ export function buildResponseJSON(
         usage = e.usage;
         endTurn = e.endTurn;
         if (e.providerState) options?.onProviderState?.(e.providerState);
-        if (e.stopReason === "max_tokens") stopReason = "max_tokens";
+        if (e.stopReason === "max_tokens" || e.stopReason === "content_filter") stopReason = e.stopReason;
         break;
     }
   }
@@ -999,14 +1000,14 @@ export function buildResponseJSON(
   flushToolCall();
   // A truncated turn must never be installed as replacement history: emit the
   // compaction item only when the turn actually completed (#422).
-  if (options?.compaction && !errorEvent && !incompleteEvent && stopReason !== "max_tokens") {
+  if (options?.compaction && !errorEvent && !incompleteEvent && stopReason === undefined) {
     output.push({ type: "compaction", id: `cmp_${uuid()}`, encrypted_content: encodeCompactionSummary(compactionText) });
   }
 
   const failure = errorEvent ? adapterFailureFromEvent(errorEvent) : undefined;
   const status = errorEvent
     ? "failed"
-    : incompleteEvent || stopReason === "max_tokens"
+    : incompleteEvent || stopReason !== undefined
       ? "incomplete"
       : "completed";
   return {
@@ -1023,8 +1024,8 @@ export function buildResponseJSON(
         ...(incompleteEvent.message ? { message: incompleteEvent.message } : {}),
         ...(incompleteEvent.retryable !== undefined ? { retryable: incompleteEvent.retryable } : {}),
       },
-    } : stopReason === "max_tokens" ? {
-      incomplete_details: { reason: "max_output_tokens" },
+    } : stopReason !== undefined ? {
+      incomplete_details: { reason: stopReason === "max_tokens" ? "max_output_tokens" : "content_filter" },
     } : {}),
     usage: responsesUsage(incompleteEvent?.usage ?? usage),
   };

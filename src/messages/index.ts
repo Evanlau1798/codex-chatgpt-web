@@ -38,7 +38,11 @@ function parsedClaudeRequest(raw: unknown, req: Request, config: AppConfig) {
     delete parsed.options.parallelToolCalls;
     parsed.context.messages.push({ role: "user", content: COMPACT_PROMPT, timestamp: Date.now() });
   }
-  return { translated, parsed, route };
+  const compactMessages = translated.compact && raw && typeof raw === "object" && !Array.isArray(raw)
+    && Array.isArray((raw as { messages?: unknown }).messages)
+    ? (raw as { messages: unknown[] }).messages
+    : [];
+  return { translated, parsed, route, compactMessages };
 }
 
 function capabilities(config: AppConfig) {
@@ -103,7 +107,7 @@ export async function messagesRequest(
   if (request.translated.stream) {
     void run();
     return new Response(streamClaudeMessage(
-      request.translated.compact ? compactClaudeStream(queue) : queue,
+      request.translated.compact ? compactClaudeStream(queue, request.compactMessages) : queue,
       meta,
       () => abort.abort(),
     ), {
@@ -112,5 +116,8 @@ export async function messagesRequest(
   }
   await run();
   const events = await queue.collect();
-  return buildClaudeMessage(request.translated.compact ? compactClaudeEvents(events) : events, meta);
+  return buildClaudeMessage(
+    request.translated.compact ? compactClaudeEvents(events, request.compactMessages) : events,
+    meta,
+  );
 }

@@ -1,10 +1,28 @@
 import { expect, test } from "bun:test";
 import {
   buildCompactV1Output,
+  COMPACT_PROMPT,
+  decodeCompactionSummary,
+  encodeCompactionSummary,
   extractCompactUserMessages,
   isReadableCompactionSummaryText,
   SUMMARY_PREFIX,
 } from "../src/responses/compaction";
+
+test("compaction checkpoints preserve resumable delegated-agent lifecycle state", () => {
+  expect(COMPACT_PROMPT).toContain("canonical agent path");
+  expect(COMPACT_PROMPT).toContain("thread/session ID");
+  expect(COMPACT_PROMPT).toContain("parent/child relationship");
+  expect(COMPACT_PROMPT).toContain("existing agent must be resumed rather than replaced");
+  expect(COMPACT_PROMPT).toContain("Do not claim that no work remains");
+});
+
+test("rejects non-canonical or invalid UTF-8 bridge compaction envelopes", () => {
+  const encoded = encodeCompactionSummary("valid checkpoint");
+  expect(decodeCompactionSummary(encoded)).toBe("valid checkpoint");
+  expect(decodeCompactionSummary(`${encoded}!corrupt`)).toBeNull();
+  expect(decodeCompactionSummary("ocx1://8=")).toBeNull();
+});
 
 test("recognizes both Codex v1 and transparent v2 readable compaction summaries", () => {
   expect(isReadableCompactionSummaryText(`${SUMMARY_PREFIX}\nv1 summary`)).toBe(true);

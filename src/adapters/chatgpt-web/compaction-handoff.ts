@@ -52,11 +52,12 @@ function withHandoffInstruction(result: BrokerToolResult, instruction = HANDOFF_
   };
 }
 
-function missingToolResult(instruction = HANDOFF_INSTRUCTION): BrokerToolResult {
+function missingToolResult(instruction?: string): BrokerToolResult {
+  const suffix = instruction ? `\n\n${instruction}` : "";
   return {
     content: [{
       type: "text",
-      text: `Codex did not supply this tool result before compaction. Its execution status is unknown; do not assume success or failure.\n\n${instruction}`,
+      text: `Codex did not supply this tool result before compaction. Its execution status is unknown; do not assume success or failure.${suffix}`,
     }],
     isError: true,
   };
@@ -150,6 +151,9 @@ async function waitForBrowser(
   signal: AbortSignal | undefined,
   timeoutMs: number,
 ): Promise<ChatGptBrowserOutcome> {
+  if (signal?.aborted) {
+    throw new DOMException("ChatGPT web compaction aborted", "AbortError");
+  }
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
@@ -179,6 +183,7 @@ export async function requestActiveCompactionHandoff(
   const cached = session.compactionHandoff();
   if (cached) return cached;
   if (!session.isActive()) return undefined;
+  if (session.runtime.mode === "read-only" && !session.runtime.requestHandoff) return undefined;
   const transaction = await broker.beginCompactionTransaction(
     session.runtime.conversationKey ?? "active-compaction",
     timeoutMs,
@@ -190,22 +195,26 @@ export async function requestActiveCompactionHandoff(
       const token = await session.runtime.token;
       const results = codexToolResultsById(parsed, session);
       let instructionDelivered = false;
-      for (const request of session.outstanding()) {
+      const outstanding = session.outstanding();
+      for (const [index, request] of outstanding.entries()) {
         const result = results.get(request.callId);
-        broker.completeTool(token, request.callId, result
-          ? withHandoffInstruction(codexToolResultToBrokerResult(result), instruction)
-          : missingToolResult(instruction));
+        const boundaryInstruction = index === outstanding.length - 1 ? instruction : undefined;
+        const brokerResult = result
+          ? codexToolResultToBrokerResult(result)
+          : missingToolResult();
+        broker.completeTool(token, request.callId, boundaryInstruction
+          ? withHandoffInstruction(brokerResult, boundaryInstruction)
+          : brokerResult);
         session.markResultDelivered(request.callId, result);
-        instructionDelivered = true;
+        instructionDelivered ||= boundaryInstruction !== undefined;
       }
-      const handoffDelivery = broker.requestHandoff(token, instruction);
+      const handoffDelivery = instructionDelivered ? undefined : broker.requestHandoff(token, instruction);
       const boundaryDelivered = instructionDelivered || handoffDelivery === "delivered";
       const preempted = !boundaryDelivered && session.runtime.preemptHandoff?.(instruction) === true;
       session.runtime.requestHandoff?.(instruction, boundaryDelivered || preempted);
     } else {
-      if (!session.runtime.requestHandoff) return undefined;
       const preempted = session.runtime.preemptHandoff?.(instruction) === true;
-      session.runtime.requestHandoff(instruction, preempted);
+      session.runtime.requestHandoff!(instruction, preempted);
     }
     const browserCompleted = waitForBrowser(session, signal, timeoutMs).then(outcome => {
       if (outcome.type === "error") {

@@ -99,6 +99,30 @@ test("Claude transcript identity does not replay guidance already delivered from
   expect(steering.peek()).toBeUndefined();
 });
 
+test("Claude late transcript identity binds the submitted provisional before an identical queued delivery", () => {
+  const steering = new ChatGptSteeringFeed();
+  steering.pushClaude("Run the same check");
+  steering.acknowledgeClaude(1);
+  steering.pushClaude("Run the same check");
+
+  expect(steering.pushClaude("Run the same check", "first-delivery-id")).toBe(false);
+  expect(steering.peek()).toMatchObject({
+    count: 1,
+    messages: [{ content: "Run the same check" }],
+  });
+  expect(steering.peek()?.messages[0]?.deliveryId).not.toBe("first-delivery-id");
+});
+
+test("Claude transcript sync retains a valid provisional delivery until its identity is visible", () => {
+  const steering = new ChatGptSteeringFeed();
+  steering.pushClaude("Transcript has not flushed yet");
+
+  expect(steering.syncClaude([])).toEqual([]);
+  expect(steering.peek()?.text).toBe("Transcript has not flushed yet");
+  expect(steering.syncClaude([], Date.now() + 1_000)).toEqual([]);
+  expect(steering.peek()).toBeUndefined();
+});
+
 test("Claude does not merge a later identical prompt with a completed delivery", () => {
   const steering = new ChatGptSteeringFeed();
   steering.pushClaude("Run the same check again");
