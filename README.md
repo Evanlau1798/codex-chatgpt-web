@@ -113,7 +113,7 @@ cd codex-chatgpt-web && \
 bun run app
 ```
 
-This source path requires Bun 1.4.0-canary.1+52bf09cb1. The command installs locked dependencies and opens the app.
+This source path requires Bun 1.4.0+34cbb9a40. The command installs locked dependencies and opens the app.
 
 ## Modes
 

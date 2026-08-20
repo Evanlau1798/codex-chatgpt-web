@@ -9,8 +9,8 @@ const packageJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"))
   packageManager?: string;
 };
 if (packageJson.version !== VERSION) throw new Error("package.json and runtime version are out of sync");
-const packageManagerMatch = /^bun@((\d+\.\d+\.\d+)-canary\.\d+\+[0-9a-f]+)$/.exec(packageJson.packageManager ?? "");
-if (!packageManagerMatch) throw new Error("package.json must pin an exact Bun canary revision");
+const packageManagerMatch = /^bun@((\d+\.\d+\.\d+)\+[0-9a-f]+)$/.exec(packageJson.packageManager ?? "");
+if (!packageManagerMatch) throw new Error("package.json must pin an exact Bun stable revision");
 const expectedBunRevision = packageManagerMatch[1];
 const expectedBunVersion = packageManagerMatch[2];
 const buildRevision = Bun.spawnSync([process.execPath, "--revision"], { stdout: "pipe", stderr: "pipe" });

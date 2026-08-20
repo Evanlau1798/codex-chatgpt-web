@@ -11,7 +11,7 @@
   "bugs": {
     "url": "https://github.com/miuuyy/codex-chatgpt-web/issues"
   },
-  "packageManager": "bun@1.4.0-canary.1+52bf09cb1",
+  "packageManager": "bun@1.4.0+34cbb9a40",
   "type": "module",
   "bin": {
     "codex-chatgpt-web": "./src/cli.ts"
