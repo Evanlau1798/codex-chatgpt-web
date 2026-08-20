@@ -100,6 +100,12 @@ function runtimeOwnershipMayBeLive(state) {
   return ["starting", "ready", "degraded", "stopping"].includes(state.status);
 }
 
+function foreignLauncherOwnerMayRecover(state) {
+  return state?.ownerPid !== process.pid
+    && processRunning(state?.ownerPid)
+    && ["starting", "ready", "degraded", "stopping"].includes(state?.status);
+}
+
 function conciseTunnelLog(value) {
   if (typeof value !== "string" || !value.trim()) return undefined;
   const tail = value.trim().split(/\r?\n/).slice(-3).join(" | ");
@@ -310,6 +316,7 @@ class RuntimeSupervisor {
     this.recoveryTasks = new Set();
     this.expectedExits = new WeakSet();
     this.restartableChildren = new WeakSet();
+    this.stateWriteCleanupStarted = false;
     this.lastChildFailure = { daemon: null, tunnel: null };
     this.lastChildOutput = { daemon: null, tunnel: null };
   }
@@ -383,6 +390,22 @@ class RuntimeSupervisor {
         if (this.restartTimers[name]) {
           clearTimeout(this.restartTimers[name]);
           this.restartTimers[name] = null;
+        }
+      }
+      if (!this.stateWriteCleanupStarted) {
+        this.stateWriteCleanupStarted = true;
+        for (const name of ["daemon", "tunnel"]) {
+          const child = this[name];
+          if (!child || child.exitCode !== null || child.signalCode !== null) continue;
+          this.expectedExits.add(child);
+          try {
+            terminateOwnedProcessTree(child);
+          } catch (terminationError) {
+            this.logger.error("runtime.state_write_cleanup_failed", {
+              name,
+              message: errorMessage(terminationError),
+            });
+          }
         }
       }
       this.logger.error("runtime.state_write_failed", { status, message });
@@ -989,6 +1012,7 @@ class RuntimeSupervisor {
       if (ownershipState && (
         processRunning(ownershipState.daemonPid)
         || processRunning(ownershipState.tunnelPid)
+        || foreignLauncherOwnerMayRecover(ownershipState)
       )) {
         const detail = "Runtime configuration is missing while launcher ownership processes are still alive";
         this.logger.warn("runtime.external_owner_detected", { detail });
@@ -1523,6 +1547,9 @@ class RuntimeSupervisor {
         + " has no tunnel identity with which to verify it",
       );
     }
+    if (foreignLauncherOwnerMayRecover(state)) {
+      throw new Error(`Another launcher process still owns the runtime (pid ${state.ownerPid})`);
+    }
     if (!daemonRunning && !managedTunnelRunning) {
       this.clearState();
       return true;
@@ -1582,6 +1609,13 @@ class RuntimeSupervisor {
         }
         if (health.status === "ok"
           && health.acquired === true
+          && health.accepting_turns === false
+          && activeHttp === 0
+          && activeBrowser === 0) {
+          return true;
+        }
+        if (health.status === "draining"
+          && health.acquired === false
           && health.accepting_turns === false
           && activeHttp === 0
           && activeBrowser === 0) {

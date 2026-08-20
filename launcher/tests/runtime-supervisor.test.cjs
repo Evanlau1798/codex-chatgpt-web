@@ -995,6 +995,30 @@ test("launcher supervisor atomically drains only after the in-flight HTTP turn f
   assert.deepEqual(actions, ["drain-if-idle", "drain-if-idle"]);
 });
 
+test("launcher supervisor accepts an existing idle drain acquired by the restart controller", async () => {
+  const actions = [];
+  const supervisor = new RuntimeSupervisor({
+    app: { getVersion: () => "0.2.0", isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: os.tmpdir(),
+    coreHome: os.tmpdir(),
+    browserDescriptorPath: path.join(os.tmpdir(), "launcher.json"),
+  });
+  supervisor.control = async (_config, action) => {
+    actions.push(action);
+    return {
+      status: "draining",
+      acquired: false,
+      accepting_turns: false,
+      active_http_turns: 0,
+      active_browser_turns: 0,
+    };
+  };
+
+  await supervisor.acquireDrain({}, 0);
+  assert.deepEqual(actions, ["drain-if-idle"]);
+});
+
 test("launcher resumes an owned drained daemon before reporting it ready", async () => {
   const supervisor = new RuntimeSupervisor({
     app: { getVersion: () => "0.2.0", isPackaged: false },
@@ -1292,6 +1316,106 @@ test("launcher clears an empty stale ownership marker when Windows reuses its PI
     assert.equal(fs.existsSync(supervisor.statePath), false);
   } finally {
     pidOccupant.kill("SIGTERM");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("stale recovery preserves an active-state marker owned by another live launcher", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-live-owner-recovery-"));
+  const liveOwner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const supervisor = new RuntimeSupervisor({
+    app: { getVersion: () => "0.2.0", isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: root,
+    coreHome: root,
+    browserDescriptorPath: path.join(root, "launcher.json"),
+  });
+  const state = {
+    version: 1,
+    ownerPid: liveOwner.pid,
+    daemonPid: null,
+    tunnelPid: null,
+    status: "degraded",
+    updatedAt: new Date().toISOString(),
+  };
+  fs.mkdirSync(path.dirname(supervisor.statePath), { recursive: true });
+  fs.writeFileSync(supervisor.statePath, `${JSON.stringify(state)}\n`);
+  supervisor.proxyHealthPayload = async () => null;
+  try {
+    await assert.rejects(
+      supervisor.stopStaleOwnedRuntime({ mode: "browser-only" }),
+      /Another launcher process still owns the runtime/,
+    );
+    assert.deepEqual(JSON.parse(fs.readFileSync(supervisor.statePath, "utf8")), state);
+  } finally {
+    liveOwner.kill("SIGTERM");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("missing config does not erase an active-state marker owned by another live launcher", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-live-owner-no-config-"));
+  const liveOwner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const supervisor = new RuntimeSupervisor({
+    app: { getVersion: () => "0.2.0", isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: root,
+    coreHome: root,
+    browserDescriptorPath: path.join(root, "launcher.json"),
+  });
+  const state = {
+    version: 1,
+    ownerPid: liveOwner.pid,
+    daemonPid: null,
+    tunnelPid: null,
+    status: "starting",
+    updatedAt: new Date().toISOString(),
+  };
+  fs.mkdirSync(path.dirname(supervisor.statePath), { recursive: true });
+  fs.writeFileSync(supervisor.statePath, `${JSON.stringify(state)}\n`);
+  try {
+    const result = await supervisor.startConfigured();
+    assert.equal(result.status, "external");
+    assert.match(result.detail, /ownership processes are still alive/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(supervisor.statePath, "utf8")), state);
+  } finally {
+    liveOwner.kill("SIGTERM");
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("ownership persistence failure stops every still-live launcher child", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-state-write-fail-closed-"));
+  const supervisor = new RuntimeSupervisor({
+    app: { getVersion: () => "0.2.0", isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: root,
+    coreHome: root,
+    browserDescriptorPath: path.join(root, "launcher.json"),
+  });
+  const invocation = () => ({
+    executable: process.execPath,
+    args: ["-e", "setInterval(() => {}, 1000)"],
+    cwd: root,
+  });
+  const daemon = supervisor.spawnChild("daemon", invocation());
+  const tunnel = supervisor.spawnChild("tunnel", invocation());
+  const exited = child => new Promise(resolve => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolve(true);
+    child.once("exit", () => resolve(true));
+    setTimeout(() => resolve(false), 1_000);
+  });
+  const daemonExited = exited(daemon);
+  const tunnelExited = exited(tunnel);
+  supervisor.writeState = () => { throw new Error("disk unavailable"); };
+  try {
+    assert.equal(supervisor.tryWriteState("degraded", "daemon exited"), false);
+    assert.equal(await daemonExited, true);
+    assert.equal(await tunnelExited, true);
+    assert.equal(supervisor.stopping, true);
+  } finally {
+    await supervisor.stopChild("daemon").catch(() => {});
+    await supervisor.stopChild("tunnel").catch(() => {});
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

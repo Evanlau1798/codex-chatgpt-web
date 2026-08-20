@@ -141,10 +141,17 @@ test("browser control server cuts off exactly one authenticated debug surface", 
 
 test("browser control server releases only ready tabs for an authenticated conversation key", async () => {
   const removed = [];
-  const ready = { id: "ready-tab", status: "ready", conversationKey: "a".repeat(64) };
+  const releaseEvents = [];
+  const ready = {
+    id: "ready-tab",
+    traceId: "ready-trace",
+    status: "ready",
+    conversationKey: "a".repeat(64),
+  };
   const running = { id: "running-tab", status: "running", conversationKey: "a".repeat(64) };
   const host = {
     turnTabs: new Map([[ready.id, ready], [running.id, running]]),
+    logger: { info: (event, detail) => releaseEvents.push([event, detail]) },
     removeTurnTab: (tab, abortRunning) => {
       assert.equal(abortRunning, false);
       removed.push(tab.id);
@@ -170,6 +177,12 @@ test("browser control server releases only ready tabs for an authenticated conve
     assert.deepEqual(await response.json(), { ok: true, released: 1 });
     assert.deepEqual(removed, ["ready-tab"]);
     assert.deepEqual([...host.turnTabs.keys()], ["running-tab"]);
+    assert.deepEqual(releaseEvents, [["browser.tab_released", {
+      tabId: "ready-tab",
+      traceId: "ready-trace",
+      status: "ready",
+      reason: "retained_conversation_superseded",
+    }]]);
   } finally {
     await server.close();
   }
