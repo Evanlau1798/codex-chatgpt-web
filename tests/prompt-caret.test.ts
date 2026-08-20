@@ -21,6 +21,22 @@ test("classifies an exact composer readback mismatch as a recoverable pre-submit
   expect(error.message).toContain("commonPrefixChars=3");
 });
 
+test("reports a caller-supplied equivalent prefix while preserving recoverable surface classification", () => {
+  const error = chatGptPromptAttachmentMismatch(
+    "ChatGPT composer did not preserve the complete prompt",
+    "a  b",
+    "a\u00A0 c",
+    3,
+  );
+
+  expect(error).toMatchObject({
+    code: "chatgpt_surface_changed",
+    retryable: true,
+    retireSession: true,
+  });
+  expect(error.message).toContain("commonPrefixChars=3");
+});
+
 test("accepts a collapsed caret at the logical composer end after Lexical rehomes its DOM node", () => {
   expect(chatGptCaretAtLogicalEnd({
     collapsed: true,

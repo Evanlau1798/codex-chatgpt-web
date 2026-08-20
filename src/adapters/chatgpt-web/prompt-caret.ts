@@ -14,10 +14,13 @@ export function chatGptPromptAttachmentMismatch(
   message: string,
   expected: string,
   observed: string,
+  equivalentPrefix?: number,
 ): Error {
-  let commonPrefix = 0;
-  while (commonPrefix < expected.length && expected[commonPrefix] === observed[commonPrefix]) {
-    commonPrefix += 1;
+  let commonPrefix = equivalentPrefix ?? 0;
+  if (equivalentPrefix === undefined) {
+    while (commonPrefix < expected.length && expected[commonPrefix] === observed[commonPrefix]) {
+      commonPrefix += 1;
+    }
   }
   return chatGptWebSurfaceError(
     `${message} (expectedChars=${expected.length}, actualChars=${observed.length}, commonPrefixChars=${commonPrefix})`,

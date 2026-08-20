@@ -38,6 +38,12 @@ Codex keeps the native task, context lifecycle, UI, and tool harness. The local 
 routes only the selected model turn through a fresh ChatGPT Temporary Chat; in full mode, MCP
 connects ChatGPT back to the tools of that same Codex task.
 
+> [!TIP]
+> I also built **[ChatGPT Persona Voice](https://github.com/miuuyy/ChatGPT-Persona-Voice)**, a local
+> app that changes the ChatGPT/Codex voice in near real time. It never touches your account, browser
+> session, or ChatGPT requests, so using it carries no account-blocking risk. If you like my work,
+> give it a try.
+
 ## Highlights
 
 - **A polished cross-platform launcher.** One command installs the native macOS, Windows, or Linux

@@ -37,6 +37,11 @@ Codex 会保留原生任务、上下文生命周期、界面和工具 harness。
 所选模型的轮次转发到全新的 ChatGPT 临时聊天；在完整模式下，MCP 会把 ChatGPT 连接回同一个
 Codex 任务的工具。
 
+> [!TIP]
+> 我还开发了 **[ChatGPT Persona Voice](https://github.com/miuuyy/ChatGPT-Persona-Voice)**：一款
+> 能够近实时改变 ChatGPT/Codex 声音的本地应用。它不会接触你的账户、浏览器会话或 ChatGPT
+> 请求，因此不会带来账户封禁风险。如果你喜欢我的作品，欢迎试用。
+
 ## 亮点
 
 - **精致的跨平台启动器。** 一条命令即可安装原生 macOS、Windows 或 Linux 应用。登录流程、设置、
