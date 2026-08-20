@@ -234,4 +234,3 @@ export async function requestActiveCompactionHandoff(
     broker.abortCompactionTransaction(transaction.token);
   }
 }
-
