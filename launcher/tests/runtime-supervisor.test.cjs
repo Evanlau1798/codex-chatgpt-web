@@ -1403,7 +1403,9 @@ test("ownership persistence failure stops every still-live launcher child", asyn
   const exited = child => new Promise(resolve => {
     if (child.exitCode !== null || child.signalCode !== null) return resolve(true);
     child.once("exit", () => resolve(true));
-    setTimeout(() => resolve(false), 1_000);
+    // Windows taskkill may complete before Node delivers both child exit events. Keep this bounded,
+    // but allow the same five-second process-event budget used by launcher cleanup tests.
+    setTimeout(() => resolve(false), 5_000);
   });
   const daemonExited = exited(daemon);
   const tunnelExited = exited(tunnel);
