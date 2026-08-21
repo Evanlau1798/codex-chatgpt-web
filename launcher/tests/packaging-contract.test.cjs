@@ -48,7 +48,8 @@ test("release installers resolve checksummed native launcher assets", () => {
   assert.match(shellInstaller, /codex-web-gpt\.desktop/);
   assert.match(shellInstaller, /--appimage-extract/);
   assert.match(packager, /-linux-x86_64\(\?=\\\.\).*?-linux-x64/);
-  assert.match(packager, /process\.execPath/);
+  assert.match(packager, /process\.env\.CODEX_CHATGPT_WEB_PACKAGER_NODE \|\| "node"/);
+  assert.doesNotMatch(packager, /const executable = process\.execPath/);
   assert.match(packager, /electron-builder\/out\/cli\/cli\.js/);
   assert.match(packager, /target === "--mac" && !env\.CSC_LINK && !env\.CSC_NAME/);
   assert.match(packager, /--config\.mac\.identity=-/);
