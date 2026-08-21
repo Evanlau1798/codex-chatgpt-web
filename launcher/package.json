@@ -20,11 +20,6 @@
     "test": "node --test tests/*.test.cjs",
     "start": "electron ."
   },
-  "dependencies": {
-    "motion": "^12.42.2",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
-  },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.0",
@@ -32,6 +27,9 @@
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "41.7.1",
     "electron-builder": "^26.8.1",
+    "motion": "^12.42.2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "typescript": "^5.9.3",
     "vite": "^6.0.0"
   },

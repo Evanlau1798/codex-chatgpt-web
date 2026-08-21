@@ -27,6 +27,13 @@ test("launcher publishes native packages for all supported desktop operating sys
   assert.equal(manifest.build.nsis.runAfterFinish, false);
 });
 
+test("packaged launcher does not traverse compile-only production dependencies", () => {
+  assert.deepEqual(manifest.dependencies ?? {}, {});
+  for (const dependency of ["motion", "react", "react-dom"]) {
+    assert.equal(typeof manifest.devDependencies?.[dependency], "string");
+  }
+});
+
 test("release installers resolve checksummed native launcher assets", () => {
   const shellInstaller = fs.readFileSync(path.join(repositoryRoot, "scripts", "install-launcher.sh"), "utf8");
   const windowsInstaller = fs.readFileSync(path.join(repositoryRoot, "scripts", "install-launcher.ps1"), "utf8");
