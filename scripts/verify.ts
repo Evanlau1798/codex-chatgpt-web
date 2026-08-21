@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 const root = resolve(import.meta.dir, "..");
 const scratch = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-verify-"));
 const runtimeBundle = join(scratch, "runtime");
-const ROOT_TEST_BATCH_SIZE = 30;
+const ROOT_TEST_BATCH_SIZE = 1;
 const rootTestFiles = readdirSync(join(root, "tests"), { withFileTypes: true })
   .filter(entry => entry.isFile() && entry.name.endsWith(".test.ts"))
   .map(entry => `tests/${entry.name}`)

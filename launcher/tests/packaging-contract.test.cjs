@@ -119,7 +119,7 @@ test("release tags with a SemVer suffix publish as prereleases", () => {
 
 test("repository verification runs the root suite in bounded explicit batches", () => {
   const verify = fs.readFileSync(path.join(repositoryRoot, "scripts", "verify.ts"), "utf8");
-  assert.match(verify, /const ROOT_TEST_BATCH_SIZE = 30/);
+  assert.match(verify, /const ROOT_TEST_BATCH_SIZE = 1/);
   assert.match(verify, /readdirSync\(join\(root, "tests"\)/);
   assert.match(verify, /await run\(\["test", \.\.\.rootTestFiles\.slice/);
   assert.doesNotMatch(verify, /await run\(\["run", "test"\]\)/);
