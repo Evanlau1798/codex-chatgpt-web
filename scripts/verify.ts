@@ -1,10 +1,16 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
 const scratch = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-verify-"));
 const runtimeBundle = join(scratch, "runtime");
+const ROOT_TEST_BATCH_SIZE = 30;
+const rootTestFiles = readdirSync(join(root, "tests"), { withFileTypes: true })
+  .filter(entry => entry.isFile() && entry.name.endsWith(".test.ts"))
+  .map(entry => `tests/${entry.name}`)
+  .sort();
+if (rootTestFiles.length === 0) throw new Error("Repository verification found no root test files");
 
 async function run(args: string[]): Promise<void> {
   const child = Bun.spawn([process.execPath, ...args], {
@@ -21,7 +27,9 @@ try {
   await run(["run", "check-version"]);
   await run(["run", "audit"]);
   await run(["run", "typecheck"]);
-  await run(["run", "test"]);
+  for (let start = 0; start < rootTestFiles.length; start += ROOT_TEST_BATCH_SIZE) {
+    await run(["test", ...rootTestFiles.slice(start, start + ROOT_TEST_BATCH_SIZE)]);
+  }
   await run(["run", "launcher:typecheck"]);
   await run(["run", "launcher:test"]);
   await run(["run", "launcher:build"]);
