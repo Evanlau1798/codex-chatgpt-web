@@ -109,6 +109,14 @@ test("release publishes the repository demo as a checksummed versioned asset", (
   assert.match(release.slice(checksumStep), /find \. -maxdepth 1 -type f ! -name checksums\.txt/);
 });
 
+test("release tags with a SemVer suffix publish as prereleases", () => {
+  const release = fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "release.yml"), "utf8");
+  assert.match(release, /if \[\[ "\$GITHUB_REF_NAME" == \*-\* \]\]/);
+  assert.match(release, /release_flags=\(--prerelease --latest=false\)/);
+  assert.match(release, /gh release create[\s\S]*?"\$\{release_flags\[@\]\}"/);
+  assert.match(release, /gh release edit[\s\S]*?"\$\{release_flags\[@\]\}"/);
+});
+
 test("Windows packages embed the checksummed Bun baseline runtime for CPUs without AVX2", () => {
   const builder = fs.readFileSync(path.join(repositoryRoot, "scripts", "build-runtime-bundle.ts"), "utf8");
   const baseline = fs.readFileSync(
