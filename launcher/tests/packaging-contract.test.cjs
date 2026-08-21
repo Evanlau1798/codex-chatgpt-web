@@ -148,3 +148,9 @@ test("Windows packages embed the checksummed Bun baseline runtime for CPUs witho
   assert.match(baseline, /Get-FileHash[^\n]+SHA256/);
   assert.match(baseline, /CODEX_CHATGPT_WEB_EMBEDDED_BUN=/);
 });
+
+test("packaged runtime materializes a hoisted dependency tree before Electron copies it", () => {
+  const builder = fs.readFileSync(path.join(repositoryRoot, "scripts", "build-runtime-bundle.ts"), "utf8");
+  assert.match(builder, /"--linker", "hoisted"/);
+  assert.match(builder, /"--backend", "copyfile"/);
+});
