@@ -52,6 +52,9 @@ test("release installers resolve checksummed native launcher assets", () => {
   assert.match(packager, /electron-builder\/out\/cli\/cli\.js/);
   assert.match(packager, /target === "--mac" && !env\.CSC_LINK && !env\.CSC_NAME/);
   assert.match(packager, /--config\.mac\.identity=-/);
+  assert.match(packager, /path\.resolve\(root, "\.\.", "tmp"\)/);
+  assert.match(packager, /fs\.mkdtempSync\(path\.join\(stagingRoot, "launcher-package-"\)\)/);
+  assert.doesNotMatch(packager, /path\.join\(root, "release"\)/);
   assert.doesNotMatch(packager, /electron-builder\.cmd/);
   assert.match(shellInstaller, /shell_quote\(\)/);
   assert.match(shellInstaller, /exec %s "\$@"/);

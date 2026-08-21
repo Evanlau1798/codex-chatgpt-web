@@ -36,11 +36,11 @@ if (target === "--mac" && !env.CSC_LINK && !env.CSC_NAME) {
   builderArgs.push("--config.mac.identity=-");
 }
 
-const staging = path.join(root, "release");
+const stagingRoot = path.resolve(root, "..", "tmp");
+fs.mkdirSync(stagingRoot, { recursive: true });
+const staging = fs.mkdtempSync(path.join(stagingRoot, "launcher-package-"));
 const artifactsDirectory = path.join(root, "artifacts");
 try {
-  fs.rmSync(staging, { recursive: true, force: true });
-  fs.mkdirSync(staging, { recursive: true });
   const result = spawnSync(executable, [
     ...builderArgs,
     `--config.directories.output=${staging}`,
