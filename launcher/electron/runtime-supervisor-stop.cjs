@@ -246,6 +246,9 @@ module.exports = {
     let ownershipState;
     try {
       ownershipState = this.readState();
+      if (foreignLauncherOwnerMayRecover(ownershipState)) {
+        throw new Error(`Another launcher process still owns the runtime (pid ${ownershipState.ownerPid})`);
+      }
       const healthyRuntime = config && this.launcherProfile !== "development"
         ? await this.proxyHealth(config)
         : false;
@@ -257,9 +260,6 @@ module.exports = {
       }
       if (!this.daemon && !this.tunnel) {
         if (!config) {
-          if (foreignLauncherOwnerMayRecover(ownershipState)) {
-            throw new Error(`Another launcher process still owns the runtime (pid ${ownershipState.ownerPid})`);
-          }
           if (ownershipState && (
             processRunning(ownershipState.daemonPid)
             || processRunning(ownershipState.tunnelPid)
