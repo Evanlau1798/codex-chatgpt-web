@@ -75,7 +75,7 @@ for (const nested of [false, true]) {
     writeFileSync(getCodexJournalPath(), serialized);
     writeFileSync(getCodexJournalRecoveryPath(), serialized);
 
-    expect(installCodexIntegration(defaultConfig("full")).version).toBe(7);
+    expect(installCodexIntegration(defaultConfig("full")).version).toBe(8);
     expect(deactivateCodexIntegration()).toEqual({ changed: true, active: false });
     expect(readFileSync(configPath, "utf8")).toBe(original);
     expect(activateCodexIntegration()).toEqual({ changed: true, active: true });

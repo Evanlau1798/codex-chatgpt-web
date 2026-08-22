@@ -16,17 +16,25 @@ import type {
   LegacyCodexIntegrationJournalV4,
   LegacyCodexIntegrationJournalV5,
   LegacyCodexIntegrationJournalV6,
+  LegacyCodexIntegrationJournalV7,
 } from "./codex-integration-shared";
 import { verifyManagedJournalState } from "./codex-integration-route";
 
 function parseJournal(path: string): AnyCodexIntegrationJournal {
   const value = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
-  if (value.version === 7
+  if (value.version === 8
     && typeof value.active === "boolean"
     && value.installed
     && value.previous
     && typeof value.configPath === "string") {
     return value as unknown as CodexIntegrationJournal;
+  }
+  if (value.version === 7
+    && typeof value.active === "boolean"
+    && value.installed
+    && value.previous
+    && typeof value.configPath === "string") {
+    return value as unknown as LegacyCodexIntegrationJournalV7;
   }
   if (value.version === 6
     && typeof value.active === "boolean"

@@ -37,6 +37,50 @@ afterEach(() => {
 });
 
 describe("reversible native Codex route integration", () => {
+  test("upgrades an active 3.0.0 v7 journal that preserved native routing fields", () => {
+    const { codexHome } = fixture();
+    const configPath = join(codexHome, "config.toml");
+    const original = [
+      'model = "gpt-5.6-sol"',
+      'model_provider = "openai" # explicit built-in default',
+      'model_catalog_json = "C:/catalogs/native-models.json"',
+      "",
+    ].join("\n");
+    writeFileSync(configPath, original);
+    const current = installCodexIntegration(defaultConfig("browser-only"), { replaceExistingRoute: true });
+    const legacy = { ...current, version: 7 };
+    const legacyConfig = [
+      original.trimEnd(),
+      "# Managed by codex-chatgpt-web; `codex-chatgpt-web uninstall` restores prior values.",
+      'openai_base_url = "http://127.0.0.1:17841/v1"',
+      "",
+    ].join("\n");
+    const serializedLegacy = `${JSON.stringify(legacy, null, 2)}\n`;
+    writeFileSync(configPath, legacyConfig);
+    writeFileSync(getCodexJournalPath(), serializedLegacy);
+    writeFileSync(getCodexJournalRecoveryPath(), serializedLegacy);
+
+    const changedLegacyConfig = legacyConfig.replace("explicit built-in default", "user changed comment");
+    writeFileSync(configPath, changedLegacyConfig);
+    expect(inspectCodexIntegration().errors).toEqual([
+      "Codex model_provider changed after setup; refusing to overwrite the user's newer value",
+    ]);
+    expect(() => installCodexIntegration(defaultConfig("browser-only"))).toThrow("model_provider changed after setup");
+    writeFileSync(configPath, legacyConfig);
+
+    expect(inspectCodexIntegration()).toMatchObject({ installed: true, active: true, errors: [] });
+    const upgraded = installCodexIntegration(defaultConfig("browser-only"));
+    expect(upgraded.version).toBe(8);
+    expect(readFileSync(configPath, "utf8")).not.toMatch(/^\s*(?:model_provider|model_catalog_json)\s*=/m);
+
+    expect(deactivateCodexIntegration()).toEqual({ changed: true, active: false });
+    expect(readFileSync(configPath, "utf8")).toBe(original);
+    expect(activateCodexIntegration()).toEqual({ changed: true, active: true });
+    expect(readFileSync(configPath, "utf8")).not.toMatch(/^\s*(?:model_provider|model_catalog_json)\s*=/m);
+    expect(uninstallCodexIntegration()).toEqual({ changed: true });
+    expect(readFileSync(configPath, "utf8")).toBe(original);
+  });
+
   test("upgrades an active v5 journal and restores its managed feature baseline", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
@@ -64,7 +108,7 @@ describe("reversible native Codex route integration", () => {
     writeFileSync(getCodexJournalRecoveryPath(), legacyJournal);
 
     const upgraded = installCodexIntegration(defaultConfig("full"));
-    expect(upgraded.version).toBe(7);
+    expect(upgraded.version).toBe(8);
     expect(readFileSync(configPath, "utf8")).toContain("multi_agent_v2 = true # user choice");
     expect(readFileSync(configPath, "utf8")).not.toContain("Managed by codex-chatgpt-web: enables routed Web subagents");
 

@@ -28,8 +28,7 @@ export interface PreviousFeatureAssignment extends PreviousAssignment {
   tableName?: "features" | "features.multi_agent_v2";
 }
 
-export interface CodexIntegrationJournal {
-  version: 7;
+interface RouteOnlyCodexIntegrationJournal {
   active: boolean;
   configPath: string;
   installed: {
@@ -40,6 +39,14 @@ export interface CodexIntegrationJournal {
     lineEnding: "\n" | "\r\n";
     trailingNewline: boolean;
   };
+}
+
+export interface CodexIntegrationJournal extends RouteOnlyCodexIntegrationJournal {
+  version: 8;
+}
+
+export interface LegacyCodexIntegrationJournalV7 extends RouteOnlyCodexIntegrationJournal {
+  version: 7;
 }
 
 export interface LegacyCodexIntegrationJournalV6 {
@@ -125,6 +132,7 @@ export interface LegacyCodexIntegrationJournal {
 
 export type ManagedRouteJournal =
   | CodexIntegrationJournal
+  | LegacyCodexIntegrationJournalV7
   | LegacyCodexIntegrationJournalV6
   | LegacyCodexIntegrationJournalV5
   | LegacyCodexIntegrationJournalV4

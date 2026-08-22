@@ -13,6 +13,7 @@ import type {
   LegacyCodexIntegrationJournalV4,
   LegacyCodexIntegrationJournalV5,
   LegacyCodexIntegrationJournalV6,
+  LegacyCodexIntegrationJournalV7,
   ManagedAssignmentKey,
   ManagedRouteJournal,
   PreviousAssignment,
@@ -115,6 +116,22 @@ export function replacementBaseline(
   if (!configExists) return "";
   if (!managedJournalIsActive(journal)) return currentText;
 
+  if (journal.version === 7) {
+    const document = parseDocument(currentText);
+    removeManagedComment(document);
+    const current = findTopLevelAssignment(document.lines, "openai_base_url");
+    if (current.value === journal.installed.openai_base_url && current.index !== undefined) {
+      const previous = journal.previous.openai_base_url;
+      if (previous.present) {
+        if (!previous.rawLine) throw new Error("Codex integration journal is missing the prior openai_base_url line");
+        document.lines[current.index] = previous.rawLine;
+      } else {
+        removeDocumentLine(document, current.index);
+      }
+    }
+    return renderDocument(document);
+  }
+
   let baseline = restoreOwnedManagedFeatures(currentText, journal);
   baseline = restoreStillManagedRouteAssignments(baseline, journal);
   return baseline;
@@ -160,13 +177,24 @@ export function verifyInstalledRoute(text: string, journal: ManagedRouteJournal)
   if (current.openai_base_url.value !== journal.installed.openai_base_url) {
     throw new Error("Codex openai_base_url changed after setup; refusing to overwrite the user's newer value");
   }
-  if (current.model_provider.present || current.model_catalog_json.present) {
+  if (journal.version === 7) {
+    for (const key of ["model_provider", "model_catalog_json"] as const) {
+      if (!assignmentExactlyMatches(current[key], journal.previous[key])) {
+        throw new Error(`Codex ${key} changed after setup; refusing to overwrite the user's newer value`);
+      }
+    }
+  } else if (current.model_provider.present || current.model_catalog_json.present) {
     throw new Error("Codex model_provider or model_catalog_json changed after setup; refusing to overwrite the user's newer value");
   }
   if (!lines.includes(MANAGED_COMMENT)) {
     throw new Error("Managed Codex route marker changed after setup; refusing to overwrite it");
   }
   if (journal.version === 5 || journal.version === 6) verifyInstalledFeatures(text, journal);
+}
+
+function assignmentExactlyMatches(current: PreviousAssignment, previous: PreviousAssignment): boolean {
+  return current.present === previous.present
+    && (!current.present || (current.value === previous.value && current.rawLine === previous.rawLine));
 }
 
 function previousAssignmentMatches(current: PreviousAssignment, previous: PreviousAssignment): boolean {
@@ -176,7 +204,7 @@ function previousAssignmentMatches(current: PreviousAssignment, previous: Previo
 
 export function verifyRestoredRoute(
   text: string,
-  journal: CodexIntegrationJournal | LegacyCodexIntegrationJournalV6 | LegacyCodexIntegrationJournalV5 | LegacyCodexIntegrationJournalV4,
+  journal: CodexIntegrationJournal | LegacyCodexIntegrationJournalV7 | LegacyCodexIntegrationJournalV6 | LegacyCodexIntegrationJournalV5 | LegacyCodexIntegrationJournalV4,
 ): void {
   const lines = splitLines(text);
   const current = assignments(lines);
@@ -236,14 +264,16 @@ export function restoreManagedRoute(text: string, journal: ManagedRouteJournal):
   } else {
     removeDocumentLine(document, currentBaseUrl.index);
   }
-  const removedAssignments = (["model_provider", "model_catalog_json"] as const)
-    .map(key => ({ key, previous: journal.previous[key] }))
-    .filter(item => item.previous.present)
-    .sort((left, right) => (left.previous.index ?? Number.MAX_SAFE_INTEGER) - (right.previous.index ?? Number.MAX_SAFE_INTEGER));
-  for (const item of removedAssignments) {
-    if (!item.previous.rawLine) throw new Error(`Codex integration journal is missing the prior ${item.key} line`);
-    const index = Math.min(item.previous.index ?? firstTableIndex(document.lines), firstTableIndex(document.lines));
-    insertDocumentLine(document, index, item.previous.rawLine);
+  if (journal.version !== 7) {
+    const removedAssignments = (["model_provider", "model_catalog_json"] as const)
+      .map(key => ({ key, previous: journal.previous[key] }))
+      .filter(item => item.previous.present)
+      .sort((left, right) => (left.previous.index ?? Number.MAX_SAFE_INTEGER) - (right.previous.index ?? Number.MAX_SAFE_INTEGER));
+    for (const item of removedAssignments) {
+      if (!item.previous.rawLine) throw new Error(`Codex integration journal is missing the prior ${item.key} line`);
+      const index = Math.min(item.previous.index ?? firstTableIndex(document.lines), firstTableIndex(document.lines));
+      insertDocumentLine(document, index, item.previous.rawLine);
+    }
   }
   const restoredRoute = renderDocument(document);
   return journal.version === 5 || journal.version === 6

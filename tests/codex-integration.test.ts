@@ -63,7 +63,7 @@ describe("reversible native Codex route integration", () => {
 
     const journal = installCodexIntegration(defaultConfig("browser-only"));
     const installed = readFileSync(configPath, "utf8");
-    expect(journal.version).toBe(7);
+    expect(journal.version).toBe(8);
     expect(installed).toContain('openai_base_url = "http://127.0.0.1:17841/v1"');
     expect(installed).not.toContain("remote_compaction_v2");
     expect(installed).toContain("multi_agent = false # user choice");
@@ -329,7 +329,7 @@ describe("reversible native Codex route integration", () => {
     deactivateCodexIntegration();
 
     expect(JSON.parse(readFileSync(getCodexJournalPath(), "utf8"))).toMatchObject({
-      version: 7,
+      version: 8,
       active: false,
     });
     expect(inspectCodexIntegration()).toMatchObject({ installed: true, active: false, errors: [] });
@@ -389,7 +389,7 @@ describe("reversible native Codex route integration", () => {
     );
 
     const upgraded = installCodexIntegration(defaultConfig("browser-only"));
-    expect(upgraded.version).toBe(7);
+    expect(upgraded.version).toBe(8);
     expect(readFileSync(configPath, "utf8")).toContain("goals = true");
     expect(readFileSync(configPath, "utf8")).not.toContain("remote_compaction_v2");
     expect(readFileSync(configPath, "utf8")).not.toContain("multi_agent");
