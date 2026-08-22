@@ -208,7 +208,10 @@ export function verifyRestoredRoute(
 ): void {
   const lines = splitLines(text);
   const current = assignments(lines);
-  for (const key of ["openai_base_url", "model_provider", "model_catalog_json"] as const) {
+  const keys = journal.version === 7
+    ? (["openai_base_url"] as const)
+    : (["openai_base_url", "model_provider", "model_catalog_json"] as const);
+  for (const key of keys) {
     if (!previousAssignmentMatches(current[key], journal.previous[key])) {
       throw new Error(`Codex ${key} changed while the bridge was disconnected; refusing to overwrite the user's newer value`);
     }

@@ -81,6 +81,34 @@ describe("reversible native Codex route integration", () => {
     expect(readFileSync(configPath, "utf8")).toBe(original);
   });
 
+  test("uninstalls an inactive 3.0.0 v7 journal after user-owned routing fields change", () => {
+    const { codexHome } = fixture();
+    const configPath = join(codexHome, "config.toml");
+    writeFileSync(configPath, [
+      'model = "gpt-5.6-sol"',
+      'model_provider = "openai"',
+      'model_catalog_json = "C:/catalogs/original.json"',
+      "",
+    ].join("\n"));
+    const current = installCodexIntegration(defaultConfig("browser-only"), { replaceExistingRoute: true });
+    const legacy = { ...current, version: 7, active: false };
+    const changedWhileDisconnected = [
+      'model = "gpt-5.6-sol"',
+      'model_provider = "custom-provider" # changed while disconnected',
+      'model_catalog_json = "C:/catalogs/newer.json"',
+      "",
+    ].join("\n");
+    const serializedLegacy = `${JSON.stringify(legacy, null, 2)}\n`;
+    writeFileSync(configPath, changedWhileDisconnected);
+    writeFileSync(getCodexJournalPath(), serializedLegacy);
+    writeFileSync(getCodexJournalRecoveryPath(), serializedLegacy);
+
+    expect(inspectCodexIntegration()).toMatchObject({ installed: true, active: false, errors: [] });
+    expect(uninstallCodexIntegration()).toEqual({ changed: true });
+    expect(readFileSync(configPath, "utf8")).toBe(changedWhileDisconnected);
+    expect(inspectCodexIntegration()).toMatchObject({ installed: false, active: false, errors: [] });
+  });
+
   test("upgrades an active v5 journal and restores its managed feature baseline", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
