@@ -4,6 +4,7 @@ const os = require("node:os");
 const { randomBytes } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { readJsonFile } = require("./json-file.cjs");
 const {
   connectorNameForDevSetup,
   connectorNameForSetup,
@@ -213,7 +214,7 @@ class RuntimeHost {
   launcherControlEnvironment() {
     let descriptor;
     try {
-      descriptor = JSON.parse(fs.readFileSync(this.browserDescriptorPath, "utf8"));
+      descriptor = readJsonFile(this.browserDescriptorPath);
     } catch (error) {
       throw new Error(
         `Launcher browser ownership descriptor is unavailable: ${error instanceof Error ? error.message : String(error)}`,

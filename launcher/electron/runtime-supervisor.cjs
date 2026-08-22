@@ -3,6 +3,7 @@ const net = require("node:net");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { readJsonFile } = require("./json-file.cjs");
 const { redactText } = require("./logging.cjs");
 const {
   DETACH_OWNED_CHILD,
@@ -61,7 +62,7 @@ function loopbackHealthBaseURL(value) {
 }
 
 function readJson(pathname) {
-  return JSON.parse(fs.readFileSync(pathname, "utf8"));
+  return readJsonFile(pathname);
 }
 
 function errorMessage(error) {
