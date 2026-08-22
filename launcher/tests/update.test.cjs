@@ -130,6 +130,12 @@ test("verified update is handed to one detached worker", async () => {
         downloadFile: async (_url, destination) => fs.writeFileSync(destination, assetBody),
         sha256: (filePath) => require("node:crypto").createHash("sha256").update(fs.readFileSync(filePath)).digest("hex"),
         spawnWorker: (runtime, worker, job) => {
+          const dependencyProbe = spawnSync(process.execPath, [
+            "-e",
+            "require(require('node:path').join(require('node:path').dirname(process.argv[1]), 'json-file.cjs'))",
+            worker,
+          ], { encoding: "utf8" });
+          assert.equal(dependencyProbe.status, 0, dependencyProbe.stderr);
           spawned = { runtime, worker, job, data: JSON.parse(fs.readFileSync(job, "utf8")) };
           return { pid: 123, unref() {}, kill() {} };
         },

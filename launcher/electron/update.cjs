@@ -305,6 +305,7 @@ function createUpdateController({
 
         const workerPath = path.join(tempRoot, "update-worker.cjs");
         fs.copyFileSync(path.join(__dirname, "update-worker.cjs"), workerPath);
+        fs.copyFileSync(path.join(__dirname, "json-file.cjs"), path.join(tempRoot, "json-file.cjs"));
         const job = buildJob({
           version: available.version,
           platform,
