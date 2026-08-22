@@ -22,7 +22,6 @@ export class HttpTurnCounter {
   async track(
     run: (signal: AbortSignal) => Promise<Response>,
     clientSignal?: AbortSignal,
-    platform: NodeJS.Platform = process.platform,
   ): Promise<Response> {
     const id = this.nextId++;
     const abort = new AbortController();
@@ -59,70 +58,38 @@ export class HttpTurnCounter {
         return new Response(null, { status: 499, statusText: "Client Closed Request" });
       }
 
-      if (platform !== "win32") {
-        // Bun's async-pull teardown bug is Windows-only. On Darwin/Linux, preserve the direct
-        // pull chain: it keeps HTTP backpressure native and lets a client body cancellation reach
-        // the original SSE reader without an eagerly drained tee branch racing the socket writer.
-        const reader = response.body.getReader();
-        streamAbortListener = () => {
-          void reader.cancel(abort.signal.reason).catch(() => {}).finally(release);
-        };
-        abort.signal.addEventListener("abort", streamAbortListener, { once: true });
-        const body = new ReadableStream<Uint8Array>({
-          async pull(controller) {
-            try {
-              const chunk = await reader.read();
-              if (chunk.done) {
-                release();
-                controller.close();
-                return;
-              }
-              controller.enqueue(chunk.value);
-            } catch (error) {
-              release();
-              controller.error(error);
-            }
-          },
-          async cancel(reason) {
-            try {
-              await reader.cancel(reason);
-            } finally {
-              release();
-            }
-          },
-        });
-        return new Response(body, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-        });
-      }
-
-      // Windows-safe Bun#32111 shape: the client gets a native tee branch,
-      // never a JS ReadableStream with async pull(). The second branch is consumed only
-      // to observe completion. The request signal releases lifecycle ownership immediately
-      // when the client disconnects and cancels the observer branch.
-      const [clientBody, lifecycleBody] = response.body.tee();
-      const reader = lifecycleBody.getReader();
+      // Bun 1.4.0 fixes the Windows async-pull teardown issue. Preserve the direct pull chain on
+      // every platform so lifecycle ownership follows client consumption instead of an eagerly
+      // drained tee branch that can buffer an entire SSE response and release the turn too early.
+      const reader = response.body.getReader();
       streamAbortListener = () => {
-        void Promise.allSettled([
-          reader.cancel(abort.signal.reason),
-          clientBody.cancel(abort.signal.reason),
-        ]).finally(release);
+        void reader.cancel(abort.signal.reason).catch(() => {}).finally(release);
       };
       abort.signal.addEventListener("abort", streamAbortListener, { once: true });
-      void (async () => {
-        try {
-          while (!(await reader.read()).done) {
-            // Consume eagerly so the lifecycle branch never backpressures the client branch.
+      const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          try {
+            const chunk = await reader.read();
+            if (chunk.done) {
+              release();
+              controller.close();
+              return;
+            }
+            controller.enqueue(chunk.value);
+          } catch (error) {
+            release();
+            controller.error(error);
           }
-        } catch {
-          // Stream failure is delivered to the client branch; lifecycle cleanup stays best-effort.
-        } finally {
-          release();
-        }
-      })();
-      return new Response(clientBody, {
+        },
+        async cancel(reason) {
+          try {
+            await reader.cancel(reason);
+          } finally {
+            release();
+          }
+        },
+      });
+      return new Response(body, {
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,

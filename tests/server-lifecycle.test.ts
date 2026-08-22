@@ -52,23 +52,25 @@ test("HTTP turn tracking releases a cancelled response stream", async () => {
   await waitForTurnCount(turns, 0);
 });
 
-test("HTTP turn tracking uses a tee branch on Windows", async () => {
+test("HTTP turn tracking stays active until the client consumes the response", async () => {
   const turns = new HttpTurnCounter();
-  let source!: ReadableStreamDefaultController<Uint8Array>;
   const original = new ReadableStream<Uint8Array>({
-    start(controller) { source = controller; },
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("safe"));
+      controller.close();
+    },
   });
-  const response = await turns.track(async () => new Response(original), undefined, "win32");
+  const response = await turns.track(async () => new Response(original));
   const reader = response.body!.getReader();
 
-  source.enqueue(new TextEncoder().encode("safe"));
+  await Bun.sleep(0);
+  expect(turns.count()).toBe(1);
   expect(new TextDecoder().decode((await reader.read()).value)).toBe("safe");
-  source.close();
   expect((await reader.read()).done).toBe(true);
   await waitForTurnCount(turns, 0);
 });
 
-test("HTTP turn tracking uses direct pull and cancellation outside Windows", async () => {
+test("HTTP turn tracking uses direct pull and cancellation", async () => {
   const turns = new HttpTurnCounter();
   let source!: ReadableStreamDefaultController<Uint8Array>;
   let sourceCancelled = false;
@@ -76,7 +78,7 @@ test("HTTP turn tracking uses direct pull and cancellation outside Windows", asy
     start(controller) { source = controller; },
     cancel() { sourceCancelled = true; },
   });
-  const response = await turns.track(async () => new Response(original), undefined, "darwin");
+  const response = await turns.track(async () => new Response(original));
   const reader = response.body!.getReader();
 
   source.enqueue(new TextEncoder().encode("native-pull"));
