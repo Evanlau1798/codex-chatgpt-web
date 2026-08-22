@@ -164,9 +164,7 @@ describe("reversible native Codex route integration", () => {
 
     expect(() => preflightCodexIntegration(defaultConfig("browser-only"))).not.toThrow();
     installCodexIntegration(defaultConfig("browser-only"));
-    expect(readFileSync(configPath, "utf8")).toContain(
-      'model_provider = "openai" # explicit built-in default',
-    );
+    expect(readFileSync(configPath, "utf8")).not.toMatch(/^\s*model_provider\s*=/m);
 
     uninstallCodexIntegration();
     expect(readFileSync(configPath, "utf8")).toBe(original);
@@ -254,7 +252,7 @@ describe("reversible native Codex route integration", () => {
     expect(() => readFileSync(cachePath, "utf8")).toThrow();
   });
 
-  test("requires explicit replacement and preserves every non-port route assignment", () => {
+  test("requires explicit replacement and restores every prior route assignment", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     const original = `model = "gpt-5.6-sol"\nmodel_provider = "existing-provider"\nopenai_base_url = "http://127.0.0.1:9999/v1"\nmodel_catalog_json = "/tmp/native.json"\n\n[features]\ngoals = true\n`;
@@ -265,41 +263,11 @@ describe("reversible native Codex route integration", () => {
     installCodexIntegration(config, { replaceExistingRoute: true });
     const installed = readFileSync(configPath, "utf8");
     expect(installed).toContain('openai_base_url = "http://127.0.0.1:17841/v1"');
-    expect(installed).toContain('model_provider = "existing-provider"');
-    expect(installed).toContain('model_catalog_json = "/tmp/native.json"');
+    expect(installed).not.toMatch(/^\s*model_provider\s*=/m);
+    expect(installed).not.toMatch(/^\s*model_catalog_json\s*=/m);
 
     uninstallCodexIntegration();
     expect(readFileSync(configPath, "utf8")).toBe(original);
-  });
-
-  test("owns only openai_base_url while active", () => {
-    const { codexHome } = fixture();
-    const configPath = join(codexHome, "config.toml");
-    const original = [
-      'model = "gpt-5.6-sol"',
-      'model_provider = "first-provider"',
-      'model_catalog_json = "/tmp/first.json"',
-      "",
-      "[features]",
-      "multi_agent = true",
-      "goals = true",
-      "",
-    ].join("\n");
-    writeFileSync(configPath, original);
-
-    installCodexIntegration(defaultConfig("full"));
-    const userEdited = readFileSync(configPath, "utf8")
-      .replace('model_provider = "first-provider"', 'model_provider = "second-provider"')
-      .replace('model_catalog_json = "/tmp/first.json"', 'model_catalog_json = "/tmp/second.json"')
-      .replace("multi_agent = true", "multi_agent = false");
-    writeFileSync(configPath, userEdited);
-
-    expect(uninstallCodexIntegration()).toEqual({ changed: true });
-    const restored = readFileSync(configPath, "utf8");
-    expect(restored).not.toContain("openai_base_url");
-    expect(restored).toContain('model_provider = "second-provider"');
-    expect(restored).toContain('model_catalog_json = "/tmp/second.json"');
-    expect(restored).toContain("multi_agent = false");
   });
 
   test("preflight detects route conflicts without changing Codex or creating a journal", () => {

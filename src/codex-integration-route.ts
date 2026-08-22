@@ -115,22 +115,6 @@ export function replacementBaseline(
   if (!configExists) return "";
   if (!managedJournalIsActive(journal)) return currentText;
 
-  if (journal.version === 7) {
-    const document = parseDocument(currentText);
-    removeManagedComment(document);
-    const current = findTopLevelAssignment(document.lines, "openai_base_url");
-    if (current.value === journal.installed.openai_base_url && current.index !== undefined) {
-      const previous = journal.previous.openai_base_url;
-      if (previous.present) {
-        if (!previous.rawLine) throw new Error("Codex integration journal is missing the prior openai_base_url line");
-        document.lines[current.index] = previous.rawLine;
-      } else {
-        removeDocumentLine(document, current.index);
-      }
-    }
-    return renderDocument(document);
-  }
-
   let baseline = restoreOwnedManagedFeatures(currentText, journal);
   baseline = restoreStillManagedRouteAssignments(baseline, journal);
   return baseline;
@@ -143,13 +127,21 @@ export function installRoute(
 ): { text: string; previous: CodexIntegrationJournal["previous"] } {
   const document = parseDocument(text);
   const previous = assignments(document.lines);
-  if (previous.openai_base_url.present && !replaceExistingRoute) {
+  const conflicts = (Object.entries(previous) as Array<[ManagedAssignmentKey, PreviousAssignment]>)
+    .filter(([key, assignment]) => assignment.present
+      && !(key === "model_provider" && assignment.value === "openai"))
+    .map(([key, assignment]) => `${key}=${JSON.stringify(assignment.value)}`);
+  if (conflicts.length > 0 && !replaceExistingRoute) {
     throw new Error(
-      `Codex already configures model routing (openai_base_url=${JSON.stringify(previous.openai_base_url.value)}). `
+      `Codex already configures model routing (${conflicts.join(", ")}). `
       + "Rerun with --replace-codex-route to replace it reversibly.",
     );
   }
 
+  for (const key of ["model_provider", "model_catalog_json"] as const) {
+    const location = findTopLevelAssignment(document.lines, key);
+    if (location.index !== undefined) removeDocumentLine(document, location.index);
+  }
   const currentBaseUrl = findTopLevelAssignment(document.lines, "openai_base_url");
   if (currentBaseUrl.index !== undefined) {
     document.lines[currentBaseUrl.index] = `openai_base_url = ${JSON.stringify(installedUrl)}`;
@@ -168,15 +160,13 @@ export function verifyInstalledRoute(text: string, journal: ManagedRouteJournal)
   if (current.openai_base_url.value !== journal.installed.openai_base_url) {
     throw new Error("Codex openai_base_url changed after setup; refusing to overwrite the user's newer value");
   }
+  if (current.model_provider.present || current.model_catalog_json.present) {
+    throw new Error("Codex model_provider or model_catalog_json changed after setup; refusing to overwrite the user's newer value");
+  }
   if (!lines.includes(MANAGED_COMMENT)) {
     throw new Error("Managed Codex route marker changed after setup; refusing to overwrite it");
   }
-  if (journal.version !== 7) {
-    if (current.model_provider.present || current.model_catalog_json.present) {
-      throw new Error("Codex model_provider or model_catalog_json changed after setup; refusing to overwrite the user's newer value");
-    }
-    if (journal.version === 5 || journal.version === 6) verifyInstalledFeatures(text, journal);
-  }
+  if (journal.version === 5 || journal.version === 6) verifyInstalledFeatures(text, journal);
 }
 
 function previousAssignmentMatches(current: PreviousAssignment, previous: PreviousAssignment): boolean {
@@ -190,10 +180,7 @@ export function verifyRestoredRoute(
 ): void {
   const lines = splitLines(text);
   const current = assignments(lines);
-  const keys = journal.version === 7
-    ? (["openai_base_url"] as const)
-    : (["openai_base_url", "model_provider", "model_catalog_json"] as const);
-  for (const key of keys) {
+  for (const key of ["openai_base_url", "model_provider", "model_catalog_json"] as const) {
     if (!previousAssignmentMatches(current[key], journal.previous[key])) {
       throw new Error(`Codex ${key} changed while the bridge was disconnected; refusing to overwrite the user's newer value`);
     }
@@ -229,8 +216,10 @@ export function assertPreservedPreviousAssignments(
   actual: CodexIntegrationJournal["previous"],
   expected: CodexIntegrationJournal["previous"],
 ): void {
-  if (!previousAssignmentMatches(actual.openai_base_url, expected.openai_base_url)) {
-    throw new Error("Codex openai_base_url changed while the bridge was disconnected; refusing to replace it");
+  for (const key of ["openai_base_url", "model_provider", "model_catalog_json"] as const) {
+    if (!previousAssignmentMatches(actual[key], expected[key])) {
+      throw new Error(`Codex ${key} changed while the bridge was disconnected; refusing to replace it`);
+    }
   }
 }
 
@@ -247,16 +236,14 @@ export function restoreManagedRoute(text: string, journal: ManagedRouteJournal):
   } else {
     removeDocumentLine(document, currentBaseUrl.index);
   }
-  if (journal.version !== 7) {
-    const removedAssignments = (["model_provider", "model_catalog_json"] as const)
-      .map(key => ({ key, previous: journal.previous[key] }))
-      .filter(item => item.previous.present)
-      .sort((left, right) => (left.previous.index ?? Number.MAX_SAFE_INTEGER) - (right.previous.index ?? Number.MAX_SAFE_INTEGER));
-    for (const item of removedAssignments) {
-      if (!item.previous.rawLine) throw new Error(`Codex integration journal is missing the prior ${item.key} line`);
-      const index = Math.min(item.previous.index ?? firstTableIndex(document.lines), firstTableIndex(document.lines));
-      insertDocumentLine(document, index, item.previous.rawLine);
-    }
+  const removedAssignments = (["model_provider", "model_catalog_json"] as const)
+    .map(key => ({ key, previous: journal.previous[key] }))
+    .filter(item => item.previous.present)
+    .sort((left, right) => (left.previous.index ?? Number.MAX_SAFE_INTEGER) - (right.previous.index ?? Number.MAX_SAFE_INTEGER));
+  for (const item of removedAssignments) {
+    if (!item.previous.rawLine) throw new Error(`Codex integration journal is missing the prior ${item.key} line`);
+    const index = Math.min(item.previous.index ?? firstTableIndex(document.lines), firstTableIndex(document.lines));
+    insertDocumentLine(document, index, item.previous.rawLine);
   }
   const restoredRoute = renderDocument(document);
   return journal.version === 5 || journal.version === 6
