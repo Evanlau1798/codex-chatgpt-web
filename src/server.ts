@@ -1,13 +1,14 @@
 import { createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
-import { timingSafeEqual } from "node:crypto";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
 import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
+import { HttpTurnCounter } from "./http-turn-counter";
+import { handleLifecycleControlRequest } from "./lifecycle-control";
 import { httpStatusFromTerminalError } from "./lib/errors";
 import { createHash } from "node:crypto";
 import { augmentNativeModelCatalog } from "./model-catalog";
@@ -32,141 +33,7 @@ import type { CodexProviderConfig } from "./types";
 import type { ProviderAdapter } from "./adapters/base";
 import { VERSION } from "./version";
 
-export class HttpTurnCounter {
-  private readonly active = new Map<number, {
-    abort: AbortController;
-    done: Promise<void>;
-    finish: () => void;
-  }>();
-  private nextId = 1;
-
-  count(): number {
-    return this.active.size;
-  }
-
-  async cancelAll(reason: unknown = new Error("Active HTTP turns cancelled")): Promise<number> {
-    const turns = [...this.active.values()];
-    for (const turn of turns) {
-      if (!turn.abort.signal.aborted) turn.abort.abort(reason);
-    }
-    await Promise.all(turns.map(turn => turn.done));
-    return turns.length;
-  }
-
-  async track(
-    run: (signal: AbortSignal) => Promise<Response>,
-    clientSignal?: AbortSignal,
-    platform: NodeJS.Platform = process.platform,
-  ): Promise<Response> {
-    const id = this.nextId++;
-    const abort = new AbortController();
-    let finish!: () => void;
-    const done = new Promise<void>(resolve => { finish = resolve; });
-    this.active.set(id, { abort, done, finish });
-    let released = false;
-    let clientAbortListener: (() => void) | undefined;
-    let streamAbortListener: (() => void) | undefined;
-    const release = () => {
-      if (released) return;
-      released = true;
-      this.active.delete(id);
-      if (clientSignal && clientAbortListener) {
-        clientSignal.removeEventListener("abort", clientAbortListener);
-        clientAbortListener = undefined;
-      }
-      if (streamAbortListener) abort.signal.removeEventListener("abort", streamAbortListener);
-      finish();
-    };
-    clientAbortListener = () => abort.abort(clientSignal?.reason);
-    if (clientSignal?.aborted) abort.abort(clientSignal.reason);
-    else clientSignal?.addEventListener("abort", clientAbortListener, { once: true });
-
-    try {
-      const response = await run(abort.signal);
-      if (!response.body) {
-        release();
-        return response;
-      }
-      if (abort.signal.aborted) {
-        await response.body.cancel(abort.signal.reason).catch(() => {});
-        release();
-        return new Response(null, { status: 499, statusText: "Client Closed Request" });
-      }
-
-      if (platform !== "win32") {
-        // Bun's async-pull teardown bug is Windows-only. On Darwin/Linux, preserve the direct
-        // pull chain: it keeps HTTP backpressure native and lets a client body cancellation reach
-        // the original SSE reader without an eagerly drained tee branch racing the socket writer.
-        const reader = response.body.getReader();
-        streamAbortListener = () => {
-          void reader.cancel(abort.signal.reason).catch(() => {}).finally(release);
-        };
-        abort.signal.addEventListener("abort", streamAbortListener, { once: true });
-        const body = new ReadableStream<Uint8Array>({
-          async pull(controller) {
-            try {
-              const chunk = await reader.read();
-              if (chunk.done) {
-                release();
-                controller.close();
-                return;
-              }
-              controller.enqueue(chunk.value);
-            } catch (error) {
-              release();
-              controller.error(error);
-            }
-          },
-          async cancel(reason) {
-            try {
-              await reader.cancel(reason);
-            } finally {
-              release();
-            }
-          },
-        });
-        return new Response(body, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-        });
-      }
-
-      // Windows-safe Bun#32111 shape: the client gets a native tee branch,
-      // never a JS ReadableStream with async pull(). The second branch is consumed only
-      // to observe completion. The request signal releases lifecycle ownership immediately
-      // when the client disconnects and cancels the observer branch.
-      const [clientBody, lifecycleBody] = response.body.tee();
-      const reader = lifecycleBody.getReader();
-      streamAbortListener = () => {
-        void Promise.allSettled([
-          reader.cancel(abort.signal.reason),
-          clientBody.cancel(abort.signal.reason),
-        ]).finally(release);
-      };
-      abort.signal.addEventListener("abort", streamAbortListener, { once: true });
-      void (async () => {
-        try {
-          while (!(await reader.read()).done) {
-            // Consume eagerly so the lifecycle branch never backpressures the client branch.
-          }
-        } catch {
-          // Stream failure is delivered to the client branch; lifecycle cleanup stays best-effort.
-        } finally {
-          release();
-        }
-      })();
-      return new Response(clientBody, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-      });
-    } catch (error) {
-      release();
-      throw error;
-    }
-  }
-}
+export { HttpTurnCounter } from "./http-turn-counter";
 
 type ChatGptWebAdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
 
@@ -508,12 +375,6 @@ export function startServer(
     active_http_turns: httpTurns.count(),
     active_browser_turns: chatGptTurnSessions.activeCount() + (turnBroker?.externalOwnerActiveCount() ?? 0),
   });
-  const controlAuthorized = (req: Request): boolean => {
-    const header = req.headers.get("authorization") ?? "";
-    const expected = Buffer.from(`Bearer ${config.controlToken}`);
-    const actual = Buffer.from(header);
-    return actual.length === expected.length && timingSafeEqual(actual, expected);
-  };
   const server = Bun.serve({
     hostname: config.host,
     port: config.port,
@@ -535,39 +396,18 @@ export function startServer(
           ...activity(),
         });
       }
-      if (req.method === "POST" && (url.pathname === "/admin/drain" || url.pathname === "/admin/resume")) {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
-        draining = url.pathname === "/admin/drain";
-        turnBroker?.setExternalOwnersAccepted(!draining);
-        return Response.json({ status: "ok", accepting_turns: !draining, ...activity() });
-      }
-      if (req.method === "POST" && url.pathname === "/admin/cancel-turns") {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
-        const cancelledBrowserTurns = chatGptTurnSessions.clear() + (turnBroker?.revokeExternalOwners() ?? 0);
-        const cancelledHttpTurns = await httpTurns.cancelAll(new Error("Active turn cancelled by launcher"));
-        return Response.json({
-          status: "ok",
-          cancelled_http_turns: cancelledHttpTurns,
-          cancelled_browser_turns: cancelledBrowserTurns,
-          ...activity(),
-        });
-      }
-      if (req.method === "POST" && url.pathname === "/admin/shutdown") {
-        if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
-        const current = activity();
-        if (!draining || current.active_http_turns > 0 || current.active_browser_turns > 0) {
-          return Response.json(
-            {
-              status: "refused",
-              accepting_turns: !draining,
-              ...current,
-            },
-            { status: 409 },
-          );
-        }
-        setTimeout(shutdown, 0);
-        return Response.json({ status: "ok", accepting_turns: false, ...current });
-      }
+      const lifecycleResponse = await handleLifecycleControlRequest(req, url.pathname, {
+        controlToken: config.controlToken,
+        activity,
+        isDraining: () => draining,
+        setDraining: value => { draining = value; },
+        setExternalOwnersAccepted: accepted => turnBroker?.setExternalOwnersAccepted(accepted),
+        revokeExternalOwners: () => turnBroker?.revokeExternalOwners() ?? 0,
+        cancelHttpTurns: reason => httpTurns.cancelAll(reason),
+        cancelBrowserTurns: () => chatGptTurnSessions.clear(),
+        shutdown,
+      });
+      if (lifecycleResponse) return lifecycleResponse;
       if (req.method === "GET" && url.pathname === "/v1/models") {
         if (draining) {
           return formatErrorResponse(

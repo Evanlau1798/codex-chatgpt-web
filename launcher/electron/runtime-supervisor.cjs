@@ -58,6 +58,7 @@ class RuntimeSupervisor {
     this.recoveryTasks = new Set();
     this.expectedExits = new WeakSet();
     this.restartableChildren = new WeakSet();
+    this.stateWriteCleanupStarted = false;
     this.lastChildFailure = { daemon: null, tunnel: null };
     this.lastChildOutput = { daemon: null, tunnel: null };
   }
@@ -143,6 +144,22 @@ class RuntimeSupervisor {
         if (this.restartTimers[name]) {
           clearTimeout(this.restartTimers[name]);
           this.restartTimers[name] = null;
+        }
+      }
+      if (!this.stateWriteCleanupStarted) {
+        this.stateWriteCleanupStarted = true;
+        for (const name of ["daemon", "tunnel"]) {
+          const child = this[name];
+          if (!child || child.exitCode !== null || child.signalCode !== null) continue;
+          this.expectedExits.add(child);
+          try {
+            terminateOwnedProcessTree(child);
+          } catch (terminationError) {
+            this.logger.error("runtime.state_write_cleanup_failed", {
+              name,
+              message: errorMessage(terminationError),
+            });
+          }
         }
       }
       this.logger.error("runtime.state_write_failed", { status, message });
