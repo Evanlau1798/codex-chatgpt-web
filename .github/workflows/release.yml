@@ -33,7 +33,7 @@ jobs:
       - name: Prepare AVX2-independent Windows runtime
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -GitHubEnv $env:GITHUB_ENV
+        run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -Revision 1.4.0+34cbb9a40 -GitHubEnv $env:GITHUB_ENV
       - run: bun run verify
       - run: bun run app:package
       - name: Ensure virtual display is available
@@ -92,7 +92,7 @@ jobs:
       - name: Add licenses, installers, and demo
         run: |
           cp LICENSE release-assets/LICENSE
-          cp LICENSES/Bun-1.4.0.md release-assets/Bun-1.4.0.md
+          cp LICENSES/Bun.md release-assets/Bun.md
           cp dist/THIRD_PARTY_NOTICES.txt release-assets/THIRD_PARTY_NOTICES.txt
           cp scripts/install.sh release-assets/install.sh
           cp scripts/install-launcher.sh release-assets/install-launcher.sh
