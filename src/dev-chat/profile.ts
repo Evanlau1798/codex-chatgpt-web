@@ -91,7 +91,7 @@ export function installedLauncherCandidates({
   environment?: NodeJS.ProcessEnv;
   homeDirectory?: string;
   platform?: NodeJS.Platform;
-  windowsInstallLocation?: string;
+  windowsInstallLocation?: string | null;
 } = {}): string[] {
   const override = environment.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE?.trim();
   const candidates = override ? [expandUserPath(override)] : [];
@@ -102,8 +102,9 @@ export function installedLauncherCandidates({
       posix.join(homeDirectory, "Applications", "Codex Web GPT.app", "Contents", "MacOS", "Codex Web GPT"),
     );
   } else if (platform === "win32") {
-    const registeredLocation = windowsInstallLocation?.trim()
-      || (process.platform === "win32" ? registeredWindowsLauncherInstallLocation() : undefined);
+    const registeredLocation = windowsInstallLocation === undefined
+      ? (process.platform === "win32" ? registeredWindowsLauncherInstallLocation() : undefined)
+      : windowsInstallLocation?.trim() || undefined;
     if (registeredLocation && win32.isAbsolute(registeredLocation)) {
       candidates.push(win32.join(registeredLocation, "Codex Web GPT.exe"));
     } else {
