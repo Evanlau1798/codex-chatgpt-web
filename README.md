@@ -143,8 +143,10 @@ reduced tool contract.
 
 ### Enhanced Web session mode (Beta)
 
-This setting is off by default and affects only `chatgpt-web/*` routes. Native OpenAI/Codex models
-always keep their original Responses and compact paths, regardless of this setting.
+This setting is enabled by default for new Enhanced fork installations and affects only
+`chatgpt-web/*` routes. Existing explicit choices are preserved, while older configurations that
+never selected a mode migrate conservatively with it disabled. Native OpenAI/Codex models always
+keep their original Responses and compact paths, regardless of this setting.
 
 When disabled, Web models follow the upstream session and compact behavior. When enabled, the
 bridge adds 30-minute retained root/subagent conversations, same-conversation steering, six-way

@@ -130,7 +130,8 @@ bun run app
 
 ### 增强型 Web 工作阶段模式（Beta）
 
-此设置默认关闭，且只影响 `chatgpt-web/*` 路由。无论该设置如何，非 Web 的 OpenAI／Codex
+此设置在 Enhanced fork 的新安装中默认开启，且只影响 `chatgpt-web/*` 路由。已有安装的明确选择
+会原样保留；从未选择过模式的旧配置会保守迁移为关闭。无论该设置如何，非 Web 的 OpenAI／Codex
 模型始终使用原生 Responses 与 compact 路径。
 
 关闭时，Web 模型使用上游原始的会话与压缩行为。开启后，桥接会增加 30 分钟 root／subagent

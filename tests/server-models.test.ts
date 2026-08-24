@@ -89,7 +89,12 @@ test("proxies official /models auth and query, then appends the fixed ChatGPT We
   expect(body.models[0]!.multi_agent_version).toBe("v2");
   for (const [index, model] of body.models.slice(1).entries()) {
     const route = CHATGPT_WEB_MODEL_ROUTES[index]!;
-    const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config);
+    const limits = resolveChatGptWebContextLimits(
+      route.backendModel,
+      route.adapterEffort,
+      config,
+      config.useEnhancedWebSessionMode,
+    );
     expect(model.context_window).toBe(limits.contextWindow);
     expect(model.max_context_window).toBe(limits.contextWindow);
     expect(model.effective_context_window_percent).toBe(limits.effectiveContextWindowPercent);

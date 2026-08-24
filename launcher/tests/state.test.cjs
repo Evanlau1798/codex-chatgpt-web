@@ -23,7 +23,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       xOpened: false,
       autoStart: true,
       bridgeEnabled: true,
-      useEnhancedWebSessionMode: false,
+      useEnhancedWebSessionMode: true,
       keepRunningOnClose: true,
       showBrowserDuringTurns: true,
       lockBrowserDuringTurns: true,
@@ -53,7 +53,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       xOpened: false,
       autoStart: true,
       bridgeEnabled: true,
-      useEnhancedWebSessionMode: false,
+      useEnhancedWebSessionMode: true,
       keepRunningOnClose: false,
       showBrowserDuringTurns: true,
       lockBrowserDuringTurns: false,
@@ -123,6 +123,24 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       mcpGuideStep: 0,
       sessionRefreshReminderAt: null,
     });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("existing launcher state without a mode stays original while the legacy opt-in migrates", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-launcher-mode-state-"));
+  const file = path.join(root, "state.json");
+  try {
+    fs.writeFileSync(file, JSON.stringify({ version: 1, onboardingComplete: true }));
+    assert.equal(createStateStore(file).read().useEnhancedWebSessionMode, false);
+
+    fs.writeFileSync(file, JSON.stringify({
+      version: 1,
+      onboardingComplete: true,
+      useNewCompactMode: true,
+    }));
+    assert.equal(createStateStore(file).read().useEnhancedWebSessionMode, true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

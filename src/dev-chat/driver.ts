@@ -223,7 +223,12 @@ export class DevChatDriver {
       solAvailable: this.config.solAvailable,
       proAvailable: this.config.proAvailable,
     });
-    const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, this.config);
+    const limits = resolveChatGptWebContextLimits(
+      route.backendModel,
+      route.adapterEffort,
+      this.config,
+      this.config.useEnhancedWebSessionMode,
+    );
     return {
       model: state.model,
       inputTokens,

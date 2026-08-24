@@ -64,7 +64,7 @@ function compactFixture({ startResults = [{ status: "ready" }], enhanced } = {})
   return { calls, configPath, host, root, retainedReleases: () => retainedReleases };
 }
 
-test("launcher runtime config defaults enhanced Web session mode off", () => {
+test("launcher keeps a missing legacy runtime mode disabled", () => {
   const descriptorPath = path.join(os.tmpdir(), "launcher-browser.json");
   const config = validateConfig(configFor(descriptorPath), descriptorPath);
   assert.equal(config.useEnhancedWebSessionMode, false);

@@ -57,13 +57,18 @@ describe("native /models augmentation", () => {
     expect(web.map(model => model.display_name)).toEqual(CHATGPT_WEB_MODEL_ROUTES.map(route => route.displayName));
     for (const [index, model] of web.entries()) {
       const route = CHATGPT_WEB_MODEL_ROUTES[index]!;
-      const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config);
+      const limits = resolveChatGptWebContextLimits(
+        route.backendModel,
+        route.adapterEffort,
+        config,
+        config.useEnhancedWebSessionMode,
+      );
       expect(model).toMatchObject({
         slug: route.slug,
         display_name: route.displayName,
         tool_mode: null,
         use_responses_lite: false,
-        supports_search_tool: false,
+        supports_search_tool: true,
         prefer_websockets: false,
         default_reasoning_level: route.codexEffort,
         supported_reasoning_levels: [{ effort: route.codexEffort, description: route.displayName }],
@@ -82,8 +87,9 @@ describe("native /models augmentation", () => {
     }
   });
 
-  test("publishes the enhanced compact threshold only when explicitly enabled", () => {
+  test("keeps the original compact threshold available when enhanced mode is disabled", () => {
     const originalConfig = defaultConfig("full");
+    originalConfig.useEnhancedWebSessionMode = false;
     originalConfig.proAvailable = true;
     const original = augmentNativeModelCatalog(source(), originalConfig).models as Array<Record<string, unknown>>;
     const betaConfig = { ...originalConfig, useEnhancedWebSessionMode: true };
@@ -127,6 +133,7 @@ describe("native /models augmentation", () => {
 
   test("advertises deferred tool discovery only for enhanced Web sessions", () => {
     const config = defaultConfig("full");
+    config.useEnhancedWebSessionMode = false;
     config.proAvailable = true;
     const native = source();
     const nativeCount = (native.models as unknown[]).length;
@@ -276,7 +283,9 @@ describe("native /models augmentation", () => {
       shell_type: "shell_command",
     });
 
-    const result = augmentNativeModelCatalog(native, defaultConfig("full"));
+    const config = defaultConfig("full");
+    config.useEnhancedWebSessionMode = false;
+    const result = augmentNativeModelCatalog(native, config);
     const web = (result.models as Array<Record<string, unknown>>)
       .filter(model => String(model.slug).startsWith("chatgpt-web/"));
     expect(web.length).toBe(3);

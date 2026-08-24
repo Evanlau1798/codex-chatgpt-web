@@ -172,7 +172,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     host: "127.0.0.1",
     port: 17841,
     contextWindow: 256_000,
-    useEnhancedWebSessionMode: false,
+    useEnhancedWebSessionMode: true,
     appName: CHATGPT_CONNECTOR_NAME,
     browserHost: "managed-chrome",
     chromeExecutablePath: defaultChromeExecutable(),

@@ -296,6 +296,7 @@ export function assertChatGptWebInputWithinLimits(
   effort: ChatGptWebModelMode["effort"],
   capabilities: ChatGptWebCapabilities,
   promptChars?: number,
+  useEnhancedWebSessionMode = false,
 ): void {
   if (modelId !== CHATGPT_WEB_MODEL_ID && modelId !== CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error(`ChatGPT web context limit is not defined for model: ${modelId}`);
@@ -309,7 +310,12 @@ export function assertChatGptWebInputWithinLimits(
       { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
     );
   }
-  const { contextWindow } = resolveChatGptWebContextLimits(modelId, effort, capabilities);
+  const { contextWindow } = resolveChatGptWebContextLimits(
+    modelId,
+    effort,
+    capabilities,
+    useEnhancedWebSessionMode,
+  );
   const { browserMessageTokenLimit, browserComposerCharLimit } = resolveChatGptWebTransportLimits(
     modelId,
     effort,
@@ -2157,6 +2163,7 @@ export class ChatGptBrowserWorker {
         requestedMode.effort,
         turn.capabilities,
         prepared.text.length,
+        turn.retainConversation === true,
       );
       const deadline = this.config.turnTimeoutMs === undefined
         ? undefined

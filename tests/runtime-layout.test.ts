@@ -90,7 +90,7 @@ test("user-home expansion accepts native Unix and Windows separators", () => {
 
 test("the direct-turn connector identity migrates known legacy setup without overwriting custom names", () => {
   expect(defaultConfig("full").appName).toBe(CHATGPT_CONNECTOR_NAME);
-  expect(defaultConfig("full").useEnhancedWebSessionMode).toBe(false);
+  expect(defaultConfig("full").useEnhancedWebSessionMode).toBe(true);
   expect(defaultConfig("full").subagentProtocol).toBe("compatibility-v1");
   expect(resolveSetupConnectorName("Codex Native")).toBe("Codex Native2");
   expect(resolveSetupConnectorName("Team Codex Harness")).toBe("Team Codex Harness");
@@ -118,6 +118,30 @@ test("enhanced Web session mode migrates the legacy key and rejects conflicting 
     useEnhancedWebSessionMode: false,
   })}\n`);
   expect(() => loadConfig()).toThrow("conflicting Web session mode settings");
+});
+
+test("existing Web session mode choices remain stable while missing legacy settings migrate off", () => {
+  const root = join(tmpdir(), `codex-chatgpt-web-session-default-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const existing = { ...defaultConfig("browser-only") } as Record<string, unknown>;
+
+  delete existing.useEnhancedWebSessionMode;
+  writeFileSync(join(root, "config.json"), `${JSON.stringify(existing)}\n`);
+  expect(loadConfig().useEnhancedWebSessionMode).toBe(false);
+
+  writeFileSync(join(root, "config.json"), `${JSON.stringify({
+    ...existing,
+    useEnhancedWebSessionMode: false,
+  })}\n`);
+  expect(loadConfig().useEnhancedWebSessionMode).toBe(false);
+
+  writeFileSync(join(root, "config.json"), `${JSON.stringify({
+    ...existing,
+    useEnhancedWebSessionMode: true,
+  })}\n`);
+  expect(loadConfig().useEnhancedWebSessionMode).toBe(true);
 });
 
 test("the DEV profile uses a distinct connector identity without overwriting custom names", () => {
