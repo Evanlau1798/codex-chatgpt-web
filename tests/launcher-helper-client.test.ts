@@ -230,7 +230,7 @@ test("a rejected prompt preparation releases the helper turn before the trace ca
 });
 
 test("launcher helper protocol preserves multipart context and the compaction flag", async () => {
-  let sent: Record<string, unknown> | undefined;
+  const sent: Record<string, unknown>[] = [];
   const client = new LauncherBrowserHelperClient({
     appName: "Codex Native2 DEV",
     browserHost: "launcher",
@@ -242,20 +242,31 @@ test("launcher helper protocol preserves multipart context and the compaction fl
     autoApproveToolCalls: false,
   });
   const internal = client as unknown as {
-    pending: Map<string, { resolve(value: string): void }>;
+    child: unknown;
     ensureChild(): Promise<void>;
     send(message: Record<string, unknown>): Promise<void>;
-    finish(id: string): void;
+    handleLine(child: unknown, line: string): void;
   };
+  const child = {};
+  internal.child = child;
   internal.ensureChild = async () => {};
   internal.send = async message => {
-    sent = message;
-    if (message.type !== "run" || typeof message.id !== "string") return;
-    queueMicrotask(() => {
-      const pending = internal.pending.get(message.id as string);
-      internal.finish(message.id as string);
-      pending?.resolve("done");
-    });
+    sent.push(message);
+    if (typeof message.id !== "string") return;
+    if (message.type === "run") {
+      queueMicrotask(() => internal.handleLine(child, JSON.stringify({
+        type: "event",
+        id: message.id,
+        event: "prepared_selected",
+        reused: false,
+      })));
+    } else if (message.type === "prepared_selected_ack") {
+      queueMicrotask(() => internal.handleLine(child, JSON.stringify({
+        type: "result",
+        id: message.id,
+        text: "done",
+      })));
+    }
   };
 
   await expect(client.run({
@@ -274,15 +285,18 @@ test("launcher helper protocol preserves multipart context and the compaction fl
     onTextDelta() {},
   })).resolves.toBe("done");
 
-  expect(sent).toMatchObject({
+  expect(sent[0]).toMatchObject({
     type: "run",
     turn: {
       compaction: true,
-      prepared: {
-        text: "commit",
-        multipart: { parts: ["{\"part\":1}", "{\"part\":2}", "{\"part\":3}"], commit: "commit" },
-        trimmedCompactionMessages: 4,
-      },
+    },
+  });
+  expect(sent[1]).toMatchObject({
+    type: "prepared_selected_ack",
+    prepared: {
+      text: "commit",
+      multipart: { parts: ["{\"part\":1}", "{\"part\":2}", "{\"part\":3}"], commit: "commit" },
+      trimmedCompactionMessages: 4,
     },
   });
 });

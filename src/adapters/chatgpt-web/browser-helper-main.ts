@@ -29,6 +29,7 @@ interface RunMessage {
     retainConversation?: boolean;
     requireRetainedConversation?: boolean;
     conversationKey?: string;
+    compaction?: boolean;
     captureLunaCheckpoint?: boolean;
   };
 }
@@ -149,6 +150,9 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.captureLunaCheckpoint !== undefined && typeof message.turn.captureLunaCheckpoint !== "boolean") {
     throw new Error("Browser helper Luna checkpoint flag is invalid");
   }
+  if (message.turn.compaction !== undefined && typeof message.turn.compaction !== "boolean") {
+    throw new Error("Browser helper compaction flag is invalid");
+  }
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: "https://chatgpt.com",
@@ -180,6 +184,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.retainConversation ? { retainConversation: true } : {}),
     ...(message.turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     ...(message.turn.conversationKey ? { conversationKey: message.turn.conversationKey } : {}),
+    ...(message.turn.compaction ? { compaction: true } : {}),
     abortSignal: abortController.signal,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
     onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "submitted" }),
