@@ -45,6 +45,7 @@ export const CHATGPT_WEB_PRO_MODEL_COMPOSER_CHAR_LIMIT = 1_635_000;
  * history out of later browser requests without asking Codex to compact its canonical history.
  */
 export const CHATGPT_WEB_LUNA_CONTEXT_WINDOW = 1_050_000;
+export const CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER = 3;
 
 export interface ChatGptWebContextLimits {
   contextWindow: number;
@@ -84,6 +85,7 @@ export function resolveChatGptWebContextLimits(
     return contextLimits(CHATGPT_WEB_LUNA_CONTEXT_WINDOW, CHATGPT_WEB_LUNA_CONTEXT_WINDOW);
   }
 
+  let limits: ChatGptWebContextLimits;
   if (capabilities.proAvailable) {
     if (useEnhancedWebSessionMode) {
       const contextWindow = effort === "low"
@@ -104,14 +106,19 @@ export function resolveChatGptWebContextLimits(
       CHATGPT_WEB_INSTANT_CONTEXT_WINDOW,
       CHATGPT_WEB_INSTANT_AUTO_COMPACT_TOKEN_LIMIT,
     );
-  }
-  if (effort === "medium" || effort === "high") {
-    return contextLimits(
+  } else if (effort === "medium" || effort === "high") {
+    limits = contextLimits(
       CHATGPT_WEB_MEDIUM_HIGH_CONTEXT_WINDOW,
       CHATGPT_WEB_MEDIUM_HIGH_AUTO_COMPACT_TOKEN_LIMIT,
     );
+  } else {
+    throw new Error(`ChatGPT Plus context limit is not defined for unavailable effort: ${effort}`);
   }
-  throw new Error(`ChatGPT Plus context limit is not defined for unavailable effort: ${effort}`);
+  if (!capabilities.experimentalBiggerContext) return limits;
+  return contextLimits(
+    limits.contextWindow * CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER,
+    limits.autoCompactTokenLimit * CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER,
+  );
 }
 
 /** Resolve limits of one visible ChatGPT composer message, independently of model context. */
@@ -161,6 +168,7 @@ export interface ChatGptWebModelRoute {
 export interface ChatGptWebAccountCapabilities {
   solAvailable: boolean;
   proAvailable: boolean;
+  experimentalBiggerContext?: boolean;
 }
 
 export const CHATGPT_WEB_LUNA_MODEL_ROUTE: ChatGptWebModelRoute = {

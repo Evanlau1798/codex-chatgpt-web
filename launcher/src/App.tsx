@@ -1254,9 +1254,9 @@ function ActivitySurface({
         <span>{copy.recentActivity}</span>
         <SecondaryButton
           icon="external"
-          onClick={() => void api!.openLogs().catch((cause) => setError(messageOf(cause)))}
+          onClick={() => void api!.exportLogs().catch((cause) => setError(messageOf(cause)))}
         >
-          {copy.openLogFolder}
+          {copy.exportSafeLog}
         </SecondaryButton>
       </div>
       <div className="activity-table">
@@ -1422,6 +1422,12 @@ function SettingsSurface({
           <LanguageMenu language={language} onChange={(next) => void updateLanguage(next)} />
         </SettingRow>
       </div>
+
+      {!devProfile && snapshot.state.codexRestartRequired ? (
+        <NoticeRow icon="alert" tone="warning">
+          {copy.restartCodex}
+        </NoticeRow>
+      ) : null}
 
       <SectionHeading label={copy.diagnostics} spaced />
       <button className="diagnostic-row" disabled={busy} onClick={() => void runDoctor()} type="button">
