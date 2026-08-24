@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { resolve } from "node:path";
 import type { ProviderAdapter } from "../src/adapters/base";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
@@ -23,6 +24,7 @@ function request(body: Record<string, unknown>, path = "/v1/messages", signal?: 
 }
 
 test("translates a Claude Code message into the existing ChatGPT Web adapter", async () => {
+  const projectRoot = resolve("claude-project");
   const seenProviders: CodexProviderConfig[] = [];
   const adapterFactory = (provider: CodexProviderConfig): ProviderAdapter => {
     seenProviders.push(provider);
@@ -38,7 +40,7 @@ test("translates a Claude Code message into the existing ChatGPT Web adapter", a
           claude_subagent: true,
           claude_retain_conversation: true,
         });
-        expect(extractChatGptTurnEnvironment(parsed).cwd).toBe("G:\\claude-project");
+        expect(extractChatGptTurnEnvironment(parsed).cwd).toBe(projectRoot);
         expect(parsed.context.systemPrompt).toContain("Available agent types for the Agent tool: Explore");
         expect(parsed.context.tools).toEqual([{
           name: "read_file",
@@ -59,7 +61,7 @@ test("translates a Claude Code message into the existing ChatGPT Web adapter", a
   const response = await messagesRequest(request({
     model: "chatgpt-web-high",
     max_tokens: 2048,
-    system: "You are Claude Code.\n- Primary working directory: G:\\claude-project",
+    system: `You are Claude Code.\n- Primary working directory: ${projectRoot}`,
     messages: [
       { role: "user", content: [
         { type: "text", text: "Inspect this image" },
