@@ -58,14 +58,8 @@ export function blockingChatGptProjectionAnimations<T extends ChatGptProjectionA
   ));
 }
 
-function animationProgress(animation: ChatGptProjectionAnimation): string {
-  const current = animation.currentTime === null ? "pending" : Math.floor(animation.currentTime / 100);
-  return `${animation.playState}:${current}:${animation.endTime ?? "unknown"}`;
-}
-
 function projectionSignature(
   state: ChatGptCompletionState,
-  blocking: readonly ChatGptProjectionAnimation[],
 ): string {
   const projection = state.projection;
   return [
@@ -76,7 +70,6 @@ function projectionSignature(
     projection.lastNodePresent ? "last" : "incomplete",
     projection.boundaryStart ?? "",
     projection.boundaryEnd ?? "",
-    ...blocking.map(animationProgress),
   ].join("\0");
 }
 
@@ -104,7 +97,13 @@ export class ChatGptCompletionTracker {
     }
 
     const blocking = blockingChatGptProjectionAnimations(state.projection.animations);
-    const signature = projectionSignature(state, blocking);
+    // Web Animations affect how an already-materialized subtree is painted, but they do not prove
+    // that more Markdown remains to be added. Some ChatGPT renderers keep a finite visual animation
+    // running after the terminal action and public last-node boundary are present. Including its
+    // currentTime in the semantic signature resets progress forever even when the extracted DOM is
+    // byte-stable. Text, HTML, root identity, and public boundaries remain the completion proof;
+    // active finite animations are retained as diagnostics only.
+    const signature = projectionSignature(state);
     if (this.progress?.signature !== signature) {
       this.progress = { signature, at: now };
     }
@@ -115,8 +114,7 @@ export class ChatGptCompletionTracker {
         && state.projection.boundaryEnd !== undefined);
     const projectionReady = Boolean(state.projection.rootId)
       && boundaryReady
-      && state.projection.lastMutationAt !== undefined
-      && blocking.length === 0;
+      && state.projection.lastMutationAt !== undefined;
     if (!projectionReady) {
       this.candidate = undefined;
       return this.stalledDecision(state, blocking.length, now);

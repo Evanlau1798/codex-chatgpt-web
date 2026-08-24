@@ -27,7 +27,7 @@ const completedState = (
   ...overrides,
 });
 
-test("does not complete a terminal prefix while a finite projection animation is active", () => {
+test("settles stable terminal content while a finite visual animation remains active", () => {
   const tracker = new ChatGptCompletionTracker(CHATGPT_COMPLETION_SETTLE_MS, 60_000);
   const animated = completedState("short prefix", {
     projection: {
@@ -43,7 +43,7 @@ test("does not complete a terminal prefix while a finite projection animation is
       ...animated.projection,
       animations: [{ playState: "running", currentTime: 12_000, endTime: 20_000, infinite: false }],
     },
-  }, 12_000).status).toBe("waiting");
+  }, 12_000).status).toBe("complete");
 
   const projected = completedState("short prefix followed by the complete answer", {
     projection: {
