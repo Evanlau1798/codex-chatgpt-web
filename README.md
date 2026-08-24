@@ -21,6 +21,7 @@
 This independently maintained **Enhanced** fork tracks the upstream release base and adds an
 opt-in Web-session lifecycle for long-running Codex and Claude Code work. Fork releases use the
 `<upstream>-Enhanced.<revision>` version format, beginning with `3.0.1-Enhanced.1`.
+The current release is `3.0.2-Enhanced.1`, based on upstream v3.0.2.
 
 Free and Go accounts get **ChatGPT Web — Luna** in Codex's native model picker. Accounts that
 expose the reasoning selector keep **Instant**, **Medium**, **High**, **Extra High**, and **Pro** as
@@ -154,6 +155,19 @@ browser scheduling, structured handoff compaction, canonical continuation after 
 bootstrap/archive transport for prompts that exceed the measured inline browser boundary. A
 compact always starts a new conversation epoch; old turn tokens and completed tool calls are not
 replayed.
+
+### Bigger Context (experimental)
+
+This separately controlled v3.0.2 feature can carry a request larger than one measured ChatGPT
+message while keeping every individual composer submission inside its verified boundary. The bridge
+stages two or three inert context parts in the same Temporary Chat, verifies an exact acknowledgement
+for each part, and executes the task only from the final commit message. Connector selection is
+bounded to three complete `@codex` attempts, and a missing connector fails explicitly instead of
+opening replacement sessions indefinitely.
+
+Bigger Context does not replace compaction and does not change native OpenAI/Codex routing. Disable
+it if you prefer the normal single-message transport; Enhanced session retention, steering, and
+handoff compact remain independent.
 
 ## Claude Code
 

@@ -20,6 +20,7 @@
 
 这是独立维护的 **Enhanced** fork：在持续跟进上游基线的同时，提供可选的长任务 Web 会话
 生命周期。Fork 版本采用 `<上游版本>-Enhanced.<修订号>`，首个版本为 `3.0.1-Enhanced.1`。
+当前版本为基于上游 v3.0.2 的 `3.0.2-Enhanced.1`。
 
 Free 和 Go 账户会在 Codex 原生模型选择器中看到 **ChatGPT Web — Luna**。具有推理选择器的
 账户仍会按订阅权限看到 **Instant**、**Medium**、**High**、**Extra High** 和 **Pro**。
@@ -138,6 +139,16 @@ bun run app
 会话保留、同对话 steering、六路浏览器调度、结构化 handoff compact、停止／重启后的 canonical
 续接，以及对超过实测浏览器 inline 边界的 bootstrap／archive 传输。每次 compact 都会建立新
 epoch；旧 turn token 与已完成工具调用不会被重播。
+
+### 更大上下文（实验性）
+
+此 v3.0.2 功能使用独立开关，可传输超过单条 ChatGPT 消息实测上限的请求，同时确保每次 composer
+提交仍在已验证边界内。Bridge 会在同一个临时聊天中分两至三次暂存不会执行任务的 context part，
+逐次验证精确 acknowledgement，最后才由 commit 消息开始工作。连接器选择最多完整输入三次
+`@codex`；找不到连接器时会明确失败，不会无限建立替代会话。
+
+更大上下文不会取代 compact，也不会更改非 Web 的 OpenAI／Codex 原生路由。偏好一般单消息传输时
+可关闭此功能；Enhanced 的会话保留、steering 与 handoff compact 均维持独立。
 
 ## Claude Code
 
