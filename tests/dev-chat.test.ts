@@ -98,6 +98,7 @@ test("Bigger Context triples the DEV compaction window and fails closed for Luna
   const config = {
     ...defaultConfig("browser-only"),
     purpose: "dev-harness" as const,
+    useEnhancedWebSessionMode: false,
     solAvailable: true,
     proAvailable: true,
   };

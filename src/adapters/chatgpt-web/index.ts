@@ -20,7 +20,7 @@ import { TurnBroker, type TurnBrokerOwner } from "./turn-broker";
 import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, chatGptTurnTraceId, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
 import { chatGptTurnRetryKey } from "./turn-retry-identity";
 import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
-import { estimateChatGptWebUsage } from "./usage";
+import { estimateChatGptWebUsage, resolveBiggerContextMultipartParts } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
 import { resolveTrustedCodexEnvironment } from "./trusted-environment-lifecycle";
 import { browserSteeringRetry, deliverPendingChatGptSteering, retainedConversationResumeRequest, sessionForChatGptRequest, validateBatchTools } from "./steering";
@@ -46,7 +46,13 @@ export function createChatGptWebAdapter(
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = TurnBroker.forSocket(brokerSocketPath(provider));
   const brokerOwner = dependencies.broker ?? broker;
-  const { timeoutMs, useEnhancedWebSessionMode, configuredCapabilities, executionNamespace } = chatGptAdapterRuntimeConfig(provider);
+  const {
+    timeoutMs,
+    useEnhancedWebSessionMode,
+    experimentalBiggerContext,
+    configuredCapabilities,
+    executionNamespace,
+  } = chatGptAdapterRuntimeConfig(provider);
   const environmentStore = new ChatGptThreadEnvironmentStore(provider.chatgptWeb?.threadEnvironmentStatePath ? resolve(expandUserPath(provider.chatgptWeb.threadEnvironmentStatePath)) : undefined);
   const lunaCheckpointStore = new ChatGptLunaCheckpointStore(provider.chatgptWeb?.lunaCheckpointStatePath ? resolve(expandUserPath(provider.chatgptWeb.lunaCheckpointStatePath)) : undefined);
   const startRuntime = (parsed: CodexParsedRequest, environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined,
@@ -58,6 +64,14 @@ export function createChatGptWebAdapter(
     const identity = extractChatGptTurnIdentity(parsed);
     const captureLunaCheckpoint = parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !parsed._compactionRequest && Boolean(identity.threadId && identity.turnId);
     const checkpointInput = captureLunaCheckpoint ? lunaCheckpointStore.apply(parsed) : { parsed, applied: false };
+    const experimentalMultipartParts = experimentalBiggerContext
+      ? resolveBiggerContextMultipartParts(checkpointInput.parsed, turnCapabilities)
+      : undefined;
+    const compileOptions = {
+      captureLunaCheckpoint,
+      nativeControlConnector,
+      ...(experimentalMultipartParts === undefined ? {} : { experimentalMultipartParts }),
+    };
     if (captureLunaCheckpoint) {
       console.info(
         `[chatgpt-web] Luna rolling checkpoint applied=${checkpointInput.applied}${checkpointInput.reason ? ` reason=${checkpointInput.reason}` : ""}`,
@@ -111,15 +125,16 @@ export function createChatGptWebAdapter(
         reasoning: parsed.options.reasoning,
         capabilities: turnCapabilities,
         prepare: async () => prepareChatGptWebContext(broker,
-          compileChatGptWebPrompt(checkpointInput.parsed, turnCapabilities, undefined, {
-            captureLunaCheckpoint,
-            nativeControlConnector,
-          }), useEnhancedWebSessionMode, contextTtlMs, traceId),
+          compileChatGptWebPrompt(checkpointInput.parsed, turnCapabilities, undefined, compileOptions),
+          useEnhancedWebSessionMode, contextTtlMs, traceId),
         ...(resumeInput ? {
-          prepareResume: async () => prepareChatGptWebContext(broker, compileChatGptWebPrompt(resumeInput, turnCapabilities, undefined, {
-            captureLunaCheckpoint,
-            nativeControlConnector,
-          }), useEnhancedWebSessionMode, contextTtlMs, traceId),
+          prepareResume: async () => prepareChatGptWebContext(
+            broker,
+            compileChatGptWebPrompt(resumeInput, turnCapabilities, undefined, compileOptions),
+            useEnhancedWebSessionMode,
+            contextTtlMs,
+            traceId,
+          ),
         } : {}),
         ...(retainConversation ? { retainConversation: true } : {}),
         ...(conversationKey ? { conversationKey } : {}),
@@ -170,10 +185,7 @@ export function createChatGptWebAdapter(
       }
       try {
         return await prepareChatGptWebContext(broker,
-          compileChatGptWebPrompt(input, turnCapabilities, turnToken, {
-            captureLunaCheckpoint,
-            nativeControlConnector,
-          }),
+          compileChatGptWebPrompt(input, turnCapabilities, turnToken, compileOptions),
           useEnhancedWebSessionMode, contextTtlMs, traceId);
       } catch (error) {
         const failure = reportChatGptPreparationFailure(traceId, source, input, error);

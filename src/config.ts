@@ -435,6 +435,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     subagentProtocol,
     solAvailable,
     proAvailable,
+    experimentalBiggerContext,
   } as AppConfig;
 }
 
@@ -475,6 +476,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       solAvailable: config.solAvailable,
       proAvailable: config.proAvailable,
       useEnhancedWebSessionMode: config.useEnhancedWebSessionMode,
+      experimentalBiggerContext: config.experimentalBiggerContext,
       autoApproveToolCalls: config.autoApproveToolCalls,
     },
   };

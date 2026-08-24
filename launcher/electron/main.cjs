@@ -545,6 +545,17 @@ function registerIpc({ logger, stateStore }) {
     send("launcher:state-changed", state);
     return state;
   });
+  handle("launcher:bigger-context", async (_event, enabled) => {
+    const result = await runtimeHost.setBiggerContext(enabled === true);
+    const state = stateStore.update({
+      experimentalBiggerContext: result.enabled,
+      codexCatalogVerified: IS_DEV_PROFILE ? true : false,
+      codexRestartRequired: IS_DEV_PROFILE ? false : true,
+    });
+    send("launcher:state-changed", state);
+    if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
+    return state;
+  });
   handle("launcher:uninstall-integration", async () => {
     if (IS_DEV_PROFILE) throw new Error("DEV profile has no Codex integration to remove");
     const language = stateStore.read().language;
@@ -669,17 +680,6 @@ function registerIpc({ logger, stateStore }) {
       state: stateStore.update({ autoStart: desired }),
       ...autostart,
     };
-  });
-  handle("launcher:bigger-context", async (_event, enabled) => {
-    const result = await runtimeHost.setBiggerContext(enabled === true);
-    const state = stateStore.update({
-      experimentalBiggerContext: result.enabled,
-      codexCatalogVerified: IS_DEV_PROFILE ? true : false,
-      codexRestartRequired: IS_DEV_PROFILE ? false : true,
-    });
-    send("launcher:state-changed", state);
-    if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
-    return state;
   });
   handle("launcher:set-preference", (_event, key, value) => {
     if (key !== "keepRunningOnClose" && key !== "showBrowserDuringTurns" && key !== "lockBrowserDuringTurns") {
@@ -861,6 +861,10 @@ async function start() {
   if (stateStore.read().useEnhancedWebSessionMode !== configuredEnhancedMode) {
     stateStore.update({ useEnhancedWebSessionMode: configuredEnhancedMode });
   }
+  const configuredBiggerContext = runtimeHost.runtimeConfigSnapshot().config?.experimentalBiggerContext === true;
+  if (stateStore.read().experimentalBiggerContext !== configuredBiggerContext) {
+    stateStore.update({ experimentalBiggerContext: configuredBiggerContext });
+  }
   browserHost = new BrowserHost({
     window: mainWindow,
     descriptorPath: BROWSER_DESCRIPTOR_PATH,
@@ -1002,14 +1006,6 @@ async function start() {
         connectorMigrated: upgrade.connectorMigrated,
       });
     }
-    const configuredRuntime = runtimeHost.runtimeConfigSnapshot();
-    if (configuredRuntime.configured) {
-      const enabled = configuredRuntime.config?.experimentalBiggerContext === true;
-      if (stateStore.read().experimentalBiggerContext !== enabled) {
-        const state = stateStore.update({ experimentalBiggerContext: enabled });
-        send("launcher:state-changed", state);
-      }
-    }
     try {
       const route = await runtimeHost.bridgeStatus();
       if (route.installed) {
@@ -1036,7 +1032,6 @@ async function start() {
       const current = stateStore.read();
       const patch = {
         mcpRuntimeInstalled: config.mode === "full",
-        experimentalBiggerContext: config.experimentalBiggerContext === true,
         ...(config.mode === "browser-only" ? {
           mcpSetupComplete: false,
           mcpGuideStep: 0,

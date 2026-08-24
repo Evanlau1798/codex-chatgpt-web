@@ -1,5 +1,25 @@
 export const CHATGPT_COMPLETION_SETTLE_MS = 2_000;
 export const CHATGPT_COMPLETION_PROJECTION_STALL_MS = 60_000;
+export const CHATGPT_STOPPED_THINKING_GRACE_MS = 5_000;
+
+export class ChatGptStoppedThinkingTracker {
+  private visibleSince?: number;
+
+  constructor(private readonly graceMs = CHATGPT_STOPPED_THINKING_GRACE_MS) {
+    if (!Number.isFinite(graceMs) || graceMs < 0) {
+      throw new Error("ChatGPT Stopped thinking grace must be a non-negative finite number");
+    }
+  }
+
+  update(visible: boolean, now = Date.now()): boolean {
+    if (!visible) {
+      this.visibleSince = undefined;
+      return false;
+    }
+    this.visibleSince ??= now;
+    return now - this.visibleSince >= this.graceMs;
+  }
+}
 
 export interface ChatGptProjectionAnimation {
   playState: string;

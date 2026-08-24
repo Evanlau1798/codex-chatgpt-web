@@ -146,17 +146,6 @@ async function run(message: RunMessage): Promise<void> {
     && !/^[a-f0-9]{64}$/.test(message.turn.conversationKey)) {
     throw new Error("Browser helper conversation key is invalid");
   }
-  if (message.turn.prepared.multipart !== undefined) {
-    const multipart = message.turn.prepared.multipart;
-    if (!multipart || !Array.isArray(multipart.parts)
-      || (multipart.parts.length !== 2 && multipart.parts.length !== 3)
-      || multipart.parts.some(part => typeof part !== "string") || typeof multipart.commit !== "string") {
-      throw new Error("Browser helper multipart prompt is invalid");
-    }
-  }
-  if (message.turn.compaction !== undefined && typeof message.turn.compaction !== "boolean") {
-    throw new Error("Browser helper compaction flag is invalid");
-  }
   if (message.turn.captureLunaCheckpoint !== undefined && typeof message.turn.captureLunaCheckpoint !== "boolean") {
     throw new Error("Browser helper Luna checkpoint flag is invalid");
   }
@@ -192,7 +181,6 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     ...(message.turn.conversationKey ? { conversationKey: message.turn.conversationKey } : {}),
     abortSignal: abortController.signal,
-    ...(message.turn.compaction ? { compaction: true } : {}),
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
     onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "submitted" }),
     onPreparedSelected: reused => {
@@ -341,11 +329,26 @@ input.on("line", line => {
       });
     }
   } else if (message.type === "prepared_selected_ack") {
-    if (!message.prepared || typeof message.prepared.text !== "string" || !Array.isArray(message.prepared.images)) {
+    const prepared = message.prepared;
+    const multipart = prepared?.multipart;
+    const invalidMultipart = multipart !== undefined && (
+      !Array.isArray(multipart.parts)
+      || (multipart.parts.length !== 2 && multipart.parts.length !== 3)
+      || multipart.parts.some(part => typeof part !== "string")
+      || typeof multipart.commit !== "string"
+    );
+    if (!prepared || typeof prepared.text !== "string" || !Array.isArray(prepared.images)
+      || invalidMultipart
+      || (prepared.modelInputText !== undefined && typeof prepared.modelInputText !== "string")
+      || (prepared.transport !== undefined
+        && prepared.transport !== "inline" && prepared.transport !== "native2-archive")
+      || (prepared.inlineChars !== undefined && !Number.isSafeInteger(prepared.inlineChars))
+      || (prepared.archiveChars !== undefined && !Number.isSafeInteger(prepared.archiveChars))
+      || (prepared.archiveSha256 !== undefined && !/^[a-f0-9]{64}$/.test(prepared.archiveSha256))) {
       writeProtocol({ type: "error", id: message.id, message: "Browser helper selected prompt is invalid" });
       preparedSelectionWaiters.get(message.id)?.();
     } else {
-      preparedSelectionWaiters.get(message.id)?.(message.prepared);
+      preparedSelectionWaiters.get(message.id)?.(prepared);
     }
     preparedSelectionWaiters.delete(message.id);
   } else if (message.type === "answer_retry") {

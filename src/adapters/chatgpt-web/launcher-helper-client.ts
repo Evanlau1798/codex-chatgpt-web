@@ -249,7 +249,19 @@ export class LauncherBrowserHelperClient {
                 return this.send({
                   type: "prepared_selected_ack",
                   id: message.id,
-                  prepared: { text: prepared.text, images: prepared.images } satisfies CompiledChatGptWebPrompt,
+                  prepared: {
+                    text: prepared.text,
+                    images: prepared.images,
+                    ...(prepared.multipart ? { multipart: prepared.multipart } : {}),
+                    ...(prepared.modelInputText ? { modelInputText: prepared.modelInputText } : {}),
+                    ...(prepared.transport ? { transport: prepared.transport } : {}),
+                    ...(prepared.inlineChars !== undefined ? { inlineChars: prepared.inlineChars } : {}),
+                    ...(prepared.archiveChars !== undefined ? { archiveChars: prepared.archiveChars } : {}),
+                    ...(prepared.archiveSha256 ? { archiveSha256: prepared.archiveSha256 } : {}),
+                    ...(prepared.trimmedCompactionMessages !== undefined
+                      ? { trimmedCompactionMessages: prepared.trimmedCompactionMessages }
+                      : {}),
+                  } satisfies CompiledChatGptWebPrompt,
                 });
               });
           })

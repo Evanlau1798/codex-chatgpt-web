@@ -1352,6 +1352,17 @@ function SettingsSurface({
       setBusy(false);
     }
   };
+  const setBiggerContext = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      updateState(await api!.setBiggerContext(enabled));
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const uninstallIntegration = async () => {
     setBusy(true);
     setError(null);
@@ -1394,6 +1405,13 @@ function SettingsSurface({
             onChange={(enabled) => void setUseEnhancedWebSessionMode(enabled)}
           />
         </SettingRow> : null}
+        <SettingRow body={copy.biggerContextBody} label={copy.biggerContext}>
+          <Switch
+            checked={snapshot.state.experimentalBiggerContext}
+            disabled={busy || snapshot.state.coreSetupComplete !== true}
+            onChange={(enabled) => void setBiggerContext(enabled)}
+          />
+        </SettingRow>
         <SettingRow body={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>
           <Switch
             checked={snapshot.state.keepRunningOnClose}

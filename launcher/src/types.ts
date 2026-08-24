@@ -11,6 +11,7 @@ export interface LauncherState {
   autoStart: boolean;
   bridgeEnabled: boolean;
   useEnhancedWebSessionMode: boolean;
+  experimentalBiggerContext: boolean;
   keepRunningOnClose: boolean;
   showBrowserDuringTurns: boolean;
   lockBrowserDuringTurns: boolean;
@@ -138,6 +139,7 @@ export interface LauncherApi {
   cancelTurns(): Promise<{ stdout: string }>;
   setBridgeEnabled(enabled: boolean): Promise<LauncherState>;
   setUseEnhancedWebSessionMode(enabled: boolean): Promise<LauncherState>;
+  setBiggerContext(enabled: boolean): Promise<LauncherState>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCodex(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
   setupClaude(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;

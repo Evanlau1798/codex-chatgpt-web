@@ -342,6 +342,7 @@ export function createLauncherDevAdapter(
       threadEnvironmentStatePath: join(runtimeStateRoot, "thread-environments.json"),
       lunaCheckpointStatePath: join(runtimeStateRoot, "luna-checkpoints.json"),
       turnTimeoutMs: 60 * 60_000,
+      ...(config.experimentalBiggerContext ? { experimentalBiggerContext: true } : {}),
     },
   }, { broker });
   return { broker, adapterFactory };

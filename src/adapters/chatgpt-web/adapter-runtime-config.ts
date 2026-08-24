@@ -8,12 +8,14 @@ import type { ChatGptWebCapabilities } from "./model";
 export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
   timeoutMs: number | undefined;
   useEnhancedWebSessionMode: boolean;
+  experimentalBiggerContext: boolean;
   configuredCapabilities: ChatGptWebCapabilities;
   executionNamespace: string;
 } {
   return {
     timeoutMs: provider.chatgptWeb?.turnTimeoutMs,
     useEnhancedWebSessionMode: provider.chatgptWeb?.useEnhancedWebSessionMode === true,
+    experimentalBiggerContext: provider.chatgptWeb?.experimentalBiggerContext === true,
     configuredCapabilities: {
       localToolsEnabled: provider.chatgptWeb?.localToolsEnabled === true,
       solAvailable: provider.chatgptWeb?.solAvailable !== false,

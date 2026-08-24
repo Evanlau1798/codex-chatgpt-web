@@ -139,6 +139,7 @@ test("Bigger Context sends three semantic record envelopes and starts work from 
   const token = "turn_12345678901234567890123456789012";
   const parsed = request("high");
   parsed.context.systemPrompt = ["system-one", "system-two"];
+  parsed.context.tools = [{ name: "Read", description: "Read a file", parameters: {} }];
   parsed.context.messages.push(
     { role: "assistant", content: [{ type: "text", text: "prior-answer" }], timestamp: 3 },
     { role: "user", content: "latest-request", timestamp: 4 },

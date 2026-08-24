@@ -32,7 +32,7 @@ export const CHATGPT_WEB_PRO_STANDARD_CONTEXT_WINDOW =
   CHATGPT_WEB_PRO_STANDARD_MESSAGE_TOKEN_LIMIT + CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + 1;
 export const CHATGPT_WEB_PRO_MODEL_CONTEXT_WINDOW =
   CHATGPT_WEB_PRO_MODEL_MESSAGE_TOKEN_LIMIT + CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + 1;
-/** Full backend windows used only when the beta conversation-preserving compact path is enabled. */
+/** Full backend windows used only when the conversation-preserving Enhanced path is enabled. */
 export const CHATGPT_WEB_PRO_INSTANT_CONTEXT_WINDOW = 137_000;
 export const CHATGPT_WEB_PRO_REASONING_CONTEXT_WINDOW = 256_000;
 export const CHATGPT_WEB_PRO_CONTEXT_WINDOW = 272_000;
@@ -95,14 +95,14 @@ export function resolveChatGptWebContextLimits(
           : CHATGPT_WEB_PRO_REASONING_CONTEXT_WINDOW;
       return contextLimits(contextWindow, Math.floor(contextWindow * 0.9));
     }
-    const contextWindow = effort === "max"
-      ? CHATGPT_WEB_PRO_MODEL_CONTEXT_WINDOW
-      : CHATGPT_WEB_PRO_STANDARD_CONTEXT_WINDOW;
-    return contextLimits(contextWindow, CHATGPT_WEB_PRO_AUTO_COMPACT_TOKEN_LIMIT);
-  }
-
-  if (effort === "low") {
-    return contextLimits(
+    const contextWindow = effort === "low"
+      ? CHATGPT_WEB_PRO_STANDARD_CONTEXT_WINDOW
+      : effort === "max"
+        ? CHATGPT_WEB_PRO_MODEL_CONTEXT_WINDOW
+        : CHATGPT_WEB_PRO_STANDARD_CONTEXT_WINDOW;
+    limits = contextLimits(contextWindow, CHATGPT_WEB_PRO_AUTO_COMPACT_TOKEN_LIMIT);
+  } else if (effort === "low") {
+    limits = contextLimits(
       CHATGPT_WEB_INSTANT_CONTEXT_WINDOW,
       CHATGPT_WEB_INSTANT_AUTO_COMPACT_TOKEN_LIMIT,
     );

@@ -48,6 +48,11 @@ export {
 } from "./driver-protocol";
 export type { DevChatEvent, DevChatTurnResult, DevContextStatus } from "./driver-protocol";
 
+export interface DevChatFeatures {
+  biggerContext: boolean;
+}
+
+const DEFAULT_DEV_CHAT_FEATURES: DevChatFeatures = { biggerContext: false };
 
 export class DevChatDriver {
   constructor(
@@ -244,12 +249,12 @@ export class DevChatDriver {
     return {
       model: state.model,
       inputTokens,
-      autoCompactTokenLimit,
-      contextWindow,
+      autoCompactTokenLimit: limits.autoCompactTokenLimit,
+      contextWindow: limits.contextWindow,
       ...(route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL
         ? { browserInputTokenLimit: CHATGPT_LUNA_BROWSER_INPUT_TOKEN_BUDGET }
         : {}),
-      percent: Math.round((inputTokens / autoCompactTokenLimit) * 1_000) / 10,
+      percent: Math.round((inputTokens / limits.autoCompactTokenLimit) * 1_000) / 10,
       inputItems: input.length,
     };
   }
