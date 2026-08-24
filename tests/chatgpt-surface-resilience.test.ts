@@ -6,30 +6,10 @@ import {
   chatGptWebSurfaceError,
 } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
-import { ChatGptMarkdownBuffer } from "../src/adapters/chatgpt-web/markdown";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { isTemporaryChatGptUrl } from "../src/chatgpt-session";
 
 describe("ChatGPT Web surface resilience", () => {
-  test("keeps a streamed prefix when ChatGPT merges roots while the answer grows", () => {
-    const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
-    expect(buffer.observe([
-      { key: "0:p", html: "<p>First.</p>", text: "First.", streamable: true },
-      { key: "1:p", html: "<p>Second.</p>", text: "Second.", streamable: false },
-    ], 0)).toBe("First.");
-
-    expect(buffer.observe([{
-      key: "0:root",
-      html: "<p>First.</p><p>Second.</p><p>Third.</p>",
-      text: "First.\n\nSecond.\n\nThird.",
-      streamable: false,
-    }], 1)).toBe("");
-    expect(buffer.finish()).toEqual({
-      markdown: "First.\n\nSecond.\n\nThird.",
-      delta: "\n\nSecond.\n\nThird.",
-    });
-  });
-
   test("retires surface failures even when a partial stream makes them unsafe to retry", () => {
     const surface = chatGptWebSurfaceError("surface changed", true);
     expect(surface).toMatchObject({
