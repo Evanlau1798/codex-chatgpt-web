@@ -211,16 +211,19 @@ stalled and failed turns, where the visible UI is needed to diagnose DOM drift w
 successful step. Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1` before starting the runtime to also
 capture a screenshot at every checkpoint during an investigation.
 
-Subagent protocol is an explicit installation setting. New installs use **Compatibility V1**: it
-enables `multi_agent`, disables the global `multi_agent_v2` override, and
-restores the user's previous feature lines on disconnect or uninstall. It also raises
-`[agents].max_depth` to at least 2 while active so Web children can spawn Web grandchildren, then
-restores the prior value. This is the universal cross-backend surface: native and Web parents can
-delegate to Web children without opaque V2 payloads, and targeted waits can observe a child that
-completed before the parent began waiting. Web parents expose `wait_agent` as explicit 10-second
-polls so one long wait cannot occupy the connector's MCP channel and block the child's own tools.
-**Native** remains an advanced opt-in that preserves
-Codex's own feature settings and supports plaintext Web-to-Web V2 delegation. Switch deliberately,
+Subagent protocol is an explicit installation setting and is independent of Enhanced Web session
+mode. New installs default to **Compatibility V1** for the broadest cross-backend compatibility: it
+enables `multi_agent`, disables the global `multi_agent_v2` override, and restores the user's
+previous feature lines on disconnect or uninstall. It also raises `[agents].max_depth` to at least
+2 while active so Web children can spawn Web grandchildren, then restores the prior value. Native
+and Web parents can therefore delegate to Web children without opaque V2 payloads, and targeted
+waits can observe a child that completed before the parent began waiting. Web parents expose
+`wait_agent` as explicit 10-second polls so one long wait cannot occupy the connector's MCP channel
+and block the child's own tools.
+
+**Native V2** is a fully supported opt-in for current Codex collaboration semantics. It preserves
+Codex's own feature settings and supports plaintext hierarchical Web delegation, targeted messages,
+waits, and interruption across root, child, and grandchild agents. Switch protocols deliberately,
 then restart Codex and start a new task because an existing task cannot change protocol in place:
 
 ```bash

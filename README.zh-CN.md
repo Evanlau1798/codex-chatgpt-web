@@ -186,6 +186,23 @@ recap、resume 与 subagent 生命周期仍由客户端管理；Enhanced 模式�
 任务仍让 ChatGPT 继续工作，请使用 **设置 → 取消残留的浏览器任务**。删除启动器前，请使用
 **设置 → 移除 Codex 集成**，以恢复此前的 Codex 路由。
 
+Subagent 协议是独立的安装设置，与增强型 Web 会话模式互不绑定。新安装默认使用
+**Compatibility V1**，以获得最广泛的跨后端兼容性：安装程序会启用 `multi_agent`、关闭全局
+`multi_agent_v2` override，并在断开或卸载时精确恢复用户原有的 feature 配置。启用期间还会将
+`[agents].max_depth` 提升到至少 2，使 Web child 可以继续派发 Web grandchild；恢复集成时会还原
+原值。Web parent 的 `wait_agent` 使用明确的 10 秒轮询，避免一次长等待占用共享 MCP channel 并
+阻塞 child 自己的工具调用。
+
+**Native V2** 是当前 Codex 协作语义下完整支持的可选模式。它保留 Codex 自己的 feature 设置，
+并支持 root、child 与 grandchild 之间的明文阶层式 Web 派发、定向消息、等待及中断。切换协议后
+必须重启 Codex 并建立新任务，因为既有任务无法在运行中更换协议：
+
+```bash
+codex-chatgpt-web subagents status
+codex-chatgpt-web subagents compatibility-v1
+codex-chatgpt-web subagents native
+```
+
 ## 限制和安全性
 
 - 这是非官方浏览器自动化，并非 OpenAI API。ChatGPT UI 变更可能破坏选择器；发生变化时会明确
