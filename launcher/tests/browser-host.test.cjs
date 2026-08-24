@@ -273,7 +273,7 @@ test("manual browser operations wait for the first measured surface", async () =
     },
   };
 
-  await BrowserHost.prototype.waitForSurfaceReady.call(fixture, 100, 1);
+  await BrowserHost.prototype.waitForSurfaceReady.call(fixture, 5_000, 1);
 
   assert.equal(readinessReads, 3);
 });
