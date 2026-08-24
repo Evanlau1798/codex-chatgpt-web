@@ -2,6 +2,7 @@ import { readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
 const projectRoot = resolve(import.meta.dir, "..");
+const MAX_BUN_CRASH_RETRIES = 2;
 
 export function listRootTestFiles(testsDirectory = join(projectRoot, "tests")): string[] {
   return readdirSync(testsDirectory, { withFileTypes: true })
@@ -10,23 +11,33 @@ export function listRootTestFiles(testsDirectory = join(projectRoot, "tests")): 
     .sort((left, right) => left.localeCompare(right));
 }
 
+export function shouldRetryBunCrash(exitCode: number, attempt: number): boolean {
+  return exitCode === 3 && attempt <= MAX_BUN_CRASH_RETRIES;
+}
+
 async function runFile(file: string): Promise<void> {
   const displayPath = relative(projectRoot, file);
-  process.stdout.write(`\n[root-tests] ${displayPath}\n`);
-  const child = Bun.spawn([
-    process.execPath,
-    "test",
-    "--no-orphans",
-    "--path-ignore-patterns=tmp",
-    displayPath,
-  ], {
-    cwd: projectRoot,
-    stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const exitCode = await child.exited;
-  if (exitCode !== 0) throw new Error(`Root test file failed (${exitCode}): ${displayPath}`);
+  for (let attempt = 1; ; attempt += 1) {
+    process.stdout.write(`\n[root-tests] ${displayPath}${attempt > 1 ? ` (runtime retry ${attempt - 1})` : ""}\n`);
+    const child = Bun.spawn([
+      process.execPath,
+      "test",
+      "--no-orphans",
+      "--path-ignore-patterns=tmp",
+      displayPath,
+    ], {
+      cwd: projectRoot,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await child.exited;
+    if (exitCode === 0) return;
+    if (!shouldRetryBunCrash(exitCode, attempt)) {
+      throw new Error(`Root test file failed (${exitCode}): ${displayPath}`);
+    }
+    process.stderr.write(`[root-tests] Bun crashed while running ${displayPath}; retrying in a fresh process\n`);
+  }
 }
 
 if (import.meta.main) {

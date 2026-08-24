@@ -31,7 +31,7 @@
     "test": "bun run scripts/run-root-tests.ts",
     "audit": "bun audit",
     "check-version": "bun run scripts/check-version.ts",
-    "typecheck": "bunx tsc --noEmit",
+    "typecheck": "bun x tsc --noEmit",
     "licenses": "bun run scripts/generate-third-party-notices.ts --include-launcher",
     "clean": "bun run scripts/clean.ts",
     "build": "bun run scripts/build-runtime-bundle.ts",

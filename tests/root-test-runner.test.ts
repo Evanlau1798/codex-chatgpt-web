@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { listRootTestFiles } from "../scripts/run-root-tests";
+import { listRootTestFiles, shouldRetryBunCrash } from "../scripts/run-root-tests";
 
 const roots: string[] = [];
 
@@ -23,4 +23,11 @@ test("root test discovery is sorted and excludes nested or non-TypeScript tests"
     "alpha.test.ts",
     "zeta.test.ts",
   ]);
+});
+
+test("root test isolation retries only bounded Bun runtime crashes", () => {
+  expect(shouldRetryBunCrash(3, 1)).toBe(true);
+  expect(shouldRetryBunCrash(3, 2)).toBe(true);
+  expect(shouldRetryBunCrash(3, 3)).toBe(false);
+  expect(shouldRetryBunCrash(1, 1)).toBe(false);
 });

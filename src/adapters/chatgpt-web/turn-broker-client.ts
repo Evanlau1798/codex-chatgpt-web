@@ -71,7 +71,7 @@ export async function callTurnBroker<T>(
       settled = true;
       clearTimeout(timer);
       cleanup();
-      socket.end();
+      socket.destroy();
       if (response.error) rejectCall(new Error(response.error));
       else resolveCall(response.result as T);
     });
