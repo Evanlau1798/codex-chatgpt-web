@@ -1289,7 +1289,7 @@ class BrowserHost {
       this.logger.info("browser.tab_retained", { tabId: tab.id, traceId });
       this.publishState?.(this.snapshot());
       this.writeDescriptor();
-      return;
+      return { cancelledByUser };
     }
     // A browser tab represents an active Codex turn, not durable task history. Retaining terminal
     // tabs leaked one slot per response/compaction until the bounded tab limit made later
