@@ -1,8 +1,8 @@
-<h1 align="center">ChatGPT Web for Codex</h1>
+<h1 align="center">ChatGPT Web for Codex & Claude Code — Enhanced</h1>
 
 <p align="center">
-  <strong>Use ChatGPT Web (including Pro) as native Codex models.</strong><br>
-  Change the model tier, save your workflow.
+  <strong>Use ChatGPT Web (including Pro) from Codex or Claude Code.</strong><br>
+  Native tools, retained sessions, compaction, and multi-agent workflows through one local bridge.
 </p>
 
 <p align="center">
@@ -10,13 +10,17 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/Evanlau1798/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/macOS-arm64%20%7C%20x64-black?logo=apple" alt="macOS arm64 and x64">
   <img src="https://img.shields.io/badge/Windows-x64-0078d4?logo=windows11" alt="Windows x64">
   <img src="https://img.shields.io/badge/Linux-x64-fcc624?logo=linux&logoColor=black" alt="Linux x64">
   <img src="https://img.shields.io/badge/Free_AI-no_API_fees-10a37f" alt="Free AI with no API fees">
 </p>
+
+This independently maintained **Enhanced** fork tracks the upstream release base and adds an
+opt-in Web-session lifecycle for long-running Codex and Claude Code work. Fork releases use the
+`<upstream>-Enhanced.<revision>` version format, beginning with `3.0.1-Enhanced.1`.
 
 Free and Go accounts get **ChatGPT Web — Luna** in Codex's native model picker. Accounts that
 expose the reasoning selector keep **Instant**, **Medium**, **High**, **Extra High**, and **Pro** as
@@ -29,9 +33,9 @@ back into the same Codex task.
 </p>
 
 ```text
-Codex task ──Responses + SSE──▶ codex-chatgpt-web ──embedded browser──▶ ChatGPT
-     ▲                                │                                      │
-     └──────── native UI, context, images, tracing, and tool lifecycle ──────┘
+Codex / Claude Code ──Responses or Messages──▶ local bridge ──browser──▶ ChatGPT
+        ▲                                          │                        │
+        └──────── context, tools, streaming, compact, and lifecycle ────────┘
 ```
 
 Codex keeps the native task, context lifecycle, UI, and tool harness. The local Responses bridge
@@ -49,16 +53,20 @@ connects ChatGPT back to the tools of that same Codex task.
 - **A polished cross-platform launcher.** One command installs the native macOS, Windows, or Linux
   app. It keeps sign-in orchestration, setup, smoke testing, MCP guidance, runtime health, and local
   logs in one place, while the embedded browser lets you watch every ChatGPT turn as it happens. Up
-  to five task-bound browser tabs can run in parallel; the cap avoids excessive parallel account
+  to six task-bound browser tabs can run in parallel in Enhanced mode; the cap avoids excessive parallel account
   traffic.
 - **ChatGPT is the selected model.** It runs as a native Codex model, not as a tool called by
   another host model. The original model picker, task lifecycle, streaming, tracing, and tool UI
   remain intact.
-- **Local-first task sessions.** Codex remains the source of truth for task history on your
-  computer. Every browser turn starts in a fresh ChatGPT Temporary Chat and receives the current
-  compiled context. Measured browser ceilings trigger compaction, while Luna carries completed
-  state through an adaptive rolling checkpoint. Browser chats are never reused across tasks or
+- **Local-first task sessions.** Codex or Claude Code remains the source of truth for task history
+  on your computer. Original mode keeps upstream's fresh-turn behavior. Enhanced mode retains a
+  completed root or subagent conversation for 30 minutes, sends only the continuation suffix, and
+  rotates to a new epoch after compaction. Browser chats are never shared across unrelated tasks or
   added to normal ChatGPT history.
+- **Codex and Claude Code clients.** The launcher installs either integration independently.
+  Codex uses the OpenAI-compatible Responses route; Claude Code uses the standard Anthropic
+  Messages stream while preserving Markdown, tool-use blocks, subagents, additive steering, and
+  native `/compact` and recap behavior.
 - **The full Codex harness over MCP.** In Full mode, every effort available to the signed-in account—
   Luna, Instant, Medium, High, Extra High, and Pro—can use the active Codex task's filesystem,
   shell, images, approvals, and configured tools/apps through the same turn-bound MCP capability.
@@ -86,13 +94,13 @@ preserving the ChatGPT profile and launcher configuration.
 **macOS or Linux**
 
 ```bash
-curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
+curl -fsSL https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
+irm https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 Then complete the three checks in the app:
@@ -101,7 +109,8 @@ Then complete the three checks in the app:
    windows stay inside the same launcher-owned private browser profile; no session is copied between
    browsers.
 2. Run the browser smoke test.
-3. Press **Install models**, restart Codex once, and select a **ChatGPT Web — …** model.
+3. Use **Install into Codex** and/or **Install into Claude Code**. Completing either integration
+   finishes setup; they can be installed or refreshed independently. Restart the selected client.
 
 The launcher detects the current account's ChatGPT controls during setup: Free/Go accounts expose
 only Luna, while Pro appears only when the signed-in account exposes it. The separate **MCP** page
@@ -113,7 +122,7 @@ model API key, installed Chrome/Chromium, system Node/Bun, or project-managed br
 **Run from source**
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
+git clone https://github.com/Evanlau1798/codex-chatgpt-web.git && \
 cd codex-chatgpt-web && \
 bun run app
 ```
@@ -131,6 +140,31 @@ Every picker entry has one fixed ChatGPT mode. Codex still displays its built-in
 rows, but changing them cannot silently change the selected browser model. In Full mode every
 available effort receives the same turn-bound MCP capability. Pro has no separate restriction or
 reduced tool contract.
+
+### Enhanced Web session mode (Beta)
+
+This setting is off by default and affects only `chatgpt-web/*` routes. Native OpenAI/Codex models
+always keep their original Responses and compact paths, regardless of this setting.
+
+When disabled, Web models follow the upstream session and compact behavior. When enabled, the
+bridge adds 30-minute retained root/subagent conversations, same-conversation steering, six-way
+browser scheduling, structured handoff compaction, canonical continuation after stop/restart, and
+bootstrap/archive transport for prompts that exceed the measured inline browser boundary. A
+compact always starts a new conversation epoch; old turn tokens and completed tool calls are not
+replayed.
+
+## Claude Code
+
+Choose **Install into Claude Code** in the launcher to configure the local `/v1/messages` gateway,
+the selected Web model alias, and the managed steering hooks. No model API key is required; the
+installed gateway key is the local placeholder `local`. Claude Code root turns and subagents keep
+separate Web conversations, and mid-turn prompts are appended at a normal tool-result boundary
+instead of interrupting or replacing an in-flight tool result.
+
+The bridge emits ordinary Web commentary as Claude `text` blocks, real reasoning as `thinking`,
+and tool calls as standard `tool_use` blocks. Markdown and code fences are passed through verbatim.
+Claude's native `/compact`, recap, resume, and subagent lifecycle remain client-owned; Enhanced mode
+only controls the corresponding Web surface retention and safe continuation.
 
 ## Full harness
 

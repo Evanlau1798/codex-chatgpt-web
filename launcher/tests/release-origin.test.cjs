@@ -17,3 +17,12 @@ test("Enhanced release installers and launcher updates use the fork release orig
   assert.match(launcherPowerShell, new RegExp(`else \\{ "${releaseRepository}" \\}`));
   assert.match(launcherUpdater, new RegExp(`REPOSITORY = "${releaseRepository}"`));
 });
+
+test("Enhanced release readmes install and clone from the fork", () => {
+  for (const name of ["README.md", "README.zh-CN.md"]) {
+    const readme = fs.readFileSync(path.join(repositoryRoot, name), "utf8");
+    assert.match(readme, new RegExp(`github\\.com/${releaseRepository}/releases/latest/download/install-launcher`));
+    assert.match(readme, new RegExp(`git clone https://github\\.com/${releaseRepository}\\.git`));
+    assert.match(readme, /3\.0\.1-Enhanced\.1/);
+  }
+});

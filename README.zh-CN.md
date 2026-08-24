@@ -1,8 +1,8 @@
-<h1 align="center">ChatGPT Web for Codex</h1>
+<h1 align="center">ChatGPT Web for Codex & Claude Code — Enhanced</h1>
 
 <p align="center">
-  <strong>将 ChatGPT Web（包括 Pro）作为 Codex 原生模型使用。</strong><br>
-  切换模型档位，保留原有工作流。
+  <strong>在 Codex 或 Claude Code 中使用 ChatGPT Web（包括 Pro）。</strong><br>
+  通过一个本地桥接保留原生工具、会话续接、上下文压缩与多 Agent 工作流。
 </p>
 
 <p align="center">
@@ -10,13 +10,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/Evanlau1798/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/macOS-arm64%20%7C%20x64-black?logo=apple" alt="macOS arm64 and x64">
   <img src="https://img.shields.io/badge/Windows-x64-0078d4?logo=windows11" alt="Windows x64">
   <img src="https://img.shields.io/badge/Linux-x64-fcc624?logo=linux&logoColor=black" alt="Linux x64">
   <img src="https://img.shields.io/badge/Free_AI-no_API_fees-10a37f" alt="Free AI with no API fees">
 </p>
+
+这是独立维护的 **Enhanced** fork：在持续跟进上游基线的同时，提供可选的长任务 Web 会话
+生命周期。Fork 版本采用 `<上游版本>-Enhanced.<修订号>`，首个版本为 `3.0.1-Enhanced.1`。
 
 Free 和 Go 账户会在 Codex 原生模型选择器中看到 **ChatGPT Web — Luna**。具有推理选择器的
 账户仍会按订阅权限看到 **Instant**、**Medium**、**High**、**Extra High** 和 **Pro**。
@@ -28,9 +31,9 @@ Free 和 Go 账户会在 Codex 原生模型选择器中看到 **ChatGPT Web — 
 </p>
 
 ```text
-Codex task ──Responses + SSE──▶ codex-chatgpt-web ──embedded browser──▶ ChatGPT
-     ▲                                │                                      │
-     └──────── native UI, context, images, tracing, and tool lifecycle ──────┘
+Codex / Claude Code ──Responses 或 Messages──▶ 本地桥接 ──浏览器──▶ ChatGPT
+        ▲                                          │                    │
+        └──────── 上下文、工具、流式输出、压缩与生命周期 ────────────────┘
 ```
 
 Codex 会保留原生任务、上下文生命周期、界面和工具 harness。本地 Responses 桥接程序只会将
@@ -46,14 +49,17 @@ Codex 任务的工具。
 
 - **精致的跨平台启动器。** 一条命令即可安装原生 macOS、Windows 或 Linux 应用。登录流程、设置、
   冒烟测试、MCP 指南、运行状态和本地日志都集中在同一处；内置浏览器还能让你实时看到每个
-  ChatGPT 轮次的执行过程。最多可同时运行五个与 Codex 任务绑定的浏览器标签页；此上限用于避免
+  ChatGPT 轮次的执行过程。Enhanced 模式最多可同时运行六个任务绑定的浏览器标签页；此上限用于避免
   对 ChatGPT 账户产生过多并行流量。
 - **ChatGPT 就是所选模型。** 它作为 Codex 原生模型运行，而不是由另一个宿主模型调用的工具。
   原有的模型选择器、任务生命周期、流式输出、追踪和工具界面保持不变。
-- **本地优先的任务会话。** Codex 仍然是电脑上任务历史的真实来源。每个浏览器轮次都会从一个
-  全新的 ChatGPT 临时聊天开始，并接收当前编译后的上下文。达到实测浏览器上限时会触发压缩，
-  Luna 则通过自适应滚动检查点携带已完成的状态。浏览器聊天不会在任务之间复用，也不会加入普通
-  ChatGPT 历史记录。
+- **本地优先的任务会话。** Codex 或 Claude Code 仍然是电脑上任务历史的真实来源。原始模式
+  保留上游每轮新建会话的行为；Enhanced 模式会将完成的 root／subagent 对话保留 30 分钟，
+  续接时只发送新增后缀，并在 compact 后切换到新的 epoch。浏览器聊天不会在无关任务之间共享，
+  也不会加入普通 ChatGPT 历史记录。
+- **同时支持 Codex 与 Claude Code。** 启动器可分别安装两种集成。Codex 使用兼容 OpenAI 的
+  Responses 路由；Claude Code 使用标准 Anthropic Messages 数据流，并保留 Markdown、工具区块、
+  subagent、非中断式 steering、原生 `/compact` 与 recap 行为。
 - **通过 MCP 使用完整 Codex harness。** 在完整模式下，登录账户可用的每一个 effort——Luna、
   Instant、Medium、High、Extra High 和 Pro——都会通过同一个与当前回合绑定的 MCP 能力，使用
   Codex 任务的文件系统、shell、图片、审批以及已配置的工具和应用。调用及其真实结果会留在
@@ -77,13 +83,13 @@ Codex 任务的工具。
 **macOS 或 Linux**
 
 ```bash
-curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
+curl -fsSL https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
+irm https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 然后在应用中完成三项检查：
@@ -91,7 +97,8 @@ irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install
 1. 直接在启动器内置的 ChatGPT 浏览器中登录。登录页和身份提供商窗口都保留在同一个由启动器
    管理的私有浏览器配置中；会话不会在不同浏览器之间复制。
 2. 运行浏览器冒烟测试。
-3. 点击 **安装模型**，重启一次 Codex，然后选择一个 **ChatGPT Web — …** 模型。
+3. 使用 **安装到 Codex** 和／或 **安装到 Claude Code**。完成任一集成即可完成设置，两者可独立
+   安装或刷新；随后重启所选客户端。
 
 启动器会在设置期间检测当前账户的 ChatGPT 控件：Free/Go 账户只会显示 Luna；只有已登录账户
 支持 Pro 时，Pro 才会显示。独立的 **MCP** 页面是可选项，它会在不需要终端命令的情况下引导你
@@ -103,7 +110,7 @@ Chrome/Chromium、系统级 Node/Bun，也不会由本项目另行下载浏览�
 **从源码运行**
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
+git clone https://github.com/Evanlau1798/codex-chatgpt-web.git && \
 cd codex-chatgpt-web && \
 bun run app
 ```
@@ -120,6 +127,28 @@ bun run app
 模型选择器中的每一项都对应一个固定的 ChatGPT 模式。Codex 仍会显示内置的 Effort 和 Speed
 选项，但更改它们不会在后台静默切换所选的浏览器模型。在完整模式下，每一个可用 effort 都会
 获得同一个与当前回合绑定的 MCP 能力；Pro 没有单独限制，也没有缩减后的工具契约。
+
+### 增强型 Web 工作阶段模式（Beta）
+
+此设置默认关闭，且只影响 `chatgpt-web/*` 路由。无论该设置如何，非 Web 的 OpenAI／Codex
+模型始终使用原生 Responses 与 compact 路径。
+
+关闭时，Web 模型使用上游原始的会话与压缩行为。开启后，桥接会增加 30 分钟 root／subagent
+会话保留、同对话 steering、六路浏览器调度、结构化 handoff compact、停止／重启后的 canonical
+续接，以及对超过实测浏览器 inline 边界的 bootstrap／archive 传输。每次 compact 都会建立新
+epoch；旧 turn token 与已完成工具调用不会被重播。
+
+## Claude Code
+
+在启动器中选择 **安装到 Claude Code**，即可配置本地 `/v1/messages` gateway、所选 Web 模型
+别名与受管理的 steering hooks。不需要模型 API key；安装后的 gateway key 是本地占位值 `local`。
+Claude Code 的 root 与 subagent 使用彼此独立的 Web 对话；mid-turn prompt 会附加在正常工具结果
+边界，而不是中断或替换正在进行的工具结果。
+
+桥接会将一般 Web commentary 输出为 Claude `text` 区块，将真正 reasoning 输出为 `thinking`，
+并将工具调用输出为标准 `tool_use`。Markdown 与代码围栏会逐字传递。Claude 原生 `/compact`、
+recap、resume 与 subagent 生命周期仍由客户端管理；Enhanced 模式只管理对应 Web surface 的
+保留与安全续接。
 
 ## 完整 harness
 
