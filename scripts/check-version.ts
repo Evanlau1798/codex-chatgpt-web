@@ -9,6 +9,9 @@ const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8
 };
 const packageVersion = packageJson.version;
 if (!packageVersion) throw new Error("package.json has no version");
+if (!/^\d+\.\d+\.\d+-Enhanced\.\d+$/.test(packageVersion)) {
+  throw new Error(`Fork releases must use the <upstream>-Enhanced.<revision> convention, received ${packageVersion}`);
+}
 const packageManagerMatch = /^bun@((\d+\.\d+\.\d+)\+([0-9a-f]+))$/.exec(packageJson.packageManager ?? "");
 if (!packageManagerMatch) throw new Error("package.json must pin an exact Bun stable revision");
 const bunRevision = packageManagerMatch[1];
