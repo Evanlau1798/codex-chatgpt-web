@@ -10,6 +10,11 @@ import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
 import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
+import {
+  httpStreamFailureDiagnostic,
+  reportHttpStreamFailure,
+  type HttpStreamFailureReporter,
+} from "./http-stream-diagnostics";
 import { augmentNativeModelCatalog } from "./model-catalog";
 import {
   readCodexModelContextOverride,
@@ -42,6 +47,8 @@ export class HttpTurnCounter {
     finish: () => void;
   }>();
   private nextId = 1;
+
+  constructor(private readonly reportStreamFailure: HttpStreamFailureReporter = reportHttpStreamFailure) {}
 
   count(): number {
     return this.active.size;
@@ -101,6 +108,9 @@ export class HttpTurnCounter {
         // pull chain: it keeps HTTP backpressure native and lets a client body cancellation reach
         // the original SSE reader without an eagerly drained tee branch racing the socket writer.
         const reader = response.body.getReader();
+        const reportStreamFailure = this.reportStreamFailure;
+        let chunks = 0;
+        let bytes = 0;
         streamAbortListener = () => {
           void reader.cancel(abort.signal.reason).catch(() => {}).finally(release);
         };
@@ -114,8 +124,13 @@ export class HttpTurnCounter {
                 controller.close();
                 return;
               }
+              chunks += 1;
+              bytes += chunk.value.byteLength;
               controller.enqueue(chunk.value);
             } catch (error) {
+              if (!abort.signal.aborted) {
+                reportStreamFailure(httpStreamFailureDiagnostic(error, "direct", platform, chunks, bytes));
+              }
               release();
               controller.error(error);
             }
@@ -141,6 +156,8 @@ export class HttpTurnCounter {
       // when the client disconnects and cancels the observer branch.
       const [clientBody, lifecycleBody] = response.body.tee();
       const reader = lifecycleBody.getReader();
+      let chunks = 0;
+      let bytes = 0;
       streamAbortListener = () => {
         void Promise.allSettled([
           reader.cancel(abort.signal.reason),
@@ -150,10 +167,17 @@ export class HttpTurnCounter {
       abort.signal.addEventListener("abort", streamAbortListener, { once: true });
       void (async () => {
         try {
-          while (!(await reader.read()).done) {
+          while (true) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            chunks += 1;
+            bytes += chunk.value.byteLength;
             // Consume eagerly so the lifecycle branch never backpressures the client branch.
           }
-        } catch {
+        } catch (error) {
+          if (!abort.signal.aborted) {
+            this.reportStreamFailure(httpStreamFailureDiagnostic(error, "lifecycle", platform, chunks, bytes));
+          }
           // Stream failure is delivered to the client branch; lifecycle cleanup stays best-effort.
         } finally {
           release();
