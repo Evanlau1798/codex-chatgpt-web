@@ -35,7 +35,9 @@ for (const nested of [false, true]) {
       : "multi_agent_v2 = true # native v2 choice\n";
     const original = `model = "gpt-5.6-sol"\n\n[features]\nremote_compaction_v2 = true # native compact choice\nmulti_agent = false # native agent choice\n${v2Original}`;
     writeFileSync(configPath, original);
-    const route = installCodexIntegration(defaultConfig("full"));
+    const routeConfig = defaultConfig("full");
+    routeConfig.subagentProtocol = "native";
+    const route = installCodexIntegration(routeConfig);
     const routed = readFileSync(configPath, "utf8");
     const managedV2 = nested
       ? "enabled = false # Managed by codex-chatgpt-web: keeps routed Web subagent payloads readable."
@@ -75,7 +77,7 @@ for (const nested of [false, true]) {
     writeFileSync(getCodexJournalPath(), serialized);
     writeFileSync(getCodexJournalRecoveryPath(), serialized);
 
-    expect(installCodexIntegration(defaultConfig("full")).version).toBe(7);
+    expect(installCodexIntegration(defaultConfig("full")).version).toBe(8);
     expect(deactivateCodexIntegration()).toEqual({ changed: true, active: false });
     expect(readFileSync(configPath, "utf8")).toBe(original);
     expect(activateCodexIntegration()).toEqual({ changed: true, active: true });

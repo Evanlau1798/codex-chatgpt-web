@@ -46,7 +46,9 @@ export function App() {
       setBrowser(next.browser);
       setLogs(next.logs);
       setOperation(next.operation);
-      if (next.operation?.status === "failed") setError(next.operation.message);
+      if (next.operation?.status === "failed" && next.operation.name !== "mcp-verification") {
+        setError(next.operation.message);
+      }
     }).catch((cause) => setError(messageOf(cause)));
     const unsubscribeState = api.onStateChanged((state) => {
       setSnapshot((current) => current
@@ -61,7 +63,7 @@ export function App() {
     const unsubscribeBrowser = api.onBrowserState(setBrowser);
     const unsubscribeOperation = api.onOperation((next) => {
       setOperation(next);
-      if (next.status === "failed") setError(next.message);
+      if (next.status === "failed" && next.name !== "mcp-verification") setError(next.message);
     });
     const unsubscribeLog = api.onLog((record) => setLogs((current) => [...current.slice(-299), record]));
     const unsubscribeUpdate = api.onUpdateState((update) => {
@@ -95,7 +97,13 @@ export function App() {
   const copy = copyFor(language);
 
   return (
-    <div className="app-root" data-language={language} data-platform={snapshot.platform} data-theme="dark">
+    <div
+      className="app-root"
+      data-language={language}
+      data-platform={snapshot.platform}
+      data-profile={snapshot.profile}
+      data-theme="dark"
+    >
       <AnimatePresence mode="wait">
         {!snapshot.state.onboardingComplete ? (
           <Onboarding
@@ -192,6 +200,7 @@ function Onboarding({
         <div className="welcome-brand no-drag">
           <BrandMark small />
           <span>{localized.product}</span>
+          {snapshot.profile === "development" ? <em className="dev-profile-badge">{localized.devBadge}</em> : null}
         </div>
         <span className="welcome-version no-drag">v{snapshot.version}</span>
       </header>
@@ -293,6 +302,7 @@ function LauncherShell({
   const [surface, setSurface] = useState<Surface>(
     snapshot.state.coreSetupComplete && clientIntegrationInstalled ? "browser" : "setup",
   );
+  const devProfile = snapshot.profile === "development";
   const compactAtMount = useRef(window.matchMedia(COMPACT_SIDEBAR_QUERY).matches).current;
   const [sidebarOpen, setSidebarOpen] = useState(!compactAtMount);
   const [compactSidebar, setCompactSidebar] = useState(compactAtMount);
@@ -444,6 +454,8 @@ function LauncherShell({
     >
       <TitleBar
         copy={copy}
+        devProfile={devProfile}
+        draggable={surface !== "browser"}
         sidebarOpen={sidebarOpen}
         toggleSidebar={toggleSidebar}
       />
@@ -469,6 +481,7 @@ function LauncherShell({
               <div className="sidebar-brand-identity">
                 <BrandMark small />
                 <strong>{copy.product}</strong>
+                {devProfile ? <em className="dev-profile-badge">{copy.devBadge}</em> : null}
               </div>
               <div className="sidebar-brand-actions">
                 <IconButton
@@ -532,7 +545,7 @@ function LauncherShell({
               ) : null}
               <SidebarItem
                 active={surface === "settings"}
-                badge={snapshot.state.coreSetupComplete
+                badge={!devProfile && snapshot.state.coreSetupComplete
                   ? <ActionDot tone={snapshot.state.bridgeEnabled ? "success" : "error"} />
                   : null}
                 icon="settings"
@@ -567,6 +580,7 @@ function LauncherShell({
                 activateBrowser={activateBrowser}
                 browser={browser}
                 copy={copy}
+                devProfile={devProfile}
                 operation={operation}
                 setError={setError}
                 showMcp={() => setSurface("mcp")}
@@ -577,6 +591,7 @@ function LauncherShell({
             {surface === "mcp" ? (
               <McpSurface
                 copy={copy}
+                devProfile={devProfile}
                 onDone={() => setSurface("browser")}
                 operation={operation}
                 setError={setError}
@@ -588,6 +603,7 @@ function LauncherShell({
             {surface === "settings" ? (
               <SettingsSurface
                 copy={copy}
+                devProfile={devProfile}
                 language={language}
                 setError={setError}
                 snapshot={snapshot}
@@ -614,21 +630,26 @@ function LauncherShell({
 
 function TitleBar({
   copy,
+  devProfile,
+  draggable,
   sidebarOpen,
   toggleSidebar,
 }: {
   copy: Copy;
+  devProfile: boolean;
+  draggable: boolean;
   sidebarOpen: boolean;
   toggleSidebar: () => void;
 }) {
   return (
-    <header className="app-titlebar draggable">
+    <header className={`app-titlebar${draggable ? " draggable" : ""}`}>
       <div className="titlebar-left no-drag">
         <IconButton
           icon="sidebar"
           label={sidebarOpen ? copy.hideSidebar : copy.showSidebar}
           onClick={toggleSidebar}
         />
+        {devProfile ? <span className="titlebar-dev-profile">{copy.devBadge}</span> : null}
       </div>
     </header>
   );
@@ -820,6 +841,7 @@ function SetupSurface({
   activateBrowser,
   browser,
   copy,
+  devProfile,
   operation,
   setError,
   showMcp,
@@ -829,6 +851,7 @@ function SetupSurface({
   activateBrowser: (show?: boolean) => Promise<void>;
   browser: BrowserState | null;
   copy: Copy;
+  devProfile: boolean;
   operation: OperationState | null;
   setError: (error: string | null) => void;
   showMcp: () => void;
@@ -876,10 +899,10 @@ function SetupSurface({
   return (
     <ContentSurface
       eyebrow={copy.required}
-      subtitle={copy.setupSubtitle}
-      title={copy.setupTitle}
+      subtitle={devProfile ? copy.devSetupSubtitle : copy.setupSubtitle}
+      title={devProfile ? copy.devSetupTitle : copy.setupTitle}
     >
-      <SectionHeading label={copy.coreSetup} />
+      <SectionHeading label={devProfile ? copy.devCoreSetup : copy.coreSetup} />
       <div className="setup-list">
         <SetupRow
           action={browser?.authenticated
@@ -902,23 +925,25 @@ function SetupSurface({
           title={copy.stepSmoke}
         />
         <SetupRow
-          action={snapshot.state.codexSetupComplete ? copy.reinstallCodex : copy.installCodex}
-          complete={clientIntegrationInstalled}
-          description={copy.stepInstallBody}
+          action={snapshot.state.coreSetupComplete
+            ? devProfile ? copy.devReinstall : copy.reinstallCodex
+            : devProfile ? copy.devInstall : copy.installCodex}
+          complete={devProfile ? snapshot.state.codexCatalogVerified === true : clientIntegrationInstalled}
+          description={devProfile ? copy.devStepInstallBody : copy.stepInstallBody}
           disabled={busy
             || (!snapshot.smokePassed && snapshot.state.coreSetupComplete !== true)}
           index={3}
           onAction={installCodex}
-          onSecondaryAction={installClaude}
+          onSecondaryAction={devProfile ? undefined : installClaude}
           repeatable
-          secondaryAction={snapshot.state.claudeSetupComplete || snapshot.state.claudeSetupOutdated
+          secondaryAction={!devProfile && (snapshot.state.claudeSetupComplete || snapshot.state.claudeSetupOutdated)
             ? copy.reinstallClaude
-            : copy.installClaude}
-          title={copy.stepInstall}
+            : !devProfile ? copy.installClaude : undefined}
+          title={devProfile ? copy.devStepInstall : copy.stepInstall}
         />
       </div>
 
-      {snapshot.state.codexRestartRequired ? (
+      {!devProfile && snapshot.state.codexRestartRequired ? (
         <NoticeRow icon="alert" tone="warning">
           {copy.restartCodex}
         </NoticeRow>
@@ -928,8 +953,8 @@ function SetupSurface({
       <button className="next-surface-row" disabled={!clientIntegrationInstalled} onClick={showMcp} type="button">
         <Icon name="mcp" />
         <span>
-          <strong>{copy.mcpTitle}</strong>
-          <small>{copy.mcpBody}</small>
+          <strong>{devProfile ? copy.devMcpTitle : copy.mcpTitle}</strong>
+          <small>{devProfile ? copy.devMcpBody : copy.mcpBody}</small>
         </span>
         <em>{snapshot.state.mcpSetupComplete ? copy.mcpReady : copy.configureMcp}</em>
         <Icon name="chevron" />
@@ -940,6 +965,7 @@ function SetupSurface({
 
 function McpSurface({
   copy,
+  devProfile,
   onDone,
   operation,
   setError,
@@ -947,6 +973,7 @@ function McpSurface({
   updateState,
 }: {
   copy: Copy;
+  devProfile: boolean;
   onDone: () => void;
   operation: OperationState | null;
   setError: (error: string | null) => void;
@@ -1027,7 +1054,11 @@ function McpSurface({
   };
 
   return (
-    <ContentSurface fit subtitle={copy.mcpSubtitle} title="MCP">
+    <ContentSurface
+      fit
+      subtitle={devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
+      title={devProfile ? copy.devMcpTitle : "MCP"}
+    >
       {!snapshot.state.codexCatalogVerified ? (
         <NoticeRow icon="setup" tone="warning">{copy.mcpCatalogRequired}</NoticeRow>
       ) : null}
@@ -1144,7 +1175,9 @@ function McpSurface({
             ) : null}
             {step === 2 ? (
               <div className="connector-actions">
-                <NoticeRow icon="alert" tone="warning">{copy.connectorMigrationNotice}</NoticeRow>
+                <NoticeRow icon="alert" tone="warning">
+                  {devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
+                </NoticeRow>
                 <div className="connector-name">
                   <span>{copy.connectorName}</span>
                   <code>{snapshot.connectorName}</code>
@@ -1250,12 +1283,14 @@ function ActivitySurface({
 
 function SettingsSurface({
   copy,
+  devProfile,
   language,
   setError,
   snapshot,
   updateState,
 }: {
   copy: Copy;
+  devProfile: boolean;
   language: Language;
   setError: (error: string | null) => void;
   snapshot: LauncherSnapshot;
@@ -1334,32 +1369,32 @@ function SettingsSurface({
   };
 
   return (
-    <ContentSurface narrow title={copy.settingsTitle}>
+    <ContentSurface narrow title={devProfile ? copy.devSettingsTitle : copy.settingsTitle}>
       <SectionHeading label={copy.general} />
       <div className="settings-list">
-        <SettingRow body={copy.launchAtLoginBody} label={copy.launchAtLogin}>
+        {!devProfile ? <SettingRow body={copy.launchAtLoginBody} label={copy.launchAtLogin}>
           <Switch
             checked={snapshot.state.autoStart}
             onChange={(checked) => void api!.setAutostart(checked)
               .then((result) => updateState(result.state))
               .catch((cause) => setError(messageOf(cause)))}
           />
-        </SettingRow>
-        <SettingRow body={copy.bridgeRouteBody} label={copy.bridgeRoute}>
+        </SettingRow> : null}
+        {!devProfile ? <SettingRow body={copy.bridgeRouteBody} label={copy.bridgeRoute}>
           <Switch
             checked={snapshot.state.bridgeEnabled}
             disabled={busy || snapshot.state.codexSetupComplete !== true}
             onChange={(checked) => void setBridgeEnabled(checked)}
           />
-        </SettingRow>
-        <SettingRow body={copy.enhancedWebSessionModeBody} label={copy.enhancedWebSessionMode}>
+        </SettingRow> : null}
+        {!devProfile ? <SettingRow body={copy.enhancedWebSessionModeBody} label={copy.enhancedWebSessionMode}>
           <Switch
             checked={snapshot.state.useEnhancedWebSessionMode}
             disabled={busy || snapshot.state.coreSetupComplete !== true}
             onChange={(enabled) => void setUseEnhancedWebSessionMode(enabled)}
           />
-        </SettingRow>
-        <SettingRow body={copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>
+        </SettingRow> : null}
+        <SettingRow body={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>
           <Switch
             checked={snapshot.state.keepRunningOnClose}
             onChange={(checked) => void api!.setPreference("keepRunningOnClose", checked)
@@ -1397,29 +1432,32 @@ function SettingsSurface({
         </span>
         <Icon name="chevron" />
       </button>
-      <button className="diagnostic-row" disabled={busy} onClick={() => void cancelTurns()} type="button">
+      {!devProfile ? <button className="diagnostic-row" disabled={busy} onClick={() => void cancelTurns()} type="button">
         <Icon name="close" />
         <span>
           <strong>{copy.cancelTurns}</strong>
           <small>{turnsCancelled ? copy.turnsCancelled : copy.cancelTurnsBody}</small>
         </span>
         <Icon name="chevron" />
-      </button>
-      <button className="diagnostic-row" disabled={busy} onClick={() => void uninstallIntegration()} type="button">
+      </button> : null}
+      {!devProfile ? <button className="diagnostic-row" disabled={busy} onClick={() => void uninstallIntegration()} type="button">
         <Icon name="close" />
         <span>
           <strong>{copy.uninstallIntegration}</strong>
           <small>{integrationRemoved ? copy.integrationRemoved : copy.uninstallIntegrationBody}</small>
         </span>
         <Icon name="chevron" />
-      </button>
+      </button> : null}
       {doctor ? <DoctorSummary copy={copy} report={doctor} /> : null}
 
       <div className="about-row">
         <BrandMark small />
         <span>
           <strong>{copy.product}</strong>
-          <small>{platformLabel(snapshot.platform)} · v{snapshot.version}</small>
+          <small>
+            {devProfile ? `${copy.devBadge} · ${snapshot.profilePaths.coreHome} · ` : ""}
+            {platformLabel(snapshot.platform)} · v{snapshot.version}
+          </small>
         </span>
       </div>
     </ContentSurface>

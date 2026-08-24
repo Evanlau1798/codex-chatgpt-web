@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CodexToolResultMessage } from "../../types";
 import { codexToolResultToBrokerResult } from "./compaction-handoff";
-import type { BrokerToolResult, TurnBroker } from "./turn-broker";
+import type { BrokerToolResult, TurnBrokerOwner } from "./turn-broker";
 import type { BrokerToolRequest } from "./turn-broker";
 import type { ChatGptTurnSession } from "./turn-execution";
 import type { PendingSteeringMessage } from "./steering-feed";
@@ -129,13 +129,13 @@ function claudeAgentMessage(
     : undefined;
 }
 
-export function completeChatGptToolResults(
+export async function completeChatGptToolResults(
   session: ChatGptTurnSession,
-  broker: Pick<TurnBroker, "completeTool">,
+  broker: Pick<TurnBrokerOwner, "completeTool">,
   token: string,
   results: CodexToolResultMessage[],
   options: ChatGptToolResultDeliveryOptions = {},
-): void {
+): Promise<void> {
   const outstanding = session.outstanding();
   if (results.length !== outstanding.length) {
     throw new Error(`Codex returned ${results.length} of ${outstanding.length} results for a parallel ChatGPT tool batch`);
@@ -152,7 +152,7 @@ export function completeChatGptToolResults(
     const closedAgent = lifecycleTarget(request, result, "close_agent");
     if (closedAgent) options.onClosedCodexAgent?.(closedAgent);
     const agentMessage = claudeAgentMessage(request, result);
-    broker.completeTool(token, message.toolCallId, isBoundary
+    await broker.completeTool(token, message.toolCallId, isBoundary
       ? withClaudeSteering(result, steering.messages, token, message.toolCallId)
       : result);
     session.markResultDelivered(message.toolCallId, message);

@@ -53,7 +53,7 @@ function toolResult(callId: string, content: string): CodexToolResultMessage {
   };
 }
 
-test("Claude steering preserves real parallel tool results and attaches once at the boundary", () => {
+test("Claude steering preserves real parallel tool results and attaches once at the boundary", async () => {
   const { session, steering } = claudeRootSession();
   session.queueSteering("Prioritize the failing test", true, "delivery-1");
   session.queueSteering("Then continue the review", true, "delivery-2");
@@ -62,7 +62,7 @@ test("Claude steering preserves real parallel tool results and attaches once at 
     completeTool: (_token: string, callId: string, result: BrokerToolResult) => completed.push({ callId, result }),
   } as Pick<TurnBroker, "completeTool">;
 
-  completeChatGptToolResults(session, broker, "turn-token", [
+  await completeChatGptToolResults(session, broker, "turn-token", [
     toolResult("call-1", "first real result"),
     toolResult("call-2", "second real result"),
   ]);
@@ -136,7 +136,7 @@ test("Claude does not merge a later identical prompt with a completed delivery",
   expect(steering.take()).toBe("Run the same check again");
 });
 
-test("Claude steering remains queued when the boundary result cannot be delivered", () => {
+test("Claude steering remains queued when the boundary result cannot be delivered", async () => {
   const { session, steering } = claudeRootSession();
   session.queueSteering("Keep the original task active", true, "delivery-1");
   let completed = 0;
@@ -147,10 +147,10 @@ test("Claude steering remains queued when the boundary result cannot be delivere
     },
   } as Pick<TurnBroker, "completeTool">;
 
-  expect(() => completeChatGptToolResults(session, broker, "turn-token", [
+  await expect(completeChatGptToolResults(session, broker, "turn-token", [
     toolResult("call-1", "first real result"),
     toolResult("call-2", "second real result"),
-  ])).toThrow("turn token is invalid or expired");
+  ])).rejects.toThrow("turn token is invalid or expired");
   expect(steering.peek()?.text).toBe("Keep the original task active");
   expect(session.outstanding().map(request => request.callId)).toEqual(["call-2"]);
 });
@@ -158,7 +158,7 @@ test("Claude steering remains queued when the boundary result cannot be delivere
 test("Claude steering becomes suppressible only after Web submission and survives a successful turn", async () => {
   const { session, resolveBrowser } = claudeRootSession();
   session.queueSteering("Apply the new constraint", true, "delivery-1");
-  completeChatGptToolResults(session, { completeTool() {} }, "turn-token", [
+  await completeChatGptToolResults(session, { completeTool() {} }, "turn-token", [
     toolResult("call-1", "first real result"),
     toolResult("call-2", "second real result"),
   ]);
@@ -172,7 +172,7 @@ test("Claude steering becomes suppressible only after Web submission and survive
 test("Claude steering submission remains available as fallback after a Web error", async () => {
   const { session, rejectBrowser } = claudeRootSession();
   session.queueSteering("Apply the new constraint", true, "delivery-1");
-  completeChatGptToolResults(session, { completeTool() {} }, "turn-token", [
+  await completeChatGptToolResults(session, { completeTool() {} }, "turn-token", [
     toolResult("call-1", "first real result"),
     toolResult("call-2", "second real result"),
   ]);
@@ -204,7 +204,7 @@ test("a text-only Claude completion succeeds when no guidance is pending", async
   expect(await retry("Complete answer without a tool call", 1)).toBeUndefined();
 });
 
-test("Claude SendMessage reaches the active child at its next real tool-result boundary", () => {
+test("Claude SendMessage reaches the active child at its next real tool-result boundary", async () => {
   const sessions = new ChatGptTurnSessions();
   const threadId = "claude_session-1";
   const agentId = "agent-1";
@@ -249,13 +249,13 @@ test("Claude SendMessage reaches the active child at its next real tool-result b
     },
   });
 
-  completeChatGptToolResults(root, { completeTool() {} }, "root-token", [
+  await completeChatGptToolResults(root, { completeTool() {} }, "root-token", [
     toolResult("send-message", '{"success":true,"message":"queued"}'),
   ], claudeAgentMessagingOptions(parsed, sessions));
 
   const completed: Array<{ callId: string; result: BrokerToolResult }> = [];
-  completeChatGptToolResults(child, {
-    completeTool: (_token, callId, result) => completed.push({ callId, result }),
+  await completeChatGptToolResults(child, {
+    completeTool: (_token, callId, result) => { completed.push({ callId, result }); },
   }, "child-token", [toolResult("child-tool", "real child result")]);
 
   const text = (completed[0]?.result.content as Array<{ text?: string }>)[0]?.text ?? "";
@@ -266,7 +266,7 @@ test("Claude SendMessage reaches the active child at its next real tool-result b
   expect(child.peekPendingSteering()).toBeUndefined();
 });
 
-test("Claude child routing waits until the SendMessage result reaches the active Web turn", () => {
+test("Claude child routing waits until the SendMessage result reaches the active Web turn", async () => {
   const root = new ChatGptTurnSession({
     mode: "tools",
     browser: new Promise<string>(() => {}),
@@ -281,11 +281,11 @@ test("Claude child routing waits until the SendMessage result reaches the active
   } }]);
   let routed = 0;
 
-  expect(() => completeChatGptToolResults(root, {
+  await expect(completeChatGptToolResults(root, {
     completeTool() { throw new Error("turn token is invalid or expired"); },
   }, "root-token", [toolResult("send-message", '{"success":true}')], {
     onClaudeAgentMessage() { routed += 1; },
-  })).toThrow("turn token is invalid or expired");
+  })).rejects.toThrow("turn token is invalid or expired");
 
   expect(routed).toBe(0);
 });

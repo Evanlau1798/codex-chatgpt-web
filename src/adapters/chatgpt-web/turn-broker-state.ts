@@ -20,6 +20,7 @@ export interface ToolWaiter {
 
 export interface TurnChannel {
   traceId: string;
+  externalOwner: boolean;
   onProgress?: () => void;
   environment: PendingTurn;
   bindingId?: string;

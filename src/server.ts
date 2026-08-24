@@ -1,16 +1,21 @@
-import { createChatGptWebAdapter } from "./adapters/chatgpt-web";
+import { chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { createHash } from "node:crypto";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import { handleClaudeSteeringHook } from "./messages/steering-hook";
+import { chatGptBrowserTabClosedError } from "./adapters/chatgpt-web/adapter-error";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
 import { AsyncEventQueue } from "./event-queue";
 import { readJsonRequestBody } from "./http-body";
 import { augmentNativeModelCatalog } from "./model-catalog";
-import { readCodexModelContextOverride, type CodexModelContextOverride } from "./codex-integration";
+import {
+  readCodexModelContextOverride,
+  readCodexSubagentProtocol,
+  type CodexModelContextOverride,
+} from "./codex-integration";
 import {
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
   isChatGptWebModelSlug,
@@ -31,40 +36,64 @@ import { enforceLocalDataRequestSecurity } from "./local-request-security";
 import { lifecycleControlAuthorized } from "./lifecycle-control";
 
 export class HttpTurnCounter {
-  private active = 0;
+  private readonly active = new Map<number, {
+    abort: AbortController;
+    done: Promise<void>;
+    finish: () => void;
+  }>();
+  private nextId = 1;
 
   count(): number {
-    return this.active;
+    return this.active.size;
+  }
+
+  async cancelAll(reason: unknown = new Error("Active HTTP turns cancelled")): Promise<number> {
+    const turns = [...this.active.values()];
+    for (const turn of turns) {
+      if (!turn.abort.signal.aborted) turn.abort.abort(reason);
+    }
+    await Promise.all(turns.map(turn => turn.done));
+    return turns.length;
   }
 
   async track(
-    run: () => Promise<Response>,
-    signal?: AbortSignal,
+    run: (signal: AbortSignal) => Promise<Response>,
+    clientSignal?: AbortSignal,
     platform: NodeJS.Platform = process.platform,
   ): Promise<Response> {
-    this.active += 1;
+    const id = this.nextId++;
+    const abort = new AbortController();
+    let finish!: () => void;
+    const done = new Promise<void>(resolve => { finish = resolve; });
+    this.active.set(id, { abort, done, finish });
     let released = false;
-    let abortListener: (() => void) | undefined;
+    let clientAbortListener: (() => void) | undefined;
+    let streamAbortListener: (() => void) | undefined;
     const release = () => {
       if (released) return;
       released = true;
-      this.active -= 1;
-      if (signal && abortListener) {
-        signal.removeEventListener("abort", abortListener);
-        abortListener = undefined;
+      this.active.delete(id);
+      if (clientSignal && clientAbortListener) {
+        clientSignal.removeEventListener("abort", clientAbortListener);
+        clientAbortListener = undefined;
       }
+      if (streamAbortListener) abort.signal.removeEventListener("abort", streamAbortListener);
+      finish();
     };
+    clientAbortListener = () => abort.abort(clientSignal?.reason);
+    if (clientSignal?.aborted) abort.abort(clientSignal.reason);
+    else clientSignal?.addEventListener("abort", clientAbortListener, { once: true });
 
     try {
-      const response = await run();
+      const response = await run(abort.signal);
       if (!response.body) {
         release();
         return response;
       }
-      if (signal?.aborted) {
-        void response.body.cancel(signal.reason).catch(() => {});
+      if (abort.signal.aborted) {
+        await response.body.cancel(abort.signal.reason).catch(() => {});
         release();
-        return response;
+        return new Response(null, { status: 499, statusText: "Client Closed Request" });
       }
 
       if (platform !== "win32") {
@@ -72,10 +101,10 @@ export class HttpTurnCounter {
         // pull chain: it keeps HTTP backpressure native and lets a client body cancellation reach
         // the original SSE reader without an eagerly drained tee branch racing the socket writer.
         const reader = response.body.getReader();
-        abortListener = () => {
-          void reader.cancel(signal?.reason).catch(() => {}).finally(release);
+        streamAbortListener = () => {
+          void reader.cancel(abort.signal.reason).catch(() => {}).finally(release);
         };
-        signal?.addEventListener("abort", abortListener, { once: true });
+        abort.signal.addEventListener("abort", streamAbortListener, { once: true });
         const body = new ReadableStream<Uint8Array>({
           async pull(controller) {
             try {
@@ -112,12 +141,13 @@ export class HttpTurnCounter {
       // when the client disconnects and cancels the observer branch.
       const [clientBody, lifecycleBody] = response.body.tee();
       const reader = lifecycleBody.getReader();
-      abortListener = () => {
-        void reader.cancel(signal?.reason).catch(() => {});
-        void clientBody.cancel(signal?.reason).catch(() => {});
-        release();
+      streamAbortListener = () => {
+        void Promise.allSettled([
+          reader.cancel(abort.signal.reason),
+          clientBody.cancel(abort.signal.reason),
+        ]).finally(release);
       };
-      signal?.addEventListener("abort", abortListener, { once: true });
+      abort.signal.addEventListener("abort", streamAbortListener, { once: true });
       void (async () => {
         try {
           while (!(await reader.read()).done) {
@@ -143,10 +173,22 @@ export class HttpTurnCounter {
 
 type ChatGptWebAdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
 
+export interface ResponseRequestOptions {
+  /** DEV and other in-process harnesses can keep continuation state in their own canonical store. */
+  rememberState?: boolean;
+  /** Observe the exact production adapter stream when invoking the handler in-process. */
+  onAdapterEvent?: (event: AdapterEvent) => void;
+}
+
 export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppConfig): ChatGptWebModelRoute {
   const route = requireChatGptWebModelRoute(parsed.modelId, config);
   parsed.modelId = route.backendModel;
-  parsed.options.reasoning = route.adapterEffort;
+  // A Pro task remains Pro, but its isolated summarization turn does not benefit from Pro's much
+  // slower reasoning. Extra High has the same 95k pre-compaction budget on a Pro account, so it
+  // can summarize the complete bounded input without changing the task's selected model.
+  parsed.options.reasoning = parsed._compactionRequest && route.adapterEffort === "max"
+    ? "xhigh"
+    : route.adapterEffort;
   return route;
 }
 
@@ -210,6 +252,7 @@ export async function responseRequest(
   req: Request,
   config: AppConfig,
   adapterFactory: ChatGptWebAdapterFactory = createChatGptWebAdapter,
+  options: ResponseRequestOptions = {},
 ): Promise<Response> {
   const nativeRequest = req.clone();
   let raw: unknown;
@@ -252,6 +295,14 @@ export async function responseRequest(
       `[responses] accepted canonical compaction replacement messages=${parsed.context.messages.length}`,
     );
   }
+  if (parsed._opaqueMultiAgentV2Payload) {
+    return formatErrorResponse(
+      400,
+      "invalid_request_error",
+      "ChatGPT Web cannot read this encrypted cross-backend subagent payload. "
+        + "Start a new Compatibility V1 task, or delegate from a Web model whose collaboration call uses the plaintext-delivery marker.",
+    );
+  }
   if (typeof requestedPreviousResponseId === "string" && expanded === raw) {
     return formatErrorResponse(
       409,
@@ -278,16 +329,49 @@ export async function responseRequest(
     parsed.context.messages.push({ role: "user", content: COMPACT_PROMPT, timestamp: Date.now() });
   }
 
-  const adapter = adapterFactory(providerConfig(config));
+  const provider = providerConfig(config);
+  let cancelledError: Error | undefined;
+  try {
+    cancelledError = chatGptTurnSessions.cancelledError(chatGptWebTraceId(provider, parsed));
+  } catch (error) {
+    // A cancelled browser session can only exist after the adapter accepted canonical native
+    // turn identity and user-revision metadata. Requests without that identity have no matching
+    // trace tombstone; preserve the adapter's existing strict validation/error path below.
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes("requires native Codex turn_id metadata")
+      && !message.includes("requires a current-turn user message")) throw error;
+  }
+  if (cancelledError) {
+    // Codex retries unknown streamed response.failed codes. A replay after the user explicitly
+    // closed the only browser document is instead a terminal client state: repeating that exact
+    // request is invalid and must not recreate the DOM. Codex maps HTTP 400 to its non-retryable
+    // InvalidRequest category while the body preserves the real client_cancelled classification.
+    return new Response(JSON.stringify({
+      error: {
+        type: "client_closed_request",
+        code: "client_cancelled",
+        message: cancelledError.message,
+      },
+    }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  const adapter = adapterFactory(provider);
   const queue = new AsyncEventQueue<AdapterEvent>();
   const abort = new AbortController();
   if (req.signal.aborted) abort.abort();
   else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
   const run = async () => {
     try {
-      await adapter.runTurn!(parsed, { headers: req.headers, abortSignal: abort.signal }, event => queue.push(event));
+      await adapter.runTurn!(parsed, { headers: req.headers, abortSignal: abort.signal }, event => {
+        options.onAdapterEvent?.(event);
+        queue.push(event);
+      });
     } catch (error) {
-      queue.push({ type: "error", message: error instanceof Error ? error.message : String(error) });
+      const event: AdapterEvent = { type: "error", message: error instanceof Error ? error.message : String(error) };
+      options.onAdapterEvent?.(event);
+      queue.push(event);
     } finally {
       queue.close();
     }
@@ -308,7 +392,9 @@ export async function responseRequest(
       {
         hideThinkingSummary: parsed.options.hideThinkingSummary,
         ...(compaction ? { compaction: true } : {
-          onCompletedResponse: (response: Record<string, unknown>) => rememberResponseState(parsed._rawBody, response, { force: true }),
+          ...(options.rememberState === false ? {} : {
+            onCompletedResponse: (response: Record<string, unknown>) => rememberResponseState(parsed._rawBody, response, { force: true }),
+          }),
         }),
       },
     );
@@ -331,7 +417,9 @@ export async function responseRequest(
     toolSearchToolNames: maps.toolSearchToolNames,
     ...(compaction ? { compaction: true } : {}),
   });
-  if (!compaction) rememberResponseState(parsed._rawBody, json, { force: true });
+  if (!compaction && options.rememberState !== false) {
+    rememberResponseState(parsed._rawBody, json, { force: true });
+  }
   return Response.json(json);
 }
 
@@ -343,9 +431,13 @@ export function startServer(
   config: AppConfig,
   dependencies: { fetchUpstream?: NativeFetch } = {},
 ): ReturnType<typeof Bun.serve> {
+  if (config.purpose === "dev-harness") {
+    throw new Error("DEV harness configuration cannot start a Responses listener");
+  }
   const startedAt = Date.now();
+  const turnBroker = config.mode === "full" ? TurnBroker.forSocket(config.brokerSocketPath) : undefined;
   if (config.mode === "full") {
-    void TurnBroker.forSocket(config.brokerSocketPath).listen().catch(error => {
+    void turnBroker!.listen().catch(error => {
       console.error(
         `[chatgpt-web] turn broker endpoint is unavailable: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -358,13 +450,13 @@ export function startServer(
   const httpTurns = new HttpTurnCounter();
   const activity = () => ({
     active_http_turns: httpTurns.count(),
-    active_browser_turns: chatGptTurnSessions.activeCount(),
+    active_browser_turns: chatGptTurnSessions.activeCount() + (turnBroker?.externalOwnerActiveCount() ?? 0),
   });
   const server = Bun.serve({
     hostname: config.host,
     port: config.port,
     idleTimeout: 0,
-    fetch(req) {
+    async fetch(req) {
       const url = new URL(req.url);
       const securityRejection = enforceLocalDataRequestSecurity(req, url.pathname, server.port!); if (securityRejection) return securityRejection;
       if (req.method === "GET" && url.pathname === "/healthz") {
@@ -385,6 +477,7 @@ export function startServer(
       if (req.method === "POST" && (url.pathname === "/admin/drain" || url.pathname === "/admin/resume")) {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
         draining = url.pathname === "/admin/drain";
+        turnBroker?.setExternalOwnersAccepted(!draining);
         return Response.json({ status: "ok", accepting_turns: !draining, ...activity() });
       }
       if (req.method === "POST" && url.pathname === "/admin/drain-if-idle") {
@@ -393,12 +486,48 @@ export function startServer(
         if (draining) return Response.json({ status: "draining", acquired: false, accepting_turns: false, ...current });
         if (current.active_http_turns > 0 || current.active_browser_turns > 0) return Response.json({ status: "busy", acquired: false, accepting_turns: true, ...current });
         draining = true;
+        turnBroker?.setExternalOwnersAccepted(false);
         return Response.json({ status: "ok", acquired: true, accepting_turns: false, ...current });
       }
       if (req.method === "POST" && url.pathname === "/admin/cancel-browser-turns") {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
-        const cancelled = chatGptTurnSessions.clear();
+        const cancelled = chatGptTurnSessions.clear() + (turnBroker?.revokeExternalOwners() ?? 0);
         return Response.json({ status: "ok", cancelled_browser_turns: cancelled, ...activity() });
+      }
+      if (req.method === "POST" && url.pathname === "/admin/cancel-turn") {
+        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
+        let traceId: string;
+        try {
+          const body = await req.json() as { traceId?: unknown };
+          traceId = typeof body?.traceId === "string" ? body.traceId : "";
+          if (!/^[A-Za-z0-9_-]{6,128}$/.test(traceId)) throw new Error("traceId is invalid");
+        } catch (error) {
+          return Response.json(
+            { status: "error", error: error instanceof Error ? error.message : String(error) },
+            { status: 400 },
+          );
+        }
+        const reason = chatGptBrowserTabClosedError();
+        const cancelledBrowserTurns = await chatGptTurnSessions.cancelTrace(traceId, reason);
+        const cancelledBrokerTurns = turnBroker?.revokeTrace(traceId, reason) ?? 0;
+        return Response.json({
+          status: "ok",
+          trace_id: traceId,
+          cancelled_browser_turns: cancelledBrowserTurns,
+          cancelled_broker_turns: cancelledBrokerTurns,
+          ...activity(),
+        });
+      }
+      if (req.method === "POST" && url.pathname === "/admin/cancel-turns") {
+        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
+        const cancelledBrowserTurns = chatGptTurnSessions.clear() + (turnBroker?.revokeExternalOwners() ?? 0);
+        const cancelledHttpTurns = await httpTurns.cancelAll(new Error("Active turn cancelled by launcher"));
+        return Response.json({
+          status: "ok",
+          cancelled_http_turns: cancelledHttpTurns,
+          cancelled_browser_turns: cancelledBrowserTurns,
+          ...activity(),
+        });
       }
       if (req.method === "POST" && url.pathname === "/admin/shutdown") {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
@@ -425,10 +554,23 @@ export function startServer(
           );
         }
         if (isClaudeGatewayModelsRequest(req)) return claudeGatewayModelsResponse(config);
-        return httpTurns.track(async () => {
+        return httpTurns.track(async signal => {
+          let catalogConfig: AppConfig;
+          try {
+            catalogConfig = {
+              ...config,
+              subagentProtocol: readCodexSubagentProtocol(config.subagentProtocol),
+            };
+          } catch (error) {
+            return formatErrorResponse(
+              500,
+              "server_error",
+              `Could not resolve the installed subagent protocol: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
           const response = await modelsRequest(
-            req,
-            config,
+            new Request(req, { signal }),
+            catalogConfig,
             dependencies.fetchUpstream,
             readCodexModelContextOverride,
           );
@@ -447,11 +589,11 @@ export function startServer(
       }
       if (req.method === "POST" && url.pathname === "/v1/responses") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
-        return httpTurns.track(() => responseRequest(req, config), req.signal);
+        return httpTurns.track(signal => responseRequest(new Request(req, { signal }), config), req.signal);
       }
       if (req.method === "POST" && url.pathname === "/v1/messages") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
-        return httpTurns.track(() => messagesRequest(req, config), req.signal);
+        return httpTurns.track(signal => messagesRequest(new Request(req, { signal }), config), req.signal);
       }
       if (req.method === "POST" && url.pathname === "/v1/messages/steering") {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
@@ -459,11 +601,14 @@ export function startServer(
       }
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
-        return httpTurns.track(() => compactRequest(req, config), req.signal);
+        return httpTurns.track(signal => compactRequest(new Request(req, { signal }), config), req.signal);
       }
       if (req.method === "POST" && url.pathname === "/v1/alpha/search") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
-        return httpTurns.track(() => nativeSearchRequest(req, dependencies.fetchUpstream), req.signal);
+        return httpTurns.track(
+          signal => nativeSearchRequest(new Request(req, { signal }), dependencies.fetchUpstream),
+          req.signal,
+        );
       }
       return new Response("Not found", { status: 404 });
     },

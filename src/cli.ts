@@ -11,6 +11,8 @@ import {
   activateCodexIntegration,
   deactivateCodexIntegration,
   inspectCodexIntegration,
+  readCodexSubagentProtocol,
+  setCodexSubagentProtocol,
   uninstallCodexIntegration,
 } from "./codex-integration";
 import { uninstallClaudeIntegration } from "./claude-integration";
@@ -19,11 +21,12 @@ import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
 import { runCommand } from "./process";
 import { reconcileRuntimeIntegrationCredentials } from "./runtime-startup";
 import { startServer } from "./server";
-import { assertServiceIdle, cancelBrowserTurns, getServiceStatus, installService, restartService, startService, stopService, uninstallService } from "./service";
+import { assertServiceIdle, cancelActiveTurns, getServiceStatus, installService, restartService, startService, stopService, uninstallService } from "./service";
 import { existingFullSetupCredentials, setup, type SetupOptions } from "./setup";
 import { installRuntimeKeyBytes, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
 import { getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
 import { VERSION } from "./version";
+import { runDevCommand } from "./dev-chat/cli";
 
 const HELP = `codex-chatgpt-web ${VERSION}
 
@@ -35,7 +38,13 @@ Usage:
   codex-chatgpt-web login
   codex-chatgpt-web doctor [--json]
   codex-chatgpt-web route <status|connect|disconnect>
+  codex-chatgpt-web subagents <status|compatibility-v1|native>
   codex-chatgpt-web browser check
+  codex-chatgpt-web dev launcher
+  codex-chatgpt-web dev status [--json]
+  codex-chatgpt-web dev setup <--browser-only|--full> [options]
+  codex-chatgpt-web dev chat NAME [--model MODEL] [MESSAGE]
+  codex-chatgpt-web dev list
   codex-chatgpt-web serve
   codex-chatgpt-web mcp [--broker-socket PATH]
   codex-chatgpt-web service <status|install|start|restart|stop|cancel-turns>
@@ -45,7 +54,7 @@ Usage:
 
 Setup options:
   --browser-only               Account-eligible Web models, full context/images, no local tools or tunnel
-  --full                       Account-eligible Web models with tools; Pro remains read-only
+  --full                       Account-eligible Web models with tools through the configured connector
   --port NUMBER                Loopback Responses port (default: 17841)
   --chrome PATH                Google Chrome/Chromium executable used for account login
   --browser-host-descriptor PATH
@@ -58,6 +67,7 @@ Setup options:
   --codex-only                 Install only the native Codex integration
   --claude-only                Install only the Claude Code integration
   --replace-codex-route        Reversibly replace an existing openai_base_url
+  --subagent-protocol MODE     compatibility-v1 (default) or native (advanced)
   --restart-service            Explicitly restart this project's daemon after an update
   --login                      Refresh the stored ChatGPT login even if one exists
   --auto-approve-tool-calls    Opt in to per-call browser clicks on "Allow once" prompts
@@ -158,6 +168,13 @@ async function setupCommand(args: string[]): Promise<void> {
     integration: codexOnly ? "codex" : claudeOnly ? "claude" : "all",
     ...(portRaw ? { port: Number(portRaw) } : {}),
   };
+  const subagentProtocol = takeOption(args, "--subagent-protocol");
+  if (subagentProtocol !== undefined) {
+    if (subagentProtocol !== "compatibility-v1" && subagentProtocol !== "native") {
+      throw new Error("--subagent-protocol must be compatibility-v1 or native");
+    }
+    options.subagentProtocol = subagentProtocol;
+  }
   const appName = takeOption(args, "--app-name");
   const tunnelId = takeOption(args, "--tunnel-id");
   const runtimeKeyFile = takeOption(args, "--runtime-key-file");
@@ -244,13 +261,39 @@ async function routeCommand(args: string[]): Promise<void> {
   stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
+async function subagentsCommand(args: string[]): Promise<void> {
+  const action = args.shift() ?? "status";
+  assertNoArgs(args);
+  const config = loadConfig();
+  if (config.purpose === "dev-harness") {
+    throw new Error("The isolated DEV harness has no Codex subagent protocol to configure");
+  }
+  if (action === "status") {
+    const integration = inspectCodexIntegration();
+    stdout.write(`${JSON.stringify({
+      protocol: readCodexSubagentProtocol(config.subagentProtocol),
+      installed: integration.installed,
+      active: integration.active,
+    }, null, 2)}\n`);
+    return;
+  }
+  if (action !== "compatibility-v1" && action !== "native") {
+    throw new Error("Subagent protocol must be one of: status, compatibility-v1, native");
+  }
+  const journal = setCodexSubagentProtocol(config, action);
+  stdout.write(`${JSON.stringify({
+    protocol: journal.installed.subagent_protocol,
+    codexRestartRequired: true,
+    launcherRestartRequired: true,
+  }, null, 2)}\n`);
+}
+
 async function serviceCommand(args: string[]): Promise<void> {
   const action = args.shift() ?? "status";
   assertNoArgs(args);
   const config = action === "status" ? undefined : loadConfig();
   if (action === "cancel-turns") {
-    const cancelled = await cancelBrowserTurns(config!);
-    stdout.write(`${JSON.stringify({ cancelledBrowserTurns: cancelled }, null, 2)}\n`);
+    stdout.write(`${JSON.stringify(await cancelActiveTurns(config!), null, 2)}\n`);
     return;
   }
   const status = action === "status" ? getServiceStatus()
@@ -355,11 +398,15 @@ async function main(): Promise<void> {
     return;
   }
   const command = args.shift() ?? "help";
+  if (command === "dev" && home) {
+    throw new Error("--home does not apply to DEV mode; use CODEX_WEB_GPT_DEV_HOME for an explicit isolated DEV profile");
+  }
   if (command === "help") stdout.write(HELP);
   else if (command === "setup") await setupCommand(args);
   else if (command === "login") await loginCommand(args);
   else if (command === "doctor" || command === "status") await doctorCommand(args);
   else if (command === "route") await routeCommand(args);
+  else if (command === "subagents") await subagentsCommand(args);
   else if (command === "browser") {
     const action = args.shift();
     assertNoArgs(args);
@@ -379,7 +426,8 @@ async function main(): Promise<void> {
     const server = startServer(config);
     stdout.write(`codex-chatgpt-web ${VERSION} listening on http://${config.host}:${server.port}/v1 (${config.mode})\n`);
     await new Promise<void>(() => {});
-  } else if (command === "mcp") await runChatGptMcpMain(args);
+  } else if (command === "dev") await runDevCommand(args);
+  else if (command === "mcp") await runChatGptMcpMain(args);
   else if (command === "service") await serviceCommand(args);
   else if (command === "tunnel") await tunnelCommand(args);
   else if (command === "open") await openCommand(args);

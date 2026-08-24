@@ -17,16 +17,20 @@ export async function callTurnBroker<T>(
   socketPath: string,
   request: Omit<BrokerRequest, "id">,
   timeoutMs: number | null = 5_000,
+  signal?: AbortSignal,
 ): Promise<T> {
   const id = opaqueId("request");
   return new Promise<T>((resolveCall, rejectCall) => {
     const socket = createConnection(socketPath);
     let buffered = "";
     let settled = false;
+    const onAbort = () => finishError(new DOMException("turn broker call aborted", "AbortError"));
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
     const finishError = (error: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      cleanup();
       socket.destroy();
       rejectCall(error);
     };
@@ -34,6 +38,11 @@ export async function callTurnBroker<T>(
       ? undefined
       : setTimeout(() => finishError(new Error("ChatGPT web turn broker timed out")), timeoutMs);
     socket.setEncoding("utf8");
+    if (signal?.aborted) {
+      finishError(new DOMException("turn broker call aborted", "AbortError"));
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
     socket.once("error", error => finishError(new Error(`ChatGPT web turn broker unavailable: ${error.message}`)));
     const finishClosed = () => finishError(new Error("ChatGPT web turn broker closed the connection"));
     socket.once("end", finishClosed);
@@ -61,6 +70,7 @@ export async function callTurnBroker<T>(
       }
       settled = true;
       clearTimeout(timer);
+      cleanup();
       socket.end();
       if (response.error) rejectCall(new Error(response.error));
       else resolveCall(response.result as T);

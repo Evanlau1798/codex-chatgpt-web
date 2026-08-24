@@ -1,22 +1,23 @@
-import { createHash } from "node:crypto";
 import { existsSync, lstatSync, unlinkSync } from "node:fs";
 import type { Server } from "node:net";
 import { isWindowsPipeEndpoint } from "../../config";
 import { CompactionTransactionStore, type CompactionTransactionHandle } from "./compaction-transaction";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { startTurnBrokerServer } from "./turn-broker-server";
+import { dispatchExternalOwnerRequest, type TurnBrokerOwner } from "./turn-broker-owner";
 import {
-  completeArchiveChunks,
   environmentIdentity,
   retiredTurnLabel,
   steeringResult,
-  type PendingContext,
   type ToolWaiter,
   type TurnChannel,
 } from "./turn-broker-state";
-import { MAX_BROKER_LINE_CHARS, opaqueId, type BrokerRequest, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker-protocol";
+import { opaqueId, type BrokerRequest, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker-protocol";
+import { TurnContextStore } from "./turn-context-store";
 
 export { callTurnBroker } from "./turn-broker-client";
+export { RemoteTurnBroker } from "./turn-broker-owner";
+export type { TurnBrokerOwner } from "./turn-broker-owner";
 export type { BrokerToolRequest, BrokerToolResult } from "./turn-broker-protocol";
 
 const brokers = new Map<string, TurnBroker>();
@@ -32,7 +33,7 @@ export async function closeTurnBrokers(): Promise<void> {
     throw new AggregateError(failures, `${failures.length} ChatGPT turn broker(s) failed to close`);
   }
 }
-export class TurnBroker {
+export class TurnBroker implements TurnBrokerOwner {
   static forSocket(path: string): TurnBroker {
     let broker = brokers.get(path);
     if (!broker) {
@@ -45,13 +46,14 @@ export class TurnBroker {
   private readonly channels = new Map<string, TurnChannel>();
   private readonly pending = new Map<string, TurnChannel>();
   private readonly compactionTransactions = new CompactionTransactionStore();
-  private readonly contexts = new Map<string, PendingContext>();
+  private readonly contexts = new TurnContextStore();
   private readonly bindings = new Map<string, { token: string; channel: TurnChannel }>();
   // The Codex context replayed into ChatGPT still carries the handles of finished turns, so a model
   // can present one. Remembering which turn retired a handle is what separates "you are holding a
   // previous turn's handle" from "this handle never existed".
   private readonly retiredBindings = new Map<string, string>();
   private readonly retiredTokens = new Map<string, string>();
+  private acceptingExternalOwners = true;
   private server?: Server;
   private startPromise?: Promise<void>;
 
@@ -72,15 +74,20 @@ export class TurnBroker {
     ttlMs?: number,
     traceId = "unknown",
     onProgress?: () => void,
+    externalOwner = false,
   ): Promise<string> {
     await this.start();
     this.prune();
+    if (externalOwner && !this.acceptingExternalOwners) {
+      throw new Error("turn broker is draining and does not accept new external owners");
+    }
     if (ttlMs !== undefined && (!Number.isFinite(ttlMs) || ttlMs <= 0)) {
       throw new Error("ChatGPT web turn broker TTL must be a positive finite number");
     }
     const token = opaqueId("turn");
     const channel: TurnChannel = {
       traceId,
+      externalOwner,
       ...(onProgress ? { onProgress } : {}),
       environment: {
         ...environment,
@@ -103,23 +110,7 @@ export class TurnBroker {
   ): Promise<string> {
     await this.start();
     this.prune();
-    if (!text) throw new Error("ChatGPT web context must not be empty");
-    if (JSON.stringify({ context: text }).length + 256 > MAX_BROKER_LINE_CHARS) {
-      throw new Error("ChatGPT web context exceeds the turn broker response size limit");
-    }
-    if (ttlMs !== undefined && (!Number.isFinite(ttlMs) || ttlMs <= 0)) {
-      throw new Error("ChatGPT web context TTL must be a positive finite number");
-    }
-    const token = opaqueId("context");
-    this.contexts.set(token, {
-      text,
-      traceId,
-      ...(turnToken ? { turnToken } : {}),
-      nextChunk: 0,
-      complete: false,
-      ...(ttlMs !== undefined ? { expiresAt: Date.now() + ttlMs } : {}),
-    });
-    return token;
+    return this.contexts.register(text, ttlMs, traceId, turnToken);
   }
 
   async beginCompactionTransaction(
@@ -143,7 +134,7 @@ export class TurnBroker {
   }
 
   revokeContext(token: string): void {
-    this.contexts.delete(token);
+    this.contexts.revoke(token);
   }
 
   updateEnvironment(token: string, environment: ChatGptTurnEnvironment): void {
@@ -247,7 +238,7 @@ export class TurnBroker {
     return Boolean(this.channels.get(token)?.handoffInstruction);
   }
 
-  revoke(token: string): void {
+  revoke(token: string, reason = new Error("Codex turn binding was revoked")): void {
     const channel = this.channels.get(token);
     if (!channel) return;
     this.channels.delete(token);
@@ -257,7 +248,32 @@ export class TurnBroker {
       this.retire(this.retiredBindings, channel.bindingId, channel.traceId);
     }
     this.retire(this.retiredTokens, token, channel.traceId);
-    this.rejectChannel(channel, new Error("Codex turn binding was revoked"));
+    this.rejectChannel(channel, reason);
+  }
+
+  externalOwnerActiveCount(): number {
+    this.prune();
+    return [...this.channels.values()].filter(channel => channel.externalOwner).length;
+  }
+
+  revokeExternalOwners(): number {
+    const tokens = [...this.channels]
+      .filter(([, channel]) => channel.externalOwner)
+      .map(([token]) => token);
+    for (const token of tokens) this.revoke(token);
+    return tokens.length;
+  }
+
+  revokeTrace(traceId: string, reason = new Error("Codex turn binding was revoked")): number {
+    const tokens = [...this.channels]
+      .filter(([, channel]) => channel.traceId === traceId)
+      .map(([token]) => token);
+    for (const token of tokens) this.revoke(token, reason);
+    return tokens.length;
+  }
+
+  setExternalOwnersAccepted(accepted: boolean): void {
+    this.acceptingExternalOwners = accepted;
   }
 
   private retire(history: Map<string, string>, handle: string, traceId: string): void {
@@ -298,6 +314,15 @@ export class TurnBroker {
 
   private dispatch(request: BrokerRequest): unknown | Promise<unknown> {
     this.prune();
+    if (request.method.startsWith("owner_")) return dispatchExternalOwnerRequest(request, {
+      accepting: () => this.acceptingExternalOwners,
+      registerExternal: (environment, ttlMs, traceId) => this.register(environment, ttlMs, traceId, undefined, true),
+      register: (environment, ttlMs, traceId) => this.register(environment, ttlMs, traceId),
+      updateEnvironment: (token, environment) => this.updateEnvironment(token, environment),
+      nextToolBatch: (token, signal) => this.nextToolBatch(token, signal),
+      completeTool: (token, callId, result) => this.completeTool(token, callId, result),
+      revoke: (token, reason) => this.revoke(token, reason),
+    });
     if (request.method === "submit_compaction_handoff") {
       const token = request.token;
       const handoffId = request.handoffId;
@@ -311,44 +336,7 @@ export class TurnBroker {
     if (request.method === "read_context") {
       const token = request.token;
       if (typeof token !== "string" || token.length === 0) throw new Error("context token is required");
-      const direct = this.contexts.get(token);
-      const inherited = direct ? [] : [...this.contexts.values()].filter(context => context.turnToken === token);
-      if (inherited.length > 1) throw new Error("turn token has multiple active context archives");
-      const context = direct ?? inherited[0];
-      if (!context) throw new Error("context token is invalid, expired, or revoked");
-      if (context.turnToken) this.channels.get(context.turnToken)?.onProgress?.();
-      if (request.index === undefined && request.chunkChars === undefined) {
-        context.complete = true;
-        console.info(`[chatgpt-web] broker trace=${context.traceId} served context chars=${context.text.length} chunks=1`);
-        return { context: context.text };
-      }
-      const index = request.index;
-      const chunkChars = request.chunkChars;
-      if (!Number.isInteger(index) || index! < 0 || !Number.isInteger(chunkChars) || chunkChars! < 1) {
-        throw new Error("context archive chunk request is invalid");
-      }
-      if (context.chunkChars !== undefined && context.chunkChars !== chunkChars) {
-        throw new Error("context archive chunk size changed during retrieval");
-      }
-      context.chunkChars = chunkChars;
-      context.chunks ??= completeArchiveChunks(context.text, chunkChars!);
-      const total = context.chunks.length;
-      if (index! >= total) throw new Error("context archive chunk index is out of range");
-      if (index! > context.nextChunk) {
-        throw new Error(`context archive chunk is out of order; expected ${context.nextChunk}`);
-      }
-      const chunk = context.chunks[index!]!;
-      const replayed = index! < context.nextChunk;
-      if (!replayed) {
-        context.nextChunk += 1;
-        context.complete = context.nextChunk === total;
-      }
-      const sha256 = createHash("sha256").update(context.text).digest("hex");
-      console.info(
-        `[chatgpt-web] broker trace=${context.traceId} ${replayed ? "replayed" : "served"} context chunk=${index! + 1}/${total}`
-        + ` chars=${chunk.length} complete=${context.complete}`,
-      );
-      return { context: chunk, index, total, sha256, nextIndex: index! + 1 === total ? null : index! + 1 };
+      return this.contexts.read(token, request.index, request.chunkChars, this.channels);
     }
     if (request.method === "claim") {
       const token = request.token;
@@ -365,7 +353,7 @@ export class TurnBroker {
           + " This Codex Native action can no longer run."
           : "turn token is invalid, expired, or revoked");
       }
-      if ([...this.contexts.values()].some(context => context.turnToken === token && !context.complete)) {
+      if (this.contexts.hasIncomplete(token)) {
         throw new Error("Read and verify the complete Codex context archive before calling work tools");
       }
       if (channel.bindingId) {
@@ -482,9 +470,7 @@ export class TurnBroker {
 
   private prune(): void {
     const now = Date.now();
-    for (const [token, context] of this.contexts) {
-      if (context.expiresAt !== undefined && context.expiresAt <= now) this.contexts.delete(token);
-    }
+    this.contexts.prune(now);
     for (const [token, channel] of this.channels) {
       if (channel.environment.expiresAt === undefined || channel.environment.expiresAt > now) continue;
       this.revoke(token);

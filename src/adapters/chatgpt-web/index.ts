@@ -16,7 +16,7 @@ import { reportChatGptPreparationFailure } from "./preparation-diagnostics";
 import { compileChatGptWebPrompt } from "./prompt";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { brokerSocketPath, ChatGptSurfaceRecoveryTracker, deferred, withAbort } from "./runtime-lifecycle";
-import { TurnBroker } from "./turn-broker";
+import { TurnBroker, type TurnBrokerOwner } from "./turn-broker";
 import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, chatGptTurnTraceId, type ChatGptTraceEvent, type ChatGptTurnRuntime } from "./turn-execution";
 import { chatGptTurnRetryKey } from "./turn-retry-identity";
 import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
@@ -31,9 +31,21 @@ import { submittedBrowserFailure, submittedStallFailure } from "./submitted-turn
 import { ChatGptLunaCheckpointStore, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint";
 import { createChatGptSameSurfaceRetry } from "./same-surface-recovery";
 import { ChatGptToolEvidenceGuard } from "./tool-evidence-guard";
-export function createChatGptWebAdapter(provider: CodexProviderConfig): ProviderAdapter {
+export function chatGptWebExecutionNamespace(provider: CodexProviderConfig): string {
+  return chatGptAdapterRuntimeConfig(provider).executionNamespace;
+}
+
+export function chatGptWebTraceId(provider: CodexProviderConfig, parsed: CodexParsedRequest): string {
+  return chatGptTurnTraceId(parsed, chatGptWebExecutionNamespace(provider));
+}
+
+export function createChatGptWebAdapter(
+  provider: CodexProviderConfig,
+  dependencies: { broker?: TurnBrokerOwner } = {},
+): ProviderAdapter {
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const broker = TurnBroker.forSocket(brokerSocketPath(provider));
+  const brokerOwner = dependencies.broker ?? broker;
   const { timeoutMs, useEnhancedWebSessionMode, configuredCapabilities, executionNamespace } = chatGptAdapterRuntimeConfig(provider);
   const environmentStore = new ChatGptThreadEnvironmentStore(provider.chatgptWeb?.threadEnvironmentStatePath ? resolve(expandUserPath(provider.chatgptWeb.threadEnvironmentStatePath)) : undefined);
   const lunaCheckpointStore = new ChatGptLunaCheckpointStore(provider.chatgptWeb?.lunaCheckpointStatePath ? resolve(expandUserPath(provider.chatgptWeb.lunaCheckpointStatePath)) : undefined);
@@ -118,6 +130,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         ...base,
         traceId,
         ...(nativeControlConnector ? { nativeConnector: true } : {}),
+        ...(parsed._compactionRequest ? { compaction: true } : {}),
         onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
         onCommentary: emitCommentary,
         onProgress: () => trace.signalProgress(),
@@ -144,7 +157,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     const token = deferred<string>();
     let tokenSettled = false;
     const prepareWith = async (input: CodexParsedRequest, source: "full" | "resume") => {
-      const turnToken = activeToken ?? await broker.register(
+      const turnToken = activeToken ?? await brokerOwner.register(
         environment,
         timeoutMs === undefined ? undefined : timeoutMs + 60_000,
         traceId,
@@ -172,6 +185,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       modelId: parsed.modelId,
       reasoning: parsed.options.reasoning,
       capabilities: turnCapabilities,
+      ...(parsed._compactionRequest ? { compaction: true } : {}),
       prepare: () => prepareWith(checkpointInput.parsed, "full"),
       ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput, "resume") } : {}),
       ...(retainConversation ? { retainConversation: true } : {}),
@@ -191,7 +205,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
     }) : browserRun);
     // Let an active runTurn observe the authoritative browser outcome before revoking its broker
     // waiter. Detached browser failures still release the token on the next event-loop turn.
-    void browser.catch(() => setTimeout(() => activeToken && broker.revoke(activeToken), 0));
+    void browser.catch(() => setTimeout(() => activeToken && void Promise.resolve(brokerOwner.revoke(activeToken)).catch(() => {}), 0));
     void browser.catch(error => {
       if (!tokenSettled) {
         tokenSettled = true;
@@ -212,9 +226,11 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
         if (result) toolEvidence?.observeToolResult(result);
       },
       ...(handoffPrompts ? activeCompactionRuntimeHooks(handoffPrompts, instruction => worker.requestPreemptiveRetry(traceId, instruction)) : {}),
-      cancel: () => {
-        browserAbort.abort();
-        if (activeToken) broker.revoke(activeToken);
+      cancel: (reason?: Error) => {
+        browserAbort.abort(reason);
+        if (activeToken) void Promise.resolve(brokerOwner.revoke(activeToken, reason)).catch(error => {
+          console.error(`[chatgpt-web] failed to revoke cancelled turn token: ${error instanceof Error ? error.message : String(error)}`);
+        });
       },
       ...(releaseRetainedConversation ? { release: releaseRetainedConversation } : {}),
     };
@@ -267,7 +283,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
       await chatGptTurnSessions.waitForRetirement(executionKey);
       const traceId = chatGptTurnTraceId(parsed, executionNamespace);
       let session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
-        () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode);
+        () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId);
       if (session.runtime.mode === "tools" && !environment) {
         environment = resolveTrustedCodexEnvironment(environmentStore, parsed);
       }
@@ -330,7 +346,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           if (session.runtime.mode === "tools") {
             turnToken = await withAbort(session.runtime.token, incoming.abortSignal);
             if (!environment) throw new Error("Tool-capable ChatGPT web runtime lost its trusted environment");
-            broker.updateEnvironment(turnToken, environment);
+            await brokerOwner.updateEnvironment(turnToken, environment);
 
             const outstanding = session.outstanding();
             if (outstanding.length > 0) {
@@ -346,7 +362,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
                   return;
                 }
               } else {
-                completeChatGptToolResults(session, broker, turnToken, results,
+                await completeChatGptToolResults(session, brokerOwner, turnToken, results,
                   chatGptAgentLifecycleOptions(environmentStore, parsed, chatGptTurnSessions, executionNamespace));
                 if (useEnhancedWebSessionMode) deliverPendingChatGptSteering(session, broker, turnToken, traceId);
               }
@@ -371,7 +387,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
             emitNewTrace(session.runtime.trace.drain());
             emitNewText(session.runtime.text.drain());
             const nextTools = turnToken
-              ? broker.nextToolBatch(turnToken, toolWaitAbort.signal).then(requests => ({ type: "tools" as const, requests }))
+              ? brokerOwner.nextToolBatch(turnToken, toolWaitAbort.signal).then(requests => ({ type: "tools" as const, requests }))
               : undefined;
             const browserOutcome = session.browserOutcome.then(outcome => ({ type: "browser" as const, outcome }));
             let nextTrace = session.runtime.trace.wait(toolWaitAbort.signal).then(() => ({ type: "trace" as const }));
@@ -402,7 +418,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
               if (next.type === "browser") {
                 session.setFinalReasoning(roundReasoning);
                 session.setFinalEvents(roundEvents);
-                if (turnToken) broker.revoke(turnToken);
+                if (turnToken) await brokerOwner.revoke(turnToken);
                 if (next.outcome.type === "error") {
                   recoveredResultCount = surfaceRecovery.recoverableResultCount(
                     next.outcome.error, session, parsed, surfaceRecoveries, incoming.abortSignal,
@@ -455,7 +471,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           );
           await chatGptTurnSessions.retireAndWait(executionKey);
           session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
-            () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode);
+            () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId);
           await session.runExclusive(async () => { session.observeCanonicalRequest(parsed); });
         }
         if (useEnhancedWebSessionMode && parsed._localCompactionRequest) { const key = chatGptConversationKey(parsed, executionNamespace); if (key) await chatGptTurnSessions.retireConversationAndWait(key); }
@@ -477,7 +493,7 @@ export function createChatGptWebAdapter(provider: CodexProviderConfig): Provider
           chatGptTurnSessions.retire(executionKey, session);
         }
         if (session.runtime.mode === "tools") {
-          void session.runtime.token.then(turnToken => broker.revoke(turnToken)).catch(() => {});
+          void session.runtime.token.then(turnToken => brokerOwner.revoke(turnToken)).catch(() => {});
         }
         if (handledError instanceof ChatGptWebAdapterError) {
           emit({

@@ -26,7 +26,10 @@ function validateRequest(request: BrokerRequest): void {
   }
   if (request.method !== "claim" && request.method !== "resolve" && request.method !== "release"
     && request.method !== "invoke" && request.method !== "read_context"
-    && request.method !== "submit_compaction_handoff") {
+    && request.method !== "submit_compaction_handoff"
+    && request.method !== "owner_status" && request.method !== "owner_register"
+    && request.method !== "owner_update" && request.method !== "owner_next"
+    && request.method !== "owner_complete" && request.method !== "owner_revoke") {
     throw new Error("turn broker method is invalid");
   }
 }

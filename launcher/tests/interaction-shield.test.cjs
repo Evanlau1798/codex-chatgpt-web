@@ -17,13 +17,18 @@ test("turn visibility keeps the native shield above its ChatGPT view", () => {
   const calls = [];
   const tab = {
     id: "turn",
-    view: { setVisible: value => calls.push(["turn", value]) },
+    view: {
+      setBounds: bounds => calls.push(["turn-bounds", bounds]),
+      setVisible: value => calls.push(["turn", value]),
+    },
     interactionShield: { setVisible: value => calls.push(["shield", value]) },
   };
   const fixture = {
     visible: true,
     surfaceActive: true,
     boundsReady: true,
+    bounds: { x: 0, y: 0, width: 800, height: 600 },
+    hiddenTurnBounds: () => ({ x: 0, y: 0, width: 1280, height: 720 }),
     view: { setVisible: value => calls.push(["home", value]) },
     turnTabs: new Map([[tab.id, tab]]),
     selectedTurnTab: () => tab,
@@ -31,7 +36,12 @@ test("turn visibility keeps the native shield above its ChatGPT view", () => {
 
   BrowserHost.prototype.syncViewVisibility.call(fixture);
 
-  assert.deepEqual(calls, [["home", false], ["turn", true], ["shield", true]]);
+  assert.deepEqual(calls, [
+    ["home", false],
+    ["turn-bounds", fixture.bounds],
+    ["turn", true],
+    ["shield", true],
+  ]);
 });
 
 test("the native shield owns operating-system focus for a selected turn", () => {
@@ -57,6 +67,7 @@ test("disabled turn protection exposes and focuses the ChatGPT view", () => {
     id: "turn",
     interactionLocked: false,
     view: {
+      setBounds: bounds => calls.push(["turn-bounds", bounds]),
       setVisible: value => calls.push(["turn", value]),
       webContents: { focus: () => focused.push("turn") },
     },
@@ -69,6 +80,8 @@ test("disabled turn protection exposes and focuses the ChatGPT view", () => {
     visible: true,
     surfaceActive: true,
     boundsReady: true,
+    bounds: { x: 0, y: 0, width: 800, height: 600 },
+    hiddenTurnBounds: () => ({ x: 0, y: 0, width: 1280, height: 720 }),
     view: { setVisible: value => calls.push(["home", value]) },
     turnTabs: new Map([[tab.id, tab]]),
     selectedTabId: tab.id,
@@ -79,7 +92,12 @@ test("disabled turn protection exposes and focuses the ChatGPT view", () => {
   BrowserHost.prototype.syncViewVisibility.call(fixture);
   BrowserHost.prototype.focusActiveSurface.call(fixture);
 
-  assert.deepEqual(calls, [["home", false], ["turn", true], ["shield", false]]);
+  assert.deepEqual(calls, [
+    ["home", false],
+    ["turn-bounds", fixture.bounds],
+    ["turn", true],
+    ["shield", false],
+  ]);
   assert.deepEqual(focused, ["turn"]);
 });
 

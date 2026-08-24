@@ -1,5 +1,6 @@
 import type { AdapterEvent, CodexParsedRequest, CodexToolResultMessage } from "../../types";
 import type { BrokerToolRequest } from "./turn-broker";
+import { chatGptBrowserTabClosedError } from "./adapter-error";
 import { ChatGptSteeringFeed, steeringFingerprint, type ClaudeSteeringDelivery } from "./steering-feed";
 import { ChatGptTextFeed, ChatGptTraceFeed } from "./turn-feeds";
 import { ChatGptAgentSessionGraph } from "./agent-session-graph";
@@ -29,7 +30,7 @@ interface ChatGptTurnRuntimeBase {
   requestHandoff?: (instruction: string, instructionDelivered?: boolean) => void;
   onToolResultDelivered?: (result?: CodexToolResultMessage) => void;
   submission?: { accepted: boolean };
-  cancel: () => void;
+  cancel: (reason?: Error) => void;
   /** Release a completed retained browser surface when this canonical session is superseded. */
   release?: () => Promise<void>;
 }
@@ -67,6 +68,7 @@ export class ChatGptTurnSession {
     readonly group?: string,
     readonly steeringId?: string,
     readonly claudeRootThreadId?: string,
+    readonly traceId?: string,
   ) {
     this.steering = runtime.steering ?? new ChatGptSteeringFeed();
     this.browserOutcome = runtime.browser
@@ -258,7 +260,7 @@ export class ChatGptTurnSession {
     }
   }
 
-  cancel(): void { this.runtime.cancel(); }
+  cancel(reason?: Error): void { this.runtime.cancel(reason); }
 }
 export class ChatGptTurnSessions {
   private readonly entries = new Map<string, ChatGptTurnSession>();
@@ -277,6 +279,7 @@ export class ChatGptTurnSessions {
     group?: string,
     steeringId?: string,
     claudeRootThreadId?: string,
+    traceId?: string,
   ): ChatGptTurnSession {
     this.prune();
     const existing = this.entries.get(key);
@@ -285,7 +288,7 @@ export class ChatGptTurnSessions {
       return existing;
     }
     if (this.entries.size >= this.maxEntries) throw new Error(`ChatGPT web session registry is full (${this.maxEntries} entries)`);
-    const session = new ChatGptTurnSession(start(), group, steeringId, claudeRootThreadId);
+    const session = new ChatGptTurnSession(start(), group, steeringId, claudeRootThreadId, traceId);
     this.entries.set(key, session);
     return session;
   }
@@ -297,10 +300,11 @@ export class ChatGptTurnSessions {
     group?: string,
     steeringId?: string,
     claudeRootThreadId?: string,
+    traceId?: string,
   ): Promise<ChatGptTurnSession> {
     for (;;) {
       const pending = this.retirements.get(key) ?? (conversationKey ? this.conversationRetirements.get(conversationKey) : undefined);
-      if (!pending) return this.getOrCreate(key, start, group, steeringId, claudeRootThreadId);
+      if (!pending) return this.getOrCreate(key, start, group, steeringId, claudeRootThreadId, traceId);
       await pending;
     }
   }
@@ -473,6 +477,23 @@ export class ChatGptTurnSessions {
     for (const [key, session] of [...this.entries]) this.retire(key, session);
     this.agentGraph.clear();
     return cancelled;
+  }
+  async cancelTrace(traceId: string, reason = chatGptBrowserTabClosedError()): Promise<number> {
+    const sessions = [...this.entries.values()]
+      .filter(session => session.traceId === traceId && session.isActive());
+    for (const session of sessions) session.cancel(reason);
+    await Promise.all(sessions.map(session => session.browserOutcome.then(() => undefined)));
+    return sessions.length;
+  }
+
+  cancelledError(traceId: string): Error | undefined {
+    for (const session of this.entries.values()) {
+      if (session.traceId !== traceId) continue;
+      const outcome = session.settledOutcome();
+      if (outcome?.type !== "error") continue;
+      if ("code" in outcome.error && outcome.error.code === "client_cancelled") return outcome.error;
+    }
+    return undefined;
   }
   activeCount(): number {
     this.prune();

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { ChatGptTurnEnvironment } from "./environment";
 
 export interface BrokerToolRequest {
   callId: string;
@@ -17,7 +18,8 @@ export interface BrokerToolResult {
 
 export interface BrokerRequest {
   id: string;
-  method: "claim" | "resolve" | "release" | "invoke" | "read_context" | "submit_compaction_handoff";
+  method: "claim" | "resolve" | "release" | "invoke" | "read_context" | "submit_compaction_handoff"
+    | "owner_status" | "owner_register" | "owner_update" | "owner_next" | "owner_complete" | "owner_revoke";
   token?: string;
   bindingId?: string;
   wireName?: string;
@@ -28,6 +30,11 @@ export interface BrokerRequest {
   summary?: string;
   index?: number;
   chunkChars?: number;
+  environment?: ChatGptTurnEnvironment;
+  ttlMs?: number;
+  traceId?: string;
+  callId?: string;
+  toolResult?: BrokerToolResult;
 }
 
 export interface BrokerResponse {

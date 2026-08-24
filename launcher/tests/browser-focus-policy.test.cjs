@@ -55,6 +55,7 @@ test("turn acquisition requests non-activating visibility", () => {
   const fixture = {
     manualOperation: null,
     turnTabs: new Map(),
+    userCancelledTurnOwners: new Map(),
     createTurnTab: () => tab,
     show: (options) => showOptions.push(options),
     syncViewVisibility() {},

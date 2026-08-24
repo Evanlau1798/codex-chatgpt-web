@@ -143,7 +143,7 @@ test("keeps same-generation and incomplete superseded calls fail-closed", () => 
   expect(incomplete.unresolvedSupersededResultIds()).toEqual(["call_incomplete"]);
 });
 
-test("does not consume steering or outstanding calls for a partial parallel result batch", () => {
+test("does not consume steering or outstanding calls for a partial parallel result batch", async () => {
   const session = new ChatGptTurnSession({
     mode: "tools",
     token: Promise.resolve("turn_partial"),
@@ -158,14 +158,14 @@ test("does not consume steering or outstanding calls for a partial parallel resu
   ]);
   session.queueSteering("new guidance");
 
-  expect(() => completeChatGptToolResults(session, { completeTool: () => {} }, "turn_partial", [{
+  await expect(completeChatGptToolResults(session, { completeTool: () => {} }, "turn_partial", [{
     role: "toolResult",
     toolCallId: "call_one",
     toolName: "exec_command",
     content: "one",
     isError: false,
     timestamp: 1,
-  }])).toThrow("Codex returned 1 of 2 results");
+  }])).rejects.toThrow("Codex returned 1 of 2 results");
   expect(session.outstanding().map(call => call.callId)).toEqual(["call_one", "call_two"]);
   expect(session.takePendingSteering()).toBe("new guidance");
 });

@@ -5,6 +5,7 @@ import type { CodexParsedRequest } from "../../types";
 import {
   extractChatGptTurnEnvironment,
   extractChatGptTurnIdentity,
+  extractChatGptThreadSpawnLineage,
   MissingTrustedCodexEnvironmentError,
   type ChatGptSandboxPolicy,
   type ChatGptTurnEnvironment,
@@ -130,19 +131,51 @@ export class ChatGptThreadEnvironmentStore {
       return environment;
     } catch (error) {
       if (!(error instanceof MissingTrustedCodexEnvironmentError) || !identity.threadId) throw error;
-      let stored = this.get(identity.threadId);
-      if (!stored && identity.parentThreadId && identity.parentThreadId !== identity.threadId
-        && this.inherit(identity.parentThreadId, identity.threadId)) {
-        stored = this.get(identity.threadId);
-      }
-      if (!stored) throw error;
-      return {
+      const stored = this.get(identity.threadId);
+      if (stored) return {
         cwd: stored.cwd,
         roots: stored.roots,
         writableRoots: stored.writableRoots,
         sandboxPolicy: stored.sandboxPolicy,
         tools: effectiveChatGptToolPolicy(parsed).tools,
       };
+
+      const lineage = extractChatGptThreadSpawnLineage(parsed);
+      if (!lineage && identity.parentThreadId && identity.parentThreadId !== identity.threadId
+        && !identity.agentName && !identity.subagentKind
+        && this.inherit(identity.parentThreadId, identity.threadId)) {
+        const inherited = this.get(identity.threadId);
+        if (inherited) return {
+          cwd: inherited.cwd,
+          roots: inherited.roots,
+          writableRoots: inherited.writableRoots,
+          sandboxPolicy: inherited.sandboxPolicy,
+          tools: effectiveChatGptToolPolicy(parsed).tools,
+        };
+      }
+      if (!lineage) throw error;
+      const parent = this.get(lineage.parentThreadId);
+      if (!parent) throw error;
+      if (lineage.sandboxType !== parent.sandboxPolicy.type) {
+        throw new Error("ChatGPT Web subagent sandbox metadata conflicts with its trusted parent thread");
+      }
+      if (lineage.workspaceRoots.length > 0 && !lineage.workspaceRoots.some(root => contains(root, parent.cwd))) {
+        throw new Error("ChatGPT Web subagent workspace metadata does not contain its trusted parent cwd");
+      }
+      if (lineage.workspaceRoots.some(root => !parent.roots.some(parentRoot => (
+        contains(parentRoot, root) || contains(root, parentRoot)
+      )))) {
+        throw new Error("ChatGPT Web subagent workspace metadata conflicts with its trusted parent roots");
+      }
+      const inherited: ChatGptTurnEnvironment = {
+        cwd: parent.cwd,
+        roots: parent.roots,
+        writableRoots: parent.writableRoots,
+        sandboxPolicy: parent.sandboxPolicy,
+        tools: effectiveChatGptToolPolicy(parsed).tools,
+      };
+      this.set(lineage.threadId, inherited);
+      return inherited;
     }
   }
 

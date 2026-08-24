@@ -23,7 +23,7 @@ function request(reasoning: "low" | "medium" | "high" | "xhigh" | "max"): CodexP
   };
 }
 
-function toolRequest(reasoning: "low" | "medium" | "high" | "xhigh"): CodexParsedRequest {
+function toolRequest(reasoning: "low" | "medium" | "high" | "xhigh" | "max"): CodexParsedRequest {
   const parsed = request(reasoning);
   parsed.context.tools = [{ name: "Read", description: "Read a file", parameters: {} }];
   return parsed;
@@ -102,10 +102,22 @@ test("Claude tool prompts authenticate additive steering without changing Codex 
   expect(codexPrompt).not.toContain("CODEX_CLAUDE_STEERING_");
 });
 
+test("Pro executes directly without delegating while other Web modes keep their existing contract", () => {
+  const token = "turn_12345678901234567890123456789012";
+  const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true };
+  const pro = compileChatGptWebPrompt(toolRequest("max"), capabilities, token);
+  const extraHigh = compileChatGptWebPrompt(toolRequest("xhigh"), capabilities, token);
+
+  expect(pro.text).toContain("Complete this task directly in the current parent response.");
+  expect(pro.text).toContain("Do not create, spawn, delegate to, or wait on sub-agents");
+  expect(pro.text).toContain("Use non-agent tools directly instead.");
+  expect(extraHigh.text).not.toContain("Do not create, spawn, delegate to, or wait on sub-agents");
+});
+
 test("read-only prompts resume without exposing a bind capability", () => {
   const compiled = compileChatGptWebPrompt(
     request("max"),
-    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    { localToolsEnabled: false, solAvailable: true, proAvailable: true },
   );
 
   expect(compiled.text).toContain("The task context is complete. Execute the latest active user request now under the capability contract above.");
@@ -124,6 +136,7 @@ test("browser-only Medium directs users to the full harness", () => {
   const warning = chatGptReadOnlyContextWarning(request("medium"), capabilities);
   expect(warning).toContain("Browser-only mode");
   expect(warning).toContain("Full harness");
+  expect(warning).toContain("selected ChatGPT Web model");
   expect(warning).not.toContain("tool-capable ChatGPT Web model first");
   expect(chatGptReadOnlyContextWarning(toolRequest("medium"), {
     ...capabilities,
@@ -256,7 +269,7 @@ test("assigns prior assistant output to the model and never attributes Codex con
   ];
   const compiled = compileChatGptWebPrompt(
     attributed,
-    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    { localToolsEnabled: false, solAvailable: true, proAvailable: true },
   );
   const encoded = compiled.text.match(/<codex_context_json>\n(.+)\n<\/codex_context_json>/s)?.[1];
   const envelope = JSON.parse(encoded!) as { messages: Array<Record<string, unknown>> };
@@ -412,7 +425,7 @@ test("the replayed context never carries a finished turn's broker handles", () =
 test("requires ChatGPT-native rich results to include a safe Markdown answer for Codex", () => {
   const compiled = compileChatGptWebPrompt(
     request("max"),
-    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    { localToolsEnabled: false, solAvailable: true, proAvailable: true },
   );
 
   expect(compiled.text).toContain("also provide the relevant result as ordinary Markdown in the final answer");

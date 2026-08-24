@@ -3,7 +3,7 @@ import { completeChatGptToolResults } from "../src/adapters/chatgpt-web/tool-res
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import type { BrokerToolResult, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 
-test("inherits a spawned Codex agent before delivering its tool result", () => {
+test("inherits a spawned Codex agent before delivering its tool result", async () => {
   const session = new ChatGptTurnSession({
     mode: "tools",
     browser: new Promise<string>(() => {}),
@@ -22,7 +22,7 @@ test("inherits a spawned Codex agent before delivering its tool result", () => {
     completeTool(_token: string, _callId: string, _result: BrokerToolResult) { events.push("deliver"); },
   } as Pick<TurnBroker, "completeTool">;
 
-  completeChatGptToolResults(session, broker, "turn-token", [{
+  await completeChatGptToolResults(session, broker, "turn-token", [{
     role: "toolResult",
     toolCallId: "call-spawn",
     toolName: "spawn_agent",
@@ -39,7 +39,7 @@ test("inherits a spawned Codex agent before delivering its tool result", () => {
   ]);
 });
 
-test("does not inherit malformed, failed, or non-spawn tool results", () => {
+test("does not inherit malformed, failed, or non-spawn tool results", async () => {
   for (const fixture of [
     { wireName: "multi_agent_v1__spawn_agent", content: "not-json", isError: false },
     { wireName: "multi_agent_v1__spawn_agent", content: JSON.stringify({ agent_id: "not-a-uuid" }), isError: false },
@@ -56,7 +56,7 @@ test("does not inherit malformed, failed, or non-spawn tool results", () => {
     });
     session.setOutstanding([{ callId: "call", wireName: fixture.wireName, freeform: false }]);
     let inherited = 0;
-    completeChatGptToolResults(session, { completeTool() {} }, "turn-token", [{
+    await completeChatGptToolResults(session, { completeTool() {} }, "turn-token", [{
       role: "toolResult",
       toolCallId: "call",
       toolName: "tool",
@@ -68,7 +68,7 @@ test("does not inherit malformed, failed, or non-spawn tool results", () => {
   }
 });
 
-test("retires a closed Codex agent before delivering its tool result", () => {
+test("retires a closed Codex agent before delivering its tool result", async () => {
   const childThreadId = "019ff0ff-1438-7a00-9aa2-0f1887d92a6c";
   const session = new ChatGptTurnSession({
     mode: "tools",
@@ -98,7 +98,7 @@ test("retires a closed Codex agent before delivering its tool result", () => {
   sessions.linkGroups("provider:child", "provider:grandchild");
   const events: string[] = [];
 
-  completeChatGptToolResults(session, {
+  await completeChatGptToolResults(session, {
     completeTool() { events.push("deliver"); },
   }, "turn-token", [{
     role: "toolResult",
@@ -117,7 +117,7 @@ test("retires a closed Codex agent before delivering its tool result", () => {
   expect(events).toEqual([`retire:${childThreadId}`, "cancel:child", "cancel:grandchild", "deliver"]);
 });
 
-test("binds a native V2 task path to its child session before delivering spawn", () => {
+test("binds a native V2 task path to its child session before delivering spawn", async () => {
   const parentGroup = "provider:root-thread";
   const childGroup = "provider:child-thread";
   const sessions = new ChatGptTurnSessions();
@@ -146,7 +146,7 @@ test("binds a native V2 task path to its child session before delivering spawn",
     arguments: { task_name: "worker", message: "bounded task" },
   }]);
 
-  completeChatGptToolResults(session, {
+  await completeChatGptToolResults(session, {
     completeTool() { events.push("deliver"); },
   }, "turn-token", [{
     role: "toolResult",
@@ -184,7 +184,7 @@ test("accepts an unambiguous relative native V2 agent reference", () => {
   expect(cancelled).toBe(1);
 });
 
-test("retires only the interrupted native V2 child before delivering its result", () => {
+test("retires only the interrupted native V2 child before delivering its result", async () => {
   const parentGroup = "provider:root-thread";
   const childGroup = "provider:child-thread";
   const grandchildGroup = "provider:grandchild-thread";
@@ -218,7 +218,7 @@ test("retires only the interrupted native V2 child before delivering its result"
     arguments: { target: "/root/worker" },
   }]);
 
-  completeChatGptToolResults(session, {
+  await completeChatGptToolResults(session, {
     completeTool() { events.push("deliver"); },
   }, "turn-token", [{
     role: "toolResult",

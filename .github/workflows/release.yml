@@ -140,6 +140,10 @@ jobs:
         run: |
           mapfile -d '' release_files < <(find release-assets -type f -print0)
           test "${#release_files[@]}" -gt 0
+          release_flags=(--latest)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            release_flags=(--prerelease --latest=false)
+          fi
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" "${release_files[@]}" \
               --repo "$GITHUB_REPOSITORY" \
@@ -147,10 +151,11 @@ jobs:
             gh release edit "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --draft=false \
-              --latest
+              "${release_flags[@]}"
           else
             gh release create "$GITHUB_REF_NAME" "${release_files[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$GITHUB_REF_NAME" \
+              "${release_flags[@]}" \
               --generate-notes
           fi
