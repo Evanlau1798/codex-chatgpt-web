@@ -40,7 +40,8 @@ test("HTTP turn tracking follows the response stream instead of Bun's global req
 });
 
 test("HTTP turn tracking releases a cancelled response stream", async () => {
-  const turns = new HttpTurnCounter();
+  const failures: unknown[] = [];
+  const turns = new HttpTurnCounter(failure => failures.push(failure));
   const request = new AbortController();
   const response = await turns.track(
     async () => new Response(new ReadableStream<Uint8Array>()),
@@ -52,6 +53,7 @@ test("HTTP turn tracking releases a cancelled response stream", async () => {
   request.abort("client disconnected");
   await cancelled;
   await waitForTurnCount(turns, 0);
+  expect(failures).toEqual([]);
 });
 
 test("HTTP turn tracking uses a tee branch on Windows", async () => {
@@ -86,6 +88,58 @@ test("HTTP turn tracking uses direct pull and cancellation outside Windows", asy
   await reader.cancel("client disconnected");
   await waitForTurnCount(turns, 0);
   expect(sourceCancelled).toBe(true);
+});
+
+test("HTTP turn tracking reports a content-free direct stream failure", async () => {
+  const failures: unknown[] = [];
+  const turns = new HttpTurnCounter(failure => failures.push(failure));
+  let source!: ReadableStreamDefaultController<Uint8Array>;
+  const response = await turns.track(async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { source = controller; },
+  })), undefined, "darwin");
+  const reader = response.body!.getReader();
+
+  source.enqueue(new TextEncoder().encode("safe"));
+  expect(new TextDecoder().decode((await reader.read()).value)).toBe("safe");
+  source.error(Object.assign(new TypeError("sensitive upstream detail"), { code: "ECONNRESET" }));
+  await expect(reader.read()).rejects.toThrow("sensitive upstream detail");
+  await waitForTurnCount(turns, 0);
+
+  expect(failures).toEqual([{
+    stage: "direct",
+    platform: "darwin",
+    chunks: 1,
+    bytes: 4,
+    errorName: "TypeError",
+    errorCode: "ECONNRESET",
+  }]);
+  expect(JSON.stringify(failures)).not.toContain("sensitive upstream detail");
+});
+
+test("HTTP turn tracking reports a content-free Windows lifecycle stream failure", async () => {
+  const failures: unknown[] = [];
+  const turns = new HttpTurnCounter(failure => failures.push(failure));
+  let source!: ReadableStreamDefaultController<Uint8Array>;
+  const response = await turns.track(async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) { source = controller; },
+  })), undefined, "win32");
+  const reader = response.body!.getReader();
+
+  source.enqueue(new TextEncoder().encode("event"));
+  expect(new TextDecoder().decode((await reader.read()).value)).toBe("event");
+  source.error(Object.assign(new TypeError("private response fragment"), { code: "ECONNRESET" }));
+  await expect(reader.read()).rejects.toThrow("private response fragment");
+  await waitForTurnCount(turns, 0);
+
+  expect(failures).toEqual([{
+    stage: "lifecycle",
+    platform: "win32",
+    chunks: 1,
+    bytes: 5,
+    errorName: "TypeError",
+    errorCode: "ECONNRESET",
+  }]);
+  expect(JSON.stringify(failures)).not.toContain("private response fragment");
 });
 
 test("HTTP turn tracking releases a stream whose client disconnected without cancelling", async () => {
