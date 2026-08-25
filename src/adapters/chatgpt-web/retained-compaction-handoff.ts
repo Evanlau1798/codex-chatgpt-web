@@ -8,18 +8,16 @@ import { chatGptConversationKey, type ChatGptTurnSession } from "./turn-executio
 
 const RETAINED_CONVERSATION_UNAVAILABLE = "The retained ChatGPT conversation is no longer available";
 const RETAINED_BROWSER_CLEANUP_TIMEOUT_MS = 15_000;
-const RETAINED_BROWSER_COMPLETION_TIMEOUT = "The retained checkpoint Web response did not complete before timeout";
 
-async function waitForBrowserCompletion(browser: Promise<string>, timeoutMs: number): Promise<string> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(RETAINED_BROWSER_COMPLETION_TIMEOUT)), timeoutMs);
-  });
+async function rejectOnBrowserFailure(browser: Promise<string>): Promise<never> {
   try {
-    return await Promise.race([browser, deadline]);
-  } finally {
-    if (timer) clearTimeout(timer);
+    await browser;
+  } catch (error) {
+    throw error;
   }
+  // A clean Web completion can race the local structured submission. The transaction owns the
+  // bounded deadline, so let its result decide whether a checkpoint exists.
+  return new Promise<never>(() => {});
 }
 
 async function waitForBrowserCleanup(browser: Promise<string>, timeoutMs: number): Promise<boolean> {
@@ -78,11 +76,11 @@ export async function requestRetainedCompactionHandoff(
       abortSignal: browserAbort.signal,
       onTextDelta: () => {},
     });
-    const [handoff] = await Promise.all([
+    const handoff = await Promise.race([
       structuredHandoff,
-      waitForBrowserCompletion(browserCompleted, timeoutMs),
+      rejectOnBrowserFailure(browserCompleted),
     ]);
-    console.info("[chatgpt-web] Web session mode=enhanced path=retained_handoff result=completed");
+    console.info("[chatgpt-web] Web session mode=enhanced path=retained_handoff result=checkpoint_submitted");
     return handoff;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;

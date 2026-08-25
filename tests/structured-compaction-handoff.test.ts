@@ -43,7 +43,7 @@ function controlBinding(instruction: string): { token: string; handoffId: string
   return { token, handoffId };
 }
 
-test("active structured compact waits for the Web conversation to end after a valid handoff", async () => {
+test("active structured compact accepts a valid checkpoint before fragile Web completion evidence", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-active-structured-"));
   const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
   let finishBrowser!: (answer: string) => void;
@@ -75,18 +75,13 @@ test("active structured compact waits for the Web conversation to end after a va
     cancel: () => {},
   } as never);
   try {
-    let settled = false;
-    const compact = requestActiveCompactionHandoff(request(true), session, broker, undefined, 1_000)
-      .then(value => { settled = true; return value; });
+    const compact = requestActiveCompactionHandoff(request(true), session, broker, undefined, 1_000);
     while (!submitted) await Bun.sleep(1);
     await submitted;
-    await Bun.sleep(10);
     expect(preemptions).toBe(1);
     expect(handoffDelivered).toBeTrue();
-    expect(settled).toBeFalse();
-
-    finishBrowser("The checkpoint Web turn has fully ended.");
     await expect(compact).resolves.toBe("Structured active checkpoint is valid.");
+    finishBrowser("The checkpoint Web turn was retired after its structured submission.");
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
@@ -213,7 +208,7 @@ test("active structured compact attaches its one-shot handoff to only one result
   expect(queuedHandoffs).toBe(0);
 });
 
-test("retained structured compact requires both a valid control submission and a completed Web turn", async () => {
+test("retained structured compact stops the Web response after a valid control submission", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-retained-structured-"));
   const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
   const namespace = createHash("sha256").update("retained-structured").digest("hex");
@@ -225,9 +220,9 @@ test("retained structured compact requires both a valid control submission and a
     usageInput: request(false),
     cancel: () => {},
   });
-  let finishBrowser!: (answer: string) => void;
   let submitted!: Promise<unknown>;
   let turn: BrowserTurn | undefined;
+  let browserAborted = false;
   const worker = { run: async (value: BrowserTurn) => {
     turn = value;
     const prepared = await value.prepare();
@@ -239,11 +234,15 @@ test("retained structured compact requires both a valid control submission and a
       handoffId: binding.handoffId,
       summary: "Structured retained checkpoint is valid.",
     });
-    return new Promise<string>(resolve => { finishBrowser = resolve; });
+    return new Promise<string>((_resolve, reject) => {
+      value.abortSignal?.addEventListener("abort", () => {
+        browserAborted = true;
+        reject(new DOMException("retained checkpoint retired", "AbortError"));
+      }, { once: true });
+    });
   } };
 
   try {
-    let settled = false;
     const compact = requestRetainedCompactionHandoff(
       worker as never,
       request(true),
@@ -252,16 +251,14 @@ test("retained structured compact requires both a valid control submission and a
       namespace,
       { localToolsEnabled: true, solAvailable: true, proAvailable: true },
       "trace_retained_structured",
-    ).then(value => { settled = true; return value; });
+    );
     while (!submitted) await Bun.sleep(1);
     await submitted;
-    await Bun.sleep(10);
-    expect(settled).toBeFalse();
     expect(turn?.nativeConnector).toBeTrue();
     expect(turn?.requireRetainedConversation).toBeTrue();
 
-    finishBrowser("The retained checkpoint Web turn has fully ended.");
     await expect(compact).resolves.toBe("Structured retained checkpoint is valid.");
+    expect(browserAborted).toBeTrue();
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });

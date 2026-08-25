@@ -8,7 +8,6 @@ import { structuredCompactionHandoffInstruction } from "./native-compaction-cont
 
 export const COMPACTION_HANDOFF_MARKER = "CODEX_COMPACTION_HANDOFF";
 export const LATEST_USER_PROMPT_MARKER = "CODEX_LATEST_USER_PROMPT_JSON";
-const ACTIVE_HANDOFF_TIMEOUT_MESSAGE = "active browser handoff timed out";
 
 export const HANDOFF_INSTRUCTION = `Automatic Codex context compaction has started. Do not call any more tools.
 ${COMPACT_PROMPT}
@@ -146,31 +145,20 @@ function retryableBrowserFailure(error: unknown): boolean {
     || error.message.includes("completed text block");
 }
 
-async function waitForBrowser(
+async function rejectOnBrowserFailure(
   session: ChatGptTurnSession,
-  signal: AbortSignal | undefined,
-  timeoutMs: number,
-): Promise<ChatGptBrowserOutcome> {
-  if (signal?.aborted) {
-    throw new DOMException("ChatGPT web compaction aborted", "AbortError");
+  broker: TurnBroker,
+  transactionToken: string,
+): Promise<never> {
+  const outcome: ChatGptBrowserOutcome = await session.browserOutcome;
+  if (outcome.type === "error") {
+    broker.abortCompactionTransaction(transactionToken);
+    throw outcome.error;
   }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let onAbort: (() => void) | undefined;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(ACTIVE_HANDOFF_TIMEOUT_MESSAGE)), timeoutMs);
-  });
-  const aborted = signal
-    ? new Promise<never>((_resolve, reject) => {
-      onAbort = () => reject(new DOMException("ChatGPT web compaction aborted", "AbortError"));
-      signal.addEventListener("abort", onAbort, { once: true });
-    })
-    : new Promise<never>(() => {});
-  try {
-    return await Promise.race([session.browserOutcome, timeout, aborted]);
-  } finally {
-    if (timer) clearTimeout(timer);
-    if (signal && onAbort) signal.removeEventListener("abort", onAbort);
-  }
+  // A clean browser completion cannot make a structured checkpoint appear later, but the broker
+  // submission may still be crossing the local socket. Keep waiting on the transaction itself;
+  // its bounded TTL remains the authoritative deadline.
+  return new Promise<never>(() => {});
 }
 
 export async function requestActiveCompactionHandoff(
@@ -184,6 +172,9 @@ export async function requestActiveCompactionHandoff(
   if (cached) return cached;
   if (!session.isActive()) return undefined;
   if (session.runtime.mode === "read-only" && !session.runtime.requestHandoff) return undefined;
+  if (signal?.aborted) {
+    throw new DOMException("ChatGPT web compaction aborted", "AbortError");
+  }
   const transaction = await broker.beginCompactionTransaction(
     session.runtime.conversationKey ?? "active-compaction",
     timeoutMs,
@@ -216,14 +207,14 @@ export async function requestActiveCompactionHandoff(
       const preempted = session.runtime.preemptHandoff?.(instruction) === true;
       session.runtime.requestHandoff!(instruction, preempted);
     }
-    const browserCompleted = waitForBrowser(session, signal, timeoutMs).then(outcome => {
-      if (outcome.type === "error") {
-        broker.abortCompactionTransaction(transaction.token);
-        throw outcome.error;
-      }
-      return outcome;
-    });
-    const [summary] = await Promise.all([structuredHandoff, browserCompleted]);
+    // The one-shot control submission contains the complete checkpoint and is validated by the
+    // broker before it resolves. Once present it is stronger evidence than a fragile ChatGPT DOM
+    // completion control; runEnhancedCompaction retires the remaining browser work before exposing
+    // the checkpoint to Codex.
+    const summary = await Promise.race([
+      structuredHandoff,
+      rejectOnBrowserFailure(session, broker, transaction.token),
+    ]);
     session.setCompactionHandoff(summary);
     return summary;
   } catch (error) {
