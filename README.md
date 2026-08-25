@@ -21,7 +21,6 @@
 This independently maintained **Enhanced** fork tracks the upstream release base and adds an
 opt-in Web-session lifecycle for long-running Codex and Claude Code work. Fork releases use the
 `<upstream>-Enhanced.<revision>` version format, beginning with `3.0.1-Enhanced.1`.
-The current release is `3.0.2-Enhanced.1`, based on upstream v3.0.2.
 
 Free and Go accounts get **ChatGPT Web — Luna** in Codex's native model picker. Accounts that
 expose the reasoning selector keep **Instant**, **Medium**, **High**, **Extra High**, and **Pro** as
@@ -77,8 +76,8 @@ connects ChatGPT back to the tools of that same Codex task.
   exclusions. Browser-only mode remains read-only for every route.
 - **Fail-closed with an explicit release gate.** UI drift and missing capabilities produce explicit
   errors rather than silent fallbacks. Account-bound model selection, long context, images,
-  streaming, compaction, native tool rounds, cancellation, and Pro are covered by the documented
-  [release validation](docs/release-validation.md), separately from package smoke.
+  streaming, compaction, native tool rounds, cancellation, and Pro are covered by a separate
+  account-bound release validation process, independently of package smoke.
 
 Temporary Chat is a ChatGPT privacy mode, not anonymity or local-only inference: prompts are still
 processed by OpenAI and are subject to the account's settings and OpenAI's
@@ -259,8 +258,8 @@ codex-chatgpt-web subagents native
   running as the same local user. Never share the launcher profile; use a trusted workstation.
 - Release packages currently target macOS 13+ (arm64/x64), Windows x64, and Linux x64. Runtime,
   tests, and native packaging are gated on all three operating systems in CI. Account-bound browser
-  and MCP flows require the separate [release validation](docs/release-validation.md); package smoke
-  is not treated as end-to-end proof.
+  and MCP flows require separate release validation; package smoke is not treated as end-to-end
+  proof.
 - Until platform signing credentials are configured for a release, macOS Gatekeeper or Windows
   SmartScreen may show an unknown-publisher warning. The one-command installers verify the
   published SHA-256 manifest before installation.
@@ -296,11 +295,9 @@ Run it without a message for `/status`, `/fill 30000`, `/compact`, `/model`, and
 Sign in and initialize the profile once inside the window labelled **DEV**. Configure optional Full
 harness only for simulated tool rounds; its launcher keeps the DEV tunnel ready while named chats
 attach their broker on demand. Production credentials and the `Codex Native2` connector are never
-reused implicitly. See
-[DEV chat harness](docs/dev-chat.md).
+reused implicitly.
 
 - [Architecture](docs/architecture.md)
-- [DEV chat harness](docs/dev-chat.md)
 - [Security model](docs/security-model.md)
 - [Contributing](CONTRIBUTING.md)
 

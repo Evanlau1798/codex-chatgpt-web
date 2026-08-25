@@ -58,7 +58,7 @@ function effortMenuFixture(itemCount: number) {
     locator: (selector: string) => {
       if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return effortMenu;
       if (selector === CHATGPT_EFFORT_SLIDER_SELECTOR) return effortSliderCollection;
-      if (selector === '[role="dialog"]') return rateLimitDialog;
+      if (selector.includes('[role="alert"]') || selector.includes('[role="dialog"]')) return rateLimitDialog;
       throw new Error(`Unexpected selector: ${selector}`);
     },
   };
@@ -136,7 +136,7 @@ describe("ChatGPT effort menu failure classification", () => {
       locator: (selector: string) => {
         if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return effortMenu;
         if (selector === CHATGPT_EFFORT_SLIDER_SELECTOR) return hiddenSliderCollection;
-        if (selector === '[role="dialog"]') return hiddenDialog;
+        if (selector.includes('[role="alert"]') || selector.includes('[role="dialog"]')) return hiddenDialog;
         throw new Error(`Unexpected selector: ${selector}`);
       },
       keyboard: { press: async () => {} },
