@@ -66,7 +66,8 @@ test("release installers resolve checksummed native launcher assets", () => {
   assert.ok(windowsInstaller.includes(`Join-Path $InstallLocation "${manifest.build.productName}.exe"`));
   assert.match(windowsInstaller, /-ArgumentList "\/S", "\/currentuser"/);
   const packageSmoke = fs.readFileSync(path.join(launcherRoot, "scripts", "smoke-package.cjs"), "utf8");
-  assert.match(packageSmoke, /run\(installer, \["\/S", "\/currentuser"\]/);
+  assert.match(packageSmoke, /runObservedProcess\(installer, \["\/S", "\/currentuser"\]/);
+  assert.match(packageSmoke, /timeoutMs:\s*5 \* 60_000/);
   assert.match(packageSmoke, /reg\.exe[\s\S]*InstallLocation/);
 });
 

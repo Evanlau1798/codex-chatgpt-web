@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { runObservedProcess } = require("./package-smoke-process.cjs");
 
 const launcherRoot = path.resolve(__dirname, "..");
 const artifactsDirectory = path.join(launcherRoot, "artifacts");
@@ -70,75 +71,87 @@ function smokeEnvironment() {
   };
 }
 
-try {
-  let executable;
-  let command;
-  let args;
-  const env = smokeEnvironment();
-
-  if (process.platform === "darwin") {
-    const archive = artifact(/-mac-(?:arm64|x64)\.zip$/, "macOS launcher archive");
-    const stage = path.join(scratch, "stage");
-    fs.mkdirSync(stage);
-    run("ditto", ["-x", "-k", archive, stage]);
-    macAppBundle = path.join(stage, "Codex Web GPT.app");
-    executable = path.join(macAppBundle, "Contents", "MacOS", "Codex Web GPT");
-    command = executable;
-    args = ["--launcher-smoke-test"];
-  } else if (process.platform === "linux") {
-    executable = artifact(/-linux-x64\.AppImage$/, "Linux AppImage");
-    fs.chmodSync(executable, 0o755);
-    command = "xvfb-run";
-    args = ["-a", executable, "--launcher-smoke-test"];
-    env.APPIMAGE_EXTRACT_AND_RUN = "1";
-  } else if (process.platform === "win32") {
-    const installer = artifact(/-win-x64\.exe$/, "Windows installer");
-    run(installer, ["/S", "/currentuser"], { timeout: 120_000 });
-    executable = path.join(windowsInstallLocation(), `${launcherManifest.build.productName}.exe`);
-    command = executable;
-    args = ["--launcher-smoke-test"];
-  } else {
-    throw new Error(`Unsupported package smoke platform: ${process.platform}`);
-  }
-
-  if (!fs.existsSync(executable)) throw new Error(`Packaged launcher executable is missing: ${executable}`);
-  run(command, args, { env });
-  if (!fs.existsSync(markerPath)) throw new Error("Packaged launcher did not write its readiness marker");
-  const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
-  if (marker.ok !== true
-    || marker.packaged !== true
-    || marker.runtimeVerified !== true
-    || marker.version !== expectedVersion
-    || marker.platform !== process.platform) {
-    throw new Error(`Unexpected packaged launcher marker: ${JSON.stringify(marker)}`);
-  }
-  const installedRuntime = path.join(
-    coreHome,
-    "versions",
-    `${expectedVersion}-${process.platform}-${process.arch}`,
-  );
-  const installedManifest = JSON.parse(
-    fs.readFileSync(path.join(installedRuntime, "manifest.json"), "utf8"),
-  );
-  if (installedManifest.appVersion !== expectedVersion
-    || installedManifest.platform !== process.platform
-    || installedManifest.arch !== process.arch
-    || !/^[a-f0-9]{64}$/.test(installedManifest.bundleId)) {
-    throw new Error(`Packaged launcher installed the wrong durable runtime: ${JSON.stringify(installedManifest)}`);
-  }
-  process.stdout.write(`PACKAGED_LAUNCHER_SMOKE_OK ${process.platform}/${process.arch}\n`);
-} finally {
+async function main() {
   try {
-    if (macAppBundle) {
-      const launchServices =
-        "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-      run(
-        launchServices,
-        ["-u", macAppBundle],
-      );
-      run(launchServices, ["-gc"]);
+    let executable;
+    let command;
+    let args;
+    const env = smokeEnvironment();
+
+    if (process.platform === "darwin") {
+      const archive = artifact(/-mac-(?:arm64|x64)\.zip$/, "macOS launcher archive");
+      const stage = path.join(scratch, "stage");
+      fs.mkdirSync(stage);
+      run("ditto", ["-x", "-k", archive, stage]);
+      macAppBundle = path.join(stage, "Codex Web GPT.app");
+      executable = path.join(macAppBundle, "Contents", "MacOS", "Codex Web GPT");
+      command = executable;
+      args = ["--launcher-smoke-test"];
+    } else if (process.platform === "linux") {
+      executable = artifact(/-linux-x64\.AppImage$/, "Linux AppImage");
+      fs.chmodSync(executable, 0o755);
+      command = "xvfb-run";
+      args = ["-a", executable, "--launcher-smoke-test"];
+      env.APPIMAGE_EXTRACT_AND_RUN = "1";
+    } else if (process.platform === "win32") {
+      const installer = artifact(/-win-x64\.exe$/, "Windows installer");
+      await runObservedProcess(installer, ["/S", "/currentuser"], {
+        cwd: scratch,
+        heartbeatMs: 30_000,
+        stage: "Windows installer",
+        timeoutMs: 5 * 60_000,
+      });
+      executable = path.join(windowsInstallLocation(), `${launcherManifest.build.productName}.exe`);
+      command = executable;
+      args = ["--launcher-smoke-test"];
+    } else {
+      throw new Error(`Unsupported package smoke platform: ${process.platform}`);
     }
+
+    if (!fs.existsSync(executable)) throw new Error(`Packaged launcher executable is missing: ${executable}`);
+    run(command, args, { env });
+    if (!fs.existsSync(markerPath)) throw new Error("Packaged launcher did not write its readiness marker");
+    const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
+    if (marker.ok !== true
+      || marker.packaged !== true
+      || marker.runtimeVerified !== true
+      || marker.version !== expectedVersion
+      || marker.platform !== process.platform) {
+      throw new Error(`Unexpected packaged launcher marker: ${JSON.stringify(marker)}`);
+    }
+    const installedRuntime = path.join(
+      coreHome,
+      "versions",
+      `${expectedVersion}-${process.platform}-${process.arch}`,
+    );
+    const installedManifest = JSON.parse(
+      fs.readFileSync(path.join(installedRuntime, "manifest.json"), "utf8"),
+    );
+    if (installedManifest.appVersion !== expectedVersion
+      || installedManifest.platform !== process.platform
+      || installedManifest.arch !== process.arch
+      || !/^[a-f0-9]{64}$/.test(installedManifest.bundleId)) {
+      throw new Error(`Packaged launcher installed the wrong durable runtime: ${JSON.stringify(installedManifest)}`);
+    }
+    process.stdout.write(`PACKAGED_LAUNCHER_SMOKE_OK ${process.platform}/${process.arch}\n`);
   } finally {
-    fs.rmSync(scratch, { recursive: true, force: true });
+    try {
+      if (macAppBundle) {
+        const launchServices =
+          "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+        run(
+          launchServices,
+          ["-u", macAppBundle],
+        );
+        run(launchServices, ["-gc"]);
+      }
+    } finally {
+      fs.rmSync(scratch, { recursive: true, force: true });
+    }
   }
 }
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
