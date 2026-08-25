@@ -163,6 +163,22 @@ test("surface recovery rejects read-only and non-retryable turns", () => {
   )).toMatchObject({ eligible: false, reason: "non_retryable" });
 });
 
+test("tool surface recovery cannot rebuild after Send activation", () => {
+  const tools = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_activated"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    submission: { phase: "send_activated" },
+    cancel: () => {},
+  });
+
+  expect(chatGptSurfaceRecoveryDecision(
+    chatGptWebSurfaceError("surface changed", false), tools, completeRequest(), 0,
+  )).toMatchObject({ eligible: false, reason: "submission_activated" });
+});
+
 test("surface recovery diagnostics identify the error that reached the decision boundary", () => {
   const session = new ChatGptTurnSession({
     mode: "tools",

@@ -187,6 +187,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.compaction ? { compaction: true } : {}),
     abortSignal: abortController.signal,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
+    onSendActivated: () => writeProtocol({ type: "event", id: message.id, event: "send_activated" }),
     onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "submitted" }),
     onPreparedSelected: reused => {
       writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused });

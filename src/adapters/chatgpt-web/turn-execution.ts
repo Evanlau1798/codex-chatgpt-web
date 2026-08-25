@@ -29,7 +29,7 @@ interface ChatGptTurnRuntimeBase {
   preemptHandoff?: (instruction: string) => boolean;
   requestHandoff?: (instruction: string, instructionDelivered?: boolean) => void;
   onToolResultDelivered?: (result?: CodexToolResultMessage) => void;
-  submission?: { accepted: boolean };
+  submission?: { phase: "prepared" | "send_activated" | "accepted" };
   cancel: (reason?: Error) => void;
   /** Release a completed retained browser surface when this canonical session is superseded. */
   release?: () => Promise<void>;
@@ -304,8 +304,25 @@ export class ChatGptTurnSessions {
   ): Promise<ChatGptTurnSession> {
     for (;;) {
       const pending = this.retirements.get(key) ?? (conversationKey ? this.conversationRetirements.get(conversationKey) : undefined);
-      if (!pending) return this.getOrCreate(key, start, group, steeringId, claudeRootThreadId, traceId);
-      await pending;
+      if (pending) {
+        await pending;
+        continue;
+      }
+      const activeOwner = conversationKey
+        ? [...this.entries].find(([ownedKey, session]) => (
+            ownedKey !== key
+            && session.runtime.conversationKey === conversationKey
+            && session.isActive()
+          ))
+        : undefined;
+      if (activeOwner) {
+        const [ownedKey, ownedSession] = activeOwner;
+        if (this.entries.get(ownedKey) !== ownedSession) continue;
+        this.entries.delete(ownedKey);
+        await this.beginRetirement(ownedKey, ownedSession);
+        continue;
+      }
+      return this.getOrCreate(key, start, group, steeringId, claudeRootThreadId, traceId);
     }
   }
 
@@ -380,7 +397,7 @@ export class ChatGptTurnSessions {
     const retirement = trackConversationRetirement(
       this.retirements, key, session.browserOutcome.then(async () => { await release?.(); }),
     );
-    if (release && session.runtime.conversationKey) {
+    if (session.runtime.conversationKey) {
       trackConversationRetirement(this.conversationRetirements, session.runtime.conversationKey, retirement);
     }
     return retirement;

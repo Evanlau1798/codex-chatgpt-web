@@ -1693,6 +1693,43 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
+  test("an ambiguous post-activation failure is replayed without resending the Web prompt", async () => {
+    const socketPath = brokerTestEndpoint(`cgw-h4-activated-retry-${process.pid}-${Date.now()}`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web",
+      baseUrl: "browser://chatgpt-activated-retry-test",
+      chatgptWeb: { brokerSocketPath: socketPath, localToolsEnabled: false, solAvailable: true, proAvailable: true },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run.bind(worker);
+    let browserStarts = 0;
+    type ActivationAwareTurn = BrowserTurn & { onSendActivated?: () => void };
+    (worker as unknown as { run: (turn: ActivationAwareTurn) => Promise<string> }).run = async turn => {
+      browserStarts += 1;
+      turn.onSendActivated?.();
+      throw chatGptWebSurfaceError("submission evidence disappeared after Send activation", false);
+    };
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const events: AdapterEvent[] = [];
+        await createChatGptWebAdapter(provider).runTurn!(
+          rawWireRequest(environmentXml),
+          { headers: new Headers() },
+          event => events.push(event),
+        );
+        expect(events.at(-1)).toMatchObject({
+          type: "error",
+          code: "chatgpt_submission_ambiguous",
+          retryable: false,
+        });
+      }
+      expect(browserStarts).toBe(1);
+    } finally {
+      (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      await TurnBroker.forSocket(socketPath).close();
+    }
+  });
+
   test("keeps a conversation key across Codex turns and rotates it after compaction", () => {
     const first = rawWireRequest(environmentXml);
     const next = structuredClone(first);

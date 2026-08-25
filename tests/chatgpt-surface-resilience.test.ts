@@ -112,6 +112,34 @@ describe("ChatGPT Web surface resilience", () => {
     expect(attempts).toBe(1);
   });
 
+  test("does not retry a fresh surface after the Send control was activated", async () => {
+    const Worker = ChatGptBrowserWorker as unknown as new (config: object) => ChatGptBrowserWorker;
+    const worker = new Worker({ browserHost: "managed-chrome" });
+    let attempts = 0;
+    let activated = false;
+    type ActivationAwareTurn = BrowserTurn & { onSendActivated?: () => void };
+    (worker as unknown as { runExclusive: (turn: ActivationAwareTurn) => Promise<string> }).runExclusive = async turn => {
+      attempts += 1;
+      if (attempts === 1) {
+        turn.onSendActivated?.();
+        throw chatGptWebSurfaceError("submission evidence disappeared after Send activation", false);
+      }
+      return "duplicate submission";
+    };
+
+    const result = worker.run({
+      traceId: "surface-send-activated-no-retry",
+      modelId: CHATGPT_WEB_MODEL_ID,
+      reasoning: "high",
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+      onSendActivated: () => { activated = true; },
+    } as ActivationAwareTurn);
+
+    await expect(result).rejects.toMatchObject({ code: "chatgpt_surface_changed" });
+    expect(activated).toBeTrue();
+    expect(attempts).toBe(1);
+  });
+
   test("leaves tool-capable fresh-surface recovery to the adapter", async () => {
     const Worker = ChatGptBrowserWorker as unknown as new (config: object) => ChatGptBrowserWorker;
     const worker = new Worker({ browserHost: "managed-chrome" });

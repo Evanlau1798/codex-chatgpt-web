@@ -226,6 +226,9 @@ export class LauncherBrowserHelperClient {
       if (message.event === "heartbeat") {
         this.invokeEventCallback(message.id, pending, () => pending.turn.onHeartbeat?.());
       }
+      else if (message.event === "send_activated") {
+        this.invokeEventCallback(message.id, pending, () => pending.turn.onSendActivated?.());
+      }
       else if (message.event === "submitted") {
         this.invokeEventCallback(message.id, pending, () => pending.turn.onSubmitted?.());
       }
