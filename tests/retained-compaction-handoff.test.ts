@@ -154,7 +154,7 @@ test("retained Enhanced compact cleanup stays bounded when the browser ignores a
   }
 });
 
-test("retained Enhanced compact stays bounded after structured handoff when the browser never completes", async () => {
+test("retained Enhanced compact preserves a structured handoff when browser completion evidence never arrives", async () => {
   const namespace = createHash("sha256").update("retained-compact-structured-timeout-test").digest("hex");
   const source = new ChatGptTurnSession({
     mode: "read-only", browser: Promise.resolve("done"), trace: new ChatGptTraceFeed(),
@@ -183,5 +183,5 @@ test("retained Enhanced compact stays bounded after structured handoff when the 
   ), Bun.sleep(200).then(() => "browser-timeout" as const)]);
 
   expect(handoff).not.toBe("browser-timeout");
-  expect(handoff).toBeUndefined();
+  expect(handoff).toBe("Structured retained checkpoint is valid.");
 });

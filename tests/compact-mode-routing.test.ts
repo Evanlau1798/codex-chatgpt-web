@@ -188,6 +188,51 @@ describe("compact mode routing", () => {
     }
   });
 
+  test("rebuilds in the same compact request when an active source cannot submit a checkpoint", async () => {
+    const sourceRequest = compactRequest();
+    delete sourceRequest._compactionRequest;
+    const parsed = compactRequest();
+    const socketPath = defaultBrokerEndpoint(join(
+      tmpdir(),
+      `compact-active-fallback-${process.pid}-${Date.now()}`,
+    ));
+    const broker = TurnBroker.forSocket(socketPath);
+    const responseExecutionKey = `active-fallback-${process.pid}-${Date.now()}`;
+    let finishBrowser!: (answer: string) => void;
+    let cancelled = 0;
+    chatGptTurnSessions.getOrCreate(responseExecutionKey, () => ({
+      mode: "read-only",
+      browser: new Promise<string>(resolve => { finishBrowser = resolve; }),
+      trace: new ChatGptTraceFeed(),
+      text: new ChatGptTextFeed(),
+      usageInput: sourceRequest,
+      cancel: () => {
+        cancelled += 1;
+        finishBrowser("source retired for canonical rebuild");
+      },
+    }));
+
+    try {
+      await expect(runEnhancedCompaction({
+        worker: { run: async () => "unused" } as never,
+        parsed,
+        broker,
+        executionNamespace: createHash("sha256").update("active-fallback-namespace").digest("hex"),
+        capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+        responseExecutionKey,
+        nativeConnectorAvailable: true,
+        timeoutMs: 20,
+        emit: () => {},
+      })).resolves.toBe("rebuild");
+
+      expect(cancelled).toBe(1);
+      expect(chatGptTurnSessions.find(responseExecutionKey)).toBeUndefined();
+    } finally {
+      await chatGptTurnSessions.retireAndWait(responseExecutionKey);
+      await broker.close();
+    }
+  });
+
   test("does not attach enhanced handoff behavior to original-mode browser turns", async () => {
     const config = provider(false);
     const worker = ChatGptBrowserWorker.forProvider(config);

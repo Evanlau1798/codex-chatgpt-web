@@ -83,14 +83,14 @@ export async function runEnhancedCompaction(
     );
     return "completed";
   }
-  console.warn("[chatgpt-web] Web session mode=enhanced path=active_handoff result=unavailable");
-  throw new ChatGptWebAdapterError(
-    "Enhanced Web session mode could not obtain a checkpoint from the active ChatGPT Web conversation. Retry the compact request or disable enhanced mode to use the original compact path.",
-    {
-      status: 409,
-      errorType: "invalid_request_error",
-      code: "compaction_handoff_unavailable",
-      retryable: false,
-    },
+  // The source-side handoff is an optimization. If its bounded attempt cannot produce a validated
+  // checkpoint, retire that surface and rebuild once from Codex's canonical request in this same
+  // HTTP compact operation. This is the exact recovery a client reconnect previously triggered,
+  // without surfacing a false failure or asking Codex to repeat an ambiguous request.
+  await chatGptTurnSessions.retireAndWait(responseExecutionKey);
+  console.warn(
+    "[chatgpt-web] Web session mode=enhanced path=active_handoff"
+    + " result=checkpoint_unavailable action=rebuild",
   );
+  return "rebuild";
 }

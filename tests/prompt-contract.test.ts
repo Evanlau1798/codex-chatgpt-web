@@ -60,7 +60,11 @@ test("tool-capable prompts pass one stable turn token directly to native actions
   expect(tokenMatches).toHaveLength(1);
   expect(compiled.text).toContain("[retired turn handle]");
   expect(transportOnly).toContain("For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.");
-  expect(transportOnly).toContain("Use actual Codex Native results as evidence for local observations and effects, and keep calling tools until the requested work is complete and verified.");
+  expect(transportOnly).toContain("Use actual Codex Native results as evidence for local observations and effects.");
+  expect(transportOnly).toContain("After a deterministic tool failure, update the working hypothesis from that result");
+  expect(transportOnly).toContain("inspect the relevant repository or environment before choosing a different next action");
+  expect(transportOnly).toContain("do not repeat the same call unless its inputs or observable state changed");
+  expect(transportOnly).toContain("Continue using the available tools until the requested work is complete and verified.");
   expect(transportOnly).toContain("Request independent tool calls together");
   expect(transportOnly).toContain("A skill catalog entry is an instruction source, not proof that its runtime tool is loaded.");
   expect(transportOnly).toContain("codex_tool_inventory");
