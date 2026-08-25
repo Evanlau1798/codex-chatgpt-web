@@ -55,6 +55,7 @@ export type ChatGptSurfaceRecoveryReason =
   | "read_only"
   | "unsupported_error"
   | "non_retryable"
+  | "submission_activated"
   | "final_streamed"
   | "canonical_incomplete"
   | "superseded_results_pending"
@@ -141,6 +142,7 @@ export function chatGptSurfaceRecoveryDecision(
   if (recoveries > 0) return reject("already_recovered");
   if (signal?.aborted) return reject("aborted");
   if (session.runtime.mode !== "tools") return reject("read_only");
+  if (session.runtime.submission?.phase === "send_activated") return reject("submission_activated");
   const surfaceFailure = error instanceof ChatGptWebAdapterError
     && (error.code === "chatgpt_surface_changed"
       || error.code === "chatgpt_connector_unavailable"

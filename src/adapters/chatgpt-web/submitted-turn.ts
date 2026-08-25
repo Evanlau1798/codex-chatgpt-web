@@ -2,20 +2,29 @@ import { StallTimeoutError } from "../../stall-timeout";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import type { ChatGptTurnSession } from "./turn-execution";
 
-function terminalError(error: unknown): ChatGptWebAdapterError {
+function terminalError(error: unknown, phase: "send_activated" | "accepted"): ChatGptWebAdapterError {
+  const ambiguous = phase === "send_activated";
   return new ChatGptWebAdapterError(
-    `ChatGPT failed after accepting the Web prompt: ${error instanceof Error ? error.message : String(error)}`,
-    { status: 502, errorType: "server_error", code: "chatgpt_submitted_turn_failed", retryable: false },
+    ambiguous
+      ? `ChatGPT Send was activated, but acceptance could not be proven; the prompt will not be resent: ${error instanceof Error ? error.message : String(error)}`
+      : `ChatGPT failed after accepting the Web prompt: ${error instanceof Error ? error.message : String(error)}`,
+    {
+      status: 502,
+      errorType: "server_error",
+      code: ambiguous ? "chatgpt_submission_ambiguous" : "chatgpt_submitted_turn_failed",
+      retryable: false,
+    },
   );
 }
 
 function submittedFailure(
   session: ChatGptTurnSession,
-  aborted: boolean,
+  _aborted: boolean,
   error: unknown,
 ): ChatGptWebAdapterError | undefined {
-  if (aborted || !session.runtime.submission?.accepted) return undefined;
-  const terminal = terminalError(error);
+  const phase = session.runtime.submission?.phase;
+  if (!phase || phase === "prepared") return undefined;
+  const terminal = terminalError(error, phase);
   session.setTerminalError(terminal);
   return terminal;
 }

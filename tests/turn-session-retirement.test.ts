@@ -75,6 +75,36 @@ test("a replacement owner waits for ordinary retirement of the same conversation
   expect(replacements).toBe(1);
 });
 
+test("a new execution cannot overlap an active owner of the same conversation", async () => {
+  const sessions = new ChatGptTurnSessions();
+  let finishBrowser!: (answer: string) => void;
+  const browser = new Promise<string>(resolve => { finishBrowser = resolve; });
+  let cancelled = 0;
+  sessions.getOrCreate("old-execution", () => settledRuntime({
+    browser,
+    conversationKey: "shared-conversation",
+    cancel: () => { cancelled += 1; },
+  }));
+
+  let replacements = 0;
+  const replacement = sessions.getOrCreateAfterConversationRetirement(
+    "new-execution",
+    "shared-conversation",
+    () => {
+      replacements += 1;
+      return settledRuntime({ conversationKey: "shared-conversation" });
+    },
+  );
+  await Bun.sleep(0);
+
+  expect(cancelled).toBe(1);
+  expect(replacements).toBe(0);
+
+  finishBrowser("cancelled");
+  await replacement;
+  expect(replacements).toBe(1);
+});
+
 test("an overlapping same-key retirement includes the replacement owner", async () => {
   const sessions = new ChatGptTurnSessions();
   let finishRelease!: () => void;

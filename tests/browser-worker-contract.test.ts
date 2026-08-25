@@ -58,6 +58,10 @@ test("browser turn orchestration retains owned prompt insertion and semantic sub
   expect(runBrowserTurn).toContain('.locator("xpath=ancestor::form[1]")');
   expect(runBrowserTurn).toContain('.getByTestId("send-button")');
   expect(runBrowserTurn).toContain("await activateChatGptSendControl(sendButton)");
+  expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
+    .toBeGreaterThanOrEqual(0);
+  expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
+    .toBeLessThan(runBrowserTurn.indexOf("await activateChatGptSendControl(sendButton)"));
   expect(runBrowserTurn).toContain("await this.waitForSubmissionAccepted(");
   expect(workerSource).not.toMatch(/\bclipboard\b|pbcopy|pbpaste/i);
 });

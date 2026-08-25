@@ -5,7 +5,7 @@ import {
 
 export type LauncherHelperMessage =
   | { type: "ready" }
-  | { type: "event"; id: string; event: "heartbeat" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
+  | { type: "event"; id: string; event: "heartbeat" | "send_activated" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
   | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
   | { type: "event"; id: string; event: "answer"; text: string; attempt: number }
   | {
@@ -108,7 +108,7 @@ function parseEvent(message: Record<string, unknown> & { id: string }): Launcher
     }
     return { type: "event", id: message.id, event, reused: message.reused };
   }
-  if (!["heartbeat", "submitted", "retry_submitted", "reasoning", "commentary", "text"].includes(String(event))) {
+  if (!["heartbeat", "send_activated", "submitted", "retry_submitted", "reasoning", "commentary", "text"].includes(String(event))) {
     throw new Error("Launcher browser helper emitted an unknown event");
   }
   if (message.text !== undefined && typeof message.text !== "string") {
@@ -120,7 +120,7 @@ function parseEvent(message: Record<string, unknown> & { id: string }): Launcher
   return {
     type: "event",
     id: message.id,
-    event: event as "heartbeat" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text",
+    event: event as "heartbeat" | "send_activated" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text",
     ...(message.text !== undefined ? { text: message.text as string } : {}),
     ...(message.continuation !== undefined ? { continuation: message.continuation as boolean } : {}),
   };

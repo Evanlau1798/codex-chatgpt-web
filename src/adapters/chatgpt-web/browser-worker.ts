@@ -459,6 +459,8 @@ export interface BrowserTurn {
   onHeartbeat?: () => void;
   /** Semantic DOM progress used only to reset the upstream silence timer. */
   onProgress?: () => void;
+  /** Send activation is an irreversible ambiguity boundary: never replay on a fresh surface. */
+  onSendActivated?: () => void;
   /** The current prompt is visible to ChatGPT and must never be replayed on another surface. */
   onSubmitted?: () => void;
   /** Release the unselected full/resume transport after the launcher resolves the retained lease. */
@@ -809,9 +811,14 @@ export class ChatGptBrowserWorker {
   }
 
   private async runWithSurfaceRetry(turn: BrowserTurn): Promise<string> {
+    let sendActivated = false;
     let submitted = false;
     const submittedTurn: BrowserTurn = {
       ...turn,
+      onSendActivated: () => {
+        sendActivated = true;
+        turn.onSendActivated?.();
+      },
       onSubmitted: () => {
         submitted = true;
         turn.onSubmitted?.();
@@ -829,6 +836,7 @@ export class ChatGptBrowserWorker {
         || (error.code !== "chatgpt_surface_changed" && error.code !== "chatgpt_connector_unavailable")
         || !error.retryable
         || (adapterOwnsRecovery && error.code !== "chatgpt_connector_unavailable")
+        || sendActivated
         || submitted
         || turn.abortSignal?.aborted) throw error;
       console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying once on a fresh surface`);
@@ -1274,6 +1282,7 @@ export class ChatGptBrowserWorker {
     initialResponseTurn: ChatGptAssistantTurnState,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
     abortSignal?: AbortSignal,
+    onSendActivated?: () => void,
   ): Promise<ChatGptSubmissionEvidence> {
     const composer = await this.activeComposer(page);
     const sendButton = composer
@@ -1286,6 +1295,7 @@ export class ChatGptBrowserWorker {
     await settleChatGptUi();
     await captureDiagnostic?.("send-ready");
     await throwIfChatGptSessionFailureAlert(page);
+    onSendActivated?.();
     await activateChatGptSendControl(sendButton);
     return this.waitForSubmissionAccepted(
       page,
@@ -2466,6 +2476,7 @@ export class ChatGptBrowserWorker {
               initialResponseTurn,
               checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
+              turn.onSendActivated,
             ),
             turn.abortSignal,
           );
@@ -2602,6 +2613,7 @@ export class ChatGptBrowserWorker {
         await settleChatGptUi();
         await diagnostics.capture(page, "send-ready");
         await throwIfChatGptSessionFailureAlert(page);
+        turn.onSendActivated?.();
         await activateChatGptSendControl(sendButton);
         const evidence = await this.waitForSubmissionAccepted(
           page,

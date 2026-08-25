@@ -97,7 +97,7 @@ export function createChatGptWebAdapter(
     let activeToken: string | undefined;
     let toolResultDelivered = false;
     const toolEvidence = mode.localTools && !parsed._compactionRequest ? new ChatGptToolEvidenceGuard() : undefined;
-    const submission = { accepted: false };
+    const submission: NonNullable<ChatGptTurnRuntime["submission"]> = { phase: "prepared" };
     const handoffPrompts = useEnhancedWebSessionMode ? createActiveCompactionHandoffPrompts() : undefined;
     const runtimeExecutionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
     const { retainConversation: requestedRetention, retryPromptForAnswer: upstreamRetry } = claudeBrowserTurnOptions(
@@ -149,7 +149,8 @@ export function createChatGptWebAdapter(
         onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
         onCommentary: emitCommentary,
         onProgress: () => trace.signalProgress(),
-        onSubmitted: () => { submission.accepted = true; },
+        onSendActivated: () => { submission.phase = "send_activated"; },
+        onSubmitted: () => { submission.phase = "accepted"; },
         onTextDelta: delta => text.push(delta),
         ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
         ...(retryPromptForError ? { retryPromptForError } : {}),
@@ -206,7 +207,8 @@ export function createChatGptWebAdapter(
       onReasoningSummary: (text, continuation) => trace.push({ kind: "reasoning", text, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: emitCommentary,
       onProgress: () => trace.signalProgress(),
-      onSubmitted: () => { submission.accepted = true; },
+      onSendActivated: () => { submission.phase = "send_activated"; },
+      onSubmitted: () => { submission.phase = "accepted"; },
       onTextDelta: delta => text.push(delta),
       ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
       ...(retryPromptForError ? { retryPromptForError } : {}),

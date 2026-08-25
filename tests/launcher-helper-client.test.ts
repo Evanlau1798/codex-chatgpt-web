@@ -29,6 +29,7 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
         if (message.prepared?.text !== "continue") process.exit(3);
         message = selected;
         selected = undefined;
+        send({ type: "event", id: message.id, event: "send_activated" });
         send({ type: "event", id: message.id, event: "submitted" });
         send({ type: "event", id: message.id, event: "reasoning", text: " files", continuation: true });
         send({ type: "event", id: message.id, event: "text", text: "done" });
@@ -97,6 +98,7 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
   const reasoning: Array<{ text: string; continuation: boolean }> = [];
   const deltas: string[] = [];
   const checkpoints: unknown[] = [];
+  let sendActivated = false;
   let submitted = false;
   let released = false;
   let resumeReleased = false;
@@ -122,6 +124,7 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
       requireRetainedConversation: true,
       conversationKey: "a".repeat(64),
       onReasoningSummary: (text, continuation) => reasoning.push({ text, continuation: continuation === true }),
+      onSendActivated: () => { sendActivated = true; },
       onSubmitted: () => { submitted = true; },
       onTextDelta: text => deltas.push(text),
       captureLunaCheckpoint: true,
@@ -135,6 +138,7 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
       { text: " files", continuation: true },
     ]);
     expect(deltas).toEqual(["done"]);
+    expect(sendActivated).toBe(true);
     expect(submitted).toBe(true);
     expect(checkpoints).toEqual([{
       answerHash: "a".repeat(64),
