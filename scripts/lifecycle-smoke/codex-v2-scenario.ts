@@ -1,11 +1,11 @@
 import { join } from "node:path";
 import { activeTurnSmokeTimeoutMs, CodexRun, completed, Rpc } from "./codex-app-server";
-import { assert, detectRestriction, events, iso, repo, save } from "./common";
+import { assert, detectRestriction, events, iso, repo, repoTests, save } from "./common";
 import { normalizeV2Activities, type V2Activity } from "./codex-v2-activity";
 
 export const hierarchySentinel = "V2_HIERARCHY_SMOKE_DONE";
 
-export const hierarchyPrompt = `請在唯讀、不修改檔案、不執行測試、不使用網路的條件下，驗證一次階層式 Multi-Agent 協作。工作範圍只限 ${repo}\\tests。
+export const hierarchyPrompt = `請在唯讀、不修改檔案、不執行測試、不使用網路的條件下，驗證一次階層式 Multi-Agent 協作。工作範圍只限 ${repoTests}。
 
 請先自行閱讀一個相關測試檔案，再派出恰好一位 child。請 child 先閱讀另一個相關測試檔案，至少讓相鄰的 Web 工作階段建立相隔 30 秒，再由 child 派出恰好一位 grandchild。Child 成功建立 grandchild 後，不要等待 grandchild；應立即完成自己的當前 turn，並在結果中回報 grandchild agent id 與已讀證據，讓 root 透過正常 wait 結果取得身分。Grandchild 要做一項短小的唯讀探查，提供可核對的檔案證據並回報實際摩擦。
 

@@ -10,10 +10,11 @@ import {
 } from "./claude-watchdog";
 import { manualCompactPreservedRetainedRoot, selfTestManualCompactRetainedRoot } from "./retained-check";
 import {
-  assert, auditPrompt, claudeExe, cutoff, detectRestriction, events, iso, LaneResult, repo, reviewTaskPrompt,
+  assert, auditPrompt, claudeExe, cutoff, detectRestriction, events, iso, LaneResult, repo, repoTests, reviewTaskPrompt,
   save, sleep, stageTimeline, steeringAuditPassed, steeringText, submitClaudeSteering, waitCreateBudget, waitForEvent,
   waitRootRequestBudget, waitSteeringPoint,
 } from "./common";
+import { findClaudeTranscript, smokePath } from "./paths";
 
 type RecordValue = Record<string, any>;
 
@@ -204,7 +205,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     lastRootRequestAt = initialAt;
     const initial = new ClaudeRun(join(laneRoot, "initial.jsonl"), args(sessionId, false, []), configDir);
     runs.push(initial);
-    await initial.send(sessionId, `請實際讀取 ${repo}\\tests\\prompt-caret.test.ts 與 ${repo}\\tests\\retained-compaction-handoff.test.ts，比較兩者如何保障 prompt submission 與 retained compact，並找出一項值得後續深入檢查的交互風險。請把探索限制在這兩個檔案，不要修改檔案、執行測試或存取網路。`);
+    await initial.send(sessionId, `請實際讀取 ${smokePath(repoTests, "prompt-caret.test.ts")} 與 ${smokePath(repoTests, "retained-compaction-handoff.test.ts")}，比較兩者如何保障 prompt submission 與 retained compact，並找出一項值得後續深入檢查的交互風險。請把探索限制在這兩個檔案，不要修改檔案、執行測試或存取網路。`);
     const created = await waitForEvent(initialAt, "browser.tab_created", 180_000);
     rootTab = String(created.detail?.tabId); tabs.add(rootTab);
     let rootTrace = String(created.detail?.traceId);
@@ -268,7 +269,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       const roundRecordStart = task.records.length;
       const taskAt = Date.now();
       lastRootRequestAt = taskAt;
-      await task.send(sessionId, round === 1 ? reviewTaskPrompt : `這是唯讀 code review 的第 ${round} 輪續接。請先列出上一輪尚未檢查的範圍，再自行選擇恰好五個新的 ${repo}\\tests 或直接對應的 production 檔案深入閱讀。不要重複已完成範圍，讀完五個就立即總結本輪；若 runtime 在本輪自然觸發 compact，請依 handoff 繼續這個相同任務。回覆開頭請輸出 ROUND_${round}_START，結尾輸出 ROUND_${round}_DONE。不要派發 subagent、修改檔案、執行測試或存取網路。`);
+      await task.send(sessionId, round === 1 ? reviewTaskPrompt : `這是唯讀 code review 的第 ${round} 輪續接。請先列出上一輪尚未檢查的範圍，再自行選擇恰好五個新的 ${repoTests} 或直接對應的 production 檔案深入閱讀。不要重複已完成範圍，讀完五個就立即總結本輪；若 runtime 在本輪自然觸發 compact，請依 handoff 繼續這個相同任務。回覆開頭請輸出 ROUND_${round}_START，結尾輸出 ROUND_${round}_DONE。不要派發 subagent、修改檔案、執行測試或存取網路。`);
       const taskResult = await task.waitResult(round, 20 * 60_000);
       const taskDone = Date.now();
       const taskText = String(taskResult.result ?? "").replaceAll("\\_", "_");
@@ -298,7 +299,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     const childAt = handoffAt;
     const child = new ClaudeRun(join(laneRoot, "post-compact-child.jsonl"), args(sessionId, true, []), configDir);
     runs.push(child);
-    await child.send(sessionId, `請先簡短整理 compact handoff 中已完成的進度與實際摩擦，再派一位 subagent 唯讀閱讀 ${repo}\\tests\\prompt-caret.test.ts：回報它看到的 cwd、test() 宣告數量、第一個測試名稱，以及過程摩擦。派出後請在它仍執行時，主動傳送一則補充要求給同一位 subagent，請它再回報最後一個測試名稱；收到它的回應後再整合結果。這項探查不需要任何 skill，請不要載入 skill。不要修改檔案、執行測試或存取網路。`);
+    await child.send(sessionId, `請先簡短整理 compact handoff 中已完成的進度與實際摩擦，再派一位 subagent 唯讀閱讀 ${smokePath(repoTests, "prompt-caret.test.ts")}：回報它看到的 cwd、test() 宣告數量、第一個測試名稱，以及過程摩擦。派出後請在它仍執行時，主動傳送一則補充要求給同一位 subagent，請它再回報最後一個測試名稱；收到它的回應後再整合結果。這項探查不需要任何 skill，請不要載入 skill。不要修改檔案、執行測試或存取網路。`);
     const childResult = await child.waitResult(1, 30 * 60_000);
     const taskLifecycle = child.records.find(record => record.type === "system"
       && ["task_started", "task_progress", "task_notification"].includes(String(record.subtype))
@@ -426,7 +427,8 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
 }
 
 function claudeCompactions(configDir: string, sessionId: string, trigger: "auto" | "manual") {
-  const path = join(configDir, "projects", "G--codex-chatgpt-web", `${sessionId}.jsonl`);
+  let path: string;
+  try { path = findClaudeTranscript(configDir, sessionId); } catch { return 0; }
   let text = "";
   try { text = readFileSync(path, "utf8"); } catch { return 0; }
   return new Set(text.split(/\r?\n/).flatMap(line => {

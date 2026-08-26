@@ -2,6 +2,7 @@ import { appendFileSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { getConfigPath, loadConfig } from "../../src/config";
+import { findClaudeTranscript, smokePath } from "./paths";
 
 const runtimeConfig = loadConfig();
 const defaultLauncherUserData = process.platform === "win32"
@@ -11,6 +12,7 @@ const defaultLauncherUserData = process.platform === "win32"
     : join(process.env.XDG_CONFIG_HOME?.trim() || join(homedir(), ".config"), "Codex Web GPT");
 
 export const repo = join(import.meta.dir, "..", "..");
+export const repoTests = smokePath(repo, "tests");
 export const serviceBaseUrl = `http://${runtimeConfig.host}:${runtimeConfig.port}`;
 export const launcherLog = process.env.CODEX_LIFECYCLE_LAUNCHER_LOG?.trim()
   || join(defaultLauncherUserData, "logs", "launcher.jsonl");
@@ -30,7 +32,7 @@ export const auditPrompt = `請只根據你在這個 Web 對話中實際可見�
 3. 你總共看到該訊息幾次？請列出每次所在的位置。
 4. 你是在 codegraph_status 的工具結果之後、下一個工具呼叫之前，還是只在最終回答前第一次看到它？
 5. 相鄰控制文字是否要求你單獨確認收到、重複提及它或停止原任務？`;
-export const reviewTaskPrompt = `請從 ${repo}\\tests 與其直接對應的 production 實作中自行選擇恰好五個尚未檢查的檔案，進行一輪深入的唯讀 code review；讀完五個檔案就立即總結本輪，不要繼續擴張範圍或派發 subagent。找出可能造成誤判、漏測或與 production 行為不一致的問題，逐項提供具體檔名與行號，並記錄已完成範圍與過程中實際遇到的摩擦。不要修改檔案、執行測試或存取網路。`;
+export const reviewTaskPrompt = `請從 ${repoTests} 與其直接對應的 production 實作中自行選擇恰好五個尚未檢查的檔案，進行一輪深入的唯讀 code review；讀完五個檔案就立即總結本輪，不要繼續擴張範圍或派發 subagent。找出可能造成誤判、漏測或與 production 行為不一致的問題，逐項提供具體檔名與行號，並記錄已完成範圍與過程中實際遇到的摩擦。不要修改檔案、執行測試或存取網路。`;
 
 function numberedAuditSequences(text: string): string[][] {
   const starts = [...text.matchAll(/(?:^|\n)\s*(?:#{1,6}\s*)?1[.、]/gm)];
@@ -148,7 +150,7 @@ export async function waitSteeringPoint(since: number, traceId: string, delivery
 
 export async function submitClaudeSteering(sessionId: string, prompt: string, configDir?: string) {
   const timestamp = iso();
-  const transcript = join(configDir ?? join(process.env.USERPROFILE ?? "", ".claude"), "projects", "G--codex-chatgpt-web", `${sessionId}.jsonl`);
+  const transcript = findClaudeTranscript(configDir ?? join(homedir(), ".claude"), sessionId);
   appendFileSync(transcript, `${JSON.stringify({ type: "queue-operation", operation: "enqueue", timestamp, sessionId, content: prompt })}\n`);
   const config = await Bun.file(getConfigPath()).json() as {
     host: string; port: number; controlToken: string;

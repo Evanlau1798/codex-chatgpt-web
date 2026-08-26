@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Rpc } from "./codex-app-server";
 import type { LauncherEvent } from "./common";
 
 export const openAiDocsSkillPath = join(
-  process.env.USERPROFILE ?? "",
+  homedir(),
   ".codex",
   "skills",
   ".system",
