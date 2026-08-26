@@ -47,7 +47,6 @@ interface ChatGptNativeToolActivityTrackerOptions {
 interface ActiveLease {
   activity: ChatGptNativeToolActivity;
   key: string;
-  startedAt: number;
   lastPulseAt: number;
 }
 
@@ -60,8 +59,9 @@ export class ChatGptNativeToolActivityTracker {
   private readonly absenceGraceMs: number;
   private readonly maxActivityMs: number;
   private active?: ActiveLease;
-  private blockedKey?: string;
   private absentSince?: number;
+  private windowStartedAt?: number;
+  private ceilingReached = false;
 
   constructor(options: ChatGptNativeToolActivityTrackerOptions = {}) {
     this.pulseIntervalMs = options.pulseIntervalMs ?? CHATGPT_NATIVE_TOOL_PULSE_INTERVAL_MS;
@@ -85,23 +85,23 @@ export class ChatGptNativeToolActivityTracker {
     if (!activity) return this.observeAbsence(now);
     this.absentSince = undefined;
     const key = activityKey(activity);
-    if (this.blockedKey === key) return [];
-    if (this.blockedKey !== undefined) this.blockedKey = undefined;
+    this.windowStartedAt ??= now;
+    if (this.ceilingReached) return [];
 
     const events: ChatGptNativeToolActivityEvent[] = [];
+    if (now - this.windowStartedAt >= this.maxActivityMs) {
+      if (this.active) events.push({ state: "inactive", reason: "lease_ceiling" });
+      this.active = undefined;
+      this.ceilingReached = true;
+      return events;
+    }
     if (this.active && this.active.key !== key) {
       events.push({ state: "inactive", reason: "activity_changed" });
       this.active = undefined;
     }
     if (!this.active) {
-      this.active = { activity, key, startedAt: now, lastPulseAt: now };
+      this.active = { activity, key, lastPulseAt: now };
       events.push({ state: "active", ...activity });
-      return events;
-    }
-    if (now - this.active.startedAt >= this.maxActivityMs) {
-      events.push({ state: "inactive", reason: "lease_ceiling" });
-      this.active = undefined;
-      this.blockedKey = key;
       return events;
     }
     if (now - this.active.lastPulseAt >= this.pulseIntervalMs) {
@@ -118,14 +118,14 @@ export class ChatGptNativeToolActivityTracker {
       ? [{ state: "inactive", reason: "dom_absent" }]
       : [];
     this.active = undefined;
-    this.blockedKey = undefined;
     return events;
   }
 
   private reset(): void {
     this.active = undefined;
-    this.blockedKey = undefined;
     this.absentSince = undefined;
+    this.windowStartedAt = undefined;
+    this.ceilingReached = false;
   }
 }
 

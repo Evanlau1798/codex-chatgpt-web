@@ -48,7 +48,7 @@ test("tracker emits an immediate content-free pulse and renews only at the fixed
   ]);
 });
 
-test("stale activity reaches a hard ceiling and cannot restart until it disappears", () => {
+test("stale activity reaches a generation-wide ceiling that only generation stop resets", () => {
   const tracker = new ChatGptNativeToolActivityTracker({
     pulseIntervalMs: 120_000,
     absenceGraceMs: 5_000,
@@ -63,9 +63,32 @@ test("stale activity reaches a hard ceiling and cannot restart until it disappea
   expect(tracker.update(activity, true, 1_030_000)).toEqual([]);
   expect(tracker.update(undefined, true, 1_031_000)).toEqual([]);
   expect(tracker.update(undefined, true, 1_036_000)).toEqual([]);
-  expect(tracker.update(activity, true, 1_037_000)).toEqual([
+  expect(tracker.update(activity, true, 1_037_000)).toEqual([]);
+  expect(tracker.update(activity, false, 1_038_000)).toEqual([]);
+  expect(tracker.update(activity, true, 1_039_000)).toEqual([
     { state: "active", kind: "web_search", evidence: "streaming_busy" },
   ]);
+});
+
+test("activity kind and evidence changes cannot renew the generation-wide ceiling", () => {
+  const tracker = new ChatGptNativeToolActivityTracker({
+    pulseIntervalMs: 120_000,
+    absenceGraceMs: 5_000,
+    maxActivityMs: 900_000,
+  });
+  const search = classifyChatGptNativeToolActivity([candidate()])!;
+  const tool = classifyChatGptNativeToolActivity([
+    candidate({ kind: "native_tool", ariaBusy: false, runningFiniteAnimation: true }),
+  ])!;
+
+  tracker.update(search, true, 10_000);
+  for (let at = 19_000; at < 910_000; at += 9_000) {
+    tracker.update(at % 18_000 === 1_000 ? search : tool, true, at);
+  }
+  expect(tracker.update(tool, true, 910_000)).toEqual([
+    { state: "inactive", reason: "lease_ceiling" },
+  ]);
+  expect(tracker.update(search, true, 919_000)).toEqual([]);
 });
 
 test("absence, generation stop, and changed activity retire the current lease", () => {
