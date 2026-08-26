@@ -28,6 +28,12 @@ import {
   type ChatGptWebModelMode,
 } from "./model";
 import {
+  ChatGptNativeToolActivityTracker,
+  classifyChatGptNativeToolActivity,
+  formatChatGptNativeToolActivityTelemetry,
+  type ChatGptNativeToolCandidate,
+} from "./native-tool-activity";
+import {
   CHATGPT_LUNA_BROWSER_INPUT_TOKEN_BUDGET,
   compiledChatGptWebMaxMessageChars,
   estimateCompiledChatGptWebMessageTokens,
@@ -588,6 +594,7 @@ interface ChatGptResponseDomSnapshot {
   stoppedThinkingVisible: boolean;
   projection: ChatGptFinalProjectionState;
   traceBlocks: ChatGptVisibleTraceBlock[];
+  nativeToolCandidates: ChatGptNativeToolCandidate[];
 }
 
 const absentResponseDomSnapshot = (): ChatGptResponseDomSnapshot => ({
@@ -602,6 +609,7 @@ const absentResponseDomSnapshot = (): ChatGptResponseDomSnapshot => ({
   stoppedThinkingVisible: false,
   projection: { boundaryProtocolPresent: false, lastNodePresent: false, animations: [] },
   traceBlocks: [],
+  nativeToolCandidates: [],
 });
 
 export function isChatGptTraceControl(block: ChatGptVisibleTraceBlock): boolean {
@@ -1879,6 +1887,13 @@ export class ChatGptBrowserWorker {
           && style.visibility !== "hidden"
           && style.opacity !== "0";
       };
+      const renderedThroughRoot = (candidate: HTMLElement): boolean => {
+        for (let current: HTMLElement | null = candidate; current; current = current.parentElement) {
+          if (!renderedInDom(current) || current.getAttribute("aria-hidden") === "true") return false;
+          if (current === root) return true;
+        }
+        return false;
+      };
 
       // ChatGPT uses the same Markdown renderer for intermediate commentary and for the final
       // answer. Older responses nested commentary in the streaming-status container. Pro can also
@@ -2147,6 +2162,34 @@ export class ChatGptBrowserWorker {
         }
         return false;
       })();
+      const nativeToolCandidates = [...root.querySelectorAll<HTMLElement>([
+        '[data-testid="cot-v5-favicon"]',
+        '[data-testid="cot-v5-native-tool-icon"]',
+        '[data-testid="cot-v5-tool-icon-pile"]',
+      ].join(", "))].flatMap(marker => {
+        const status = marker.closest<HTMLElement>("[data-streaming-response-status]");
+        if (!status || !root.contains(status)) return [];
+        const activityAnimations = typeof status.getAnimations === "function"
+          ? status.getAnimations({ subtree: true })
+          : [];
+        const runningFiniteAnimation = activityAnimations.some(animation => {
+          const timing = animation.effect?.getTiming();
+          const endTime = animation.effect?.getComputedTiming().endTime;
+          return timing?.iterations !== Infinity
+            && typeof endTime === "number"
+            && Number.isFinite(endTime)
+            && (animation.playState === "running" || animation.pending === true);
+        });
+        const testId = marker.getAttribute("data-testid");
+        return [{
+          kind: testId === "cot-v5-favicon" ? "web_search" as const : "native_tool" as const,
+          withinStreamingStatus: true,
+          ancestorsVisible: renderedThroughRoot(marker),
+          ariaBusy: status.matches('[aria-busy="true"]')
+            || status.querySelector('[aria-busy="true"]') !== null,
+          runningFiniteAnimation,
+        }];
+      });
       return {
         responsePresent: true,
         visibleText: renderedRoots.map(candidate => candidate.innerText.trim()).filter(Boolean).join("\n\n") || plainTextFallback,
@@ -2160,6 +2203,7 @@ export class ChatGptBrowserWorker {
         stoppedThinkingVisible,
         projection,
         traceBlocks,
+        nativeToolCandidates,
       };
     }, CHATGPT_COMPLETION_ACTION_SELECTOR, { timeout: 2_000 }).catch(() => {
       if (responseTurn.page().isClosed()) {
@@ -2657,6 +2701,7 @@ export class ChatGptBrowserWorker {
         const completionTracker = new ChatGptCompletionTracker();
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
         const stoppedThinkingTracker = new ChatGptStoppedThinkingTracker();
+        const nativeToolActivityTracker = new ChatGptNativeToolActivityTracker();
         for (;;) {
         if (page.isClosed()) {
           throw chatGptWebSurfaceError("ChatGPT browser tab was closed while the turn was active", answerBuffer.deliveredChars() > 0);
@@ -2756,6 +2801,13 @@ export class ChatGptBrowserWorker {
           continue;
         }
         const snapshot = await this.responseDomSnapshot(responseTurn, markdownOwnership, running);
+        for (const event of nativeToolActivityTracker.update(
+          classifyChatGptNativeToolActivity(snapshot.nativeToolCandidates),
+          running,
+        )) {
+          console.info(formatChatGptNativeToolActivityTelemetry(turn.traceId, event));
+          if (event.state === "active") turn.onProgress?.();
+        }
         if (stoppedThinkingTracker.update(snapshot.stoppedThinkingVisible)) {
           throw chatGptStoppedThinkingError();
         }
