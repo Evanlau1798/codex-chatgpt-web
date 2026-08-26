@@ -20,7 +20,7 @@ import {
   LifecycleMemoryBudget,
   appendLifecycleArtifact,
   lifecycleErrorCategory,
-  readBoundedLifecycleStream,
+  readBoundedLifecycleProcess,
   saveLifecycleContentSummary,
   summarizeClaudeRecord,
   summarizeStreamChunk,
@@ -202,11 +202,9 @@ async function runClaudeCommand(output: string, configDir: string, controlToken:
     cmd: [claudeExe, ...args(sessionId, true, [], false), command], cwd: repo,
     env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000", CODEX_CHATGPT_WEB_CONTROL_TOKEN: controlToken }, stdout: "pipe", stderr: "pipe",
   });
-  const [stdout, stderr, code] = await Promise.all([
-    readBoundedLifecycleStream(child.stdout, 8 * 1024 * 1024, "Claude command stdout"),
-    readBoundedLifecycleStream(child.stderr, 8 * 1024 * 1024, "Claude command stderr"),
-    waitForClaudeCommandExit(child),
-  ]);
+  const [stdout, stderr, code] = await readBoundedLifecycleProcess(
+    child, waitForClaudeCommandExit(child), 8 * 1024 * 1024, "Claude command",
+  );
   const outputEncoder = new LifecycleArtifactEncoder();
   for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
     let summary;

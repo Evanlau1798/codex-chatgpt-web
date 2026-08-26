@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   LifecycleArtifactEncoder,
   LifecycleMemoryBudget,
+  readBoundedLifecycleProcess,
   lifecycleErrorCategory,
   saveLifecycleContentSummary,
   saveLifecycleJson,
@@ -40,6 +41,19 @@ test("lifecycle protocol memory rejects oversized lines, totals, and command out
   expect(() => budget.retain("12345", "rpc")).toThrow("memory limit");
   const stream = new Blob(["x".repeat(20)]).stream();
   await expect(readBoundedLifecycleStream(stream, 10, "command stdout")).rejects.toThrow("memory limit");
+});
+
+test("bounded lifecycle process output terminates its child on overflow", async () => {
+  let killed = false;
+  const child = {
+    stdout: new Blob(["x".repeat(20)]).stream(),
+    stderr: new Blob([]).stream(),
+    exited: Promise.resolve(1),
+    kill: () => { killed = true; },
+  };
+  await expect(readBoundedLifecycleProcess(child, Promise.resolve(1), 10, "command"))
+    .rejects.toThrow("memory limit");
+  expect(killed).toBeTrue();
 });
 
 test("lifecycle failure categories never retain model or tool content", () => {

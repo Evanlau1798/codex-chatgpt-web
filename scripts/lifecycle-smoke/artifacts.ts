@@ -145,6 +145,35 @@ export async function readBoundedLifecycleStream(
   }
 }
 
+export async function readBoundedLifecycleProcess(
+  child: {
+    stdout: ReadableStream<Uint8Array>;
+    stderr: ReadableStream<Uint8Array>;
+    exited: Promise<number>;
+    kill(signal?: number): void;
+  },
+  exit: Promise<number>,
+  maxBytes: number,
+  label: string,
+): Promise<[string, string, number]> {
+  try {
+    return await Promise.all([
+      readBoundedLifecycleStream(child.stdout, maxBytes, `${label} stdout`),
+      readBoundedLifecycleStream(child.stderr, maxBytes, `${label} stderr`),
+      exit,
+    ]);
+  } catch (error) {
+    try { child.kill(); } catch { /* The process may already have exited. */ }
+    let stopped = await Promise.race([child.exited.then(() => true), Bun.sleep(5_000).then(() => false)]);
+    if (!stopped) {
+      try { child.kill(9); } catch { /* Preserve the original bounded-read failure. */ }
+      stopped = await Promise.race([child.exited.then(() => true), Bun.sleep(5_000).then(() => false)]);
+    }
+    if (!stopped) throw new Error(`${label} cleanup timed out after output collection failed`);
+    throw error;
+  }
+}
+
 export function summarizeClaudeRecord(record: Record<string, any>, at: string): ArtifactSummary {
   const blocks = Array.isArray(record.message?.content) ? record.message.content : [];
   const textChars = blocks.reduce((total: number, block: Record<string, unknown>) => (
