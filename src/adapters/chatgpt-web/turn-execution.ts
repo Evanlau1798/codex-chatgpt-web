@@ -61,6 +61,7 @@ export class ChatGptTurnSession {
   private readonly hookedSteeringReplays: string[] = [];
   private readonly steering: ChatGptSteeringFeed;
   private settledBrowserOutcome?: ChatGptBrowserOutcome;
+  private physicalBrowserSettled = false;
   private tail: Promise<void> = Promise.resolve();
 
   constructor(
@@ -77,6 +78,7 @@ export class ChatGptTurnSession {
       .then(outcome => {
       this.steering.settleClaude(outcome.type === "final");
       this.settledBrowserOutcome ??= outcome;
+      this.physicalBrowserSettled = true;
       return this.settledBrowserOutcome;
     });
   }
@@ -107,6 +109,7 @@ export class ChatGptTurnSession {
   isActive(): boolean {
     return this.settledBrowserOutcome === undefined;
   }
+  browserTurnPending(): boolean { return !this.physicalBrowserSettled; }
 
   setOutstanding(requests: BrokerToolRequest[], reasoning: string[] = [], prelude: AdapterEvent[] = []): void {
     if (this.outstandingById.size > 0) throw new Error("cannot emit a new ChatGPT tool batch while the previous batch is unresolved");
@@ -312,7 +315,7 @@ export class ChatGptTurnSessions {
         ? [...this.entries].find(([ownedKey, session]) => (
             ownedKey !== key
             && session.runtime.conversationKey === conversationKey
-            && session.isActive()
+            && session.browserTurnPending()
           ))
         : undefined;
       if (activeOwner) {
