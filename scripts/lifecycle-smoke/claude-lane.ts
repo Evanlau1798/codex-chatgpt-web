@@ -15,6 +15,11 @@ import {
   waitRootRequestBudget, waitSteeringPoint,
 } from "./common";
 import { findClaudeTranscript, smokePath } from "./paths";
+import {
+  LifecycleArtifactEncoder,
+  summarizeClaudeRecord,
+  summarizeStreamChunk,
+} from "./artifacts";
 
 type RecordValue = Record<string, any>;
 
@@ -52,6 +57,8 @@ class ClaudeRun {
   private results = 0;
   private buffer = "";
   private waiters = new Set<() => void>();
+  private outputEncoder = new LifecycleArtifactEncoder();
+  private stderrEncoder = new LifecycleArtifactEncoder();
 
   constructor(private output: string, args: string[], configDir: string) {
     this.process = Bun.spawn({
@@ -73,14 +80,18 @@ class ClaudeRun {
         const line = this.buffer.slice(0, newline).replace(/\r$/, "");
         this.buffer = this.buffer.slice(newline + 1);
         if (!line) continue;
-        appendFileSync(this.output, `${line}\n`);
         try {
           const parsed = JSON.parse(line);
+          const summary = this.outputEncoder.encode(summarizeClaudeRecord(parsed, iso()));
+          if (summary) appendFileSync(this.output, summary);
           this.records.push(parsed);
           this.receivedAt.push({ at: iso(), value: parsed });
           if (parsed.type === "result") this.results++;
           for (const wake of this.waiters) wake();
-        } catch {}
+        } catch {
+          const summary = this.outputEncoder.encode(summarizeStreamChunk("stdout", iso(), line.length));
+          if (summary) appendFileSync(this.output, summary);
+        }
       }
     }
   }
@@ -92,7 +103,9 @@ class ClaudeRun {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      appendFileSync(path, decoder.decode(value, { stream: true }));
+      const chars = decoder.decode(value, { stream: true }).length;
+      const summary = this.stderrEncoder.encode(summarizeStreamChunk("stderr", iso(), chars));
+      if (summary) appendFileSync(path, summary);
     }
   }
 
@@ -177,8 +190,18 @@ async function runClaudeCommand(output: string, configDir: string, sessionId: st
   const [stdout, stderr, code] = await Promise.all([
     new Response(child.stdout).text(), new Response(child.stderr).text(), waitForClaudeCommandExit(child),
   ]);
-  await Bun.write(output, stdout);
-  if (stderr) await Bun.write(output.replace(/\.jsonl$/, ".stderr.log"), stderr);
+  const outputEncoder = new LifecycleArtifactEncoder();
+  for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
+    let summary;
+    try { summary = summarizeClaudeRecord(JSON.parse(line), iso()); }
+    catch { summary = summarizeStreamChunk("stdout", iso(), line.length); }
+    const encoded = outputEncoder.encode(summary);
+    if (encoded) appendFileSync(output, encoded);
+  }
+  if (stderr) {
+    const encoded = new LifecycleArtifactEncoder().encode(summarizeStreamChunk("stderr", iso(), stderr.length));
+    if (encoded) appendFileSync(output.replace(/\.jsonl$/, ".stderr.log"), encoded);
+  }
   assert(code === 0, `Claude ${command} failed with exit code ${code}`);
 }
 

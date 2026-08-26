@@ -1,0 +1,39 @@
+import { expect, test } from "bun:test";
+import {
+  LifecycleArtifactEncoder,
+  summarizeClaudeRecord,
+  summarizeCodexRpc,
+} from "../scripts/lifecycle-smoke/artifacts";
+
+test("raw lifecycle summaries retain structure without prompt, answer, or tool content", () => {
+  const secret = "PRIVATE_PROMPT_AND_ANSWER";
+  const claude = JSON.stringify(summarizeClaudeRecord({
+    type: "assistant",
+    subtype: "success",
+    result: secret,
+    message: { content: [{ type: "text", text: secret }, { type: "tool_use", input: secret }] },
+  }, "2026-01-01T00:00:00.000Z"));
+  const codex = JSON.stringify(summarizeCodexRpc({
+    method: "item/agentMessage/delta",
+    params: { delta: secret, item: { type: "agentMessage", text: secret } },
+  }, "2026-01-01T00:00:00.000Z"));
+
+  expect(claude).not.toContain(secret);
+  expect(codex).not.toContain(secret);
+  expect(claude).toContain('"textChars":25');
+  expect(codex).toContain('"deltaChars":25');
+});
+
+test("lifecycle JSONL encoding has per-record and total byte ceilings", () => {
+  const encoder = new LifecycleArtifactEncoder({ maxLineBytes: 96, maxTotalBytes: 240 });
+  const outputs = Array.from({ length: 20 }, (_, index) => encoder.encode({
+    type: "record",
+    index,
+    detail: "x".repeat(200),
+  })).filter((value): value is string => value !== undefined);
+  const bytes = outputs.reduce((total, value) => total + Buffer.byteLength(value), 0);
+
+  expect(bytes).toBeLessThanOrEqual(240);
+  expect(outputs.every(value => Buffer.byteLength(value) <= 96)).toBeTrue();
+  expect(outputs.join("")).not.toContain("x".repeat(20));
+});

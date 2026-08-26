@@ -3,6 +3,11 @@ import { DEFAULT_STALL_TIMEOUT_SEC } from "../../src/stall-timeout";
 import { assert, codexExe, events, iso, repo, serviceBaseUrl, sleep } from "./common";
 import { CodexLifecycleProgressSignals } from "./progress-signals";
 import { LifecycleProgressWatchdog } from "./progress-watchdog";
+import {
+  LifecycleArtifactEncoder,
+  summarizeCodexRpc,
+  summarizeStreamChunk,
+} from "./artifacts";
 
 export const activeTurnSmokeTimeoutMs = 45 * 60_000;
 export const lifecycleSemanticInactivityMs = DEFAULT_STALL_TIMEOUT_SEC * 3 * 1_000 + 60_000;
@@ -145,6 +150,8 @@ export class CodexRun {
   private stderrTask: Promise<void>;
   private outputQueue: string[] = [];
   private stderrQueue: string[] = [];
+  private outputEncoder = new LifecycleArtifactEncoder();
+  private stderrEncoder = new LifecycleArtifactEncoder();
 
   constructor(private output: string, compactLimit = true) {
     const provider = [
@@ -168,11 +175,16 @@ export class CodexRun {
     });
     this.stdoutTask = this.read(this.process.stdout, line => this.handle(JSON.parse(line)));
     this.stderrTask = this.read(this.process.stderr, line => {
-      this.appendDiagnostic(this.stderrQueue, output.replace(/\.jsonl$/, ".stderr.log"), `${line}\n`);
+      this.appendDiagnostic(
+        this.stderrQueue,
+        output.replace(/\.jsonl$/, ".stderr.log"),
+        this.stderrEncoder.encode(summarizeStreamChunk("stderr", iso(), line.length)),
+      );
     });
   }
 
-  private appendDiagnostic(queue: string[], path: string, value: string) {
+  private appendDiagnostic(queue: string[], path: string, value: string | undefined) {
+    if (!value) return;
     queue.push(value);
     this.flushDiagnostic(queue, path);
   }
@@ -208,7 +220,11 @@ export class CodexRun {
   private handle(message: Rpc) {
     message.receivedAt = iso();
     this.received.push(message);
-    this.appendDiagnostic(this.outputQueue, this.output, `${JSON.stringify(message)}\n`);
+    this.appendDiagnostic(
+      this.outputQueue,
+      this.output,
+      this.outputEncoder.encode(summarizeCodexRpc(message, message.receivedAt)),
+    );
     if (message.id !== undefined && message.method === "mcpServer/elicitation/request") {
       void this.send({ id: message.id, result: { action: "accept", content: {}, _meta: { persist: "session" } } });
       return;
