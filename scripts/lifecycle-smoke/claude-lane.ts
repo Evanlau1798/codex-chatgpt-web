@@ -66,14 +66,16 @@ export class ClaudeRun {
   private stderrEncoder = new LifecycleArtifactEncoder();
   private memoryBudget = new LifecycleMemoryBudget();
   private readFailure?: Error;
+  private outputTask: Promise<void>;
+  private errorTask: Promise<void>;
 
   constructor(private output: string, args: string[], configDir: string, controlToken: string) {
     this.process = Bun.spawn({
       cmd: [claudeExe, ...args], cwd: repo, stdin: "pipe", stdout: "pipe", stderr: "pipe",
       env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000", CODEX_CHATGPT_WEB_CONTROL_TOKEN: controlToken },
     });
-    void this.readOutput();
-    void this.readErrors();
+    this.outputTask = this.readOutput();
+    this.errorTask = this.readErrors().catch(error => this.failRead(error));
   }
 
   private async readOutput() {
@@ -82,6 +84,7 @@ export class ClaudeRun {
   }
 
   private failRead(error: unknown) {
+    if (this.readFailure) return;
     this.readFailure = error instanceof Error ? error : new Error(String(error));
     this.process.kill();
     for (const wake of this.waiters) wake();
@@ -133,6 +136,7 @@ export class ClaudeRun {
   }
 
   async send(sessionId: string, text: string) {
+    if (this.readFailure) throw this.readFailure;
     this.process.stdin.write(`${JSON.stringify({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, session_id: sessionId })}\n`);
     await this.process.stdin.flush();
   }
@@ -189,12 +193,14 @@ export class ClaudeRun {
 
   rawText() { return this.records.map(record => JSON.stringify(record)).join("\n"); }
   async close() {
-    this.process.stdin.end();
+    try { this.process.stdin.end(); } catch (error) { if (!this.readFailure) throw error; }
     const code = await Promise.race([this.process.exited, sleep(15_000).then(() => null)]);
     if (code === null) {
       this.process.kill(9);
       await Promise.race([this.process.exited, sleep(5_000)]);
     }
+    await Promise.all([this.outputTask, this.errorTask]);
+    if (this.readFailure) throw this.readFailure;
   }
 }
 
