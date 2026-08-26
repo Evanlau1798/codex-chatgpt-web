@@ -1,10 +1,11 @@
-import { appendFileSync, readFileSync, readdirSync } from "node:fs";
+import { appendFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { getConfigPath, loadConfig } from "../../src/config";
 import { findClaudeTranscript, smokePath } from "./paths";
 import { saveLifecycleJson } from "./artifacts";
 import { fetchWithTimeout } from "./run-guard";
+import { LauncherEventReader, type LauncherEvent } from "./launcher-event-reader";
 
 const runtimeConfig = loadConfig();
 const defaultLauncherUserData = process.platform === "win32"
@@ -69,7 +70,7 @@ export function steeringAuditPassed(text: string): boolean {
   });
 }
 
-export type LauncherEvent = { at: string; event: string; detail?: Record<string, any>; message?: string };
+export type { LauncherEvent } from "./launcher-event-reader";
 export type Timeline = Record<string, string | number | null>;
 export type LaneResult = {
   status: "passed" | "failed" | "blocked";
@@ -86,6 +87,8 @@ export function iso(ms = Date.now()) { return new Date(ms).toISOString(); }
 export function sleep(ms: number) { return Bun.sleep(ms); }
 export function assert(ok: unknown, message: string): asserts ok { if (!ok) throw new Error(message); }
 
+const launcherEventReader = new LauncherEventReader();
+
 export function events(since = 0): LauncherEvent[] {
   let paths: string[] = [];
   try {
@@ -94,12 +97,7 @@ export function events(since = 0): LauncherEvent[] {
       .filter(value => value === name || value.startsWith(`${name}.`))
       .map(value => join(dirname(launcherLog), value));
   } catch { return []; }
-  return paths.flatMap(path => readFileSync(path, "utf8").split(/\r?\n/)).flatMap(line => {
-    try {
-      const value = JSON.parse(line) as LauncherEvent;
-      return Date.parse(value.at) >= since ? [value] : [];
-    } catch { return []; }
-  }).sort((left, right) => Date.parse(left.at) - Date.parse(right.at));
+  return launcherEventReader.read(paths, since);
 }
 
 export async function waitForEvent(
