@@ -139,7 +139,7 @@ export function selfTestActiveTurnSmokeBudget(): void {
   );
 }
 
-type Waiter = { predicate: (message: Rpc) => boolean; resolve: (message: Rpc) => void };
+type Waiter = { predicate: (message: Rpc) => boolean; resolve: (message: Rpc) => void; reject: (error: Error) => void };
 
 export class CodexRun {
   readonly received: Rpc[] = [];
@@ -154,6 +154,7 @@ export class CodexRun {
   private outputEncoder = new LifecycleArtifactEncoder();
   private stderrEncoder = new LifecycleArtifactEncoder();
   private memoryBudget = new LifecycleMemoryBudget();
+  private readFailure?: Error;
 
   constructor(private output: string, compactLimit = true) {
     const provider = [
@@ -175,14 +176,29 @@ export class CodexRun {
       stdout: "pipe",
       stderr: "pipe",
     });
-    this.stdoutTask = this.read(this.process.stdout, line => this.handle(JSON.parse(line)), true);
+    this.stdoutTask = this.read(this.process.stdout, line => this.handle(JSON.parse(line)), true)
+      .catch(error => this.failRead(error));
     this.stderrTask = this.read(this.process.stderr, line => {
       this.appendDiagnostic(
         this.stderrQueue,
         output.replace(/\.jsonl$/, ".stderr.log"),
         this.stderrEncoder.encode(summarizeStreamChunk("stderr", iso(), line.length)),
       );
-    });
+    }).catch(error => this.failRead(error));
+  }
+
+  private failRead(error: unknown) {
+    if (this.readFailure) return;
+    this.readFailure = error instanceof Error ? error : new Error(String(error));
+    this.process.kill();
+    for (const pending of this.pending.values()) pending.reject(this.readFailure);
+    for (const waiter of this.waiters) waiter.reject(this.readFailure);
+    this.pending.clear();
+    this.waiters.clear();
+  }
+
+  assertReadable() {
+    if (this.readFailure) throw this.readFailure;
   }
 
   private appendDiagnostic(queue: string[], path: string, value: string | undefined) {
@@ -262,6 +278,7 @@ export class CodexRun {
   }
 
   async request(method: string, params: Record<string, unknown>, timeoutMs = 30_000) {
+    this.assertReadable();
     const id = this.nextId++;
     let timer: Timer;
     const response = new Promise<any>((resolve, reject) => {
@@ -278,12 +295,13 @@ export class CodexRun {
   }
 
   async waitFor(predicate: (message: Rpc) => boolean, timeoutMs: number, label: string) {
+    this.assertReadable();
     const existing = this.received.findLast(predicate);
     if (existing) return existing;
     let timer: Timer;
     let entry: Waiter;
     const result = new Promise<Rpc>((resolve, reject) => {
-      entry = { predicate, resolve };
+      entry = { predicate, resolve, reject };
       this.waiters.add(entry);
       timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
     });
@@ -349,6 +367,7 @@ export async function completed(run: CodexRun, turnId: string, timeoutMs: number
   let receivedIndex = 0;
   let launcherIndex = 0;
   for (;;) {
+    run.assertReadable();
     const message = run.received.findLast(value => (
       value.method === "turn/completed" && value.params?.turn?.id === turnId
     ));

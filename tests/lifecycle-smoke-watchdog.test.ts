@@ -1,5 +1,23 @@
 import { expect, test } from "bun:test";
+import { CodexRun } from "../scripts/lifecycle-smoke/codex-app-server";
 import { LifecycleProgressWatchdog } from "../scripts/lifecycle-smoke/progress-watchdog";
+
+test("Codex protocol read failures reject active waits immediately", async () => {
+  const run = Object.create(CodexRun.prototype) as any;
+  let killed = false;
+  run.process = { kill: () => { killed = true; } };
+  run.pending = new Map();
+  run.waiters = new Set();
+  const pending = new Promise((resolve, reject) => run.pending.set(1, { resolve, reject }));
+  const waiter = new Promise((resolve, reject) => run.waiters.add({ predicate: () => false, resolve, reject }));
+
+  run.failRead(new Error("Codex RPC exceeded lifecycle memory limit"));
+
+  await expect(pending).rejects.toThrow("memory limit");
+  await expect(waiter).rejects.toThrow("memory limit");
+  expect(killed).toBeTrue();
+  expect(() => run.assertReadable()).toThrow("memory limit");
+});
 
 test("liveness records never extend semantic inactivity", () => {
   const watcher = new LifecycleProgressWatchdog({
