@@ -40,6 +40,7 @@
     "smoke:cancel": "bun run scripts/smoke-codex-cancel.ts",
     "smoke:subagents": "bun run scripts/smoke-codex-subagents.ts --v1 && bun run scripts/smoke-codex-subagents.ts --v2",
     "smoke:subagents:live": "bun run scripts/smoke-codex-web-subagents.ts",
+    "smoke:lifecycle:live": "bun run scripts/lifecycle-smoke/run.ts --live",
     "launcher": "bun run scripts/start-launcher.ts",
     "app": "bun run scripts/start-launcher.ts",
     "app:package": "bun run --cwd launcher package",
