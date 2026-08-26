@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LauncherEventReader } from "../scripts/lifecycle-smoke/launcher-event-reader";
+import { LauncherEventReader, unseenLauncherEvents } from "../scripts/lifecycle-smoke/launcher-event-reader";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -74,4 +74,19 @@ test("launcher event reader binds rotation identity to the opened file", () => {
   expect(reader.read([active]).map(value => value.event)).toEqual(["one"]);
   expect(rotatedDuringOpen).toBeTrue();
   expect(reader.read([rotated, active]).map(value => value.event)).toEqual(["one", "two"]);
+});
+
+test("launcher event consumers observe late older rotation records exactly once", () => {
+  const root = join(tmpdir(), `lifecycle-launcher-events-${crypto.randomUUID()}`);
+  roots.push(root);
+  mkdirSync(root);
+  const active = join(root, "launcher.jsonl");
+  const rotated = `${active}.1`;
+  writeFileSync(active, event("2026-01-01T00:00:01.000Z", "new"));
+  const reader = new LauncherEventReader();
+  const seen = new WeakSet<object>();
+  expect(unseenLauncherEvents(reader.read([active]), seen).map(value => value.event)).toEqual(["new"]);
+
+  writeFileSync(rotated, event("2026-01-01T00:00:00.000Z", "old"));
+  expect(unseenLauncherEvents(reader.read([rotated, active]), seen).map(value => value.event)).toEqual(["old"]);
 });

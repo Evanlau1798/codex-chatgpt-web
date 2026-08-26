@@ -2,6 +2,7 @@ import { DEFAULT_STALL_TIMEOUT_SEC } from "../../src/stall-timeout";
 import { assert, codexExe, events, iso, repo, serviceBaseUrl, sleep } from "./common";
 import { CodexLifecycleProgressSignals } from "./progress-signals";
 import { LifecycleProgressWatchdog } from "./progress-watchdog";
+import { unseenLauncherEvents } from "./launcher-event-reader";
 import {
   LifecycleArtifactEncoder,
   LifecycleMemoryBudget,
@@ -368,7 +369,7 @@ export async function completed(run: CodexRun, turnId: string, timeoutMs: number
   });
   const signals = new CodexLifecycleProgressSignals();
   let receivedIndex = 0;
-  let launcherIndex = 0;
+  const seenLauncherEvents = new WeakSet<object>();
   for (;;) {
     run.assertReadable();
     const message = run.received.findLast(value => (
@@ -386,10 +387,9 @@ export async function completed(run: CodexRun, turnId: string, timeoutMs: number
     }
     receivedIndex = run.received.length;
     const launcher = events(startedAt);
-    for (const value of launcher.slice(launcherIndex)) {
+    for (const value of unseenLauncherEvents(launcher, seenLauncherEvents)) {
       watcher.observe(signals.fromLauncher(value), Date.parse(value.at));
     }
-    launcherIndex = launcher.length;
     const status = watcher.status(Date.now());
     if (status.timedOut) {
       throw new Error(`turn ${turnId} timed out: ${status.reason}`);

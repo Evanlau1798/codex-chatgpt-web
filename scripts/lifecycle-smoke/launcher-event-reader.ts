@@ -7,6 +7,14 @@ export type LauncherEvent = {
   message?: string;
 };
 
+export function unseenLauncherEvents(values: LauncherEvent[], seen: WeakSet<object>): LauncherEvent[] {
+  return values.filter(value => {
+    if (seen.has(value)) return false;
+    seen.add(value);
+    return true;
+  });
+}
+
 type Cursor = {
   identity: string;
   offset: number;
