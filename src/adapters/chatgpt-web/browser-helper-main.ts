@@ -66,6 +66,7 @@ interface AnswerRetryMessage {
 }
 type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage
   | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
+  | { type: "send_activated_ack"; id: string }
   | { type: "preempt_retry"; id: string; prompt: string }
   | { type: "abort"; id: string } | { type: "shutdown" };
 
@@ -78,9 +79,7 @@ const handleOutputFailure = (error: Error): void => {
 const protocolOutput = createProcessLineWriter(stdout, handleOutputFailure);
 const diagnosticOutput = createProcessLineWriter(stderr, handleOutputFailure);
 
-const writeProtocol = (message: unknown): void => {
-  protocolOutput.write(JSON.stringify(message));
-};
+const writeProtocol = (message: unknown): boolean => protocolOutput.write(JSON.stringify(message));
 
 const diagnostic = (...values: unknown[]): void => {
   diagnosticOutput.write(values.map(value => typeof value === "string" ? value : JSON.stringify(value)).join(" "));
@@ -92,6 +91,7 @@ console.error = diagnostic;
 const abortControllers = new Map<string, AbortController>();
 const answerRetryWaiters = new Map<string, (prompt?: string | ChatGptRetryPrompt) => void>();
 const preparedSelectionWaiters = new Map<string, (prepared?: CompiledChatGptWebPrompt) => void>();
+const sendActivationWaiters = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
 const activeWorkers = new Map<string, ChatGptBrowserWorker>();
 let shuttingDown = false;
 let shutdownPromise: Promise<void> | undefined;
@@ -110,6 +110,10 @@ function requestShutdown(): Promise<void> {
   answerRetryWaiters.clear();
   for (const resolve of preparedSelectionWaiters.values()) resolve();
   preparedSelectionWaiters.clear();
+  for (const waiter of sendActivationWaiters.values()) {
+    waiter.reject(new DOMException("Browser helper activation acknowledgement aborted", "AbortError"));
+  }
+  sendActivationWaiters.clear();
   input.close();
   void closeChatGptBrowserWorkers().then(
     () => {
@@ -187,7 +191,16 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.compaction ? { compaction: true } : {}),
     abortSignal: abortController.signal,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
-    onSendActivated: () => writeProtocol({ type: "event", id: message.id, event: "send_activated" }),
+    onSendActivated: () => new Promise<void>((resolve, reject) => {
+      if (sendActivationWaiters.has(message.id)) {
+        reject(new Error("Browser helper Send activation is already awaiting acknowledgement"));
+        return;
+      }
+      sendActivationWaiters.set(message.id, { resolve, reject });
+      if (writeProtocol({ type: "event", id: message.id, event: "send_activated" })) return;
+      sendActivationWaiters.delete(message.id);
+      reject(new Error("Browser helper could not publish Send activation"));
+    }),
     onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "submitted" }),
     onPreparedSelected: reused => {
       writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused });
@@ -252,6 +265,7 @@ async function run(message: RunMessage): Promise<void> {
     if (activeWorkers.get(message.id) === worker) activeWorkers.delete(message.id);
     answerRetryWaiters.delete(message.id);
     preparedSelectionWaiters.delete(message.id);
+    sendActivationWaiters.delete(message.id);
     abortControllers.delete(message.id);
   }
 }
@@ -323,6 +337,10 @@ input.on("line", line => {
     answerRetryWaiters.delete(message.id);
     preparedSelectionWaiters.get(message.id)?.();
     preparedSelectionWaiters.delete(message.id);
+    sendActivationWaiters.get(message.id)?.reject(
+      new DOMException("Browser helper Send activation aborted", "AbortError"),
+    );
+    sendActivationWaiters.delete(message.id);
     abortControllers.get(message.id)?.abort();
   } else if (message.type === "preempt_retry") {
     const worker = activeWorkers.get(message.id);
@@ -334,6 +352,9 @@ input.on("line", line => {
         message: "Browser helper could not preempt the active generation for same-surface retry",
       });
     }
+  } else if (message.type === "send_activated_ack") {
+    sendActivationWaiters.get(message.id)?.resolve();
+    sendActivationWaiters.delete(message.id);
   } else if (message.type === "prepared_selected_ack") {
     const prepared = message.prepared;
     const multipart = prepared?.multipart;

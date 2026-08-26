@@ -6,6 +6,7 @@ import {
   parseLauncherHelperMessage,
   type LauncherHelperMessage,
 } from "./launcher-helper-protocol";
+import { terminateLauncherHelperProcess, writeLauncherHelperMessage } from "./launcher-helper-process";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { BrowserTurn, ResolvedBrowserConfig } from "./browser-worker";
 
@@ -124,8 +125,8 @@ export class LauncherBrowserHelperClient {
       this.finishWithError(id, new DOMException("Launcher browser helper is closing", "AbortError"));
     }
     if (!child) return;
-    await this.sendTo(child, { type: "shutdown" }).catch(() => {});
-    await this.terminateChild(child, 2_000);
+    await writeLauncherHelperMessage(child, { type: "shutdown" }).catch(() => {});
+    await terminateLauncherHelperProcess(child, 2_000);
   }
 
   private async ensureChild(): Promise<void> {
@@ -163,7 +164,7 @@ export class LauncherBrowserHelperClient {
       const owned = this.child === child;
       this.handleExit(child, error);
       if (owned && Number.isInteger(child.pid) && child.exitCode === null && child.signalCode === null) {
-        void this.terminateChild(child, 0).catch(cleanupError => {
+        void terminateLauncherHelperProcess(child, 0).catch(cleanupError => {
           console.error(
             `[chatgpt-web-helper] process-error cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
           );
@@ -190,7 +191,7 @@ export class LauncherBrowserHelperClient {
         this.readyReject = undefined;
       }
       try {
-        await this.terminateChild(child, 500);
+        await terminateLauncherHelperProcess(child, 500);
       } catch (cleanupError) {
         const primary = error instanceof Error ? error.message : String(error);
         const cleanup = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
@@ -209,7 +210,7 @@ export class LauncherBrowserHelperClient {
     catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       this.handleExit(child, new Error(`Launcher browser helper emitted invalid protocol data: ${detail}`));
-      void this.terminateChild(child, 0).catch(error => {
+      void terminateLauncherHelperProcess(child, 0).catch(error => {
         console.error(`[chatgpt-web-helper] invalid-protocol cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
       });
       return;
@@ -227,7 +228,16 @@ export class LauncherBrowserHelperClient {
         this.invokeEventCallback(message.id, pending, () => pending.turn.onHeartbeat?.());
       }
       else if (message.event === "send_activated") {
-        this.invokeEventCallback(message.id, pending, () => pending.turn.onSendActivated?.());
+        void Promise.resolve().then(() => pending.turn.onSendActivated?.()).then(() => {
+          if (this.pending.get(message.id) !== pending) return;
+          return this.send({ type: "send_activated_ack", id: message.id });
+        }).catch(error => {
+          if (this.pending.get(message.id) === pending) this.abortWithLocalFailure(
+            message.id,
+            error instanceof Error ? error : new Error(String(error)),
+            pending,
+          );
+        });
       }
       else if (message.event === "submitted") {
         this.invokeEventCallback(message.id, pending, () => pending.turn.onSubmitted?.());
@@ -448,41 +458,6 @@ export class LauncherBrowserHelperClient {
     }
   }
 
-  private async waitForExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<boolean> {
-    if (child.exitCode !== null || child.signalCode !== null) return true;
-    return await new Promise<boolean>(resolveExit => {
-      let settled = false;
-      const finish = (exited: boolean) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        child.off("exit", onExit);
-        child.off("close", onExit);
-        resolveExit(exited);
-      };
-      const onExit = () => finish(true);
-      const timer = setTimeout(() => finish(false), timeoutMs);
-      child.once("exit", onExit);
-      child.once("close", onExit);
-    });
-  }
-
-  private async terminateChild(child: ChildProcessWithoutNullStreams, gracefulTimeoutMs: number): Promise<void> {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    child.stdin.end();
-    if (await this.waitForExit(child, gracefulTimeoutMs)) return;
-    if (!child.kill("SIGTERM") && child.exitCode === null && child.signalCode === null) {
-      throw new Error("Launcher browser helper refused termination");
-    }
-    if (await this.waitForExit(child, 2_000)) return;
-    if (!child.kill("SIGKILL") && child.exitCode === null && child.signalCode === null) {
-      throw new Error("Launcher browser helper refused forced termination");
-    }
-    if (!await this.waitForExit(child, 2_000)) {
-      throw new Error("Launcher browser helper did not exit after forced termination");
-    }
-  }
-
   private send(message: unknown): Promise<void> {
     const child = this.child;
     if (!child
@@ -491,19 +466,6 @@ export class LauncherBrowserHelperClient {
       || child.signalCode !== null) {
       return Promise.reject(new Error("Launcher browser helper is not running"));
     }
-    return this.sendTo(child, message);
-  }
-
-  private async sendTo(child: ChildProcessWithoutNullStreams, message: unknown): Promise<void> {
-    const encoded = `${JSON.stringify(message)}\n`;
-    if (child.stdin.destroyed || child.stdin.writableEnded) {
-      throw new Error("Launcher browser helper input is closed");
-    }
-    await new Promise<void>((resolveWrite, rejectWrite) => {
-      child.stdin.write(encoded, error => {
-        if (error) rejectWrite(error);
-        else resolveWrite();
-      });
-    });
+    return writeLauncherHelperMessage(child, message);
   }
 }

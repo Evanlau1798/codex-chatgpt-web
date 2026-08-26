@@ -460,7 +460,7 @@ export interface BrowserTurn {
   /** Semantic DOM progress used only to reset the upstream silence timer. */
   onProgress?: () => void;
   /** Send activation is an irreversible ambiguity boundary: never replay on a fresh surface. */
-  onSendActivated?: () => void;
+  onSendActivated?: () => void | Promise<void>;
   /** The current prompt is visible to ChatGPT and must never be replayed on another surface. */
   onSubmitted?: () => void;
   /** Release the unselected full/resume transport after the launcher resolves the retained lease. */
@@ -815,9 +815,9 @@ export class ChatGptBrowserWorker {
     let submitted = false;
     const submittedTurn: BrowserTurn = {
       ...turn,
-      onSendActivated: () => {
+      onSendActivated: async () => {
         sendActivated = true;
-        turn.onSendActivated?.();
+        await turn.onSendActivated?.();
       },
       onSubmitted: () => {
         submitted = true;
@@ -1282,7 +1282,7 @@ export class ChatGptBrowserWorker {
     initialResponseTurn: ChatGptAssistantTurnState,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
     abortSignal?: AbortSignal,
-    onSendActivated?: () => void,
+    onSendActivated?: () => void | Promise<void>,
   ): Promise<ChatGptSubmissionEvidence> {
     const composer = await this.activeComposer(page);
     const sendButton = composer
@@ -1295,7 +1295,7 @@ export class ChatGptBrowserWorker {
     await settleChatGptUi();
     await captureDiagnostic?.("send-ready");
     await throwIfChatGptSessionFailureAlert(page);
-    onSendActivated?.();
+    await onSendActivated?.();
     await activateChatGptSendControl(sendButton);
     return this.waitForSubmissionAccepted(
       page,
@@ -2613,7 +2613,7 @@ export class ChatGptBrowserWorker {
         await settleChatGptUi();
         await diagnostics.capture(page, "send-ready");
         await throwIfChatGptSessionFailureAlert(page);
-        turn.onSendActivated?.();
+        await turn.onSendActivated?.();
         await activateChatGptSendControl(sendButton);
         const evidence = await this.waitForSubmissionAccepted(
           page,
