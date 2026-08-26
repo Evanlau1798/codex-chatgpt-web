@@ -13,6 +13,7 @@ type Cursor = {
   remainder: string;
   remainderOffset: number;
   discardPartial: boolean;
+  decoder: TextDecoder;
 };
 
 const DEFAULT_INITIAL_TAIL_BYTES = 8 * 1024 * 1024;
@@ -49,24 +50,28 @@ export class LauncherEventReader {
     let cursor = this.cursors.get(path);
     if (!cursor || cursor.identity !== identity || stat.size < cursor.offset) {
       const offset = Math.max(0, stat.size - (this.limits.maxInitialTailBytes ?? DEFAULT_INITIAL_TAIL_BYTES));
-      cursor = { identity, offset, remainder: "", remainderOffset: offset, discardPartial: offset > 0 };
+      cursor = {
+        identity,
+        offset,
+        remainder: "",
+        remainderOffset: offset,
+        discardPartial: offset > 0,
+        decoder: new TextDecoder(),
+      };
       this.cursors.set(path, cursor);
     }
     if (stat.size === cursor.offset) return false;
     const fd = openSync(path, "r");
     let changed = false;
-    const decoder = new TextDecoder();
     try {
       while (cursor.offset < stat.size) {
         const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, stat.size - cursor.offset));
         const bytes = readSync(fd, buffer, 0, buffer.length, cursor.offset);
         if (bytes === 0) break;
         cursor.offset += bytes;
-        cursor.remainder += decoder.decode(buffer.subarray(0, bytes), { stream: true });
+        cursor.remainder += cursor.decoder.decode(buffer.subarray(0, bytes), { stream: true });
         changed = this.consume(cursor) || changed;
       }
-      cursor.remainder += decoder.decode();
-      changed = this.consume(cursor) || changed;
       this.assertLine(cursor.remainder);
       return changed;
     } finally {

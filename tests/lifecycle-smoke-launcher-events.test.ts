@@ -39,3 +39,19 @@ test("launcher event reader rejects an unbounded retained cache", () => {
   writeFileSync(active, event("2026-01-01T00:00:00.000Z", "oversized"));
   expect(() => new LauncherEventReader({ maxRetainedBytes: 8 }).read([active])).toThrow("cache limit");
 });
+
+test("launcher event reader preserves UTF-8 characters split across polls", () => {
+  const root = join(tmpdir(), `lifecycle-launcher-events-${crypto.randomUUID()}`);
+  roots.push(root);
+  mkdirSync(root);
+  const active = join(root, "launcher.jsonl");
+  const line = Buffer.from(`${JSON.stringify({
+    at: "2026-01-01T00:00:00.000Z", event: "message", detail: { message: "測試訊息" },
+  })}\n`);
+  const split = line.indexOf(Buffer.from("訊")) + 1;
+  writeFileSync(active, line.subarray(0, split));
+  const reader = new LauncherEventReader();
+  expect(reader.read([active])).toEqual([]);
+  appendFileSync(active, line.subarray(split));
+  expect(reader.read([active])[0]?.detail?.message).toBe("測試訊息");
+});
