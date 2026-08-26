@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { expandUserPath } from "../../config";
 import { releaseLauncherRetainedConversation } from "../../launcher-browser-host";
 import type { CodexProviderConfig } from "../../types";
+import { effectiveExperimentalBiggerContext } from "../../context-mode";
 import type { ChatGptWebCapabilities } from "./model";
 
 export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
@@ -12,10 +13,14 @@ export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
   configuredCapabilities: ChatGptWebCapabilities;
   executionNamespace: string;
 } {
+  const useEnhancedWebSessionMode = provider.chatgptWeb?.useEnhancedWebSessionMode === true;
   return {
     timeoutMs: provider.chatgptWeb?.turnTimeoutMs,
-    useEnhancedWebSessionMode: provider.chatgptWeb?.useEnhancedWebSessionMode === true,
-    experimentalBiggerContext: provider.chatgptWeb?.experimentalBiggerContext === true,
+    useEnhancedWebSessionMode,
+    experimentalBiggerContext: effectiveExperimentalBiggerContext(
+      useEnhancedWebSessionMode,
+      provider.chatgptWeb?.experimentalBiggerContext === true,
+    ),
     configuredCapabilities: {
       localToolsEnabled: provider.chatgptWeb?.localToolsEnabled === true,
       solAvailable: provider.chatgptWeb?.solAvailable !== false,

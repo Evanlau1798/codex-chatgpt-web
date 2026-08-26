@@ -10,6 +10,7 @@ import {
 } from "react";
 import { copyFor, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
+import { biggerContextSwitchState } from "./context-mode";
 import type {
   BrowserState,
   DoctorReport,
@@ -1363,6 +1364,12 @@ function SettingsSurface({
       setBusy(false);
     }
   };
+  const biggerContextState = biggerContextSwitchState({
+    busy,
+    coreSetupComplete: snapshot.state.coreSetupComplete === true,
+    useEnhancedWebSessionMode: snapshot.state.useEnhancedWebSessionMode,
+    experimentalBiggerContext: snapshot.state.experimentalBiggerContext,
+  });
   const uninstallIntegration = async () => {
     setBusy(true);
     setError(null);
@@ -1407,8 +1414,8 @@ function SettingsSurface({
         </SettingRow> : null}
         <SettingRow body={copy.biggerContextBody} label={copy.biggerContext}>
           <Switch
-            checked={snapshot.state.experimentalBiggerContext}
-            disabled={busy || snapshot.state.coreSetupComplete !== true}
+            checked={biggerContextState.checked}
+            disabled={biggerContextState.disabled}
             onChange={(enabled) => void setBiggerContext(enabled)}
           />
         </SettingRow>

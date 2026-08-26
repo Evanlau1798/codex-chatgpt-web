@@ -17,6 +17,7 @@ const { embeddedRuntimeInvocation, runtimeInvocation } = require("./runtime-comm
 const { redactText } = require("./logging.cjs");
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require("./process-tree.cjs");
 const { inspectClaudeIntegrationStatus } = require("./claude-integration-status.cjs");
+const { assertBiggerContextChangeAllowed, normalizeContextModes } = require("./context-mode.cjs");
 
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
@@ -780,7 +781,10 @@ class RuntimeHost {
         const { useNewCompactMode: _legacyMode, ...canonicalConfig } = current.config;
         writePrivateFileAtomic(
           this.supervisor.configPath,
-          `${JSON.stringify({ ...canonicalConfig, useEnhancedWebSessionMode: desired }, null, 2)}\n`,
+          `${JSON.stringify(normalizeContextModes({
+            ...canonicalConfig,
+            useEnhancedWebSessionMode: desired,
+          }), null, 2)}\n`,
         );
         const runtime = await this.supervisor.startIfConfigured();
         if (runtime.status !== "ready") {
@@ -951,6 +955,7 @@ class RuntimeHost {
     if (!current.configured) {
       throw new Error("Initialize the runtime before changing Bigger Context");
     }
+    assertBiggerContextChangeAllowed(current.config, enabled === true);
     const mode = current.mode;
     const contextFlag = enabled === true ? "--bigger-context" : "--standard-context";
     if (this.launcherProfile === "development") {

@@ -33,11 +33,14 @@ function configFor(descriptorPath, overrides = {}) {
   };
 }
 
-function compactFixture({ startResults = [{ status: "ready" }], enhanced } = {}) {
+function compactFixture({ startResults = [{ status: "ready" }], enhanced, biggerContext } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-new-compact-"));
   const descriptorPath = path.join(root, "launcher-browser.json");
   const configPath = path.join(root, "config.json");
-  const mode = typeof enhanced === "boolean" ? { useEnhancedWebSessionMode: enhanced } : {};
+  const mode = {
+    ...(typeof enhanced === "boolean" ? { useEnhancedWebSessionMode: enhanced } : {}),
+    ...(typeof biggerContext === "boolean" ? { experimentalBiggerContext: biggerContext } : {}),
+  };
   fs.writeFileSync(configPath, `${JSON.stringify(configFor(descriptorPath, mode), null, 2)}\n`);
   const calls = [];
   let startIndex = 0;
@@ -89,15 +92,27 @@ test("launcher migrates the legacy compact key and rejects conflicting mode keys
 });
 
 test("launcher atomically changes enhanced Web session mode and restarts the configured runtime", async (t) => {
-  const fixture = compactFixture();
+  const fixture = compactFixture({ biggerContext: true });
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
 
   assert.equal(await fixture.host.setUseEnhancedWebSessionMode(true), true);
-  assert.equal(JSON.parse(fs.readFileSync(fixture.configPath, "utf8")).useEnhancedWebSessionMode, true);
+  const saved = JSON.parse(fs.readFileSync(fixture.configPath, "utf8"));
+  assert.equal(saved.useEnhancedWebSessionMode, true);
+  assert.equal(saved.experimentalBiggerContext, false);
   assert.deepEqual(fixture.calls, ["stop", "start"]);
 
   assert.equal(await fixture.host.setUseEnhancedWebSessionMode(true), true);
   assert.deepEqual(fixture.calls, ["stop", "start"]);
+});
+
+test("launcher normalizes conflicting persisted context modes to Enhanced only", () => {
+  const descriptorPath = path.join(os.tmpdir(), "launcher-browser.json");
+  const config = validateConfig(configFor(descriptorPath, {
+    useEnhancedWebSessionMode: true,
+    experimentalBiggerContext: true,
+  }), descriptorPath);
+  assert.equal(config.useEnhancedWebSessionMode, true);
+  assert.equal(config.experimentalBiggerContext, false);
 });
 
 test("launcher restores the prior enhanced mode when runtime restart fails", async (t) => {

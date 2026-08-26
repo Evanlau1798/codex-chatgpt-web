@@ -5,6 +5,7 @@ import { basename, delimiter, dirname, isAbsolute, join, resolve, sep, win32 } f
 import { tmpdir } from "node:os";
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
+import { effectiveExperimentalBiggerContext } from "./context-mode";
 
 export type RuntimeMode = "browser-only" | "full";
 export type BrowserHostMode = "managed-chrome" | "launcher";
@@ -424,14 +425,18 @@ function parseConfig(value: unknown, path: string): AppConfig {
   }
   const solAvailable = parsed.solAvailable !== false;
   const proAvailable = parsed.proAvailable === true;
-  const experimentalBiggerContext = parsed.experimentalBiggerContext === true;
+  const useEnhancedWebSessionMode = parsed.useEnhancedWebSessionMode ?? (parsed.useNewCompactMode === true);
+  const experimentalBiggerContext = effectiveExperimentalBiggerContext(
+    useEnhancedWebSessionMode,
+    parsed.experimentalBiggerContext === true,
+  );
   if (proAvailable && !solAvailable) {
     throw new Error(`Invalid ChatGPT account capabilities in ${path}: Pro requires Sol`);
   }
   const { useNewCompactMode, ...canonical } = parsed;
   return {
     ...canonical,
-    useEnhancedWebSessionMode: parsed.useEnhancedWebSessionMode ?? (useNewCompactMode === true),
+    useEnhancedWebSessionMode,
     subagentProtocol,
     solAvailable,
     proAvailable,
@@ -442,7 +447,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
 export function saveConfig(config: AppConfig): void {
   const path = getConfigPath();
   const original = existsSync(path) ? readFileSync(path, "utf8") : "";
-  atomicWriteFile(path, preserveUtf8Bom(`${JSON.stringify(config, null, 2)}\n`, original));
+  const canonical = { ...config, experimentalBiggerContext: effectiveExperimentalBiggerContext(
+    config.useEnhancedWebSessionMode, config.experimentalBiggerContext,
+  ) };
+  atomicWriteFile(path, preserveUtf8Bom(`${JSON.stringify(canonical, null, 2)}\n`, original));
 }
 
 export function providerConfig(config: AppConfig): CodexProviderConfig {
@@ -476,7 +484,9 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       solAvailable: config.solAvailable,
       proAvailable: config.proAvailable,
       useEnhancedWebSessionMode: config.useEnhancedWebSessionMode,
-      experimentalBiggerContext: config.experimentalBiggerContext,
+      experimentalBiggerContext: effectiveExperimentalBiggerContext(
+        config.useEnhancedWebSessionMode, config.experimentalBiggerContext,
+      ),
       autoApproveToolCalls: config.autoApproveToolCalls,
     },
   };

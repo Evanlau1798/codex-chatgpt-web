@@ -541,7 +541,11 @@ function registerIpc({ logger, stateStore }) {
   });
   handle("launcher:enhanced-web-session-mode", async (_event, enabled) => {
     const useEnhancedWebSessionMode = await runtimeHost.setUseEnhancedWebSessionMode(enabled === true);
-    const state = stateStore.update({ useEnhancedWebSessionMode, codexRestartRequired: true });
+    const state = stateStore.update({
+      useEnhancedWebSessionMode,
+      ...(useEnhancedWebSessionMode ? { experimentalBiggerContext: false } : {}),
+      codexRestartRequired: true,
+    });
     send("launcher:state-changed", state);
     return state;
   });
