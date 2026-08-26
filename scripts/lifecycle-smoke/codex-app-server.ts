@@ -285,9 +285,12 @@ export class CodexRun {
       this.pending.set(id, { resolve, reject });
       timer = setTimeout(() => reject(new Error(`${method} timed out`)), timeoutMs);
     });
-    await this.send({ id, method, params });
     try {
-      return await response;
+      const [, result] = await Promise.all([this.send({ id, method, params }), response]);
+      return result;
+    } catch (error) {
+      this.assertReadable();
+      throw error;
     } finally {
       clearTimeout(timer!);
       this.pending.delete(id);

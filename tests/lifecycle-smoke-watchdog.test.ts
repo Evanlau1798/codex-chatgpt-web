@@ -19,6 +19,26 @@ test("Codex protocol read failures reject active waits immediately", async () =>
   expect(() => run.assertReadable()).toThrow("memory limit");
 });
 
+test("Codex requests preserve a read failure that races stdin flush", async () => {
+  const run = Object.create(CodexRun.prototype) as any;
+  run.nextId = 1;
+  run.pending = new Map();
+  run.waiters = new Set();
+  run.process = {
+    kill: () => {},
+    stdin: {
+      write: () => {},
+      flush: async () => {
+        run.failRead(new Error("Codex RPC exceeded lifecycle memory limit"));
+        throw new Error("secondary stdin write failure");
+      },
+    },
+  };
+
+  await expect(run.request("test", {})).rejects.toThrow("memory limit");
+  expect(run.pending.size).toBe(0);
+});
+
 test("liveness records never extend semantic inactivity", () => {
   const watcher = new LifecycleProgressWatchdog({
     startedAt: 0,
