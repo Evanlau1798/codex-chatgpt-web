@@ -55,7 +55,7 @@ export function selfTestClaudeLaneBudget(): void {
   selfTestManualCompactRetainedRoot();
 }
 
-class ClaudeRun {
+export class ClaudeRun {
   readonly process: Bun.Subprocess<"pipe", "pipe", "pipe">;
   readonly records: RecordValue[] = [];
   readonly receivedAt: { at: string; value: RecordValue }[] = [];
@@ -72,26 +72,37 @@ class ClaudeRun {
       cmd: [claudeExe, ...args], cwd: repo, stdin: "pipe", stdout: "pipe", stderr: "pipe",
       env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000", CODEX_CHATGPT_WEB_CONTROL_TOKEN: controlToken },
     });
-    void this.readOutput().catch(error => {
-      this.readFailure = error instanceof Error ? error : new Error(String(error));
-      this.process.kill();
-      for (const wake of this.waiters) wake();
-    });
+    void this.readOutput();
     void this.readErrors();
   }
 
   private async readOutput() {
+    try { await this.consumeOutput(); }
+    catch (error) { this.failRead(error); }
+  }
+
+  private failRead(error: unknown) {
+    this.readFailure = error instanceof Error ? error : new Error(String(error));
+    this.process.kill();
+    for (const wake of this.waiters) wake();
+  }
+
+  private async consumeOutput() {
     const reader = this.process.stdout.getReader();
     const decoder = new TextDecoder();
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       this.buffer += decoder.decode(value, { stream: true });
+      const lines: string[] = [];
       for (let newline = this.buffer.indexOf("\n"); newline >= 0; newline = this.buffer.indexOf("\n")) {
         const line = this.buffer.slice(0, newline).replace(/\r$/, "");
         this.buffer = this.buffer.slice(newline + 1);
-        if (!line) continue;
-        this.memoryBudget.retain(line, "Claude protocol");
+        if (line) lines.push(line);
+      }
+      for (const line of lines) this.memoryBudget.retain(line, "Claude protocol");
+      this.memoryBudget.assertLine(this.buffer, "Claude protocol");
+      for (const line of lines) {
         try {
           const parsed = JSON.parse(line);
           const summary = this.outputEncoder.encode(summarizeClaudeRecord(parsed, iso()));
@@ -105,7 +116,6 @@ class ClaudeRun {
           if (summary) appendLifecycleArtifact(this.output, summary);
         }
       }
-      this.memoryBudget.assertLine(this.buffer, "Claude protocol");
     }
   }
 
@@ -143,6 +153,7 @@ class ClaudeRun {
         observedRecords = this.records.length;
       }
     }
+    if (this.readFailure) throw this.readFailure;
     assert(this.results >= number,
       `Claude result ${number} timed out: ${watchdog.expired(Date.now()) ?? "unknown"}`);
     const result = this.records.filter(record => record.type === "result")[number - 1];
