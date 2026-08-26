@@ -275,3 +275,194 @@ test("forwards native model discovery as GET and preserves the client version qu
   expect(upstreamRequest!.method).toBe("GET");
   expect(upstreamRequest!.headers.get("if-none-match")).toBeNull();
 });
+
+test("preserves upstream Bad Request responses while reporting content-free request metadata", async () => {
+  const privatePrompt = "private prompt that must never enter diagnostics";
+  const imageUrl = `data:image/png;base64,${"A".repeat(4_096)}`;
+  const body = JSON.stringify({
+    model: "gpt-5.6-sol",
+    input: [
+      { type: "message", role: "user", content: [{ type: "input_text", text: privatePrompt }] },
+      { type: "message", role: "user", content: [{ type: "input_image", image_url: imageUrl }] },
+    ],
+  });
+  const request = new Request("http://127.0.0.1:17841/v1/responses/compact", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer codex-oauth-token",
+      "content-type": "application/json",
+    },
+    body,
+  });
+  const diagnostics: unknown[] = [];
+
+  const response = await forwardNativeCodexRequest(
+    request,
+    "responses/compact",
+    async () => new Response('{"detail":"Bad Request"}', {
+      status: 400,
+      headers: { "content-type": "application/json", "x-request-id": "req_safe-123" },
+    }),
+    undefined,
+    diagnostic => diagnostics.push(diagnostic),
+  );
+
+  expect(response.status).toBe(400);
+  expect(response.headers.get("x-request-id")).toBe("req_safe-123");
+  expect(await response.text()).toBe('{"detail":"Bad Request"}');
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({
+    endpoint: "responses/compact",
+    requestBytes: Buffer.byteLength(body),
+    contentEncoding: "identity",
+    bodyRewritten: false,
+    inputItems: 2,
+    imageItems: 1,
+    imageUrlChars: imageUrl.length,
+    upstreamStatus: 400,
+    requestId: "req_safe-123",
+    outcome: "completed",
+    errorName: null,
+    errorCode: null,
+  });
+  expect((diagnostics[0] as { headersMs: number }).headersMs).toBeGreaterThanOrEqual(0);
+  expect(JSON.stringify(diagnostics)).not.toContain(privatePrompt);
+  expect(JSON.stringify(diagnostics)).not.toContain("AAAA");
+  expect(JSON.stringify(diagnostics)).not.toContain("codex-oauth-token");
+});
+
+test("reports transport failures without leaking the upstream error message", async () => {
+  const body = JSON.stringify({ model: "gpt-5.6-sol", input: [] });
+  const request = new Request("http://127.0.0.1:17841/v1/responses", {
+    method: "POST",
+    headers: {
+      authorization: "Bearer codex-oauth-token",
+      "content-type": "application/json",
+      "content-encoding": "identity",
+    },
+    body,
+  });
+  const diagnostics: unknown[] = [];
+
+  await expect(forwardNativeCodexRequest(
+    request,
+    "responses",
+    async () => {
+      throw Object.assign(new TypeError("private socket failure detail"), { code: "ECONNRESET" });
+    },
+    undefined,
+    diagnostic => diagnostics.push(diagnostic),
+  )).rejects.toThrow("private socket failure detail");
+
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({
+    endpoint: "responses",
+    requestBytes: Buffer.byteLength(body),
+    contentEncoding: "identity",
+    bodyRewritten: false,
+    inputItems: 0,
+    imageItems: 0,
+    imageUrlChars: 0,
+    upstreamStatus: null,
+    requestId: null,
+    outcome: "failed",
+    errorName: "TypeError",
+    errorCode: "ECONNRESET",
+  });
+  expect(JSON.stringify(diagnostics)).not.toContain("private socket failure detail");
+  expect(JSON.stringify(diagnostics)).not.toContain("codex-oauth-token");
+});
+
+test("classifies a native headers abort separately from a transport failure", async () => {
+  const client = new AbortController();
+  const request = new Request("http://127.0.0.1:17841/v1/responses", {
+    method: "POST",
+    headers: { authorization: "Bearer codex-oauth-token", "content-type": "application/json" },
+    body: JSON.stringify({ model: "gpt-5.6-sol", input: [] }),
+    signal: client.signal,
+  });
+  const diagnostics: unknown[] = [];
+  const aborted = new DOMException("private abort reason", "AbortError");
+
+  const forwarded = forwardNativeCodexRequest(
+    request,
+    "responses",
+    input => new Promise<Response>((_resolve, reject) => {
+      input.signal.addEventListener("abort", () => reject(input.signal.reason), { once: true });
+    }),
+    undefined,
+    diagnostic => diagnostics.push(diagnostic),
+  );
+  client.abort(aborted);
+
+  await expect(forwarded).rejects.toBe(aborted);
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({
+    endpoint: "responses",
+    outcome: "aborted",
+    errorPhase: "headers",
+    upstreamStatus: null,
+    errorName: "AbortError",
+    errorCode: "unknown",
+  });
+  expect(JSON.stringify(diagnostics)).not.toContain("private abort reason");
+});
+
+test("reports a pre-aborted native request without contacting upstream", async () => {
+  const client = new AbortController();
+  const aborted = new DOMException("private preflight reason", "AbortError");
+  client.abort(aborted);
+  const request = new Request("http://127.0.0.1:17841/v1/responses", {
+    method: "POST",
+    headers: { authorization: "Bearer codex-oauth-token", "content-type": "application/json" },
+    body: "{}",
+    signal: client.signal,
+  });
+  const diagnostics: unknown[] = [];
+  let upstreamCalled = false;
+
+  await expect(forwardNativeCodexRequest(
+    request,
+    "responses",
+    async () => {
+      upstreamCalled = true;
+      return new Response();
+    },
+    undefined,
+    diagnostic => diagnostics.push(diagnostic),
+  )).rejects.toBe(aborted);
+
+  expect(upstreamCalled).toBe(false);
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]).toMatchObject({ outcome: "aborted", errorPhase: "prepare" });
+  expect(JSON.stringify(diagnostics)).not.toContain("private preflight reason");
+});
+
+test("marks bounded image metadata traversal as truncated", async () => {
+  const oversizedContent = Array.from({ length: 100_001 }, () => ({ type: "input_text", text: "x" }));
+  const decodedBody = {
+    model: "gpt-5.6-sol",
+    input: [{ type: "message", role: "user", content: oversizedContent }],
+  };
+  const request = new Request("http://127.0.0.1:17841/v1/responses", {
+    method: "POST",
+    headers: { authorization: "Bearer codex-oauth-token", "content-type": "application/json" },
+    body: "{}",
+  });
+  const diagnostics: unknown[] = [];
+
+  await forwardNativeCodexRequest(
+    request,
+    "responses",
+    async () => new Response("data: done\n\n"),
+    decodedBody,
+    diagnostic => diagnostics.push(diagnostic),
+  );
+
+  expect(diagnostics[0]).toMatchObject({
+    inputItems: 1,
+    summaryTruncated: true,
+    visitedNodes: 100_000,
+    outcome: "completed",
+  });
+});

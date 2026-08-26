@@ -1,4 +1,5 @@
 import { readJsonRequestBody } from "./http-body";
+import { safeDiagnosticIdentifier, safeErrorMetadata } from "./http-stream-diagnostics";
 import { BRIDGE_COMPACTION_PREFIX, compactionItemToText } from "./responses/compaction";
 import { BRIDGE_REASONING_PREFIX } from "./responses/reasoning-envelope";
 
@@ -18,7 +19,32 @@ const HOP_BY_HOP_HEADERS = new Set([
 export type NativeFetch = (request: Request) => Promise<Response>;
 export type NativeCodexEndpoint = "models" | "responses" | "responses/compact" | "alpha/search";
 
+export interface NativePassthroughDiagnostic {
+  outcome: "completed" | "failed" | "aborted";
+  endpoint: NativeCodexEndpoint;
+  requestBytes: number;
+  forwardedBytes: number;
+  contentEncoding: "identity" | "zstd" | "other";
+  bodyRewritten: boolean;
+  inputItems: number;
+  imageItems: number;
+  imageUrlChars: number;
+  summaryTruncated: boolean;
+  visitedNodes: number;
+  prepareMs: number;
+  headersMs: number;
+  upstreamStatus: number | null;
+  requestId: string | null;
+  errorPhase: "prepare" | "headers" | null;
+  errorName: string | null;
+  errorCode: string | null;
+}
+
+export type NativePassthroughReporter = (diagnostic: NativePassthroughDiagnostic) => void;
+
 type JsonObject = Record<string, unknown>;
+
+const NATIVE_DIAGNOSTIC_NODE_LIMIT = 100_000;
 
 function isObject(value: unknown): value is JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -33,6 +59,84 @@ function isBridgeReasoningItem(value: unknown): value is JsonObject {
     && (encrypted === undefined || encrypted === null)
     && (Array.isArray(value.summary) || Array.isArray(value.content));
 }
+
+function contentEncoding(headers: Headers): NativePassthroughDiagnostic["contentEncoding"] {
+  const value = headers.get("content-encoding")?.trim().toLowerCase();
+  if (!value || value === "identity") return "identity";
+  return value === "zstd" ? "zstd" : "other";
+}
+
+type NativeInputSummary = Pick<
+  NativePassthroughDiagnostic,
+  "inputItems" | "imageItems" | "imageUrlChars" | "summaryTruncated" | "visitedNodes"
+>;
+
+function summarizeInput(value: unknown): NativeInputSummary {
+  if (!isObject(value) || !Array.isArray(value.input)) {
+    return {
+      inputItems: 0,
+      imageItems: 0,
+      imageUrlChars: 0,
+      summaryTruncated: false,
+      visitedNodes: 0,
+    };
+  }
+  const stack: unknown[] = [...value.input];
+  const seen = new WeakSet<object>();
+  let visitedNodes = 0;
+  let imageItems = 0;
+  let imageUrlChars = 0;
+  while (stack.length > 0 && visitedNodes < NATIVE_DIAGNOSTIC_NODE_LIMIT) {
+    const current = stack.pop();
+    visitedNodes += 1;
+    if (current === null || typeof current !== "object") continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    if (Array.isArray(current)) {
+      for (let index = 0; index < current.length; index += 1) stack.push(current[index]);
+      continue;
+    }
+    const object = current as JsonObject;
+    if (object.type === "input_image" && typeof object.image_url === "string") {
+      imageItems += 1;
+      imageUrlChars += object.image_url.length;
+    }
+    for (const child of Object.values(object)) stack.push(child);
+  }
+  return {
+    inputItems: value.input.length,
+    imageItems,
+    imageUrlChars,
+    summaryTruncated: stack.length > 0,
+    visitedNodes,
+  };
+}
+
+function safeDuration(value: number): number {
+  return Math.max(0, Math.round(value));
+}
+
+function emitNativeDiagnostic(
+  reporter: NativePassthroughReporter,
+  diagnostic: NativePassthroughDiagnostic,
+): void {
+  try {
+    reporter(diagnostic);
+  } catch {
+    // Diagnostics must never change passthrough behavior.
+  }
+}
+
+export const reportNativePassthroughDiagnostic: NativePassthroughReporter = diagnostic => {
+  const noteworthy = diagnostic.outcome !== "completed"
+    || diagnostic.errorPhase !== null
+    || diagnostic.upstreamStatus === null
+    || diagnostic.upstreamStatus >= 400
+    || diagnostic.summaryTruncated
+    || diagnostic.prepareMs >= 1_000
+    || diagnostic.headersMs >= 5_000;
+  if (noteworthy) console.warn(`[native-passthrough] request timing ${JSON.stringify(diagnostic)}`);
+};
 
 function isBridgeCompactionItem(value: unknown): boolean {
   return isObject(value)
@@ -98,6 +202,8 @@ export async function forwardNativeCodexRequest(
   endpoint: NativeCodexEndpoint,
   fetchUpstream: NativeFetch = fetch,
   decodedBody?: unknown,
+  reportDiagnostic: NativePassthroughReporter = reportNativePassthroughDiagnostic,
+  now: () => number = () => performance.now(),
 ): Promise<Response> {
   const authorization = request.headers.get("authorization") ?? "";
   if (!authorization.startsWith("Bearer ") || authorization.length <= "Bearer ".length) {
@@ -108,27 +214,142 @@ export async function forwardNativeCodexRequest(
   const headers = endToEndHeaders(request.headers);
   if (endpoint === "models") headers.delete("if-none-match");
   const method = endpoint === "models" ? "GET" : "POST";
-  let body: BodyInit | undefined;
-  if (method === "POST") {
-    const parseRequest = decodedBody === undefined ? request.clone() : undefined;
-    const originalBody = await request.arrayBuffer();
-    const scrubbed = scrubBridgeArtifactsForNative(
-      decodedBody === undefined ? await readJsonRequestBody(parseRequest!) : decodedBody,
-    );
-    if (scrubbed.changed) {
-      headers.delete("content-encoding");
-      body = JSON.stringify(scrubbed.value);
-    } else {
-      body = originalBody;
-    }
+  const startedAt = now();
+  if (request.signal.aborted) {
+    const reason = request.signal.reason ?? new DOMException("Request aborted", "AbortError");
+    emitNativeDiagnostic(reportDiagnostic, {
+      outcome: "aborted",
+      endpoint,
+      requestBytes: 0,
+      forwardedBytes: 0,
+      contentEncoding: contentEncoding(request.headers),
+      bodyRewritten: false,
+      inputItems: 0,
+      imageItems: 0,
+      imageUrlChars: 0,
+      summaryTruncated: false,
+      visitedNodes: 0,
+      prepareMs: 0,
+      headersMs: 0,
+      upstreamStatus: null,
+      requestId: null,
+      errorPhase: "prepare",
+      ...safeErrorMetadata(reason),
+    });
+    throw reason;
   }
+  let body: BodyInit | undefined;
+  let requestBytes = 0;
+  let forwardedBytes = 0;
+  let bodyRewritten = false;
+  let summary: NativeInputSummary = {
+    inputItems: 0,
+    imageItems: 0,
+    imageUrlChars: 0,
+    summaryTruncated: false,
+    visitedNodes: 0,
+  };
+  try {
+    if (method === "POST") {
+      const parseRequest = decodedBody === undefined ? request.clone() : undefined;
+      const originalBody = await request.arrayBuffer();
+      requestBytes = originalBody.byteLength;
+      const decoded = decodedBody === undefined ? await readJsonRequestBody(parseRequest!) : decodedBody;
+      summary = summarizeInput(decoded);
+      const scrubbed = scrubBridgeArtifactsForNative(decoded);
+      bodyRewritten = scrubbed.changed;
+      if (scrubbed.changed) {
+        headers.delete("content-encoding");
+        body = JSON.stringify(scrubbed.value);
+        forwardedBytes = Buffer.byteLength(body);
+      } else {
+        body = originalBody;
+        forwardedBytes = originalBody.byteLength;
+      }
+    }
+  } catch (error) {
+    const safe = safeErrorMetadata(error);
+    emitNativeDiagnostic(reportDiagnostic, {
+      outcome: request.signal.aborted ? "aborted" : "failed",
+      endpoint,
+      requestBytes,
+      forwardedBytes,
+      contentEncoding: contentEncoding(request.headers),
+      bodyRewritten,
+      ...summary,
+      prepareMs: safeDuration(now() - startedAt),
+      headersMs: 0,
+      upstreamStatus: null,
+      requestId: null,
+      errorPhase: "prepare",
+      ...safe,
+    });
+    throw error;
+  }
+  const preparedAt = now();
   const upstreamRequest = new Request(`${CODEX_BACKEND}/${endpoint}${incomingUrl.search}`, {
     method,
     headers,
     ...(body ? { body } : {}),
     signal: request.signal,
   });
-  const upstream = await fetchUpstream(upstreamRequest);
+  if (request.signal.aborted) {
+    const reason = request.signal.reason ?? new DOMException("Request aborted", "AbortError");
+    emitNativeDiagnostic(reportDiagnostic, {
+      outcome: "aborted",
+      endpoint,
+      requestBytes,
+      forwardedBytes,
+      contentEncoding: contentEncoding(request.headers),
+      bodyRewritten,
+      ...summary,
+      prepareMs: safeDuration(preparedAt - startedAt),
+      headersMs: 0,
+      upstreamStatus: null,
+      requestId: null,
+      errorPhase: "headers",
+      ...safeErrorMetadata(reason),
+    });
+    throw reason;
+  }
+  let upstream: Response;
+  try {
+    upstream = await fetchUpstream(upstreamRequest);
+  } catch (error) {
+    const safe = safeErrorMetadata(error);
+    emitNativeDiagnostic(reportDiagnostic, {
+      outcome: request.signal.aborted ? "aborted" : "failed",
+      endpoint,
+      requestBytes,
+      forwardedBytes,
+      contentEncoding: contentEncoding(request.headers),
+      bodyRewritten,
+      ...summary,
+      prepareMs: safeDuration(preparedAt - startedAt),
+      headersMs: safeDuration(now() - preparedAt),
+      upstreamStatus: null,
+      requestId: null,
+      errorPhase: "headers",
+      ...safe,
+    });
+    throw error;
+  }
+  emitNativeDiagnostic(reportDiagnostic, {
+    outcome: "completed",
+    endpoint,
+    requestBytes,
+    forwardedBytes,
+    contentEncoding: contentEncoding(request.headers),
+    bodyRewritten,
+    ...summary,
+    prepareMs: safeDuration(preparedAt - startedAt),
+    headersMs: safeDuration(now() - preparedAt),
+    upstreamStatus: upstream.status,
+    requestId: safeDiagnosticIdentifier(upstream.headers.get("x-request-id")),
+    errorPhase: null,
+    errorName: null,
+    errorCode: null,
+  });
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,
