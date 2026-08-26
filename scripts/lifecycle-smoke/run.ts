@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, mkdirSync, openSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadConfig } from "../../src/config";
 import { parseLifecycleSmokeOptions } from "./options";
+import { acquireLifecycleLock, fetchLifecycleHealth, releaseLifecycleLock } from "./run-guard";
 
 const repo = resolve(import.meta.dir, "..", "..");
 const options = parseLifecycleSmokeOptions(process.argv.slice(2), repo);
@@ -19,20 +20,12 @@ function runId(): string {
 
 mkdirSync(options.artifactRoot, { recursive: true });
 const lockPath = join(options.artifactRoot, ".active.lock");
-let lock: number;
-try {
-  lock = openSync(lockPath, "wx");
-  writeFileSync(lock, `${JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() })}\n`);
-} catch (error) {
-  const code = (error as NodeJS.ErrnoException).code;
-  if (code === "EEXIST") throw new Error(`Lifecycle smoke is already active: ${lockPath}`);
-  throw error;
-}
+const lock = acquireLifecycleLock(lockPath);
 
 try {
   const config = loadConfig();
   const serviceBaseUrl = `http://${config.host}:${config.port}`;
-  const healthResponse = await fetch(`${serviceBaseUrl}/healthz`);
+  const healthResponse = await fetchLifecycleHealth(`${serviceBaseUrl}/healthz`);
   if (!healthResponse.ok) throw new Error(`Lifecycle smoke health preflight failed: HTTP ${healthResponse.status}`);
   const health = await healthResponse.json() as Record<string, unknown>;
   if (health.status !== "ok" || health.accepting_turns !== true) {
@@ -90,6 +83,5 @@ try {
   process.stdout.write(`LIFECYCLE_SMOKE_${failed ? "FAILED" : "PASSED"} root=${root}\n`);
   if (failed) process.exitCode = 1;
 } finally {
-  closeSync(lock!);
-  unlinkSync(lockPath);
+  releaseLifecycleLock(lock);
 }
