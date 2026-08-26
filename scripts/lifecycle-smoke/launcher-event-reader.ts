@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 
 export type LauncherEvent = {
@@ -8,7 +7,13 @@ export type LauncherEvent = {
   message?: string;
 };
 
-type Cursor = { identity: string; offset: number; remainder: string; discardPartial: boolean };
+type Cursor = {
+  identity: string;
+  offset: number;
+  remainder: string;
+  remainderOffset: number;
+  discardPartial: boolean;
+};
 
 const DEFAULT_INITIAL_TAIL_BYTES = 8 * 1024 * 1024;
 const DEFAULT_RETAINED_BYTES = 64 * 1024 * 1024;
@@ -44,7 +49,7 @@ export class LauncherEventReader {
     let cursor = this.cursors.get(path);
     if (!cursor || cursor.identity !== identity || stat.size < cursor.offset) {
       const offset = Math.max(0, stat.size - (this.limits.maxInitialTailBytes ?? DEFAULT_INITIAL_TAIL_BYTES));
-      cursor = { identity, offset, remainder: "", discardPartial: offset > 0 };
+      cursor = { identity, offset, remainder: "", remainderOffset: offset, discardPartial: offset > 0 };
       this.cursors.set(path, cursor);
     }
     if (stat.size === cursor.offset) return false;
@@ -72,27 +77,33 @@ export class LauncherEventReader {
   private consume(cursor: Cursor): boolean {
     if (cursor.discardPartial) {
       const newline = cursor.remainder.indexOf("\n");
-      if (newline < 0) { cursor.remainder = ""; return false; }
+      if (newline < 0) {
+        cursor.remainderOffset += Buffer.byteLength(cursor.remainder);
+        cursor.remainder = "";
+        return false;
+      }
+      cursor.remainderOffset += Buffer.byteLength(cursor.remainder.slice(0, newline + 1));
       cursor.remainder = cursor.remainder.slice(newline + 1);
       cursor.discardPartial = false;
     }
     let changed = false;
     for (let newline = cursor.remainder.indexOf("\n"); newline >= 0; newline = cursor.remainder.indexOf("\n")) {
       const line = cursor.remainder.slice(0, newline).replace(/\r$/, "");
+      const recordKey = `${cursor.identity}:${cursor.remainderOffset}`;
+      cursor.remainderOffset += Buffer.byteLength(cursor.remainder.slice(0, newline + 1));
       cursor.remainder = cursor.remainder.slice(newline + 1);
       if (!line) continue;
       this.assertLine(line);
-      const hash = createHash("sha256").update(line).digest("hex");
-      if (this.seen.has(hash)) continue;
+      if (this.seen.has(recordKey)) continue;
       let record: LauncherEvent;
       try { record = JSON.parse(line) as LauncherEvent; }
       catch { continue; }
-      const bytes = Buffer.byteLength(line) + hash.length;
+      const bytes = Buffer.byteLength(line) + recordKey.length;
       if (this.retainedBytes + bytes > (this.limits.maxRetainedBytes ?? DEFAULT_RETAINED_BYTES)) {
         throw new Error("Launcher event cache exceeded lifecycle cache limit");
       }
       this.retainedBytes += bytes;
-      this.seen.add(hash);
+      this.seen.add(recordKey);
       this.records.push(record);
       changed = true;
     }
