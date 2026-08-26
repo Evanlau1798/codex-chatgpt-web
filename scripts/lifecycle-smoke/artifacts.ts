@@ -54,6 +54,12 @@ export function saveLifecycleContentSummary(path: string, kind: string, value: s
   saveLifecycleJson(path, { type: "content_summary", kind, chars: value.length, bytes: Buffer.byteLength(value), sha256: sha256(value) });
 }
 
+export function lifecycleErrorCategory(error: unknown): "RATE_OR_VERIFICATION_LIMIT" | "LIFECYCLE_SMOKE_FAILED" {
+  return String(error instanceof Error ? error.message : error).includes("RATE_OR_VERIFICATION_LIMIT")
+    ? "RATE_OR_VERIFICATION_LIMIT"
+    : "LIFECYCLE_SMOKE_FAILED";
+}
+
 function chars(value: unknown): number | undefined {
   return typeof value === "string" ? value.length : undefined;
 }

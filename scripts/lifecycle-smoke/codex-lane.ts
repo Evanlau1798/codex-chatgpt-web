@@ -10,7 +10,7 @@ import { normalizeV2Activities } from "./codex-v2-activity";
 import { runV2HierarchyScenario } from "./codex-v2-scenario";
 import { hasLocalFileEvidence, skillContractEvidence } from "./skill-contract";
 import { smokePath } from "./paths";
-import { saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
+import { lifecycleErrorCategory, saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
 
 export function selfTestCodexLaneBudget(): void {
   assert(
@@ -265,7 +265,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     const result: LaneResult = { status, lane: "codex", threadId, checks, timelines, artifacts: { root: laneRoot, rootTab, childTab, childId } };
     await save(join(laneRoot, "result.json"), result); return result;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = lifecycleErrorCategory(error);
     const result: LaneResult = { status: message.includes("RATE_OR_VERIFICATION_LIMIT") ? "blocked" : "failed", lane: "codex", threadId, checks, timelines, artifacts: { root: laneRoot, rootTab, childTab, childId }, message };
     await save(join(laneRoot, "result.json"), result); return result;
   } finally {

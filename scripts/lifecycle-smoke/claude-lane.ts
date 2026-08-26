@@ -18,6 +18,7 @@ import { findClaudeTranscript, smokePath } from "./paths";
 import {
   LifecycleArtifactEncoder,
   appendLifecycleArtifact,
+  lifecycleErrorCategory,
   saveLifecycleContentSummary,
   summarizeClaudeRecord,
   summarizeStreamChunk,
@@ -442,7 +443,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     await save(join(laneRoot, "result.json"), result);
     return result;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = lifecycleErrorCategory(error);
     const result: LaneResult = { status: message.includes("RATE_OR_VERIFICATION_LIMIT") ? "blocked" : "failed", lane: "claude", sessionId, checks, timelines, artifacts: { root: laneRoot, childId, rootTab, childTab }, message };
     await save(join(laneRoot, "result.json"), result);
     return result;

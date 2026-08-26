@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { activeTurnSmokeTimeoutMs, CodexRun, completed, Rpc } from "./codex-app-server";
 import { assert, detectRestriction, events, iso, repo, repoTests, save } from "./common";
 import { normalizeV2Activities, type V2Activity } from "./codex-v2-activity";
-import { saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
+import { lifecycleErrorCategory, saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
 
 export const hierarchySentinel = "V2_HIERARCHY_SMOKE_DONE";
 
@@ -477,7 +477,7 @@ export async function runV2HierarchyScenario(
       },
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = lifecycleErrorCategory(error);
     const failed: HierarchyScenarioResult = {
       status: message.includes("RATE_OR_VERIFICATION_LIMIT") ? "blocked" : "failed",
       threadId,

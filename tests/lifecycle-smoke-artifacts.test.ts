@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   LifecycleArtifactEncoder,
+  lifecycleErrorCategory,
   saveLifecycleContentSummary,
   saveLifecycleJson,
   saveRedactedLifecycleJson,
@@ -28,6 +29,13 @@ test("raw lifecycle summaries retain structure without prompt, answer, or tool c
   expect(codex).not.toContain(secret);
   expect(claude).toContain('"textChars":25');
   expect(codex).toContain('"deltaChars":25');
+});
+
+test("lifecycle failure categories never retain model or tool content", () => {
+  const secret = "PRIVATE_FAILURE_MODEL_CONTENT";
+  expect(lifecycleErrorCategory(new Error(secret))).toBe("LIFECYCLE_SMOKE_FAILED");
+  expect(lifecycleErrorCategory(new Error(`RATE_OR_VERIFICATION_LIMIT: ${secret}`)))
+    .toBe("RATE_OR_VERIFICATION_LIMIT");
 });
 
 test("retained lifecycle evidence is content-free, owner-only, and bounded", () => {
