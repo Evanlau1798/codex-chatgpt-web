@@ -47,6 +47,12 @@ test("Bigger Context is disabled by default and read from the isolated DEV runti
     expect(readDevChatExperimentalFeatures(paths)).toEqual({ biggerContext: true });
     writeFileSync(paths.configPath, JSON.stringify({
       version: 3,
+      useEnhancedWebSessionMode: true,
+      experimentalBiggerContext: true,
+    }));
+    expect(readDevChatExperimentalFeatures(paths)).toEqual({ biggerContext: false });
+    writeFileSync(paths.configPath, JSON.stringify({
+      version: 3,
       experimentalBiggerContext: "yes",
     }));
     expect(() => readDevChatExperimentalFeatures(paths)).toThrow("Invalid Bigger Context preference");

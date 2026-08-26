@@ -243,6 +243,7 @@ function baseConfig(existing: AppConfig | undefined, options: SetupOptions): App
   config.appName = resolveSetupConnectorName(existing?.appName, options.appName);
   if (options.autoApproveToolCalls !== undefined) config.autoApproveToolCalls = options.autoApproveToolCalls;
   if (options.experimentalBiggerContext !== undefined) {
+    if (options.experimentalBiggerContext && config.useEnhancedWebSessionMode) throw new Error("Bigger Context is unavailable while Enhanced Web session mode is enabled");
     config.experimentalBiggerContext = options.experimentalBiggerContext;
   }
   if (options.acknowledgedUnofficial) config.acknowledgedUnofficialAt = new Date().toISOString();

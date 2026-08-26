@@ -3,6 +3,7 @@ import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { expandUserPath, getConfigPath } from "../config";
+import { effectiveExperimentalBiggerContext } from "../context-mode";
 import {
   readLauncherBrowserHostDescriptor,
   type LauncherBrowserHostDescriptor,
@@ -86,11 +87,18 @@ export function readDevChatExperimentalFeatures(
   if (!value || typeof value !== "object" || Array.isArray(value) || (value as { version?: unknown }).version !== 3) {
     throw new Error(`Invalid DEV runtime settings in ${paths.configPath}`);
   }
-  const enabled = (value as { experimentalBiggerContext?: unknown }).experimentalBiggerContext;
+  const config = value as { experimentalBiggerContext?: unknown; useEnhancedWebSessionMode?: unknown };
+  const enabled = config.experimentalBiggerContext;
   if (enabled !== undefined && typeof enabled !== "boolean") {
     throw new Error(`Invalid Bigger Context preference in ${paths.configPath}`);
   }
-  return { biggerContext: enabled === true };
+  if (config.useEnhancedWebSessionMode !== undefined && typeof config.useEnhancedWebSessionMode !== "boolean") {
+    throw new Error(`Invalid Enhanced Web session preference in ${paths.configPath}`);
+  }
+  return { biggerContext: effectiveExperimentalBiggerContext(
+    config.useEnhancedWebSessionMode === true,
+    enabled === true,
+  ) };
 }
 
 export function activateDevProfileEnvironment(paths = resolveDevProfilePaths()): DevProfilePaths {
