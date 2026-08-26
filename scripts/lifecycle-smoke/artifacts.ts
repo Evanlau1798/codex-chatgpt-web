@@ -4,6 +4,8 @@ import { atomicWriteFile } from "../../src/config";
 
 const DEFAULT_MAX_LINE_BYTES = 4 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES = 4 * 1024 * 1024;
+const DEFAULT_PROTOCOL_LINE_BYTES = 4 * 1024 * 1024;
+const DEFAULT_PROTOCOL_TOTAL_BYTES = 64 * 1024 * 1024;
 const MAX_JSON_ARTIFACT_BYTES = 1024 * 1024;
 const MAX_REDACTED_ITEMS = 100;
 
@@ -100,6 +102,46 @@ export class LifecycleArtifactEncoder {
     }
     this.writtenBytes += bytes;
     return value;
+  }
+}
+
+export class LifecycleMemoryBudget {
+  private retainedBytes = 0;
+
+  constructor(private limits: { maxLineBytes?: number; maxTotalBytes?: number } = {}) {}
+
+  assertLine(value: string, label: string): void {
+    if (Buffer.byteLength(value) > (this.limits.maxLineBytes ?? DEFAULT_PROTOCOL_LINE_BYTES)) {
+      throw new Error(`${label} exceeded lifecycle line limit`);
+    }
+  }
+
+  retain(value: string, label: string): void {
+    this.assertLine(value, label);
+    this.retainedBytes += Buffer.byteLength(value);
+    if (this.retainedBytes > (this.limits.maxTotalBytes ?? DEFAULT_PROTOCOL_TOTAL_BYTES)) {
+      throw new Error(`${label} exceeded lifecycle memory limit`);
+    }
+  }
+}
+
+export async function readBoundedLifecycleStream(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+  label: string,
+): Promise<string> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return new TextDecoder().decode(Buffer.concat(chunks));
+    bytes += value.byteLength;
+    if (bytes > maxBytes) {
+      await reader.cancel();
+      throw new Error(`${label} exceeded lifecycle memory limit`);
+    }
+    chunks.push(value);
   }
 }
 

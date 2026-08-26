@@ -4,6 +4,7 @@ import { CodexLifecycleProgressSignals } from "./progress-signals";
 import { LifecycleProgressWatchdog } from "./progress-watchdog";
 import {
   LifecycleArtifactEncoder,
+  LifecycleMemoryBudget,
   appendLifecycleArtifact,
   summarizeCodexRpc,
   summarizeStreamChunk,
@@ -152,6 +153,7 @@ export class CodexRun {
   private stderrQueue: string[] = [];
   private outputEncoder = new LifecycleArtifactEncoder();
   private stderrEncoder = new LifecycleArtifactEncoder();
+  private memoryBudget = new LifecycleMemoryBudget();
 
   constructor(private output: string, compactLimit = true) {
     const provider = [
@@ -173,7 +175,7 @@ export class CodexRun {
       stdout: "pipe",
       stderr: "pipe",
     });
-    this.stdoutTask = this.read(this.process.stdout, line => this.handle(JSON.parse(line)));
+    this.stdoutTask = this.read(this.process.stdout, line => this.handle(JSON.parse(line)), true);
     this.stderrTask = this.read(this.process.stderr, line => {
       this.appendDiagnostic(
         this.stderrQueue,
@@ -201,7 +203,7 @@ export class CodexRun {
     }
   }
 
-  private async read(stream: ReadableStream<Uint8Array>, handle: (line: string) => void) {
+  private async read(stream: ReadableStream<Uint8Array>, handle: (line: string) => void, retain = false) {
     const reader = stream.getReader();
     const decoder = new TextDecoder();
     let buffered = "";
@@ -212,8 +214,13 @@ export class CodexRun {
       for (let newline = buffered.indexOf("\n"); newline >= 0; newline = buffered.indexOf("\n")) {
         const line = buffered.slice(0, newline).replace(/\r$/, "");
         buffered = buffered.slice(newline + 1);
-        if (line) handle(line);
+        if (line) {
+          if (retain) this.memoryBudget.retain(line, "Codex RPC");
+          else this.memoryBudget.assertLine(line, "Codex stderr");
+          handle(line);
+        }
       }
+      this.memoryBudget.assertLine(buffered, retain ? "Codex RPC" : "Codex stderr");
     }
   }
 

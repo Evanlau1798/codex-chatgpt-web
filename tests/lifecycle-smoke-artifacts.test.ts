@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   LifecycleArtifactEncoder,
+  LifecycleMemoryBudget,
   lifecycleErrorCategory,
   saveLifecycleContentSummary,
   saveLifecycleJson,
   saveRedactedLifecycleJson,
+  readBoundedLifecycleStream,
   summarizeClaudeRecord,
   summarizeCodexRpc,
 } from "../scripts/lifecycle-smoke/artifacts";
@@ -29,6 +31,15 @@ test("raw lifecycle summaries retain structure without prompt, answer, or tool c
   expect(codex).not.toContain(secret);
   expect(claude).toContain('"textChars":25');
   expect(codex).toContain('"deltaChars":25');
+});
+
+test("lifecycle protocol memory rejects oversized lines, totals, and command output", async () => {
+  const budget = new LifecycleMemoryBudget({ maxLineBytes: 8, maxTotalBytes: 12 });
+  budget.retain("12345678", "rpc");
+  expect(() => budget.retain("123456789", "rpc")).toThrow("line limit");
+  expect(() => budget.retain("12345", "rpc")).toThrow("memory limit");
+  const stream = new Blob(["x".repeat(20)]).stream();
+  await expect(readBoundedLifecycleStream(stream, 10, "command stdout")).rejects.toThrow("memory limit");
 });
 
 test("lifecycle failure categories never retain model or tool content", () => {

@@ -17,8 +17,10 @@ import {
 import { findClaudeTranscript, smokePath } from "./paths";
 import {
   LifecycleArtifactEncoder,
+  LifecycleMemoryBudget,
   appendLifecycleArtifact,
   lifecycleErrorCategory,
+  readBoundedLifecycleStream,
   saveLifecycleContentSummary,
   summarizeClaudeRecord,
   summarizeStreamChunk,
@@ -62,13 +64,19 @@ class ClaudeRun {
   private waiters = new Set<() => void>();
   private outputEncoder = new LifecycleArtifactEncoder();
   private stderrEncoder = new LifecycleArtifactEncoder();
+  private memoryBudget = new LifecycleMemoryBudget();
+  private readFailure?: Error;
 
   constructor(private output: string, args: string[], configDir: string, controlToken: string) {
     this.process = Bun.spawn({
       cmd: [claudeExe, ...args], cwd: repo, stdin: "pipe", stdout: "pipe", stderr: "pipe",
       env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000", CODEX_CHATGPT_WEB_CONTROL_TOKEN: controlToken },
     });
-    void this.readOutput();
+    void this.readOutput().catch(error => {
+      this.readFailure = error instanceof Error ? error : new Error(String(error));
+      this.process.kill();
+      for (const wake of this.waiters) wake();
+    });
     void this.readErrors();
   }
 
@@ -83,6 +91,7 @@ class ClaudeRun {
         const line = this.buffer.slice(0, newline).replace(/\r$/, "");
         this.buffer = this.buffer.slice(newline + 1);
         if (!line) continue;
+        this.memoryBudget.retain(line, "Claude protocol");
         try {
           const parsed = JSON.parse(line);
           const summary = this.outputEncoder.encode(summarizeClaudeRecord(parsed, iso()));
@@ -96,6 +105,7 @@ class ClaudeRun {
           if (summary) appendLifecycleArtifact(this.output, summary);
         }
       }
+      this.memoryBudget.assertLine(this.buffer, "Claude protocol");
     }
   }
 
@@ -121,6 +131,7 @@ class ClaudeRun {
     const watchdog = new ClaudeResultWatchdog(Date.now(), timeoutMs);
     let observedRecords = this.records.length;
     while (this.results < number && !watchdog.expired(Date.now())) {
+      if (this.readFailure) throw this.readFailure;
       detectRestriction(events(Date.now() - 60_000));
       await new Promise<void>(resolve => {
         const timer = setTimeout(() => { this.waiters.delete(wake); resolve(); }, 500);
@@ -142,6 +153,7 @@ class ClaudeRun {
   async waitFor(predicate: (record: RecordValue) => boolean, timeoutMs: number) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
+      if (this.readFailure) throw this.readFailure;
       const record = this.records.findLast(predicate);
       if (record) return record;
       detectRestriction(events(Date.now() - 60_000));
@@ -191,7 +203,9 @@ async function runClaudeCommand(output: string, configDir: string, controlToken:
     env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000", CODEX_CHATGPT_WEB_CONTROL_TOKEN: controlToken }, stdout: "pipe", stderr: "pipe",
   });
   const [stdout, stderr, code] = await Promise.all([
-    new Response(child.stdout).text(), new Response(child.stderr).text(), waitForClaudeCommandExit(child),
+    readBoundedLifecycleStream(child.stdout, 8 * 1024 * 1024, "Claude command stdout"),
+    readBoundedLifecycleStream(child.stderr, 8 * 1024 * 1024, "Claude command stderr"),
+    waitForClaudeCommandExit(child),
   ]);
   const outputEncoder = new LifecycleArtifactEncoder();
   for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
