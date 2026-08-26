@@ -588,6 +588,59 @@ interface ChatGptResponseDomSnapshot {
   stoppedThinkingVisible: boolean;
   projection: ChatGptFinalProjectionState;
   traceBlocks: ChatGptVisibleTraceBlock[];
+  nativeToolActivity?: ChatGptNativeToolActivity;
+}
+
+export type ChatGptNativeToolActivity = "web_search" | "native_tool";
+
+export const CHATGPT_NATIVE_TOOL_ACTIVITY_PULSE_MS = 120_000;
+const CHATGPT_NATIVE_TOOL_ACTIVITY_DISAPPEARANCE_GRACE_MS = 5_000;
+
+/** Keep a Responses wait alive and expose bounded progress while ChatGPT visibly owns a native tool. */
+export class ChatGptNativeToolActivityTracker {
+  private activity?: ChatGptNativeToolActivity;
+  private startedAt?: number;
+  private missingSince?: number;
+  private lastPulseAt?: number;
+
+  observe(activity: ChatGptNativeToolActivity | undefined, running: boolean, now = Date.now()): string | undefined {
+    if (!running) {
+      this.reset();
+      return undefined;
+    }
+    if (!activity) {
+      this.missingSince ??= now;
+      if (now - this.missingSince >= CHATGPT_NATIVE_TOOL_ACTIVITY_DISAPPEARANCE_GRACE_MS) {
+        this.reset();
+      }
+      return undefined;
+    }
+    if (this.activity !== activity
+      || (this.missingSince !== undefined
+        && now - this.missingSince >= CHATGPT_NATIVE_TOOL_ACTIVITY_DISAPPEARANCE_GRACE_MS)) {
+      this.activity = activity;
+      this.startedAt = now;
+      this.lastPulseAt = undefined;
+    }
+    this.missingSince = undefined;
+    if (this.lastPulseAt !== undefined
+      && now - this.lastPulseAt < CHATGPT_NATIVE_TOOL_ACTIVITY_PULSE_MS) {
+      return undefined;
+    }
+    const elapsedMinutes = Math.floor(Math.max(0, now - (this.startedAt ?? now)) / 60_000);
+    this.lastPulseAt = now;
+    const label = activity === "web_search" ? "Recherche Web" : "Outil ChatGPT";
+    return elapsedMinutes >= 2
+      ? `${label} toujours en cours (${elapsedMinutes} min)`
+      : `${label} en cours`;
+  }
+
+  private reset(): void {
+    this.activity = undefined;
+    this.startedAt = undefined;
+    this.missingSince = undefined;
+    this.lastPulseAt = undefined;
+  }
 }
 
 const absentResponseDomSnapshot = (): ChatGptResponseDomSnapshot => ({
@@ -2135,6 +2188,12 @@ export class ChatGptBrowserWorker {
         ...block,
         ...(block.kind === "commentary" ? { complete: index < blocks.length - 1 } : {}),
       }));
+      const webSearchActivityVisible = [...root.querySelectorAll<HTMLElement>(
+        '[data-testid="cot-v5-favicon"]',
+      )].some(renderedInDom);
+      const nativeToolActivityVisible = webSearchActivityVisible || [...root.querySelectorAll<HTMLElement>(
+        '[data-testid="cot-v5-native-tool-icon"], [data-testid="cot-v5-tool-icon-pile"]',
+      )].some(renderedInDom);
       const stoppedThinkingVisible = (() => {
         if ([...root.querySelectorAll<HTMLElement>('[aria-label="Stopped thinking"]')].some(renderedInDom)) {
           return true;
@@ -2160,6 +2219,11 @@ export class ChatGptBrowserWorker {
         stoppedThinkingVisible,
         projection,
         traceBlocks,
+        ...(webSearchActivityVisible
+          ? { nativeToolActivity: "web_search" as const }
+          : nativeToolActivityVisible
+            ? { nativeToolActivity: "native_tool" as const }
+            : {}),
       };
     }, CHATGPT_COMPLETION_ACTION_SELECTOR, { timeout: 2_000 }).catch(() => {
       if (responseTurn.page().isClosed()) {
@@ -2657,6 +2721,7 @@ export class ChatGptBrowserWorker {
         const completionTracker = new ChatGptCompletionTracker();
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
         const stoppedThinkingTracker = new ChatGptStoppedThinkingTracker();
+        const nativeToolActivityTracker = new ChatGptNativeToolActivityTracker();
         for (;;) {
         if (page.isClosed()) {
           throw chatGptWebSurfaceError("ChatGPT browser tab was closed while the turn was active", answerBuffer.deliveredChars() > 0);
@@ -2765,6 +2830,14 @@ export class ChatGptBrowserWorker {
         );
         if (running) sawRunning = true;
         if (snapshot.responsePresent) {
+          const nativeToolActivity = nativeToolActivityTracker.observe(
+            snapshot.nativeToolActivity,
+            running,
+          );
+          if (nativeToolActivity) {
+            turn.onReasoningSummary?.(nativeToolActivity, false);
+            turn.onProgress?.();
+          }
           const currentProgressChars = snapshot.markdownRoots.reduce(
             (total, root) => total + root.text.length,
             0,

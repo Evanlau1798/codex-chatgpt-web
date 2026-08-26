@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { Page } from "playwright-core";
-import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_PROMPT_INSERT_CHUNK_CHARS, CHATGPT_STOPPED_THINKING_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptPromptAttachmentIntegrityError, ChatGptStoppedThinkingTracker, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, assertChatGptWebInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, chatGptSubmissionEvidence, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
+import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_NATIVE_TOOL_ACTIVITY_PULSE_MS, CHATGPT_PROMPT_INSERT_CHUNK_CHARS, CHATGPT_STOPPED_THINKING_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptNativeToolActivityTracker, ChatGptPromptAttachmentIntegrityError, ChatGptStoppedThinkingTracker, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, assertChatGptWebInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, chatGptSubmissionEvidence, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
@@ -72,6 +72,36 @@ test("browser completion waits for transient Markdown prefix recovery", () => {
   expect(completion).toContain("markdownBuffer.currentSnapshotIsConsistent()");
   expect(completion.indexOf("markdownBuffer.currentSnapshotIsConsistent()"))
     .toBeLessThan(completion.indexOf("markdownBuffer.finish()"));
+});
+
+test("visible native tools keep long silent browser work alive at bounded intervals", () => {
+  expect(CHATGPT_NATIVE_TOOL_ACTIVITY_PULSE_MS).toBe(120_000);
+  const tracker = new ChatGptNativeToolActivityTracker();
+
+  expect(tracker.observe("web_search", true, 1_000)).toBe("Recherche Web en cours");
+  expect(tracker.observe("web_search", true, 120_999)).toBeUndefined();
+  expect(tracker.observe("web_search", true, 121_000)).toBe("Recherche Web toujours en cours (2 min)");
+  expect(tracker.observe("web_search", true, 241_000)).toBe("Recherche Web toujours en cours (4 min)");
+});
+
+test("native tool activity distinguishes generic tools and resets after completion", () => {
+  const tracker = new ChatGptNativeToolActivityTracker();
+
+  expect(tracker.observe("native_tool", true, 10_000)).toBe("Outil ChatGPT en cours");
+  expect(tracker.observe(undefined, true, 11_000)).toBeUndefined();
+  expect(tracker.observe("native_tool", true, 12_000)).toBeUndefined();
+  expect(tracker.observe(undefined, true, 20_000)).toBeUndefined();
+  expect(tracker.observe(undefined, true, 25_000)).toBeUndefined();
+  expect(tracker.observe("native_tool", true, 26_000)).toBe("Outil ChatGPT en cours");
+  expect(tracker.observe(undefined, false, 27_000)).toBeUndefined();
+  expect(tracker.observe("native_tool", true, 28_000)).toBe("Outil ChatGPT en cours");
+});
+
+test("response DOM scopes native tool activity to the owned assistant turn", () => {
+  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  expect(workerSource).toContain('[data-testid="cot-v5-favicon"]');
+  expect(workerSource).toContain('[data-testid="cot-v5-native-tool-icon"], [data-testid="cot-v5-tool-icon-pile"]');
+  expect(workerSource).toContain("nativeToolActivityTracker.observe(");
 });
 
 test("persistent Stopped thinking is a terminal cancelled turn", () => {
