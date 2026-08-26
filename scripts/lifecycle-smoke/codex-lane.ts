@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-  assert, auditPrompt, cutoff, detectRestriction, events, iso, LaneResult, repo, reviewTaskPrompt,
+  assert, auditPrompt, cutoff, detectRestriction, events, iso, LaneResult, repo, repoTests, reviewTaskPrompt,
   save, serviceBaseUrl, sleep, stageTimeline, steeringAuditPassed, steeringText, waitCreateBudget, waitForEvent,
   waitRootRequestBudget, waitSteeringPoint,
 } from "./common";
@@ -9,6 +9,7 @@ import { activeTurnSmokeTimeoutMs, agentTextStreamDiagnostic, CodexRun, complete
 import { normalizeV2Activities } from "./codex-v2-activity";
 import { runV2HierarchyScenario } from "./codex-v2-scenario";
 import { hasLocalFileEvidence, skillContractEvidence } from "./skill-contract";
+import { smokePath } from "./paths";
 
 export function selfTestCodexLaneBudget(): void {
   assert(
@@ -69,9 +70,10 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     assert(webModel, "Codex Web model catalog did not load the Extra High route");
     const thread = await run.request("thread/start", { cwd: repo, model: "chatgpt-web/extra-high", ephemeral: false, approvalPolicy: "never", sandbox: "read-only" });
     threadId = String(thread.thread.id);
+    const responseStateCompactionPath = smokePath(repoTests, "response-state-compaction.test.ts");
     const initialAt = Date.now();
     lastRootRequestAt = initialAt;
-    const initial = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: `請依 OpenAI 官方文件說明 Responses API compaction continuation contract，再唯讀檢查 ${repo}\\tests\\response-state-compaction.test.ts，指出最直接覆蓋 compaction replacement boundary 的兩個測試。請提供官方連結與本機檔名、行號證據；不要派發 subagent、修改檔案或執行測試，也不要使用非 OpenAI 網站。` }] });
+    const initial = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: `請依 OpenAI 官方文件說明 Responses API compaction continuation contract，再唯讀檢查 ${responseStateCompactionPath}，指出最直接覆蓋 compaction replacement boundary 的兩個測試。請提供官方連結與本機檔名、行號證據；不要派發 subagent、修改檔案或執行測試，也不要使用非 OpenAI 網站。` }] });
     const created = await waitForEvent(initialAt, "browser.tab_created", 180_000); rootTab = String(created.detail?.tabId); tabs.add(rootTab); const trace = String(created.detail?.traceId);
     const hadCommentary = await waitSteeringPoint(initialAt, trace);
     const steeringAt = Date.now();
@@ -98,7 +100,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     checks.skill_local_evidence = hasLocalFileEvidence(
       run.received,
       initial.turn.id,
-      `${repo}\\tests\\response-state-compaction.test.ts`,
+      responseStateCompactionPath,
       initialTurnMessages,
     );
     checks.no_unsubstantiated_skill_failure = !/(?:skill|skill\.md)[^\n]{0,120}(?:安全[^\n]{0,40}(?:阻擋|攔下)|無法讀取|unavailable|blocked|rejected)|(?:安全檢查|security check)[^\n]{0,120}(?:阻擋|攔下|blocked|rejected)/i.test(initialTurnMessages);
@@ -139,7 +141,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
       if (round > 1) await waitRootRequestBudget(lastRootRequestAt);
       const taskAt = Date.now();
       lastRootRequestAt = taskAt;
-      const task = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: round === 1 ? reviewTaskPrompt : `請繼續上一輪的唯讀檢查，自行從 ${repo}\\tests 選擇恰好兩個尚未檢查的測試檔案及其直接對應的 production 實作；完成這個有界範圍後立即總結，不要擴張到其他面向。不要重複已完成範圍、不要派發 subagent、不要修改檔案、執行測試或存取網路。` }] });
+      const task = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: round === 1 ? reviewTaskPrompt : `請繼續上一輪的唯讀檢查，自行從 ${repoTests} 選擇恰好兩個尚未檢查的測試檔案及其直接對應的 production 實作；完成這個有界範圍後立即總結，不要擴張到其他面向。不要重複已完成範圍、不要派發 subagent、不要修改檔案、執行測試或存取網路。` }] });
       await completed(run, task.turn.id, activeTurnSmokeTimeoutMs); const taskDone = Date.now();
       const taskText = run.received.flatMap(message => message.method === "item/completed" && message.params?.turnId === task.turn.id && message.params?.item?.type === "agentMessage" ? [String(message.params.item.text)] : []).join("\n").replaceAll("\\_", "_");
       longToolCalls += run.received.filter(message => message.method === "item/completed" && message.params?.turnId === task.turn.id && ["commandExecution", "mcpToolCall"].includes(message.params?.item?.type)).length;

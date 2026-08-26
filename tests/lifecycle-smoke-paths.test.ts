@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, posix, win32 } from "node:path";
 import {
@@ -14,6 +14,12 @@ test("smoke prompt paths follow the target platform instead of hardcoded separat
   expect(joinSmokePath(win32, "D:\\work\\renamed-checkout", "tests", "sample.test.ts")).toBe(
     "D:\\work\\renamed-checkout\\tests\\sample.test.ts",
   );
+});
+
+test("Codex lifecycle prompts use the portable smoke path helper", () => {
+  const source = readFileSync(join(import.meta.dir, "..", "scripts", "lifecycle-smoke", "codex-lane.ts"), "utf8");
+  expect(source).not.toContain("${repo}\\\\tests");
+  expect(source).toContain("smokePath(repoTests");
 });
 
 test("Claude transcript discovery is independent of drive and checkout encoding", () => {
