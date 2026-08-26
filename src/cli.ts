@@ -71,6 +71,8 @@ Setup options:
   --restart-service            Explicitly restart this project's daemon after an update
   --login                      Refresh the stored ChatGPT login even if one exists
   --auto-approve-tool-calls    Opt in to per-call browser clicks on "Allow once" prompts
+  --enhanced-session           Enable Enhanced Web session mode
+  --standard-session           Disable Enhanced Web session mode
   --bigger-context             Enable experimental adaptive context (Enhanced mode must be off)
   --standard-context           Disable experimental multi-message context
   --acknowledge-unofficial     Accept the one-time unofficial-browser-automation notice
@@ -190,6 +192,12 @@ async function setupCommand(args: string[]): Promise<void> {
   if (runtimeKeyFile) options.runtimeKeyFile = runtimeKeyFile;
   options.forceLogin = takeFlag(args, "--login");
   options.autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
+  const enhancedSession = takeFlag(args, "--enhanced-session");
+  const standardSession = takeFlag(args, "--standard-session");
+  if (enhancedSession && standardSession) {
+    throw new Error("Choose at most one session mode: --enhanced-session or --standard-session");
+  }
+  if (enhancedSession || standardSession) options.useEnhancedWebSessionMode = enhancedSession;
   const biggerContext = takeFlag(args, "--bigger-context");
   const standardContext = takeFlag(args, "--standard-context");
   if (biggerContext && standardContext) {

@@ -1405,13 +1405,13 @@ function SettingsSurface({
             onChange={(checked) => void setBridgeEnabled(checked)}
           />
         </SettingRow> : null}
-        {!devProfile ? <SettingRow body={copy.enhancedWebSessionModeBody} label={copy.enhancedWebSessionMode}>
+        <SettingRow body={copy.enhancedWebSessionModeBody} label={copy.enhancedWebSessionMode}>
           <Switch
             checked={snapshot.state.useEnhancedWebSessionMode}
             disabled={busy || snapshot.state.coreSetupComplete !== true}
             onChange={(enabled) => void setUseEnhancedWebSessionMode(enabled)}
           />
-        </SettingRow> : null}
+        </SettingRow>
         <SettingRow body={copy.biggerContextBody} label={copy.biggerContext}>
           <Switch
             checked={biggerContextState.checked}
