@@ -23,7 +23,6 @@ export function buildClaudeSmokeSettings(config: AppConfig): ClaudeSmokeSettings
       ANTHROPIC_BASE_URL: `http://${config.host}:${config.port}`,
       ANTHROPIC_AUTH_TOKEN: "codex-chatgpt-web-local",
       CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
-      CODEX_CHATGPT_WEB_CONTROL_TOKEN: config.controlToken,
     },
     hooks: Object.fromEntries([
       "UserPromptSubmit",
@@ -40,9 +39,9 @@ export function selfTestClaudeSmokeSettings(config: AppConfig): void {
     "Claude smoke settings must target the live project route instead of the user global gateway",
   );
   assert(
-    settings.env?.CODEX_CHATGPT_WEB_CONTROL_TOKEN === config.controlToken
+    !JSON.stringify(settings).includes(config.controlToken)
       && settings.env?.ANTHROPIC_AUTH_TOKEN === "codex-chatgpt-web-local",
-    "Claude smoke settings must use the live local control credentials",
+    "Claude smoke settings must not persist the live control credential",
   );
   assert(
     settings.availableModels?.every?.((model: unknown) => (

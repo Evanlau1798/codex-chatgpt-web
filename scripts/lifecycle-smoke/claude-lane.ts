@@ -60,10 +60,10 @@ class ClaudeRun {
   private outputEncoder = new LifecycleArtifactEncoder();
   private stderrEncoder = new LifecycleArtifactEncoder();
 
-  constructor(private output: string, args: string[], configDir: string) {
+  constructor(private output: string, args: string[], configDir: string, controlToken: string) {
     this.process = Bun.spawn({
       cmd: [claudeExe, ...args], cwd: repo, stdin: "pipe", stdout: "pipe", stderr: "pipe",
-      env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000" },
+      env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000", CODEX_CHATGPT_WEB_CONTROL_TOKEN: controlToken },
     });
     void this.readOutput();
     void this.readErrors();
@@ -182,10 +182,10 @@ const args = (sessionId: string, resume: boolean, tools: string[], streamInput =
   ...(tools.length > 0 ? ["--tools", tools.join(",")] : []),
 ];
 
-async function runClaudeCommand(output: string, configDir: string, sessionId: string, command: string) {
+async function runClaudeCommand(output: string, configDir: string, controlToken: string, sessionId: string, command: string) {
   const child = Bun.spawn({
     cmd: [claudeExe, ...args(sessionId, true, [], false), command], cwd: repo,
-    env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000" }, stdout: "pipe", stderr: "pipe",
+    env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000", CODEX_CHATGPT_WEB_CONTROL_TOKEN: controlToken }, stdout: "pipe", stderr: "pipe",
   });
   const [stdout, stderr, code] = await Promise.all([
     new Response(child.stdout).text(), new Response(child.stderr).text(), waitForClaudeCommandExit(child),
@@ -210,7 +210,8 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
   mkdirSync(laneRoot, { recursive: true });
   const configDir = join(laneRoot, "config");
   mkdirSync(configDir, { recursive: true });
-  writeFileSync(join(configDir, "settings.json"), `${JSON.stringify(buildClaudeSmokeSettings(loadConfig()), null, 2)}\n`, "utf8");
+  const runtimeConfig = loadConfig();
+  writeFileSync(join(configDir, "settings.json"), `${JSON.stringify(buildClaudeSmokeSettings(runtimeConfig), null, 2)}\n`, "utf8");
   writeFileSync(join(configDir, ".claude.json"), '{"autoCompactEnabled":true}', "utf8");
   const sessionId = crypto.randomUUID();
   const timelines: Record<string, any>[] = [];
@@ -226,7 +227,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     await waitCreateBudget();
     const initialAt = Date.now();
     lastRootRequestAt = initialAt;
-    const initial = new ClaudeRun(join(laneRoot, "initial.jsonl"), args(sessionId, false, []), configDir);
+    const initial = new ClaudeRun(join(laneRoot, "initial.jsonl"), args(sessionId, false, []), configDir, runtimeConfig.controlToken);
     runs.push(initial);
     await initial.send(sessionId, `請實際讀取 ${smokePath(repoTests, "prompt-caret.test.ts")} 與 ${smokePath(repoTests, "retained-compaction-handoff.test.ts")}，比較兩者如何保障 prompt submission 與 retained compact，並找出一項值得後續深入檢查的交互風險。請把探索限制在這兩個檔案，不要修改檔案、執行測試或存取網路。`);
     const created = await waitForEvent(initialAt, "browser.tab_created", 180_000);
@@ -260,7 +261,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     await waitRootRequestBudget(lastRootRequestAt);
     const auditAt = Date.now();
     lastRootRequestAt = auditAt;
-    const audit = new ClaudeRun(join(laneRoot, "steering-audit.jsonl"), args(sessionId, true, []), configDir);
+    const audit = new ClaudeRun(join(laneRoot, "steering-audit.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(audit);
     await audit.send(sessionId, auditPrompt);
     const auditResult = await audit.waitResult(1, CLAUDE_INITIAL_RESULT_TIMEOUT_MS);
@@ -285,7 +286,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     let longToolCalls = 0;
     let autoCompactions = claudeCompactions(configDir, sessionId, "auto");
     const preAutoCompactRootTab = rootTab;
-    const task = new ClaudeRun(join(laneRoot, "long-task.jsonl"), args(sessionId, true, []), configDir);
+    const task = new ClaudeRun(join(laneRoot, "long-task.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(task);
     for (let round = 1; round <= 8 && autoCompactions === 0; round += 1) {
       if (round > 1) await waitRootRequestBudget(lastRootRequestAt);
@@ -320,7 +321,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     const handoffAt = Date.now();
     lastRootRequestAt = handoffAt;
     const childAt = handoffAt;
-    const child = new ClaudeRun(join(laneRoot, "post-compact-child.jsonl"), args(sessionId, true, []), configDir);
+    const child = new ClaudeRun(join(laneRoot, "post-compact-child.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(child);
     await child.send(sessionId, `請先簡短整理 compact handoff 中已完成的進度與實際摩擦，再派一位 subagent 唯讀閱讀 ${smokePath(repoTests, "prompt-caret.test.ts")}：回報它看到的 cwd、test() 宣告數量、第一個測試名稱，以及過程摩擦。派出後請在它仍執行時，主動傳送一則補充要求給同一位 subagent，請它再回報最後一個測試名稱；收到它的回應後再整合結果。這項探查不需要任何 skill，請不要載入 skill。不要修改檔案、執行測試或存取網路。`);
     const childResult = await child.waitResult(1, 30 * 60_000);
@@ -369,7 +370,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     lastRootRequestAt = compactAt;
     const preManualCompactRootTab = rootTab;
     const preManualCompactions = claudeCompactions(configDir, sessionId, "manual");
-    await runClaudeCommand(join(laneRoot, "manual-compact.jsonl"), configDir, sessionId, "/compact");
+    await runClaudeCommand(join(laneRoot, "manual-compact.jsonl"), configDir, runtimeConfig.controlToken, sessionId, "/compact");
     const postManualCompactions = claudeCompactions(configDir, sessionId, "manual");
     checks.manual_compact_observed = postManualCompactions > preManualCompactions;
     await save(join(laneRoot, "compact-counts.json"), {
@@ -398,7 +399,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     await waitRootRequestBudget(lastRootRequestAt);
     const finalAt = Date.now();
     lastRootRequestAt = finalAt;
-    const final = new ClaudeRun(join(laneRoot, "final.jsonl"), args(sessionId, true, []), configDir);
+    const final = new ClaudeRun(join(laneRoot, "final.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(final);
     await final.send(sessionId, "請與剛才已完成的同一位 subagent 再互動一次，詢問它是否仍記得自己先前做過的 tests 目錄 probe、當時的結果，以及這次續接過程有沒有摩擦或上下文遺失。不要另派新的 subagent，也不要要求它重新執行工具。收到回覆後，整理這段工作中的訊息追加、兩次上下文整理、交接、subagent 首次與續接，以及你觀察到的不足。");
     const resumedChild = await final.waitFor(record => record.type === "system"
