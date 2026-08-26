@@ -5,6 +5,7 @@ import { join, posix, win32 } from "node:path";
 import {
   findClaudeTranscript,
   joinSmokePath,
+  resolveLifecycleExecutable,
 } from "../scripts/lifecycle-smoke/paths";
 
 test("smoke prompt paths follow the target platform instead of hardcoded separators", () => {
@@ -14,6 +15,15 @@ test("smoke prompt paths follow the target platform instead of hardcoded separat
   expect(joinSmokePath(win32, "D:\\work\\renamed-checkout", "tests", "sample.test.ts")).toBe(
     "D:\\work\\renamed-checkout\\tests\\sample.test.ts",
   );
+});
+
+test("Windows lifecycle commands prefer native executables over command shims", () => {
+  const found: Record<string, string> = {
+    "codex.exe": "C:\\native\\codex.exe",
+    codex: "C:\\npm\\codex.cmd",
+  };
+  expect(resolveLifecycleExecutable("codex", "win32", name => found[name] ?? null))
+    .toBe("C:\\native\\codex.exe");
 });
 
 test("Codex lifecycle prompts use the portable smoke path helper", () => {

@@ -2,7 +2,7 @@ import { appendFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { getConfigPath, loadConfig } from "../../src/config";
-import { findClaudeTranscript, smokePath } from "./paths";
+import { findClaudeTranscript, resolveLifecycleExecutable, smokePath } from "./paths";
 import { saveLifecycleJson } from "./artifacts";
 import { fetchWithTimeout } from "./run-guard";
 import { LauncherEventReader, type LauncherEvent } from "./launcher-event-reader";
@@ -23,11 +23,9 @@ export const browserDescriptor = process.env.CODEX_LIFECYCLE_BROWSER_DESCRIPTOR?
   || runtimeConfig.browserHostDescriptorPath
   || "";
 export const codexExe = process.env.CODEX_LIFECYCLE_CODEX_EXE?.trim()
-  || Bun.which("codex")
-  || (process.platform === "win32" ? "codex.exe" : "codex");
+  || resolveLifecycleExecutable("codex");
 export const claudeExe = process.env.CODEX_LIFECYCLE_CLAUDE_EXE?.trim()
-  || Bun.which("claude")
-  || (process.platform === "win32" ? "claude.exe" : "claude");
+  || resolveLifecycleExecutable("claude");
 export const steeringText = "這是測試訊息追加功能的訊息，有看到的話請回應";
 export const auditPrompt = `請只根據你在這個 Web 對話中實際可見的上下文回答，不使用工具、不要推測，也不要引用無關的 system/developer instructions：
 1.「${steeringText}」第一次出現時，是獨立 user message、system/developer message，還是附加在某次 tool result 內？

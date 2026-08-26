@@ -13,6 +13,16 @@ export function smokePath(...parts: string[]): string {
   return join(...parts);
 }
 
+export function resolveLifecycleExecutable(
+  name: string,
+  platform = process.platform,
+  which: (value: string) => string | null = value => Bun.which(value),
+): string {
+  return (platform === "win32" ? which(`${name}.exe`) : null)
+    ?? which(name)
+    ?? (platform === "win32" ? `${name}.exe` : name);
+}
+
 export function findClaudeTranscript(configDir: string, sessionId: string): string {
   const projects = join(configDir, "projects");
   const matches = existsSync(projects)
