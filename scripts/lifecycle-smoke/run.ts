@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { loadConfig } from "../../src/config";
+import { getConfigDir, loadConfig } from "../../src/config";
 import { parseLifecycleSmokeOptions } from "./options";
-import { acquireLifecycleLock, fetchLifecycleHealth, releaseLifecycleLock } from "./run-guard";
+import { acquireLifecycleLock, fetchLifecycleHealth, lifecycleLockPath, releaseLifecycleLock } from "./run-guard";
 
 const repo = resolve(import.meta.dir, "..", "..");
 const options = parseLifecycleSmokeOptions(process.argv.slice(2), repo);
@@ -19,7 +19,7 @@ function runId(): string {
 }
 
 mkdirSync(options.artifactRoot, { recursive: true });
-const lockPath = join(options.artifactRoot, ".active.lock");
+const lockPath = lifecycleLockPath(getConfigDir());
 const lock = acquireLifecycleLock(lockPath);
 
 try {

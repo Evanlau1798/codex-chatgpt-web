@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 type LifecycleFetch = (
   input: string | URL | Request,
@@ -22,7 +23,12 @@ function processIsAlive(pid: number): boolean {
   }
 }
 
+export function lifecycleLockPath(configDir: string): string {
+  return join(configDir, "runtime", "lifecycle-smoke.lock");
+}
+
 export function acquireLifecycleLock(path: string): LifecycleLock {
+  mkdirSync(dirname(path), { recursive: true });
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const record = `${JSON.stringify({
       pid: process.pid,
@@ -41,15 +47,27 @@ export function acquireLifecycleLock(path: string): LifecycleLock {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       let existing: { pid?: unknown };
-      try { existing = JSON.parse(readFileSync(path, "utf8")); }
+      let observed: string;
+      try {
+        observed = readFileSync(path, "utf8");
+        existing = JSON.parse(observed);
+      }
       catch { throw new Error(`Lifecycle smoke lock is corrupt and cannot be reclaimed safely: ${path}`); }
       if (typeof existing.pid !== "number" || processIsAlive(existing.pid)) {
         throw new Error(`Lifecycle smoke is already active: ${path}`);
       }
-      try { unlinkSync(path); }
-      catch (unlinkError) {
-        if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError;
+      const quarantine = `${path}.reclaim-${process.pid}-${randomUUID()}`;
+      try { renameSync(path, quarantine); }
+      catch (renameError) {
+        if ((renameError as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw renameError;
       }
+      const claimed = readFileSync(quarantine, "utf8");
+      if (claimed !== observed) {
+        try { renameSync(quarantine, path); } catch {}
+        throw new Error(`Lifecycle smoke lock changed during stale recovery: ${path}`);
+      }
+      unlinkSync(quarantine);
     }
   }
   throw new Error(`Lifecycle smoke lock could not be acquired safely: ${path}`);
