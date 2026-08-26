@@ -1,7 +1,58 @@
+import { createHash } from "node:crypto";
+import { appendFileSync, chmodSync } from "node:fs";
+import { atomicWriteFile } from "../../src/config";
+
 const DEFAULT_MAX_LINE_BYTES = 4 * 1024;
 const DEFAULT_MAX_TOTAL_BYTES = 4 * 1024 * 1024;
+const MAX_JSON_ARTIFACT_BYTES = 1024 * 1024;
+const MAX_REDACTED_ITEMS = 100;
 
 type ArtifactSummary = Record<string, unknown>;
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function boundedJson(value: unknown): string {
+  const encoded = `${JSON.stringify(value, null, 2)}\n`;
+  const bytes = Buffer.byteLength(encoded);
+  return bytes <= MAX_JSON_ARTIFACT_BYTES
+    ? encoded
+    : `${JSON.stringify({ type: "artifact_omitted", bytes, sha256: sha256(encoded) }, null, 2)}\n`;
+}
+
+function redactValue(value: unknown, depth = 0): unknown {
+  if (typeof value === "string") return { chars: value.length, sha256: sha256(value) };
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (depth >= 6) return { type: "depth_limit" };
+  if (Array.isArray(value)) return {
+    items: value.slice(0, MAX_REDACTED_ITEMS).map(item => redactValue(item, depth + 1)),
+    omitted: Math.max(0, value.length - MAX_REDACTED_ITEMS),
+  };
+  if (!value || typeof value !== "object") return { type: typeof value };
+  const entries = Object.entries(value).slice(0, MAX_REDACTED_ITEMS).map(([key, field], index) => [
+    /^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/.test(key) ? key : `field_${index}`,
+    redactValue(field, depth + 1),
+  ]);
+  return { ...Object.fromEntries(entries), omitted: Math.max(0, Object.keys(value).length - entries.length) };
+}
+
+export function appendLifecycleArtifact(path: string, value: string): void {
+  appendFileSync(path, value, { mode: 0o600 });
+  try { chmodSync(path, 0o600); } catch { /* Windows ACLs are owned by the launcher profile. */ }
+}
+
+export function saveLifecycleJson(path: string, value: unknown): void {
+  atomicWriteFile(path, boundedJson(value));
+}
+
+export function saveRedactedLifecycleJson(path: string, value: unknown): void {
+  saveLifecycleJson(path, redactValue(value));
+}
+
+export function saveLifecycleContentSummary(path: string, kind: string, value: string): void {
+  saveLifecycleJson(path, { type: "content_summary", kind, chars: value.length, bytes: Buffer.byteLength(value), sha256: sha256(value) });
+}
 
 function chars(value: unknown): number | undefined {
   return typeof value === "string" ? value.length : undefined;

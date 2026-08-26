@@ -1,6 +1,12 @@
 import { expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   LifecycleArtifactEncoder,
+  saveLifecycleContentSummary,
+  saveLifecycleJson,
+  saveRedactedLifecycleJson,
   summarizeClaudeRecord,
   summarizeCodexRpc,
 } from "../scripts/lifecycle-smoke/artifacts";
@@ -22,6 +28,27 @@ test("raw lifecycle summaries retain structure without prompt, answer, or tool c
   expect(codex).not.toContain(secret);
   expect(claude).toContain('"textChars":25');
   expect(codex).toContain('"deltaChars":25');
+});
+
+test("retained lifecycle evidence is content-free, owner-only, and bounded", () => {
+  const root = mkdtempSync(join(tmpdir(), "lifecycle-artifacts-"));
+  const secret = "PRIVATE_MODEL_AND_TOOL_CONTENT";
+  try {
+    const summary = join(root, "summary.json");
+    const redacted = join(root, "redacted.json");
+    const bounded = join(root, "bounded.json");
+    saveLifecycleContentSummary(summary, "final", secret);
+    saveRedactedLifecycleJson(redacted, { prompt: secret, nested: [{ result: secret }] });
+    saveLifecycleJson(bounded, { value: secret.repeat(100_000) });
+
+    for (const path of [summary, redacted, bounded]) {
+      expect(readFileSync(path, "utf8")).not.toContain(secret);
+      expect(statSync(path).size).toBeLessThanOrEqual(1024 * 1024);
+      if (process.platform !== "win32") expect(statSync(path).mode & 0o077).toBe(0);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("lifecycle JSONL encoding has per-record and total byte ceilings", () => {

@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { getConfigPath, loadConfig } from "../../src/config";
 import { findClaudeTranscript, smokePath } from "./paths";
+import { saveLifecycleJson } from "./artifacts";
 
 const runtimeConfig = loadConfig();
 const defaultLauncherUserData = process.platform === "win32"
@@ -211,7 +212,7 @@ export function successfulReport(text: string, expected: string[]) {
   return expected.every(value => text.includes(value))
     && !/(?:cannot|unable|could not|無法(?:完成|讀取|處理)|不能完成)/i.test(text);
 }
-export function save(path: string, value: unknown) { return Bun.write(path, `${JSON.stringify(value, null, 2)}\n`); }
+export function save(path: string, value: unknown) { saveLifecycleJson(path, value); }
 
 export async function selfTest() {
   assert(count("x-x-x", "x") === 3, "count self-test failed");

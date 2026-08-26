@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../../src/config";
 import { DEFAULT_STALL_TIMEOUT_SEC } from "../../src/stall-timeout";
@@ -17,6 +17,8 @@ import {
 import { findClaudeTranscript, smokePath } from "./paths";
 import {
   LifecycleArtifactEncoder,
+  appendLifecycleArtifact,
+  saveLifecycleContentSummary,
   summarizeClaudeRecord,
   summarizeStreamChunk,
 } from "./artifacts";
@@ -83,14 +85,14 @@ class ClaudeRun {
         try {
           const parsed = JSON.parse(line);
           const summary = this.outputEncoder.encode(summarizeClaudeRecord(parsed, iso()));
-          if (summary) appendFileSync(this.output, summary);
+          if (summary) appendLifecycleArtifact(this.output, summary);
           this.records.push(parsed);
           this.receivedAt.push({ at: iso(), value: parsed });
           if (parsed.type === "result") this.results++;
           for (const wake of this.waiters) wake();
         } catch {
           const summary = this.outputEncoder.encode(summarizeStreamChunk("stdout", iso(), line.length));
-          if (summary) appendFileSync(this.output, summary);
+          if (summary) appendLifecycleArtifact(this.output, summary);
         }
       }
     }
@@ -105,7 +107,7 @@ class ClaudeRun {
       if (done) break;
       const chars = decoder.decode(value, { stream: true }).length;
       const summary = this.stderrEncoder.encode(summarizeStreamChunk("stderr", iso(), chars));
-      if (summary) appendFileSync(path, summary);
+      if (summary) appendLifecycleArtifact(path, summary);
     }
   }
 
@@ -196,11 +198,11 @@ async function runClaudeCommand(output: string, configDir: string, controlToken:
     try { summary = summarizeClaudeRecord(JSON.parse(line), iso()); }
     catch { summary = summarizeStreamChunk("stdout", iso(), line.length); }
     const encoded = outputEncoder.encode(summary);
-    if (encoded) appendFileSync(output, encoded);
+    if (encoded) appendLifecycleArtifact(output, encoded);
   }
   if (stderr) {
     const encoded = new LifecycleArtifactEncoder().encode(summarizeStreamChunk("stderr", iso(), stderr.length));
-    if (encoded) appendFileSync(output.replace(/\.jsonl$/, ".stderr.log"), encoded);
+    if (encoded) appendLifecycleArtifact(output.replace(/\.jsonl$/, ".stderr.log"), encoded);
   }
   assert(code === 0, `Claude ${command} failed with exit code ${code}`);
 }
@@ -268,7 +270,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     const auditDone = Date.now();
     const auditText = (audit.assistantTextSince(0) || String(auditResult.result ?? "")).replaceAll("\\_", "_");
     await audit.close();
-    await Bun.write(join(laneRoot, "steering-audit.txt"), auditText);
+    saveLifecycleContentSummary(join(laneRoot, "steering-audit.json"), "steering_audit", auditText);
     const auditEvents = events(auditAt);
     const auditSurface = auditEvents.findLast(value => value.event === "browser.tab_created" || value.event === "browser.tab_reused");
     for (const value of auditEvents.filter(value => value.event === "browser.tab_created")) {
@@ -335,9 +337,9 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     assert(childNotification.status === "completed", `Claude child failed: ${childNotification.summary ?? "unknown error"}`);
     await child.close();
     const childText = child.rawText().replaceAll("\\_", "_"); longText += childText;
-    await Bun.write(join(laneRoot, "handoff.txt"), childText);
-    await Bun.write(join(laneRoot, "steering-audit.txt"), auditText);
-    await Bun.write(join(laneRoot, "child-friction.txt"), childText);
+    saveLifecycleContentSummary(join(laneRoot, "handoff.json"), "handoff", childText);
+    saveLifecycleContentSummary(join(laneRoot, "steering-audit.json"), "steering_audit", auditText);
+    saveLifecycleContentSummary(join(laneRoot, "child-friction.json"), "child_friction", childText);
     checks.handoff_seen = childText.includes("摩擦");
     const childEvents = events(childAt);
     const acquisitions = childEvents.filter(value => (
@@ -360,7 +362,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       && events(longAt).some(value => value.event === "browser.tab_created" && value.detail?.tabId === rootTab);
     checks.child_completed = Boolean(childId && childTab && childResult?.subtype === "success");
     const childCompletionText = String(childNotification.summary ?? "");
-    await Bun.write(join(laneRoot, "child-first-completion.txt"), childCompletionText);
+    saveLifecycleContentSummary(join(laneRoot, "child-first-completion.json"), "child_completion", childCompletionText);
     checks.child_interacted = sentMessageTo(child.records, childId)
       && childCompletionText.includes("rejects a caret that Lexical moved outside the active composer");
     autoCompactions = claudeCompactions(configDir, sessionId, "auto");
@@ -413,7 +415,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     const finalDone = Date.now();
     await final.close();
     const finalText = final.rawText().replaceAll("\\_", "_");
-    await Bun.write(join(laneRoot, "final.txt"), String(finalResult.result ?? ""));
+    saveLifecycleContentSummary(join(laneRoot, "final.json"), "final", String(finalResult.result ?? ""));
     const finalEvents = events(finalAt);
     const postManualRoot = finalEvents.find(value => value.event === "browser.tab_created"
       && value.detail?.tabId !== childTab);

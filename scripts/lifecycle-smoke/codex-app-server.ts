@@ -1,10 +1,10 @@
-import { appendFileSync } from "node:fs";
 import { DEFAULT_STALL_TIMEOUT_SEC } from "../../src/stall-timeout";
 import { assert, codexExe, events, iso, repo, serviceBaseUrl, sleep } from "./common";
 import { CodexLifecycleProgressSignals } from "./progress-signals";
 import { LifecycleProgressWatchdog } from "./progress-watchdog";
 import {
   LifecycleArtifactEncoder,
+  appendLifecycleArtifact,
   summarizeCodexRpc,
   summarizeStreamChunk,
 } from "./artifacts";
@@ -193,7 +193,7 @@ export class CodexRun {
     if (queue.length === 0) return;
     const value = queue.join("");
     try {
-      appendFileSync(path, value);
+      appendLifecycleArtifact(path, value);
       queue.splice(0, queue.length);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;

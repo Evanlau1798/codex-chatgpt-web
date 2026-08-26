@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { activeTurnSmokeTimeoutMs, CodexRun, completed, Rpc } from "./codex-app-server";
 import { assert, detectRestriction, events, iso, repo, repoTests, save } from "./common";
 import { normalizeV2Activities, type V2Activity } from "./codex-v2-activity";
+import { saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
 
 export const hierarchySentinel = "V2_HIERARCHY_SMOKE_DONE";
 
@@ -441,21 +442,21 @@ export async function runV2HierarchyScenario(
         .test(`${value.message ?? ""} ${JSON.stringify(value.detail ?? {})}`)),
     };
     const problems = problemList(checks);
-    await Bun.write(join(artifactRoot, "final.md"), finalText);
-    await save(join(artifactRoot, "agent-activity.json"), activity);
-    await save(join(artifactRoot, "tool-ledger.json"), ledger);
-    await save(join(artifactRoot, "thread-states.json"), { child: childState, grandchild: grandchildState });
+    saveLifecycleContentSummary(join(artifactRoot, "final.json"), "final", finalText);
+    saveRedactedLifecycleJson(join(artifactRoot, "agent-activity.json"), activity);
+    saveRedactedLifecycleJson(join(artifactRoot, "tool-ledger.json"), ledger);
+    saveRedactedLifecycleJson(join(artifactRoot, "thread-states.json"), { child: childState, grandchild: grandchildState });
     await save(join(artifactRoot, "timeline.json"), { startedAt: iso(startedAt), completedAt: iso(completedAt), creates });
     await save(join(artifactRoot, "recovery-projection.json"), diagnostics);
-    await save(join(artifactRoot, "descendant-compact.json"), {
+    saveRedactedLifecycleJson(join(artifactRoot, "descendant-compact.json"), {
       threadId: grandchildId,
       turnId: descendantCompactTurnId,
       compactionsBefore: descendantCompactionsBefore,
       compactionsAfter: descendantCompactionsAfter,
       launcher: descendantCompactEvents,
     });
-    await Bun.write(join(artifactRoot, "launcher.jsonl"), `${launcher.map(value => JSON.stringify(value)).join("\n")}\n`);
-    await Bun.write(join(artifactRoot, "problems.jsonl"), `${problems.map(value => JSON.stringify(value)).join("\n")}${problems.length ? "\n" : ""}`);
+    saveRedactedLifecycleJson(join(artifactRoot, "launcher.json"), launcher);
+    saveRedactedLifecycleJson(join(artifactRoot, "problems.json"), problems);
     return {
       status: problems.length === 0 ? "passed" : "failed",
       threadId,
@@ -493,7 +494,7 @@ export async function runV2HierarchyScenario(
       problems: [{ check: "scenario_completed", message }],
       message,
     };
-    await save(join(artifactRoot, "failure.json"), failed);
+    saveRedactedLifecycleJson(join(artifactRoot, "failure.json"), failed);
     return failed;
   }
 }

@@ -10,6 +10,7 @@ import { normalizeV2Activities } from "./codex-v2-activity";
 import { runV2HierarchyScenario } from "./codex-v2-scenario";
 import { hasLocalFileEvidence, skillContractEvidence } from "./skill-contract";
 import { smokePath } from "./paths";
+import { saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
 
 export function selfTestCodexLaneBudget(): void {
   assert(
@@ -124,7 +125,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     const auditText = run.received.flatMap(message => message.method === "item/completed"
       && message.params?.turnId === audit.turn.id && message.params?.item?.type === "agentMessage"
       ? [String(message.params.item.text)] : []).join("\n").replaceAll("\\_", "_");
-    await Bun.write(join(laneRoot, "steering-audit.txt"), auditText);
+    saveLifecycleContentSummary(join(laneRoot, "steering-audit.json"), "steering_audit", auditText);
     const auditSurface = rootEvents(auditAt).findLast(value => value.event === "browser.tab_created" || value.event === "browser.tab_reused");
     for (const value of rootEvents(auditAt).filter(value => value.event === "browser.tab_created")) {
       rootTab = String(value.detail?.tabId); tabs.add(rootTab);
@@ -170,9 +171,9 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     // hierarchy root must acquire a fresh surface before the two child levels.
     const hierarchy = await runV2HierarchyScenario(run, threadId, hierarchyRoot, { expectFreshRoot: false });
     const childText = hierarchy.finalText.replaceAll("\\_", "_");
-    await Bun.write(join(laneRoot, "handoff.txt"), childText);
-    await Bun.write(join(laneRoot, "steering-audit.txt"), auditText);
-    await Bun.write(join(laneRoot, "child-friction.txt"), childText);
+    saveLifecycleContentSummary(join(laneRoot, "handoff.json"), "handoff", childText);
+    saveLifecycleContentSummary(join(laneRoot, "steering-audit.json"), "steering_audit", auditText);
+    saveLifecycleContentSummary(join(laneRoot, "child-friction.json"), "child_friction", childText);
     checks.handoff_seen = childText.includes("摩擦");
     interruptedChildTab = hierarchy.agentTabs.child;
     childId = hierarchy.agents.grandchild;
@@ -210,7 +211,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
       events(compactAt),
       preManualCompactRootTab,
     );
-    await save(join(laneRoot, "retained-release-debug.json"), {
+    saveRedactedLifecycleJson(join(laneRoot, "retained-release-debug.json"), {
       auto: {
         sourceTab: preAutoCompactRootTab,
         events: events(longAt).filter(value => value.event === "browser.tab_released"
@@ -230,7 +231,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     const final = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: "請嘗試與剛才正常完成的同一位 grandchild 再互動，詢問它是否仍記得階層測試中的證據與摩擦；不要另派新的 subagent。收到回覆後，整理這段工作中的訊息追加、兩次上下文整理、交接、階層式 subagent 協作、中止與 TTL 續接，以及你觀察到的不足。" }] });
     await completed(run, final.turn.id, activeTurnSmokeTimeoutMs); const finalDone = Date.now();
     const finalMessages = run.messages(threadId).join("\n").replaceAll("\\_", "_");
-    await Bun.write(join(laneRoot, "final.txt"), finalMessages);
+    saveLifecycleContentSummary(join(laneRoot, "final.json"), "final", finalMessages);
     const finalEvents = events(finalAt); for (const value of finalEvents.filter(value => value.event === "browser.tab_created")) if (value.detail?.tabId) tabs.add(String(value.detail.tabId));
     const resumedChildInteraction = normalizeV2Activities(run.received, finalAt)
       .find(activity => activity.kind === "interacted" && activity.agentThreadId === childId);
