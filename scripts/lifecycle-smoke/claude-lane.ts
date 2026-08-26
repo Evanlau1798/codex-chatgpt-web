@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { loadConfig } from "../../src/config";
 import { DEFAULT_STALL_TIMEOUT_SEC } from "../../src/stall-timeout";
 import { buildClaudeSmokeSettings, selfTestClaudeSmokeSettings } from "./claude-config";
+import {
+  CLAUDE_RESULT_ABSOLUTE_TIMEOUT_MS,
+  ClaudeResultWatchdog,
+  waitForClaudeCommandExit,
+} from "./claude-watchdog";
 import { manualCompactPreservedRetainedRoot, selfTestManualCompactRetainedRoot } from "./retained-check";
 import {
   assert, auditPrompt, claudeExe, cutoff, detectRestriction, events, iso, LaneResult, repo, reviewTaskPrompt,
@@ -13,32 +18,6 @@ import {
 type RecordValue = Record<string, any>;
 
 export const CLAUDE_INITIAL_RESULT_TIMEOUT_MS = DEFAULT_STALL_TIMEOUT_SEC * 3 * 1_000 + 60_000;
-
-function claudeResultRecordSignalsProgress(record: RecordValue): boolean {
-  if (record.type === "assistant" || record.type === "user" || record.type === "result") return true;
-  if (record.type === "stream_event") {
-    const eventType = String(record.event?.type ?? "");
-    return eventType === "content_block_start"
-      || eventType === "content_block_delta"
-      || eventType === "content_block_stop"
-      || eventType === "message_delta"
-      || eventType === "message_stop";
-  }
-  if (record.type === "system") {
-    const subtype = String(record.subtype ?? "");
-    return subtype === "compact_boundary" || subtype.startsWith("task_");
-  }
-  return false;
-}
-
-function claudeResultDeadlineAfterRecords(
-  deadline: number,
-  now: number,
-  timeoutMs: number,
-  records: RecordValue[],
-): number {
-  return records.some(claudeResultRecordSignalsProgress) ? now + timeoutMs : deadline;
-}
 
 function sentMessageTo(records: RecordValue[], childId: string): boolean {
   return records.some(record => record.type === "assistant"
@@ -59,20 +38,8 @@ export function selfTestClaudeLaneBudget(): void {
   assert(!sentMessageTo([{ type: "assistant", message: { content: [{
     type: "tool_use", name: "SendMessage", input: { to: "other" },
   }] } }], "child"), "Claude child interaction matched the wrong recipient");
-  const deadline = 10_000;
-  assert(
-    claudeResultDeadlineAfterRecords(deadline, 5_000, 20_000, [
-      { type: "stream_event", event: { type: "ping" } },
-      { type: "system", subtype: "status", status: "requesting" },
-    ]) === deadline,
-    "Claude keepalive/status records must not extend the result inactivity deadline",
-  );
-  assert(
-    claudeResultDeadlineAfterRecords(deadline, 5_000, 20_000, [
-      { type: "assistant", message: { content: [{ type: "tool_use", name: "Read" }] } },
-    ]) === 25_000,
-    "Claude semantic progress must extend the result inactivity deadline",
-  );
+  assert(CLAUDE_RESULT_ABSOLUTE_TIMEOUT_MS > 30 * 60_000,
+    "Claude absolute result ceiling must cover the supported thirty-minute child turn");
   selfTestClaudeSmokeSettings(loadConfig());
   selfTestManualCompactRetainedRoot();
 }
@@ -134,9 +101,9 @@ class ClaudeRun {
   }
 
   async waitResult(number: number, timeoutMs: number) {
-    let deadline = Date.now() + timeoutMs;
+    const watchdog = new ClaudeResultWatchdog(Date.now(), timeoutMs);
     let observedRecords = this.records.length;
-    while (this.results < number && Date.now() < deadline) {
+    while (this.results < number && !watchdog.expired(Date.now())) {
       detectRestriction(events(Date.now() - 60_000));
       await new Promise<void>(resolve => {
         const timer = setTimeout(() => { this.waiters.delete(wake); resolve(); }, 500);
@@ -144,16 +111,12 @@ class ClaudeRun {
         this.waiters.add(wake);
       });
       if (this.records.length > observedRecords) {
-        deadline = claudeResultDeadlineAfterRecords(
-          deadline,
-          Date.now(),
-          timeoutMs,
-          this.records.slice(observedRecords),
-        );
+        watchdog.observe(Date.now(), this.records.slice(observedRecords));
         observedRecords = this.records.length;
       }
     }
-    assert(this.results >= number, `Claude result ${number} timed out`);
+    assert(this.results >= number,
+      `Claude result ${number} timed out: ${watchdog.expired(Date.now()) ?? "unknown"}`);
     const result = this.records.filter(record => record.type === "result")[number - 1];
     assert(result?.is_error !== true && result?.terminal_reason !== "api_error", `Claude result ${number} failed: ${result?.result ?? "unknown"}`);
     return result;
@@ -211,7 +174,7 @@ async function runClaudeCommand(output: string, configDir: string, sessionId: st
     env: { ...process.env, CLAUDE_CONFIG_DIR: configDir, CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000" }, stdout: "pipe", stderr: "pipe",
   });
   const [stdout, stderr, code] = await Promise.all([
-    new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+    new Response(child.stdout).text(), new Response(child.stderr).text(), waitForClaudeCommandExit(child),
   ]);
   await Bun.write(output, stdout);
   if (stderr) await Bun.write(output.replace(/\.jsonl$/, ".stderr.log"), stderr);
