@@ -90,12 +90,22 @@ export async function fetchLifecycleHealth(
   timeoutMs = 10_000,
   fetcher: LifecycleFetch = fetch,
 ): Promise<Response> {
+  return fetchWithTimeout(url, timeoutMs, "Lifecycle smoke health preflight", fetcher);
+}
+
+export async function fetchWithTimeout(
+  url: string,
+  timeoutMs: number,
+  label: string,
+  fetcher: LifecycleFetch = fetch,
+  init: RequestInit = {},
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetcher(url, { signal: controller.signal });
+    return await fetcher(url, { ...init, signal: controller.signal });
   } catch (error) {
-    if (controller.signal.aborted) throw new Error(`Lifecycle smoke health preflight timed out after ${timeoutMs}ms`);
+    if (controller.signal.aborted) throw new Error(`${label} timed out after ${timeoutMs}ms`);
     throw error;
   } finally {
     clearTimeout(timer);

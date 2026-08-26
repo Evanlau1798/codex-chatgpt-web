@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   acquireLifecycleLock,
+  fetchWithTimeout,
   fetchLifecycleHealth,
   lifecycleLockPath,
   releaseLifecycleLock,
@@ -57,5 +58,14 @@ test("lifecycle health preflight aborts an unresponsive daemon", async () => {
   });
   await expect(fetchLifecycleHealth("http://127.0.0.1/healthz", 10, fetcher)).rejects.toThrow(
     "health preflight timed out",
+  );
+});
+
+test("every lifecycle HTTP operation can name and bound its timeout", async () => {
+  const fetcher = (_input: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+  });
+  await expect(fetchWithTimeout("http://127.0.0.1/steer", 10, "steering", fetcher)).rejects.toThrow(
+    "steering timed out",
   );
 });

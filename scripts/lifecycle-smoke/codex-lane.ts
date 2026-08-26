@@ -11,6 +11,7 @@ import { runV2HierarchyScenario } from "./codex-v2-scenario";
 import { hasLocalFileEvidence, skillContractEvidence } from "./skill-contract";
 import { smokePath } from "./paths";
 import { lifecycleErrorCategory, saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
+import { fetchWithTimeout } from "./run-guard";
 
 export function selfTestCodexLaneBudget(): void {
   assert(
@@ -52,7 +53,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
   let interruptedChildTab = "";
   try {
     await waitCreateBudget();
-    const catalogBefore = Number((await (await fetch(`${serviceBaseUrl}/healthz`)).json()).successful_model_catalog_requests ?? 0);
+    const catalogBefore = Number((await (await fetchWithTimeout(`${serviceBaseUrl}/healthz`, 5_000, "Codex catalog preflight")).json()).successful_model_catalog_requests ?? 0);
     const run = new CodexRun(join(laneRoot, "app-server.jsonl")); runs.push(run); await run.initialize();
     const config = await run.request("config/read", { includeLayers: false });
     assert(config.config?.model_auto_compact_token_limit === 100_000, "Codex compact override is not 100000");
@@ -60,7 +61,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     const catalogDeadline = Date.now() + 30_000;
     let catalogReady = false;
     while (Date.now() < catalogDeadline) {
-      const health = await (await fetch(`${serviceBaseUrl}/healthz`)).json();
+      const health = await (await fetchWithTimeout(`${serviceBaseUrl}/healthz`, 5_000, "Codex catalog readiness")).json();
       if (Number(health.successful_model_catalog_requests ?? 0) > catalogBefore) { catalogReady = true; break; }
       await sleep(250);
     }

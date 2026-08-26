@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { getConfigPath, loadConfig } from "../../src/config";
 import { findClaudeTranscript, smokePath } from "./paths";
 import { saveLifecycleJson } from "./artifacts";
+import { fetchWithTimeout } from "./run-guard";
 
 const runtimeConfig = loadConfig();
 const defaultLauncherUserData = process.platform === "win32"
@@ -156,22 +157,26 @@ export async function submitClaudeSteering(sessionId: string, prompt: string, co
   const config = await Bun.file(getConfigPath()).json() as {
     host: string; port: number; controlToken: string;
   };
-  const response = await fetch(`http://${config.host}:${config.port}/v1/messages/steering`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${config.controlToken}`, "content-type": "application/json" },
-    body: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: sessionId, prompt }),
-  });
+  const response = await fetchWithTimeout(
+    `http://${config.host}:${config.port}/v1/messages/steering`, 10_000, "Claude steering hook", fetch, {
+      method: "POST",
+      headers: { authorization: `Bearer ${config.controlToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: sessionId, prompt }),
+    },
+  );
   assert(response.status === 204, `Claude steering hook failed: HTTP ${response.status}`);
 }
 
 export async function cutoff(tabId: string) {
   assert(browserDescriptor, "Lifecycle smoke requires a launcher browser descriptor");
   const descriptor = await Bun.file(browserDescriptor).json();
-  const response = await fetch(`${descriptor.control.endpoint}/v1/debug/turn/cutoff`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${descriptor.control.token}`, "content-type": "application/json" },
-    body: JSON.stringify({ tabId }),
-  });
+  const response = await fetchWithTimeout(
+    `${descriptor.control.endpoint}/v1/debug/turn/cutoff`, 10_000, "Browser cutoff cleanup", fetch, {
+      method: "POST",
+      headers: { authorization: `Bearer ${descriptor.control.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ tabId }),
+    },
+  );
   if (response.status !== 200 && response.status !== 404) throw new Error(`cutoff ${tabId} failed: ${response.status}`);
 }
 
