@@ -55,3 +55,23 @@ test("launcher event reader preserves UTF-8 characters split across polls", () =
   appendFileSync(active, line.subarray(split));
   expect(reader.read([active])[0]?.detail?.message).toBe("測試訊息");
 });
+
+test("launcher event reader binds rotation identity to the opened file", () => {
+  const root = join(tmpdir(), `lifecycle-launcher-events-${crypto.randomUUID()}`);
+  roots.push(root);
+  mkdirSync(root);
+  const active = join(root, "launcher.jsonl");
+  const rotated = `${active}.1`;
+  writeFileSync(active, event("2026-01-01T00:00:00.000Z", "one"));
+  let rotatedDuringOpen = false;
+  const reader = new LauncherEventReader({}, () => {
+    if (rotatedDuringOpen) return;
+    renameSync(active, rotated);
+    writeFileSync(active, event("2026-01-01T00:00:01.000Z", "two"));
+    rotatedDuringOpen = true;
+  });
+
+  expect(reader.read([active]).map(value => value.event)).toEqual(["one"]);
+  expect(rotatedDuringOpen).toBeTrue();
+  expect(reader.read([rotated, active]).map(value => value.event)).toEqual(["one", "two"]);
+});

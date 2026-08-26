@@ -1,4 +1,4 @@
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 
 export type LauncherEvent = {
   at: string;
@@ -30,7 +30,7 @@ export class LauncherEventReader {
     maxInitialTailBytes?: number;
     maxRetainedBytes?: number;
     maxLineBytes?: number;
-  } = {}) {}
+  } = {}, private afterOpen?: (path: string) => void) {}
 
   read(paths: string[], since = 0): LauncherEvent[] {
     let changed = false;
@@ -45,25 +45,26 @@ export class LauncherEventReader {
   }
 
   private readPath(path: string): boolean {
-    const stat = statSync(path);
-    const identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
-    let cursor = this.cursors.get(path);
-    if (!cursor || cursor.identity !== identity || stat.size < cursor.offset) {
-      const offset = Math.max(0, stat.size - (this.limits.maxInitialTailBytes ?? DEFAULT_INITIAL_TAIL_BYTES));
-      cursor = {
-        identity,
-        offset,
-        remainder: "",
-        remainderOffset: offset,
-        discardPartial: offset > 0,
-        decoder: new TextDecoder(),
-      };
-      this.cursors.set(path, cursor);
-    }
-    if (stat.size === cursor.offset) return false;
     const fd = openSync(path, "r");
-    let changed = false;
     try {
+      this.afterOpen?.(path);
+      const stat = fstatSync(fd);
+      const identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+      let cursor = this.cursors.get(path);
+      if (!cursor || cursor.identity !== identity || stat.size < cursor.offset) {
+        const offset = Math.max(0, stat.size - (this.limits.maxInitialTailBytes ?? DEFAULT_INITIAL_TAIL_BYTES));
+        cursor = {
+          identity,
+          offset,
+          remainder: "",
+          remainderOffset: offset,
+          discardPartial: offset > 0,
+          decoder: new TextDecoder(),
+        };
+        this.cursors.set(path, cursor);
+      }
+      if (stat.size === cursor.offset) return false;
+      let changed = false;
       while (cursor.offset < stat.size) {
         const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, stat.size - cursor.offset));
         const bytes = readSync(fd, buffer, 0, buffer.length, cursor.offset);
