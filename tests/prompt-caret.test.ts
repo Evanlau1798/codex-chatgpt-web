@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   chatGptCaretAtLogicalEnd,
   chatGptPromptAttachmentMismatch,
+  previousChatGptPromptMarkdownMarker,
 } from "../src/adapters/chatgpt-web/prompt-caret";
 
 test("classifies an exact composer readback mismatch as a recoverable pre-submit surface failure", () => {
@@ -70,4 +71,22 @@ test("rejects a caret that Lexical moved outside the active composer", () => {
     focusInsideComposer: true,
     trailingEditableText: "",
   })).toBeFalse();
+});
+
+test("finds Markdown restoration markers strictly right-to-left", () => {
+  const replacements = [
+    { marker: "\uE000", value: "`", count: 2 },
+    { marker: "\uE001", value: "*", count: 2 },
+  ];
+  const text = "a\uE000b\uE001c\uE000d\uE001";
+
+  expect(previousChatGptPromptMarkdownMarker(text, text.length, replacements)).toEqual({
+    offset: 7,
+    value: "*",
+  });
+  expect(previousChatGptPromptMarkdownMarker(text, 7, replacements)).toEqual({
+    offset: 5,
+    value: "`",
+  });
+  expect(previousChatGptPromptMarkdownMarker(text, 1, replacements)).toBeUndefined();
 });

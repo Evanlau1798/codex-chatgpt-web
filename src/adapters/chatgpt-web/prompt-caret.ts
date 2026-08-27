@@ -18,6 +18,21 @@ function codePointWindow(value: string, offset: number): string {
 
 const MARKDOWN_SHORTCUT_DELIMITERS = ["`", "*", "_", "~", "=", "[", ")"] as const;
 
+type MarkdownReplacement = { marker: string; value: string; count: number };
+
+export function previousChatGptPromptMarkdownMarker(
+  text: string,
+  before: number,
+  replacements: MarkdownReplacement[],
+): { offset: number; value: string } | undefined {
+  let match: { offset: number; value: string } | undefined;
+  for (const replacement of replacements) {
+    const offset = text.lastIndexOf(replacement.marker, before - 1);
+    if (offset >= 0 && (!match || offset > match.offset)) match = { offset, value: replacement.value };
+  }
+  return match;
+}
+
 export function guardChatGptPromptMarkdown(text: string): {
   text: string;
   replacements: Array<{ marker: string; value: string; count: number }>;
@@ -43,26 +58,70 @@ export function guardChatGptPromptMarkdown(text: string): {
 
 export async function restoreChatGptPromptMarkdown(
   composer: Locator,
-  replacements: Array<{ marker: string; value: string; count: number }>,
+  replacements: MarkdownReplacement[],
   count: number,
 ): Promise<boolean> {
   await composer.focus();
   return composer.evaluate(async (element, input) => {
     const selection = window.getSelection();
     if (!selection) return false;
-    for (let remaining = input.count; remaining > 0; remaining -= 1) {
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-      let match: { node: Text; offset: number; value: string } | undefined;
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const content = node.textContent ?? "";
-        let nodeMatch: { offset: number; value: string } | undefined;
-        for (const replacement of input.replacements) {
-          const offset = content.lastIndexOf(replacement.marker);
-          if (offset >= 0 && (!nodeMatch || offset > nodeMatch.offset)) {
-            nodeMatch = { offset, value: replacement.value };
-          }
+    const end = document.createRange();
+    end.selectNodeContents(element);
+    end.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(end);
+
+    const rightmostText = (node: Node): Text | undefined => {
+      if (node.nodeType === Node.TEXT_NODE) return node as Text;
+      for (let child = node.lastChild; child; child = child.previousSibling) {
+        const text = rightmostText(child);
+        if (text) return text;
+      }
+      return undefined;
+    };
+    const previousText = (node: Node): Text | undefined => {
+      for (let current: Node | null = node; current && current !== element; current = current.parentNode) {
+        for (let sibling = current.previousSibling; sibling; sibling = sibling.previousSibling) {
+          const text = rightmostText(sibling);
+          if (text) return text;
         }
-        if (nodeMatch) match = { node: node as Text, ...nodeMatch };
+      }
+      return undefined;
+    };
+    const cursor = (): { node: Text; offset: number } | undefined => {
+      const anchor = selection.anchorNode;
+      if (!anchor || (anchor !== element && !element.contains(anchor))) return undefined;
+      if (anchor.nodeType === Node.TEXT_NODE) {
+        const node = anchor as Text;
+        return { node, offset: Math.min(selection.anchorOffset, node.data.length) };
+      }
+      for (let index = Math.min(selection.anchorOffset, anchor.childNodes.length) - 1; index >= 0; index -= 1) {
+        const node = rightmostText(anchor.childNodes[index]!);
+        if (node) return { node, offset: node.data.length };
+      }
+      const node = previousText(anchor);
+      return node ? { node, offset: node.data.length } : undefined;
+    };
+    const previousMarker = (text: string, before: number) => {
+      let match: { offset: number; value: string } | undefined;
+      for (const replacement of input.replacements) {
+        const offset = text.lastIndexOf(replacement.marker, before - 1);
+        if (offset >= 0 && (!match || offset > match.offset)) match = { offset, value: replacement.value };
+      }
+      return match;
+    };
+
+    for (let remaining = input.count; remaining > 0; remaining -= 1) {
+      let position = cursor();
+      let match: { node: Text; offset: number; value: string } | undefined;
+      while (position) {
+        const found = previousMarker(position.node.data, position.offset);
+        if (found) {
+          match = { node: position.node, ...found };
+          break;
+        }
+        const node = previousText(position.node);
+        position = node ? { node, offset: node.data.length } : undefined;
       }
       if (!match) return false;
       const range = document.createRange();
