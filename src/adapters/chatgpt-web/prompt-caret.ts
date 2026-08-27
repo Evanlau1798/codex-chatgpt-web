@@ -10,6 +10,73 @@ export interface ChatGptCaretEvidence {
 
 const ZERO_WIDTH_TEXT = /[\u200B\u200C\u200D\u2060\uFEFF]/g;
 
+function codePointWindow(value: string, offset: number): string {
+  return Array.from(value.slice(offset), char => (
+    `U+${char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`
+  )).slice(0, 6).join(",");
+}
+
+const MARKDOWN_SHORTCUT_DELIMITERS = ["`", "*", "_", "~", "=", "[", ")"] as const;
+
+export function guardChatGptPromptMarkdown(text: string): {
+  text: string;
+  replacements: Array<{ marker: string; value: string; count: number }>;
+  count: number;
+} | undefined {
+  let guarded = text;
+  let codePoint = 0xE000;
+  const replacements: Array<{ marker: string; value: string; count: number }> = [];
+  for (const value of MARKDOWN_SHORTCUT_DELIMITERS) {
+    const count = text.length - text.replaceAll(value, "").length;
+    if (count === 0) continue;
+    let marker = replacements.length === 0 ? "\u2060" : String.fromCharCode(codePoint++);
+    while (text.includes(marker) || replacements.some(replacement => replacement.marker === marker)) {
+      if (codePoint > 0xF8FF) throw new Error("ChatGPT prompt has no available Markdown marker");
+      marker = String.fromCharCode(codePoint++);
+    }
+    guarded = guarded.replaceAll(value, marker);
+    replacements.push({ marker, value, count });
+  }
+  if (replacements.length === 0) return undefined;
+  return { text: guarded, replacements, count: replacements.reduce((sum, value) => sum + value.count, 0) };
+}
+
+export async function restoreChatGptPromptMarkdown(
+  composer: Locator,
+  replacements: Array<{ marker: string; value: string; count: number }>,
+  count: number,
+): Promise<boolean> {
+  await composer.focus();
+  return composer.evaluate(async (element, input) => {
+    const selection = window.getSelection();
+    if (!selection) return false;
+    for (let remaining = input.count; remaining > 0; remaining -= 1) {
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let match: { node: Text; offset: number; value: string } | undefined;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const content = node.textContent ?? "";
+        let nodeMatch: { offset: number; value: string } | undefined;
+        for (const replacement of input.replacements) {
+          const offset = content.lastIndexOf(replacement.marker);
+          if (offset >= 0 && (!nodeMatch || offset > nodeMatch.offset)) {
+            nodeMatch = { offset, value: replacement.value };
+          }
+        }
+        if (nodeMatch) match = { node: node as Text, ...nodeMatch };
+      }
+      if (!match) return false;
+      const range = document.createRange();
+      range.setStart(match.node, match.offset);
+      range.setEnd(match.node, match.offset + 1);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      if (!document.execCommand("insertText", false, match.value)) return false;
+      await Promise.resolve();
+    }
+    return true;
+  }, { replacements, count }, { timeout: 20_000 });
+}
+
 export function chatGptPromptAttachmentMismatch(
   message: string,
   expected: string,
@@ -23,7 +90,7 @@ export function chatGptPromptAttachmentMismatch(
     }
   }
   return chatGptWebSurfaceError(
-    `${message} (expectedChars=${expected.length}, actualChars=${observed.length}, commonPrefixChars=${commonPrefix})`,
+    `${message} (expectedChars=${expected.length}, actualChars=${observed.length}, commonPrefixChars=${commonPrefix}, expectedCodePoints=${codePointWindow(expected, commonPrefix)}, actualCodePoints=${codePointWindow(observed, commonPrefix)})`,
     false,
   );
 }

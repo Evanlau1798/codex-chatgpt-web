@@ -121,7 +121,12 @@ import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGpt
 import { ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, redactChatGptUiDiagnostic } from "./browser-diagnostics";
-import { chatGptPromptAttachmentMismatch, reanchorChatGptComposerCaret } from "./prompt-caret";
+import {
+  chatGptPromptAttachmentMismatch,
+  guardChatGptPromptMarkdown,
+  reanchorChatGptComposerCaret,
+  restoreChatGptPromptMarkdown,
+} from "./prompt-caret";
 import { chatGptCompletionEvidenceFailure } from "./same-surface-readiness";
 import {
   ChatGptLunaCheckpointStream,
@@ -1747,19 +1752,33 @@ export class ChatGptBrowserWorker {
   }
 
   private async insertPromptText(page: Page, text: string, abortSignal?: AbortSignal): Promise<void> {
-    for (let offset = 0; offset < text.length;) {
+    const guarded = guardChatGptPromptMarkdown(text);
+    const insertionText = guarded?.text ?? text;
+    for (let offset = 0; offset < insertionText.length;) {
       throwIfPromptAttachmentAborted(abortSignal);
-      const end = promptInsertChunkEnd(text, offset);
-      await page.keyboard.insertText(text.slice(offset, end));
+      const end = promptInsertChunkEnd(insertionText, offset);
+      const chunk = insertionText.slice(offset, end);
+      await page.keyboard.insertText(chunk);
       throwIfPromptAttachmentAborted(abortSignal);
-      if (end < text.length) {
+      if (end < insertionText.length) {
         // Lexical can rebuild the active block after an exact commit and move its native selection.
         // Re-anchor only after the verified prefix is stable, before the next irreversible edit.
-        const expectedPrefix = text.slice(0, end).trimStart();
+        const expectedPrefix = insertionText.slice(0, end).trimStart();
         await this.waitForPromptChunkAttached(page, expectedPrefix, abortSignal);
         await this.reanchorPromptCaret(page, abortSignal);
       }
       offset = end;
+    }
+    if (guarded) {
+      throwIfPromptAttachmentAborted(abortSignal);
+      if (!await restoreChatGptPromptMarkdown(
+        await this.activeComposer(page),
+        guarded.replacements,
+        guarded.count,
+      )) {
+        throw chatGptWebSurfaceError("ChatGPT composer could not restore literal Markdown delimiters", false);
+      }
+      await this.reanchorPromptCaret(page, abortSignal);
     }
   }
 

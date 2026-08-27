@@ -497,6 +497,40 @@ test("multi-chunk prompt insertion repairs a drifted Lexical caret after each ex
   ]);
 });
 
+test("Markdown shortcut delimiters are restored right-to-left after all bounded prompt edits", async () => {
+  const prompt = "Preserve *literal* and `.gitignore`.";
+  const restorations: unknown[] = [];
+  const nativeEdits: string[] = [];
+  const page = {
+    keyboard: { insertText: async (value: string) => { nativeEdits.push(value); } },
+  };
+  const composer = {
+    focus: async () => {},
+    evaluate: async (_callback: unknown, value: unknown) => {
+      restorations.push(value);
+      return true;
+    },
+  };
+  const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
+    insertPromptText(page: unknown, text: string): Promise<void>;
+  }).insertPromptText;
+
+  await insertPromptText.call({
+    activeComposer: async () => composer,
+    waitForPromptChunkAttached: async () => {},
+    reanchorPromptCaret: async () => {},
+  }, page, prompt);
+
+  expect(nativeEdits).toEqual(["Preserve \uE000literal\uE000 and \u2060.gitignore\u2060."]);
+  expect(restorations).toEqual([{
+    replacements: [
+      { marker: "\u2060", value: "`", count: 2 },
+      { marker: "\uE000", value: "*", count: 2 },
+    ],
+    count: 4,
+  }]);
+});
+
 test("prompt insertion avoids a native edit boundary inside a text token", async () => {
   const prompt = `${"x".repeat(CHATGPT_PROMPT_INSERT_CHUNK_CHARS - 100)} ${"tonumber".repeat(100)}`;
   const inserted: string[] = [];
@@ -652,6 +686,13 @@ test("the real compaction envelope survives simulated caret drift at every bound
   let attached = "";
   let caret = 0;
   let simulatedDrifts = 0;
+  const composer = {
+    focus: async () => {},
+    evaluate: async () => {
+      attached = compiled.text;
+      return true;
+    },
+  };
   const page = {
     keyboard: {
       insertText: async (value: string) => {
@@ -665,6 +706,7 @@ test("the real compaction envelope survives simulated caret drift at every bound
   }).insertPromptText;
 
   await insertPromptText.call({
+    activeComposer: async () => composer,
     waitForPromptChunkAttached: async (_page: unknown, expected: string) => {
       expect(attached).toBe(expected);
       caret = Math.max(0, attached.length - 16);
