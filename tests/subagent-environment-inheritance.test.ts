@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
+import { chatGptAgentLifecycleOptions } from "../src/adapters/chatgpt-web/agent-session-lifecycle";
+import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import { completeChatGptToolResults } from "../src/adapters/chatgpt-web/tool-result-delivery";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import type { BrokerToolResult, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import type { CodexParsedRequest } from "../src/types";
 
 test("inherits a spawned Codex agent before delivering its tool result", async () => {
   const session = new ChatGptTurnSession({
@@ -240,6 +243,80 @@ test("retires only the interrupted native V2 child before delivering its result"
     "deliver",
   ]);
   expect(sessions.retireGroup(grandchildGroup)).toBe(1);
+});
+
+test("production lifecycle wiring keeps interrupt targeted and close recursive", async () => {
+  const childThreadId = "019ff0ff-1438-7a00-9aa2-0f1887d92a6c";
+  const parentGroup = "provider:root-thread";
+  const childGroup = `provider:${childThreadId}`;
+  const grandchildGroup = "provider:grandchild-thread";
+  const parsed = {
+    _rawBody: {
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({ thread_id: "root-thread" }),
+      },
+    },
+  } as CodexParsedRequest;
+
+  for (const [protocol, target] of [
+    ["multi_agent_v1", childThreadId],
+    ["collaboration", "/root/worker"],
+  ] as const) {
+    for (const action of ["interrupt", "close"] as const) {
+      const events: string[] = [];
+      const sessions = new ChatGptTurnSessions();
+      sessions.getOrCreate(`${protocol}-${action}-child`, () => ({
+        mode: "read-only", browser: new Promise<string>(() => {}),
+        trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(),
+        cancel: () => events.push("cancel:child"),
+      }), childGroup);
+      sessions.getOrCreate(`${protocol}-${action}-grandchild`, () => ({
+        mode: "read-only", browser: new Promise<string>(() => {}),
+        trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(),
+        cancel: () => events.push("cancel:grandchild"),
+      }), grandchildGroup);
+      sessions.linkGroups(parentGroup, childGroup);
+      sessions.linkGroups(childGroup, grandchildGroup);
+      sessions.linkAgentReference(parentGroup, "/root/worker");
+
+      const session = new ChatGptTurnSession({
+        mode: "tools",
+        browser: new Promise<string>(() => {}),
+        token: Promise.resolve("turn-token"),
+        trace: new ChatGptTraceFeed(),
+        text: new ChatGptTextFeed(),
+        cancel: () => {},
+      });
+      const callId = `${protocol}-${action}`;
+      session.setOutstanding([{
+        callId,
+        wireName: `${protocol}__${action}_agent`,
+        freeform: false,
+        arguments: { target },
+      }]);
+
+      await completeChatGptToolResults(session, {
+        completeTool() { events.push("deliver"); },
+      }, "turn-token", [{
+        role: "toolResult",
+        toolCallId: callId,
+        toolName: `${action}_agent`,
+        content: JSON.stringify({ previous_status: "running" }),
+        isError: false,
+        timestamp: 1,
+      }], chatGptAgentLifecycleOptions(
+        new ChatGptThreadEnvironmentStore(),
+        parsed,
+        sessions,
+        "provider",
+      ));
+
+      expect(events).toEqual(action === "close"
+        ? ["cancel:child", "cancel:grandchild", "deliver"]
+        : ["cancel:child", "deliver"]);
+      expect(sessions.retireGroup(grandchildGroup)).toBe(action === "close" ? 0 : 1);
+    }
+  }
 });
 
 test("does not guess native V2 task paths when sibling bindings are ambiguous", () => {
