@@ -68,6 +68,15 @@ function targetsSkill(item: Record<string, any>, skillPath: string): boolean {
     || (identity.includes("openai-docs") && identity.includes("skill.md"));
 }
 
+function targetsSkillDocument(item: Record<string, any>): boolean {
+  return normalize(JSON.stringify({
+    command: item.command,
+    arguments: item.arguments,
+    tool: item.tool,
+    server: item.server,
+  })).includes("skill.md");
+}
+
 function completeRead(items: Record<string, any>[], expected: string, skillPath: string): boolean {
   const output = normalize(items.flatMap(item => strings({
     aggregatedOutput: item.aggregatedOutput,
@@ -124,7 +133,10 @@ export function skillContractEvidence(
     JSON.stringify(event).includes("served context chunk=")
     && JSON.stringify(event).includes("complete=true")
   ));
-  const firstWork = started[0];
+  const firstWork = started.find(message => {
+    const item = workItem(message)!;
+    return targetsSkill(item, skillPath) || !targetsSkillDocument(item);
+  });
   const firstSkill = skillStarted[0];
   const archiveAt = archiveComplete?.at ?? null;
   const skillAt = firstSkill?.receivedAt ?? null;

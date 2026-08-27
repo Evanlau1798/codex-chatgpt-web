@@ -114,3 +114,33 @@ test("skill contract artifacts never retain an absolute user path", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("skill contract allows mandatory prerequisite skill reads before the selected skill", () => {
+  const root = mkdtempSync(join(tmpdir(), "lifecycle-skill-order-"));
+  try {
+    const selectedPath = join(root, "openai-docs", "SKILL.md");
+    const prerequisitePath = join(root, "agent-handoff-discipline", "SKILL.md");
+    mkdirSync(join(root, "openai-docs"), { recursive: true });
+    writeFileSync(selectedPath, "# Selected skill\n", "utf8");
+    const started = (id: string, command: string) => ({
+      method: "item/started",
+      receivedAt: "2026-01-01T00:00:00.000Z",
+      params: { turnId: "turn", item: { id, type: "commandExecution", command } },
+    });
+
+    const prerequisiteFirst = skillContractEvidence([
+      started("prerequisite", `Get-Content -Raw '${prerequisitePath}'`),
+      started("selected", `Get-Content -Raw '${selectedPath}'`),
+    ], [], "turn", "trace", selectedPath);
+    const ordinaryWorkFirst = skillContractEvidence([
+      started("source", "Get-Content -Raw 'src/index.ts'"),
+      started("selected", `Get-Content -Raw '${selectedPath}'`),
+    ], [], "turn", "trace", selectedPath);
+
+    expect(prerequisiteFirst.firstWorkItemId).toBe("selected");
+    expect(prerequisiteFirst.firstWorkWasSkillRead).toBeTrue();
+    expect(ordinaryWorkFirst.firstWorkWasSkillRead).toBeFalse();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
