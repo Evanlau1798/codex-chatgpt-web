@@ -265,7 +265,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     let rootTrace = String(created.detail?.traceId);
     const hadCommentary = await waitSteeringPoint(initialAt, rootTrace, CLAUDE_INITIAL_RESULT_TIMEOUT_MS);
     const steeringAt = Date.now();
-    await submitClaudeSteering(sessionId, steeringText, configDir);
+    await submitClaudeSteering(sessionId, `${steeringText}\n\n${auditPrompt}`, configDir);
     const initialResult = await initial.waitResult(1, CLAUDE_INITIAL_RESULT_TIMEOUT_MS);
     const initialDone = Date.now();
     lastRootCompletionAt = initialDone;
@@ -275,6 +275,8 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       rootTab = String(value.detail?.tabId); tabs.add(rootTab);
     }
     const initialText = initial.rawText().replaceAll("\\_", "_");
+    const auditText = (initial.assistantTextSince(0) || String(initialResult.result ?? "")).replaceAll("\\_", "_");
+    saveLifecycleContentSummary(join(laneRoot, "steering-audit.json"), "steering_audit", auditText);
     checks.initial_tool_completed = initial.records.some(record => record.type === "assistant" && record.message?.content?.some?.((block: RecordValue) => block.type === "tool_use"))
       && initial.records.some(record => record.type === "user" && record.message?.content?.some?.((block: RecordValue) => block.type === "tool_result"));
     checks.initial_commentary_observed = hadCommentary;
@@ -288,28 +290,6 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     checks.initial_retained = rootEvents(initialAt).some(value => value.event === "browser.tab_retained" && value.detail?.tabId === rootTab);
     timelines.push(stageTimeline(initialAt, rootTrace, { phase: "initial", request_sent: iso(initialAt), completed: iso(initialDone), ...initial.firstClientTimes(initialAt) }));
     assert(initialResult.subtype === "success", "Claude initial turn failed");
-
-    await waitRootRequestBudget(lastRootCompletionAt);
-    const auditAt = Date.now();
-    const audit = new ClaudeRun(join(laneRoot, "steering-audit.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
-    runs.push(audit);
-    await audit.send(sessionId, auditPrompt);
-    const auditResult = await audit.waitResult(1, CLAUDE_INITIAL_RESULT_TIMEOUT_MS);
-    const auditDone = Date.now();
-    lastRootCompletionAt = auditDone;
-    const auditText = (audit.assistantTextSince(0) || String(auditResult.result ?? "")).replaceAll("\\_", "_");
-    await audit.close();
-    saveLifecycleContentSummary(join(laneRoot, "steering-audit.json"), "steering_audit", auditText);
-    const auditEvents = events(auditAt);
-    const auditSurface = auditEvents.findLast(value => value.event === "browser.tab_created" || value.event === "browser.tab_reused");
-    for (const value of auditEvents.filter(value => value.event === "browser.tab_created")) {
-      rootTab = String(value.detail?.tabId); tabs.add(rootTab);
-    }
-    if (auditSurface?.detail?.traceId) rootTrace = String(auditSurface.detail.traceId);
-    timelines.push(stageTimeline(auditAt, String(auditSurface?.detail?.traceId ?? ""), {
-      phase: "steering_audit", request_sent: iso(auditAt), completed: iso(auditDone), ...audit.firstClientTimes(auditAt),
-    }));
-    assert(auditResult.subtype === "success", "Claude steering audit turn failed");
 
     await waitRootRequestBudget(lastRootCompletionAt);
     const longAt = Date.now();

@@ -31,16 +31,12 @@ test("both live lanes anchor root cooldowns to request completion", () => {
 
 test("steering audit accepts natural stopping wording", () => {
   expect(steeringAuditPassed(`1. It appeared appended to a tool result.
-2. The preceding and following control sentences were visible.
-3. I can see 2 literal occurrences.
-4. It appeared at the tool boundary.
-5. It did not ask for repeated mention or stopping the original task.`)).toBe(true);
+2. I can see one literal occurrence.
+3. It did not ask for repeated mention or stopping the original task.`)).toBe(true);
 });
 
 test("steering audit accepts an explicit none-of-those denial", () => {
   expect(steeringAuditPassed(`1. It appeared appended to a tool result.
-2. The adjacent control sentences were visible.
-3. Two literal occurrences are visible.
-4. It appeared at the tool boundary.
-5. None of those. The adjacent text said to continue the original task.`)).toBe(true);
+2. One literal occurrence is visible.
+3. None of those. The adjacent text said to continue the original task.`)).toBe(true);
 });

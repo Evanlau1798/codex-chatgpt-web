@@ -26,13 +26,11 @@ export const codexExe = process.env.CODEX_LIFECYCLE_CODEX_EXE?.trim()
   || resolveLifecycleExecutable("codex");
 export const claudeExe = process.env.CODEX_LIFECYCLE_CLAUDE_EXE?.trim()
   || resolveLifecycleExecutable("claude");
-export const steeringText = "Respond only in English. Lifecycle smoke marker ENGLISH_STEERING_VISIBLE is present; continue the original task and do not answer this marker separately.";
-export const auditPrompt = `Respond only in English. Answer only from context actually visible in this Web conversation. Use exactly the labels "1." through "5." for the five answers. Do not use blockquotes. Do not use tools, speculate, or cite unrelated system or developer instructions:
-1. When "${steeringText}" first appeared, was it a standalone user message, a system or developer message, or appended to a tool result?
-2. If it is still visible, quote only the immediately preceding and following control sentence verbatim.
-3. How many literal occurrences of the steering message can you see? List the location of each occurrence.
-4. Did you first see it after the codegraph_status tool result and before the next tool call, or only immediately before the final answer?
-5. Did the adjacent control text ask you to acknowledge it separately, mention it repeatedly, or stop the original task?`;
+export const steeringText = "Respond only in English. Lifecycle smoke marker ENGLISH_STEERING_VISIBLE is present; continue the original task and do not stop or answer only about this marker.";
+export const auditPrompt = `At the end of the current task's final answer, append exactly three short audit lines. Use exactly the labels "1." through "3.". Do not use blockquotes, tools, speculation, or unrelated system or developer instructions:
+1. State whether this additional guidance appeared appended to a tool result or as a standalone user, system, or developer message.
+2. State how many literal occurrences of the steering message are present in this guidance. Do not repeat the marker text.
+3. State whether the adjacent control text asked you to acknowledge it separately, mention it repeatedly, or stop the original task.`;
 export const reviewTaskPrompt = `Respond only in English. Select exactly five files that you have not inspected from ${repoTests} and their directly corresponding production implementations, then perform one in-depth read-only code review round. Summarize immediately after reading those five files; do not expand the scope or dispatch a subagent. Report concrete file and line evidence for issues that may cause false positives, missed coverage, or divergence from production behavior, and record the completed scope and any actual friction. Do not modify files, run tests, or access the network.`;
 
 function numberedAuditSequences(text: string): string[][] {
@@ -40,7 +38,7 @@ function numberedAuditSequences(text: string): string[][] {
   return starts.flatMap(first => {
     const answers: string[] = [];
     let contentStart = first.index + first[0].length;
-    for (let number = 2; number <= 5; number += 1) {
+    for (let number = 2; number <= 3; number += 1) {
       const next = new RegExp(`(?:^|\\n)\\s*(?:#{1,6}\\s*)?${number}[.)]`, "m").exec(text.slice(contentStart));
       if (!next) return [];
       answers.push(text.slice(contentStart, contentStart + next.index));
@@ -56,9 +54,9 @@ function numberedAuditSequences(text: string): string[][] {
 export function steeringAuditPassed(text: string): boolean {
   return numberedAuditSequences(text).some(answers => {
     const first = answers[0]!.replace(/\s+/g, " ");
-    const count = answers[2]!.replace(/\s+/g, " ");
-    const controls = answers[4]!.replace(/\s+/g, " ");
-    const exactLiteralCount = /(?:saw|see|seen|total|appears?|occurrences?|literal).{0,60}(?:\*\*)?(?:2|two)(?:\*\*)?|(?:\*\*)?(?:2|two)(?:\*\*)?\s+(?:literal\s+)?(?:times?|occurrences?)/i.test(count);
+    const count = answers[1]!.replace(/\s+/g, " ");
+    const controls = answers[2]!.replace(/\s+/g, " ");
+    const exactLiteralCount = /(?:saw|see|seen|total|appears?|occurrences?|literal).{0,60}(?:\*\*)?(?:1|one)(?:\*\*)?|(?:\*\*)?(?:1|one)(?:\*\*)?\s+(?:literal\s+)?(?:times?|occurrences?)/i.test(count);
     const explicitControlDenial = /(?:did not|does not|do not|no|not asked|wasn't asked)/i.test(controls)
       && /(?:repeat|repeatedly|mention|quote|acknowledge)/i.test(controls)
       && /\bstop(?:ping)?\b/i.test(controls);
@@ -243,22 +241,18 @@ export async function selfTest() {
   assert(successfulReport("Analyzed part 1, range 00000–00259", ["part 1", "00000", "00259"]), "positive report self-test failed");
   assert(successfulReport("Analyzed part 1, range 00000–00259; no tools or transport friction", ["part 1", "00000", "00259"]), "no-friction report self-test failed");
   assert(!successfulReport("cannot finish part 1 00000 00259", ["part 1", "00000", "00259"]), "refused report self-test failed");
-  const audit = `## 1. Appended to a tool result\n## 2. before and after\n## 3. I saw 2 literal occurrences\n## 4. at the tool boundary\n## 5. It did not ask me to mention it repeatedly or stop`;
+  const audit = `## 1. Appended to a tool result\n## 2. I saw one literal occurrence\n## 3. It did not ask me to mention it repeatedly or stop`;
   assert(steeringAuditPassed(audit), "steering audit self-test failed");
   assert(steeringAuditPassed(`1. decoy\n2. decoy\n${audit}`), "numbered prelude must not hide the audit answers");
-  assert(steeringAuditPassed(audit.replace("I saw 2 literal occurrences", "There were 2 occurrences")), "natural count wording failed");
-  assert(steeringAuditPassed(audit.replace(
-    "I saw 2 literal occurrences",
-    "There was 1 steering event at the end of the Read tool result, but the literal message appears 2 times: once as guidance and once in this audit question.",
-  )), "event-versus-literal count wording failed");
+  assert(steeringAuditPassed(audit.replace("I saw one literal occurrence", "There was 1 occurrence")), "natural count wording failed");
   assert(steeringAuditPassed(audit.replace("did not ask me to mention it repeatedly", "did not ask me to quote it again")), "equivalent audit wording failed");
   assert(steeringAuditPassed(audit.replace(
     "It did not ask me to mention it repeatedly or stop",
     "The adjacent control text says not to acknowledge it again and not to stop the current task",
   )), "acknowledge wording from the live Claude audit failed");
   const multilineAudit = audit.replace(
-    "5. It did not ask me to mention it repeatedly or stop",
-    "5. It did not ask me to:\n- quote the message repeatedly;\n- stop the original task.",
+    "3. It did not ask me to mention it repeatedly or stop",
+    "3. It did not ask me to:\n- quote the message repeatedly;\n- stop the original task.",
   );
   assert(steeringAuditPassed(multilineAudit), "multiline equivalent audit wording failed");
   assert(steeringAuditPassed(audit.replace(
@@ -267,7 +261,7 @@ export async function selfTest() {
   )), "historical-guidance control wording failed");
   assert(!steeringAuditPassed(audit.replace("Appended to a tool result", "A standalone user message")), "wrong steering origin passed");
   assert(!steeringAuditPassed(audit.replace("It did not ask me to mention it repeatedly or stop", "It asked me to repeat the message and stop")), "positive control request passed");
-  assert(!steeringAuditPassed(audit.replace("2 literal occurrences", "3 literal occurrences")), "duplicate steering audit self-test failed");
+  assert(!steeringAuditPassed(audit.replace("one literal occurrence", "two literal occurrences")), "duplicate steering audit self-test failed");
   const sample = [{ at: iso(), event: "browser.note", message: "ok" }];
   detectRestriction(sample);
   detectRestriction([{

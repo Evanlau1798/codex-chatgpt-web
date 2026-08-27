@@ -34,8 +34,15 @@ test("the English steering marker continues instead of replacing the active task
 });
 
 test("the steering audit requires stable numbered answer labels", () => {
-  expect(auditPrompt).toContain('Use exactly the labels "1." through "5."');
+  expect(auditPrompt).toContain('Use exactly the labels "1." through "3."');
   expect(auditPrompt).toContain("Do not use blockquotes");
+});
+
+test("Claude audits steering inside the same active turn", () => {
+  const source = readFileSync(join(import.meta.dir, "..", "scripts", "lifecycle-smoke", "claude-lane.ts"), "utf8");
+
+  expect(source).toContain("`${steeringText}\\n\\n${auditPrompt}`");
+  expect(source).not.toContain('new ClaudeRun(join(laneRoot, "steering-audit.jsonl")');
 });
 
 test("root lifecycle resumes use a one-minute cooldown", () => {
