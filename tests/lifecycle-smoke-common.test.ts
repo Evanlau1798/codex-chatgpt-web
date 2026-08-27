@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { cleanupLifecycleResources, rootRequestCooldownRemaining, steeringAuditPassed } from "../scripts/lifecycle-smoke/common";
+import { auditPrompt, cleanupLifecycleResources, rootRequestCooldownRemaining, steeringAuditPassed } from "../scripts/lifecycle-smoke/common";
+
+test("steering audit names the earlier steered guidance instead of its own user request", () => {
+  expect(auditPrompt).toContain("Audit only the earlier lifecycle steering guidance containing marker ENGLISH_STEERING_VISIBLE");
+  expect(auditPrompt).toContain("not this current audit request");
+});
 
 test("cleanup attempts every resource and fails the lane after any error", async () => {
   const calls: string[] = [];
