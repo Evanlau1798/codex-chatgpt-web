@@ -43,11 +43,11 @@ test("Claude close rejects protocol overflow arriving after a result chunk", asy
 });
 
 test("Claude lane surface accounting fails closed on an extra Web tab", () => {
-  const expected = ["initial-root", "audit-root", "auto-root", "child", "final-root"].map((tabId, index) => ({
+  const expected = ["initial-root", "auto-root", "child", "final-root"].map((tabId, index) => ({
     at: `2026-01-01T00:00:0${index}.000Z`, event: "browser.tab_created",
     detail: { tabId, traceId: `trace-${index}` },
   }));
-  const childReuse = { at: "2026-01-01T00:00:05.000Z", event: "browser.tab_reused", detail: { tabId: "child", traceId: "child-resume" } };
+  const childReuse = { at: "2026-01-01T00:00:04.000Z", event: "browser.tab_reused", detail: { tabId: "child", traceId: "child-resume" } };
 
   expect(claudeLaneSurfaceCountIsExact([...expected, childReuse] as any, 0, "child")).toBeTrue();
   expect(claudeLaneSurfaceCountIsExact([...expected, childReuse, {

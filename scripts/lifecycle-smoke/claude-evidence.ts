@@ -25,7 +25,7 @@ export function claudeLaneSurfaceCountIsExact(
   const createdTabs = new Set(creates.map(value => String(value.detail!.tabId)));
   const childResumes = launcher.filter(value => value.event === "browser.tab_reused"
     && value.detail?.tabId === childTab);
-  return creates.length === 5 + safeRecoveries
+  return creates.length === 4 + safeRecoveries
     && createdTabs.size === creates.length
     && childResumes.length === 1;
 }
