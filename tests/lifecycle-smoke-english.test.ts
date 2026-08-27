@@ -43,7 +43,8 @@ test("the hierarchy root follows the transport-safe agent wait contract", () => 
   expect(hierarchyPrompt).toContain("repeat the same wait_agent call");
   expect(hierarchyPrompt).not.toContain("must not poll wait_agent");
   expect(hierarchyPrompt).toContain("complete before the child follow-up");
-  expect(hierarchyPrompt).toContain("at least 90 seconds");
+  expect(hierarchyPrompt).toContain("exactly six consecutive wait_agent calls");
+  expect(hierarchyPrompt).toContain("Immediately after the sixth timeout");
   expect(hierarchyPrompt).toContain("interrupt=true exactly once");
 });
 
