@@ -1,5 +1,5 @@
 import type { ProviderAdapter } from "../adapters/base";
-import { createChatGptWebAdapter } from "../adapters/chatgpt-web";
+import { chatGptWebExecutionNamespace, createChatGptWebAdapter } from "../adapters/chatgpt-web";
 import { ChatGptWebAdapterError } from "../adapters/chatgpt-web/adapter-error";
 import { bindClaudeSessionAbort } from "../adapters/chatgpt-web/claude-subagent";
 import { chatGptTurnSessions } from "../adapters/chatgpt-web/turn-execution";
@@ -72,6 +72,7 @@ export async function messagesRequest(
   try { inputTokens = estimateChatGptWebInputTokens(request.parsed, capabilities(config)); } catch {}
   const queue = new AsyncEventQueue<AdapterEvent>();
   const abort = new AbortController();
+  const provider = providerConfig(config);
   if (req.signal.aborted) abort.abort();
   else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
   const run = async () => {
@@ -82,8 +83,10 @@ export async function messagesRequest(
         queue.push({ type: "done", stopReason: "stop", endTurn: true });
         return;
       }
-      unbindSessionAbort = bindClaudeSessionAbort(request.parsed, abort.signal, chatGptTurnSessions);
-      await adapterFactory(providerConfig(config)).runTurn(request.parsed, {
+      unbindSessionAbort = bindClaudeSessionAbort(
+        request.parsed, abort.signal, chatGptTurnSessions, chatGptWebExecutionNamespace(provider),
+      );
+      await adapterFactory(provider).runTurn(request.parsed, {
         headers: req.headers,
         abortSignal: abort.signal,
       }, event => queue.push(event));

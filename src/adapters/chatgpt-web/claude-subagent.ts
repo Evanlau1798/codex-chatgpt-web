@@ -54,9 +54,11 @@ export function bindClaudeSessionAbort(
   parsed: CodexParsedRequest,
   signal: AbortSignal,
   sessions: ChatGptTurnSessions,
+  executionNamespace?: string,
 ): () => void {
-  const group = claudeBrowserSessionGroup(parsed);
-  if (!group) return () => {};
+  const rawGroup = claudeBrowserSessionGroup(parsed);
+  if (!rawGroup) return () => {};
+  const group = executionNamespace ? `${executionNamespace}:${rawGroup}` : rawGroup;
   const retire = () => { sessions.retireGroup(group); };
   if (signal.aborted) retire();
   else signal.addEventListener("abort", retire, { once: true });
