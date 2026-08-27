@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { cleanupLifecycleResources, rootRequestCooldownRemaining, steeringAuditPassed } from "../scripts/lifecycle-smoke/common";
 
 test("cleanup attempts every resource and fails the lane after any error", async () => {
@@ -18,6 +19,14 @@ test("cleanup attempts every resource and fails the lane after any error", async
 test("root request cooldown waits only for the remaining one-minute budget", () => {
   expect(rootRequestCooldownRemaining(1_000, 60_000)).toBe(1_000);
   expect(rootRequestCooldownRemaining(1_000, 61_000)).toBe(0);
+});
+
+test("both live lanes anchor root cooldowns to request completion", () => {
+  for (const file of ["codex-lane.ts", "claude-lane.ts"]) {
+    const source = readFileSync(new URL(`../scripts/lifecycle-smoke/${file}`, import.meta.url), "utf8");
+    expect(source).toContain("lastRootCompletionAt");
+    expect(source).not.toContain("lastRootRequestAt");
+  }
 });
 
 test("steering audit accepts natural stopping wording", () => {

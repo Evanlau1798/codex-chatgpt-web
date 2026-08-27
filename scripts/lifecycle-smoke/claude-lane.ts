@@ -252,12 +252,11 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
   let rootTab = "";
   let childTab = "";
   let childId = "";
-  let lastRootRequestAt = 0;
+  let lastRootCompletionAt = 0;
   let rootTtlReused = false;
   try {
     await waitCreateBudget();
     const initialAt = Date.now();
-    lastRootRequestAt = initialAt;
     const initial = new ClaudeRun(join(laneRoot, "initial.jsonl"), args(sessionId, false, []), configDir, runtimeConfig.controlToken);
     runs.push(initial);
     await initial.send(sessionId, `Respond only in English. Read ${smokePath(repoTests, "prompt-caret.test.ts")} and ${smokePath(repoTests, "retained-compaction-handoff.test.ts")}. Compare how they protect prompt submission and retained compaction, then identify one interaction risk worth deeper follow-up. Limit the inspection to those two files. Do not modify files, run tests, or access the network.`);
@@ -269,6 +268,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     await submitClaudeSteering(sessionId, steeringText, configDir);
     const initialResult = await initial.waitResult(1, CLAUDE_INITIAL_RESULT_TIMEOUT_MS);
     const initialDone = Date.now();
+    lastRootCompletionAt = initialDone;
     await initial.close();
     const rootEvents = (since: number) => events(since).filter(value => value.detail?.traceId === rootTrace);
     for (const value of rootEvents(initialAt).filter(value => value.event === "browser.tab_created")) {
@@ -289,14 +289,14 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     timelines.push(stageTimeline(initialAt, rootTrace, { phase: "initial", request_sent: iso(initialAt), completed: iso(initialDone), ...initial.firstClientTimes(initialAt) }));
     assert(initialResult.subtype === "success", "Claude initial turn failed");
 
-    await waitRootRequestBudget(lastRootRequestAt);
+    await waitRootRequestBudget(lastRootCompletionAt);
     const auditAt = Date.now();
-    lastRootRequestAt = auditAt;
     const audit = new ClaudeRun(join(laneRoot, "steering-audit.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(audit);
     await audit.send(sessionId, auditPrompt);
     const auditResult = await audit.waitResult(1, CLAUDE_INITIAL_RESULT_TIMEOUT_MS);
     const auditDone = Date.now();
+    lastRootCompletionAt = auditDone;
     const auditText = (audit.assistantTextSince(0) || String(auditResult.result ?? "")).replaceAll("\\_", "_");
     await audit.close();
     saveLifecycleContentSummary(join(laneRoot, "steering-audit.json"), "steering_audit", auditText);
@@ -311,7 +311,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     }));
     assert(auditResult.subtype === "success", "Claude steering audit turn failed");
 
-    await waitRootRequestBudget(lastRootRequestAt);
+    await waitRootRequestBudget(lastRootCompletionAt);
     const longAt = Date.now();
     let longText = "";
     let longToolCalls = 0;
@@ -320,13 +320,13 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     const task = new ClaudeRun(join(laneRoot, "long-task.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(task);
     for (let round = 1; round <= 8 && autoCompactions === 0; round += 1) {
-      if (round > 1) await waitRootRequestBudget(lastRootRequestAt);
+      if (round > 1) await waitRootRequestBudget(lastRootCompletionAt);
       const roundRecordStart = task.records.length;
       const taskAt = Date.now();
-      lastRootRequestAt = taskAt;
       await task.send(sessionId, round === 1 ? reviewTaskPrompt : `Respond only in English. This is read-only code review continuation round ${round}. First list the scope left uninspected by the previous round, then select exactly five new files from ${repoTests} or their directly corresponding production implementations for in-depth reading. Do not repeat completed scope; summarize immediately after five files. If the runtime naturally compacts during this round, continue the same task from the handoff. Start the response with ROUND_${round}_START and end it with ROUND_${round}_DONE. Do not dispatch a subagent, modify files, run tests, or access the network.`);
       const taskResult = await task.waitResult(round, 20 * 60_000);
       const taskDone = Date.now();
+      lastRootCompletionAt = taskDone;
       const taskText = String(taskResult.result ?? "").replaceAll("\\_", "_");
       const assistantText = task.assistantTextSince(roundRecordStart).replaceAll("\\_", "_") || taskText;
       longText += `${assistantText}\n`;
@@ -348,9 +348,8 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     assert(checks.auto_compact_observed, "Claude did not observe an automatic compact");
 
     await waitCreateBudget();
-    await waitRootRequestBudget(lastRootRequestAt);
+    await waitRootRequestBudget(lastRootCompletionAt);
     const handoffAt = Date.now();
-    lastRootRequestAt = handoffAt;
     const childAt = handoffAt;
     const child = new ClaudeRun(join(laneRoot, "post-compact-child.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(child);
@@ -365,6 +364,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       && record.task_id === childId && (record.status === "completed" || record.status === "failed"), 20 * 60_000);
     assert(childNotification.status === "completed", `Claude child failed: ${childNotification.summary ?? "unknown error"}`);
     await child.close();
+    lastRootCompletionAt = Date.now();
     const childText = child.rawText().replaceAll("\\_", "_"); longText += childText;
     saveLifecycleContentSummary(join(laneRoot, "handoff.json"), "handoff", childText);
     saveLifecycleContentSummary(join(laneRoot, "steering-audit.json"), "steering_audit", auditText);
@@ -396,12 +396,12 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       && childCompletionText.includes("rejects a caret that Lexical moved outside the active composer");
     autoCompactions = claudeCompactions(configDir, sessionId, "auto");
 
-    await waitRootRequestBudget(lastRootRequestAt);
+    await waitRootRequestBudget(lastRootCompletionAt);
     const compactAt = Date.now();
-    lastRootRequestAt = compactAt;
     const preManualCompactRootTab = rootTab;
     const preManualCompactions = claudeCompactions(configDir, sessionId, "manual");
     await runClaudeCommand(join(laneRoot, "manual-compact.jsonl"), configDir, runtimeConfig.controlToken, sessionId, "/compact");
+    lastRootCompletionAt = Date.now();
     const postManualCompactions = claudeCompactions(configDir, sessionId, "manual");
     checks.manual_compact_observed = postManualCompactions > preManualCompactions;
     await save(join(laneRoot, "compact-counts.json"), {
@@ -432,9 +432,8 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     assert(checks.manual_compact_observed, "Claude native /compact boundary missing");
 
     await waitCreateBudget();
-    await waitRootRequestBudget(lastRootRequestAt);
+    await waitRootRequestBudget(lastRootCompletionAt);
     const finalAt = Date.now();
-    lastRootRequestAt = finalAt;
     const final = new ClaudeRun(join(laneRoot, "final.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(final);
     await final.send(sessionId, `Respond only in English. Resume the existing subagent with agent ID ${childId}; do not dispatch a new subagent. Ask whether it remembers its previous tests-directory probe and result, and whether this resume introduced friction or context loss. Do not ask it to execute tools again. After receiving its reply, summarize steering, both compactions, handoff, the initial and resumed subagent interactions, and any observed gaps.`);
