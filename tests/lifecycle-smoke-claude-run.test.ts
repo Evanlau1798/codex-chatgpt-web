@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LifecycleArtifactEncoder, LifecycleMemoryBudget } from "../scripts/lifecycle-smoke/artifacts";
 import { ClaudeRun } from "../scripts/lifecycle-smoke/claude-lane";
+import { claudeLaneSurfaceCountIsExact } from "../scripts/lifecycle-smoke/claude-evidence";
 
 const paths: string[] = [];
 afterEach(() => { for (const path of paths.splice(0)) rmSync(path, { force: true }); });
@@ -38,4 +39,17 @@ test("Claude close rejects protocol overflow arriving after a result chunk", asy
   controller.enqueue(new TextEncoder().encode(`${"x".repeat(200)}\n`));
   controller.close();
   await expect(run.close()).rejects.toThrow("line limit");
+});
+
+test("Claude lane surface accounting fails closed on an extra Web tab", () => {
+  const expected = ["initial-root", "auto-root", "child", "final-root"].map((tabId, index) => ({
+    at: `2026-01-01T00:00:0${index}.000Z`, event: "browser.tab_created",
+    detail: { tabId, traceId: `trace-${index}` },
+  }));
+  const childReuse = { at: "2026-01-01T00:00:05.000Z", event: "browser.tab_reused", detail: { tabId: "child", traceId: "child-resume" } };
+
+  expect(claudeLaneSurfaceCountIsExact([...expected, childReuse] as any, 4, "child")).toBeTrue();
+  expect(claudeLaneSurfaceCountIsExact([...expected, childReuse, {
+    at: "2026-01-01T00:00:06.000Z", event: "browser.tab_created", detail: { tabId: "extra", traceId: "extra" },
+  }] as any, 4, "child")).toBeFalse();
 });

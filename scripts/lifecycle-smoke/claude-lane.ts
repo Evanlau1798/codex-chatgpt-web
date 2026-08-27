@@ -1,20 +1,22 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "../../src/config";
 import { DEFAULT_STALL_TIMEOUT_SEC } from "../../src/stall-timeout";
 import { buildClaudeSmokeSettings, selfTestClaudeSmokeSettings } from "./claude-config";
+import { claudeCompactions, claudeLaneSurfaceCountIsExact } from "./claude-evidence";
 import {
   CLAUDE_RESULT_ABSOLUTE_TIMEOUT_MS,
   ClaudeResultWatchdog,
   waitForClaudeCommandExit,
 } from "./claude-watchdog";
 import { manualCompactPreservedRetainedRoot, selfTestManualCompactRetainedRoot } from "./retained-check";
+import { safeSurfaceRecoveryCount } from "./codex-v2-surfaces";
 import {
   assert, auditPrompt, claudeExe, cleanupLifecycleResources, cutoff, detectRestriction, events, iso, LaneResult, repo, repoTests, reviewTaskPrompt,
   save, sleep, stageTimeline, steeringAuditPassed, steeringText, submitClaudeSteering, waitCreateBudget, waitForEvent,
   waitRootRequestBudget, waitSteeringPoint,
 } from "./common";
-import { findClaudeTranscript, smokePath } from "./paths";
+import { smokePath } from "./paths";
 import {
   LifecycleArtifactEncoder,
   LifecycleMemoryBudget,
@@ -463,6 +465,10 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     timelines.push(stageTimeline(finalAt, String(finalSurface?.detail?.traceId ?? ""), { phase: "post_manual_child_ttl", request_sent: iso(finalAt), completed: iso(finalDone), ...final.firstClientTimes(finalAt) }));
     assert(finalResult.subtype === "success", "Claude final turn failed");
 
+    const safeRecoveries = safeSurfaceRecoveryCount(events(initialAt));
+    checks.surface_recovery_bounded = safeRecoveries !== undefined;
+    checks.expected_web_surfaces = safeRecoveries !== undefined
+      && claudeLaneSurfaceCountIsExact(events(initialAt), 4 + safeRecoveries, childTab);
     checks.latency = timelines.every(value => (value.adapter_to_cli_ms === null || Number(value.adapter_to_cli_ms) <= 2_000)
       && (value.web_commentary_to_cli_ms === null || Number(value.web_commentary_to_cli_ms) <= 5_000));
     const status = Object.values(checks).every(Boolean) ? "passed" : "failed";
@@ -484,17 +490,4 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       throw error;
     }
   }
-}
-
-function claudeCompactions(configDir: string, sessionId: string, trigger: "auto" | "manual") {
-  let path: string;
-  try { path = findClaudeTranscript(configDir, sessionId); } catch { return 0; }
-  let text = ""; try { text = readFileSync(path, "utf8"); } catch { return 0; }
-  return new Set(text.split(/\r?\n/).flatMap(line => {
-    try {
-      const record = JSON.parse(line) as RecordValue;
-      return record.type === "system" && record.subtype === "compact_boundary" && record.compactMetadata?.trigger === trigger
-        ? [String(record.uuid ?? record.timestamp)] : [];
-    } catch { return []; }
-  })).size;
 }
