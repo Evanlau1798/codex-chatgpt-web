@@ -77,6 +77,22 @@ function toolLedger(run: CodexRun, since: number) {
   };
 }
 
+function toolLedgerIsTerminal(
+  ledger: ReturnType<typeof toolLedger>,
+  childThreadId: string,
+  childStatuses: string[],
+  targetedInterruptObserved: boolean,
+): boolean {
+  if (ledger.allStartedCompleted) return true;
+  if (!targetedInterruptObserved || !childStatuses.includes("interrupted")) return false;
+  const completedIds = new Set(ledger.completed.map(value => String(value.item.id)));
+  const unfinished = ledger.started.filter(value => !completedIds.has(String(value.item.id)));
+  return unfinished.length === 1
+    && unfinished[0]?.threadId === childThreadId
+    && unfinished[0]?.item.type === "commandExecution"
+    && unfinished[0]?.item.status === "inProgress";
+}
+
 function threadTurnStatuses(value: any): string[] {
   return (value?.thread?.turns ?? []).map((turn: any) => String(turn.status ?? ""));
 }
@@ -94,6 +110,17 @@ function problemList(checks: Record<string, boolean>) {
 }
 
 export function selfTestHierarchySurfaceClassification() {
+  const interruptedCommandLedger = {
+    started: [{ at: undefined, threadId: "child", item: { id: "command", type: "commandExecution", status: "inProgress" } }],
+    completed: [],
+    allStartedCompleted: false,
+    duplicateCompleted: false,
+  };
+  assert(toolLedgerIsTerminal(interruptedCommandLedger, "child", ["interrupted"], true),
+    "One command terminated by the targeted child interruption should satisfy the tool ledger");
+  assert(!toolLedgerIsTerminal(interruptedCommandLedger, "child", ["completed"], true),
+    "An unfinished command on a normally completed child must fail closed");
+
   const launcher = [
     { at: "2026-01-01T00:00:00.000Z", event: "browser.tab_reused", detail: { tabId: "old-root", traceId: "old-root-trace" } },
     { at: "2026-01-01T00:00:01.000Z", event: "browser.tab_created", detail: { tabId: "new-root", traceId: "new-root-trace" } },
@@ -340,7 +367,12 @@ export async function runV2HierarchyScenario(
       child_not_running: !childStatuses.includes("inProgress") && !childStatuses.includes("running"),
       no_orphan_agents: grandchildStatuses.length > 0 && !grandchildStatuses.includes("inProgress")
         && !grandchildStatuses.includes("running"),
-      tool_results_complete: ledger.allStartedCompleted,
+      tool_results_complete: toolLedgerIsTerminal(
+        ledger,
+        childId,
+        childStatuses,
+        classifiedSurfaces.plannedInterruptObserved,
+      ),
       no_duplicate_tool_completion: !ledger.duplicateCompleted,
       expected_web_surfaces: classifiedSurfaces.expected,
       web_session_create_spacing: createSpacing,
