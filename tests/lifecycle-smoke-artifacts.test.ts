@@ -62,6 +62,12 @@ test("lifecycle failure categories never retain model or tool content", () => {
   expect(lifecycleErrorCategory(new Error(secret))).toBe("LIFECYCLE_SMOKE_FAILED");
   expect(lifecycleErrorCategory(new Error(`RATE_OR_VERIFICATION_LIMIT: ${secret}`)))
     .toBe("RATE_OR_VERIFICATION_LIMIT");
+  expect(lifecycleErrorCategory(new Error("request failed: HTTP 429 too many requests")))
+    .toBe("RATE_OR_VERIFICATION_LIMIT");
+  expect(lifecycleErrorCategory(new Error("rate_limit_exceeded")))
+    .toBe("RATE_OR_VERIFICATION_LIMIT");
+  expect(lifecycleErrorCategory(new Error("tracked response timing elapsedMs=429")))
+    .toBe("LIFECYCLE_SMOKE_FAILED");
 });
 
 test("retained lifecycle evidence is content-free, bounded, and owner-only on POSIX", () => {

@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { getConfigPath, loadConfig } from "../../src/config";
 import { findClaudeTranscript, resolveLifecycleExecutable, smokePath } from "./paths";
-import { saveLifecycleJson } from "./artifacts";
+import { isRateOrVerificationLimit, saveLifecycleJson } from "./artifacts";
 import { fetchWithTimeout } from "./run-guard";
 import { LauncherEventReader, type LauncherEvent } from "./launcher-event-reader";
 
@@ -199,10 +199,7 @@ export async function cutoff(tabId: string) {
 
 export function detectRestriction(values: LauncherEvent[], extra = "") {
   const text = `${extra}\n${values.map(value => `${value.event} ${value.message ?? ""} ${JSON.stringify(value.detail ?? {})}`).join("\n")}`;
-  const rateLimited = /\bHTTP(?: status)?\s*[:=]?\s*429\b|"(?:status|statusCode|code)"\s*:\s*429\b|\bstatus(?: code)?\s*[=:]\s*429\b|\b429\s+(?:too many requests|rate limit)/i.test(text);
-  if (rateLimited || /too many requests|temp(?:orary)? ban|temporarily blocked|verify you are human/i.test(text)) {
-    throw new Error("RATE_OR_VERIFICATION_LIMIT");
-  }
+  if (isRateOrVerificationLimit(text)) throw new Error("RATE_OR_VERIFICATION_LIMIT");
 }
 
 export function stageTimeline(since: number, traceId: string, client: Partial<Timeline>): Timeline {

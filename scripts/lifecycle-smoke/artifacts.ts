@@ -56,8 +56,14 @@ export function saveLifecycleContentSummary(path: string, kind: string, value: s
   saveLifecycleJson(path, { type: "content_summary", kind, chars: value.length, bytes: Buffer.byteLength(value), sha256: sha256(value) });
 }
 
+export function isRateOrVerificationLimit(text: string): boolean {
+  return text.includes("RATE_OR_VERIFICATION_LIMIT")
+    || /\bHTTP(?: status)?\s*[:=]?\s*429\b|"(?:status|statusCode|code)"\s*:\s*429\b|\bstatus(?: code)?\s*[=:]\s*429\b|\b429\s+(?:too many requests|rate limit)/i.test(text)
+    || /too many requests|rate[_ -]?limit(?:ed|[_ -]?(?:exceeded|reached))|temp(?:orary)? ban|temporarily blocked|verify you are human/i.test(text);
+}
+
 export function lifecycleErrorCategory(error: unknown): "RATE_OR_VERIFICATION_LIMIT" | "LIFECYCLE_SMOKE_FAILED" {
-  return String(error instanceof Error ? error.message : error).includes("RATE_OR_VERIFICATION_LIMIT")
+  return isRateOrVerificationLimit(String(error instanceof Error ? error.message : error))
     ? "RATE_OR_VERIFICATION_LIMIT"
     : "LIFECYCLE_SMOKE_FAILED";
 }
