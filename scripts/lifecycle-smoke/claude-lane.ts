@@ -261,7 +261,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     lastRootRequestAt = initialAt;
     const initial = new ClaudeRun(join(laneRoot, "initial.jsonl"), args(sessionId, false, []), configDir, runtimeConfig.controlToken);
     runs.push(initial);
-    await initial.send(sessionId, `Read ${smokePath(repoTests, "prompt-caret.test.ts")} and ${smokePath(repoTests, "retained-compaction-handoff.test.ts")}. Compare how they protect prompt submission and retained compaction, then identify one interaction risk worth deeper follow-up. Limit the inspection to those two files. Do not modify files, run tests, or access the network.`);
+    await initial.send(sessionId, `Respond only in English. Read ${smokePath(repoTests, "prompt-caret.test.ts")} and ${smokePath(repoTests, "retained-compaction-handoff.test.ts")}. Compare how they protect prompt submission and retained compaction, then identify one interaction risk worth deeper follow-up. Limit the inspection to those two files. Do not modify files, run tests, or access the network.`);
     const created = await waitForEvent(initialAt, "browser.tab_created", 180_000);
     rootTab = String(created.detail?.tabId); tabs.add(rootTab);
     let rootTrace = String(created.detail?.traceId);
@@ -325,7 +325,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       const roundRecordStart = task.records.length;
       const taskAt = Date.now();
       lastRootRequestAt = taskAt;
-      await task.send(sessionId, round === 1 ? reviewTaskPrompt : `This is read-only code review continuation round ${round}. First list the scope left uninspected by the previous round, then select exactly five new files from ${repoTests} or their directly corresponding production implementations for in-depth reading. Do not repeat completed scope; summarize immediately after five files. If the runtime naturally compacts during this round, continue the same task from the handoff. Start the response with ROUND_${round}_START and end it with ROUND_${round}_DONE. Do not dispatch a subagent, modify files, run tests, or access the network.`);
+      await task.send(sessionId, round === 1 ? reviewTaskPrompt : `Respond only in English. This is read-only code review continuation round ${round}. First list the scope left uninspected by the previous round, then select exactly five new files from ${repoTests} or their directly corresponding production implementations for in-depth reading. Do not repeat completed scope; summarize immediately after five files. If the runtime naturally compacts during this round, continue the same task from the handoff. Start the response with ROUND_${round}_START and end it with ROUND_${round}_DONE. Do not dispatch a subagent, modify files, run tests, or access the network.`);
       const taskResult = await task.waitResult(round, 20 * 60_000);
       const taskDone = Date.now();
       const taskText = String(taskResult.result ?? "").replaceAll("\\_", "_");
@@ -355,7 +355,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     const childAt = handoffAt;
     const child = new ClaudeRun(join(laneRoot, "post-compact-child.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(child);
-    await child.send(sessionId, `Briefly summarize completed progress and actual friction from the compaction handoff, then dispatch one subagent to read ${smokePath(repoTests, "prompt-caret.test.ts")} read-only. Ask it to report its observed cwd, the number of test() declarations, the first test name, and process friction. While it is still running, proactively send one follow-up request to that same subagent asking for the final test name; integrate the result only after receiving its reply. This probe needs no skill, so do not load one. Do not modify files, run tests, or access the network.`);
+    await child.send(sessionId, `Respond only in English. Briefly summarize completed progress and actual friction from the compaction handoff, then dispatch one subagent to read ${smokePath(repoTests, "prompt-caret.test.ts")} read-only. Ask it to report its observed cwd, the number of test() declarations, the first test name, and process friction. While it is still running, proactively send one follow-up request to that same subagent asking for the final test name; integrate the result only after receiving its reply. This probe needs no skill, so do not load one. Do not modify files, run tests, or access the network.`);
     const childResult = await child.waitResult(1, 30 * 60_000);
     const taskLifecycle = child.records.find(record => record.type === "system"
       && ["task_started", "task_progress", "task_notification"].includes(String(record.subtype))
@@ -433,7 +433,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     lastRootRequestAt = finalAt;
     const final = new ClaudeRun(join(laneRoot, "final.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(final);
-    await final.send(sessionId, `Resume the existing subagent with agent ID ${childId}; do not dispatch a new subagent. Ask whether it remembers its previous tests-directory probe and result, and whether this resume introduced friction or context loss. Do not ask it to execute tools again. After receiving its reply, summarize steering, both compactions, handoff, the initial and resumed subagent interactions, and any observed gaps.`);
+    await final.send(sessionId, `Respond only in English. Resume the existing subagent with agent ID ${childId}; do not dispatch a new subagent. Ask whether it remembers its previous tests-directory probe and result, and whether this resume introduced friction or context loss. Do not ask it to execute tools again. After receiving its reply, summarize steering, both compactions, handoff, the initial and resumed subagent interactions, and any observed gaps.`);
     const resumedChild = await final.waitFor(record => record.type === "system"
       && ["task_started", "task_progress", "task_notification"].includes(String(record.subtype))
       && (record.task_id || record.agent_id), 20 * 60_000);

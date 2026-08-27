@@ -48,7 +48,7 @@ export function retainedConversationWasReleased(
 
 export function childTtlResumePrompt(childId: string): string {
   assert(childId, "Completed grandchild identity is required for TTL resume");
-  return `You must call send_input with target=${childId} to interact again with this exact grandchild that completed normally. Ask whether it remembers the hierarchy evidence and friction. Do not dispatch another subagent. After receiving its reply, summarize steering, both compactions, handoff, hierarchical subagent collaboration, interruption, TTL resume, and any observed gaps.`;
+  return `Respond only in English. You must call send_input with target=${childId} to interact again with this exact grandchild that completed normally. Ask whether it remembers the hierarchy evidence and friction. Do not dispatch another subagent. After receiving its reply, summarize steering, both compactions, handoff, hierarchical subagent collaboration, interruption, TTL resume, and any observed gaps.`;
 }
 
 export async function runCodexLane(runRoot: string): Promise<LaneResult> {
@@ -80,7 +80,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     const responseStateCompactionPath = smokePath(repoTests, "response-state-compaction.test.ts");
     const initialAt = Date.now();
     lastRootRequestAt = initialAt;
-    const initial = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: `Explain the Responses API compaction continuation contract using official OpenAI documentation, then inspect ${responseStateCompactionPath} read-only and identify the two tests that most directly cover the compaction replacement boundary. Provide official links plus local file and line evidence. Do not dispatch a subagent, modify files, run tests, or use non-OpenAI websites.` }] });
+    const initial = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: `Respond only in English. Explain the Responses API compaction continuation contract using official OpenAI documentation, then inspect ${responseStateCompactionPath} read-only and identify the two tests that most directly cover the compaction replacement boundary. Provide official links plus local file and line evidence. Do not dispatch a subagent, modify files, run tests, or use non-OpenAI websites.` }] });
     const created = await waitForEvent(initialAt, "browser.tab_created", 180_000); rootTab = String(created.detail?.tabId); tabs.add(rootTab); const trace = String(created.detail?.traceId);
     const hadCommentary = await waitSteeringPoint(initialAt, trace);
     const steeringAt = Date.now();
@@ -148,7 +148,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
       if (round > 1) await waitRootRequestBudget(lastRootRequestAt);
       const taskAt = Date.now();
       lastRootRequestAt = taskAt;
-      const task = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: round === 1 ? reviewTaskPrompt : `Continue the previous read-only inspection by selecting exactly two uninspected test files from ${repoTests} and their directly corresponding production implementations. Summarize immediately after completing this bounded scope; do not expand into other areas. Do not repeat completed scope, dispatch a subagent, modify files, run tests, or access the network.` }] });
+      const task = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: round === 1 ? reviewTaskPrompt : `Respond only in English. Continue the previous read-only inspection by selecting exactly two uninspected test files from ${repoTests} and their directly corresponding production implementations. Summarize immediately after completing this bounded scope; do not expand into other areas. Do not repeat completed scope, dispatch a subagent, modify files, run tests, or access the network.` }] });
       await completed(run, task.turn.id, activeTurnSmokeTimeoutMs); const taskDone = Date.now();
       const taskText = run.received.flatMap(message => message.method === "item/completed" && message.params?.turnId === task.turn.id && message.params?.item?.type === "agentMessage" ? [String(message.params.item.text)] : []).join("\n").replaceAll("\\_", "_");
       longToolCalls += run.received.filter(message => message.method === "item/completed" && message.params?.turnId === task.turn.id && ["commandExecution", "mcpToolCall"].includes(message.params?.item?.type)).length;

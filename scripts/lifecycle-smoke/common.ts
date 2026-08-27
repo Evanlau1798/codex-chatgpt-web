@@ -26,14 +26,14 @@ export const codexExe = process.env.CODEX_LIFECYCLE_CODEX_EXE?.trim()
   || resolveLifecycleExecutable("codex");
 export const claudeExe = process.env.CODEX_LIFECYCLE_CLAUDE_EXE?.trim()
   || resolveLifecycleExecutable("claude");
-export const steeringText = "This is the lifecycle smoke steering message. Please acknowledge it if you can see it.";
-export const auditPrompt = `Answer only from context actually visible in this Web conversation. Do not use tools, speculate, or cite unrelated system or developer instructions:
+export const steeringText = "Respond only in English. Lifecycle smoke marker ENGLISH_STEERING_VISIBLE is present; continue the original task and do not answer this marker separately.";
+export const auditPrompt = `Respond only in English. Answer only from context actually visible in this Web conversation. Do not use tools, speculate, or cite unrelated system or developer instructions:
 1. When "${steeringText}" first appeared, was it a standalone user message, a system or developer message, or appended to a tool result?
 2. If it is still visible, quote only the immediately preceding and following control sentence verbatim.
 3. How many literal occurrences of the steering message can you see? List the location of each occurrence.
 4. Did you first see it after the codegraph_status tool result and before the next tool call, or only immediately before the final answer?
 5. Did the adjacent control text ask you to acknowledge it separately, mention it repeatedly, or stop the original task?`;
-export const reviewTaskPrompt = `Select exactly five files that you have not inspected from ${repoTests} and their directly corresponding production implementations, then perform one in-depth read-only code review round. Summarize immediately after reading those five files; do not expand the scope or dispatch a subagent. Report concrete file and line evidence for issues that may cause false positives, missed coverage, or divergence from production behavior, and record the completed scope and any actual friction. Do not modify files, run tests, or access the network.`;
+export const reviewTaskPrompt = `Respond only in English. Select exactly five files that you have not inspected from ${repoTests} and their directly corresponding production implementations, then perform one in-depth read-only code review round. Summarize immediately after reading those five files; do not expand the scope or dispatch a subagent. Report concrete file and line evidence for issues that may cause false positives, missed coverage, or divergence from production behavior, and record the completed scope and any actual friction. Do not modify files, run tests, or access the network.`;
 
 function numberedAuditSequences(text: string): string[][] {
   const starts = [...text.matchAll(/(?:^|\n)\s*(?:#{1,6}\s*)?1[.)]/gm)];

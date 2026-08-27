@@ -6,7 +6,7 @@ import { lifecycleErrorCategory, saveLifecycleContentSummary, saveRedactedLifecy
 
 export const hierarchySentinel = "V2_HIERARCHY_SMOKE_DONE";
 
-export const hierarchyPrompt = `Validate one hierarchical Multi-Agent collaboration flow while remaining read-only: do not modify files, run tests, or use the network. Limit all work to ${repoTests}.
+export const hierarchyPrompt = `Respond only in English. Validate one hierarchical Multi-Agent collaboration flow while remaining read-only: do not modify files, run tests, or use the network. Limit all work to ${repoTests}.
 
 First read one relevant test file yourself, then dispatch exactly one child. Ask the child to read another relevant test file, wait long enough that adjacent Web session creations are at least 30 seconds apart, and then have the child dispatch exactly one grandchild. After the child successfully creates the grandchild, it must not wait for the grandchild; it must immediately complete its current turn and report the grandchild agent ID plus file evidence so the root obtains that identity through the normal wait result. The grandchild must perform one small read-only probe, provide verifiable file evidence, and report actual friction.
 
