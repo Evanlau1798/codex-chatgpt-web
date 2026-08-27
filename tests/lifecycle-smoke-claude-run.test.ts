@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { LifecycleArtifactEncoder, LifecycleMemoryBudget } from "../scripts/lifecycle-smoke/artifacts";
 import { ClaudeRun } from "../scripts/lifecycle-smoke/claude-lane";
 import { claudeLaneSurfaceCountIsExact } from "../scripts/lifecycle-smoke/claude-evidence";
-import { manualCompactContinuityPassed } from "../scripts/lifecycle-smoke/retained-check";
+import { claudeManualCompactEvidence, manualCompactContinuityPassed } from "../scripts/lifecycle-smoke/retained-check";
 
 const paths: string[] = [];
 afterEach(() => { for (const path of paths.splice(0)) rmSync(path, { force: true }); });
@@ -63,4 +63,16 @@ test("Claude manual compact accepts only retained or proved recovery continuity"
   expect(manualCompactContinuityPassed(false, true, true)).toBeTrue();
   expect(manualCompactContinuityPassed(false, true, false)).toBeFalse();
   expect(manualCompactContinuityPassed(false, false, false)).toBeFalse();
+});
+
+test("Claude manual compact follows a replacement surface trace", () => {
+  const previous = [{ event: "browser.tab_retained", detail: { tabId: "old-tab", traceId: "old-trace" } }];
+  const compact = [
+    { event: "browser.tab_created", detail: { tabId: "new-tab", traceId: "new-trace" } },
+    { event: "browser.diagnostic", detail: { traceId: "new-trace", message: "surface recovery eligible=true" } },
+  ];
+
+  expect(claudeManualCompactEvidence(previous, compact, "old-trace", "old-tab")).toEqual({
+    replacement: compact[0], recoveryTrace: "new-trace", recovered: true, retained: false,
+  });
 });

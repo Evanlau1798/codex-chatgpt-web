@@ -9,7 +9,7 @@ import {
   ClaudeResultWatchdog,
   waitForClaudeCommandExit,
 } from "./claude-watchdog";
-import { manualCompactContinuityPassed, manualCompactPreservedRetainedRoot, selfTestManualCompactRetainedRoot } from "./retained-check";
+import { claudeManualCompactEvidence, manualCompactContinuityPassed, selfTestManualCompactRetainedRoot } from "./retained-check";
 import { safeSurfaceRecoveryCount } from "./codex-v2-surfaces";
 import {
   assert, auditPrompt, claudeExe, cleanupLifecycleResources, cutoff, detectRestriction, events, iso, LaneResult, repo, repoTests, reviewTaskPrompt,
@@ -390,15 +390,9 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       afterManual: postManualCompactions,
     });
     const compactEvents = events(compactAt);
-    const compactRootEvents = rootEvents(compactAt);
-    const compactReplacement = compactRootEvents.findLast(value => value.event === "browser.tab_created");
-    const compactRecovery = compactEvents.some(value => {
-      const line = JSON.stringify(value);
-      return line.includes(rootTrace) && line.includes("surface recovery eligible=true");
-    });
-    const compactRetained = manualCompactPreservedRetainedRoot(
-      rootEvents(initialAt), compactRootEvents, rootTab,
-    );
+    const {
+      replacement: compactReplacement, recoveryTrace, recovered: compactRecovery, retained: compactRetained,
+    } = claudeManualCompactEvidence(events(initialAt), compactEvents, rootTrace, rootTab);
     checks.manual_compact_continuity = manualCompactContinuityPassed(
       compactRetained,
       Boolean(compactReplacement),
@@ -407,6 +401,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     checks.manual_compact_safe_recovery = !compactReplacement || compactRecovery;
     if (compactReplacement?.detail?.tabId) {
       rootTab = String(compactReplacement.detail.tabId);
+      rootTrace = recoveryTrace;
       tabs.add(rootTab);
     }
     assert(checks.manual_compact_observed, "Claude native /compact boundary missing");

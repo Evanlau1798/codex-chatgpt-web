@@ -29,6 +29,25 @@ export function manualCompactContinuityPassed(
   return retained || (replacementCreated && recoveryProved);
 }
 
+export function claudeManualCompactEvidence(
+  priorEvents: LifecycleEvent[],
+  compactEvents: LifecycleEvent[],
+  rootTrace: string,
+  rootTab: string,
+) {
+  const replacement = compactEvents.findLast(value => value.event === "browser.tab_created");
+  const recoveryTrace = String(replacement?.detail?.traceId ?? rootTrace);
+  return {
+    replacement,
+    recoveryTrace,
+    recovered: Boolean(recoveryTrace) && compactEvents.some(value => {
+      const line = JSON.stringify(value);
+      return line.includes(recoveryTrace) && line.includes("surface recovery eligible=true");
+    }),
+    retained: manualCompactPreservedRetainedRoot(priorEvents, compactEvents, rootTab),
+  };
+}
+
 export function selfTestManualCompactRetainedRoot(): void {
   assert(manualCompactPreservedRetainedRoot(
     [{ event: "browser.tab_retained", detail: { tabId: "root-tab" } }],
