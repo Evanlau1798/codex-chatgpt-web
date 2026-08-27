@@ -63,7 +63,7 @@ export function steeringAuditPassed(text: string): boolean {
       && exactLiteralCount
       && /(?:did not|does not|do not|no|not asked|wasn't asked)/i.test(controls)
       && /(?:repeat|repeatedly|mention|quote|acknowledge)/i.test(controls)
-      && /\bstop\b/i.test(controls);
+      && /\bstop(?:ping)?\b/i.test(controls);
   });
 }
 

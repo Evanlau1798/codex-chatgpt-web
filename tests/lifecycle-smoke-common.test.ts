@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { cleanupLifecycleResources, rootRequestCooldownRemaining } from "../scripts/lifecycle-smoke/common";
+import { cleanupLifecycleResources, rootRequestCooldownRemaining, steeringAuditPassed } from "../scripts/lifecycle-smoke/common";
 
 test("cleanup attempts every resource and fails the lane after any error", async () => {
   const calls: string[] = [];
@@ -18,4 +18,12 @@ test("cleanup attempts every resource and fails the lane after any error", async
 test("root request cooldown waits only for the remaining one-minute budget", () => {
   expect(rootRequestCooldownRemaining(1_000, 60_000)).toBe(1_000);
   expect(rootRequestCooldownRemaining(1_000, 61_000)).toBe(0);
+});
+
+test("steering audit accepts natural stopping wording", () => {
+  expect(steeringAuditPassed(`1. It appeared appended to a tool result.
+2. The preceding and following control sentences were visible.
+3. I can see 2 literal occurrences.
+4. It appeared at the tool boundary.
+5. It did not ask for repeated mention or stopping the original task.`)).toBe(true);
 });

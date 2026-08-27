@@ -132,6 +132,7 @@ export function classifyHierarchySurfaces(
     creates,
     rootTrace,
     descendantTabs,
+    plannedInterruptObserved: interruptReplacements.length === 1,
     expected: safeRecoveries !== undefined
       && rootAcquisitionValid
       && descendantTabs.length === 2 + plannedInterruptReplacements

@@ -65,7 +65,7 @@ export function normalizeV2Activities(messages: Rpc[], since: number): V2Activit
   return legacy.length > 0 ? legacy : collabActivities(messages, since);
 }
 
-export function targetedInterruptActivity(
+export function targetedInterruptRequestActivity(
   activities: V2Activity[],
   parentThreadId: string,
   childThreadId: string,
@@ -81,7 +81,7 @@ export function targetedInterruptActivity(
   const grandchild = interactions.filter(value => value.agentThreadId === grandchildThreadId);
   const candidate = child[1];
   if (child.length !== 2 || grandchild.length !== 1 || interactions.at(-1)?.id !== candidate?.id) return undefined;
-  return { ...candidate, kind: "interrupted" };
+  return candidate;
 }
 
 export function selfTestV2ActivityNormalization(): void {
@@ -118,9 +118,9 @@ export function selfTestV2ActivityNormalization(): void {
     event("grandchild-message", "sendInput", "root", "grandchild"),
     event("interrupt-message", "sendInput", "root", "child"),
   ], 0);
-  assert(targetedInterruptActivity(compatibility, "root", "child", "grandchild")?.id === "interrupt-message",
-    "Compatibility V1 targeted interruption was not distinguished from ordinary delivery");
-  assert(targetedInterruptActivity([
+  assert(targetedInterruptRequestActivity(compatibility, "root", "child", "grandchild")?.id === "interrupt-message",
+    "Compatibility V1 targeted interruption request was not distinguished from ordinary delivery");
+  assert(targetedInterruptRequestActivity([
     ...compatibility,
     ...normalizeV2Activities([event("close", "closeAgent", "root", "child")], 0),
   ], "root", "child", "grandchild") === undefined,

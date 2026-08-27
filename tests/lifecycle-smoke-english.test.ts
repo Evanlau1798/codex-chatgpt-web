@@ -37,11 +37,14 @@ test("root lifecycle resumes use a one-minute cooldown", () => {
 });
 
 test("the hierarchy root follows the transport-safe agent wait contract", () => {
-  expect(hierarchyPrompt).toContain("one blocking wait");
+  expect(hierarchyPrompt).toContain("one blocking read-only wait");
   expect(hierarchyPrompt).toContain("must not call send_input to address the root");
   expect(hierarchyPrompt).toContain("timeout_ms=10000");
   expect(hierarchyPrompt).toContain("repeat the same wait_agent call");
   expect(hierarchyPrompt).not.toContain("must not poll wait_agent");
+  expect(hierarchyPrompt).toContain("complete before the child follow-up");
+  expect(hierarchyPrompt).toContain("at least 90 seconds");
+  expect(hierarchyPrompt).toContain("interrupt=true exactly once");
 });
 
 test("hierarchy surface accounting accepts only the planned interrupt replacement", () => {

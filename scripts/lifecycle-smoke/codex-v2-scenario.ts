@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { activeTurnSmokeTimeoutMs, CodexRun, completed, Rpc } from "./codex-app-server";
 import { assert, detectRestriction, events, iso, repo, repoTests, save } from "./common";
-import { normalizeV2Activities, targetedInterruptActivity, type V2Activity } from "./codex-v2-activity";
+import { normalizeV2Activities, targetedInterruptRequestActivity, type V2Activity } from "./codex-v2-activity";
 import { lifecycleErrorCategory, saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
 import {
   activeBrowserTraceIds,
@@ -17,7 +17,9 @@ export const hierarchyPrompt = `Respond only in English. Validate one hierarchic
 
 First read one relevant test file yourself, then dispatch exactly one child. Ask the child to read another relevant test file, wait long enough that adjacent Web session creations are at least 30 seconds apart, and then have the child dispatch exactly one grandchild. After the child successfully creates the grandchild, it must not wait for the grandchild; it must immediately complete its current turn and report the grandchild agent ID plus file evidence so the root obtains that identity through the normal wait result. The grandchild must perform one small read-only probe, provide verifiable file evidence, and report actual friction.
 
-Immediately after spawning the child, the root must call wait_agent for that child with timeout_ms=10000. Treat every nonterminal result as pending and repeat the same wait_agent call until the child's completion result explicitly reports successful grandchild creation and its agent ID. Do not send a message to either descendant before seeing that creation evidence. After obtaining both identities, proactively ask each descendant one distinct question. The child follow-up must require it to publish its evidence as commentary, must not call send_input to address the root, and then start exactly one blocking wait long enough for the root to interrupt it; it must not poll or call write_stdin after that wait starts. Use only wait_agent calls with timeout_ms=10000 for descendant delivery, repeating the same targets only while required state is pending. After receiving both interaction records, proactively interrupt the still-running child. The grandchild must complete normally. Finally, confirm that no agent remains running and summarize the root-to-child-to-grandchild identities, two interactions, one interruption, grandchild evidence, and friction at each level.
+Immediately after spawning the child, the root must call wait_agent for that child with timeout_ms=10000. Treat every nonterminal result as pending and repeat the same wait_agent call until the child's completion result explicitly reports successful grandchild creation and its agent ID. Do not send a message to either descendant before seeing that creation evidence.
+
+After obtaining both identities, first ask the grandchild one distinct follow-up question and repeat wait_agent with timeout_ms=10000 until that grandchild follow-up completes normally; the grandchild interaction must complete before the child follow-up. Only then send the child its distinct follow-up. The child follow-up must require it to immediately publish its existing evidence as commentary, must not call send_input to address the root, and then start exactly one blocking read-only wait of at least ten minutes; it must not poll or call write_stdin after that wait starts. After the child delivery is accepted, the root must keep calling wait_agent for only that child with timeout_ms=10000 until at least 90 seconds have elapsed and every result remained nonterminal. A terminal child status before interruption fails the scenario and must not trigger a retry follow-up. Once the child has remained pending for at least 90 seconds, call send_input for that child with interrupt=true exactly once. Do not send a second child follow-up. Then repeat wait_agent with timeout_ms=10000 until the interrupted child completes. Finally, confirm that no agent remains running and summarize the root-to-child-to-grandchild identities, two interactions, one targeted interruption, grandchild evidence, and friction at each level.
 
 Use the available native Multi-Agent tools to complete the entire flow without user intervention. Output only ${hierarchySentinel} on the final line.`;
 
@@ -110,6 +112,7 @@ export function selfTestHierarchySurfaceClassification() {
     Date.parse("2026-01-01T00:00:05.050Z"),
   );
   assert(classified.expected, "Retained root replacement should not count as a third descendant");
+  assert(classified.plannedInterruptObserved, "Planned targeted interruption should require replacement-surface evidence");
   assert(classified.rootTrace === "new-root-trace", "Final root trace should follow the replacement surface");
   assert(classified.descendantTabs.join(",") === "child,grandchild,child-replacement", "Hierarchy descendants should include the planned child replacement only");
   const missingInterruptRelease = classifyHierarchySurfaces(
@@ -118,6 +121,7 @@ export function selfTestHierarchySurfaceClassification() {
     Date.parse("2026-01-01T00:00:05.050Z"),
   );
   assert(!missingInterruptRelease.expected, "An unpaired extra descendant surface must fail closed");
+  assert(!missingInterruptRelease.plannedInterruptObserved, "Missing aborted release must not count as targeted interruption");
 
   const foreignActiveTrace = "foreign-active-trace";
   const withForeignActiveRecovery = [
@@ -250,8 +254,8 @@ export async function runV2HierarchyScenario(
     const grandchildCandidates = spawned.filter(value => value.parentThreadId === childId);
     const grandchildId = grandchildCandidates.length === 1 ? grandchildCandidates[0]!.agentThreadId : "";
     const rootInteractions = activity.filter(value => value.kind === "interacted" && value.parentThreadId === threadId);
-    const targetedInterrupt = targetedInterruptActivity(activity, threadId, childId, grandchildId);
-    const deliveryInteractions = rootInteractions.filter(value => value.id !== targetedInterrupt?.id);
+    const targetedInterruptRequest = targetedInterruptRequestActivity(activity, threadId, childId, grandchildId);
+    const deliveryInteractions = rootInteractions.filter(value => value.id !== targetedInterruptRequest?.id);
     const childState = childId ? await run.request("thread/read", { threadId: childId, includeTurns: true }) : undefined;
     const grandchildState = grandchildId ? await run.request("thread/read", { threadId: grandchildId, includeTurns: true }) : undefined;
     const finalText = rootFinal(run, threadId, turnId);
@@ -268,7 +272,7 @@ export async function runV2HierarchyScenario(
       options.expectFreshRoot,
       safeRecoveries,
       new Set(),
-      targetedInterrupt ? Date.parse(targetedInterrupt.at) : undefined,
+      targetedInterruptRequest ? Date.parse(targetedInterruptRequest.at) : undefined,
     );
     const { creates, surfaces, rootTrace, descendantTabs } = classifiedSurfaces;
     const tabs = [...new Set(surfaces.flatMap(value => value.detail?.tabId ? [String(value.detail.tabId)] : []))];
@@ -326,10 +330,12 @@ export async function runV2HierarchyScenario(
       root_interacted_child: deliveryInteractions.some(value => value.agentThreadId === childId),
       root_interacted_grandchild: deliveryInteractions.some(value => value.agentThreadId === grandchildId),
       activity_delivery_exact_once: activityIds.length === new Set(activityIds).size,
-      child_interrupted_once: targetedInterrupt?.parentThreadId === threadId
-        && targetedInterrupt.agentThreadId === childId,
-      interrupt_after_interactions: Boolean(targetedInterrupt && deliveryInteractions.length >= 2
-        && Date.parse(targetedInterrupt.at) > Math.max(...deliveryInteractions.map(value => Date.parse(value.at)))),
+      child_interrupted_once: classifiedSurfaces.plannedInterruptObserved
+        && targetedInterruptRequest?.parentThreadId === threadId
+        && targetedInterruptRequest.agentThreadId === childId,
+      interrupt_after_interactions: Boolean(classifiedSurfaces.plannedInterruptObserved
+        && targetedInterruptRequest && deliveryInteractions.length >= 2
+        && Date.parse(targetedInterruptRequest.at) > Math.max(...deliveryInteractions.map(value => Date.parse(value.at)))),
       grandchild_completed: grandchildStatuses.includes("completed"),
       child_not_running: !childStatuses.includes("inProgress") && !childStatuses.includes("running"),
       no_orphan_agents: grandchildStatuses.length > 0 && !grandchildStatuses.includes("inProgress")
