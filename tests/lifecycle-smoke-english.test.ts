@@ -31,10 +31,12 @@ test("root lifecycle resumes use a one-minute cooldown", () => {
   expect(rootRequestCooldownMs).toBe(60_000);
 });
 
-test("the hierarchy interruption uses one blocking child wait without root busy polling", () => {
+test("the hierarchy root follows the transport-safe agent wait contract", () => {
   expect(hierarchyPrompt).toContain("one blocking wait");
   expect(hierarchyPrompt).toContain("must not call send_input to address the root");
-  expect(hierarchyPrompt).toContain("must not poll wait_agent");
+  expect(hierarchyPrompt).toContain("timeout_ms=10000");
+  expect(hierarchyPrompt).toContain("repeat the same wait_agent call");
+  expect(hierarchyPrompt).not.toContain("must not poll wait_agent");
 });
 
 test("hierarchy surface accounting accepts only the planned interrupt replacement", () => {
