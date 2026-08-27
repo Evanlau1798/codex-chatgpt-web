@@ -6,13 +6,13 @@ import { lifecycleErrorCategory, saveLifecycleContentSummary, saveRedactedLifecy
 
 export const hierarchySentinel = "V2_HIERARCHY_SMOKE_DONE";
 
-export const hierarchyPrompt = `請在唯讀、不修改檔案、不執行測試、不使用網路的條件下，驗證一次階層式 Multi-Agent 協作。工作範圍只限 ${repoTests}。
+export const hierarchyPrompt = `Validate one hierarchical Multi-Agent collaboration flow while remaining read-only: do not modify files, run tests, or use the network. Limit all work to ${repoTests}.
 
-請先自行閱讀一個相關測試檔案，再派出恰好一位 child。請 child 先閱讀另一個相關測試檔案，至少讓相鄰的 Web 工作階段建立相隔 30 秒，再由 child 派出恰好一位 grandchild。Child 成功建立 grandchild 後，不要等待 grandchild；應立即完成自己的當前 turn，並在結果中回報 grandchild agent id 與已讀證據，讓 root 透過正常 wait 結果取得身分。Grandchild 要做一項短小的唯讀探查，提供可核對的檔案證據並回報實際摩擦。
+First read one relevant test file yourself, then dispatch exactly one child. Ask the child to read another relevant test file, wait long enough that adjacent Web session creations are at least 30 seconds apart, and then have the child dispatch exactly one grandchild. After the child successfully creates the grandchild, it must not wait for the grandchild; it must immediately complete its current turn and report the grandchild agent ID plus file evidence so the root obtains that identity through the normal wait result. The grandchild must perform one small read-only probe, provide verifiable file evidence, and report actual friction.
 
-Root 必須先等到 child 的完成結果明確回報已成功建立 grandchild 及其 agent id；在看到這項實際建立證據以前，不得對 child 或 grandchild 傳送訊息。取得身分後，再分別主動詢問兩者一次並取得各自回覆；不要重複傳送同一問題。對 child 的新訊息應要求它回覆後維持當前 turn 活動，等待 root 中止。取得兩層互動證據後，請主動中止仍在執行的 child。Grandchild 必須正常完成。最後確認沒有遺留仍在執行的 Agent，整理 root → child → grandchild 的身分、兩次互動、一次中止、grandchild 證據與每層摩擦。
+The root must first wait until the child's completion result explicitly reports successful grandchild creation and its agent ID. Do not send a message to either descendant before seeing that creation evidence. After obtaining both identities, proactively ask each descendant one distinct question and receive both replies. The new child message must ask it to reply and then keep its current turn active while waiting for the root to interrupt it. After obtaining both interaction records, proactively interrupt the still-running child. The grandchild must complete normally. Finally, confirm that no agent remains running and summarize the root-to-child-to-grandchild identities, two interactions, one interruption, grandchild evidence, and friction at each level.
 
-請自行使用已提供的原生 Multi-Agent 工具完成整個流程，不要要求使用者介入。最後一行只輸出 ${hierarchySentinel}。`;
+Use the available native Multi-Agent tools to complete the entire flow without user intervention. Output only ${hierarchySentinel} on the final line.`;
 
 export type HierarchyScenarioResult = {
   status: "passed" | "failed" | "blocked";

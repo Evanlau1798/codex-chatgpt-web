@@ -59,7 +59,9 @@ Documentation-only changes and isolated utilities that cannot affect those bound
 the live gate. Run it only after deterministic verification passes and the launcher-owned daemon is
 healthy, accepting turns, and idle. The command uses the signed-in ChatGPT account, creates real Web
 sessions, consumes account usage, and writes bounded redacted artifacts under
-`tmp/lifecycle-smoke/runs/`; never commit those artifacts.
+`tmp/lifecycle-smoke/runs/`; never commit those artifacts. Keep every model-facing lifecycle smoke
+prompt and its validation vocabulary in English so contributors reproduce the same standardized
+flow regardless of their local language.
 
 ```sh
 bun run scripts/lifecycle-smoke/run.ts --live --lane=codex

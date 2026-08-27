@@ -48,7 +48,7 @@ export function retainedConversationWasReleased(
 
 export function childTtlResumePrompt(childId: string): string {
   assert(childId, "Completed grandchild identity is required for TTL resume");
-  return `你必須呼叫 send_input，且 target=${childId}，與這位已正常完成的同一位 grandchild 再互動，詢問它是否仍記得階層測試中的證據與摩擦；不要另派新的 subagent。收到回覆後，整理這段工作中的訊息追加、兩次上下文整理、交接、階層式 subagent 協作、中止與 TTL 續接，以及你觀察到的不足。`;
+  return `You must call send_input with target=${childId} to interact again with this exact grandchild that completed normally. Ask whether it remembers the hierarchy evidence and friction. Do not dispatch another subagent. After receiving its reply, summarize steering, both compactions, handoff, hierarchical subagent collaboration, interruption, TTL resume, and any observed gaps.`;
 }
 
 export async function runCodexLane(runRoot: string): Promise<LaneResult> {
@@ -80,7 +80,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     const responseStateCompactionPath = smokePath(repoTests, "response-state-compaction.test.ts");
     const initialAt = Date.now();
     lastRootRequestAt = initialAt;
-    const initial = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: `請依 OpenAI 官方文件說明 Responses API compaction continuation contract，再唯讀檢查 ${responseStateCompactionPath}，指出最直接覆蓋 compaction replacement boundary 的兩個測試。請提供官方連結與本機檔名、行號證據；不要派發 subagent、修改檔案或執行測試，也不要使用非 OpenAI 網站。` }] });
+    const initial = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: `Explain the Responses API compaction continuation contract using official OpenAI documentation, then inspect ${responseStateCompactionPath} read-only and identify the two tests that most directly cover the compaction replacement boundary. Provide official links plus local file and line evidence. Do not dispatch a subagent, modify files, run tests, or use non-OpenAI websites.` }] });
     const created = await waitForEvent(initialAt, "browser.tab_created", 180_000); rootTab = String(created.detail?.tabId); tabs.add(rootTab); const trace = String(created.detail?.traceId);
     const hadCommentary = await waitSteeringPoint(initialAt, trace);
     const steeringAt = Date.now();
@@ -110,7 +110,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
       responseStateCompactionPath,
       initialTurnMessages,
     );
-    checks.no_unsubstantiated_skill_failure = !/(?:skill|skill\.md)[^\n]{0,120}(?:安全[^\n]{0,40}(?:阻擋|攔下)|無法讀取|unavailable|blocked|rejected)|(?:安全檢查|security check)[^\n]{0,120}(?:阻擋|攔下|blocked|rejected)/i.test(initialTurnMessages);
+    checks.no_unsubstantiated_skill_failure = !/(?:skill|skill\.md)[^\n]{0,120}(?:unavailable|blocked|rejected|unable to read)|(?:safety|security|policy|approval|permission|guardrail)[^\n]{0,120}(?:blocked|rejected|denied|refused)/i.test(initialTurnMessages);
     assert(checks.initial_archive_transport, "Codex skill preflight did not use the Native2 context archive");
     assert(checks.initial_archive_complete, "Codex skill preflight did not complete the Native2 context archive");
     assert(checks.skill_read_first, "Codex did not read the selected Skill before other native work tools");
@@ -148,7 +148,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
       if (round > 1) await waitRootRequestBudget(lastRootRequestAt);
       const taskAt = Date.now();
       lastRootRequestAt = taskAt;
-      const task = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: round === 1 ? reviewTaskPrompt : `請繼續上一輪的唯讀檢查，自行從 ${repoTests} 選擇恰好兩個尚未檢查的測試檔案及其直接對應的 production 實作；完成這個有界範圍後立即總結，不要擴張到其他面向。不要重複已完成範圍、不要派發 subagent、不要修改檔案、執行測試或存取網路。` }] });
+      const task = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: round === 1 ? reviewTaskPrompt : `Continue the previous read-only inspection by selecting exactly two uninspected test files from ${repoTests} and their directly corresponding production implementations. Summarize immediately after completing this bounded scope; do not expand into other areas. Do not repeat completed scope, dispatch a subagent, modify files, run tests, or access the network.` }] });
       await completed(run, task.turn.id, activeTurnSmokeTimeoutMs); const taskDone = Date.now();
       const taskText = run.received.flatMap(message => message.method === "item/completed" && message.params?.turnId === task.turn.id && message.params?.item?.type === "agentMessage" ? [String(message.params.item.text)] : []).join("\n").replaceAll("\\_", "_");
       longToolCalls += run.received.filter(message => message.method === "item/completed" && message.params?.turnId === task.turn.id && ["commandExecution", "mcpToolCall"].includes(message.params?.item?.type)).length;
@@ -180,7 +180,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     saveLifecycleContentSummary(join(laneRoot, "handoff.json"), "handoff", childText);
     saveLifecycleContentSummary(join(laneRoot, "steering-audit.json"), "steering_audit", auditText);
     saveLifecycleContentSummary(join(laneRoot, "child-friction.json"), "child_friction", childText);
-    checks.handoff_seen = childText.includes("摩擦");
+    checks.handoff_seen = childText.toLowerCase().includes("friction");
     interruptedChildTab = hierarchy.agentTabs.child;
     childId = hierarchy.agents.grandchild;
     rootTab = hierarchy.agentTabs.root || rootTab;

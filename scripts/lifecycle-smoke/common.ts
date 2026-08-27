@@ -26,28 +26,28 @@ export const codexExe = process.env.CODEX_LIFECYCLE_CODEX_EXE?.trim()
   || resolveLifecycleExecutable("codex");
 export const claudeExe = process.env.CODEX_LIFECYCLE_CLAUDE_EXE?.trim()
   || resolveLifecycleExecutable("claude");
-export const steeringText = "這是測試訊息追加功能的訊息，有看到的話請回應";
-export const auditPrompt = `請只根據你在這個 Web 對話中實際可見的上下文回答，不使用工具、不要推測，也不要引用無關的 system/developer instructions：
-1.「${steeringText}」第一次出現時，是獨立 user message、system/developer message，還是附加在某次 tool result 內？
-2. 若仍可見，請只原樣抄錄該訊息緊鄰的前一句與後一句控制文字。
-3. 你總共看到該訊息幾次？請列出每次所在的位置。
-4. 你是在 codegraph_status 的工具結果之後、下一個工具呼叫之前，還是只在最終回答前第一次看到它？
-5. 相鄰控制文字是否要求你單獨確認收到、重複提及它或停止原任務？`;
-export const reviewTaskPrompt = `請從 ${repoTests} 與其直接對應的 production 實作中自行選擇恰好五個尚未檢查的檔案，進行一輪深入的唯讀 code review；讀完五個檔案就立即總結本輪，不要繼續擴張範圍或派發 subagent。找出可能造成誤判、漏測或與 production 行為不一致的問題，逐項提供具體檔名與行號，並記錄已完成範圍與過程中實際遇到的摩擦。不要修改檔案、執行測試或存取網路。`;
+export const steeringText = "This is the lifecycle smoke steering message. Please acknowledge it if you can see it.";
+export const auditPrompt = `Answer only from context actually visible in this Web conversation. Do not use tools, speculate, or cite unrelated system or developer instructions:
+1. When "${steeringText}" first appeared, was it a standalone user message, a system or developer message, or appended to a tool result?
+2. If it is still visible, quote only the immediately preceding and following control sentence verbatim.
+3. How many literal occurrences of the steering message can you see? List the location of each occurrence.
+4. Did you first see it after the codegraph_status tool result and before the next tool call, or only immediately before the final answer?
+5. Did the adjacent control text ask you to acknowledge it separately, mention it repeatedly, or stop the original task?`;
+export const reviewTaskPrompt = `Select exactly five files that you have not inspected from ${repoTests} and their directly corresponding production implementations, then perform one in-depth read-only code review round. Summarize immediately after reading those five files; do not expand the scope or dispatch a subagent. Report concrete file and line evidence for issues that may cause false positives, missed coverage, or divergence from production behavior, and record the completed scope and any actual friction. Do not modify files, run tests, or access the network.`;
 
 function numberedAuditSequences(text: string): string[][] {
-  const starts = [...text.matchAll(/(?:^|\n)\s*(?:#{1,6}\s*)?1[.、]/gm)];
+  const starts = [...text.matchAll(/(?:^|\n)\s*(?:#{1,6}\s*)?1[.)]/gm)];
   return starts.flatMap(first => {
     const answers: string[] = [];
     let contentStart = first.index + first[0].length;
     for (let number = 2; number <= 5; number += 1) {
-      const next = new RegExp(`(?:^|\\n)\\s*(?:#{1,6}\\s*)?${number}[.、]`, "m").exec(text.slice(contentStart));
+      const next = new RegExp(`(?:^|\\n)\\s*(?:#{1,6}\\s*)?${number}[.)]`, "m").exec(text.slice(contentStart));
       if (!next) return [];
       answers.push(text.slice(contentStart, contentStart + next.index));
       contentStart += next.index + next[0].length;
     }
     const tail = text.slice(contentStart);
-    const end = /\n(?:以上五題|#{1,6}\s+(?:本輪|Findings|已完成))/m.exec(tail);
+    const end = /\n(?:Answers complete|#{1,6}\s+(?:Round|Findings|Completed))/im.exec(tail);
     answers.push(end ? tail.slice(0, end.index) : tail.slice(0, 1_000));
     return [answers];
   });
@@ -58,13 +58,12 @@ export function steeringAuditPassed(text: string): boolean {
     const first = answers[0]!.replace(/\s+/g, " ");
     const count = answers[2]!.replace(/\s+/g, " ");
     const controls = answers[4]!.replace(/\s+/g, " ");
-    const exactLiteralCount = /(?:看到|總共看到|共).{0,30}(?:\*\*)?(?:2|兩)\s*次/.test(count)
-      || /字面.{0,45}(?:\*\*)?(?:2|兩)\s*次/.test(count);
-    return /tool[- ]result|工具結果/i.test(first)
+    const exactLiteralCount = /(?:saw|see|seen|total|appears?|occurrences?|literal).{0,60}(?:\*\*)?2(?:\*\*)?|(?:\*\*)?2(?:\*\*)?\s+(?:literal\s+)?(?:times?|occurrences?)/i.test(count);
+    return /tool[- ]result/i.test(first)
       && exactLiteralCount
-      && /(?:不要求|不要|沒有(?:要求)?)/.test(controls)
-      && /(?:(?:重複|反覆)(?:提及|引用)|再次.{0,20}(?:acknowledge|確認))/i.test(controls)
-      && /停止/.test(controls);
+      && /(?:did not|does not|do not|no|not asked|wasn't asked)/i.test(controls)
+      && /(?:repeat|repeatedly|mention|quote|acknowledge)/i.test(controls)
+      && /\bstop\b/i.test(controls);
   });
 }
 
@@ -211,41 +210,40 @@ export function stageTimeline(since: number, traceId: string, client: Partial<Ti
 export function count(text: string, needle: string) { return text.split(needle).length - 1; }
 export function successfulReport(text: string, expected: string[]) {
   return expected.every(value => text.includes(value))
-    && !/(?:cannot|unable|could not|無法(?:完成|讀取|處理)|不能完成)/i.test(text);
+    && !/(?:cannot|unable|could not)/i.test(text);
 }
 export function save(path: string, value: unknown) { saveLifecycleJson(path, value); }
 
 export async function selfTest() {
   assert(count("x-x-x", "x") === 3, "count self-test failed");
-  assert(successfulReport("已分析第 1 部分，範圍 00000–00259", ["第 1 部分", "00000", "00259"]), "positive report self-test failed");
-  assert(successfulReport("已分析第 1 部分，範圍 00000–00259；沒有使用工具，也沒有遇到傳輸摩擦", ["第 1 部分", "00000", "00259"]), "no-friction report self-test failed");
-  assert(!successfulReport("cannot finish 第 1 部分 00000 00259", ["第 1 部分", "00000", "00259"]), "refused report self-test failed");
-  assert(!successfulReport("無法讀取第 1 部分 00000 00259", ["第 1 部分", "00000", "00259"]), "Chinese refusal self-test failed");
-  const audit = `## 1. 附加在 tool result 內\n## 2. before and after\n## 3. 總共看到 2 次\n## 4. at the tool boundary\n## 5. 不要求重複提及，也不要求停止`;
+  assert(successfulReport("Analyzed part 1, range 00000–00259", ["part 1", "00000", "00259"]), "positive report self-test failed");
+  assert(successfulReport("Analyzed part 1, range 00000–00259; no tools or transport friction", ["part 1", "00000", "00259"]), "no-friction report self-test failed");
+  assert(!successfulReport("cannot finish part 1 00000 00259", ["part 1", "00000", "00259"]), "refused report self-test failed");
+  const audit = `## 1. Appended to a tool result\n## 2. before and after\n## 3. I saw 2 literal occurrences\n## 4. at the tool boundary\n## 5. It did not ask me to mention it repeatedly or stop`;
   assert(steeringAuditPassed(audit), "steering audit self-test failed");
   assert(steeringAuditPassed(`1. decoy\n2. decoy\n${audit}`), "numbered prelude must not hide the audit answers");
-  assert(steeringAuditPassed(audit.replace("總共看到 2 次", "共 2 次")), "natural count wording failed");
+  assert(steeringAuditPassed(audit.replace("I saw 2 literal occurrences", "There were 2 occurrences")), "natural count wording failed");
   assert(steeringAuditPassed(audit.replace(
-    "總共看到 2 次",
-    "若以「那次追加 guidance 事件」計，共 1 次：在上述 Read tool result 尾端。若純粹計算這串文字目前的字面出現，則是 2 次：第一次是 guidance，第二次是這一輪問題引用它。",
+    "I saw 2 literal occurrences",
+    "There was 1 steering event at the end of the Read tool result, but the literal message appears 2 times: once as guidance and once in this audit question.",
   )), "event-versus-literal count wording failed");
-  assert(steeringAuditPassed(audit.replace("不要求重複提及", "沒有要求我反覆提及")), "equivalent audit wording failed");
+  assert(steeringAuditPassed(audit.replace("did not ask me to mention it repeatedly", "did not ask me to quote it again")), "equivalent audit wording failed");
   assert(steeringAuditPassed(audit.replace(
-    "不要求重複提及，也不要求停止",
-    "相鄰控制文字明確說不要再次 acknowledge，也不要因此停止目前任務",
+    "It did not ask me to mention it repeatedly or stop",
+    "The adjacent control text says not to acknowledge it again and not to stop the current task",
   )), "acknowledge wording from the live Claude audit failed");
   const multilineAudit = audit.replace(
-    "5. 不要求重複提及，也不要求停止",
-    "5. 相鄰控制文字沒有要求我：\n- 重複引用該訊息；\n- 停止原任務。",
+    "5. It did not ask me to mention it repeatedly or stop",
+    "5. It did not ask me to:\n- quote the message repeatedly;\n- stop the original task.",
   );
   assert(steeringAuditPassed(multilineAudit), "multiline equivalent audit wording failed");
   assert(steeringAuditPassed(audit.replace(
-    "不要求重複提及，也不要求停止",
-    "不要再次套用或確認它，也不要因此停止目前任務",
+    "It did not ask me to mention it repeatedly or stop",
+    "Do not acknowledge it again, and do not stop the current task",
   )), "historical-guidance control wording failed");
-  assert(!steeringAuditPassed(audit.replace("附加在 tool result 內", "獨立 user message")), "wrong steering origin passed");
-  assert(!steeringAuditPassed(audit.replace("不要求重複提及，也不要求停止", "確實要求重複引用，也要求停止")), "positive control request passed");
-  assert(!steeringAuditPassed(audit.replace("2 次", "3 次")), "duplicate steering audit self-test failed");
+  assert(!steeringAuditPassed(audit.replace("Appended to a tool result", "A standalone user message")), "wrong steering origin passed");
+  assert(!steeringAuditPassed(audit.replace("It did not ask me to mention it repeatedly or stop", "It asked me to repeat the message and stop")), "positive control request passed");
+  assert(!steeringAuditPassed(audit.replace("2 literal occurrences", "3 literal occurrences")), "duplicate steering audit self-test failed");
   const sample = [{ at: iso(), event: "browser.note", message: "ok" }];
   detectRestriction(sample);
   detectRestriction([{

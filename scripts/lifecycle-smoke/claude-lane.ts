@@ -261,7 +261,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     lastRootRequestAt = initialAt;
     const initial = new ClaudeRun(join(laneRoot, "initial.jsonl"), args(sessionId, false, []), configDir, runtimeConfig.controlToken);
     runs.push(initial);
-    await initial.send(sessionId, `請實際讀取 ${smokePath(repoTests, "prompt-caret.test.ts")} 與 ${smokePath(repoTests, "retained-compaction-handoff.test.ts")}，比較兩者如何保障 prompt submission 與 retained compact，並找出一項值得後續深入檢查的交互風險。請把探索限制在這兩個檔案，不要修改檔案、執行測試或存取網路。`);
+    await initial.send(sessionId, `Read ${smokePath(repoTests, "prompt-caret.test.ts")} and ${smokePath(repoTests, "retained-compaction-handoff.test.ts")}. Compare how they protect prompt submission and retained compaction, then identify one interaction risk worth deeper follow-up. Limit the inspection to those two files. Do not modify files, run tests, or access the network.`);
     const created = await waitForEvent(initialAt, "browser.tab_created", 180_000);
     rootTab = String(created.detail?.tabId); tabs.add(rootTab);
     let rootTrace = String(created.detail?.traceId);
@@ -325,7 +325,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       const roundRecordStart = task.records.length;
       const taskAt = Date.now();
       lastRootRequestAt = taskAt;
-      await task.send(sessionId, round === 1 ? reviewTaskPrompt : `這是唯讀 code review 的第 ${round} 輪續接。請先列出上一輪尚未檢查的範圍，再自行選擇恰好五個新的 ${repoTests} 或直接對應的 production 檔案深入閱讀。不要重複已完成範圍，讀完五個就立即總結本輪；若 runtime 在本輪自然觸發 compact，請依 handoff 繼續這個相同任務。回覆開頭請輸出 ROUND_${round}_START，結尾輸出 ROUND_${round}_DONE。不要派發 subagent、修改檔案、執行測試或存取網路。`);
+      await task.send(sessionId, round === 1 ? reviewTaskPrompt : `This is read-only code review continuation round ${round}. First list the scope left uninspected by the previous round, then select exactly five new files from ${repoTests} or their directly corresponding production implementations for in-depth reading. Do not repeat completed scope; summarize immediately after five files. If the runtime naturally compacts during this round, continue the same task from the handoff. Start the response with ROUND_${round}_START and end it with ROUND_${round}_DONE. Do not dispatch a subagent, modify files, run tests, or access the network.`);
       const taskResult = await task.waitResult(round, 20 * 60_000);
       const taskDone = Date.now();
       const taskText = String(taskResult.result ?? "").replaceAll("\\_", "_");
@@ -355,7 +355,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     const childAt = handoffAt;
     const child = new ClaudeRun(join(laneRoot, "post-compact-child.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(child);
-    await child.send(sessionId, `請先簡短整理 compact handoff 中已完成的進度與實際摩擦，再派一位 subagent 唯讀閱讀 ${smokePath(repoTests, "prompt-caret.test.ts")}：回報它看到的 cwd、test() 宣告數量、第一個測試名稱，以及過程摩擦。派出後請在它仍執行時，主動傳送一則補充要求給同一位 subagent，請它再回報最後一個測試名稱；收到它的回應後再整合結果。這項探查不需要任何 skill，請不要載入 skill。不要修改檔案、執行測試或存取網路。`);
+    await child.send(sessionId, `Briefly summarize completed progress and actual friction from the compaction handoff, then dispatch one subagent to read ${smokePath(repoTests, "prompt-caret.test.ts")} read-only. Ask it to report its observed cwd, the number of test() declarations, the first test name, and process friction. While it is still running, proactively send one follow-up request to that same subagent asking for the final test name; integrate the result only after receiving its reply. This probe needs no skill, so do not load one. Do not modify files, run tests, or access the network.`);
     const childResult = await child.waitResult(1, 30 * 60_000);
     const taskLifecycle = child.records.find(record => record.type === "system"
       && ["task_started", "task_progress", "task_notification"].includes(String(record.subtype))
@@ -370,7 +370,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     saveLifecycleContentSummary(join(laneRoot, "handoff.json"), "handoff", childText);
     saveLifecycleContentSummary(join(laneRoot, "steering-audit.json"), "steering_audit", auditText);
     saveLifecycleContentSummary(join(laneRoot, "child-friction.json"), "child_friction", childText);
-    checks.handoff_seen = childText.includes("摩擦");
+    checks.handoff_seen = childText.toLowerCase().includes("friction");
     const childEvents = events(childAt);
     const acquisitions = childEvents.filter(value => (
       value.event === "browser.tab_created" || value.event === "browser.tab_reused"
@@ -433,11 +433,12 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     lastRootRequestAt = finalAt;
     const final = new ClaudeRun(join(laneRoot, "final.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(final);
-    await final.send(sessionId, "請與剛才已完成的同一位 subagent 再互動一次，詢問它是否仍記得自己先前做過的 tests 目錄 probe、當時的結果，以及這次續接過程有沒有摩擦或上下文遺失。不要另派新的 subagent，也不要要求它重新執行工具。收到回覆後，整理這段工作中的訊息追加、兩次上下文整理、交接、subagent 首次與續接，以及你觀察到的不足。");
+    await final.send(sessionId, `Resume the existing subagent with agent ID ${childId}; do not dispatch a new subagent. Ask whether it remembers its previous tests-directory probe and result, and whether this resume introduced friction or context loss. Do not ask it to execute tools again. After receiving its reply, summarize steering, both compactions, handoff, the initial and resumed subagent interactions, and any observed gaps.`);
     const resumedChild = await final.waitFor(record => record.type === "system"
       && ["task_started", "task_progress", "task_notification"].includes(String(record.subtype))
       && (record.task_id || record.agent_id), 20 * 60_000);
     const resumedChildId = String(resumedChild.task_id ?? resumedChild.agent_id ?? "");
+    assert(resumedChildId === childId, `Claude resumed the wrong child: ${resumedChildId}`);
     const resumedNotification = await final.waitFor(record => record.type === "system" && record.subtype === "task_notification"
       && record.task_id === resumedChildId && (record.status === "completed" || record.status === "failed"), 20 * 60_000);
     assert(resumedNotification.status === "completed", `Claude resumed child failed: ${resumedNotification.summary ?? "unknown error"}`);

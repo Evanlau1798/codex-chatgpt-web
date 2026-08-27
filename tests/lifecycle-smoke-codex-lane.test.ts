@@ -7,7 +7,7 @@ test("Codex child TTL prompt names the exact existing agent and required tool", 
 
   expect(prompt).toContain("send_input");
   expect(prompt).toContain("target=grandchild-thread-id");
-  expect(prompt).toContain("不要另派");
+  expect(prompt).toContain("Do not dispatch another subagent");
 });
 
 test("Codex local evidence accepts conventional L-prefixed line references", () => {
@@ -18,5 +18,5 @@ test("Codex local evidence accepts conventional L-prefixed line references", () 
       turnId: "turn",
       item: { type: "commandExecution", command: `Get-Content '${target}'`, status: "completed" },
     },
-  }], "turn", target, "replacement boundary 在 L38，持久性覆蓋在 L51–77。")).toBeTrue();
+  }], "turn", target, "The replacement boundary is at L38; persistence is covered at L51–77.")).toBeTrue();
 });

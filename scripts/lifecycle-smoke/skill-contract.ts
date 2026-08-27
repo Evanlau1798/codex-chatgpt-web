@@ -175,7 +175,7 @@ export function hasLocalFileEvidence(
   });
   const evidenceText = finalText.replaceAll("**", "");
   const lineReferences = evidenceText.match(
-    /(?:\b(?:line\s+|l\s*)\d+(?:\s*[-–—]\s*\d+)?\b|第\s*\d+(?:\s*[-–—]\s*\d+)?\s*行|:\d+(?:\s*[-–—]\s*\d+)?\b)/gi,
+    /(?:\b(?:line\s+|l\s*)\d+(?:\s*[-–—]\s*\d+)?\b|:\d+(?:\s*[-–—]\s*\d+)?\b)/gi,
   ) ?? [];
   return readCompleted && lineReferences.length >= 2;
 }
@@ -219,13 +219,13 @@ export function selfTestSkillContract(): void {
       item: { id: "local", type: "commandExecution", command: `Get-Content -Raw '${target}'`, status: "completed", exitCode: 0 },
     },
   }];
-  if (!hasLocalFileEvidence(localMessages, "turn", target, "第一項在第 10 行，第二項在 line 20。")) {
+  if (!hasLocalFileEvidence(localMessages, "turn", target, "The first item is at line 10 and the second at line 20.")) {
     throw new Error("local file evidence self-test failed");
   }
-  if (!hasLocalFileEvidence(localMessages, "turn", target, "第一項在第 38–49 行，第二項在第 51–77 行。")) {
+  if (!hasLocalFileEvidence(localMessages, "turn", target, "The first item is at lines 38–49 and the second at lines 51–77.")) {
     throw new Error("local file evidence rejected valid line-range references");
   }
-  if (hasLocalFileEvidence(localMessages, "turn", target, "只有泛泛的本機結論。")) {
+  if (hasLocalFileEvidence(localMessages, "turn", target, "Only a generic local conclusion.")) {
     throw new Error("local file evidence accepted a report without line references");
   }
 }
