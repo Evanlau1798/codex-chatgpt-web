@@ -218,6 +218,30 @@ describe("ChatGPT Web surface resilience", () => {
     expect(menuOpen).toBeFalse();
   });
 
+  test("retries a Temporary Chat personalization menu that does not open", async () => {
+    let openAttempts = 0;
+    let menuOpen = false;
+    const button = {
+      press: async () => { openAttempts += 1; menuOpen = openAttempts > 1; },
+      getAttribute: async (name: string) => name === "aria-expanded" ? String(menuOpen) : null,
+    };
+    const item = (index: number) => ({
+      waitFor: async () => { if (!menuOpen) throw new Error("menu did not open"); },
+      getAttribute: async (name: string) => name === "aria-checked" ? String(index === 0) : null,
+    });
+    const items = { count: async () => 2, first: () => item(0), nth: (index: number) => item(index) };
+    const page = {
+      locator: (selector: string) => selector.includes("conversation-header-actions")
+        ? { filter: () => ({ count: async () => 1, first: () => button }) }
+        : { filter: () => ({ last: () => ({ locator: () => items }) }) },
+      keyboard: { press: async () => { menuOpen = false; } },
+    };
+
+    await ensureChatGptTemporaryChatPersonalized(page as never);
+
+    expect(openAttempts).toBe(2);
+  });
+
   test("keeps a final plain-text fallback and the surface retirement bit across the helper", () => {
     const worker = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
     const helperMain = readFileSync(new URL("../src/adapters/chatgpt-web/browser-helper-main.ts", import.meta.url), "utf8");

@@ -112,8 +112,16 @@ export async function ensureChatGptTemporaryChatPersonalized(page: Page): Promis
   const menu = page.locator('[role="menu"]:has([role="menuitemradio"])').filter({ visible: true }).last();
   const modes = menu.locator('[role="menuitemradio"]');
   try {
-    await button.press("Enter");
-    await modes.first().waitFor({ state: "visible", timeout: 5_000 });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await button.press("Enter");
+      try {
+        await modes.first().waitFor({ state: "visible", timeout: 5_000 });
+        break;
+      } catch (error) {
+        if (attempt === 1) throw error;
+        await page.keyboard.press("Escape").catch(() => {});
+      }
+    }
     if (await modes.count() !== 2) throw new Error("ChatGPT Temporary Chat personalization menu changed");
     const firstChecked = await modes.first().getAttribute("aria-checked");
     const secondChecked = await modes.nth(1).getAttribute("aria-checked");
