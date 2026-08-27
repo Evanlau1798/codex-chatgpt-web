@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-  assert, auditPrompt, cutoff, detectRestriction, events, iso, LaneResult, repo, repoTests, reviewTaskPrompt,
+  assert, auditPrompt, cleanupLifecycleResources, cutoff, detectRestriction, events, iso, LaneResult, repo, repoTests, reviewTaskPrompt,
   save, serviceBaseUrl, sleep, stageTimeline, steeringAuditPassed, steeringText, waitCreateBudget, waitForEvent,
   waitRootRequestBudget, waitSteeringPoint,
 } from "./common";
@@ -275,11 +275,20 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     const result: LaneResult = { status: message.includes("RATE_OR_VERIFICATION_LIMIT") ? "blocked" : "failed", lane: "codex", threadId, checks, timelines, artifacts: { root: laneRoot, rootTab, childTab, childId }, message };
     await save(join(laneRoot, "result.json"), result); return result;
   } finally {
-    for (const run of runs) await run.close().catch(() => {});
     if (childAt && !childTab) {
       childTab = String(events(childAt).find(value => value.event === "browser.tab_created" && value.detail?.tabId !== rootTab)?.detail?.tabId ?? "");
       if (childTab) tabs.add(childTab);
     }
-    for (const tab of tabs) await cutoff(tab).catch(() => {});
+    try {
+      await cleanupLifecycleResources(
+        runs.map(run => () => run.close()),
+        [...tabs].map(tab => () => cutoff(tab)),
+      );
+    } catch (error) {
+      const message = lifecycleErrorCategory(error);
+      await save(join(laneRoot, "result.json"), { status: "failed", lane: "codex", threadId, checks, timelines,
+        artifacts: { root: laneRoot, rootTab, childTab, childId }, message } satisfies LaneResult);
+      throw error;
+    }
   }
 }

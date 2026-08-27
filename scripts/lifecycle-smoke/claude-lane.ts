@@ -10,7 +10,7 @@ import {
 } from "./claude-watchdog";
 import { manualCompactPreservedRetainedRoot, selfTestManualCompactRetainedRoot } from "./retained-check";
 import {
-  assert, auditPrompt, claudeExe, cutoff, detectRestriction, events, iso, LaneResult, repo, repoTests, reviewTaskPrompt,
+  assert, auditPrompt, claudeExe, cleanupLifecycleResources, cutoff, detectRestriction, events, iso, LaneResult, repo, repoTests, reviewTaskPrompt,
   save, sleep, stageTimeline, steeringAuditPassed, steeringText, submitClaudeSteering, waitCreateBudget, waitForEvent,
   waitRootRequestBudget, waitSteeringPoint,
 } from "./common";
@@ -25,11 +25,8 @@ import {
   summarizeClaudeRecord,
   summarizeStreamChunk,
 } from "./artifacts";
-
 type RecordValue = Record<string, any>;
-
 export const CLAUDE_INITIAL_RESULT_TIMEOUT_MS = DEFAULT_STALL_TIMEOUT_SEC * 3 * 1_000 + 60_000;
-
 function sentMessageTo(records: RecordValue[], childId: string): boolean {
   return records.some(record => record.type === "assistant"
     && record.message?.content?.some?.((block: RecordValue) => block.type === "tool_use"
@@ -478,16 +475,21 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     await save(join(laneRoot, "result.json"), result);
     return result;
   } finally {
-    for (const run of runs) if (!run.process.killed) await run.close().catch(() => {});
-    for (const tab of tabs) await cutoff(tab).catch(() => {});
+    try {
+      await cleanupLifecycleResources(runs.filter(run => !run.process.killed).map(run => () => run.close()),
+        [...tabs].map(tab => () => cutoff(tab)));
+    } catch (error) {
+      const message = lifecycleErrorCategory(error);
+      await save(join(laneRoot, "result.json"), { status: "failed", lane: "claude", sessionId, checks, timelines, artifacts: { root: laneRoot, childId, rootTab, childTab }, message } satisfies LaneResult);
+      throw error;
+    }
   }
 }
 
 function claudeCompactions(configDir: string, sessionId: string, trigger: "auto" | "manual") {
   let path: string;
   try { path = findClaudeTranscript(configDir, sessionId); } catch { return 0; }
-  let text = "";
-  try { text = readFileSync(path, "utf8"); } catch { return 0; }
+  let text = ""; try { text = readFileSync(path, "utf8"); } catch { return 0; }
   return new Set(text.split(/\r?\n/).flatMap(line => {
     try {
       const record = JSON.parse(line) as RecordValue;

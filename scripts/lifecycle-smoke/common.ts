@@ -127,6 +127,19 @@ export async function waitRootRequestBudget(previousRequestAt: number, minimumMs
   if (remaining > 0) await sleep(remaining);
 }
 
+type CleanupAction = () => Promise<unknown>;
+
+export async function cleanupLifecycleResources(...phases: CleanupAction[][]): Promise<void> {
+  const errors: unknown[] = [];
+  for (const phase of phases) {
+    const results = await Promise.allSettled(phase.map(action => action()));
+    errors.push(...results.flatMap(result => result.status === "rejected" ? [result.reason] : []));
+  }
+  if (errors.length > 0) {
+    throw new AggregateError(errors, `Lifecycle smoke cleanup failed (${errors.length} errors)`);
+  }
+}
+
 export async function waitSteeringPoint(since: number, traceId: string, deliveryTimeoutMs = 300_000) {
   await waitForEvent(since, "runtime.daemon_stdout", 300_000, value => JSON.stringify(value).includes(traceId) && JSON.stringify(value).includes("stage=response_visible"));
   const deadline = Date.now() + deliveryTimeoutMs;
