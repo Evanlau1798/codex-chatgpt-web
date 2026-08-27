@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { childTtlResumePrompt } from "../scripts/lifecycle-smoke/codex-lane";
+import { catalogContainsModel, childTtlResumePrompt } from "../scripts/lifecycle-smoke/codex-lane";
 import { hasLocalFileEvidence } from "../scripts/lifecycle-smoke/skill-contract";
 import { ownedSurfaceEvents } from "../scripts/lifecycle-smoke/codex-v2-surfaces";
 
@@ -9,6 +9,13 @@ test("Codex child TTL prompt names the exact existing agent and required tool", 
   expect(prompt).toContain("send_input");
   expect(prompt).toContain("target=grandchild-thread-id");
   expect(prompt).toContain("Do not dispatch another subagent");
+});
+
+test("Codex catalog preflight accepts an already-cached Web model", () => {
+  expect(catalogContainsModel({ data: [{ id: "chatgpt-web/extra-high" }] }, "chatgpt-web/extra-high"))
+    .toBeTrue();
+  expect(catalogContainsModel({ data: [{ id: "gpt-5.6-sol" }] }, "chatgpt-web/extra-high"))
+    .toBeFalse();
 });
 
 test("Codex local evidence accepts conventional L-prefixed line references", () => {

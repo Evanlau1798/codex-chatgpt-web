@@ -52,6 +52,11 @@ export function childTtlResumePrompt(childId: string): string {
   return `Respond only in English. You must call send_input with target=${childId} to interact again with this exact grandchild that completed normally. Ask whether it remembers the hierarchy evidence and friction. Do not dispatch another subagent. After receiving its reply, summarize steering, both compactions, handoff, hierarchical subagent collaboration, interruption, TTL resume, and any observed gaps.`;
 }
 
+export function catalogContainsModel(catalog: unknown, modelId: string): boolean {
+  return Array.isArray((catalog as { data?: unknown[] } | undefined)?.data)
+    && (catalog as { data: Array<{ id?: unknown }> }).data.some(model => model?.id === modelId);
+}
+
 export async function runCodexLane(runRoot: string): Promise<LaneResult> {
   const laneRoot = join(runRoot, "codex"); mkdirSync(laneRoot, { recursive: true });
   const timelines: Record<string, any>[] = []; const checks: Record<string, boolean> = {}; const tabs = new Set<string>();
@@ -63,19 +68,20 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     const run = new CodexRun(join(laneRoot, "app-server.jsonl")); runs.push(run); await run.initialize();
     const config = await run.request("config/read", { includeLayers: false });
     assert(config.config?.model_auto_compact_token_limit === 100_000, "Codex compact override is not 100000");
-    await run.request("model/list", { includeHidden: true });
-    const catalogDeadline = Date.now() + 30_000;
-    let catalogReady = false;
-    while (Date.now() < catalogDeadline) {
-      const health = await (await fetchWithTimeout(`${serviceBaseUrl}/healthz`, 5_000, "Codex catalog readiness")).json();
-      if (Number(health.successful_model_catalog_requests ?? 0) > catalogBefore) { catalogReady = true; break; }
-      await sleep(250);
+    let models = await run.request("model/list", { includeHidden: true });
+    if (!catalogContainsModel(models, "chatgpt-web/extra-high")) {
+      const catalogDeadline = Date.now() + 30_000;
+      while (Date.now() < catalogDeadline) {
+        const health = await (await fetchWithTimeout(`${serviceBaseUrl}/healthz`, 5_000, "Codex catalog readiness")).json();
+        if (Number(health.successful_model_catalog_requests ?? 0) > catalogBefore) {
+          await sleep(250);
+          models = await run.request("model/list", { includeHidden: true });
+          break;
+        }
+        await sleep(250);
+      }
     }
-    assert(catalogReady, "Codex app-server did not refresh the Web model catalog");
-    await sleep(250);
-    const models = await run.request("model/list", { includeHidden: true });
-    const webModel = models.data?.find((model: any) => model.id === "chatgpt-web/extra-high");
-    assert(webModel, "Codex Web model catalog did not load the Extra High route");
+    assert(catalogContainsModel(models, "chatgpt-web/extra-high"), "Codex Web model catalog did not load the Extra High route");
     const thread = await run.request("thread/start", { cwd: repo, model: "chatgpt-web/extra-high", ephemeral: false, approvalPolicy: "never", sandbox: "read-only" });
     threadId = String(thread.thread.id);
     const responseStateCompactionPath = smokePath(repoTests, "response-state-compaction.test.ts");
