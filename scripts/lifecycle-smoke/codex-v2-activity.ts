@@ -3,7 +3,7 @@ import { assert } from "./common";
 
 export type V2Activity = {
   id: string;
-  kind: "started" | "interacted" | "interrupted";
+  kind: "started" | "interacted" | "interrupted" | "closed";
   parentThreadId: string;
   agentThreadId: string;
   agentPath: string;
@@ -34,8 +34,8 @@ function collabActivityKind(tool: unknown): V2Activity["kind"] | undefined {
   switch (String(tool ?? "").toLowerCase()) {
     case "spawnagent": return "started";
     case "sendinput": return "interacted";
-    case "interruptagent":
-    case "closeagent": return "interrupted";
+    case "interruptagent": return "interrupted";
+    case "closeagent": return "closed";
     default: return undefined;
   }
 }
@@ -85,9 +85,10 @@ export function selfTestV2ActivityNormalization(): void {
   const current = normalizeV2Activities([
     event("spawn", "spawnAgent", "root", "child"),
     event("message", "sendInput", "root", "child"),
+    event("interrupt", "interruptAgent", "root", "child"),
     event("close", "closeAgent", "root", "child"),
   ], 0);
-  assert(current.map(value => value.kind).join(",") === "started,interacted,interrupted",
+  assert(current.map(value => value.kind).join(",") === "started,interacted,interrupted,closed",
     "Current collabAgentToolCall lifecycle normalization failed");
   assert(current.every(value => value.parentThreadId === "root" && value.agentThreadId === "child"),
     "Current collabAgentToolCall identities were not preserved");

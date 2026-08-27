@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { rootRequestCooldownMs, steeringText } from "../scripts/lifecycle-smoke/common";
 import { hierarchyPrompt, selfTestHierarchySurfaceClassification } from "../scripts/lifecycle-smoke/codex-v2-scenario";
+import { selfTestV2ActivityNormalization } from "../scripts/lifecycle-smoke/codex-v2-activity";
 
 test("lifecycle smoke scripts contain no CJK prompt or validation text", () => {
   const root = join(import.meta.dir, "..", "scripts", "lifecycle-smoke");
@@ -38,4 +39,8 @@ test("the hierarchy interruption uses one blocking child wait without root busy 
 
 test("hierarchy surface accounting accepts only the planned interrupt replacement", () => {
   selfTestHierarchySurfaceClassification();
+});
+
+test("targeted interrupt remains distinct from subtree close", () => {
+  selfTestV2ActivityNormalization();
 });
