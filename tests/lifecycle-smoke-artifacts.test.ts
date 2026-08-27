@@ -64,7 +64,7 @@ test("lifecycle failure categories never retain model or tool content", () => {
     .toBe("RATE_OR_VERIFICATION_LIMIT");
 });
 
-test("retained lifecycle evidence is content-free, owner-only, and bounded", () => {
+test("retained lifecycle evidence is content-free, bounded, and owner-only on POSIX", () => {
   const root = mkdtempSync(join(tmpdir(), "lifecycle-artifacts-"));
   const secret = "PRIVATE_MODEL_AND_TOOL_CONTENT";
   try {

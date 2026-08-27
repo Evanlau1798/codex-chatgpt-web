@@ -41,7 +41,7 @@ function redactValue(value: unknown, depth = 0): unknown {
 
 export function appendLifecycleArtifact(path: string, value: string): void {
   appendFileSync(path, value, { mode: 0o600 });
-  try { chmodSync(path, 0o600); } catch { /* Windows ACLs are owned by the launcher profile. */ }
+  try { chmodSync(path, 0o600); } catch { /* Windows retains the artifact root's inherited DACL. */ }
 }
 
 export function saveLifecycleJson(path: string, value: unknown): void {
