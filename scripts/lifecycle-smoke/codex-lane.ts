@@ -46,6 +46,11 @@ export function retainedConversationWasReleased(
   return authoritativeReleases.length === 1;
 }
 
+export function childTtlResumePrompt(childId: string): string {
+  assert(childId, "Completed grandchild identity is required for TTL resume");
+  return `你必須呼叫 send_input，且 target=${childId}，與這位已正常完成的同一位 grandchild 再互動，詢問它是否仍記得階層測試中的證據與摩擦；不要另派新的 subagent。收到回覆後，整理這段工作中的訊息追加、兩次上下文整理、交接、階層式 subagent 協作、中止與 TTL 續接，以及你觀察到的不足。`;
+}
+
 export async function runCodexLane(runRoot: string): Promise<LaneResult> {
   const laneRoot = join(runRoot, "codex"); mkdirSync(laneRoot, { recursive: true });
   const timelines: Record<string, any>[] = []; const checks: Record<string, boolean> = {}; const tabs = new Set<string>();
@@ -229,7 +234,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     await waitRootRequestBudget(lastRootRequestAt);
     const finalAt = Date.now();
     lastRootRequestAt = finalAt;
-    const final = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: "請嘗試與剛才正常完成的同一位 grandchild 再互動，詢問它是否仍記得階層測試中的證據與摩擦；不要另派新的 subagent。收到回覆後，整理這段工作中的訊息追加、兩次上下文整理、交接、階層式 subagent 協作、中止與 TTL 續接，以及你觀察到的不足。" }] });
+    const final = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: childTtlResumePrompt(childId) }] });
     await completed(run, final.turn.id, activeTurnSmokeTimeoutMs); const finalDone = Date.now();
     const finalMessages = run.messages(threadId).join("\n").replaceAll("\\_", "_");
     saveLifecycleContentSummary(join(laneRoot, "final.json"), "final", finalMessages);
