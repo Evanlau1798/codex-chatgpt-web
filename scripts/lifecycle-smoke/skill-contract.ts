@@ -175,7 +175,7 @@ export function hasLocalFileEvidence(
   });
   const evidenceText = finalText.replaceAll("**", "");
   const lineReferences = evidenceText.match(
-    /(?:\b(?:line\s+|l\s*)\d+(?:\s*[-–—]\s*\d+)?\b|:\d+(?:\s*[-–—]\s*\d+)?\b)/gi,
+    /(?:\b(?:lines?\s+|l\s*)\d+(?:\s*[-–—]\s*\d+)?\b|:\d+(?:\s*[-–—]\s*\d+)?\b)/gi,
   ) ?? [];
   return readCompleted && lineReferences.length >= 2;
 }

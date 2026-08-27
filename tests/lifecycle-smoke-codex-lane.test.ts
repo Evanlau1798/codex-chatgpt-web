@@ -20,3 +20,14 @@ test("Codex local evidence accepts conventional L-prefixed line references", () 
     },
   }], "turn", target, "The replacement boundary is at L38; persistence is covered at L51–77.")).toBeTrue();
 });
+
+test("Codex local evidence accepts plural line ranges", () => {
+  const target = "G:\\repo\\tests\\target.test.ts";
+  expect(hasLocalFileEvidence([{
+    method: "item/completed",
+    params: {
+      turnId: "turn",
+      item: { type: "commandExecution", command: `Get-Content '${target}'`, status: "completed" },
+    },
+  }], "turn", target, "The checks are at lines 38–49 and lines 51–77.")).toBeTrue();
+});
