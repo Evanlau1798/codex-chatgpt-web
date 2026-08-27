@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { childTtlResumePrompt } from "../scripts/lifecycle-smoke/codex-lane";
 import { hasLocalFileEvidence } from "../scripts/lifecycle-smoke/skill-contract";
+import { ownedSurfaceEvents } from "../scripts/lifecycle-smoke/codex-v2-surfaces";
 
 test("Codex child TTL prompt names the exact existing agent and required tool", () => {
   const prompt = childTtlResumePrompt("grandchild-thread-id");
@@ -30,4 +31,16 @@ test("Codex local evidence accepts plural line ranges", () => {
       item: { type: "commandExecution", command: `Get-Content '${target}'`, status: "completed" },
     },
   }], "turn", target, "The checks are at lines 38–49 and lines 51–77.")).toBeTrue();
+});
+
+test("Codex root ownership follows same-trace replacement tabs", () => {
+  const launcher = [
+    { at: "2026-01-01T00:00:00.000Z", event: "browser.tab_reused", detail: { tabId: "root-old", traceId: "trace-a" } },
+    { at: "2026-01-01T00:00:01.000Z", event: "browser.tab_created", detail: { tabId: "root-new", traceId: "trace-a" } },
+    { at: "2026-01-01T00:00:02.000Z", event: "browser.tab_reused", detail: { tabId: "root-new", traceId: "trace-b" } },
+    { at: "2026-01-01T00:00:03.000Z", event: "browser.tab_created", detail: { tabId: "child", traceId: "trace-child" } },
+  ] as any;
+
+  expect(ownedSurfaceEvents(launcher, ["root-old"], ["trace-a"]).map(value => value.detail?.tabId))
+    .toEqual(["root-old", "root-new", "root-new"]);
 });

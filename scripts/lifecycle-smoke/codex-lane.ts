@@ -8,6 +8,7 @@ import {
 import { activeTurnSmokeTimeoutMs, agentTextStreamDiagnostic, CodexRun, completed } from "./codex-app-server";
 import { normalizeV2Activities } from "./codex-v2-activity";
 import { runV2HierarchyScenario } from "./codex-v2-scenario";
+import { ownedSurfaceEvents } from "./codex-v2-surfaces";
 import { hasLocalFileEvidence, skillContractEvidence } from "./skill-contract";
 import { smokePath } from "./paths";
 import { lifecycleErrorCategory, saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
@@ -87,7 +88,8 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     await run.request("turn/steer", { threadId, expectedTurnId: initial.turn.id, input: [{ type: "text", text: steeringText }] });
     await completed(run, initial.turn.id, activeTurnSmokeTimeoutMs);
     const initialDone = Date.now(); const initialText = run.messages(threadId).join("\n").replaceAll("\\_", "_");
-    const rootEvents = (since: number) => events(since).filter(value => value.detail?.tabId === rootTab);
+    const rootEvents = (since: number) => ownedSurfaceEvents(events(initialAt), [rootTab], [trace])
+      .filter(value => Date.parse(value.at) >= since);
     for (const value of rootEvents(initialAt).filter(value => value.event === "browser.tab_created")) {
       rootTab = String(value.detail?.tabId); tabs.add(rootTab);
     }

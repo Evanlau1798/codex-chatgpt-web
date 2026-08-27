@@ -11,6 +11,28 @@ function traceIdForLauncherEvent(value: LauncherEvents[number]): string {
     ?? "";
 }
 
+export function ownedSurfaceEvents(
+  launcher: LauncherEvents,
+  seedTabs: Iterable<string>,
+  seedTraces: Iterable<string>,
+): LauncherEvents {
+  const tabs = new Set(seedTabs);
+  const traces = new Set(seedTraces);
+  let changed: boolean;
+  do {
+    changed = false;
+    for (const value of launcher) {
+      const tabId = String(value.detail?.tabId ?? "");
+      const traceId = traceIdForLauncherEvent(value);
+      if (!(tabId && tabs.has(tabId)) && !(traceId && traces.has(traceId))) continue;
+      if (tabId && !tabs.has(tabId)) { tabs.add(tabId); changed = true; }
+      if (traceId && !traces.has(traceId)) { traces.add(traceId); changed = true; }
+    }
+  } while (changed);
+  return launcher.filter(value => tabs.has(String(value.detail?.tabId ?? ""))
+    || traces.has(traceIdForLauncherEvent(value)));
+}
+
 export function activeBrowserTraceIds(launcher: LauncherEvents): Set<string> {
   const active = new Set<string>();
   for (const value of launcher) {
