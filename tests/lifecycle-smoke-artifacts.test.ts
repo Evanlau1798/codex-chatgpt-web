@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,6 +14,7 @@ import {
   summarizeClaudeRecord,
   summarizeCodexRpc,
 } from "../scripts/lifecycle-smoke/artifacts";
+import { skillContractEvidence } from "../scripts/lifecycle-smoke/skill-contract";
 
 test("raw lifecycle summaries retain structure without prompt, answer, or tool content", () => {
   const secret = "PRIVATE_PROMPT_AND_ANSWER";
@@ -96,4 +97,20 @@ test("lifecycle JSONL encoding has per-record and total byte ceilings", () => {
   expect(bytes).toBeLessThanOrEqual(240);
   expect(outputs.every(value => Buffer.byteLength(value) <= 96)).toBeTrue();
   expect(outputs.join("")).not.toContain("x".repeat(20));
+});
+
+test("skill contract artifacts never retain an absolute user path", () => {
+  const root = mkdtempSync(join(tmpdir(), "lifecycle-skill-path-"));
+  try {
+    const skillDir = join(root, "openai-docs");
+    const skillPath = join(skillDir, "SKILL.md");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(skillPath, "# Test skill\n", "utf8");
+
+    const artifact = JSON.stringify(skillContractEvidence([], [], "turn", "trace", skillPath));
+    expect(artifact).not.toContain(root);
+    expect(artifact).toContain('"skillName":"openai-docs"');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Rpc } from "./codex-app-server";
 import type { LauncherEvent } from "./common";
 
@@ -22,7 +22,7 @@ type SkillCall = {
 };
 
 export type SkillContractEvidence = {
-  skillPath: string;
+  skillName: string;
   skillSha256: string;
   skillLines: number;
   archiveTransport: boolean;
@@ -129,7 +129,7 @@ export function skillContractEvidence(
   const archiveAt = archiveComplete?.at ?? null;
   const skillAt = firstSkill?.receivedAt ?? null;
   return {
-    skillPath,
+    skillName: basename(dirname(skillPath)),
     skillSha256: createHash("sha256").update(expected).digest("hex"),
     skillLines: expected.split(/\r?\n/).length,
     archiveTransport: archiveTransport !== undefined,
