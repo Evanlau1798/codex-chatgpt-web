@@ -7,7 +7,7 @@ import {
 } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
-import { isTemporaryChatGptUrl } from "../src/chatgpt-session";
+import { ensureChatGptTemporaryChatPersonalized, isTemporaryChatGptUrl } from "../src/chatgpt-session";
 
 describe("ChatGPT Web surface resilience", () => {
   test("retires surface failures even when a partial stream makes them unsafe to retry", () => {
@@ -187,6 +187,35 @@ describe("ChatGPT Web surface resilience", () => {
     expect(isTemporaryChatGptUrl("https://chatgpt.com/?temporary-chat=true&model=gpt-5")).toBe(true);
     expect(isTemporaryChatGptUrl("https://chatgpt.com/c/changed")).toBe(false);
     expect(isTemporaryChatGptUrl("not a URL")).toBe(false);
+  });
+
+  test("enables the personalized Temporary Chat mode required by connectors", async () => {
+    let selectedMode = 1;
+    let menuOpen = false;
+    let selectionPresses = 0;
+    const button = {
+      press: async () => { menuOpen = true; },
+      getAttribute: async (name: string) => name === "aria-expanded" ? String(menuOpen) : null,
+    };
+    const item = (index: number) => ({
+      waitFor: async () => { expect(menuOpen).toBeTrue(); },
+      getAttribute: async (name: string) => name === "aria-checked" ? String(selectedMode === index) : null,
+      press: async () => { selectionPresses += 1; selectedMode = index; menuOpen = false; },
+    });
+    const items = { count: async () => 2, first: () => item(0), nth: (index: number) => item(index) };
+    const page = {
+      locator: (selector: string) => selector.includes("conversation-header-actions")
+        ? { filter: () => ({ count: async () => 1, first: () => button }) }
+        : { filter: () => ({ last: () => ({ locator: () => items }) }) },
+      keyboard: { press: async () => { menuOpen = false; } },
+    };
+
+    await ensureChatGptTemporaryChatPersonalized(page as never);
+    await ensureChatGptTemporaryChatPersonalized(page as never);
+
+    expect(selectedMode).toBe(0);
+    expect(selectionPresses).toBe(1);
+    expect(menuOpen).toBeFalse();
   });
 
   test("keeps a final plain-text fallback and the surface retirement bit across the helper", () => {

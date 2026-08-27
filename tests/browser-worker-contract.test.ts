@@ -890,6 +890,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
   let activeComposerCalls = 0;
   const resolved = await selectConnector.call({
     config: { appName: "Codex Native2" },
+    ensureConnectorSurface: async () => {},
     connectorIsSelected: async () => connectorSelected,
     selectedConnectorControl: () => selectedConnector,
     activeComposer: async () => {
@@ -973,6 +974,7 @@ test("connector selection moves highlight to the exact hidden-viewport row befor
 
   await expect(selectConnector.call({
     config: { appName: "Codex Native2 DEV" },
+    ensureConnectorSurface: async () => {},
     connectorIsSelected: async () => selected,
     selectedConnectorControl: () => selectedConnector,
     activeComposer: async () => selected ? selectedComposer : initialComposer,
@@ -1033,6 +1035,7 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
   let activeComposerCalls = 0;
   await selectConnector.call({
     config: { appName: "Codex Native2" },
+    ensureConnectorSurface: async () => {},
     connectorIsSelected: async () => selected,
     connectorMentionRowTitles: async () => [],
     selectedConnectorControl: () => selectedConnector,
@@ -1112,6 +1115,7 @@ test("connector verification preserves the host-refreshed catalog evidence", asy
       calls.push(`prepare:${prepared}`);
     },
     activeComposer: async () => selected ? selectedComposer : initialComposer,
+    ensureConnectorSurface: async () => {},
     connectorIsSelected: async () => selected,
     connectorMentionFailure: prototype.connectorMentionFailure,
     connectorMentionRowTitles: prototype.connectorMentionRowTitles,
@@ -1172,6 +1176,7 @@ test("connector catalog refresh stays fail-closed for absent, legacy, and exact 
     try {
       return await selectConnector.call({
         config: { appName: CHATGPT_CONNECTOR_NAME },
+        ensureConnectorSurface: async () => {},
         activeComposer: async () => ({
           fill: async () => {},
           focus: async () => {},
@@ -1253,6 +1258,7 @@ test("tool-capable prompts use the shared Playwright connector selection before 
   let activeComposerCalls = 0;
   await attachPrompt.call({
     config: { appName: "Codex Native2" },
+    ensureConnectorSurface: async () => {},
     selectConnector,
     insertPromptText,
     connectorIsSelected: async () => selected,

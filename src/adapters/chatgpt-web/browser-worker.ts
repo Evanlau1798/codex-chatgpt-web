@@ -101,6 +101,7 @@ import {
   CHATGPT_USER_TURN_SELECTOR,
   chatGptEffortSliderAdvancedTowardTarget,
   detectChatGptAccountCapabilities,
+  ensureChatGptTemporaryChatPersonalized,
   isTemporaryChatGptUrl,
   parseChatGptEffortSliderState,
 } from "../../chatgpt-session";
@@ -1502,12 +1503,17 @@ export class ChatGptBrowserWorker {
       + "; create a connector with that exact name before retrying";
   }
 
+  private async ensureConnectorSurface(page: Page): Promise<void> {
+    await ensureChatGptTemporaryChatPersonalized(page);
+  }
+
   private async selectConnector(
     page: Page,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
     catalogRefreshAvailable = false,
     attemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 },
   ): Promise<Locator> {
+    await this.ensureConnectorSurface(page);
     let composer = await this.activeComposer(page);
     await composer.fill("");
     if (await this.connectorIsSelected(composer)) {

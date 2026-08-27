@@ -19,6 +19,8 @@ export const CHATGPT_EFFORT_MENU_SELECTOR = [
 export const CHATGPT_EFFORT_ITEM_SELECTOR = '[role="menuitemradio"]';
 export const CHATGPT_EFFORT_SLIDER_SELECTOR = '[data-model-reasoning-effort-slider] [role="slider"]';
 export const CHATGPT_EFFORT_SLIDER_MAX_OPTIONS = 5;
+export const CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR =
+  '#conversation-header-actions button[aria-haspopup="menu"]';
 export const CHATGPT_STOP_BUTTON_SELECTOR = '[data-testid="stop-button"]';
 export const CHATGPT_COMPLETION_ACTION_SELECTOR = 'button[data-testid="copy-turn-action-button"]';
 export const CHATGPT_ASSISTANT_TURN_SELECTOR = [
@@ -97,6 +99,41 @@ export async function assertAuthenticatedChatGptPage(page: Page): Promise<void> 
 export async function assertTemporaryChatPage(page: Page): Promise<void> {
   if (!isTemporaryChatGptUrl(page.url())) {
     throw new Error(`ChatGPT left the isolated Temporary Chat surface (${page.url()})`);
+  }
+}
+
+export async function ensureChatGptTemporaryChatPersonalized(page: Page): Promise<void> {
+  const buttons = page.locator(CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR).filter({ visible: true });
+  const buttonCount = await buttons.count();
+  if (buttonCount !== 1) {
+    throw new Error(`ChatGPT Temporary Chat exposed ${buttonCount} personalization controls`);
+  }
+  const button = buttons.first();
+  const menu = page.locator('[role="menu"]:has([role="menuitemradio"])').filter({ visible: true }).last();
+  const modes = menu.locator('[role="menuitemradio"]');
+  try {
+    await button.press("Enter");
+    await modes.first().waitFor({ state: "visible", timeout: 5_000 });
+    if (await modes.count() !== 2) throw new Error("ChatGPT Temporary Chat personalization menu changed");
+    const firstChecked = await modes.first().getAttribute("aria-checked");
+    const secondChecked = await modes.nth(1).getAttribute("aria-checked");
+    if (firstChecked === "true" && secondChecked === "false") return;
+    if (firstChecked !== "false" || secondChecked !== "true") {
+      throw new Error("ChatGPT Temporary Chat personalization menu lost its semantic radio state");
+    }
+    await modes.first().press("Enter");
+    const deadline = Date.now() + 5_000;
+    while (await button.getAttribute("aria-expanded") !== "false" && Date.now() < deadline) {
+      await new Promise(resolveSleep => setTimeout(resolveSleep, 50));
+    }
+    await button.press("Enter");
+    await modes.first().waitFor({ state: "visible", timeout: 5_000 });
+    if (await modes.first().getAttribute("aria-checked") !== "true"
+      || await modes.nth(1).getAttribute("aria-checked") !== "false") {
+      throw new Error("ChatGPT did not enable Temporary Chat personalization for connector access");
+    }
+  } finally {
+    await page.keyboard.press("Escape").catch(() => {});
   }
 }
 
