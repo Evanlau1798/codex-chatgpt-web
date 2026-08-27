@@ -12,6 +12,7 @@ import {
 } from "./artifacts";
 
 export const activeTurnSmokeTimeoutMs = 45 * 60_000;
+export const lifecycleAutoCompactTokenLimit = 70_000;
 export const lifecycleSemanticInactivityMs = DEFAULT_STALL_TIMEOUT_SEC * 3 * 1_000 + 60_000;
 export const lifecycleNativeToolLeaseMs = 150_000;
 export const lifecycleNativeToolMaxMs = 15 * 60_000;
@@ -168,7 +169,7 @@ export class CodexRun {
       "-c", "model_providers.lifecycle_smoke.supports_websockets=false",
     ];
     const compact = compactLimit
-      ? ["-c", "model_auto_compact_token_limit=100000", "-c", 'model_auto_compact_token_limit_scope="body_after_prefix"']
+      ? ["-c", `model_auto_compact_token_limit=${lifecycleAutoCompactTokenLimit}`, "-c", 'model_auto_compact_token_limit_scope="body_after_prefix"']
       : [];
     this.process = Bun.spawn({
       cmd: [codexExe, ...provider, ...compact, "app-server", "--listen", "stdio://"],

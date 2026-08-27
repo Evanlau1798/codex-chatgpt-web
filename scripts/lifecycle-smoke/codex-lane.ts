@@ -5,7 +5,7 @@ import {
   save, serviceBaseUrl, sleep, stageTimeline, steeringAuditPassed, steeringText, waitCreateBudget, waitForEvent,
   waitRootRequestBudget, waitSteeringPoint,
 } from "./common";
-import { activeTurnSmokeTimeoutMs, agentTextStreamDiagnostic, CodexRun, completed } from "./codex-app-server";
+import { activeTurnSmokeTimeoutMs, agentTextStreamDiagnostic, CodexRun, completed, lifecycleAutoCompactTokenLimit } from "./codex-app-server";
 import { normalizeV2Activities } from "./codex-v2-activity";
 import { runV2HierarchyScenario } from "./codex-v2-scenario";
 import { ownedSurfaceEvents } from "./codex-v2-surfaces";
@@ -67,7 +67,10 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     const catalogBefore = Number((await (await fetchWithTimeout(`${serviceBaseUrl}/healthz`, 5_000, "Codex catalog preflight")).json()).successful_model_catalog_requests ?? 0);
     const run = new CodexRun(join(laneRoot, "app-server.jsonl")); runs.push(run); await run.initialize();
     const config = await run.request("config/read", { includeLayers: false });
-    assert(config.config?.model_auto_compact_token_limit === 100_000, "Codex compact override is not 100000");
+    assert(
+      config.config?.model_auto_compact_token_limit === lifecycleAutoCompactTokenLimit,
+      "Codex compact override does not match the lifecycle smoke limit",
+    );
     let models = await run.request("model/list", { includeHidden: true });
     if (!catalogContainsModel(models, "chatgpt-web/extra-high")) {
       const catalogDeadline = Date.now() + 30_000;

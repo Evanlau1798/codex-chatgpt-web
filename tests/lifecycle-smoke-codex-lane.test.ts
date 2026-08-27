@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { lifecycleAutoCompactTokenLimit } from "../scripts/lifecycle-smoke/codex-app-server";
 import { catalogContainsModel, childTtlResumePrompt } from "../scripts/lifecycle-smoke/codex-lane";
 import { hasLocalFileEvidence } from "../scripts/lifecycle-smoke/skill-contract";
 import { ownedSurfaceEvents } from "../scripts/lifecycle-smoke/codex-v2-surfaces";
@@ -9,6 +10,10 @@ test("Codex child TTL prompt names the exact existing agent and required tool", 
   expect(prompt).toContain("send_input");
   expect(prompt).toContain("target=grandchild-thread-id");
   expect(prompt).toContain("Do not dispatch another subagent");
+});
+
+test("Codex lifecycle smoke forces compaction within bounded read-only review work", () => {
+  expect(lifecycleAutoCompactTokenLimit).toBe(70_000);
 });
 
 test("Codex catalog preflight accepts an already-cached Web model", () => {
