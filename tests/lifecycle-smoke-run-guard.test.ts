@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -7,9 +7,18 @@ import {
   acquireLifecycleLock,
   fetchWithTimeout,
   fetchLifecycleHealth,
+  lifecycleHealthIsIdle,
   lifecycleLockPath,
   releaseLifecycleLock,
 } from "../scripts/lifecycle-smoke/run-guard";
+
+test("lifecycle health must be idle before and after live lanes", () => {
+  expect(lifecycleHealthIsIdle({ status: "ok", accepting_turns: true, active_http_turns: 0, active_browser_turns: 0 })).toBeTrue();
+  expect(lifecycleHealthIsIdle({ status: "ok", accepting_turns: true, active_http_turns: 1, active_browser_turns: 0 })).toBeFalse();
+  const source = readFileSync(join(import.meta.dir, "..", "scripts", "lifecycle-smoke", "run.ts"), "utf8");
+  expect(source.match(/fetchLifecycleHealth/g)?.length).toBeGreaterThanOrEqual(3);
+  expect(source).toContain("postflight_idle");
+});
 
 test("lifecycle lock reclaims only a demonstrably dead owner", () => {
   const root = mkdtempSync(join(tmpdir(), "lifecycle-lock-"));

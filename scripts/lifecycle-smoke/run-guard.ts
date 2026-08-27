@@ -93,6 +93,13 @@ export async function fetchLifecycleHealth(
   return fetchWithTimeout(url, timeoutMs, "Lifecycle smoke health preflight", fetcher);
 }
 
+export function lifecycleHealthIsIdle(health: Record<string, unknown>): boolean {
+  return health.status === "ok"
+    && health.accepting_turns === true
+    && Number(health.active_http_turns ?? 0) === 0
+    && Number(health.active_browser_turns ?? 0) === 0;
+}
+
 export async function fetchWithTimeout(
   url: string,
   timeoutMs: number,

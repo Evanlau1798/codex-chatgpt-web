@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getConfigDir, loadConfig } from "../../src/config";
 import { parseLifecycleSmokeOptions } from "./options";
-import { acquireLifecycleLock, fetchLifecycleHealth, lifecycleLockPath, releaseLifecycleLock } from "./run-guard";
+import { acquireLifecycleLock, fetchLifecycleHealth, lifecycleHealthIsIdle, lifecycleLockPath, releaseLifecycleLock } from "./run-guard";
 
 const repo = resolve(import.meta.dir, "..", "..");
 const options = parseLifecycleSmokeOptions(process.argv.slice(2), repo);
@@ -28,12 +28,7 @@ try {
   const healthResponse = await fetchLifecycleHealth(`${serviceBaseUrl}/healthz`);
   if (!healthResponse.ok) throw new Error(`Lifecycle smoke health preflight failed: HTTP ${healthResponse.status}`);
   const health = await healthResponse.json() as Record<string, unknown>;
-  if (health.status !== "ok" || health.accepting_turns !== true) {
-    throw new Error(`Lifecycle smoke requires a healthy accepting daemon: ${JSON.stringify(health)}`);
-  }
-  if (Number(health.active_http_turns ?? 0) !== 0 || Number(health.active_browser_turns ?? 0) !== 0) {
-    throw new Error("Lifecycle smoke requires an idle daemon with zero active HTTP and browser turns");
-  }
+  if (!lifecycleHealthIsIdle(health)) throw new Error("Lifecycle smoke requires a healthy, accepting, idle daemon");
   if (config.browserHost !== "launcher" || !config.browserHostDescriptorPath) {
     throw new Error("Lifecycle smoke requires the launcher-owned browser host");
   }
@@ -67,7 +62,13 @@ try {
     claudeLane.selfTestClaudeLaneBudget();
     results.push(await claudeLane.runClaudeLane(root));
   }
-  const failed = results.some(result => (
+  let postflightIdle = false;
+  try {
+    const postflight = await fetchLifecycleHealth(`${serviceBaseUrl}/healthz`);
+    postflightIdle = postflight.ok
+      && lifecycleHealthIsIdle(await postflight.json() as Record<string, unknown>);
+  } catch {}
+  const failed = !postflightIdle || results.some(result => (
     typeof result === "object" && result !== null && (result as { status?: unknown }).status !== "passed"
   ));
   await save(join(root, "result.json"), {
@@ -78,6 +79,7 @@ try {
       version: health.version,
       pid: health.pid,
     },
+    postflight_idle: postflightIdle,
     results,
   });
   process.stdout.write(`LIFECYCLE_SMOKE_${failed ? "FAILED" : "PASSED"} root=${root}\n`);
