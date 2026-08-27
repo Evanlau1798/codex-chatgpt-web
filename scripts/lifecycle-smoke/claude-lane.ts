@@ -9,7 +9,7 @@ import {
   ClaudeResultWatchdog,
   waitForClaudeCommandExit,
 } from "./claude-watchdog";
-import { manualCompactPreservedRetainedRoot, selfTestManualCompactRetainedRoot } from "./retained-check";
+import { manualCompactContinuityPassed, manualCompactPreservedRetainedRoot, selfTestManualCompactRetainedRoot } from "./retained-check";
 import { safeSurfaceRecoveryCount } from "./codex-v2-surfaces";
 import {
   assert, auditPrompt, claudeExe, cleanupLifecycleResources, cutoff, detectRestriction, events, iso, LaneResult, repo, repoTests, reviewTaskPrompt,
@@ -416,8 +416,13 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       const line = JSON.stringify(value);
       return line.includes(rootTrace) && line.includes("surface recovery eligible=true");
     });
-    checks.manual_compact_retained = manualCompactPreservedRetainedRoot(
+    const compactRetained = manualCompactPreservedRetainedRoot(
       rootEvents(initialAt), compactRootEvents, rootTab,
+    );
+    checks.manual_compact_continuity = manualCompactContinuityPassed(
+      compactRetained,
+      Boolean(compactReplacement),
+      compactRecovery,
     );
     checks.manual_compact_safe_recovery = !compactReplacement || compactRecovery;
     if (compactReplacement?.detail?.tabId) {
@@ -468,7 +473,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     const safeRecoveries = safeSurfaceRecoveryCount(events(initialAt));
     checks.surface_recovery_bounded = safeRecoveries !== undefined;
     checks.expected_web_surfaces = safeRecoveries !== undefined
-      && claudeLaneSurfaceCountIsExact(events(initialAt), 4 + safeRecoveries, childTab);
+      && claudeLaneSurfaceCountIsExact(events(initialAt), safeRecoveries, childTab);
     checks.latency = timelines.every(value => (value.adapter_to_cli_ms === null || Number(value.adapter_to_cli_ms) <= 2_000)
       && (value.web_commentary_to_cli_ms === null || Number(value.web_commentary_to_cli_ms) <= 5_000));
     const status = Object.values(checks).every(Boolean) ? "passed" : "failed";

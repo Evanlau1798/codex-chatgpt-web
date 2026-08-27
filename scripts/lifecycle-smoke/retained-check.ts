@@ -21,6 +21,14 @@ export function manualCompactPreservedRetainedRoot(
   return (retainedBeforeCompact || reusedDuringCompact) && !invalidatedDuringCompact;
 }
 
+export function manualCompactContinuityPassed(
+  retained: boolean,
+  replacementCreated: boolean,
+  recoveryProved: boolean,
+): boolean {
+  return retained || (replacementCreated && recoveryProved);
+}
+
 export function selfTestManualCompactRetainedRoot(): void {
   assert(manualCompactPreservedRetainedRoot(
     [{ event: "browser.tab_retained", detail: { tabId: "root-tab" } }],
@@ -37,4 +45,8 @@ export function selfTestManualCompactRetainedRoot(): void {
     [{ event: "browser.tab_created", detail: { tabId: "replacement-tab" } }],
     "root-tab",
   ), "Claude local /compact must reject an unproved replacement surface");
+  assert(manualCompactContinuityPassed(false, true, true),
+    "Claude local /compact must accept a replacement only when recovery is proved");
+  assert(!manualCompactContinuityPassed(false, true, false),
+    "Claude local /compact must reject an unproved replacement");
 }

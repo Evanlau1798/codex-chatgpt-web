@@ -18,12 +18,14 @@ export function claudeCompactions(configDir: string, sessionId: string, trigger:
 
 export function claudeLaneSurfaceCountIsExact(
   launcher: LauncherEvent[],
-  expectedCreates: number,
+  safeRecoveries: number,
   childTab: string,
 ): boolean {
   const creates = launcher.filter(value => value.event === "browser.tab_created" && value.detail?.tabId);
   const createdTabs = new Set(creates.map(value => String(value.detail!.tabId)));
   const childResumes = launcher.filter(value => value.event === "browser.tab_reused"
     && value.detail?.tabId === childTab);
-  return creates.length === expectedCreates && createdTabs.size === creates.length && childResumes.length === 1;
+  return creates.length === 5 + safeRecoveries
+    && createdTabs.size === creates.length
+    && childResumes.length === 1;
 }

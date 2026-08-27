@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { LifecycleArtifactEncoder, LifecycleMemoryBudget } from "../scripts/lifecycle-smoke/artifacts";
 import { ClaudeRun } from "../scripts/lifecycle-smoke/claude-lane";
 import { claudeLaneSurfaceCountIsExact } from "../scripts/lifecycle-smoke/claude-evidence";
+import { manualCompactContinuityPassed } from "../scripts/lifecycle-smoke/retained-check";
 
 const paths: string[] = [];
 afterEach(() => { for (const path of paths.splice(0)) rmSync(path, { force: true }); });
@@ -42,14 +43,24 @@ test("Claude close rejects protocol overflow arriving after a result chunk", asy
 });
 
 test("Claude lane surface accounting fails closed on an extra Web tab", () => {
-  const expected = ["initial-root", "auto-root", "child", "final-root"].map((tabId, index) => ({
+  const expected = ["initial-root", "audit-root", "auto-root", "child", "final-root"].map((tabId, index) => ({
     at: `2026-01-01T00:00:0${index}.000Z`, event: "browser.tab_created",
     detail: { tabId, traceId: `trace-${index}` },
   }));
   const childReuse = { at: "2026-01-01T00:00:05.000Z", event: "browser.tab_reused", detail: { tabId: "child", traceId: "child-resume" } };
 
-  expect(claudeLaneSurfaceCountIsExact([...expected, childReuse] as any, 4, "child")).toBeTrue();
+  expect(claudeLaneSurfaceCountIsExact([...expected, childReuse] as any, 0, "child")).toBeTrue();
   expect(claudeLaneSurfaceCountIsExact([...expected, childReuse, {
     at: "2026-01-01T00:00:06.000Z", event: "browser.tab_created", detail: { tabId: "extra", traceId: "extra" },
-  }] as any, 4, "child")).toBeFalse();
+  }] as any, 0, "child")).toBeFalse();
+  expect(claudeLaneSurfaceCountIsExact([...expected, childReuse, {
+    at: "2026-01-01T00:00:06.000Z", event: "browser.tab_created", detail: { tabId: "recovery", traceId: "trace-auto" },
+  }] as any, 1, "child")).toBeTrue();
+});
+
+test("Claude manual compact accepts only retained or proved recovery continuity", () => {
+  expect(manualCompactContinuityPassed(true, false, false)).toBeTrue();
+  expect(manualCompactContinuityPassed(false, true, true)).toBeTrue();
+  expect(manualCompactContinuityPassed(false, true, false)).toBeFalse();
+  expect(manualCompactContinuityPassed(false, false, false)).toBeFalse();
 });
