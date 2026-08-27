@@ -3,6 +3,13 @@ import { activeTurnSmokeTimeoutMs, CodexRun, completed, Rpc } from "./codex-app-
 import { assert, detectRestriction, events, iso, repo, repoTests, save } from "./common";
 import { normalizeV2Activities, type V2Activity } from "./codex-v2-activity";
 import { lifecycleErrorCategory, saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
+import {
+  activeBrowserTraceIds,
+  classifyHierarchySurfaces,
+  excludeLauncherTraces,
+  latestSurfaceTabForTrace,
+  safeSurfaceRecoveryCount,
+} from "./codex-v2-surfaces";
 
 export const hierarchySentinel = "V2_HIERARCHY_SMOKE_DONE";
 
@@ -10,7 +17,7 @@ export const hierarchyPrompt = `Respond only in English. Validate one hierarchic
 
 First read one relevant test file yourself, then dispatch exactly one child. Ask the child to read another relevant test file, wait long enough that adjacent Web session creations are at least 30 seconds apart, and then have the child dispatch exactly one grandchild. After the child successfully creates the grandchild, it must not wait for the grandchild; it must immediately complete its current turn and report the grandchild agent ID plus file evidence so the root obtains that identity through the normal wait result. The grandchild must perform one small read-only probe, provide verifiable file evidence, and report actual friction.
 
-The root must first wait until the child's completion result explicitly reports successful grandchild creation and its agent ID. Do not send a message to either descendant before seeing that creation evidence. After obtaining both identities, proactively ask each descendant one distinct question and receive both replies. The new child message must ask it to reply and then keep its current turn active while waiting for the root to interrupt it. After obtaining both interaction records, proactively interrupt the still-running child. The grandchild must complete normally. Finally, confirm that no agent remains running and summarize the root-to-child-to-grandchild identities, two interactions, one interruption, grandchild evidence, and friction at each level.
+The root must first wait until the child's completion result explicitly reports successful grandchild creation and its agent ID. Do not send a message to either descendant before seeing that creation evidence. After obtaining both identities, proactively ask each descendant one distinct question. The child follow-up must require it to publish its evidence as commentary, must not call send_input to address the root, and then start exactly one blocking wait long enough for the root to interrupt it; it must not poll or call write_stdin after that wait starts. The root may use at most one long wait_agent call for descendant delivery and must not poll wait_agent. After receiving both interaction records, proactively interrupt the still-running child. The grandchild must complete normally. Finally, confirm that no agent remains running and summarize the root-to-child-to-grandchild identities, two interactions, one interruption, grandchild evidence, and friction at each level.
 
 Use the available native Multi-Agent tools to complete the entire flow without user intervention. Output only ${hierarchySentinel} on the final line.`;
 
@@ -84,124 +91,14 @@ function problemList(checks: Record<string, boolean>) {
     .map(([check]) => ({ check, message: `Hierarchy smoke check failed: ${check}` }));
 }
 
-function traceIdForLauncherEvent(value: ReturnType<typeof events>[number]): string {
-  const direct = String(value.detail?.traceId ?? "");
-  if (direct) return direct;
-  const line = String(value.detail?.line ?? "");
-  return line.match(/browser turn ([A-Za-z0-9_-]+)/)?.[1]
-    ?? line.match(/broker trace=([A-Za-z0-9_-]+)/)?.[1]
-    ?? "";
-}
-
-export function activeBrowserTraceIds(launcher: ReturnType<typeof events>): Set<string> {
-  const active = new Set<string>();
-  for (const value of launcher) {
-    const traceId = traceIdForLauncherEvent(value);
-    if (!traceId) continue;
-    if (value.event === "browser.turn_started") active.add(traceId);
-    if (value.event === "browser.turn_ended") active.delete(traceId);
-  }
-  return active;
-}
-
-function excludeLauncherTraces(
-  launcher: ReturnType<typeof events>,
-  excludedTraces: ReadonlySet<string>,
-): ReturnType<typeof events> {
-  if (excludedTraces.size === 0) return launcher;
-  return launcher.filter(value => {
-    const traceId = traceIdForLauncherEvent(value);
-    return !traceId || !excludedTraces.has(traceId);
-  });
-}
-
-export function safeSurfaceRecoveryCount(
-  launcher: ReturnType<typeof events>,
-  excludedTraces: ReadonlySet<string> = new Set(),
-): number | undefined {
-  const ownedLauncher = excludeLauncherTraces(launcher, excludedTraces);
-  const eligible = ownedLauncher.filter(value => /surface recovery eligible=true/.test(String(value.detail?.line ?? "")));
-  if (eligible.length > 1) return undefined;
-  for (const recovery of eligible) {
-    const line = String(recovery.detail?.line ?? "");
-    const traceId = line.match(/browser turn ([A-Za-z0-9_-]+)/)?.[1];
-    if (!traceId
-      || !/reason=eligible/.test(line)
-      || !/finalChars=0/.test(line)
-      || !/canonicalComplete=true/.test(line)
-      || !/unresolvedSuperseded=0/.test(line)) return undefined;
-    const created = ownedLauncher.find(value => value.event === "browser.tab_created"
-      && value.detail?.traceId === traceId
-      && Date.parse(value.at) >= Date.parse(recovery.at));
-    const released = ownedLauncher.findLast(value => value.event === "browser.tab_released"
-      && value.detail?.traceId === traceId
-      && (value.detail?.status === "error" || value.detail?.status === "aborted")
-      && Date.parse(value.at) <= Date.parse(created?.at ?? ""));
-    const completed = ownedLauncher.find(value => value.event === "browser.tab_completed"
-      && value.detail?.traceId === traceId
-      && Date.parse(value.at) >= Date.parse(created?.at ?? ""));
-    const rebuild = ownedLauncher.find(value => String(value.detail?.line ?? "")
-      .includes(`browser turn ${traceId} rebuilding tool surface from canonical state`));
-    if (!released || !created || !completed || !rebuild) return undefined;
-  }
-  return eligible.length;
-}
-
-export function latestSurfaceTabForTrace(
-  launcher: ReturnType<typeof events>,
-  traceId: string,
-): string {
-  return String(launcher.findLast(value => (
-    (value.event === "browser.tab_created" || value.event === "browser.tab_reused")
-    && value.detail?.traceId === traceId && value.detail?.tabId
-  ))?.detail?.tabId ?? "");
-}
-
-export function classifyHierarchySurfaces(
-  launcher: ReturnType<typeof events>,
-  firstSpawnAt: number,
-  expectFreshRoot: boolean | undefined,
-  safeRecoveries: number | undefined,
-  excludedTraces: ReadonlySet<string> = new Set(),
-) {
-  const ownedLauncher = excludeLauncherTraces(launcher, excludedTraces);
-  const surfaces = ownedLauncher.filter(value => value.event === "browser.tab_created" || value.event === "browser.tab_reused");
-  const creates = surfaces.filter(value => value.event === "browser.tab_created");
-  const rootSurfaces = surfaces.filter(value => Date.parse(value.at) < firstSpawnAt);
-  const rootCreates = rootSurfaces.filter(value => value.event === "browser.tab_created");
-  const rootTrace = String(rootSurfaces.findLast(value => value.detail?.traceId)?.detail?.traceId ?? "");
-  const descendantCreates = creates.filter(value => (
-    Date.parse(value.at) >= firstSpawnAt
-    && String(value.detail?.traceId ?? "") !== rootTrace
-  ));
-  const descendantTabs = [...new Set(descendantCreates.flatMap(value => (
-    value.detail?.tabId ? [String(value.detail.tabId)] : []
-  )))];
-  const retainedRootReplacement = expectFreshRoot === false ? rootCreates.length : 0;
-  const expectedCreates = (expectFreshRoot === false ? 2 : 3)
-    + (safeRecoveries ?? 0)
-    + retainedRootReplacement;
-  const rootAcquisitionValid = expectFreshRoot === false
-    ? rootSurfaces.some(value => value.event === "browser.tab_reused") && rootCreates.length <= 1
-    : rootCreates.length >= 1;
-  return {
-    surfaces,
-    creates,
-    rootTrace,
-    descendantTabs,
-    expected: safeRecoveries !== undefined
-      && rootAcquisitionValid
-      && descendantTabs.length === 2
-      && creates.length === expectedCreates,
-  };
-}
-
 export function selfTestHierarchySurfaceClassification() {
   const launcher = [
     { at: "2026-01-01T00:00:00.000Z", event: "browser.tab_reused", detail: { tabId: "old-root", traceId: "old-root-trace" } },
     { at: "2026-01-01T00:00:01.000Z", event: "browser.tab_created", detail: { tabId: "new-root", traceId: "new-root-trace" } },
     { at: "2026-01-01T00:00:03.000Z", event: "browser.tab_created", detail: { tabId: "child", traceId: "child-trace" } },
     { at: "2026-01-01T00:00:05.000Z", event: "browser.tab_created", detail: { tabId: "grandchild", traceId: "grandchild-trace" } },
+    { at: "2026-01-01T00:00:05.100Z", event: "browser.tab_released", detail: { tabId: "child", traceId: "child-trace", status: "aborted" } },
+    { at: "2026-01-01T00:00:05.200Z", event: "browser.tab_created", detail: { tabId: "child-replacement", traceId: "child-interrupt-trace" } },
     { at: "2026-01-01T00:00:06.000Z", event: "browser.tab_created", detail: { tabId: "recovered-root", traceId: "new-root-trace" } },
   ] as ReturnType<typeof events>;
   const classified = classifyHierarchySurfaces(
@@ -209,10 +106,18 @@ export function selfTestHierarchySurfaceClassification() {
     Date.parse("2026-01-01T00:00:02.000Z"),
     false,
     1,
+    new Set(),
+    Date.parse("2026-01-01T00:00:05.050Z"),
   );
   assert(classified.expected, "Retained root replacement should not count as a third descendant");
   assert(classified.rootTrace === "new-root-trace", "Final root trace should follow the replacement surface");
-  assert(classified.descendantTabs.join(",") === "child,grandchild", "Hierarchy descendants should exclude root surfaces");
+  assert(classified.descendantTabs.join(",") === "child,grandchild,child-replacement", "Hierarchy descendants should include the planned child replacement only");
+  const missingInterruptRelease = classifyHierarchySurfaces(
+    launcher.filter(value => value.event !== "browser.tab_released"),
+    Date.parse("2026-01-01T00:00:02.000Z"), false, 1, new Set(),
+    Date.parse("2026-01-01T00:00:05.050Z"),
+  );
+  assert(!missingInterruptRelease.expected, "An unpaired extra descendant surface must fail closed");
 
   const foreignActiveTrace = "foreign-active-trace";
   const withForeignActiveRecovery = [
@@ -339,6 +244,8 @@ export async function runV2HierarchyScenario(
     await completed(run, turnId, activeTurnSmokeTimeoutMs);
     const completedAt = Date.now();
     const activity = activities(run, startedAt);
+    const rootInteractions = activity.filter(value => value.kind === "interacted" && value.parentThreadId === threadId);
+    const interrupts = activity.filter(value => value.kind === "interrupted");
     const spawned = activity.filter(value => value.kind === "started");
     const childCandidates = spawned.filter(value => value.parentThreadId === threadId);
     const childId = childCandidates.length === 1 ? childCandidates[0]!.agentThreadId : "";
@@ -359,6 +266,8 @@ export async function runV2HierarchyScenario(
       firstSpawnAt,
       options.expectFreshRoot,
       safeRecoveries,
+      new Set(),
+      interrupts.length === 1 ? Date.parse(interrupts[0]!.at) : undefined,
     );
     const { creates, surfaces, rootTrace, descendantTabs } = classifiedSurfaces;
     const tabs = [...new Set(surfaces.flatMap(value => value.detail?.tabId ? [String(value.detail.tabId)] : []))];
@@ -369,8 +278,6 @@ export async function runV2HierarchyScenario(
       grandchild: descendantTabs[1] ?? "",
     };
     const ledger = toolLedger(run, startedAt);
-    const rootInteractions = activity.filter(value => value.kind === "interacted" && value.parentThreadId === threadId);
-    const interrupts = activity.filter(value => value.kind === "interrupted");
     const activityIds = activity.map(value => value.id);
     const createTimes = creates.map(value => Date.parse(value.at));
     const createSpacing = createTimes.slice(1).every((at, index) => at - createTimes[index]! >= 30_000);
