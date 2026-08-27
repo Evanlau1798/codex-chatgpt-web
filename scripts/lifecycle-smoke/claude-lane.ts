@@ -393,7 +393,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     const childCompletionText = String(childNotification.summary ?? "");
     saveLifecycleContentSummary(join(laneRoot, "child-first-completion.json"), "child_completion", childCompletionText);
     checks.child_interacted = sentMessageTo(child.records, childId)
-      && childCompletionText.includes("rejects a caret that Lexical moved outside the active composer");
+      && childCompletionText.includes("finds Markdown restoration markers strictly right-to-left");
     autoCompactions = claudeCompactions(configDir, sessionId, "auto");
 
     await waitRootRequestBudget(lastRootCompletionAt);

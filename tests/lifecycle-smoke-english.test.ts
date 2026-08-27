@@ -21,6 +21,12 @@ test("Claude TTL resume names and verifies the existing child identity", () => {
   expect(source).toContain("resumedChildId === childId");
 });
 
+test("Claude child interaction verifies the requested final test name", () => {
+  const source = readFileSync(join(import.meta.dir, "..", "scripts", "lifecycle-smoke", "claude-lane.ts"), "utf8");
+
+  expect(source).toContain("finds Markdown restoration markers strictly right-to-left");
+});
+
 test("the English steering marker continues instead of replacing the active task", () => {
   expect(steeringText).toContain("Respond only in English");
   expect(steeringText).toContain("continue the original task");
