@@ -27,7 +27,7 @@ export const codexExe = process.env.CODEX_LIFECYCLE_CODEX_EXE?.trim()
 export const claudeExe = process.env.CODEX_LIFECYCLE_CLAUDE_EXE?.trim()
   || resolveLifecycleExecutable("claude");
 export const steeringText = "Respond only in English. Lifecycle smoke marker ENGLISH_STEERING_VISIBLE is present; continue the original task and do not answer this marker separately.";
-export const auditPrompt = `Respond only in English. Answer only from context actually visible in this Web conversation. Do not use tools, speculate, or cite unrelated system or developer instructions:
+export const auditPrompt = `Respond only in English. Answer only from context actually visible in this Web conversation. Use exactly the labels "1." through "5." for the five answers. Do not use blockquotes. Do not use tools, speculate, or cite unrelated system or developer instructions:
 1. When "${steeringText}" first appeared, was it a standalone user message, a system or developer message, or appended to a tool result?
 2. If it is still visible, quote only the immediately preceding and following control sentence verbatim.
 3. How many literal occurrences of the steering message can you see? List the location of each occurrence.

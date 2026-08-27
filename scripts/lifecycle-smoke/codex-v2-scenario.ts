@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { activeTurnSmokeTimeoutMs, CodexRun, completed, Rpc } from "./codex-app-server";
 import { assert, detectRestriction, events, iso, repo, repoTests, save } from "./common";
-import { normalizeV2Activities, type V2Activity } from "./codex-v2-activity";
+import { normalizeV2Activities, targetedInterruptActivity, type V2Activity } from "./codex-v2-activity";
 import { lifecycleErrorCategory, saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
 import {
   activeBrowserTraceIds,
@@ -244,13 +244,14 @@ export async function runV2HierarchyScenario(
     await completed(run, turnId, activeTurnSmokeTimeoutMs);
     const completedAt = Date.now();
     const activity = activities(run, startedAt);
-    const rootInteractions = activity.filter(value => value.kind === "interacted" && value.parentThreadId === threadId);
-    const interrupts = activity.filter(value => value.kind === "interrupted");
     const spawned = activity.filter(value => value.kind === "started");
     const childCandidates = spawned.filter(value => value.parentThreadId === threadId);
     const childId = childCandidates.length === 1 ? childCandidates[0]!.agentThreadId : "";
     const grandchildCandidates = spawned.filter(value => value.parentThreadId === childId);
     const grandchildId = grandchildCandidates.length === 1 ? grandchildCandidates[0]!.agentThreadId : "";
+    const rootInteractions = activity.filter(value => value.kind === "interacted" && value.parentThreadId === threadId);
+    const targetedInterrupt = targetedInterruptActivity(activity, threadId, childId, grandchildId);
+    const deliveryInteractions = rootInteractions.filter(value => value.id !== targetedInterrupt?.id);
     const childState = childId ? await run.request("thread/read", { threadId: childId, includeTurns: true }) : undefined;
     const grandchildState = grandchildId ? await run.request("thread/read", { threadId: grandchildId, includeTurns: true }) : undefined;
     const finalText = rootFinal(run, threadId, turnId);
@@ -267,7 +268,7 @@ export async function runV2HierarchyScenario(
       options.expectFreshRoot,
       safeRecoveries,
       new Set(),
-      interrupts.length === 1 ? Date.parse(interrupts[0]!.at) : undefined,
+      targetedInterrupt ? Date.parse(targetedInterrupt.at) : undefined,
     );
     const { creates, surfaces, rootTrace, descendantTabs } = classifiedSurfaces;
     const tabs = [...new Set(surfaces.flatMap(value => value.detail?.tabId ? [String(value.detail.tabId)] : []))];
@@ -322,13 +323,13 @@ export async function runV2HierarchyScenario(
       root_completed: finalText.trim().length > 0,
       exactly_two_spawns: spawned.length === 2,
       hierarchy_root_child_grandchild: childCandidates.length === 1 && grandchildCandidates.length === 1,
-      root_interacted_child: rootInteractions.some(value => value.agentThreadId === childId),
-      root_interacted_grandchild: rootInteractions.some(value => value.agentThreadId === grandchildId),
+      root_interacted_child: deliveryInteractions.some(value => value.agentThreadId === childId),
+      root_interacted_grandchild: deliveryInteractions.some(value => value.agentThreadId === grandchildId),
       activity_delivery_exact_once: activityIds.length === new Set(activityIds).size,
-      child_interrupted_once: interrupts.length === 1 && interrupts[0]?.parentThreadId === threadId
-        && interrupts[0]?.agentThreadId === childId,
-      interrupt_after_interactions: interrupts.length === 1 && rootInteractions.length >= 2
-        && Date.parse(interrupts[0]!.at) > Math.max(...rootInteractions.map(value => Date.parse(value.at))),
+      child_interrupted_once: targetedInterrupt?.parentThreadId === threadId
+        && targetedInterrupt.agentThreadId === childId,
+      interrupt_after_interactions: Boolean(targetedInterrupt && deliveryInteractions.length >= 2
+        && Date.parse(targetedInterrupt.at) > Math.max(...deliveryInteractions.map(value => Date.parse(value.at)))),
       grandchild_completed: grandchildStatuses.includes("completed"),
       child_not_running: !childStatuses.includes("inProgress") && !childStatuses.includes("running"),
       no_orphan_agents: grandchildStatuses.length > 0 && !grandchildStatuses.includes("inProgress")

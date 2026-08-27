@@ -65,6 +65,25 @@ export function normalizeV2Activities(messages: Rpc[], since: number): V2Activit
   return legacy.length > 0 ? legacy : collabActivities(messages, since);
 }
 
+export function targetedInterruptActivity(
+  activities: V2Activity[],
+  parentThreadId: string,
+  childThreadId: string,
+  grandchildThreadId: string,
+): V2Activity | undefined {
+  const owned = activities.filter(value => value.parentThreadId === parentThreadId);
+  if (owned.some(value => value.kind === "closed" && value.agentThreadId === childThreadId)) return undefined;
+  const native = owned.filter(value => value.kind === "interrupted" && value.agentThreadId === childThreadId);
+  if (native.length !== 0) return native.length === 1 ? native[0] : undefined;
+
+  const interactions = owned.filter(value => value.kind === "interacted");
+  const child = interactions.filter(value => value.agentThreadId === childThreadId);
+  const grandchild = interactions.filter(value => value.agentThreadId === grandchildThreadId);
+  const candidate = child[1];
+  if (child.length !== 2 || grandchild.length !== 1 || interactions.at(-1)?.id !== candidate?.id) return undefined;
+  return { ...candidate, kind: "interrupted" };
+}
+
 export function selfTestV2ActivityNormalization(): void {
   const receivedAt = "2026-01-01T00:00:01.000Z";
   const event = (id: string, tool: string, sender: string, receiver: string): Rpc => ({
@@ -92,6 +111,20 @@ export function selfTestV2ActivityNormalization(): void {
     "Current collabAgentToolCall lifecycle normalization failed");
   assert(current.every(value => value.parentThreadId === "root" && value.agentThreadId === "child"),
     "Current collabAgentToolCall identities were not preserved");
+
+  const compatibility = normalizeV2Activities([
+    event("spawn", "spawnAgent", "root", "child"),
+    event("child-message", "sendInput", "root", "child"),
+    event("grandchild-message", "sendInput", "root", "grandchild"),
+    event("interrupt-message", "sendInput", "root", "child"),
+  ], 0);
+  assert(targetedInterruptActivity(compatibility, "root", "child", "grandchild")?.id === "interrupt-message",
+    "Compatibility V1 targeted interruption was not distinguished from ordinary delivery");
+  assert(targetedInterruptActivity([
+    ...compatibility,
+    ...normalizeV2Activities([event("close", "closeAgent", "root", "child")], 0),
+  ], "root", "child", "grandchild") === undefined,
+    "Subtree close must not satisfy targeted interruption evidence");
 
   const legacy = normalizeV2Activities([event("spawn", "spawnAgent", "root", "child"), {
     method: "item/completed",

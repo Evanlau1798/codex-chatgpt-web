@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { rootRequestCooldownMs, steeringText } from "../scripts/lifecycle-smoke/common";
+import { auditPrompt, rootRequestCooldownMs, steeringText } from "../scripts/lifecycle-smoke/common";
 import { hierarchyPrompt, selfTestHierarchySurfaceClassification } from "../scripts/lifecycle-smoke/codex-v2-scenario";
 import { selfTestV2ActivityNormalization } from "../scripts/lifecycle-smoke/codex-v2-activity";
 
@@ -25,6 +25,11 @@ test("the English steering marker continues instead of replacing the active task
   expect(steeringText).toContain("Respond only in English");
   expect(steeringText).toContain("continue the original task");
   expect(steeringText.toLowerCase()).not.toContain("acknowledge");
+});
+
+test("the steering audit requires stable numbered answer labels", () => {
+  expect(auditPrompt).toContain('Use exactly the labels "1." through "5."');
+  expect(auditPrompt).toContain("Do not use blockquotes");
 });
 
 test("root lifecycle resumes use a one-minute cooldown", () => {
