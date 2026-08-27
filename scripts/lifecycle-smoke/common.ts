@@ -120,7 +120,9 @@ export async function waitCreateBudget(minimumMs = 30_000) {
   if (remaining > 0) await sleep(remaining);
 }
 
-export async function waitRootRequestBudget(previousRequestAt: number, minimumMs = 300_000) {
+export const rootRequestCooldownMs = 60_000;
+
+export async function waitRootRequestBudget(previousRequestAt: number, minimumMs = rootRequestCooldownMs) {
   const remaining = minimumMs - (Date.now() - previousRequestAt);
   if (remaining > 0) await sleep(remaining);
 }
