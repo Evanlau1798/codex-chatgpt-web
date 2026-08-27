@@ -19,7 +19,7 @@ First read one relevant test file yourself, then dispatch exactly one child. Ask
 
 Immediately after spawning the child, the root must call wait_agent for that child with timeout_ms=10000. Treat every nonterminal result as pending and repeat the same wait_agent call until the child's completion result explicitly reports successful grandchild creation and its agent ID. Do not send a message to either descendant before seeing that creation evidence.
 
-After obtaining both identities, first ask the grandchild one distinct follow-up question and repeat wait_agent with timeout_ms=10000 until that grandchild follow-up completes normally; the grandchild interaction must complete before the child follow-up. Only then send the child its distinct follow-up. The child follow-up must require it to immediately publish its existing evidence as commentary, must not call send_input to address the root, and then start exactly one blocking read-only wait of at least ten minutes; it must not poll or call write_stdin after that wait starts. After the child delivery is accepted, make exactly six consecutive wait_agent calls for only that child with timeout_ms=10000. Each of the six results must remain nonterminal; a terminal child status fails the scenario and must not trigger a retry follow-up. Immediately after the sixth timeout, call send_input for that child with interrupt=true exactly once. Do not send a seventh pre-interrupt wait or a second child follow-up. Then repeat wait_agent with timeout_ms=10000 until the interrupted child completes. Finally, confirm that no agent remains running and summarize the root-to-child-to-grandchild identities, two interactions, one targeted interruption, grandchild evidence, and friction at each level.
+After obtaining both identities, first ask the grandchild one distinct follow-up question and repeat wait_agent with timeout_ms=10000 until that grandchild follow-up completes normally; the grandchild interaction must complete before the child follow-up. Only then send the child its distinct follow-up. The child follow-up must require it to immediately publish its existing evidence as commentary, must not call send_input to address the root, and then start exactly one blocking read-only wait of at least ten minutes; it must not poll or call write_stdin after that wait starts. After the child delivery is accepted, make exactly six consecutive wait_agent calls for only that child with timeout_ms=10000. Each of the six results must remain nonterminal; a terminal child status fails the scenario and must not trigger a retry follow-up. Immediately after the sixth timeout, call send_input for that child with interrupt=true exactly once. Do not send a seventh pre-interrupt wait or a second child follow-up. Then repeat wait_agent with timeout_ms=10000 until the interrupted child completes. After that targeted interruption is terminal, call close_agent exactly once for the completed grandchild; never close the child in place of its targeted interruption. Finally, confirm that no agent remains running and summarize the root-to-child-to-grandchild identities, two interactions, one targeted interruption, one subtree close, grandchild evidence, and friction at each level.
 
 Use the available native Multi-Agent tools to complete the entire flow without user intervention. Output only ${hierarchySentinel} on the final line.`;
 
@@ -283,6 +283,7 @@ export async function runV2HierarchyScenario(
     const rootInteractions = activity.filter(value => value.kind === "interacted" && value.parentThreadId === threadId);
     const targetedInterruptRequest = targetedInterruptRequestActivity(activity, threadId, childId, grandchildId);
     const deliveryInteractions = rootInteractions.filter(value => value.id !== targetedInterruptRequest?.id);
+    const subtreeCloses = activity.filter(value => value.kind === "closed" && value.parentThreadId === threadId);
     const childState = childId ? await run.request("thread/read", { threadId: childId, includeTurns: true }) : undefined;
     const grandchildState = grandchildId ? await run.request("thread/read", { threadId: grandchildId, includeTurns: true }) : undefined;
     const finalText = rootFinal(run, threadId, turnId);
@@ -360,6 +361,9 @@ export async function runV2HierarchyScenario(
       child_interrupted_once: classifiedSurfaces.plannedInterruptObserved
         && targetedInterruptRequest?.parentThreadId === threadId
         && targetedInterruptRequest.agentThreadId === childId,
+      grandchild_closed_once: subtreeCloses.length === 1 && subtreeCloses[0]?.agentThreadId === grandchildId,
+      close_after_interrupt: Boolean(targetedInterruptRequest && subtreeCloses[0]
+        && Date.parse(subtreeCloses[0].at) > Date.parse(targetedInterruptRequest.at)),
       interrupt_after_interactions: Boolean(classifiedSurfaces.plannedInterruptObserved
         && targetedInterruptRequest && deliveryInteractions.length >= 2
         && Date.parse(targetedInterruptRequest.at) > Math.max(...deliveryInteractions.map(value => Date.parse(value.at)))),

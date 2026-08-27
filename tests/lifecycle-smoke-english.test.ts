@@ -59,6 +59,8 @@ test("the hierarchy root follows the transport-safe agent wait contract", () => 
   expect(hierarchyPrompt).toContain("exactly six consecutive wait_agent calls");
   expect(hierarchyPrompt).toContain("Immediately after the sixth timeout");
   expect(hierarchyPrompt).toContain("interrupt=true exactly once");
+  expect(hierarchyPrompt).toContain("close_agent exactly once");
+  expect(hierarchyPrompt).toContain("completed grandchild");
 });
 
 test("hierarchy surface accounting accepts only the planned interrupt replacement", () => {
