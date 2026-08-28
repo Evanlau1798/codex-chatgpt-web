@@ -160,7 +160,7 @@ async function loginCommand(args: string[]): Promise<void> {
   } else if (externalBrowser) {
     throw new Error("--external-browser is reserved for the launcher-owned login flow");
   }
-  const result = await loginToChatGpt(config);
+  const result = await loginToChatGpt(config, { electronImport: externalBrowser });
   stdout.write(`ChatGPT login stored at ${result.storageStatePath}\n`);
 }
 

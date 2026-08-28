@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { chromium, type BrowserContextOptions } from "playwright-core";
+import { chromium, type BrowserContextOptions, type Page } from "playwright-core";
 import type { AppConfig } from "./config";
 import { atomicWriteFile, stripUtf8Bom } from "./config";
 import {
   assertAuthenticatedChatGptPage,
   assertTemporaryChatPage,
+  CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_TEMPORARY_CHAT_URL,
   detectChatGptAccountCapabilities,
 } from "./chatgpt-session";
@@ -44,9 +45,65 @@ function writeVerificationMarker(
   atomicWriteFile(loginVerificationMarkerPath(storageStatePath), `${JSON.stringify(marker)}\n`);
 }
 
+export async function verifyBrowserLoginPage(
+  page: Page,
+  options: { electronImport?: boolean; timeoutMs?: number } = {},
+): Promise<void> {
+  await assertTemporaryChatPage(page);
+  if (options.electronImport) {
+    const authenticated = await page.evaluate(async (temporaryChatUrl) => {
+      const expected = new URL(temporaryChatUrl);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+      try {
+        const response = await fetch("/api/auth/session", {
+          credentials: "include",
+          cache: "no-store",
+          headers: { accept: "application/json" },
+          signal: controller.signal,
+        });
+        const responseUrl = new URL(response.url);
+        const payload = response.ok
+          && responseUrl.origin === expected.origin
+          && responseUrl.pathname === "/api/auth/session"
+          && response.headers.get("content-type")?.includes("application/json")
+          ? await response.json()
+          : null;
+        const user = payload?.user && typeof payload.user === "object" && !Array.isArray(payload.user)
+          ? payload.user
+          : null;
+        const validExpiry = payload?.expires === undefined || payload.expires === null
+          ? true
+          : typeof payload.expires === "string"
+            && Number.isFinite(Date.parse(payload.expires))
+            && Date.parse(payload.expires) > Date.now();
+        return Boolean(user && Object.keys(user).length > 0
+          && (payload?.error === undefined || payload.error === null || payload.error === "")
+          && validExpiry);
+      } catch {
+        return false;
+      } finally {
+        clearTimeout(timeout);
+      }
+    }, CHATGPT_TEMPORARY_CHAT_URL).catch(() => false);
+    if (!authenticated) throw new Error("ChatGPT session could not be verified for Electron import");
+    return;
+  }
+  const composer = page.getByRole("textbox", { name: "Chat with ChatGPT" }).or(
+    page.locator(CHATGPT_COMPOSER_SELECTOR),
+  ).first();
+  try {
+    await composer.waitFor({ state: "visible", timeout: options.timeoutMs ?? 60_000 });
+  } catch {
+    throw new Error("The authenticated ChatGPT page did not produce a visible composer");
+  }
+  await assertAuthenticatedChatGptPage(page);
+}
+
 async function inspectStoredState(
   config: AppConfig,
   storageState: NonNullable<BrowserContextOptions["storageState"]>,
+  electronImport = false,
 ): Promise<ChatGptWebAccountCapabilities & { url: string }> {
   const verifierBrowser = await chromium.launch({
     executablePath: config.chromeExecutablePath,
@@ -59,10 +116,11 @@ async function inspectStoredState(
     try {
       const verifierPage = await verifierContext.newPage();
       await verifierPage.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
-      await verifierPage.getByRole("textbox", { name: "Chat with ChatGPT" }).waitFor({ state: "visible", timeout: 60_000 });
-      await assertAuthenticatedChatGptPage(verifierPage);
-      await assertTemporaryChatPage(verifierPage);
-      return { ...await detectChatGptAccountCapabilities(verifierPage), url: verifierPage.url() };
+      await verifyBrowserLoginPage(verifierPage, { electronImport });
+      const capabilities = electronImport
+        ? { solAvailable: config.solAvailable, proAvailable: config.proAvailable }
+        : await detectChatGptAccountCapabilities(verifierPage);
+      return { ...capabilities, url: verifierPage.url() };
     } finally {
       await verifierContext.close();
     }
@@ -95,7 +153,7 @@ export function storedBrowserLoginCapabilities(
 
 export async function loginToChatGpt(
   config: AppConfig,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; electronImport?: boolean } = {},
 ): Promise<BrowserLoginResult> {
   if (!existsSync(config.chromeExecutablePath)) {
     throw new Error(`Google Chrome was not found at ${config.chromeExecutablePath}. Pass --chrome with its executable path.`);
@@ -134,19 +192,10 @@ export async function loginToChatGpt(
       waitUntil: "domcontentloaded",
       timeout: 60_000,
     });
-    const composer = page.getByRole("textbox", { name: "Chat with ChatGPT" }).or(
-      page.locator('[data-testid="prompt-textarea"], [contenteditable="true"][data-lexical-editor="true"]'),
-    ).first();
-    try {
-      await composer.waitFor({ state: "visible", timeout: options.timeoutMs ?? 60_000 });
-    } catch {
-      throw new Error("The authenticated ChatGPT page did not produce a visible composer");
-    }
-    await assertAuthenticatedChatGptPage(page);
-    await assertTemporaryChatPage(page);
+    await verifyBrowserLoginPage(page, options);
     const state = await context.storageState();
 
-    const inspected = await inspectStoredState(config, state);
+    const inspected = await inspectStoredState(config, state, options.electronImport);
     atomicWriteFile(config.storageStatePath, `${JSON.stringify(state)}\n`);
     writeVerificationMarker(config.storageStatePath, inspected);
     return {

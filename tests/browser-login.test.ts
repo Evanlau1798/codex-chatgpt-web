@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { browserLoginStateExists, loginToChatGpt, loginVerificationMarkerPath } from "../src/browser-login";
+import { browserLoginStateExists, loginToChatGpt, loginVerificationMarkerPath, verifyBrowserLoginPage } from "../src/browser-login";
 import { CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
 import { defaultConfig } from "../src/config";
 
@@ -52,4 +52,20 @@ test("a storage-state file is not trusted without a verification marker", () => 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("launcher cookie import accepts an authenticated session before Electron proves the composer", async () => {
+  let composerQueried = false;
+  const page = {
+    url: () => CHATGPT_TEMPORARY_CHAT_URL,
+    evaluate: async () => true,
+    getByRole: () => { composerQueried = true; throw new Error("composer must not be queried"); },
+    locator: () => { composerQueried = true; throw new Error("composer must not be queried"); },
+  };
+
+  await verifyBrowserLoginPage(page as never, { electronImport: true });
+  expect(composerQueried).toBe(false);
+  await expect(verifyBrowserLoginPage({ ...page, evaluate: async () => false } as never, {
+    electronImport: true,
+  })).rejects.toThrow("session could not be verified");
 });
