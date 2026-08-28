@@ -4,6 +4,7 @@ const { importVerifiedChatGptCookies } = require("./browser-login-state.cjs");
 
 const EXTERNAL_LOGIN_TIMEOUT_MS = 15 * 60 * 1000;
 const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
+const pendingLoginMethodChoices = new WeakMap();
 
 function isTemporaryChatUrl(value) {
   try {
@@ -36,18 +37,16 @@ function openExternalLogin(browserHost, { storageStatePath, runLogin }) {
     if (existing.authenticated) return existing;
 
     browserHost.setState({ status: "loading", message: "Waiting for normal Chrome login", authenticated: false });
-    browserHost.logger.info("browser.external_login_opened");
     try {
       await runLogin();
       if (browserHost.authView) browserHost.closeAuthView(browserHost.authView, true, false);
-      const cookieCount = await importVerifiedChatGptCookies(contents.session, storageStatePath);
+      await importVerifiedChatGptCookies(contents.session, storageStatePath);
       await contents.loadURL(TEMPORARY_CHAT_URL);
       const authenticated = await browserHost.probeAuthentication();
       if (!authenticated.authenticated) {
         throw new Error("Imported normal Chrome session did not authenticate the Electron browser");
       }
       await browserHost.runSessionInspection(false);
-      browserHost.logger.info("browser.external_login_imported", { cookieCount });
       return browserHost.snapshot();
     } catch (error) {
       await contents.session.clearStorageData().catch(() => {});
@@ -57,9 +56,6 @@ function openExternalLogin(browserHost, { storageStatePath, runLogin }) {
         await contents.loadURL(TEMPORARY_CHAT_URL).catch(() => {});
         await browserHost.probeAuthentication().catch(() => {});
       }
-      browserHost.logger.warn("browser.external_login_failed", {
-        message: error instanceof Error ? error.message : String(error),
-      });
       throw error;
     }
   });
@@ -70,7 +66,37 @@ function openExternalLogin(browserHost, { storageStatePath, runLogin }) {
   return tracked;
 }
 
-async function openBrowserLogin({ browserHost, runtimeHost, isDevProfile }) {
+function chooseLoginMethodOnce(browserHost, chooseLoginMethod) {
+  const pending = pendingLoginMethodChoices.get(browserHost);
+  if (pending) return pending;
+  const choice = Promise.resolve().then(chooseLoginMethod).finally(() => {
+    if (pendingLoginMethodChoices.get(browserHost) === choice) pendingLoginMethodChoices.delete(browserHost);
+  });
+  pendingLoginMethodChoices.set(browserHost, choice);
+  return choice;
+}
+
+async function chooseNativeLoginMethod(browserHost) {
+  const { response } = await require("electron").dialog.showMessageBox(browserHost.window, {
+    type: "question",
+    title: "Sign in to ChatGPT",
+    message: "Choose how to sign in",
+    detail: "Continue in the app, or use normal Chrome when a passkey is required.",
+    buttons: ["Continue in app", "Use Chrome for passkey", "Cancel"],
+    defaultId: 0,
+    cancelId: 2,
+    noLink: true,
+  });
+  return ["embedded", "chrome", "cancel"][response] ?? "cancel";
+}
+
+async function openBrowserLogin({
+  browserHost,
+  runtimeHost,
+  isDevProfile,
+  chooseLoginMethod,
+}) {
+  if (browserHost.state.authenticated || browserHost.loginOperation) return browserHost.openLogin();
   const config = runtimeHost.runtimeConfigSnapshot().config;
   const chromeExecutablePath = config?.chromeExecutablePath;
   if (typeof chromeExecutablePath !== "string" || !chromeExecutablePath.trim()) {
@@ -81,6 +107,29 @@ async function openBrowserLogin({ browserHost, runtimeHost, isDevProfile }) {
   }
   if (!fs.statSync(chromeExecutablePath, { throwIfNoEntry: false })?.isFile()) {
     return browserHost.openLogin();
+  }
+  const method = await chooseLoginMethodOnce(
+    browserHost,
+    chooseLoginMethod ?? (() => chooseNativeLoginMethod(browserHost)),
+  );
+  if (!["embedded", "chrome", "cancel"].includes(method)) throw new Error("Login method chooser returned an invalid result");
+  browserHost.logger.info("browser.login_method_selected", { method });
+  if (method === "cancel") {
+    browserHost.logger.info("browser.login_method_result", { method, result: "cancelled" });
+    return browserHost.snapshot();
+  }
+  if (method === "embedded") {
+    try {
+      const result = await browserHost.openLogin();
+      browserHost.logger.info("browser.login_method_result", {
+        method,
+        result: result.authenticated ? "authenticated" : "signed-out",
+      });
+      return result;
+    } catch (error) {
+      browserHost.logger.warn("browser.login_method_result", { method, result: "failed" });
+      throw error;
+    }
   }
   const storageStatePath = config?.storageStatePath;
   if (typeof storageStatePath !== "string" || !path.isAbsolute(storageStatePath)) {
@@ -101,10 +150,20 @@ async function openBrowserLogin({ browserHost, runtimeHost, isDevProfile }) {
     env: runtimeHost.launcherControlEnvironment(),
     ...(environment ? { environment } : {}),
   };
-  return openExternalLogin(browserHost, {
-    storageStatePath,
-    runLogin: () => runtimeHost.run("browser-login", ["login", "--external-browser"], options),
-  });
+  try {
+    const result = await openExternalLogin(browserHost, {
+      storageStatePath,
+      runLogin: () => runtimeHost.run("browser-login", ["login", "--external-browser"], options),
+    });
+    browserHost.logger.info("browser.login_method_result", {
+      method,
+      result: result.authenticated ? "authenticated" : "signed-out",
+    });
+    return result;
+  } catch (error) {
+    browserHost.logger.warn("browser.login_method_result", { method, result: "failed" });
+    throw error;
+  }
 }
 
 module.exports = { openBrowserLogin, openExternalLogin };

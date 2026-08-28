@@ -29,6 +29,7 @@ test("verified storage imports only ChatGPT and OpenAI cookies", async () => {
     const statePath = writeVerifiedState(root, [
       { name: "host", value: "one", domain: "chatgpt.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" },
       { name: "shared", value: "two", domain: ".openai.com", path: "/auth", expires: 2_000_000_000, httpOnly: false, secure: true, sameSite: "None" },
+      { name: "partitioned", value: "three", domain: "chatgpt.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax", partitionKey: "https://chatgpt.com" },
       { name: "idp", value: "secret", domain: ".accounts.google.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" },
       { name: "lookalike", value: "secret", domain: "evilchatgpt.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" },
     ]);
@@ -80,6 +81,18 @@ test("verified storage imports only ChatGPT and OpenAI cookies", async () => {
   }
 });
 
+test("partitioned cookies fail closed when no ordinary first-party cookie remains", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "browser-login-chips-"));
+  try {
+    const statePath = writeVerifiedState(root, [
+      { name: "partitioned", value: "secret", domain: "chatgpt.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax", partitionKey: "https://chatgpt.com" },
+    ]);
+    assert.throws(() => readVerifiedChatGptCookies(statePath), /no importable first-party cookies/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("cookie import clears the Electron partition again after a failed write", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "browser-login-failure-"));
   try {
@@ -102,7 +115,7 @@ test("cookie import clears the Electron partition again after a failed write", a
   }
 });
 
-test("launcher login uses normal Chrome when configured and embedded login only when missing", async () => {
+test("launcher login offers embedded, Chrome passkey, and cancel choices", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "browser-login-flow-"));
   try {
     const chromePath = path.join(root, "chrome.exe");
@@ -146,14 +159,103 @@ test("launcher login uses normal Chrome when configured and embedded login only 
       openLogin: async () => { calls.push(["embedded"]); return { authenticated: false }; },
     };
 
-    assert.deepEqual(await openBrowserLogin({ browserHost, runtimeHost, isDevProfile: false }), { authenticated: true });
+    assert.deepEqual(await openBrowserLogin({
+      browserHost,
+      runtimeHost,
+      isDevProfile: false,
+      chooseLoginMethod: async () => "embedded",
+    }), { authenticated: false });
+    assert.deepEqual(calls, [["embedded"]]);
+
+    calls.length = 0;
+    assert.deepEqual(await openBrowserLogin({
+      browserHost,
+      runtimeHost,
+      isDevProfile: false,
+      chooseLoginMethod: async () => "chrome",
+    }), { authenticated: true });
     assert.deepEqual(calls[0].slice(0, 3), ["run", "browser-login", ["login", "--external-browser"]]);
     assert.deepEqual(calls[0][3].env, { CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "test-token" });
 
+    calls.length = 0;
+    assert.deepEqual(await openBrowserLogin({
+      browserHost,
+      runtimeHost,
+      isDevProfile: false,
+      chooseLoginMethod: async () => "cancel",
+    }), { authenticated: true });
+    assert.deepEqual(calls, []);
+
     fs.rmSync(chromePath);
     calls.length = 0;
-    await openBrowserLogin({ browserHost, runtimeHost, isDevProfile: false });
+    let chooserCalled = false;
+    await openBrowserLogin({
+      browserHost,
+      runtimeHost,
+      isDevProfile: false,
+      chooseLoginMethod: async () => { chooserCalled = true; return "chrome"; },
+    });
     assert.deepEqual(calls, [["embedded"]]);
+    assert.equal(chooserCalled, false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent launcher login requests share one chooser and Chrome operation", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "browser-login-concurrent-"));
+  try {
+    const chromePath = path.join(root, "chrome.exe");
+    const statePath = path.join(root, "storage-state.json");
+    fs.writeFileSync(chromePath, "fake");
+    let chooserCalls = 0;
+    let loginCalls = 0;
+    let probes = 0;
+    const runtimeHost = {
+      runtimeConfigSnapshot: () => ({ config: { chromeExecutablePath: chromePath, storageStatePath: statePath } }),
+      launcherControlEnvironment: () => ({}),
+      run: async () => {
+        loginCalls += 1;
+        writeVerifiedState(root, [
+          { name: "session", value: "secret", domain: "chatgpt.com", path: "/", expires: -1, httpOnly: true, secure: true, sameSite: "Lax" },
+        ]);
+      },
+    };
+    const browserSession = {
+      clearStorageData: async () => {},
+      flushStorageData() {},
+      cookies: { set: async () => {}, flushStore: async () => {} },
+    };
+    const browserHost = {
+      state: { authenticated: false },
+      loginOperation: null,
+      view: { webContents: {
+        getURL: () => "https://chatgpt.com/?temporary-chat=true",
+        loadURL: async () => {},
+        isDestroyed: () => false,
+        session: browserSession,
+      } },
+      activateHomeSurface() {}, show() {}, setState() {},
+      withManualOperation: async (_name, action) => action(),
+      probeAuthentication: async () => ({ authenticated: ++probes > 1 }),
+      runSessionInspection: async () => {},
+      snapshot: () => ({ authenticated: true }),
+      logger: { info() {}, warn() {} },
+      authView: null,
+      openLogin: async () => ({ authenticated: false }),
+    };
+    const chooseLoginMethod = async () => {
+      chooserCalls += 1;
+      await new Promise(resolve => setImmediate(resolve));
+      return "chrome";
+    };
+
+    await Promise.all([
+      openBrowserLogin({ browserHost, runtimeHost, isDevProfile: false, chooseLoginMethod }),
+      openBrowserLogin({ browserHost, runtimeHost, isDevProfile: false, chooseLoginMethod }),
+    ]);
+    assert.equal(chooserCalls, 1);
+    assert.equal(loginCalls, 1);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

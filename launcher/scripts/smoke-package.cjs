@@ -109,7 +109,7 @@ async function main() {
     }
 
     if (!fs.existsSync(executable)) throw new Error(`Packaged launcher executable is missing: ${executable}`);
-    run(command, args, { env });
+    run(command, args, { env, timeout: process.platform === "win32" ? 120_000 : 45_000 });
     if (!fs.existsSync(markerPath)) throw new Error("Packaged launcher did not write its readiness marker");
     const marker = JSON.parse(fs.readFileSync(markerPath, "utf8"));
     if (marker.ok !== true

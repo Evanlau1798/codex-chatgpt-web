@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { browserLoginStateExists, loginToChatGpt, loginVerificationMarkerPath, verifyBrowserLoginPage } from "../src/browser-login";
@@ -19,6 +19,9 @@ test("login starts with normal Chrome and captures state in a headed Keychain-aw
     const config = defaultConfig("browser-only");
     config.chromeExecutablePath = executable;
     config.storageStatePath = join(root, "browser", "storage-state.json");
+    const profileDir = join(root, "browser", "login-profile");
+    mkdirSync(profileDir, { recursive: true });
+    writeFileSync(join(profileDir, "stale"), "stale");
     await loginToChatGpt(config, { timeoutMs: 100 }).catch(() => {});
 
     const launches = readFileSync(argsLog, "utf8").trim().split("\n");
@@ -28,6 +31,7 @@ test("login starts with normal Chrome and captures state in a headed Keychain-aw
     expect(firstLaunch).toContain(CHATGPT_TEMPORARY_CHAT_URL);
     expect(firstLaunch).not.toContain("--remote-debugging-pipe");
     expect(launches[1]).not.toContain("--headless");
+    expect(existsSync(profileDir)).toBe(false);
   } finally {
     if (previousLog === undefined) delete process.env.CODEX_LOGIN_ARG_LOG;
     else process.env.CODEX_LOGIN_ARG_LOG = previousLog;
@@ -49,6 +53,23 @@ test("a storage-state file is not trusted without a verification marker", () => 
       { mode: 0o600 },
     );
     expect(browserLoginStateExists(config)).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed normal Chrome launch removes the dedicated login profile", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-login-cleanup-"));
+  try {
+    const config = defaultConfig("browser-only");
+    config.chromeExecutablePath = process.execPath;
+    config.storageStatePath = join(root, "browser", "storage-state.json");
+    const profileDir = join(root, "browser", "login-profile");
+    mkdirSync(profileDir, { recursive: true });
+    writeFileSync(join(profileDir, "stale"), "stale");
+
+    await expect(loginToChatGpt(config)).rejects.toThrow();
+    expect(existsSync(profileDir)).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

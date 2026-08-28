@@ -41,6 +41,7 @@ function allowedCookieHost(rawDomain) {
 
 function mapPlaywrightCookie(cookie) {
   if (!cookie || typeof cookie !== "object" || Array.isArray(cookie)) return null;
+  if (Object.hasOwn(cookie, "partitionKey")) return null;
   const host = allowedCookieHost(cookie.domain);
   if (!host) return null;
   if (typeof cookie.name !== "string" || !cookie.name

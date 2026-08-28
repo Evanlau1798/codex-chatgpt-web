@@ -95,9 +95,9 @@ irm https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/in
 
 然后在应用中完成三项检查：
 
-1. 通过启动器打开的普通 Chrome 窗口登录。Chrome 验证临时聊天后，启动器只会将 ChatGPT／OpenAI
-   会话 Cookie 导入其私有 Electron 配置，并再次验证 composer。若找不到已配置的 Chrome，则改用
-   内置登录。
+1. 默认在应用内嵌页面登录。若帐号需要 Passkey，请选择 **Use Chrome for passkey**；Chrome 验证
+   临时聊天后，启动器只会将非分区的 ChatGPT／OpenAI 会话 Cookie 导入其私有 Electron 配置，并
+   再次验证 composer。若找不到已配置的 Chrome，启动器会直接使用内置登录。
 2. 运行浏览器冒烟测试。
 3. 使用 **安装到 Codex** 和／或 **安装到 Claude Code**。完成任一集成即可完成设置，两者可独立
    安装或刷新；随后重启所选客户端。

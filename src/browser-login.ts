@@ -159,54 +159,58 @@ export async function loginToChatGpt(
     throw new Error(`Google Chrome was not found at ${config.chromeExecutablePath}. Pass --chrome with its executable path.`);
   }
   const profileDir = join(dirname(config.storageStatePath), "login-profile");
+  rmSync(profileDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   mkdirSync(profileDir, { recursive: true, mode: 0o700 });
-  process.stdout.write(
-    "A normal Chrome window is open. Sign in to ChatGPT, confirm that the composer is visible, then quit this dedicated Chrome instance completely.\n",
-  );
-  const loginBrowser = spawn(config.chromeExecutablePath, [
-    `--user-data-dir=${profileDir}`,
-    "--new-window",
-    "--disable-background-mode",
-    "--no-first-run",
-    "--no-default-browser-check",
-    CHATGPT_TEMPORARY_CHAT_URL,
-  ], { env: process.env, stdio: "ignore" });
-  const loginExit = await new Promise<number>((resolveExit, rejectExit) => {
-    loginBrowser.once("error", rejectExit);
-    loginBrowser.once("exit", (code, signal) => {
-      if (signal) rejectExit(new Error(`Normal Chrome login window exited from signal ${signal}`));
-      else resolveExit(code ?? 1);
-    });
-  });
-  if (loginExit !== 0) throw new Error(`Normal Chrome login window exited with status ${loginExit}`);
-
-  const context = await chromium.launchPersistentContext(profileDir, {
-    executablePath: config.chromeExecutablePath,
-    headless: false,
-    ignoreDefaultArgs: ["--password-store=basic", "--use-mock-keychain"],
-    args: ["--no-first-run", "--no-default-browser-check"],
-  });
   try {
-    const page = context.pages()[0] ?? await context.newPage();
-    await page.goto(CHATGPT_TEMPORARY_CHAT_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: 60_000,
+    process.stdout.write(
+      "A normal Chrome window is open. Sign in to ChatGPT, confirm that the composer is visible, then quit this dedicated Chrome instance completely.\n",
+    );
+    const loginBrowser = spawn(config.chromeExecutablePath, [
+      `--user-data-dir=${profileDir}`,
+      "--new-window",
+      "--disable-background-mode",
+      "--no-first-run",
+      "--no-default-browser-check",
+      CHATGPT_TEMPORARY_CHAT_URL,
+    ], { env: process.env, stdio: "ignore" });
+    const loginExit = await new Promise<number>((resolveExit, rejectExit) => {
+      loginBrowser.once("error", rejectExit);
+      loginBrowser.once("exit", (code, signal) => {
+        if (signal) rejectExit(new Error(`Normal Chrome login window exited from signal ${signal}`));
+        else resolveExit(code ?? 1);
+      });
     });
-    await verifyBrowserLoginPage(page, options);
-    const state = await context.storageState();
+    if (loginExit !== 0) throw new Error(`Normal Chrome login window exited with status ${loginExit}`);
 
-    const inspected = await inspectStoredState(config, state, options.electronImport);
-    atomicWriteFile(config.storageStatePath, `${JSON.stringify(state)}\n`);
-    writeVerificationMarker(config.storageStatePath, inspected);
-    return {
-      storageStatePath: config.storageStatePath,
-      accountSurfaceUrl: page.url(),
-      solAvailable: inspected.solAvailable,
-      proAvailable: inspected.proAvailable,
-    };
+    const context = await chromium.launchPersistentContext(profileDir, {
+      executablePath: config.chromeExecutablePath,
+      headless: false,
+      ignoreDefaultArgs: ["--password-store=basic", "--use-mock-keychain"],
+      args: ["--no-first-run", "--no-default-browser-check"],
+    });
+    try {
+      const page = context.pages()[0] ?? await context.newPage();
+      await page.goto(CHATGPT_TEMPORARY_CHAT_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+      await verifyBrowserLoginPage(page, options);
+      const state = await context.storageState();
+
+      const inspected = await inspectStoredState(config, state, options.electronImport);
+      atomicWriteFile(config.storageStatePath, `${JSON.stringify(state)}\n`);
+      writeVerificationMarker(config.storageStatePath, inspected);
+      return {
+        storageStatePath: config.storageStatePath,
+        accountSurfaceUrl: page.url(),
+        solAvailable: inspected.solAvailable,
+        proAvailable: inspected.proAvailable,
+      };
+    } finally {
+      await context.close();
+    }
   } finally {
-    await context.close();
-    if (browserLoginStateExists(config)) rmSync(profileDir, { recursive: true, force: true });
+    rmSync(profileDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }
 

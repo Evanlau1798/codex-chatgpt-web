@@ -105,9 +105,10 @@ irm https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/in
 
 Then complete the three checks in the app:
 
-1. Sign in through the normal Chrome window opened by the launcher. After Chrome verifies Temporary
-   Chat, the launcher imports only ChatGPT/OpenAI session cookies into its private Electron profile
-   and verifies the composer again. If configured Chrome is unavailable, it uses embedded sign-in.
+1. Sign in in the embedded app by default. If your account requires a passkey, choose **Use Chrome
+   for passkey**; after Chrome verifies Temporary Chat, the launcher imports only non-partitioned
+   ChatGPT/OpenAI session cookies into its private Electron profile and verifies the composer again.
+   If configured Chrome is unavailable, the launcher uses embedded sign-in directly.
 2. Run the browser smoke test.
 3. Use **Install into Codex** and/or **Install into Claude Code**. Completing either integration
    finishes setup; they can be installed or refreshed independently. Restart the selected client.

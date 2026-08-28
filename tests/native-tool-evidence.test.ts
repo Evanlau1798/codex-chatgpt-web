@@ -162,12 +162,14 @@ test("an aborted MCP request revokes only its turn binding and leaves the server
     expect(chatGptMcpInvocationTimeout(environment)).toBe(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS);
     expect(chatGptMcpInvocationTimeout({ ...environment, expiresAt: 1_500 }, 1_000)).toBe(500);
     await client.connect(transport);
+    const abandonedController = new AbortController();
     const abandoned = client.callTool({
       name: "codex_exec",
       arguments: { turn_token: abandonedToken, cmd: "wait forever" },
-    }, undefined, { timeout: 100 });
+    }, undefined, { signal: abandonedController.signal });
     const [request] = await broker.nextToolBatch(abandonedToken);
     expect(request?.wireName).toBe("exec_command");
+    abandonedController.abort();
     await expect(abandoned).rejects.toBeDefined();
 
     const deadline = Date.now() + 5_000;
