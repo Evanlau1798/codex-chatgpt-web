@@ -162,7 +162,7 @@ export class CodexRun {
     const provider = [
       "-c", 'model_provider="lifecycle_smoke"',
       "-c", 'model_providers.lifecycle_smoke.name="Lifecycle Smoke"',
-      "-c", `model_providers.lifecycle_smoke.base_url="${serviceBaseUrl}/v1"`,
+      "-c", `model_providers.lifecycle_smoke.base_url="${serviceBaseUrl()}/v1"`,
       "-c", 'model_providers.lifecycle_smoke.wire_api="responses"',
       "-c", "model_providers.lifecycle_smoke.request_max_retries=0",
       "-c", "model_providers.lifecycle_smoke.stream_max_retries=0",

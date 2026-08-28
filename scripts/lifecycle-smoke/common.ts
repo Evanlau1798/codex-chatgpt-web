@@ -7,7 +7,6 @@ import { isRateOrVerificationLimit, saveLifecycleJson } from "./artifacts";
 import { fetchWithTimeout } from "./run-guard";
 import { LauncherEventReader, type LauncherEvent } from "./launcher-event-reader";
 
-const runtimeConfig = loadConfig();
 const defaultLauncherUserData = process.platform === "win32"
   ? join(process.env.APPDATA?.trim() || join(homedir(), "AppData", "Roaming"), "Codex Web GPT")
   : process.platform === "darwin"
@@ -16,12 +15,17 @@ const defaultLauncherUserData = process.platform === "win32"
 
 export const repo = join(import.meta.dir, "..", "..");
 export const repoTests = smokePath(repo, "tests");
-export const serviceBaseUrl = `http://${runtimeConfig.host}:${runtimeConfig.port}`;
+export function serviceBaseUrl(): string {
+  const config = loadConfig();
+  return `http://${config.host}:${config.port}`;
+}
 export const launcherLog = process.env.CODEX_LIFECYCLE_LAUNCHER_LOG?.trim()
   || join(defaultLauncherUserData, "logs", "launcher.jsonl");
-export const browserDescriptor = process.env.CODEX_LIFECYCLE_BROWSER_DESCRIPTOR?.trim()
-  || runtimeConfig.browserHostDescriptorPath
-  || "";
+export function browserDescriptor(): string {
+  return process.env.CODEX_LIFECYCLE_BROWSER_DESCRIPTOR?.trim()
+    || loadConfig().browserHostDescriptorPath
+    || "";
+}
 export const codexExe = process.env.CODEX_LIFECYCLE_CODEX_EXE?.trim()
   || resolveLifecycleExecutable("codex");
 export const claudeExe = process.env.CODEX_LIFECYCLE_CLAUDE_EXE?.trim()
@@ -185,8 +189,9 @@ export async function submitClaudeSteering(sessionId: string, prompt: string, co
 }
 
 export async function cutoff(tabId: string) {
-  assert(browserDescriptor, "Lifecycle smoke requires a launcher browser descriptor");
-  const descriptor = await Bun.file(browserDescriptor).json();
+  const descriptorPath = browserDescriptor();
+  assert(descriptorPath, "Lifecycle smoke requires a launcher browser descriptor");
+  const descriptor = await Bun.file(descriptorPath).json();
   const response = await fetchWithTimeout(
     `${descriptor.control.endpoint}/v1/debug/turn/cutoff`, 10_000, "Browser cutoff cleanup", fetch, {
       method: "POST",

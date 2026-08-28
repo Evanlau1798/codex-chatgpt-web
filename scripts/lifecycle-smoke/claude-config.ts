@@ -1,6 +1,6 @@
+import { ok as assert } from "node:assert";
 import type { AppConfig } from "../../src/config";
 import { preferredClaudeGatewayModelIds } from "../../src/messages/models";
-import { assert } from "./common";
 
 type ClaudeSmokeSettings = Record<string, any>;
 

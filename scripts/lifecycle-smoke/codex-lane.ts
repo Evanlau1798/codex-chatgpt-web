@@ -64,7 +64,8 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
   let interruptedChildTab = "";
   try {
     await waitCreateBudget();
-    const catalogBefore = Number((await (await fetchWithTimeout(`${serviceBaseUrl}/healthz`, 5_000, "Codex catalog preflight")).json()).successful_model_catalog_requests ?? 0);
+    const baseUrl = serviceBaseUrl();
+    const catalogBefore = Number((await (await fetchWithTimeout(`${baseUrl}/healthz`, 5_000, "Codex catalog preflight")).json()).successful_model_catalog_requests ?? 0);
     const run = new CodexRun(join(laneRoot, "app-server.jsonl")); runs.push(run); await run.initialize();
     const config = await run.request("config/read", { includeLayers: false });
     assert(
@@ -75,7 +76,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     if (!catalogContainsModel(models, "chatgpt-web/extra-high")) {
       const catalogDeadline = Date.now() + 30_000;
       while (Date.now() < catalogDeadline) {
-        const health = await (await fetchWithTimeout(`${serviceBaseUrl}/healthz`, 5_000, "Codex catalog readiness")).json();
+        const health = await (await fetchWithTimeout(`${baseUrl}/healthz`, 5_000, "Codex catalog readiness")).json();
         if (Number(health.successful_model_catalog_requests ?? 0) > catalogBefore) {
           await sleep(250);
           models = await run.request("model/list", { includeHidden: true });
