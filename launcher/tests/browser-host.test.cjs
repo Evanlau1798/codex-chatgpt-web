@@ -237,6 +237,7 @@ test("hidden turn tabs retain an operational viewport without revealing the brow
   const events = [];
   const tab = {
     id: "tab-hidden-viewport",
+    status: "running",
     view: {
       setBounds: bounds => events.push(["bounds", bounds]),
       setVisible: visible => events.push(["visible", visible]),
@@ -258,8 +259,8 @@ test("hidden turn tabs retain an operational viewport without revealing the brow
 
   assert.deepEqual(events, [
     ["home", false],
-    ["bounds", { x: 0, y: 0, width: 1120, height: 720 }],
-    ["visible", false],
+    ["bounds", { x: 1121, y: 721, width: 1120, height: 720 }],
+    ["visible", true],
   ]);
 });
 
@@ -1144,8 +1145,8 @@ test("selecting a task tab shows and focuses its owned Playwright surface", () =
     setVisible: (visible) => visibility.push([id, visible]),
     webContents: { focus: () => focused.push(id) },
   });
-  const first = { id: "tab-first", view: makeView("first") };
-  const second = { id: "tab-second", view: makeView("second") };
+  const first = { id: "tab-first", status: "running", view: makeView("first") };
+  const second = { id: "tab-second", status: "running", view: makeView("second") };
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     view: makeView("home"),
     turnTabs: new Map([[first.id, first], [second.id, second]]),
@@ -1166,7 +1167,7 @@ test("selecting a task tab shows and focuses its owned Playwright surface", () =
   assert.equal(fixture.selectedTabId, second.id);
   assert.deepEqual(visibility, [
     ["home", false],
-    ["first", false],
+    ["first", true],
     ["second", true],
   ]);
   assert.deepEqual(focused, ["second"]);

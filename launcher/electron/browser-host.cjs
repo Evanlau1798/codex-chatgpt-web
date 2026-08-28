@@ -346,7 +346,7 @@ class BrowserHost {
     this.window.contentView.addChildView(interactionShield);
     view.setBounds(this.hiddenTurnBounds());
     interactionShield.setBounds(this.bounds);
-    view.setVisible(false);
+    view.setVisible(true);
     interactionShield.setVisible(false);
     view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindShellZoomShortcuts(view.webContents);
@@ -862,11 +862,13 @@ class BrowserHost {
 
   hiddenTurnBounds() {
     const [contentWidth, contentHeight] = this.window.getContentSize();
+    const width = Math.max(HIDDEN_TURN_VIEWPORT.width, Math.round(contentWidth || 0));
+    const height = Math.max(HIDDEN_TURN_VIEWPORT.height, Math.round(contentHeight || 0));
     return {
-      x: 0,
-      y: 0,
-      width: Math.max(HIDDEN_TURN_VIEWPORT.width, Math.round(contentWidth || 0)),
-      height: Math.max(HIDDEN_TURN_VIEWPORT.height, Math.round(contentHeight || 0)),
+      x: width + 1,
+      y: height + 1,
+      width,
+      height,
     };
   }
 
@@ -885,7 +887,7 @@ class BrowserHost {
     for (const tab of this.turnTabs.values()) {
       const selectedVisible = visible && !this.authView && selected?.id === tab.id;
       tab.view.setBounds(selectedVisible ? this.bounds : this.hiddenTurnBounds());
-      tab.view.setVisible(selectedVisible);
+      tab.view.setVisible(selectedVisible || tab.status === "running");
       tab.interactionShield?.setVisible(selectedVisible && tab.interactionLocked !== false);
     }
     this.authView?.setVisible(visible);
