@@ -12,7 +12,7 @@ import {
 import { claudeManualCompactEvidence, manualCompactContinuityPassed, selfTestManualCompactRetainedRoot } from "./retained-check";
 import { safeSurfaceRecoveryCount } from "./codex-v2-surfaces";
 import {
-  assert, auditPrompt, claudeExe, cleanupLifecycleResources, cutoff, detectRestriction, events, iso, LaneResult, repo, repoTests, reviewTaskPrompt,
+  assert, auditPrompt, claudeExe, cleanupLifecycleResources, cutoff, detectRestriction, events, iso, LaneResult, noSkillInstruction, repo, repoTests, reviewTaskPrompt,
   save, sleep, stageTimeline, steeringAuditPassed, steeringText, submitClaudeSteering, waitCreateBudget, waitForEvent,
   waitRootRequestBudget, waitSteeringPoint,
 } from "./common";
@@ -304,7 +304,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       if (round > 1) await waitRootRequestBudget(lastRootCompletionAt);
       const roundRecordStart = task.records.length;
       const taskAt = Date.now();
-      await task.send(sessionId, round === 1 ? reviewTaskPrompt : `Respond only in English. This is read-only code review continuation round ${round}. First list the scope left uninspected by the previous round, then select exactly five new files from ${repoTests} or their directly corresponding production implementations for in-depth reading. Do not repeat completed scope; summarize immediately after five files. If the runtime naturally compacts during this round, continue the same task from the handoff. Start the response with ROUND_${round}_START and end it with ROUND_${round}_DONE. Do not dispatch a subagent, modify files, run tests, or access the network.`);
+      await task.send(sessionId, round === 1 ? reviewTaskPrompt : `Respond only in English. This is read-only code review continuation round ${round}. First list the scope left uninspected by the previous round, then select exactly five new files from ${repoTests} or their directly corresponding production implementations for in-depth reading. Do not repeat completed scope; summarize immediately after five files. If the runtime naturally compacts during this round, continue the same task from the handoff. Start the response with ROUND_${round}_START and end it with ROUND_${round}_DONE. Do not dispatch a subagent. ${noSkillInstruction} Do not modify files, run tests, or access the network.`);
       const taskResult = await task.waitResult(round, 20 * 60_000);
       const taskDone = Date.now();
       lastRootCompletionAt = taskDone;
@@ -342,7 +342,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     const childAt = handoffAt;
     const child = new ClaudeRun(join(laneRoot, "post-compact-child.jsonl"), args(sessionId, true, []), configDir, runtimeConfig.controlToken);
     runs.push(child);
-    await child.send(sessionId, `Respond only in English. Briefly summarize completed progress and actual friction from the compaction handoff, then dispatch one subagent to read ${smokePath(repoTests, "prompt-caret.test.ts")} read-only. Ask it to report its observed cwd, the number of test() declarations, the first test name, and process friction. While it is still running, proactively send one follow-up request to that same subagent asking for the final test name; integrate the result only after receiving its reply. This probe needs no skill, so do not load one. Do not modify files, run tests, or access the network.`);
+    await child.send(sessionId, `Respond only in English. Briefly summarize completed progress and actual friction from the compaction handoff, then dispatch one subagent to read ${smokePath(repoTests, "prompt-caret.test.ts")} read-only. Ask it to report its observed cwd, the number of test() declarations, the first test name, and process friction. While it is still running, proactively send one follow-up request to that same subagent asking for the final test name; integrate the result only after receiving its reply. ${noSkillInstruction} Do not modify files, run tests, or access the network.`);
     const childResult = await child.waitResult(1, 30 * 60_000);
     const taskLifecycle = child.records.find(record => record.type === "system"
       && ["task_started", "task_progress", "task_notification"].includes(String(record.subtype))

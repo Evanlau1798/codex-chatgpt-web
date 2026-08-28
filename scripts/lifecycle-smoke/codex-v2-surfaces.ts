@@ -61,8 +61,7 @@ export function safeSurfaceRecoveryCount(
 ): number | undefined {
   const ownedLauncher = excludeLauncherTraces(launcher, excludedTraces);
   const eligible = ownedLauncher.filter(value => /surface recovery eligible=true/.test(String(value.detail?.line ?? "")));
-  if (eligible.length > 1) return undefined;
-  for (const recovery of eligible) {
+  for (const [index, recovery] of eligible.entries()) {
     const line = String(recovery.detail?.line ?? "");
     const traceId = line.match(/browser turn ([A-Za-z0-9_-]+)/)?.[1];
     if (!traceId
@@ -70,18 +69,30 @@ export function safeSurfaceRecoveryCount(
       || !/finalChars=0/.test(line)
       || !/canonicalComplete=true/.test(line)
       || !/unresolvedSuperseded=0/.test(line)) return undefined;
+    const recoveryAt = Date.parse(recovery.at);
+    const previousRecoveryAt = Date.parse(eligible.slice(0, index).findLast(value => (
+      String(value.detail?.line ?? "").includes(`browser turn ${traceId} surface recovery`)
+    ))?.at ?? "");
+    const nextRecoveryAt = Date.parse(eligible.slice(index + 1).find(value => (
+      String(value.detail?.line ?? "").includes(`browser turn ${traceId} surface recovery`)
+    ))?.at ?? "");
     const created = ownedLauncher.find(value => value.event === "browser.tab_created"
       && value.detail?.traceId === traceId
-      && Date.parse(value.at) >= Date.parse(recovery.at));
+      && Date.parse(value.at) >= recoveryAt);
     const released = ownedLauncher.findLast(value => value.event === "browser.tab_released"
       && value.detail?.traceId === traceId
       && (value.detail?.status === "error" || value.detail?.status === "aborted")
+      && (Number.isNaN(previousRecoveryAt) || Date.parse(value.at) > previousRecoveryAt)
       && Date.parse(value.at) <= Date.parse(created?.at ?? ""));
     const completed = ownedLauncher.find(value => value.event === "browser.tab_completed"
       && value.detail?.traceId === traceId
-      && Date.parse(value.at) >= Date.parse(created?.at ?? ""));
+      && value.detail?.tabId === created?.detail?.tabId
+      && Date.parse(value.at) >= Date.parse(created?.at ?? "")
+      && (Number.isNaN(nextRecoveryAt) || Date.parse(value.at) < nextRecoveryAt));
     const rebuild = ownedLauncher.find(value => String(value.detail?.line ?? "")
-      .includes(`browser turn ${traceId} rebuilding tool surface from canonical state`));
+      .includes(`browser turn ${traceId} rebuilding tool surface from canonical state`)
+      && Date.parse(value.at) >= recoveryAt
+      && Date.parse(value.at) <= Date.parse(created?.at ?? ""));
     if (!released || !created || !completed || !rebuild) return undefined;
   }
   return eligible.length;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { LifecycleArtifactEncoder, LifecycleMemoryBudget } from "../scripts/lifecycle-smoke/artifacts";
 import { ClaudeRun } from "../scripts/lifecycle-smoke/claude-lane";
 import { claudeLaneSurfaceCountIsExact } from "../scripts/lifecycle-smoke/claude-evidence";
+import { safeSurfaceRecoveryCount } from "../scripts/lifecycle-smoke/codex-v2-surfaces";
 import { claudeManualCompactEvidence, manualCompactContinuityPassed } from "../scripts/lifecycle-smoke/retained-check";
 
 const paths: string[] = [];
@@ -67,6 +68,20 @@ test("Claude lane surface accounting fails closed on an extra Web tab", () => {
   expect(claudeLaneSurfaceCountIsExact(
     [...expected, freshContinuation, childReuse] as any, 0, "child", false,
   )).toBeFalse();
+});
+
+test("surface recovery accounting accepts multiple independently completed recoveries", () => {
+  const recovery = (traceId: string, second: number) => [
+    { at: `2026-01-01T00:00:${second}.000Z`, event: "browser.tab_released", detail: { traceId, tabId: `old-${second}`, status: "error" } },
+    { at: `2026-01-01T00:00:${second}.010Z`, event: "runtime.daemon_stderr", detail: { line: `[chatgpt-web] browser turn ${traceId} surface recovery eligible=true reason=eligible finalChars=0 canonicalComplete=true unresolvedSuperseded=0` } },
+    { at: `2026-01-01T00:00:${second}.011Z`, event: "runtime.daemon_stderr", detail: { line: `[chatgpt-web] browser turn ${traceId} rebuilding tool surface from canonical state` } },
+    { at: `2026-01-01T00:00:${second}.020Z`, event: "browser.tab_created", detail: { traceId, tabId: `new-${second}` } },
+    { at: `2026-01-01T00:00:${second}.030Z`, event: "browser.tab_completed", detail: { traceId, tabId: `new-${second}` } },
+  ];
+  const events = [...recovery("same-trace", 10), ...recovery("same-trace", 20)];
+
+  expect(safeSurfaceRecoveryCount(events as any)).toBe(2);
+  expect(safeSurfaceRecoveryCount(events.filter(value => value.at !== "2026-01-01T00:00:20.030Z") as any)).toBeUndefined();
 });
 
 test("Claude manual compact accepts only retained or proved recovery continuity", () => {

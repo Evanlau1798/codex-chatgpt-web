@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-  assert, auditPrompt, cleanupLifecycleResources, cutoff, detectRestriction, events, iso, LaneResult, repo, repoTests, reviewTaskPrompt,
+  assert, auditPrompt, cleanupLifecycleResources, cutoff, detectRestriction, events, iso, LaneResult, noSkillInstruction, repo, repoTests, reviewTaskPrompt,
   save, serviceBaseUrl, sleep, stageTimeline, steeringAuditPassed, steeringText, waitCreateBudget, waitForEvent,
   waitRootRequestBudget, waitSteeringPoint,
 } from "./common";
@@ -185,7 +185,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     for (let round = 1; round <= 8 && run.compactions(threadId) === 0; round += 1) {
       if (round > 1) await waitRootRequestBudget(lastRootCompletionAt);
       const taskAt = Date.now();
-      const task = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: round === 1 ? reviewTaskPrompt : `Respond only in English. Continue the previous read-only inspection by selecting exactly two uninspected test files from ${repoTests} and their directly corresponding production implementations. Summarize immediately after completing this bounded scope; do not expand into other areas. Do not repeat completed scope, dispatch a subagent, modify files, run tests, or access the network.` }] });
+      const task = await run.request("turn/start", { threadId, effort: "xhigh", input: [{ type: "text", text: round === 1 ? reviewTaskPrompt : `Respond only in English. Continue the previous read-only inspection by selecting exactly two uninspected test files from ${repoTests} and their directly corresponding production implementations. Summarize immediately after completing this bounded scope; do not expand into other areas. Do not repeat completed scope or dispatch a subagent. ${noSkillInstruction} Do not modify files, run tests, or access the network.` }] });
       await completed(run, task.turn.id, activeTurnSmokeTimeoutMs); const taskDone = Date.now(); lastRootCompletionAt = taskDone;
       const taskText = run.received.flatMap(message => message.method === "item/completed" && message.params?.turnId === task.turn.id && message.params?.item?.type === "agentMessage" ? [String(message.params.item.text)] : []).join("\n").replaceAll("\\_", "_");
       longToolCalls += run.received.filter(message => message.method === "item/completed" && message.params?.turnId === task.turn.id && ["commandExecution", "mcpToolCall"].includes(message.params?.item?.type)).length;

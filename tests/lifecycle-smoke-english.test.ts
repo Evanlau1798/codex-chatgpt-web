@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { auditPrompt, rootRequestCooldownMs, steeringText } from "../scripts/lifecycle-smoke/common";
+import {
+  auditPrompt, noSkillInstruction, reviewTaskPrompt, rootRequestCooldownMs, steeringText,
+} from "../scripts/lifecycle-smoke/common";
 import { hierarchyPrompt, selfTestHierarchySurfaceClassification } from "../scripts/lifecycle-smoke/codex-v2-scenario";
 import { selfTestV2ActivityNormalization } from "../scripts/lifecycle-smoke/codex-v2-activity";
 
@@ -36,6 +38,7 @@ test("the English steering marker continues instead of replacing the active task
 test("the steering audit requires stable numbered answer labels", () => {
   expect(auditPrompt).toContain('Use exactly the labels "1." through "3."');
   expect(auditPrompt).toContain("Do not use blockquotes");
+  expect(auditPrompt).toContain('If none apply, write exactly: "None of those."');
 });
 
 test("Claude audits steering inside the same active turn", () => {
@@ -47,6 +50,14 @@ test("Claude audits steering inside the same active turn", () => {
 
 test("root lifecycle resumes use a one-minute cooldown", () => {
   expect(rootRequestCooldownMs).toBe(60_000);
+});
+
+test("bounded review rounds do not open unrelated skill surfaces", () => {
+  expect(reviewTaskPrompt).toContain(noSkillInstruction);
+  for (const name of ["claude-lane.ts", "codex-lane.ts"]) {
+    const source = readFileSync(join(import.meta.dir, "..", "scripts", "lifecycle-smoke", name), "utf8");
+    expect(source).toContain("${noSkillInstruction}");
+  }
 });
 
 test("the hierarchy root follows the transport-safe agent wait contract", () => {
