@@ -902,13 +902,13 @@ async function start() {
   const trayAvailable = createTray(logger);
   if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", () => showMainWindow());
   const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");
-  if (!launcherSmokeTest) {
-    void browserHost.refreshAuthentication().catch((error) => {
+  const sessionRefresh = launcherSmokeTest
+    ? Promise.resolve()
+    : browserHost.refreshAuthentication().catch((error) => {
       logger.warn("browser.session_refresh_failed", {
         message: error instanceof Error ? error.message : String(error),
       });
     });
-  }
   await loadRenderer(mainWindow);
   if (!launcherSmokeTest) void updateController.checkOnce();
   if (launcherSmokeTest) {
@@ -984,6 +984,7 @@ async function start() {
       });
     }
   } else void (async () => {
+    await sessionRefresh;
     const upgrade = await runtimeHost.upgradeManagedRuntime();
     if (upgrade.updated) {
       const state = stateStore.update({

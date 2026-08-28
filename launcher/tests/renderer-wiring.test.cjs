@@ -131,7 +131,10 @@ test("MCP verification proves runtime health before checking the connector", () 
 });
 
 test("saved ChatGPT authentication is refreshed before setup is presented", () => {
-  assert.match(electronMain, /browserHost\.refreshAuthentication\(\)/);
+  const refresh = electronMain.indexOf("browserHost.refreshAuthentication()");
+  const upgrade = electronMain.indexOf("runtimeHost.upgradeManagedRuntime()");
+  assert.ok(refresh >= 0 && upgrade > refresh, "runtime upgrade must follow saved-session refresh");
+  assert.match(electronMain.slice(refresh, upgrade), /await sessionRefresh;/);
   assert.match(appSource, /browser\?\.status === "loading" \? copy\.checkingSignIn/);
 });
 
