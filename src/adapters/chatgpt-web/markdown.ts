@@ -57,8 +57,14 @@ turndown.addRule("compactListItem", {
   },
 });
 
+function preserveObsidianWikiLinks(markdown: string): string {
+  // Turndown escapes literal brackets, but Codex interprets the resulting `\[` as LaTeX.
+  // Double-bracket wiki links are already plain GFM text, so preserve only that exact syntax.
+  return markdown.replace(/\\\[\\\[([^\r\n]*?)\\\]\\\]/g, "[[$1]]");
+}
+
 export function chatGptHtmlToMarkdown(html: string): string {
-  return html.trim() ? turndown.turndown(html).trim() : "";
+  return html.trim() ? preserveObsidianWikiLinks(turndown.turndown(html)).trim() : "";
 }
 
 export interface ChatGptMarkdownSegment {

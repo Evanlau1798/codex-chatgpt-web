@@ -419,6 +419,56 @@ test("a Codex retry after tab cancellation receives terminal HTTP 400 without a 
   }
 });
 
+test("a restart recovery turn without a new user instruction fails terminally instead of replaying the stopped prompt", async () => {
+  const config = defaultConfig("browser-only");
+  const previousTurnId = "turn_before_codex_restart";
+  const recoveryTurnId = "turn_after_codex_restart";
+  const body = {
+    model: "chatgpt-web/high",
+    stream: true,
+    client_metadata: {
+      "x-codex-turn-metadata": JSON.stringify({
+        thread_id: "thread_codex_restart",
+        turn_id: recoveryTurnId,
+      }),
+    },
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Run the original task" }],
+        internal_chat_message_metadata_passthrough: { turn_id: previousTurnId },
+      },
+      {
+        type: "message",
+        role: "developer",
+        content: [{ type: "input_text", text: "<skills_instructions>fresh skills</skills_instructions>" }],
+        internal_chat_message_metadata_passthrough: { turn_id: recoveryTurnId },
+      },
+    ],
+  };
+  let adapterConstructions = 0;
+
+  const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  }), config, () => {
+    adapterConstructions += 1;
+    throw new Error("a context-only recovery turn must not construct a browser adapter");
+  });
+
+  expect(response.status).toBe(400);
+  expect(await response.json()).toEqual({
+    error: {
+      code: "invalid_request_error",
+      type: "invalid_request_error",
+      message: "ChatGPT web current user message conflicts with native Codex turn_id metadata",
+    },
+  });
+  expect(adapterConstructions).toBe(0);
+});
+
 test("authenticated lifecycle control aborts active HTTP work before acknowledging cancellation", async () => {
   const config = { ...defaultConfig("browser-only"), port: 0 };
   let upstreamAbortObserved = false;

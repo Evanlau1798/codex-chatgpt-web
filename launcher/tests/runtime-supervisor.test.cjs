@@ -26,10 +26,10 @@ async function freePort() {
   });
 }
 
-async function localHealthServer(statusForPath = () => 200) {
+async function localHealthServer(statusForPath = () => 200, bodyForPath = () => "ok") {
   const server = http.createServer((request, response) => {
     response.writeHead(statusForPath(request.url || "/"));
-    response.end("ok");
+    response.end(bodyForPath(request.url || "/"));
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -562,6 +562,47 @@ test("an explicit local readiness failure remains actionable tunnel evidence", a
     assert.equal(observation.statusKnown, true);
     assert.equal(observation.state, "degraded");
     assert.match(observation.detail, /readyz returned HTTP 503/);
+  } finally {
+    await health.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("recent internal MCP transport failures override false-green tunnel readiness", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-tunnel-mcp-degraded-"));
+  const health = await localHealthServer(
+    () => 200,
+    pathname => pathname.startsWith("/api/logs")
+      ? JSON.stringify({
+        events: [{
+          time: new Date().toISOString(),
+          level: "WARN",
+          message: "dispatcher received MCP upstream error; posted error response to control plane",
+          attrs: {
+            failure_source: "client_internal",
+            status_code: 502,
+            upstream_response_received: false,
+            rpc_method: "initialize",
+          },
+        }],
+      })
+      : "ok",
+  );
+  const supervisor = new RuntimeSupervisor({
+    app: { getVersion: () => "0.2.0", isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: root,
+    coreHome: root,
+    browserDescriptorPath: path.join(root, "launcher.json"),
+  });
+  supervisor.tunnel = { pid: process.pid, managed: true };
+  supervisor.tunnelHealthBaseUrl = health.baseUrl;
+  try {
+    const observation = await supervisor.readLocalTunnelHealth();
+    assert.equal(observation.ready, false);
+    assert.equal(observation.statusKnown, true);
+    assert.equal(observation.fatal, true);
+    assert.match(observation.detail, /MCP transport returned internal HTTP 502/);
   } finally {
     await health.close();
     fs.rmSync(root, { recursive: true, force: true });

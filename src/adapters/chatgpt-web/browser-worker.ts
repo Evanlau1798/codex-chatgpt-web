@@ -123,6 +123,11 @@ import { ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptStoppedThi
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import {
+  ChatGptBrowserObservationTimeoutError,
+  MAX_CHATGPT_BROWSER_PAGE_REBINDS,
+  withChatGptBrowserObservationTimeout,
+} from "./browser-observation";
+import {
   chatGptPromptAttachmentMismatch,
   guardChatGptPromptMarkdown,
   reanchorChatGptComposerCaret,
@@ -2447,7 +2452,7 @@ export class ChatGptBrowserWorker {
       const deadline = this.config.turnTimeoutMs === undefined
         ? undefined
         : Date.now() + this.config.turnTimeoutMs;
-      const page = await this.runStage(turn.traceId, "browser_page", browserStageTimeouts.browserPage, async (abortSignal) => {
+      let page = await this.runStage(turn.traceId, "browser_page", browserStageTimeouts.browserPage, async (abortSignal) => {
         if (maintenancePage) return maintenancePage;
         if (!launcherSurfaceId) {
           const managed = await this.pageForNewTurn();
@@ -2472,6 +2477,38 @@ export class ChatGptBrowserWorker {
       });
       if (!maintenancePage && !launcherSurfaceId) managedPage = page;
       diagnosticPage = page;
+      const rebindLauncherPage = async (attempt: number, cause: Error): Promise<void> => {
+        if (!launcherSurfaceId || !this.config.browserHostDescriptorPath) throw cause;
+        console.warn(
+          `[chatgpt-web] browser turn ${turn.traceId} is rebinding its launcher page after a stalled DOM probe:`
+          + ` ${redactChatGptUiDiagnostic(cause.message)}`,
+        );
+        const previousConnection = turnConnection;
+        const connection = await this.runStage(
+          turn.traceId,
+          `response_page_rebind_${attempt}`,
+          browserStageTimeouts.browserPage,
+          stageSignal => connectLauncherBrowserHost(
+            this.config.browserHostDescriptorPath!,
+            browserStageTimeouts.browserPage,
+            launcherSurfaceId,
+            turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
+          ),
+          turn.abortSignal,
+        );
+        turnConnection = connection.browser;
+        page = connection.page;
+        diagnosticPage = page;
+        if (previousConnection && previousConnection !== connection.browser) {
+          await previousConnection.close().catch(error => {
+            console.warn(
+              `[chatgpt-web] previous browser observation connection did not close after rebind:`
+              + ` ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+        }
+        console.warn(`[chatgpt-web] browser turn ${turn.traceId} rebound its existing launcher page`);
+      };
       await diagnostics.capture(page, "browser-page-acquired");
       console.info(
         `[chatgpt-web] browser turn ${turn.traceId} opened (transport=${multipartTransport
@@ -2596,7 +2633,7 @@ export class ChatGptBrowserWorker {
       let preemptiveRetryPrompt: string | undefined;
       let preemptiveStop: PreemptiveRetryStopState | undefined;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
-        const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
+        let responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
         const initialResponseTurn = await readChatGptAssistantTurnState(responseTurns);
         let responseTurn = responseTurns.nth(initialResponseTurn.count);
         let responseTurnBinding: ChatGptAssistantTurnBinding | undefined;
@@ -2727,6 +2764,7 @@ export class ChatGptBrowserWorker {
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
         const stoppedThinkingTracker = new ChatGptStoppedThinkingTracker();
         const nativeToolActivityTracker = new ChatGptNativeToolActivityTracker();
+        let consecutiveObservationRebinds = 0;
         for (;;) {
         if (page.isClosed()) {
           throw chatGptWebSurfaceError("ChatGPT browser tab was closed while the turn was active", answerBuffer.deliveredChars() > 0);
@@ -2751,7 +2789,29 @@ export class ChatGptBrowserWorker {
           );
         }
 
-        const currentResponseTurn = await readChatGptAssistantTurnState(responseTurns);
+        let currentResponseTurn: ChatGptAssistantTurnState;
+        try {
+          currentResponseTurn = await withChatGptBrowserObservationTimeout(
+            readChatGptAssistantTurnState(responseTurns),
+          );
+          consecutiveObservationRebinds = 0;
+        } catch (error) {
+          if (!(error instanceof ChatGptBrowserObservationTimeoutError)) throw error;
+          consecutiveObservationRebinds += 1;
+          if (consecutiveObservationRebinds > MAX_CHATGPT_BROWSER_PAGE_REBINDS) {
+            throw new Error(
+              `ChatGPT browser DOM remained unresponsive after ${MAX_CHATGPT_BROWSER_PAGE_REBINDS} same-page rebinds`,
+              { cause: error },
+            );
+          }
+          await rebindLauncherPage(consecutiveObservationRebinds, error);
+          responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
+          responseTurn = responseTurnBinding
+            ? locateChatGptAssistantTurn(responseTurns, responseTurnBinding)
+            : responseTurns.nth(initialResponseTurn.count);
+          await diagnostics.capture(page, "response-page-rebound");
+          continue;
+        }
         const responseTurnAttached = await responseTurn.count().catch(() => 0) > 0;
         if (!responseTurnBinding) {
           const binding = bindChatGptAssistantTurn(initialResponseTurn, currentResponseTurn);
@@ -3032,6 +3092,10 @@ export class ChatGptBrowserWorker {
       console.info(`[chatgpt-web] browser turn ${turn.traceId} completed (markdownChars=${answer.length})`);
       return answer;
     } catch (error) {
+      console.error(
+        `[chatgpt-web] browser turn ${turn.traceId} failed:`
+        + ` ${redactChatGptUiDiagnostic(error instanceof Error ? error.message : String(error))}`,
+      );
       if (diagnosticPage && !diagnosticPage.isClosed()) {
         await diagnostics.capture(diagnosticPage, "turn-failed", error);
       }

@@ -44,6 +44,9 @@ export interface ChatGptTurnUserRevision {
   content: unknown;
   turnId?: string;
 }
+
+export const CHATGPT_TURN_REVISION_CONFLICT_MESSAGE =
+  "ChatGPT web current user message conflicts with native Codex turn_id metadata";
 function contentText(content: string | CodexContentPart[]): string {
   if (typeof content === "string") return content;
   return content.filter(part => part.type === "text").map(part => part.text).join("\n");
@@ -101,7 +104,7 @@ export function extractChatGptTurnUserRevision(parsed: CodexParsedRequest): unkn
   const revision = currentTurnUserRevision(parsed._rawBody, turnId);
   if (!revision) throw new Error("ChatGPT web requires a current-turn user message for browser-session replay");
   if (revision.turnId !== undefined && revision.turnId !== turnId) {
-    throw new Error("ChatGPT web current user message conflicts with native Codex turn_id metadata");
+    throw new Error(CHATGPT_TURN_REVISION_CONFLICT_MESSAGE);
   }
   return revision.content;
 }

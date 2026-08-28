@@ -4,6 +4,10 @@ import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import { handleClaudeSteeringHook } from "./messages/steering-hook";
 import { chatGptBrowserTabClosedError } from "./adapters/chatgpt-web/adapter-error";
+import {
+  CHATGPT_TURN_REVISION_CONFLICT_MESSAGE,
+  extractChatGptTurnUserRevision,
+} from "./adapters/chatgpt-web/environment";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
@@ -159,17 +163,26 @@ export async function responseRequest(
   }
 
   const provider = providerConfig(config);
-  let cancelledError: Error | undefined;
+  let traceId: string | undefined;
   try {
-    cancelledError = chatGptTurnSessions.cancelledError(chatGptWebTraceId(provider, parsed));
+    traceId = chatGptWebTraceId(provider, parsed);
+    if (!compaction) extractChatGptTurnUserRevision(parsed);
   } catch (error) {
     // A cancelled browser session can only exist after the adapter accepted canonical native
     // turn identity and user-revision metadata. Requests without that identity have no matching
     // trace tombstone; preserve the adapter's existing strict validation/error path below.
     const message = error instanceof Error ? error.message : String(error);
+    if (message === CHATGPT_TURN_REVISION_CONFLICT_MESSAGE) {
+      // Codex can reopen an interrupted task with only refreshed developer/skill context under a
+      // new turn_id. Its last human prompt still belongs to the stopped turn and must not be
+      // replayed as new work. HTTP 400 makes that malformed recovery request terminal instead of
+      // allowing Codex to retry it as an upstream 502.
+      return formatErrorResponse(400, "invalid_request_error", message);
+    }
     if (!message.includes("requires native Codex turn_id metadata")
       && !message.includes("requires a current-turn user message")) throw error;
   }
+  const cancelledError = traceId ? chatGptTurnSessions.cancelledError(traceId) : undefined;
   if (cancelledError) {
     // Codex retries unknown streamed response.failed codes. A replay after the user explicitly
     // closed the only browser document is instead a terminal client state: repeating that exact

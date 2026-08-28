@@ -11,6 +11,7 @@ import {
   CHATGPT_EFFORT_ITEM_SELECTOR,
 } from "../../chatgpt-session";
 import type { ChatGptAssistantTurnBinding } from "./response-turn-boundary";
+import { withChatGptBrowserObservationTimeout } from "./browser-observation";
 
 const CHATGPT_BROWSER_DIAGNOSTIC_TRACE_LIMIT = 10;
 
@@ -92,7 +93,9 @@ export class ChatGptBrowserDiagnostics {
       let state: unknown = null;
       let stateError: string | undefined;
       try {
-        state = await captureBrowserDiagnosticState(page, this.assistantTurnBinding);
+        state = await withChatGptBrowserObservationTimeout(
+          captureBrowserDiagnosticState(page, this.assistantTurnBinding),
+        );
       } catch (captureError) {
         stateError = diagnosticError(captureError);
       }

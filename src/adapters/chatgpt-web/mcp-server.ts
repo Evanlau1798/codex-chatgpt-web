@@ -16,6 +16,9 @@ import {
 } from "./native-command";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
 import { callTurnBroker, type BrokerToolResult } from "./turn-broker";
+import { invokeChatGptMcpTool } from "./mcp-invocation";
+
+export { CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, chatGptMcpInvocationTimeout } from "./mcp-invocation";
 
 interface ClaimedTurn {
   bindingId: string;
@@ -52,6 +55,7 @@ function requestScopeSummary(extra: {
   requestId: string | number;
   _meta?: unknown;
   requestInfo?: unknown;
+  signal?: AbortSignal;
 }): string {
   const meta = extra._meta && typeof extra._meta === "object" && !Array.isArray(extra._meta)
     ? Object.entries(extra._meta as Record<string, unknown>)
@@ -157,10 +161,6 @@ function assertBrowserToolArguments(tool: CodexTool, args: Record<string, unknow
   }
 }
 
-function invocationTimeout(environment: ChatGptTurnEnvironment & { expiresAt?: number }): number | null {
-  return environment.expiresAt === undefined ? null : Math.max(1, environment.expiresAt - Date.now());
-}
-
 function asMcpResult(value: BrokerToolResult) {
   return {
     content: value.content as never,
@@ -199,7 +199,12 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
   ): Promise<ClaimedTurn> => {
     logToolPhase(toolName, "claim", "started", ` scope=${requestScopeSummary(extra)}`);
     try {
-      const claimed = await callTurnBroker<ClaimedTurn>(options.brokerSocketPath, { method: "claim", token: turnToken });
+      const claimed = await callTurnBroker<ClaimedTurn>(
+        options.brokerSocketPath,
+        { method: "claim", token: turnToken },
+        5_000,
+        extra.signal,
+      );
       logToolPhase(toolName, "claim", "completed", ` binding=${scopeHash(claimed.bindingId)}`);
       return claimed;
     } catch (error) {
@@ -213,18 +218,17 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     bound: ChatGptTurnEnvironment & { expiresAt?: number },
     tool: CodexTool,
     payload: { arguments?: Record<string, unknown>; input?: string },
+    signal?: AbortSignal,
   ) => {
     const name = wireName(tool);
     const binding = scopeHash(bindingId);
     logToolPhase(name, "invoke", "started", ` binding=${binding}`);
     try {
-      const response = await callTurnBroker<BrokerToolResult>(options.brokerSocketPath, {
-        method: "invoke",
-        bindingId,
+      const response = await invokeChatGptMcpTool(options.brokerSocketPath, bindingId, bound, {
         wireName: name,
         freeform: tool.freeform === true,
         ...(tool.freeform ? { input: payload.input ?? "" } : { arguments: payload.arguments ?? {} }),
-      }, invocationTimeout(bound));
+      }, signal);
       logToolPhase(name, "invoke", "completed", ` isError=${response.isError === true} binding=${binding}`);
       return asMcpResult(response);
     } catch (error) {
@@ -239,6 +243,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     nestedToolName: string,
     freeform: boolean,
     payload: { arguments?: Record<string, unknown>; input?: string },
+    signal?: AbortSignal,
   ) => {
     const gateway = execGateway(bound);
     if (!gateway) {
@@ -246,7 +251,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     }
     return invoke(bindingId, bound, gateway, {
       input: execGatewayProgram(nestedToolName, freeform, payload),
-    });
+    }, signal);
   };
 
   const invokeNativeCommand = (
@@ -258,6 +263,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       maxOutputTokens?: number;
       tty?: boolean;
     },
+    signal?: AbortSignal,
   ) => {
     const bound = claimed.environment;
     const execCommandArguments = {
@@ -277,7 +283,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       if (tool.name === "shell_command" && command.tty === true) throw new Error(ONE_SHOT_SHELL_TTY_ERROR);
       return invoke(claimed.bindingId, bound, tool, {
         arguments: tool.name === "exec_command" ? execCommandArguments : shellCommandArguments,
-      });
+      }, signal);
     }
     const claudeBash = exactTool(bound, "Bash");
     if (claudeBash && !claudeBash.freeform) {
@@ -285,13 +291,13 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       assertClaudeBashCommand(command.cmd);
       return invoke(claimed.bindingId, bound, claudeBash, {
         arguments: { command: claudeBashCommand(command.cmd, command.workdir) },
-      });
+      }, signal);
     }
     const gateway = execGateway(bound);
     if (!gateway) throw new Error("This Codex turn did not advertise a native command tool or the native exec gateway");
     return invoke(claimed.bindingId, bound, gateway, {
       input: execCommandGatewayProgram(execCommandArguments, shellCommandArguments),
-    });
+    }, signal);
   };
 
   server.registerTool(
@@ -302,10 +308,12 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       inputSchema: { context_token: contextTokenSchema },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ context_token }) => {
+    async ({ context_token }, extra) => {
       const { context } = await callTurnBroker<{ context: string }>(
         options.brokerSocketPath,
         { method: "read_context", token: context_token },
+        5_000,
+        extra.signal,
       );
       return { content: [{ type: "text" as const, text: context }] };
     },
@@ -334,7 +342,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
         ...(yield_time_ms !== undefined ? { yieldTimeMs: yield_time_ms } : {}),
         ...(max_output_tokens !== undefined ? { maxOutputTokens: max_output_tokens } : {}),
         ...(tty !== undefined ? { tty } : {}),
-      });
+      }, extra.signal);
     },
   );
 
@@ -365,8 +373,8 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
         ...(max_output_tokens !== undefined ? { [toolName === "wait" ? "max_tokens" : "max_output_tokens"]: max_output_tokens } : {}),
       } };
       return tool
-        ? invoke(claimed.bindingId, bound, tool, payload)
-        : invokeNestedNative(claimed.bindingId, bound, toolName, false, payload);
+        ? invoke(claimed.bindingId, bound, tool, payload, extra.signal)
+        : invokeNestedNative(claimed.bindingId, bound, toolName, false, payload, extra.signal);
     },
   );
 
@@ -382,10 +390,10 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       const claimed = await claimTurn("codex_apply_patch", turn_token, extra);
       const bound = claimed.environment;
       const tool = exactTool(bound, "apply_patch");
-      if (!tool) return invokeNestedNative(claimed.bindingId, bound, "apply_patch", true, { input: patch });
+      if (!tool) return invokeNestedNative(claimed.bindingId, bound, "apply_patch", true, { input: patch }, extra.signal);
       return tool.freeform
-        ? invoke(claimed.bindingId, bound, tool, { input: patch })
-        : invoke(claimed.bindingId, bound, tool, { arguments: { input: patch } });
+        ? invoke(claimed.bindingId, bound, tool, { input: patch }, extra.signal)
+        : invoke(claimed.bindingId, bound, tool, { arguments: { input: patch } }, extra.signal);
     },
   );
 
@@ -407,8 +415,8 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       const tool = exactTool(bound, "view_image");
       const payload = { arguments: { path, ...(detail ? { detail } : {}) } };
       return tool
-        ? invoke(claimed.bindingId, bound, tool, payload)
-        : invokeNestedNative(claimed.bindingId, bound, "view_image", false, payload);
+        ? invoke(claimed.bindingId, bound, tool, payload, extra.signal)
+        : invokeNestedNative(claimed.bindingId, bound, "view_image", false, payload, extra.signal);
     },
   );
 
@@ -438,13 +446,13 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
           if (!searchTool?.toolSearch) throw new Error("This Codex turn did not advertise deferred tool search");
           return invoke(claimed.bindingId, claimed.environment, searchTool, {
             arguments: { query: searchQuery },
-          });
+          }, extra.signal);
         }
         return invokeNativeCommand(claimed, {
           cmd: readTextFileCommand(readFile![1]!),
           yieldTimeMs: 30_000,
           maxOutputTokens: 1_000_000,
-        });
+        }, extra.signal);
       }
       const archiveMatch = /^__codex_context__:(\d+)$/.exec(query?.trim() ?? "");
       if (archiveMatch) {
@@ -460,7 +468,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
           token: turn_token,
           index: requestedIndex,
           chunkChars: CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS,
-        });
+        }, 5_000, extra.signal);
         return { content: [{
           type: "text" as const,
           text: formatContextArchiveChunk(archive),
@@ -512,7 +520,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
           token: turn_token,
           handoffId,
           summary,
-        });
+        }, 5_000, extra.signal);
         return result({ submitted: true });
       }
       const claimed = await claimTurn("codex_tool_call", turn_token, extra);
@@ -521,7 +529,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       if (tool.freeform) {
         if (input === undefined) throw new Error(`Freeform Codex tool ${wire_name} requires input`);
         if (args && Object.keys(args).length > 0) throw new Error(`Freeform Codex tool ${wire_name} does not accept arguments`);
-        return invoke(claimed.bindingId, bound, tool, { input });
+        return invoke(claimed.bindingId, bound, tool, { input }, extra.signal);
       }
       if (input !== undefined) throw new Error(`Function Codex tool ${wire_name} does not accept freeform input`);
       const toolArguments = boundedConnectorToolArguments(tool, args ?? {});
@@ -529,7 +537,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       if (tool.name === "Bash" && typeof toolArguments.command === "string") {
         assertClaudeBashCommand(toolArguments.command);
       }
-      return invoke(claimed.bindingId, bound, tool, { arguments: toolArguments });
+      return invoke(claimed.bindingId, bound, tool, { arguments: toolArguments }, extra.signal);
     },
   );
 

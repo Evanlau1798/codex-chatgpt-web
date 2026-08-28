@@ -2,6 +2,12 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { Page } from "playwright-core";
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_PROMPT_INSERT_CHUNK_CHARS, CHATGPT_STOPPED_THINKING_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptPromptAttachmentIntegrityError, ChatGptStoppedThinkingTracker, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, assertChatGptWebInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, chatGptSubmissionEvidence, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
+import {
+  CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS,
+  ChatGptBrowserObservationTimeoutError,
+  MAX_CHATGPT_BROWSER_PAGE_REBINDS,
+  withChatGptBrowserObservationTimeout,
+} from "../src/adapters/chatgpt-web/browser-observation";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
@@ -256,6 +262,25 @@ test("prompt attachment timeout retires the unsubmitted surface for canonical re
 test("browser send stage allows slow retained composers to settle", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   expect(workerSource).toContain("send: 60_000");
+});
+
+test("a stalled post-submit DOM probe is bounded before same-page launcher recovery", async () => {
+  expect(CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS).toBe(5_000);
+  expect(MAX_CHATGPT_BROWSER_PAGE_REBINDS).toBe(2);
+  await expect(withChatGptBrowserObservationTimeout(
+    new Promise<never>(() => {}),
+    5,
+  )).rejects.toBeInstanceOf(ChatGptBrowserObservationTimeoutError);
+
+  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const runBrowserTurn = workerSource.slice(workerSource.indexOf("  private async runBrowserTurn("));
+  const submissionAccepted = runBrowserTurn.indexOf("submission accepted evidence=");
+  const recovery = runBrowserTurn.indexOf("await rebindLauncherPage(", submissionAccepted);
+  const duplicateSend = runBrowserTurn.indexOf("activateChatGptSendControl(", recovery);
+  expect(recovery).toBeGreaterThan(submissionAccepted);
+  expect(duplicateSend).toBe(-1);
+  expect(runBrowserTurn).toContain("if (!launcherSurfaceId || !this.config.browserHostDescriptorPath) throw cause");
+  expect(runBrowserTurn.slice(recovery)).toContain("responseTurnBinding");
 });
 
 test("browser stage aborts immediately when the owning turn is cancelled", async () => {

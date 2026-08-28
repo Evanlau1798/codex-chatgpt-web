@@ -24,6 +24,7 @@ const TUNNEL_HEALTH_POLL_INTERVAL_MS = 1_000;
 const TUNNEL_MONITOR_INTERVAL_MS = 10_000;
 const TUNNEL_MONITOR_FAILURE_THRESHOLD = 3;
 const TUNNEL_MCP_CONNECTION_MAX_TTL = "24h";
+const TUNNEL_MCP_FAILURE_RECENCY_MS = 2 * 60_000;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -720,10 +721,68 @@ class RuntimeSupervisor {
     }
   }
 
+  async probeTunnelMcpTransport(timeoutMs = 2_000) {
+    if (!this.tunnelHealthBaseUrl) {
+      return { observed: false, ok: false, fatal: false, detail: "local tunnel MCP diagnostics URL is not known" };
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`${this.tunnelHealthBaseUrl}/api/logs?limit=100`, {
+        method: "GET",
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        return {
+          observed: false,
+          ok: false,
+          fatal: false,
+          detail: `MCP transport diagnostics returned HTTP ${response.status}`,
+        };
+      }
+      const body = await response.json();
+      if (!body || typeof body !== "object" || !Array.isArray(body.events)) {
+        throw new Error("response has no events array");
+      }
+      const cutoff = Date.now() - TUNNEL_MCP_FAILURE_RECENCY_MS;
+      const failure = body.events.findLast(event => {
+        if (!event || typeof event !== "object") return false;
+        const attrs = event.attrs && typeof event.attrs === "object" ? event.attrs : {};
+        const occurredAt = Date.parse(event.time);
+        return Number.isFinite(occurredAt)
+          && occurredAt >= cutoff
+          && event.message === "dispatcher received MCP upstream error; posted error response to control plane"
+          && attrs.failure_source === "client_internal"
+          && attrs.status_code === 502
+          && attrs.upstream_response_received === false
+          && ["initialize", "tools/call"].includes(attrs.rpc_method);
+      });
+      if (!failure) {
+        return { observed: true, ok: true, fatal: false, detail: "MCP transport has no recent internal failures" };
+      }
+      return {
+        observed: true,
+        ok: false,
+        fatal: true,
+        detail: `MCP transport returned internal HTTP 502 for ${failure.attrs.rpc_method} at ${failure.time}`,
+      };
+    } catch (error) {
+      return {
+        observed: false,
+        ok: false,
+        fatal: false,
+        detail: `MCP transport diagnostics could not be observed: ${errorMessage(error)}`,
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async readLocalTunnelHealth() {
-    const [healthz, readyz] = await Promise.all([
+    const [healthz, readyz, mcp] = await Promise.all([
       this.probeTunnelEndpoint("/healthz"),
       this.probeTunnelEndpoint("/readyz"),
+      this.probeTunnelMcpTransport(),
     ]);
     const pid = Number.isInteger(this.tunnel?.pid) ? this.tunnel.pid : null;
     if (pid && !processRunning(pid)) {
@@ -739,7 +798,8 @@ class RuntimeSupervisor {
       };
     }
     const explicitlyUnhealthy = (healthz.observed && !healthz.ok)
-      || (readyz.observed && !readyz.ok);
+      || (readyz.observed && !readyz.ok)
+      || (mcp.observed && !mcp.ok);
     const completelyObserved = healthz.observed && readyz.observed;
     if (!explicitlyUnhealthy && !completelyObserved) {
       return {
@@ -750,18 +810,21 @@ class RuntimeSupervisor {
         healthy: undefined,
         absent: false,
         statusKnown: false,
-        detail: `${healthz.detail}; ${readyz.detail}`,
+        fatal: mcp.fatal === true,
+        detail: `${healthz.detail}; ${readyz.detail}; ${mcp.detail}`,
       };
     }
+    const mcpReady = !mcp.observed || mcp.ok;
     return {
-      ready: healthz.ok && readyz.ok,
+      ready: healthz.ok && readyz.ok && mcpReady,
       pid,
-      state: healthz.ok && readyz.ok ? "ready" : "degraded",
+      state: healthz.ok && readyz.ok && mcpReady ? "ready" : "degraded",
       processRunning: pid ? true : undefined,
-      healthy: healthz.ok,
+      healthy: healthz.ok && mcpReady,
       absent: false,
       statusKnown: true,
-      detail: `${healthz.detail}; ${readyz.detail}`,
+      fatal: mcp.fatal === true,
+      detail: `${healthz.detail}; ${readyz.detail}; ${mcp.detail}`,
     };
   }
 
@@ -917,8 +980,9 @@ class RuntimeSupervisor {
     this.tunnelMonitorFailures = 0;
     this.tunnelMonitorObservationUnavailable = false;
     const generation = this.tunnelMonitorGeneration;
-    const recordFailure = (message) => {
+    const recordFailure = (message, immediate = false) => {
       if (this.stopping || generation !== this.tunnelMonitorGeneration) return;
+      if (immediate) this.tunnelMonitorFailures = TUNNEL_MONITOR_FAILURE_THRESHOLD - 1;
       this.tunnelMonitorFailures += 1;
       this.logger.warn("runtime.tunnel_monitor_unhealthy", {
         consecutiveFailures: this.tunnelMonitorFailures,
@@ -968,7 +1032,7 @@ class RuntimeSupervisor {
           }
           return;
         }
-        recordFailure(`Tunnel runtime lost readiness: ${health.detail}`);
+        recordFailure(`Tunnel runtime lost readiness: ${health.detail}`, health.fatal === true);
       }).catch((error) => {
         recordFailure(`Tunnel health probe failed: ${errorMessage(error)}`);
       }).finally(() => {

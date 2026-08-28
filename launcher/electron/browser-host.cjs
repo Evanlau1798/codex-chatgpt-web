@@ -506,6 +506,12 @@ class BrowserHost {
       });
       this.removeTurnTab(tab, true);
     });
+    contents.on("unresponsive", () => {
+      this.logger.warn("browser.tab_unresponsive", { tabId: tab.id, traceId: tab.traceId });
+    });
+    contents.on("responsive", () => {
+      this.logger.info("browser.tab_responsive", { tabId: tab.id, traceId: tab.traceId });
+    });
   }
 
   bindWebContents() {

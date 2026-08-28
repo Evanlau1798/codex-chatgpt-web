@@ -5,10 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { readTextFileCommand } from "../src/adapters/chatgpt-web/native-command";
-import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { callTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { defaultBrokerEndpoint } from "../src/config";
 import type { ChatGptTurnEnvironment } from "../src/adapters/chatgpt-web/environment";
+import {
+  CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS,
+  chatGptMcpInvocationTimeout,
+} from "../src/adapters/chatgpt-web/mcp-server";
 import type { CodexParsedRequest } from "../src/types";
 
 const evidenceContract = "Describe failed local actions using only observable tool evidence. If no native result was returned, state only that the action did not execute; never infer or name an unreported cause.";
@@ -133,6 +137,64 @@ test("MCP diagnostics distinguish claims from native invocation results without 
     await broker.close();
   }
 }, 30_000);
+
+test("an aborted MCP request revokes only its turn binding and leaves the server usable", async () => {
+  const socketPath = brokerEndpoint(`cgw-native-abort-${process.pid}-${Date.now()}`);
+  const broker = TurnBroker.forSocket(socketPath);
+  const environment: ChatGptTurnEnvironment = {
+    cwd: process.cwd(),
+    roots: [process.cwd()],
+    writableRoots: [process.cwd()],
+    sandboxPolicy: { type: "dangerFullAccess" },
+    tools: [{ name: "exec_command", description: "Run a command", parameters: { type: "object" } }],
+  };
+  const abandonedToken = await broker.register(environment, 3_000);
+  const replacementToken = await broker.register(environment);
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+    cwd: process.cwd(),
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "native-abort-test", version: "1.0.0" });
+
+  try {
+    expect(chatGptMcpInvocationTimeout(environment)).toBe(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS);
+    expect(chatGptMcpInvocationTimeout({ ...environment, expiresAt: 1_500 }, 1_000)).toBe(500);
+    await client.connect(transport);
+    const abandoned = client.callTool({
+      name: "codex_exec",
+      arguments: { turn_token: abandonedToken, cmd: "wait forever" },
+    }, undefined, { timeout: 100 });
+    const [request] = await broker.nextToolBatch(abandonedToken);
+    expect(request?.wireName).toBe("exec_command");
+    await expect(abandoned).rejects.toBeDefined();
+
+    const deadline = Date.now() + 5_000;
+    let abandonedError: unknown;
+    do {
+      try {
+        await callTurnBroker(socketPath, { method: "claim", token: abandonedToken });
+      } catch (error) {
+        abandonedError = error;
+        break;
+      }
+      await Bun.sleep(10);
+    } while (Date.now() < deadline);
+    expect(String(abandonedError)).toContain("already finished");
+
+    const inventory = await client.callTool({
+      name: "codex_tool_inventory",
+      arguments: { turn_token: replacementToken, query: "exec_command", include_schema: false },
+    });
+    expect(inventory.structuredContent).toMatchObject({ total: 1 });
+  } finally {
+    await client.close().catch(() => {});
+    broker.revoke(abandonedToken);
+    broker.revoke(replacementToken);
+    await broker.close();
+  }
+}, 10_000);
 
 test("read-only inventory operations relay deferred discovery and fixed local file reads", async () => {
   const socketPath = brokerEndpoint(`cgw-native-readonly-${process.pid}-${Date.now()}`);
