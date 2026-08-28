@@ -216,10 +216,9 @@ that option clicks **Allow once**, never a permanent grant.
 
 ## Operations
 
-Use **Activity** for structured local logs and **Settings → Run doctor** for end-to-end health
-checks. Use **Settings → Cancel retained browser turn** if a stopped task leaves ChatGPT working,
-and **Settings → Remove Codex integration** before deleting the launcher so the previous Codex
-route is restored.
+Use **Activity** for safe local diagnostics and **Settings → Run doctor** for end-to-end health.
+Settings can also cancel a retained browser turn or remove the Codex integration before uninstall.
+Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1` only when every browser checkpoint needs a screenshot.
 
 Browser turn diagnostics save bounded JSON state at each checkpoint. Screenshots are captured for
 stalled and failed turns, where the visible UI is needed to diagnose DOM drift without slowing every
@@ -251,9 +250,6 @@ codex-chatgpt-web subagents native
 
 - This is unofficial browser automation, not an OpenAI API. ChatGPT UI changes can break selectors;
   drift fails explicitly instead of silently switching model or transport.
-- ChatGPT's account-specific composer ceilings are smaller than some underlying model windows.
-  The measured boundaries and requirements for a larger deterministic transport are tracked in
-  [#76](https://github.com/miuuyy/codex-chatgpt-web/issues/76).
 - Browser state is a sensitive login artifact, and the loopback listener is reachable by processes
   running as the same local user. Never share the launcher profile; use a trusted workstation.
 - Release packages currently target macOS 13+ (arm64/x64), Windows x64, and Linux x64. Runtime,
