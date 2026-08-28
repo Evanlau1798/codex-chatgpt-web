@@ -56,6 +56,17 @@ test("Claude lane surface accounting fails closed on an extra Web tab", () => {
   expect(claudeLaneSurfaceCountIsExact([...expected, childReuse, {
     at: "2026-01-01T00:00:06.000Z", event: "browser.tab_created", detail: { tabId: "recovery", traceId: "trace-auto" },
   }] as any, 1, "child")).toBeTrue();
+
+  const freshContinuation = {
+    at: "2026-01-01T00:00:00.500Z", event: "browser.tab_created",
+    detail: { tabId: "long-root", traceId: "trace-long" },
+  };
+  expect(claudeLaneSurfaceCountIsExact(
+    [...expected, freshContinuation, childReuse] as any, 0, "child", true,
+  )).toBeTrue();
+  expect(claudeLaneSurfaceCountIsExact(
+    [...expected, freshContinuation, childReuse] as any, 0, "child", false,
+  )).toBeFalse();
 });
 
 test("Claude manual compact accepts only retained or proved recovery continuity", () => {

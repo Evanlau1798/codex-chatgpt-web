@@ -254,6 +254,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
   let childId = "";
   let lastRootCompletionAt = 0;
   let rootTtlReused = false;
+  let initialContinuationCreated = false;
   try {
     await waitCreateBudget();
     const initialAt = Date.now();
@@ -313,6 +314,14 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
       longToolCalls += task.records.filter(record => record.type === "assistant" && record.message?.content?.some?.((block: RecordValue) => block.type === "tool_use")).length;
       autoCompactions = claudeCompactions(configDir, sessionId, "auto");
       const taskEvents = events(taskAt);
+      if (round === 1) {
+        const acquisition = taskEvents.find(value => value.event === "browser.tab_created"
+          || value.event === "browser.tab_reused");
+        initialContinuationCreated = acquisition?.event === "browser.tab_created"
+          && taskEvents.some(value => value.event === "browser.tab_released"
+            && value.detail?.tabId === preAutoCompactRootTab
+            && value.detail?.reason === "retained_conversation_superseded");
+      }
       const surface = taskEvents.findLast(value => value.event === "browser.tab_created" || value.event === "browser.tab_reused");
       rootTtlReused ||= taskEvents.some(value => value.event === "browser.tab_reused" && value.detail?.tabId === rootTab);
       for (const value of taskEvents.filter(value => value.event === "browser.tab_created")) { rootTab = String(value.detail?.tabId); tabs.add(rootTab); }
@@ -447,7 +456,7 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
     const safeRecoveries = safeSurfaceRecoveryCount(events(initialAt));
     checks.surface_recovery_bounded = safeRecoveries !== undefined;
     checks.expected_web_surfaces = safeRecoveries !== undefined
-      && claudeLaneSurfaceCountIsExact(events(initialAt), safeRecoveries, childTab);
+      && claudeLaneSurfaceCountIsExact(events(initialAt), safeRecoveries, childTab, initialContinuationCreated);
     checks.latency = timelines.every(value => (value.adapter_to_cli_ms === null || Number(value.adapter_to_cli_ms) <= 2_000)
       && (value.web_commentary_to_cli_ms === null || Number(value.web_commentary_to_cli_ms) <= 5_000));
     const status = Object.values(checks).every(Boolean) ? "passed" : "failed";
