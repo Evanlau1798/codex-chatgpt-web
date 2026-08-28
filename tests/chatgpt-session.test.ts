@@ -15,7 +15,9 @@ test("login keeps the established turn composer contract", () => {
 });
 
 test("the effort selector identifies the model slider instead of any composer menu button", () => {
-  expect(CHATGPT_EFFORT_CONTROL_SELECTOR).toContain('[data-animated-slider-trigger="true"]');
+  expect(CHATGPT_EFFORT_CONTROL_SELECTOR.split(", ")).toContain(
+    'button[data-tone="neutral"][aria-haspopup="menu"]',
+  );
   expect(CHATGPT_EFFORT_CONTROL_SELECTOR).toContain('[data-testid="model-switcher-dropdown-button"]');
   expect(CHATGPT_EFFORT_CONTROL_SELECTOR).not.toBe('button[aria-haspopup="menu"]');
 });

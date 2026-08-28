@@ -201,7 +201,8 @@ export async function detectChatGptAccountCapabilities(
         slider.waitFor({ state: "attached", timeout: 70_000, signal: waitAbort.signal })
           .then(() => "slider" as const),
       ]);
-      if (ready === "items") {
+      const sliderAttached = await slider.count().then(count => count === 1).catch(() => false);
+      if (ready === "items" && !sliderAttached) {
         return { solAvailable: true, proAvailable: await efforts.count() >= 5 };
       }
       const state = parseChatGptEffortSliderState(

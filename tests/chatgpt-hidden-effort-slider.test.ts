@@ -34,7 +34,10 @@ test("capability detection accepts a semantic effort slider with no visible box"
     last() { return this; },
     locator: () => composerForm,
   };
-  const efforts = { first: () => ({ waitFor: () => new Promise(() => {}) }) };
+  const efforts = {
+    first: () => ({ waitFor: async () => {} }),
+    count: async () => 2,
+  };
   const menu = {
     last() { return this; },
     isVisible: async () => true,
@@ -44,6 +47,7 @@ test("capability detection accepts a semantic effort slider with no visible box"
     },
   };
   const slider = {
+    count: async () => 1,
     waitFor: async ({ state }: { state: string }) => expect(state).toBe("attached"),
     getAttribute: async (name: string) => ({
       "aria-valuemin": "0",
