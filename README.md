@@ -105,9 +105,9 @@ irm https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/in
 
 Then complete the three checks in the app:
 
-1. Sign in directly in the launcher's embedded ChatGPT browser. Login pages and identity-provider
-   windows stay inside the same launcher-owned private browser profile; no session is copied between
-   browsers.
+1. Sign in through the normal Chrome window opened by the launcher. After Chrome verifies Temporary
+   Chat, the launcher imports only ChatGPT/OpenAI session cookies into its private Electron profile
+   and verifies the composer again. If configured Chrome is unavailable, it uses embedded sign-in.
 2. Run the browser smoke test.
 3. Use **Install into Codex** and/or **Install into Claude Code**. Completing either integration
    finishes setup; they can be installed or refreshed independently. Restart the selected client.
@@ -157,7 +157,7 @@ replayed.
 
 ### Bigger Context (experimental)
 
-This separately controlled v3.0.2 feature can carry a request larger than one measured ChatGPT
+This separately controlled feature can carry a request larger than one measured ChatGPT
 message while keeping every individual composer submission inside its verified boundary. The bridge
 stages two or three inert context parts in the same Temporary Chat, verifies an exact acknowledgement
 for each part, and executes the task only from the final commit message. Connector selection is

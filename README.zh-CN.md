@@ -20,7 +20,7 @@
 
 这是独立维护的 **Enhanced** fork：在持续跟进上游基线的同时，提供可选的长任务 Web 会话
 生命周期。Fork 版本采用 `<上游版本>-Enhanced.<修订号>`，首个版本为 `3.0.1-Enhanced.1`。
-当前版本为基于上游 v3.0.2 的 `3.0.2-Enhanced.1`。
+当前版本为基于上游 v4.0.0 的 `4.0.0-Enhanced.1`。
 
 Free 和 Go 账户会在 Codex 原生模型选择器中看到 **ChatGPT Web — Luna**。具有推理选择器的
 账户仍会按订阅权限看到 **Instant**、**Medium**、**High**、**Extra High** 和 **Pro**。
@@ -95,8 +95,9 @@ irm https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/in
 
 然后在应用中完成三项检查：
 
-1. 直接在启动器内置的 ChatGPT 浏览器中登录。登录页和身份提供商窗口都保留在同一个由启动器
-   管理的私有浏览器配置中；会话不会在不同浏览器之间复制。
+1. 通过启动器打开的普通 Chrome 窗口登录。Chrome 验证临时聊天后，启动器只会将 ChatGPT／OpenAI
+   会话 Cookie 导入其私有 Electron 配置，并再次验证 composer。若找不到已配置的 Chrome，则改用
+   内置登录。
 2. 运行浏览器冒烟测试。
 3. 使用 **安装到 Codex** 和／或 **安装到 Claude Code**。完成任一集成即可完成设置，两者可独立
    安装或刷新；随后重启所选客户端。
@@ -142,7 +143,7 @@ epoch；旧 turn token 与已完成工具调用不会被重播。
 
 ### 更大上下文（实验性）
 
-此 v3.0.2 功能使用独立开关，可传输超过单条 ChatGPT 消息实测上限的请求，同时确保每次 composer
+此功能使用独立开关，可传输超过单条 ChatGPT 消息实测上限的请求，同时确保每次 composer
 提交仍在已验证边界内。Bridge 会在同一个临时聊天中分两至三次暂存不会执行任务的 context part，
 逐次验证精确 acknowledgement，最后才由 commit 消息开始工作。连接器选择最多完整输入三次
 `@codex`；找不到连接器时会明确失败，不会无限建立替代会话。

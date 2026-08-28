@@ -21,7 +21,7 @@ const reportedRevision = revision.stdout.toString().trim();
 if (revision.exitCode !== 0 || Bun.version !== bunVersion || reportedRevision !== bunRevision) {
   throw new Error(`Expected Bun ${bunRevision}, received ${reportedRevision || Bun.version}`);
 }
-if (packageJson.engines?.bun !== `>=${bunVersion}`) throw new Error(`engines.bun is not synchronized to ${bunVersion}`);
+if (packageJson.engines?.bun !== bunVersion) throw new Error(`engines.bun is not synchronized to ${bunVersion}`);
 const expected = [
   ["src/version.ts", `export const VERSION = ${JSON.stringify(packageVersion)};`],
   ["scripts/install.sh", `VERSION=\"\${CODEX_CHATGPT_WEB_VERSION:-${packageVersion}}\"`],
