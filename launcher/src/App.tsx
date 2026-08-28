@@ -481,7 +481,10 @@ function LauncherShell({
             <div className="sidebar-brand-row">
               <div className="sidebar-brand-identity">
                 <BrandMark small />
-                <strong>{copy.product}</strong>
+                <span className="sidebar-brand-copy">
+                  <strong>{copy.product}</strong>
+                  <small>Enhanced</small>
+                </span>
                 {devProfile ? <em className="dev-profile-badge">{copy.devBadge}</em> : null}
               </div>
               <div className="sidebar-brand-actions">
