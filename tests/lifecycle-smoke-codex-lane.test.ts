@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { lifecycleAutoCompactTokenLimit } from "../scripts/lifecycle-smoke/codex-app-server";
 import { catalogContainsModel, childTtlResumePrompt } from "../scripts/lifecycle-smoke/codex-lane";
 import { hasLocalFileEvidence } from "../scripts/lifecycle-smoke/skill-contract";
@@ -14,6 +15,12 @@ test("Codex child TTL prompt names the exact existing agent and required tool", 
 
 test("Codex lifecycle smoke forces compaction within bounded read-only review work", () => {
   expect(lifecycleAutoCompactTokenLimit).toBe(70_000);
+});
+
+test("Codex lifecycle provider reuses the signed-in Codex OAuth token", () => {
+  const source = readFileSync(new URL("../scripts/lifecycle-smoke/codex-app-server.ts", import.meta.url), "utf8");
+
+  expect(source).toContain("model_providers.lifecycle_smoke.requires_openai_auth=true");
 });
 
 test("Codex catalog preflight accepts an already-cached Web model", () => {

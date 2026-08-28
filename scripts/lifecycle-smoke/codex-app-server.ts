@@ -164,6 +164,7 @@ export class CodexRun {
       "-c", 'model_providers.lifecycle_smoke.name="Lifecycle Smoke"',
       "-c", `model_providers.lifecycle_smoke.base_url="${serviceBaseUrl()}/v1"`,
       "-c", 'model_providers.lifecycle_smoke.wire_api="responses"',
+      "-c", "model_providers.lifecycle_smoke.requires_openai_auth=true",
       "-c", "model_providers.lifecycle_smoke.request_max_retries=0",
       "-c", "model_providers.lifecycle_smoke.stream_max_retries=0",
       "-c", "model_providers.lifecycle_smoke.supports_websockets=false",
