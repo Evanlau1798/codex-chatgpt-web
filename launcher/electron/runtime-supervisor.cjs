@@ -778,6 +778,24 @@ class RuntimeSupervisor {
     }
   }
 
+  async waitForTunnelMcpTransport(timeoutMs = 10_000) {
+    const deadline = Date.now() + timeoutMs;
+    let health;
+    do {
+      health = await this.probeTunnelMcpTransport();
+      if (health.observed && health.ok) return health;
+      if (health.fatal) {
+        throw new Error(`Fresh tunnel MCP transport is unhealthy: ${health.detail}`);
+      }
+      if (Date.now() >= deadline) break;
+      await sleep(TUNNEL_HEALTH_POLL_INTERVAL_MS);
+    } while (Date.now() < deadline);
+    throw new Error(
+      `Fresh tunnel MCP transport could not be verified within ${timeoutMs}ms:`
+      + ` ${health?.detail || "no diagnostics returned"}`,
+    );
+  }
+
   async readLocalTunnelHealth() {
     const [healthz, readyz, mcp] = await Promise.all([
       this.probeTunnelEndpoint("/healthz"),
@@ -908,12 +926,12 @@ class RuntimeSupervisor {
     );
   }
 
-  async startTunnel(config, operationName = "runtime-start") {
+  async startTunnel(config, operationName = "runtime-start", { forceRestart = false } = {}) {
     if (config.mode !== "full") return;
     this.assertTunnelClientReady(config);
     try {
       const existing = await this.waitForKnownTunnelStatus(config);
-      if (existing.ready) {
+      if (existing.ready && !forceRestart) {
         this.tunnel = {
           pid: existing.pid,
           exitCode: null,
@@ -933,6 +951,7 @@ class RuntimeSupervisor {
         );
       }
       if (stopped.code === 0) await this.waitForTunnelStopped(config);
+      this.tunnelHealthBaseUrl = null;
       const connected = await this.runTunnelConnectCommand(config);
       if (connected.code !== 0) {
         throw new Error(
@@ -941,6 +960,7 @@ class RuntimeSupervisor {
       }
       await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, operationName);
       if (!this.tunnel) throw new Error("Tunnel runtime became ready without a managed process identity");
+      if (forceRestart) await this.waitForTunnelMcpTransport();
       this.startTunnelMonitor(config);
     } catch (error) {
       let cleanupError;
@@ -1261,7 +1281,9 @@ class RuntimeSupervisor {
     }
     this.publishOperation?.({ name: "runtime-recovery", status: "running", message: `Restarting ${name}` });
     const tunnelOnly = this.launcherProfile === "development";
-    if (name === "tunnel") await this.startTunnel(config, "runtime-recovery");
+    if (name === "tunnel") {
+      await this.startTunnel(config, "runtime-recovery", { forceRestart: true });
+    }
     else if (tunnelOnly) throw new Error("DEV runtime cannot recover a Responses daemon");
     else await this.startDaemon(config);
     if (!tunnelOnly && !this.daemon) throw new Error("Responses proxy is unavailable after runtime recovery");

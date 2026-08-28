@@ -2132,6 +2132,19 @@ export class ChatGptBrowserWorker {
           .indexOf(itemAnchor);
         return anchorIndex >= 0 ? `${kind}:anchor:${anchorIndex}` : undefined;
       };
+      const hasFollowingRenderedSibling = (candidate: HTMLElement): boolean => {
+        const itemAnchor = candidate.closest<HTMLElement>("[data-item-anchor]");
+        for (
+          let sibling = itemAnchor?.nextElementSibling;
+          sibling;
+          sibling = sibling.nextElementSibling
+        ) {
+          if (sibling instanceof HTMLElement && renderedInDom(sibling) && sibling.innerText.trim()) {
+            return true;
+          }
+        }
+        return false;
+      };
       root.querySelectorAll<HTMLElement>(
         'button, [role="status"], [aria-busy="true"], [data-testid*="cot"], [data-testid*="reason"], [data-testid*="thought"]',
       ).forEach(candidate => {
@@ -2164,6 +2177,7 @@ export class ChatGptBrowserWorker {
           kind,
           text: traceText(candidate),
           key: traceKey(candidate, kind),
+          ...(kind === "commentary" ? { complete: hasFollowingRenderedSibling(candidate) } : {}),
           // Footer controls such as the model picker and overflow menu are siblings of the final
           // Markdown inside the assistant turn. They are UI, not model trace. Real action buttons
           // are scoped by ChatGPT's streaming-status container.
@@ -2178,7 +2192,9 @@ export class ChatGptBrowserWorker {
         });
       const traceBlocks = [...traceByKey.values()].map((block, index, blocks) => ({
         ...block,
-        ...(block.kind === "commentary" ? { complete: index < blocks.length - 1 } : {}),
+        ...(block.kind === "commentary" ? {
+          complete: block.complete === true || index < blocks.length - 1,
+        } : {}),
       }));
       const stoppedThinkingVisible = (() => {
         if ([...root.querySelectorAll<HTMLElement>('[aria-label="Stopped thinking"]')].some(renderedInDom)) {

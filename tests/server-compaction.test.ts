@@ -64,7 +64,7 @@ test("compacts ChatGPT Web v1 through a dedicated read-only browser summarizatio
   ]);
 });
 
-test("compacts a Pro task with Extra High while preserving the Pro route", async () => {
+test("compacts a Pro task with Pro effort", async () => {
   const config = defaultConfig("full");
   config.proAvailable = true;
   const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
@@ -78,7 +78,7 @@ test("compacts a Pro task with Extra High while preserving the Pro route", async
     name: "pro-compaction-effort-check",
     async runTurn(parsed, _incoming, emit) {
       expect(parsed._compactionRequest).toBe(true);
-      expect(parsed.options.reasoning).toBe("xhigh");
+      expect(parsed.options.reasoning).toBe("max");
       emit({ type: "text_delta", text: summary, phase: "final_answer" });
       emit({ type: "done", stopReason: "stop", endTurn: true });
     },

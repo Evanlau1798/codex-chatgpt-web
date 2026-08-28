@@ -745,6 +745,76 @@ test("launcher adopts a healthy native managed tunnel without spawning a foregro
   }
 });
 
+test("tunnel recovery replaces a false-green managed runtime and proves the fresh MCP transport", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-managed-tunnel-recovery-"));
+  const binaryPath = path.join(root, "tunnel-client");
+  const runtimeKeyFile = path.join(root, "runtime.key");
+  const profileDir = path.join(root, "profiles");
+  fs.mkdirSync(profileDir, { recursive: true });
+  fs.writeFileSync(binaryPath, "binary");
+  fs.writeFileSync(runtimeKeyFile, "runtime-key");
+  fs.writeFileSync(path.join(profileDir, "codex-chatgpt-web.yaml"), "profile");
+  const config = {
+    mode: "full",
+    releaseVersion: "0.2.0",
+    tunnel: {
+      binaryPath,
+      runtimeKeyFile,
+      profileDir,
+      profileName: "codex-chatgpt-web",
+    },
+  };
+  const supervisor = new RuntimeSupervisor({
+    app: { getVersion: () => "0.2.0", isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: root,
+    coreHome: root,
+    browserDescriptorPath: path.join(root, "launcher.json"),
+    launcherProfile: "development",
+  });
+  const events = [];
+  let reads = 0;
+  supervisor.readConfig = () => config;
+  supervisor.readTunnelHealth = async () => {
+    reads += 1;
+    return {
+      ready: true,
+      pid: reads === 1 ? 123_456_778 : 123_456_779,
+      statusKnown: true,
+      detail: "ready",
+    };
+  };
+  supervisor.runTunnelStopCommand = async () => {
+    events.push("stop");
+    return { code: 0, output: "{}" };
+  };
+  supervisor.waitForTunnelStopped = async () => {
+    events.push("stopped");
+  };
+  supervisor.runTunnelConnectCommand = async () => {
+    events.push("connect");
+    return { code: 0, output: "{}" };
+  };
+  supervisor.waitForTunnelMcpTransport = async () => {
+    events.push("mcp");
+  };
+  supervisor.startTunnelMonitor = () => { events.push("monitor"); };
+  supervisor.tryWriteState = () => true;
+  try {
+    await supervisor.recover("tunnel");
+    assert.deepEqual(events, [
+      "stop",
+      "stopped",
+      "connect",
+      "mcp",
+      "monitor",
+    ]);
+    assert.equal(supervisor.tunnel?.pid, 123_456_779);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("launcher stops an unhealthy managed runtime before reconnecting the alias", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-managed-tunnel-reconnect-"));
   const binaryPath = path.join(root, "tunnel-client");

@@ -2076,6 +2076,20 @@ test("a tool boundary flushes short-lived commentary without waiting for the sta
   }]);
 });
 
+test("a structurally completed trailing Pro commentary does not wait for another parsed trace block", () => {
+  const tracker = new ChatGptVisibleTraceTracker(100);
+  const commentary = [{
+    kind: "commentary",
+    text: "The tracked worktree is clean; I’m preserving the untracked user artifacts.",
+    complete: true,
+  }] as const;
+  expect(tracker.observe([...commentary], false, 1_000)).toEqual([]);
+  expect(tracker.observe([...commentary], false, 1_100)).toEqual([{
+    kind: "commentary",
+    text: "The tracked worktree is clean; I’m preserving the untracked user artifacts.",
+  }]);
+});
+
 test("visible DOM trace emits one complete commentary paragraph before the next action", () => {
   const tracker = new ChatGptVisibleTraceTracker(100);
   const initial = [
@@ -2117,6 +2131,25 @@ test("response DOM separates streaming commentary from the final Markdown answer
   expect(workerSource).toContain('.filter(markdownRoot => markdownRoot.ownership === "final")');
   expect(workerSource).toContain("markdownBuffer.observe(snapshot.markdownSegments)");
   expect(workerSource).toContain("ownership.observe(snapshot.markdownRoots)");
+  expect(workerSource).not.toContain("streamCompletedBlocks");
+  expect(workerSource).toContain('code: "multipart_protocol_violation"');
+  expect(workerSource).not.toContain("multipartFailed");
+  expect(workerSource).toContain('"final_part_effort_selection"');
+  expect(workerSource).not.toContain("stableHtml:");
+  expect(workerSource).not.toContain("observeStableHtml");
+  expect(workerSource).toContain("const overlapsRenderedAnswer = (candidate: HTMLElement)");
+  expect(workerSource).toContain("const statusSemantic = (candidate: HTMLElement)");
+  expect(workerSource).toContain('candidate.querySelectorAll<HTMLElement>(".sr-only")');
+  expect(workerSource).not.toContain("const adjacentCommentary");
+  expect(workerSource).toContain('candidate.closest<HTMLElement>("[data-item-anchor]")');
+  expect(workerSource).toContain("const hasFollowingRenderedSibling = (candidate: HTMLElement)");
+  expect(workerSource).toContain("itemAnchor?.nextElementSibling");
+  expect(workerSource).toContain("block.complete === true || index < blocks.length - 1");
+  expect(workerSource).toContain("const traceByKey = new Map<string, ChatGptVisibleTraceBlock>()");
+  expect(workerSource).toContain('uiControl: candidate.matches("button")');
+  expect(workerSource).toContain("!overlapsRenderedAnswer(semantic)");
+  expect(workerSource).toContain("!overlapsRenderedAnswer(container)");
+  expect(workerSource).not.toContain('fullHtml: rendered?.innerHTML ?? ""');
 });
 test("visible DOM trace keeps a complete action phrase instead of a nested count", () => {
   expect(new ChatGptVisibleTraceTracker(0).observe([

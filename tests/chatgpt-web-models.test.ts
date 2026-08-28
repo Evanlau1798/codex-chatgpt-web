@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { chatGptConversationKey } from "../src/adapters/chatgpt-web/conversation-key";
 import {
   availableChatGptWebModelRoutes,
   CHATGPT_WEB_BACKEND_MODEL,
@@ -210,17 +211,28 @@ describe("fixed ChatGPT Web model routes", () => {
       .toThrow("model is not enabled");
   });
 
-  test("keeps normal Pro turns on Pro and routes only Pro compaction through Extra High", () => {
+  test("keeps Pro compaction on the same retained Pro conversation", () => {
     const config = defaultConfig("full");
     config.proAvailable = true;
     const normal = parsed("chatgpt-web/pro", "low");
     const compact = parsed("chatgpt-web/pro", "low");
+    const metadata = {
+      "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread_pro_compaction" }),
+    };
+    normal._rawBody = {
+      model: "chatgpt-web/pro",
+      reasoning: { effort: "low" },
+      client_metadata: metadata,
+    };
+    compact._rawBody = structuredClone(normal._rawBody);
     compact._compactionRequest = true;
 
     expect(routeChatGptWebRequest(normal, config).slug).toBe("chatgpt-web/pro");
     expect(normal.options.reasoning).toBe("max");
     expect(routeChatGptWebRequest(compact, config).slug).toBe("chatgpt-web/pro");
-    expect(compact.options.reasoning).toBe("xhigh");
+    expect(compact.options.reasoning).toBe("max");
+    expect(chatGptConversationKey(compact, "provider"))
+      .toBe(chatGptConversationKey(normal, "provider"));
   });
 
   test("binds the Luna route to Luna without a selectable effort", () => {

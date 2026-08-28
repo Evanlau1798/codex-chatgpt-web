@@ -52,12 +52,7 @@ export interface ResponseRequestOptions {
 export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppConfig): ChatGptWebModelRoute {
   const route = requireChatGptWebModelRoute(parsed.modelId, config);
   parsed.modelId = route.backendModel;
-  // A Pro task remains Pro, but its isolated summarization turn does not benefit from Pro's much
-  // slower reasoning. Extra High has the same 95k pre-compaction budget on a Pro account, so it
-  // can summarize the complete bounded input without changing the task's selected model.
-  parsed.options.reasoning = parsed._compactionRequest && route.adapterEffort === "max"
-    ? "xhigh"
-    : route.adapterEffort;
+  parsed.options.reasoning = route.adapterEffort;
   return route;
 }
 

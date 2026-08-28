@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import { namespacedToolName, type CodexTool } from "../../types";
+import { VERSION } from "../../version";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS } from "./context-bootstrap";
 import { formatContextArchiveChunk } from "./context-archive-response";
@@ -190,7 +191,7 @@ export function boundedConnectorToolArguments(tool: CodexTool, args: Record<stri
 }
 
 export async function runChatGptMcpServer(options: { brokerSocketPath: string }): Promise<void> {
-  const server = new McpServer({ name: "codex-native", version: "4.1.0" });
+  const server = new McpServer({ name: "codex-native", version: VERSION });
 
   const claimTurn = async (
     toolName: string,

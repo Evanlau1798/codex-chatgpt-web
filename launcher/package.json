@@ -1,6 +1,6 @@
 {
   "name": "codex-web-gpt-launcher",
-  "version": "4.0.3-Enhanced.1",
+  "version": "4.0.4",
   "private": true,
   "description": "Desktop control center for Codex ChatGPT Web",
   "author": "miuuyy",
@@ -8,6 +8,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "bun run scripts/dev.cjs",
+    "audit": "bun audit",
     "typecheck": "tsc --noEmit",
     "build:renderer": "vite build",
     "build": "bun run typecheck && bun run build:renderer",
@@ -30,7 +31,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.2.0",
-    "electron": "41.7.1",
+    "electron": "41.10.7",
     "electron-builder": "^26.8.1",
     "typescript": "^5.9.3",
     "vite": "^6.0.0"
