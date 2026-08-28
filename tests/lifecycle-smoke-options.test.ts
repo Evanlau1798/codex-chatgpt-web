@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { parseLifecycleSmokeOptions } from "../scripts/lifecycle-smoke/options";
 
 test("live lifecycle smoke requires an explicit live acknowledgement", () => {
@@ -26,11 +26,11 @@ test("live lifecycle smoke accepts portable executable and launcher overrides", 
   ], "C:\\repo")).toEqual({
     live: true,
     lane: "all",
-    artifactRoot: "D:\\smoke",
-    codexExecutable: "D:\\bin\\codex.exe",
-    claudeExecutable: "D:\\bin\\claude.exe",
-    launcherLog: "D:\\logs\\launcher.jsonl",
-    browserDescriptor: "D:\\runtime\\browser.json",
+    artifactRoot: resolve("D:\\smoke"),
+    codexExecutable: resolve("D:\\bin\\codex.exe"),
+    claudeExecutable: resolve("D:\\bin\\claude.exe"),
+    launcherLog: resolve("D:\\logs\\launcher.jsonl"),
+    browserDescriptor: resolve("D:\\runtime\\browser.json"),
   });
 });
 
