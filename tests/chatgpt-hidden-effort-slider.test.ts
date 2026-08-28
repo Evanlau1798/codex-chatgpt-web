@@ -8,6 +8,15 @@ import {
   detectChatGptAccountCapabilities,
 } from "../src/chatgpt-session";
 
+test("effort selectors cover the current semantic slider DOM", () => {
+  expect(CHATGPT_EFFORT_CONTROL_SELECTOR.split(", ")).toContain(
+    'button[data-tone="neutral"][aria-haspopup="menu"]',
+  );
+  expect(CHATGPT_EFFORT_SLIDER_SELECTOR.split(", ")).toContain(
+    '[data-testid="composer-intelligence-picker-content"] [role="slider"]',
+  );
+});
+
 test("capability detection accepts a semantic effort slider with no visible box", async () => {
   const effortButton = {
     last() { return this; },

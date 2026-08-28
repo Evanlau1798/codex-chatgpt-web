@@ -8,7 +8,7 @@ export const CHATGPT_COMPOSER_SELECTOR = [
   '[contenteditable="true"][data-lexical-editor="true"]',
 ].join(", ");
 export const CHATGPT_EFFORT_CONTROL_SELECTOR = [
-  'button[aria-haspopup="menu"][data-tone="neutral"]:has([data-animated-slider-trigger="true"])',
+  'button[data-tone="neutral"][aria-haspopup="menu"]',
   'button[data-testid="model-switcher-dropdown-button"][aria-haspopup="menu"]',
 ].join(", ");
 export const CHATGPT_EFFORT_MENU_SELECTOR = [
@@ -17,7 +17,10 @@ export const CHATGPT_EFFORT_MENU_SELECTOR = [
   '[role="group"]:has([role="menuitemradio"], [data-model-reasoning-effort-slider])',
 ].join(", ");
 export const CHATGPT_EFFORT_ITEM_SELECTOR = '[role="menuitemradio"]';
-export const CHATGPT_EFFORT_SLIDER_SELECTOR = '[data-model-reasoning-effort-slider] [role="slider"]';
+export const CHATGPT_EFFORT_SLIDER_SELECTOR = [
+  '[data-testid="composer-intelligence-picker-content"] [role="slider"]',
+  '[data-model-reasoning-effort-slider] [role="slider"]',
+].join(", ");
 export const CHATGPT_EFFORT_SLIDER_MAX_OPTIONS = 5;
 export const CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR =
   '#conversation-header-actions button[aria-haspopup="menu"]';
