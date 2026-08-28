@@ -39,8 +39,24 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/prepare-windows-baseline-bun.ps1 -Version 1.4.0 -Revision 1.4.0+34cbb9a40 -GitHubEnv $env:GITHUB_ENV
+      - name: Prepare compatible Linux libnotify
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config libglib2.0-dev libgdk-pixbuf-2.0-dev binutils
+          ./scripts/prepare-linux-libnotify.sh
+      - name: Prepare owned AppImage toolset
+        if: runner.os == 'Linux'
+        run: bun run launcher/scripts/prepare-linux-appimage-tools.cjs
       - run: bun run verify
       - run: bun run app:package
+      - name: Verify Linux AppImage ABI on current Arch
+        if: runner.os == 'Linux'
+        run: |
+          artifact="$(find launcher/artifacts -maxdepth 1 -name '*-linux-x64.AppImage' -print -quit)"
+          test -n "$artifact"
+          docker run --rm -v "$PWD:/work:ro" -e APPIMAGE_PATH="/work/$artifact" archlinux:base \
+            sh -lc 'pacman -Sy --noconfirm binutils file glibc alsa-lib at-spi2-core cairo cups gtk3 libx11 libxcb libxcomposite libxdamage libxext libxfixes libxkbcommon libxrandr mesa nspr nss pango >/dev/null && /work/launcher/scripts/smoke-linux-appimage-symbols.sh "$APPIMAGE_PATH"'
       - name: Ensure virtual display is available
         if: runner.os == 'Linux'
         run: command -v xvfb-run || (sudo apt-get update && sudo apt-get install -y xvfb)

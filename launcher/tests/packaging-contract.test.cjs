@@ -21,6 +21,8 @@ test("launcher publishes native packages for all supported desktop operating sys
   assert.equal(manifest.build.win.icon, "assets/icon.ico");
   assert.deepEqual(manifest.build.linux.target, ["AppImage"]);
   assert.ok(manifest.build.files.includes("assets/icon.png"));
+  assert.ok(manifest.build.files.includes("assets/linux-appimage-runner.sh"));
+  assert.ok(manifest.build.asarUnpack.includes("assets/linux-appimage-runner.sh"));
   assert.ok(fs.existsSync(path.join(launcherRoot, "assets", "icon.ico")));
   assert.equal(manifest.build.nsis.oneClick, false);
   assert.equal(manifest.build.nsis.perMachine, false);
@@ -51,7 +53,9 @@ test("release installers resolve checksummed native launcher assets", () => {
   assert.match(packager, /--config\.mac\.identity=-/);
   assert.doesNotMatch(packager, /electron-builder\.cmd/);
   assert.match(shellInstaller, /shell_quote\(\)/);
-  assert.match(shellInstaller, /exec %s "\$@"/);
+  assert.match(shellInstaller, /RUNNER_SOURCE/);
+  assert.match(shellInstaller, /exec %s %s "\$@"/);
+  assert.doesNotMatch(shellInstaller, /APPIMAGE_EXTRACT_AND_RUN=.*1/);
   assert.ok(
     shellInstaller.indexOf('chmod 0755 "$TEMP_DIR/$ASSET"')
       < shellInstaller.indexOf('"$TEMP_DIR/$ASSET" --appimage-extract'),
@@ -82,6 +86,8 @@ test("packaged launcher owns a detached checksummed updater for every release pl
   assert.match(updater, /SHA-256 verification failed/);
   assert.match(updater, /detached:\s*true/);
   assert.match(worker, /waitForParent/);
+  assert.match(updater, /linux-appimage-runner\.sh/);
+  assert.match(worker, /runnerSource/);
   assert.doesNotMatch(worker, /backup/i);
 });
 
@@ -92,15 +98,50 @@ test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
   assert.match(ci, /bun run app:package/);
   assert.match(ci, /bun run app:smoke/);
   assert.match(ci, /prepare-windows-baseline-bun\.ps1 -Version 1\.4\.0 -Revision 1\.4\.0\+34cbb9a40/);
+  assert.match(ci, /prepare-linux-libnotify\.sh/);
+  assert.match(ci, /prepare-linux-appimage-tools\.cjs/);
+  assert.match(ci, /archlinux:base/);
   for (const runner of ["macos-15", "macos-15-intel", "ubuntu-latest", "windows-latest"]) {
     assert.match(release, new RegExp(runner));
   }
   assert.match(release, /launcher\/build\/runtime/);
   assert.match(release, /bun run app:smoke/);
   assert.match(release, /prepare-windows-baseline-bun\.ps1 -Version 1\.4\.0 -Revision 1\.4\.0\+34cbb9a40/);
+  assert.match(release, /prepare-linux-libnotify\.sh/);
+  assert.match(release, /prepare-linux-appimage-tools\.cjs/);
+  assert.match(release, /archlinux:base/);
   assert.match(release, /codesign --verify --deep --strict --verbose=2/);
   assert.match(release, /Codex Web GPT\.app/);
   assert.doesNotMatch(release, /gh release create[\s\S]*?--draft/);
+});
+
+test("Linux AppImage packaging owns its runner and compatible libnotify toolset", () => {
+  const runner = fs.readFileSync(path.join(launcherRoot, "assets", "linux-appimage-runner.sh"), "utf8");
+  const prepareTools = fs.readFileSync(
+    path.join(launcherRoot, "scripts", "prepare-linux-appimage-tools.cjs"),
+    "utf8",
+  );
+  const prepareLibnotify = fs.readFileSync(
+    path.join(repositoryRoot, "scripts", "prepare-linux-libnotify.sh"),
+    "utf8",
+  );
+  const smoke = fs.readFileSync(
+    path.join(launcherRoot, "scripts", "smoke-linux-appimage-symbols.sh"),
+    "utf8",
+  );
+  const license = fs.readFileSync(
+    path.join(repositoryRoot, "LICENSES", "libnotify-0.8.7-LGPL-2.1.md"),
+    "utf8",
+  );
+
+  assert.match(runner, /--appimage-extract/);
+  for (const contract of [prepareTools, prepareLibnotify, smoke]) {
+    assert.match(contract, /notify_notification_get_activation_app_launch_context/);
+  }
+  assert.match(prepareLibnotify, /4be15202ec4184fce1ac15997ece5530d2be32fe9573875aeb10e3b573858748/);
+  assert.match(prepareTools, /APPIMAGE_TOOLS_PATH/);
+  assert.match(smoke, /cp "\$APPIMAGE_PATH" "\$SMOKE_APPIMAGE"/);
+  assert.match(license, /GNU LESSER GENERAL PUBLIC LICENSE/);
 });
 
 test("macOS package smoke unregisters its staged app from LaunchServices", () => {

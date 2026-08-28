@@ -186,6 +186,10 @@ function buildJob({ version, platform, executablePath, assetPath, stagingRoot, t
     if (!target || !path.isAbsolute(target)) {
       throw new Error("The running Linux AppImage path is unavailable; reinstall with install-launcher.sh");
     }
+    const wrapper = process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE?.trim();
+    if (!wrapper || !path.isAbsolute(wrapper)) {
+      throw new Error("Linux auto-update requires the stable install-launcher.sh wrapper; reinstall once");
+    }
     return {
       version,
       platform,
@@ -194,7 +198,8 @@ function buildJob({ version, platform, executablePath, assetPath, stagingRoot, t
       logPath,
       source: assetPath,
       target,
-      wrapper: process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE?.trim() || null,
+      wrapper,
+      runnerSource: path.join(tempRoot, "linux-appimage-runner.sh"),
     };
   }
   throw new Error(`Updates are not supported on ${platform}`);
@@ -214,6 +219,20 @@ function defaultDependencies() {
       });
       if (result.error) throw result.error;
       if (result.status !== 0) throw new Error(`Could not extract the macOS update: ${result.stderr.trim()}`);
+    },
+    linuxRunnerSource() {
+      if (typeof process.resourcesPath === "string" && process.resourcesPath) {
+        const unpacked = path.join(
+          process.resourcesPath,
+          "app.asar.unpacked",
+          "assets",
+          "linux-appimage-runner.sh",
+        );
+        if (fs.statSync(unpacked, { throwIfNoEntry: false })?.isFile()) return unpacked;
+      }
+      const source = path.resolve(__dirname, "..", "assets", "linux-appimage-runner.sh");
+      if (fs.statSync(source, { throwIfNoEntry: false })?.isFile()) return source;
+      throw new Error("Packaged Linux AppImage runner is missing");
     },
     spawnWorker(runtimeExecutable, workerPath, jobPath) {
       return spawn(runtimeExecutable, [workerPath, jobPath], {
@@ -301,7 +320,12 @@ function createUpdateController({
 
         const stagingRoot = path.join(tempRoot, "stage");
         if (platform === "darwin") deps.extractMac(assetPath, stagingRoot);
-        if (platform === "linux") fs.chmodSync(assetPath, 0o755);
+        if (platform === "linux") {
+          fs.chmodSync(assetPath, 0o755);
+          const runnerSource = deps.linuxRunnerSource();
+          fs.copyFileSync(runnerSource, path.join(tempRoot, "linux-appimage-runner.sh"));
+          fs.chmodSync(path.join(tempRoot, "linux-appimage-runner.sh"), 0o755);
+        }
 
         const workerPath = path.join(tempRoot, "update-worker.cjs");
         fs.copyFileSync(path.join(__dirname, "update-worker.cjs"), workerPath);

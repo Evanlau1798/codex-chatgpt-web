@@ -133,13 +133,22 @@ if [ -z "$ICON_SOURCE" ]; then
   echo "Launcher AppImage does not contain a PNG application icon" >&2
   exit 1
 fi
+RUNNER_SOURCE="$(find "$EXTRACT_DIR/squashfs-root" -type f -path '*/app.asar.unpacked/assets/linux-appimage-runner.sh' -print -quit)"
+if [ -z "$RUNNER_SOURCE" ]; then
+  echo "Launcher AppImage does not contain its bounded Linux runner" >&2
+  exit 1
+fi
 
 mkdir -p "$TARGET_DIR" "$BIN_DIR"
 TARGET_NEXT="$TARGET.next.$$"
 WRAPPER_NEXT="$WRAPPER.next.$$"
-trap 'rm -rf "$TEMP_DIR"; rm -f "$TARGET_NEXT" "$WRAPPER_NEXT"' EXIT HUP INT TERM
+RUNNER="$LIB_DIR/run-appimage"
+RUNNER_NEXT="$RUNNER.next.$$"
+trap 'rm -rf "$TEMP_DIR"; rm -f "$TARGET_NEXT" "$WRAPPER_NEXT" "$RUNNER_NEXT"' EXIT HUP INT TERM
 install -m 0755 "$TEMP_DIR/$ASSET" "$TARGET_NEXT"
 mv -f "$TARGET_NEXT" "$TARGET"
+install -m 0755 "$RUNNER_SOURCE" "$RUNNER_NEXT"
+mv -f "$RUNNER_NEXT" "$RUNNER"
 shell_quote() {
   printf "'"
   printf '%s' "$1" | sed "s/'/'\\\\''/g"
@@ -147,13 +156,13 @@ shell_quote() {
 }
 WRAPPER_QUOTED="$(shell_quote "$WRAPPER")"
 TARGET_QUOTED="$(shell_quote "$TARGET")"
+RUNNER_QUOTED="$(shell_quote "$RUNNER")"
 {
   printf '%s\n' '#!/bin/sh'
   printf '%s\n' 'set -eu'
-  printf '%s\n' 'export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"'
   printf 'export CODEX_WEB_GPT_LAUNCHER_EXECUTABLE=%s\n' "$WRAPPER_QUOTED"
   printf 'export CODEX_WEB_GPT_APPIMAGE=%s\n' "$TARGET_QUOTED"
-  printf 'exec %s "$@"\n' "$TARGET_QUOTED"
+  printf 'exec %s %s "$@"\n' "$RUNNER_QUOTED" "$TARGET_QUOTED"
 } > "$WRAPPER_NEXT"
 chmod 0755 "$WRAPPER_NEXT"
 mv -f "$WRAPPER_NEXT" "$WRAPPER"
