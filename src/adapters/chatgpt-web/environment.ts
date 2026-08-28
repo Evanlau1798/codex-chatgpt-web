@@ -1,9 +1,19 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
 import { isContextualCodexUserMessage } from "./contextual-user-message";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
 import { currentTurnUserRevision } from "./turn-user-revision";
 import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
+import {
+  decodeXmlText,
+  environmentCwdMatches,
+  isCurrentThreadVisualizationRoot,
+  matchesPath,
+  MissingTrustedCodexEnvironmentError,
+  pathIdentity,
+  uniqueAbsolutePaths,
+} from "./environment-paths";
+export { MissingTrustedCodexEnvironmentError } from "./environment-paths";
 export type ChatGptSandboxPolicy =
   | { type: "dangerFullAccess" }
   | { type: "readOnly"; networkAccess: boolean }
@@ -34,13 +44,6 @@ export interface ChatGptTurnUserRevision {
   content: unknown;
   turnId?: string;
 }
-export class MissingTrustedCodexEnvironmentError extends Error {
-  constructor(field: string) {
-    super(`ChatGPT web turn is missing ${field} in trusted Codex environment context`);
-    this.name = "MissingTrustedCodexEnvironmentError";
-  }
-}
-
 function contentText(content: string | CodexContentPart[]): string {
   if (typeof content === "string") return content;
   return content.filter(part => part.type === "text").map(part => part.text).join("\n");
@@ -50,11 +53,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
-}
-
-function pathIdentity(value: string): string {
-  const normalized = resolve(value);
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 function clientTurnMetadata(parsed: CodexParsedRequest): Record<string, unknown> | undefined {
@@ -264,7 +262,10 @@ function environmentMatchesCanonicalMetadata(
     && !normalizedMetadataRoots.some(root => matchesPath(root, cwd))) return false;
   if (requireMetadataBoundRoots && (
     normalizedMetadataRoots.length === 0
-    || declaredRoots.some(root => !normalizedMetadataRoots.some(metadataRoot => matchesPath(metadataRoot, root)))
+    || declaredRoots.some(root => (
+      !normalizedMetadataRoots.some(metadataRoot => matchesPath(metadataRoot, root))
+      && !isCurrentThreadVisualizationRoot(root, metadata)
+    ))
   )) return false;
   if (!declaredRoots.some(root => matchesPath(root, cwd))) return false;
   return sandboxMetadataMatchesEnvironment(metadataSandboxValue, environmentText);
@@ -415,67 +416,6 @@ function trustedEnvironmentText(parsed: CodexParsedRequest): string {
     .filter(message => message.role === "developer")
     .map(message => contentText(message.content));
   return [...system, ...developer].join("\n");
-}
-
-function decodeXmlText(value: string): string {
-  return value
-    .replaceAll("&lt;", "<")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&amp;", "&")
-    .replaceAll("&quot;", "\"")
-    .replaceAll("&#39;", "'");
-}
-
-function environmentCwdMatches(text: string, preferredRoots: string[] = []): string[] {
-  const sections = [...text.matchAll(/<environments>([\s\S]*?)<\/environments>/gi)];
-  if (sections.length === 0) {
-    return [...text.matchAll(/<cwd>([^<]+)<\/cwd>/gi)].map(match => match[1] ?? "");
-  }
-  if (sections.length !== 1) return [];
-
-  const section = sections[0]!;
-  const outside = text.replace(section[0], "");
-  if (/<cwd>[^<]*<\/cwd>/i.test(outside)) return [];
-
-  const environments = [...section[1]!.matchAll(/<environment\b([^>]*)>([\s\S]*?)<\/environment>/gi)];
-  const primary = environments.filter(match => /\bprimary\s*=\s*["']true["']/i.test(match[1] ?? ""));
-  if (primary.length === 1) {
-    return [...primary[0]![2]!.matchAll(/<cwd>([^<]+)<\/cwd>/gi)].map(match => match[1] ?? "");
-  }
-  if (primary.length > 1) return [];
-
-  // Codex 0.146.x emitted multiple environments without a primary attribute. Only use that
-  // legacy shape when canonical workspace metadata identifies one candidate; never pick by order.
-  const candidates = environments.flatMap(environment => {
-    const cwdMatches = [...environment[2]!.matchAll(/<cwd>([^<]+)<\/cwd>/gi)]
-      .map(match => match[1] ?? "");
-    return cwdMatches.length === 1 ? cwdMatches : [];
-  });
-  if (candidates.length === 1) return candidates;
-  if (preferredRoots.length === 0) return [];
-
-  const exact = candidates.filter(candidate => preferredRoots
-    .some(root => pathIdentity(root) === pathIdentity(candidate)));
-  if (exact.length === 1) return exact;
-  const contained = candidates.filter(candidate => preferredRoots
-    .some(root => matchesPath(root, candidate)));
-  return contained.length === 1 ? contained : [];
-}
-
-function uniqueAbsolutePaths(values: string[], field: string): string[] {
-  const decoded = values.map(value => decodeXmlText(value.trim()));
-  if (decoded.length === 0) throw new MissingTrustedCodexEnvironmentError(field);
-  if (decoded.some(path => !isAbsolute(path))) throw new Error(`ChatGPT web ${field} must contain absolute paths`);
-  const unique = new Map<string, string>();
-  for (const path of decoded.map(value => resolve(value))) {
-    if (!unique.has(pathIdentity(path))) unique.set(pathIdentity(path), path);
-  }
-  return [...unique.values()];
-}
-
-function matchesPath(root: string, path: string): boolean {
-  const rel = relative(pathIdentity(root), pathIdentity(path));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 export function extractChatGptTurnEnvironment(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
