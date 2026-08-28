@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { lifecycleAutoCompactTokenLimit } from "../scripts/lifecycle-smoke/codex-app-server";
-import { catalogContainsModel, childTtlResumePrompt } from "../scripts/lifecycle-smoke/codex-lane";
+import { catalogContainsModel, childTtlResumePrompt, codexLifecycleModel, manualCompactionContinuedSafely } from "../scripts/lifecycle-smoke/codex-lane";
 import { hasLocalFileEvidence } from "../scripts/lifecycle-smoke/skill-contract";
 import { ownedSurfaceEvents } from "../scripts/lifecycle-smoke/codex-v2-surfaces";
 
@@ -15,6 +15,10 @@ test("Codex child TTL prompt names the exact existing agent and required tool", 
 
 test("Codex lifecycle smoke forces compaction within bounded read-only review work", () => {
   expect(lifecycleAutoCompactTokenLimit).toBe(70_000);
+});
+
+test("Codex lifecycle smoke keeps the model route aligned with xhigh turns", () => {
+  expect(codexLifecycleModel).toBe("chatgpt-web/extra-high");
 });
 
 test("Codex lifecycle provider reuses the signed-in Codex OAuth token", () => {
@@ -62,4 +66,19 @@ test("Codex root ownership follows same-trace replacement tabs", () => {
 
   expect(ownedSurfaceEvents(launcher, ["root-old"], ["trace-a"]).map(value => value.detail?.tabId))
     .toEqual(["root-old", "root-new", "root-new"]);
+});
+
+test("manual compaction accepts one completed same-trace surface recovery", () => {
+  const launcher = [
+    { at: "2026-01-01T00:00:00.000Z", event: "browser.tab_reused", detail: { tabId: "root", traceId: "compact" } },
+    { at: "2026-01-01T00:01:00.000Z", event: "browser.tab_released", detail: { tabId: "root", traceId: "compact", status: "error" } },
+    { at: "2026-01-01T00:01:00.001Z", event: "browser.turn_ended", detail: { traceId: "compact", status: "failed" } },
+    { at: "2026-01-01T00:01:00.002Z", event: "browser.tab_created", detail: { tabId: "replacement", traceId: "compact" } },
+    { at: "2026-01-01T00:02:00.000Z", event: "browser.tab_completed", detail: { tabId: "replacement", traceId: "compact" } },
+    { at: "2026-01-01T00:02:00.001Z", event: "browser.turn_ended", detail: { traceId: "compact", status: "completed" } },
+  ] as any;
+
+  expect(manualCompactionContinuedSafely(launcher, "root")).toBeTrue();
+  expect(manualCompactionContinuedSafely(launcher.filter((value: { event: string }) => value.event !== "browser.tab_completed"), "root"))
+    .toBeFalse();
 });

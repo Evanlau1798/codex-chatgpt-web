@@ -52,6 +52,34 @@ export function childTtlResumePrompt(childId: string): string {
   return `Respond only in English. You must call send_input with target=${childId} to interact again with this exact grandchild that completed normally. Ask whether it remembers the hierarchy evidence and friction. Do not dispatch another subagent. After receiving its reply, summarize steering, both compactions, handoff, hierarchical subagent collaboration, interruption, TTL resume, and any observed gaps.`;
 }
 
+export const codexLifecycleModel = "chatgpt-web/extra-high";
+
+export function manualCompactionContinuedSafely(
+  values: ReturnType<typeof events>,
+  rootTab: string,
+): boolean {
+  const reusedAt = values.findIndex(value => value.event === "browser.tab_reused"
+    && value.detail?.tabId === rootTab);
+  if (reusedAt < 0) return false;
+  const traceId = values[reusedAt]?.detail?.traceId;
+  const replacements = values
+    .map((value, index) => ({ value, index }))
+    .filter(({ value }) => value.event === "browser.tab_created" && value.detail?.traceId === traceId);
+  if (replacements.length === 0) return true;
+  if (replacements.length !== 1) return false;
+  const replacement = replacements[0]!;
+  const replacementTab = replacement.value.detail?.tabId;
+  const between = values.slice(reusedAt + 1, replacement.index);
+  const after = values.slice(replacement.index + 1);
+  return between.some(value => value.event === "browser.tab_released"
+      && value.detail?.tabId === rootTab && value.detail?.status === "error")
+    && between.some(value => value.event === "browser.turn_ended"
+      && value.detail?.traceId === traceId && value.detail?.status === "failed")
+    && after.some(value => value.event === "browser.tab_completed" && value.detail?.tabId === replacementTab)
+    && after.some(value => value.event === "browser.turn_ended"
+      && value.detail?.traceId === traceId && value.detail?.status === "completed");
+}
+
 export function catalogContainsModel(catalog: unknown, modelId: string): boolean {
   return Array.isArray((catalog as { data?: unknown[] } | undefined)?.data)
     && (catalog as { data: Array<{ id?: unknown }> }).data.some(model => model?.id === modelId);
@@ -73,7 +101,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
       "Codex compact override does not match the lifecycle smoke limit",
     );
     let models = await run.request("model/list", { includeHidden: true });
-    if (!catalogContainsModel(models, "chatgpt-web/extra-high")) {
+    if (!catalogContainsModel(models, codexLifecycleModel)) {
       const catalogDeadline = Date.now() + 30_000;
       while (Date.now() < catalogDeadline) {
         const health = await (await fetchWithTimeout(`${baseUrl}/healthz`, 5_000, "Codex catalog readiness")).json();
@@ -85,8 +113,8 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
         await sleep(250);
       }
     }
-    assert(catalogContainsModel(models, "chatgpt-web/extra-high"), "Codex Web model catalog did not load the Extra High route");
-    const thread = await run.request("thread/start", { cwd: repo, model: "chatgpt-web/extra-high", ephemeral: false, approvalPolicy: "never", sandbox: "read-only" });
+    assert(catalogContainsModel(models, codexLifecycleModel), "Codex Web model catalog did not load the Extra High route");
+    const thread = await run.request("thread/start", { cwd: repo, model: codexLifecycleModel, ephemeral: false, approvalPolicy: "never", sandbox: "read-only" });
     threadId = String(thread.thread.id);
     const responseStateCompactionPath = smokePath(repoTests, "response-state-compaction.test.ts");
     const initialAt = Date.now();
@@ -221,7 +249,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
       beforeManual: preManualCompactions,
       afterManual: postManualCompactions,
     });
-    checks.manual_compact_retained = rootEvents(compactAt).some(value => value.event === "browser.tab_reused" && value.detail?.tabId === rootTab) && !rootEvents(compactAt).some(value => value.event === "browser.tab_created");
+    checks.manual_compact_continued_safely = manualCompactionContinuedSafely(rootEvents(compactAt), rootTab);
     checks.manual_compact_released_prior_root = retainedConversationWasReleased(
       events(compactAt),
       preManualCompactRootTab,
