@@ -7,7 +7,11 @@ import {
 } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
-import { ensureChatGptTemporaryChatPersonalized, isTemporaryChatGptUrl } from "../src/chatgpt-session";
+import {
+  CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR,
+  ensureChatGptTemporaryChatPersonalized,
+  isTemporaryChatGptUrl,
+} from "../src/chatgpt-session";
 
 describe("ChatGPT Web surface resilience", () => {
   test("retires surface failures even when a partial stream makes them unsafe to retry", () => {
@@ -187,6 +191,12 @@ describe("ChatGPT Web surface resilience", () => {
     expect(isTemporaryChatGptUrl("https://chatgpt.com/?temporary-chat=true&model=gpt-5")).toBe(true);
     expect(isTemporaryChatGptUrl("https://chatgpt.com/c/changed")).toBe(false);
     expect(isTemporaryChatGptUrl("not a URL")).toBe(false);
+  });
+
+  test("discovers localized Temporary Chat personalization controls structurally", () => {
+    expect(CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR).toContain(
+      '[data-testid="thread-header-right-actions"] button[aria-haspopup="menu"]',
+    );
   });
 
   test("enables the personalized Temporary Chat mode required by connectors", async () => {

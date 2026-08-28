@@ -22,8 +22,10 @@ export const CHATGPT_EFFORT_SLIDER_SELECTOR = [
   '[data-model-reasoning-effort-slider] [role="slider"]',
 ].join(", ");
 export const CHATGPT_EFFORT_SLIDER_MAX_OPTIONS = 5;
-export const CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR =
-  '#conversation-header-actions button[aria-haspopup="menu"]';
+export const CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR = [
+  '[data-testid="thread-header-right-actions"] button[aria-haspopup="menu"]',
+  '#conversation-header-actions button[aria-haspopup="menu"]',
+].join(", ");
 export const CHATGPT_STOP_BUTTON_SELECTOR = '[data-testid="stop-button"]';
 export const CHATGPT_COMPLETION_ACTION_SELECTOR = 'button[data-testid="copy-turn-action-button"]';
 export const CHATGPT_ASSISTANT_TURN_SELECTOR = [
