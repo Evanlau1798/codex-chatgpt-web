@@ -16,6 +16,7 @@ const {
   Tray,
 } = require("electron");
 const { BrowserHost } = require("./browser-host.cjs");
+const { openBrowserLogin } = require("./browser-login-flow.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
 const { getAutostart, setAutostart } = require("./autostart.cjs");
 const {
@@ -427,7 +428,7 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:browser-tab-select", (_event, tabId) => browserHost.selectTab(tabId));
   handle("launcher:browser-tab-close", (_event, tabId) => browserHost.closeTab(tabId));
   handle("launcher:browser-login", async () => {
-    const browser = await browserHost.openLogin();
+    const browser = await openBrowserLogin({ browserHost, runtimeHost, isDevProfile: IS_DEV_PROFILE });
     if (browser.authenticated) {
       const state = stateStore.update({ sessionRefreshReminderAt: nextSessionRefreshReminderAt() });
       send("launcher:state-changed", state);

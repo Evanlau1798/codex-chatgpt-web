@@ -341,3 +341,46 @@ test("authorized launcher uninstall does not re-probe an already stopped full ru
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("launcher-owned external browser login requires the live owner token", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-web-gpt-login-control-"));
+  const appHome = join(root, "app");
+  const descriptorPath = join(root, "launcher-browser.json");
+  mkdirSync(appHome, { recursive: true });
+  writeFileSync(descriptorPath, `${JSON.stringify({
+    pid: process.pid,
+    control: { token: "launcher-login-control-token-0123456789abcdefghijkl" },
+  })}\n`);
+  writeFileSync(join(appHome, "config.json"), `${JSON.stringify({
+    version: 3,
+    releaseVersion: "0.2.0",
+    mode: "browser-only",
+    host: "127.0.0.1",
+    port: 17841,
+    contextWindow: 256_000,
+    appName: "Codex Native2",
+    browserHost: "launcher",
+    browserHostDescriptorPath: descriptorPath,
+    chromeExecutablePath: process.execPath,
+    storageStatePath: join(appHome, "browser", "storage-state.json"),
+    brokerSocketPath: defaultBrokerEndpoint(appHome),
+    headed: true,
+    solAvailable: true,
+    proAvailable: false,
+    autoApproveToolCalls: false,
+    controlToken: "runtime-control-token-0123456789abcdef0123456789",
+    runtimeCommand: [process.execPath],
+  })}\n`);
+  try {
+    const result = await runCli(["login", "--external-browser"], {
+      ...process.env,
+      CODEX_HOME: join(root, "codex"),
+      CODEX_CHATGPT_WEB_HOME: appHome,
+      CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: descriptorPath,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Launcher-controlled external browser login requires a live launcher authorization");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -149,10 +149,16 @@ function authorizeLauncherControl(operation: string): void {
 }
 
 async function loginCommand(args: string[]): Promise<void> {
+  const externalBrowser = takeFlag(args, "--external-browser");
   assertNoArgs(args);
   const config = loadConfig();
   if (config.browserHost === "launcher") {
-    throw new Error("ChatGPT login is owned by the launcher; open Codex Web GPT and use its Sign in step");
+    if (!externalBrowser) {
+      throw new Error("ChatGPT login is owned by the launcher; open Codex Web GPT and use its Sign in step");
+    }
+    authorizeLauncherControl("external browser login");
+  } else if (externalBrowser) {
+    throw new Error("--external-browser is reserved for the launcher-owned login flow");
   }
   const result = await loginToChatGpt(config);
   stdout.write(`ChatGPT login stored at ${result.storageStatePath}\n`);
