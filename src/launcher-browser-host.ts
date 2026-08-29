@@ -237,7 +237,14 @@ export async function inspectLauncherBrowserHost(
     expectedProfile?: LauncherBrowserHostProfile;
     timeoutMs?: number;
   } = {},
-): Promise<{ solAvailable?: boolean; proAvailable?: boolean; url: string }> {
+): Promise<{
+  authenticated: true;
+  temporary: true;
+  composer: true;
+  solAvailable?: boolean;
+  proAvailable?: boolean;
+  url: string;
+}> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   if (options.expectedProfile && descriptor.profile !== options.expectedProfile) {
     throw new Error(
@@ -276,6 +283,9 @@ export async function inspectLauncherBrowserHost(
       throw new Error("Launcher returned contradictory ChatGPT account capability evidence");
     }
     return {
+      authenticated: true,
+      temporary: true,
+      composer: true,
       url: body.url,
       ...(options.detectCapabilities ? {
         solAvailable: body.solAvailable as boolean,
@@ -287,6 +297,38 @@ export async function inspectLauncherBrowserHost(
       ? `session inspection timed out after ${timeoutMs}ms`
       : error instanceof Error ? error.message : String(error);
     throw new Error(`Launcher ChatGPT session could not be verified: ${detail}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function verifyLauncherBrowserConnector(
+  descriptorPath: string,
+  timeoutMs = LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS,
+): Promise<true> {
+  const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${descriptor.control.endpoint}/v1/session/verify-connector`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${descriptor.control.token}`,
+        "content-type": "application/json",
+      },
+      body: "{}",
+      signal: controller.signal,
+    });
+    const body = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok || body.verified !== true) {
+      throw new Error(typeof body.error === "string" ? body.error : `HTTP ${response.status}`);
+    }
+    return true;
+  } catch (error) {
+    const detail = controller.signal.aborted
+      ? `connector verification timed out after ${timeoutMs}ms`
+      : error instanceof Error ? error.message : String(error);
+    throw new Error(`Launcher ChatGPT connector could not be verified: ${detail}`);
   } finally {
     clearTimeout(timer);
   }

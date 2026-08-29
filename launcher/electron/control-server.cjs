@@ -96,8 +96,10 @@ class BrowserControlServer {
       || request.url === "/v1/turn/end";
     const isTurnRelease = request.url === "/v1/turn/release";
     const isSessionInspect = request.url === "/v1/session/inspect";
+    const isConnectorVerify = request.url === "/v1/session/verify-connector";
     const isDebugCutoff = request.url === "/v1/debug/turn/cutoff";
-    if (request.method !== "POST" || (!isTurn && !isTurnRelease && !isSessionInspect && !isDebugCutoff)) {
+    if (request.method !== "POST"
+      || (!isTurn && !isTurnRelease && !isSessionInspect && !isConnectorVerify && !isDebugCutoff)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -108,6 +110,11 @@ class BrowserControlServer {
       if (isSessionInspect) {
         const result = await host.inspectSession(body?.detectCapabilities === true);
         writeJson(response, 200, result);
+        return;
+      }
+      if (isConnectorVerify) {
+        await host.verifyConnector(host.connectorName());
+        writeJson(response, 200, { verified: true });
         return;
       }
       if (isTurnRelease) {

@@ -187,3 +187,31 @@ test("browser control server releases only ready tabs for an authenticated conve
     await server.close();
   }
 });
+
+test("browser control server delegates authenticated connector verification to the existing host operation", async () => {
+  const calls = [];
+  const server = await new BrowserControlServer({
+    logger: { info() {}, warn() {} },
+    getBrowserHost: () => ({
+      connectorName: () => "Codex Native2",
+      verifyConnector: async (name) => { calls.push(name); },
+    }),
+    getPreferences: () => ({}),
+  }).start();
+  const descriptor = server.descriptor();
+  try {
+    const response = await fetch(`${descriptor.endpoint}/v1/session/verify-connector`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${descriptor.token}`,
+        "content-type": "application/json",
+      },
+      body: "{}",
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { verified: true });
+    assert.deepEqual(calls, ["Codex Native2"]);
+  } finally {
+    await server.close();
+  }
+});

@@ -14,6 +14,6 @@ test("CI and release workflows install the pinned Bun 1.4 stable release", () =>
     .join("\n");
   expect(workflows).not.toContain("bun-version: canary");
   expect(workflows).not.toContain("ReleaseTag canary");
-  expect(workflows.match(/bun-version: 1\.4\.0/g)?.length).toBe(3);
+  expect(workflows.match(/bun-version: 1\.4\.0/g)?.length).toBe(4);
   expect(workflows.match(/-Revision 1\.4\.0\+34cbb9a40/g)?.length).toBe(2);
 });

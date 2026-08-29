@@ -11,6 +11,7 @@ import {
   readLauncherBrowserHostDescriptor,
   releaseLauncherRetainedConversation,
   selectLauncherPage,
+  verifyLauncherBrowserConnector,
 } from "../src/launcher-browser-host";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 
@@ -205,10 +206,37 @@ test("launcher session verification uses the authenticated control channel inste
     if (!address || typeof address === "string") throw new Error("test server has no port");
     const path = descriptorFile(`http://127.0.0.1:${address.port}`);
     expect(await inspectLauncherBrowserHost(path, { detectCapabilities: true })).toEqual({
+      authenticated: true,
+      temporary: true,
+      composer: true,
       solAvailable: true,
       proAvailable: true,
       url: "https://chatgpt.com/?temporary-chat=true",
     });
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
+
+test("launcher connector verification uses the authenticated existing browser operation", async () => {
+  const server = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    expect(request.url).toBe("/v1/session/verify-connector");
+    expect(request.headers.authorization).toBe("Bearer launcher-control-token-0123456789abcdefghijklmnop");
+    expect(JSON.parse(Buffer.concat(chunks).toString("utf8"))).toEqual({});
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end('{"verified":true}\n');
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server has no port");
+    const path = descriptorFile(`http://127.0.0.1:${address.port}`);
+    await expect(verifyLauncherBrowserConnector(path)).resolves.toBeTrue();
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }

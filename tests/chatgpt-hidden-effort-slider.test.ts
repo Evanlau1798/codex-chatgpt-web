@@ -74,3 +74,60 @@ test("capability detection accepts a semantic effort slider with no visible box"
     proAvailable: true,
   });
 });
+
+test("capability detection retries once when the effort picker ignores its first activation", async () => {
+  let expanded = false;
+  let presses = 0;
+  let waits = 0;
+  const effortButton = {
+    last() { return this; },
+    isVisible: async () => true,
+    getAttribute: async () => String(expanded),
+    press: async () => { presses += 1; expanded = true; },
+  };
+  const composerForm = { locator: () => effortButton };
+  const composers = {
+    filter() { return this; },
+    last() { return this; },
+    locator: () => composerForm,
+  };
+  const efforts = {
+    first: () => ({ waitFor: async () => {
+      waits += 1;
+      if (waits === 1) throw Object.assign(new Error("picker did not open"), { name: "TimeoutError" });
+      return await new Promise(() => {});
+    } }),
+    count: async () => 0,
+  };
+  const menu = {
+    last() { return this; },
+    isVisible: async () => false,
+    locator: () => efforts,
+  };
+  const slider = {
+    count: async () => 1,
+    waitFor: async () => {
+      if (waits < 2) return await new Promise(() => {});
+    },
+    getAttribute: async (name: string) => ({
+      "aria-valuemin": "0",
+      "aria-valuemax": "4",
+      "aria-valuenow": "3",
+    })[name as "aria-valuemin" | "aria-valuemax" | "aria-valuenow"],
+  };
+  const page = {
+    locator: (selector: string) => {
+      if (selector === CHATGPT_COMPOSER_SELECTOR) return composers;
+      if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return menu;
+      if (selector === CHATGPT_EFFORT_SLIDER_SELECTOR) return { last: () => slider };
+      throw new Error(`Unexpected selector: ${selector}`);
+    },
+    keyboard: { press: async () => { expanded = false; } },
+  };
+
+  await expect(detectChatGptAccountCapabilities(page as never)).resolves.toEqual({
+    solAvailable: true,
+    proAvailable: true,
+  });
+  expect(presses).toBe(2);
+});

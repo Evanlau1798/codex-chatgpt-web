@@ -197,12 +197,18 @@ describe("ChatGPT Web surface resilience", () => {
     expect(CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR).toContain(
       '[data-testid="thread-header-right-actions"] button[aria-haspopup="menu"]',
     );
+    expect(CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR).toContain(
+      'div:has(> [data-testid="temporary-chat-label"]) + div button[aria-expanded]',
+    );
   });
 
   test("enables the personalized Temporary Chat mode required by connectors", async () => {
     let selectedMode = 1;
     let menuOpen = false;
     let selectionPresses = 0;
+    let buttonProbes = 0;
+    let modeGroupSelector = "";
+    let modeItemSelector = "";
     const button = {
       press: async () => { menuOpen = true; },
       getAttribute: async (name: string) => name === "aria-expanded" ? String(menuOpen) : null,
@@ -214,9 +220,16 @@ describe("ChatGPT Web surface resilience", () => {
     });
     const items = { count: async () => 2, first: () => item(0), nth: (index: number) => item(index) };
     const page = {
-      locator: (selector: string) => selector.includes("conversation-header-actions")
-        ? { filter: () => ({ count: async () => 1, first: () => button }) }
-        : { filter: () => ({ last: () => ({ locator: () => items }) }) },
+      locator: (selector: string) => {
+        if (selector.includes("conversation-header-actions")) {
+          return { filter: () => ({ count: async () => ++buttonProbes === 1 ? 0 : 1, first: () => button }) };
+        }
+        modeGroupSelector = selector;
+        return { filter: () => ({ last: () => ({ locator: (itemSelector: string) => {
+          modeItemSelector = itemSelector;
+          return items;
+        } }) }) };
+      },
       keyboard: { press: async () => { menuOpen = false; } },
     };
 
@@ -225,6 +238,9 @@ describe("ChatGPT Web surface resilience", () => {
 
     expect(selectedMode).toBe(0);
     expect(selectionPresses).toBe(1);
+    expect(buttonProbes).toBeGreaterThan(1);
+    expect(modeGroupSelector).toContain('[role="radiogroup"]');
+    expect(modeItemSelector).toContain('[role="radio"]');
     expect(menuOpen).toBeFalse();
   });
 
