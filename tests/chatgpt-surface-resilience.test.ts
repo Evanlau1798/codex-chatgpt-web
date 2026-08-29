@@ -202,6 +202,50 @@ describe("ChatGPT Web surface resilience", () => {
     );
   });
 
+  test("keeps exact connector selection in the production path when personalization is absent", async () => {
+    const Worker = ChatGptBrowserWorker as unknown as new (config: object) => ChatGptBrowserWorker;
+    const worker = new Worker({ browserHost: "managed-chrome", appName: "Codex Native2" });
+    let selected = false;
+    let mentionInserted = false;
+    const composer = {
+      fill: async () => {},
+      focus: async () => {},
+      pressSequentially: async (value: string) => { mentionInserted = value === "@codex"; },
+    };
+    const appResult = {
+      waitFor: async () => {},
+      count: async () => 1,
+      getAttribute: async (name: string) => name === "data-highlighted" ? "" : null,
+    };
+    const menuRows = { filter: () => appResult };
+    const page = {
+      locator: (selector: string) => selector === CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR
+        ? { filter: () => ({ count: async () => 0 }) }
+        : menuRows,
+      getByText: (value: string, options: { exact: boolean }) => ({ value, options }),
+      keyboard: { press: async (key: string) => { if (key === "Enter") selected = true; } },
+    };
+    const internal = worker as unknown as {
+      activeComposer: () => Promise<typeof composer>;
+      connectorIsSelected: () => Promise<boolean>;
+      selectedConnectorControl: () => { waitFor(): Promise<void> };
+      selectConnector(page: unknown): Promise<typeof composer>;
+    };
+    internal.activeComposer = async () => composer;
+    internal.connectorIsSelected = async () => selected;
+    internal.selectedConnectorControl = () => ({ waitFor: async () => {} });
+    const realDateNow = Date.now;
+    let now = realDateNow();
+    Date.now = () => (now += 5_001);
+    try {
+      expect(await internal.selectConnector(page)).toBe(composer);
+    } finally {
+      Date.now = realDateNow;
+    }
+    expect(mentionInserted).toBeTrue();
+    expect(selected).toBeTrue();
+  });
+
   test("continues when Temporary Chat exposes connectors without a personalization control", async () => {
     const page = {
       locator: () => ({
