@@ -197,7 +197,7 @@ export async function detectChatGptAccountCapabilities(
     }
     await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
   }
-  const menu = page.locator(CHATGPT_EFFORT_MENU_SELECTOR).last();
+  const menu = page.locator(CHATGPT_EFFORT_MENU_SELECTOR).filter({ visible: true }).last();
   try {
     const efforts = menu.locator(CHATGPT_EFFORT_ITEM_SELECTOR);
     const slider = page.locator(CHATGPT_EFFORT_SLIDER_SELECTOR).last();

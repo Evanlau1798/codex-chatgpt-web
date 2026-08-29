@@ -39,6 +39,7 @@ test("capability detection accepts a semantic effort slider with no visible box"
     count: async () => 2,
   };
   const menu = {
+    filter() { return this; },
     last() { return this; },
     isVisible: async () => true,
     locator: (selector: string) => {
@@ -100,6 +101,7 @@ test("capability detection retries once when the effort picker ignores its first
     count: async () => 0,
   };
   const menu = {
+    filter() { return this; },
     last() { return this; },
     isVisible: async () => false,
     locator: () => efforts,
@@ -130,4 +132,54 @@ test("capability detection retries once when the effort picker ignores its first
     proAvailable: true,
   });
   expect(presses).toBe(2);
+});
+
+test("capability detection ignores a stale hidden effort picker", async () => {
+  const effortButton = {
+    last() { return this; },
+    isVisible: async () => true,
+    getAttribute: async () => "true",
+  };
+  const composerForm = { locator: () => effortButton };
+  const composers = {
+    filter() { return this; },
+    last() { return this; },
+    locator: () => composerForm,
+  };
+  const staleMenu = {
+    isVisible: async () => false,
+    locator: () => ({ first: () => ({ waitFor: async () => { throw new Error("stale picker"); } }) }),
+  };
+  const activeMenu = {
+    isVisible: async () => true,
+    locator: () => ({
+      first: () => ({ waitFor: async () => {} }),
+      count: async () => 2,
+    }),
+  };
+  const menuCollection = {
+    last: () => staleMenu,
+    filter: ({ visible }: { visible: boolean }) => {
+      expect(visible).toBeTrue();
+      return { last: () => activeMenu };
+    },
+  };
+  const slider = {
+    count: async () => 0,
+    waitFor: async () => await new Promise(() => {}),
+  };
+  const page = {
+    locator: (selector: string) => {
+      if (selector === CHATGPT_COMPOSER_SELECTOR) return composers;
+      if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return menuCollection;
+      if (selector === CHATGPT_EFFORT_SLIDER_SELECTOR) return { last: () => slider };
+      throw new Error(`Unexpected selector: ${selector}`);
+    },
+    keyboard: { press: async () => {} },
+  };
+
+  await expect(detectChatGptAccountCapabilities(page as never)).resolves.toEqual({
+    solAvailable: true,
+    proAvailable: false,
+  });
 });
