@@ -32,6 +32,7 @@ test("turn visibility keeps the native shield above its ChatGPT view", () => {
     view: { setVisible: value => calls.push(["home", value]) },
     turnTabs: new Map([[tab.id, tab]]),
     selectedTurnTab: () => tab,
+    presentTurnView: BrowserHost.prototype.presentTurnView,
   };
 
   BrowserHost.prototype.syncViewVisibility.call(fixture);
@@ -87,6 +88,7 @@ test("disabled turn protection exposes and focuses the ChatGPT view", () => {
     selectedTabId: tab.id,
     selectedTurnTab: () => tab,
     activeView: () => tab.view,
+    presentTurnView: BrowserHost.prototype.presentTurnView,
   };
 
   BrowserHost.prototype.syncViewVisibility.call(fixture);
