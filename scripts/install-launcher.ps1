@@ -22,6 +22,11 @@ function Invoke-WithRetry {
   }
 }
 
+function Test-IsFullyQualifiedWindowsPath {
+  param([AllowEmptyString()][string]$Path)
+  return $Path -match '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$))'
+}
+
 $Repository = if ($env:CODEX_WEB_GPT_REPOSITORY) { $env:CODEX_WEB_GPT_REPOSITORY } else { "Evanlau1798/codex-chatgpt-web" }
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
   throw "Invalid GitHub repository: $Repository"
@@ -69,7 +74,7 @@ try {
   if ($Process.ExitCode -ne 0) { throw "Installer exited with code $($Process.ExitCode)" }
   $InstallRegistry = "HKCU:\Software\d1a6026a-6210-588e-9a2b-da3936f94e02"
   $InstallLocation = [string](Get-ItemPropertyValue -LiteralPath $InstallRegistry -Name "InstallLocation")
-  if (-not [System.IO.Path]::IsPathFullyQualified($InstallLocation)) {
+  if (-not (Test-IsFullyQualifiedWindowsPath $InstallLocation)) {
     throw "Installer recorded an invalid InstallLocation: $InstallLocation"
   }
   $Executable = Join-Path $InstallLocation "Codex Web GPT.exe"

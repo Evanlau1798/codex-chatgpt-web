@@ -39,6 +39,9 @@ jobs:
           }
           $source = Get-Content scripts/install-launcher.ps1 -Raw
           [void][scriptblock]::Create($source)
+          if ($source.Contains("IsPathFullyQualified")) {
+            throw "The Windows PowerShell 5.1 installer cannot use the .NET Core-only IsPathFullyQualified API"
+          }
           if (-not [Environment]::Is64BitOperatingSystem) {
             throw "The Windows CI runner must be 64-bit"
           }

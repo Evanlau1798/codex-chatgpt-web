@@ -15,7 +15,11 @@ import {
 } from "../../config";
 import type { CodexProviderConfig } from "../../types";
 import { parseDataUrl } from "../image";
-import { ChatGptMarkdownBuffer, type ChatGptMarkdownSegment } from "./markdown";
+import {
+  ChatGptMarkdownBuffer,
+  ChatGptMarkdownConsistencyError,
+  type ChatGptMarkdownSegment,
+} from "./markdown";
 import {
   ChatGptMarkdownOwnershipTracker,
   type ChatGptMarkdownRootSnapshot,
@@ -1962,53 +1966,119 @@ export class ChatGptBrowserWorker {
         runtimeWindow.__codexMarkdownRootIds!.set(markdownRoot, created);
         return created;
       };
+      const blockMarkdownTags = new Set([
+        "address", "article", "aside", "blockquote", "div", "dl", "fieldset", "figcaption",
+        "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr",
+        "li", "main", "nav", "ol", "p", "pre", "section", "table", "ul",
+      ]);
+      let listGroupIndex = 0;
+      const sourceRange = (candidate: Element): { sourceStart: number; sourceEnd: number } | undefined => {
+        const startAttribute = candidate.getAttribute("data-start");
+        const endAttribute = candidate.getAttribute("data-end");
+        if (startAttribute === null || endAttribute === null) return undefined;
+        if (!startAttribute.trim() || !endAttribute.trim()) return undefined;
+        const sourceStart = Number(startAttribute);
+        const sourceEnd = Number(endAttribute);
+        return Number.isFinite(sourceStart) && Number.isFinite(sourceEnd) && sourceEnd >= sourceStart
+          ? { sourceStart, sourceEnd }
+          : undefined;
+      };
       const segmentsFor = (markdownRoot: HTMLElement, rootIsComplete: boolean) => {
-        const hasDirectText = [...markdownRoot.childNodes].some(node => (
-          node.nodeType === Node.TEXT_NODE && Boolean(node.textContent?.trim())
-        ));
-        const children = [...markdownRoot.children] as HTMLElement[];
-        if (hasDirectText || children.length === 0) {
-          return markdownRoot.innerHTML.trim() ? [{
-            key: "root",
-            html: markdownRoot.innerHTML,
-            text: markdownRoot.innerText.trim(),
-            streamable: rootIsComplete,
-          }] : [];
-        }
-
-        return children.flatMap((child, childIndex) => {
+        const flattened: Array<{
+          tag: string;
+          html: string;
+          text: string;
+          group?: string;
+          sourceStart?: number;
+          sourceEnd?: number;
+        }> = [];
+        const appendBlockSegment = (child: HTMLElement) => {
           const tag = child.tagName.toLowerCase();
-          const childIsComplete = rootIsComplete || childIndex < children.length - 1;
+          const childRange = sourceRange(child);
           const listItems = tag === "ol" || tag === "ul"
             ? [...child.children].filter(candidate => candidate.tagName === "LI") as HTMLElement[]
             : [];
           if (listItems.length === 0) {
-            return [{
-              key: `${childIndex}:${tag}`,
-              html: child.outerHTML,
-              text: child.innerText.trim(),
-              streamable: childIsComplete,
-            }];
+            flattened.push({ tag, html: child.outerHTML, text: child.innerText.trim(), ...childRange });
+            return;
           }
 
-          const group = `${childIndex}:${tag}`;
+          const group = childRange
+            ? `list:${childRange.sourceStart}:${tag}`
+            : `list:${listGroupIndex++}:${tag}`;
           const orderedStart = tag === "ol" ? Number(child.getAttribute("start") ?? "1") : undefined;
-          return listItems.map((item, itemIndex) => {
+          listItems.forEach((item, itemIndex) => {
             const shell = child.cloneNode(false) as HTMLElement;
             shell.removeAttribute("data-is-last-node");
             if (orderedStart !== undefined && Number.isFinite(orderedStart)) {
               shell.setAttribute("start", String(orderedStart + itemIndex));
             }
             shell.append(item.cloneNode(true));
-            return {
-              key: `${childIndex}:${tag}:${itemIndex}`,
+            flattened.push({
+              tag: `${tag}:item`,
               html: shell.outerHTML,
               text: item.innerText.trim(),
               group,
-              streamable: childIsComplete || itemIndex < listItems.length - 1,
-            };
+              ...sourceRange(item),
+            });
           });
-        });
+        };
+        const children = [...markdownRoot.children] as HTMLElement[];
+        const hasBlockChildren = children.some(child => blockMarkdownTags.has(child.tagName.toLowerCase()));
+        if (!hasBlockChildren) {
+          if (markdownRoot.innerHTML.trim()) flattened.push({
+            tag: "root",
+            html: markdownRoot.innerHTML,
+            text: markdownRoot.innerText.trim(),
+            ...sourceRange(markdownRoot),
+          });
+        } else {
+          let inlineRun: Node[] = [];
+          const flushInlineRun = () => {
+            if (inlineRun.length === 0) return;
+            const nodes = inlineRun;
+            inlineRun = [];
+            const shell = document.createElement("span");
+            nodes.forEach(node => shell.append(node.cloneNode(true)));
+            const text = shell.textContent?.trim() ?? "";
+            if (!text) return;
+            const ranges = nodes.flatMap(node => node instanceof Element
+              ? [node, ...node.querySelectorAll<HTMLElement>("[data-start][data-end]")]
+              : [])
+              .map(sourceRange)
+              .filter((range): range is { sourceStart: number; sourceEnd: number } => range !== undefined);
+            flattened.push({
+              tag: "inline",
+              html: shell.outerHTML,
+              text,
+              ...(ranges.length > 0 ? {
+                sourceStart: Math.min(...ranges.map(range => range.sourceStart)),
+                sourceEnd: Math.max(...ranges.map(range => range.sourceEnd)),
+              } : {}),
+            });
+          };
+          markdownRoot.childNodes.forEach((node) => {
+            if (node instanceof HTMLElement && blockMarkdownTags.has(node.tagName.toLowerCase())) {
+              flushInlineRun();
+              appendBlockSegment(node);
+            } else {
+              inlineRun.push(node);
+            }
+          });
+          flushInlineRun();
+        }
+        return flattened.map((segment, index, segments) => ({
+          key: segment.sourceStart !== undefined
+            ? `${segment.sourceStart}:${segment.tag}`
+            : `${index}:${segment.tag}`,
+          tag: segment.tag,
+          html: segment.html,
+          text: segment.text,
+          ...(segment.group ? { group: segment.group } : {}),
+          ...(segment.sourceStart !== undefined ? { sourceStart: segment.sourceStart } : {}),
+          ...(segment.sourceEnd !== undefined ? { sourceEnd: segment.sourceEnd } : {}),
+          streamable: rootIsComplete || index < segments.length - 1,
+        }));
       };
       const markdownRoots = allMarkdownRoots.map(markdownRoot => {
         const renderedIndex = renderedRoots.indexOf(markdownRoot);
@@ -2776,6 +2846,15 @@ export class ChatGptBrowserWorker {
             if (deliverable) turn.onTextDelta(deliverable);
           }
         };
+        const throwMarkdownConsistencyError = (error: unknown): never => {
+          if (!(error instanceof ChatGptMarkdownConsistencyError)) throw error;
+          throw new ChatGptWebAdapterError(error.message, {
+            status: 502,
+            errorType: "server_error",
+            code: "browser_stream_inconsistent",
+            retryable: false,
+          });
+        };
         const completionTracker = new ChatGptCompletionTracker();
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
         const stoppedThinkingTracker = new ChatGptStoppedThinkingTracker();
@@ -2947,7 +3026,13 @@ export class ChatGptBrowserWorker {
             await diagnostics.capture(page, "response-visible");
           }
           latency.observe(snapshot.traceBlocks);
-          const textDelta = markdownBuffer.observe(snapshot.markdownSegments);
+          const textDelta = (() => {
+            try {
+              return markdownBuffer.observe(snapshot.markdownSegments);
+            } catch (error) {
+              return throwMarkdownConsistencyError(error);
+            }
+          })();
           for (const trace of visibleTrace.observe(snapshot.traceBlocks, snapshot.completionActionVisible)) {
             if (trace.kind === "commentary") { latency.commentaryEmitted(); turn.onCommentary?.(trace.text, trace.continuation === true); }
             else turn.onReasoningSummary?.(trace.text, trace.continuation === true);
@@ -2990,16 +3075,14 @@ export class ChatGptBrowserWorker {
             }
             throw chatGptWebSurfaceError(domError, answerBuffer.deliveredChars() > 0);
           }
-          const completion = markdownBuffer.currentSnapshotIsConsistent()
-            ? completionTracker.update({
+          const completion = completionTracker.update({
             responsePresent: snapshot.responsePresent,
             running,
             currentText: snapshot.visibleText,
             currentHtml: snapshot.fullHtml,
             completionActionVisible: snapshot.completionActionVisible,
             projection: snapshot.projection,
-          })
-            : { status: "waiting" as const };
+          });
           if (completion.status === "stalled") {
             throw new ChatGptWebAdapterError(
               `ChatGPT final Markdown projection stopped before completion (${JSON.stringify(completion.diagnostic)})`,
@@ -3025,7 +3108,13 @@ export class ChatGptBrowserWorker {
                 },
               );
             }
-            const final = markdownBuffer.finish();
+            const final = (() => {
+              try {
+                return markdownBuffer.finish();
+              } catch (error) {
+                return throwMarkdownConsistencyError(error);
+              }
+            })();
             if (!final.markdown && snapshot.plainTextFallback) {
               emitMarkdownDelta(snapshot.plainTextFallback);
             } else if (!final.markdown && snapshot.visibleText) {

@@ -1408,7 +1408,7 @@ describe("ChatGPT outer-native harness v4", () => {
       { key: "source", html: `${linked}<button>Copy</button>`, text: "Source", streamable: true },
     ], 200)).toBe("");
 
-    const rewritten = new ChatGptMarkdownBuffer(markdown => markdown, 100, 500);
+    const rewritten = new ChatGptMarkdownBuffer(markdown => markdown, 100);
     const source = [{ key: "source", html: plain, text: "Source", streamable: true }];
     expect(rewritten.observe(source, 0)).toBe("");
     expect(rewritten.observe(source, 100)).toBe("Source");
@@ -1418,20 +1418,184 @@ describe("ChatGPT outer-native harness v4", () => {
     expect(rewritten.observe(different, 200)).toBe("");
     expect(rewritten.currentSnapshotIsConsistent()).toBe(false);
     expect(() => rewritten.finish()).toThrow("completed text block");
-    expect(() => rewritten.observe(different, 700)).toThrow("completed text block");
+    expect(rewritten.observe(different, 700)).toBe("");
   });
 
   test("recovers from a transient React frame that omits already-streamed Markdown blocks", () => {
-    const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 100, 500);
+    const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 100);
     const first = { key: "first", html: "<p>First</p>", text: "First", streamable: true };
     const second = { key: "second", html: "<p>Second</p>", text: "Second", streamable: false };
     expect(buffer.observe([first], 0)).toBe("");
     expect(buffer.observe([first], 100)).toBe("First");
     expect(buffer.observe([], 150)).toBe("");
-    expect(buffer.currentSnapshotIsConsistent()).toBe(false);
+    expect(buffer.currentSnapshotIsConsistent()).toBe(true);
     expect(buffer.observe([first, second], 200)).toBe("");
     expect(buffer.currentSnapshotIsConsistent()).toBe(true);
     expect(buffer.finish()).toEqual({ markdown: "First\n\nSecond", delta: "\n\nSecond" });
+  });
+
+  test("continues an append-only stream when ChatGPT permanently virtualizes committed DOM prefixes", () => {
+    const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 100);
+    const segment = (
+      text: string,
+      sourceStart: number,
+      sourceEnd: number,
+      streamable: boolean,
+    ) => ({
+      key: `${sourceStart}:p`,
+      tag: "p",
+      html: `<p data-start="${sourceStart}" data-end="${sourceEnd}">${text}</p>`,
+      text,
+      sourceStart,
+      sourceEnd,
+      streamable,
+    });
+    const first = segment("First", 0, 5, true);
+    const secondTail = segment("Second", 7, 13, false);
+    expect(buffer.observe([first, secondTail], 0)).toBe("");
+    expect(buffer.observe([first, secondTail], 100)).toBe("First");
+
+    const second = { ...secondTail, streamable: true };
+    const thirdTail = segment("Third", 15, 20, false);
+    expect(buffer.observe([second, thirdTail], 150)).toBe("");
+    expect(buffer.observe([second, thirdTail], 250)).toBe("\n\nSecond");
+
+    const third = { ...thirdTail, streamable: true };
+    const fourth = segment("Fourth", 22, 28, false);
+    expect(buffer.observe([third, fourth], 300)).toBe("");
+    expect(buffer.observe([third, fourth], 400)).toBe("\n\nThird");
+    expect(buffer.finish()).toEqual({
+      markdown: "First\n\nSecond\n\nThird\n\nFourth",
+      delta: "\n\nFourth",
+    });
+  });
+
+  test("uses source ranges across DOM remount keys but still rejects a committed semantic rewrite", () => {
+    const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 100);
+    const original = {
+      key: "old-root:0",
+      tag: "p",
+      html: '<p data-start="0" data-end="6">Stable</p>',
+      text: "Stable",
+      sourceStart: 0,
+      sourceEnd: 6,
+      streamable: true,
+    };
+    expect(buffer.observe([original], 0)).toBe("");
+    expect(buffer.observe([original], 100)).toBe("Stable");
+
+    const remounted = { ...original, key: "new-root:0" };
+    const tail = {
+      key: "8:p",
+      tag: "p",
+      html: '<p data-start="8" data-end="11">Tail</p>',
+      text: "Tail",
+      sourceStart: 8,
+      sourceEnd: 11,
+      streamable: false,
+    };
+    expect(buffer.observe([remounted, tail], 150)).toBe("");
+    expect(buffer.currentSnapshotIsConsistent()).toBe(true);
+
+    const rewritten = {
+      ...remounted,
+      html: '<p data-start="0" data-end="6">Changed</p>',
+      text: "Changed",
+    };
+    expect(buffer.observe([rewritten, tail], 200)).toBe("");
+    expect(buffer.currentSnapshotIsConsistent()).toBe(false);
+    expect(() => buffer.finish()).toThrow("changed a completed text block");
+  });
+
+  test("distinguishes repeated paragraphs by source range after the first copy is virtualized", () => {
+    const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 100);
+    const repeated = (sourceStart: number, sourceEnd: number, streamable: boolean) => ({
+      key: `${sourceStart}:p`,
+      tag: "p",
+      html: `<p data-start="${sourceStart}" data-end="${sourceEnd}">Same</p>`,
+      text: "Same",
+      sourceStart,
+      sourceEnd,
+      streamable,
+    });
+    const first = repeated(0, 4, true);
+    const secondTail = repeated(6, 10, false);
+    expect(buffer.observe([first, secondTail], 0)).toBe("");
+    expect(buffer.observe([first, secondTail], 100)).toBe("Same");
+    const second = { ...secondTail, streamable: true };
+    const tail = {
+      key: "12:p",
+      tag: "p",
+      html: '<p data-start="12" data-end="16">Tail</p>',
+      text: "Tail",
+      sourceStart: 12,
+      sourceEnd: 16,
+      streamable: false,
+    };
+    expect(buffer.observe([second, tail], 150)).toBe("");
+    expect(buffer.observe([second, tail], 250)).toBe("\n\nSame");
+    expect(buffer.finish()).toEqual({
+      markdown: "Same\n\nSame\n\nTail",
+      delta: "\n\nTail",
+    });
+  });
+
+  test("fails closed when a DOM snapshot reverses ChatGPT source order", () => {
+    const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
+    const first = {
+      key: "0:p",
+      tag: "p",
+      html: '<p data-start="0" data-end="4">First</p>',
+      text: "First",
+      sourceStart: 0,
+      sourceEnd: 4,
+      streamable: true,
+    };
+    expect(buffer.observe([first], 0)).toBe("First");
+    const reversed = [
+      {
+        key: "12:p",
+        tag: "p",
+        html: '<p data-start="12" data-end="16">Later</p>',
+        text: "Later",
+        sourceStart: 12,
+        sourceEnd: 16,
+        streamable: true,
+      },
+      {
+        key: "6:p",
+        tag: "p",
+        html: '<p data-start="6" data-end="10">Earlier</p>',
+        text: "Earlier",
+        sourceStart: 6,
+        sourceEnd: 10,
+        streamable: false,
+      },
+    ];
+    expect(buffer.observe(reversed, 1)).toBe("");
+    expect(() => buffer.finish()).toThrow("non-monotonic source ranges");
+  });
+
+  test("an appended inline tail extends already-streamed block Markdown without collapsing it", () => {
+    const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 100);
+    const first = { key: "0:p", html: "<p>First</p>", text: "First", streamable: true };
+    const second = { key: "1:p", html: "<p>Second</p>", text: "Second", streamable: false };
+    expect(buffer.observe([first, second], 0)).toBe("");
+    expect(buffer.observe([first, second], 100)).toBe("First");
+
+    const completedSecond = { ...second, streamable: true };
+    const citation = {
+      key: "2:inline",
+      html: "<span>&lt;oai-mem-citation&gt;source&lt;/oai-mem-citation&gt;</span>",
+      text: "<oai-mem-citation>source</oai-mem-citation>",
+      streamable: false,
+    };
+    expect(buffer.observe([first, completedSecond, citation], 150)).toBe("");
+    expect(buffer.observe([first, completedSecond, citation], 250)).toBe("\n\nSecond");
+    expect(buffer.finish()).toEqual({
+      markdown: "First\n\nSecond\n\n<oai-mem-citation>source</oai-mem-citation>",
+      delta: "\n\n<oai-mem-citation>source</oai-mem-citation>",
+    });
   });
 
   test("drops decorative HTML images without removing textual links", () => {

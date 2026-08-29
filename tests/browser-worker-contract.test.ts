@@ -72,12 +72,13 @@ test("browser turn orchestration retains owned prompt insertion and semantic sub
   expect(workerSource).not.toMatch(/\bclipboard\b|pbcopy|pbpaste/i);
 });
 
-test("browser completion waits for transient Markdown prefix recovery", () => {
+test("browser completion settles final projection before fail-closed Markdown finalization", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   const completion = workerSource.slice(workerSource.indexOf("const completion = completionTracker.update"));
-  expect(completion).toContain("markdownBuffer.currentSnapshotIsConsistent()");
-  expect(completion.indexOf("markdownBuffer.currentSnapshotIsConsistent()"))
+  expect(workerSource).not.toContain("markdownBuffer.currentSnapshotIsConsistent()");
+  expect(completion.indexOf("completionTracker.update"))
     .toBeLessThan(completion.indexOf("markdownBuffer.finish()"));
+  expect(completion).toContain("throwMarkdownConsistencyError(error)");
 });
 
 test("persistent Stopped thinking is a terminal cancelled turn", () => {
@@ -2129,8 +2130,25 @@ test("response DOM separates streaming commentary from the final Markdown answer
   expect(workerSource).toContain("!commentaryRoots.includes(candidate)");
   expect(workerSource).toContain("const markdownSegments = markdownRoots");
   expect(workerSource).toContain('.filter(markdownRoot => markdownRoot.ownership === "final")');
-  expect(workerSource).toContain("markdownBuffer.observe(snapshot.markdownSegments)");
   expect(workerSource).toContain("ownership.observe(snapshot.markdownRoots)");
+  expect(workerSource).toContain('fullHtml: renderedRoots.map(candidate => candidate.innerHTML).join("")');
+  expect(workerSource).toContain("const flattened: Array<{");
+  expect(workerSource).toContain("const blockMarkdownTags = new Set([");
+  expect(workerSource).toContain("markdownRoot.childNodes.forEach((node) => {");
+  expect(workerSource).toContain("flushInlineRun();");
+  expect(workerSource).toContain('tag: "inline"');
+  expect(workerSource).not.toContain("const hasDirectText =");
+  expect(workerSource).toContain("const sourceRange = (candidate: Element)");
+  expect(workerSource).toContain('candidate.getAttribute("data-start")');
+  expect(workerSource).toContain('candidate.getAttribute("data-end")');
+  expect(workerSource).toContain('key: segment.sourceStart !== undefined');
+  expect(workerSource).toContain('`${segment.sourceStart}:${segment.tag}`');
+  expect(workerSource).toContain("sourceStart: Math.min(...ranges.map");
+  expect(workerSource).toContain("sourceEnd: Math.max(...ranges.map");
+  expect(workerSource).toContain("streamable: rootIsComplete || index < segments.length - 1");
+  expect(workerSource).toContain("markdownBuffer.observe(snapshot.markdownSegments)");
+  expect(workerSource).toContain("const completion = completionTracker.update({");
+  expect(workerSource).not.toContain("markdownBuffer.currentSnapshotIsConsistent()");
   expect(workerSource).not.toContain("streamCompletedBlocks");
   expect(workerSource).toContain('code: "multipart_protocol_violation"');
   expect(workerSource).not.toContain("multipartFailed");

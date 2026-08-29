@@ -233,14 +233,21 @@ test("browser surface reactivation preserves its last measured bounds", () => {
   assert.equal(fixture.boundsReady, true);
 });
 
-test("hidden turn tabs retain an operational viewport without revealing the browser surface", () => {
+test("hidden turn tabs receive an explicit renderer viewport before moving offscreen", () => {
   const events = [];
   const tab = {
     id: "tab-hidden-viewport",
     status: "running",
+    rendererReady: true,
+    deviceEmulationViewport: null,
+    deviceEmulationDirty: true,
     view: {
       setBounds: bounds => events.push(["bounds", bounds]),
       setVisible: visible => events.push(["visible", visible]),
+      webContents: {
+        enableDeviceEmulation: options => events.push(["emulate", options]),
+        disableDeviceEmulation: () => events.push(["disable-emulation"]),
+      },
     },
   };
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
@@ -259,9 +266,91 @@ test("hidden turn tabs retain an operational viewport without revealing the brow
 
   assert.deepEqual(events, [
     ["home", false],
+    ["emulate", {
+      screenPosition: "desktop",
+      screenSize: { width: 1120, height: 720 },
+      viewPosition: { x: 0, y: 0 },
+      deviceScaleFactor: 0,
+      viewSize: { width: 1120, height: 720 },
+      scale: 1,
+    }],
     ["bounds", { x: 1121, y: 721, width: 1120, height: 720 }],
     ["visible", true],
   ]);
+  assert.deepEqual(tab.deviceEmulationViewport, { width: 1120, height: 720 });
+  assert.equal(tab.deviceEmulationDirty, false);
+});
+
+test("new turn tabs defer device emulation until their renderer finishes loading", () => {
+  const events = [];
+  const tab = {
+    id: "tab-loading-viewport",
+    status: "running",
+    rendererReady: false,
+    deviceEmulationViewport: null,
+    deviceEmulationDirty: true,
+    view: {
+      setBounds: bounds => events.push(["bounds", bounds]),
+      setVisible: visible => events.push(["visible", visible]),
+      webContents: {
+        enableDeviceEmulation: () => assert.fail("emulation started before did-finish-load"),
+        disableDeviceEmulation: () => assert.fail("emulation cleared before did-finish-load"),
+      },
+    },
+  };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    window: { getContentSize: () => [1120, 720] },
+  });
+
+  BrowserHost.prototype.presentTurnView.call(fixture, tab, false);
+
+  assert.deepEqual(events, [
+    ["bounds", { x: 1121, y: 721, width: 1120, height: 720 }],
+    ["visible", true],
+  ]);
+  assert.equal(tab.deviceEmulationViewport, null);
+  assert.equal(tab.deviceEmulationDirty, true);
+});
+
+test("visible turn tabs establish native bounds before clearing background emulation", () => {
+  const events = [];
+  const tab = {
+    id: "tab-visible-viewport",
+    status: "running",
+    rendererReady: true,
+    deviceEmulationViewport: { width: 1120, height: 720 },
+    deviceEmulationDirty: true,
+    view: {
+      setBounds: bounds => events.push(["bounds", bounds]),
+      setVisible: visible => events.push(["visible", visible]),
+      webContents: {
+        enableDeviceEmulation: options => events.push(["emulate", options]),
+        disableDeviceEmulation: () => events.push(["disable-emulation"]),
+      },
+    },
+  };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    visible: true,
+    surfaceActive: true,
+    boundsReady: true,
+    bounds: { x: 280, y: 64, width: 840, height: 656 },
+    selectedTabId: tab.id,
+    turnTabs: new Map([[tab.id, tab]]),
+    authView: null,
+    window: { getContentSize: () => [1120, 720] },
+    view: { setVisible: visible => events.push(["home", visible]) },
+  });
+
+  BrowserHost.prototype.syncViewVisibility.call(fixture);
+
+  assert.deepEqual(events, [
+    ["home", false],
+    ["bounds", { x: 280, y: 64, width: 840, height: 656 }],
+    ["disable-emulation"],
+    ["visible", true],
+  ]);
+  assert.equal(tab.deviceEmulationViewport, null);
+  assert.equal(tab.deviceEmulationDirty, false);
 });
 
 test("manual browser operations wait for the first measured surface", async () => {
@@ -1143,7 +1232,11 @@ test("selecting a task tab shows and focuses its owned Playwright surface", () =
   const makeView = (id) => ({
     setBounds() {},
     setVisible: (visible) => visibility.push([id, visible]),
-    webContents: { focus: () => focused.push(id) },
+    webContents: {
+      disableDeviceEmulation() {},
+      enableDeviceEmulation() {},
+      focus: () => focused.push(id),
+    },
   });
   const first = { id: "tab-first", status: "running", view: makeView("first") };
   const second = { id: "tab-second", status: "running", view: makeView("second") };

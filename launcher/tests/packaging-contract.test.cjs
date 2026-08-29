@@ -71,6 +71,17 @@ test("release installers resolve checksummed native launcher assets", () => {
   assert.match(windowsInstaller, /codex-web-gpt-\$Version-win-\$Arch\.exe/);
   assert.match(windowsInstaller, /\[Environment\]::Is64BitOperatingSystem/);
   assert.doesNotMatch(windowsInstaller, /RuntimeInformation/);
+  assert.match(windowsInstaller, /function Test-IsFullyQualifiedWindowsPath/);
+  assert.match(windowsInstaller, /Test-IsFullyQualifiedWindowsPath \$InstallLocation/);
+  assert.doesNotMatch(windowsInstaller, /IsPathFullyQualified/);
+  const windowsPathPattern = windowsInstaller.match(/return \$Path -match '([^']+)'/)?.[1];
+  assert.ok(windowsPathPattern, "the Windows installer must expose its absolute-path contract");
+  const fullyQualifiedWindowsPath = new RegExp(windowsPathPattern);
+  assert.equal(fullyQualifiedWindowsPath.test("C:\\Users\\tester\\Codex Web GPT"), true);
+  assert.equal(fullyQualifiedWindowsPath.test("\\\\server\\share\\Codex Web GPT"), true);
+  assert.equal(fullyQualifiedWindowsPath.test("C:Codex Web GPT"), false);
+  assert.equal(fullyQualifiedWindowsPath.test("\\Codex Web GPT"), false);
+  assert.equal(fullyQualifiedWindowsPath.test("Codex Web GPT"), false);
   assert.ok(windowsInstaller.includes(`HKCU:\\Software\\${manifest.build.nsis.guid}`));
   assert.ok(devProfile.includes(`WINDOWS_LAUNCHER_GUID = "${manifest.build.nsis.guid}"`));
   assert.match(windowsInstaller, /Get-ItemPropertyValue[\s\S]*InstallLocation/);

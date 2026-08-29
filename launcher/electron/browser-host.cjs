@@ -338,15 +338,17 @@ class BrowserHost {
       loading: true,
       message: "ChatGPT is working",
       bootstrapReady: false,
+      rendererReady: false,
+      deviceEmulationViewport: null,
+      deviceEmulationDirty: true,
       bootstrapDeadlineAt: Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS,
       lastHeartbeatAt: Date.now(),
     };
     this.turnTabs.set(id, tab);
     this.window.contentView.addChildView(view);
     this.window.contentView.addChildView(interactionShield);
-    view.setBounds(this.hiddenTurnBounds());
+    this.presentTurnView(tab, false);
     interactionShield.setBounds(this.bounds);
-    view.setVisible(true);
     interactionShield.setVisible(false);
     view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindShellZoomShortcuts(view.webContents);
@@ -440,10 +442,14 @@ class BrowserHost {
     };
     contents.on("will-navigate", blockAuthenticationNavigation);
     contents.on("will-redirect", blockAuthenticationNavigation);
-    contents.on("did-start-navigation", (_event, url, _inPlace, mainFrame) => {
+    contents.on("did-start-navigation", (_event, url, inPlace, mainFrame) => {
       if (!mainFrame) return;
       tab.url = url;
       tab.loading = true;
+      if (!inPlace) {
+        tab.rendererReady = false;
+        tab.deviceEmulationDirty = true;
+      }
       this.publishState?.(this.snapshot());
     });
     contents.on("did-start-loading", () => {
@@ -458,7 +464,9 @@ class BrowserHost {
     contents.on("did-finish-load", () => {
       tab.url = contents.getURL();
       tab.loading = false;
+      tab.rendererReady = true;
       if (tab.url.startsWith(CHATGPT_ORIGIN)) tab.bootstrapReady = true;
+      this.syncViewVisibility();
       void contents.insertCSS(CHATGPT_VIEWPORT_CSS).catch(() => {});
       const encoded = JSON.stringify(tab.surfaceId);
       void contents.executeJavaScript(`(() => {
@@ -878,6 +886,44 @@ class BrowserHost {
     };
   }
 
+  enableHiddenTurnViewport(contents, { width, height }) {
+    contents.enableDeviceEmulation({
+      screenPosition: "desktop",
+      screenSize: { width, height },
+      viewPosition: { x: 0, y: 0 },
+      deviceScaleFactor: 0,
+      viewSize: { width, height },
+      scale: 1,
+    });
+  }
+
+  presentTurnView(tab, visible) {
+    if (visible) {
+      // Establish native on-screen bounds before removing the background viewport contract.
+      tab.view.setBounds(this.bounds);
+      if (tab.rendererReady && tab.deviceEmulationViewport) {
+        tab.view.webContents.disableDeviceEmulation();
+        tab.deviceEmulationViewport = null;
+      }
+      if (tab.rendererReady) tab.deviceEmulationDirty = false;
+    } else {
+      // A WebContentsView born outside a hidden BrowserWindow has a 0x0 renderer even when its
+      // native bounds and View visibility are non-zero. Device emulation gives background turns
+      // an explicit renderer viewport before moving the view outside the launcher surface.
+      const bounds = this.hiddenTurnBounds();
+      if (tab.rendererReady
+        && (tab.deviceEmulationDirty
+          || tab.deviceEmulationViewport?.width !== bounds.width
+          || tab.deviceEmulationViewport?.height !== bounds.height)) {
+        this.enableHiddenTurnViewport(tab.view.webContents, bounds);
+        tab.deviceEmulationViewport = { width: bounds.width, height: bounds.height };
+        tab.deviceEmulationDirty = false;
+      }
+      tab.view.setBounds(bounds);
+    }
+    tab.view.setVisible(visible || tab.status === "running");
+  }
+
   activateHomeSurface() {
     this.selectedTabId = "home";
     this.syncViewVisibility();
@@ -891,10 +937,9 @@ class BrowserHost {
     const selected = this.selectedTurnTab();
     this.view.setVisible(visible && !this.authView && !selected);
     for (const tab of this.turnTabs.values()) {
-      const selectedVisible = visible && !this.authView && selected?.id === tab.id;
-      tab.view.setBounds(selectedVisible ? this.bounds : this.hiddenTurnBounds());
-      tab.view.setVisible(selectedVisible || tab.status === "running");
-      tab.interactionShield?.setVisible(selectedVisible && tab.interactionLocked !== false);
+      const tabVisible = visible && !this.authView && selected?.id === tab.id;
+      this.presentTurnView(tab, tabVisible);
+      tab.interactionShield?.setVisible(tabVisible && tab.interactionLocked !== false);
     }
     this.authView?.setVisible(visible);
   }
