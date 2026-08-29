@@ -202,6 +202,19 @@ describe("ChatGPT Web surface resilience", () => {
     );
   });
 
+  test("continues when Temporary Chat exposes connectors without a personalization control", async () => {
+    const page = {
+      locator: () => ({
+        filter: () => ({ count: async () => 0 }),
+      }),
+    };
+
+    await expect(ensureChatGptTemporaryChatPersonalized(
+      page as never,
+      { controlTimeoutMs: 0 },
+    )).resolves.toBeUndefined();
+  });
+
   test("enables the personalized Temporary Chat mode required by connectors", async () => {
     let selectedMode = 1;
     let menuOpen = false;
