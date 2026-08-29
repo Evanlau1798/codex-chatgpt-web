@@ -24,30 +24,22 @@ import {
   requireChatGptWebModelRoute,
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
-import { forwardNativeCodexRequest, type NativeFetch } from "./native-passthrough";
+import { forwardNativeCodexRequest } from "./native-passthrough";
 import { modelsRequest, nativeSearchRequest } from "./native-routes";
 import { COMPACT_PROMPT } from "./responses/compaction";
 import { handleCompactRequest } from "./responses/compact-handler";
 import { parseRequest } from "./responses/parser";
 import { expandPreviousResponseInput, flushResponseState, rememberResponseState } from "./responses/state";
-import { namespacedToolName, type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "./types";
-import type { ProviderAdapter } from "./adapters/base";
+import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
 import { VERSION } from "./version";
 import { messagesRequest } from "./messages";
 import { claudeGatewayModelsResponse, isClaudeGatewayModelsRequest } from "./messages/models";
 import { enforceLocalDataRequestSecurity } from "./local-request-security";
 import { lifecycleControlAuthorized } from "./lifecycle-control";
+import type { ChatGptWebAdapterFactory, ResponseRequestOptions, ServerDependencies } from "./server-dependencies";
 
 export { HttpTurnCounter, modelsRequest, nativeSearchRequest };
-
-type ChatGptWebAdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
-
-export interface ResponseRequestOptions {
-  /** DEV and other in-process harnesses can keep continuation state in their own canonical store. */
-  rememberState?: boolean;
-  /** Observe the exact production adapter stream when invoking the handler in-process. */
-  onAdapterEvent?: (event: AdapterEvent) => void;
-}
+export type { ResponseRequestOptions } from "./server-dependencies";
 
 export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppConfig): ChatGptWebModelRoute {
   const route = requireChatGptWebModelRoute(parsed.modelId, config);
@@ -266,7 +258,7 @@ export async function compactRequest(req: Request, config: AppConfig, adapterFac
 
 export function startServer(
   config: AppConfig,
-  dependencies: { fetchUpstream?: NativeFetch } = {},
+  dependencies: ServerDependencies = {},
 ): ReturnType<typeof Bun.serve> {
   if (config.purpose === "dev-harness") {
     throw new Error("DEV harness configuration cannot start a Responses listener");
@@ -427,7 +419,7 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/v1/responses") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
-          signal => responseRequest(new Request(req, { signal }), config),
+          signal => responseRequest(new Request(req, { signal }), config, dependencies.adapterFactory),
           req.signal,
           undefined,
           url.pathname,
@@ -436,7 +428,7 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/v1/messages") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
-          signal => messagesRequest(new Request(req, { signal }), config),
+          signal => messagesRequest(new Request(req, { signal }), config, dependencies.adapterFactory),
           req.signal,
           undefined,
           url.pathname,
@@ -449,7 +441,7 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
-          signal => compactRequest(new Request(req, { signal }), config),
+          signal => compactRequest(new Request(req, { signal }), config, dependencies.adapterFactory),
           req.signal,
           undefined,
           url.pathname,

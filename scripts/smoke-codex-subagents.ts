@@ -6,6 +6,7 @@ import { bridgeToResponsesSSE } from "../src/bridge";
 import { defaultConfig } from "../src/config";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
 import type { AdapterEvent } from "../src/types";
+import { assertCodexLifecycleRequests } from "./lifecycle-sim/codex-evidence";
 
 const protocol = process.argv.includes("--v1") ? "v1" : "v2";
 const explicitChildModel = "gpt-5.6-sol";
@@ -373,6 +374,11 @@ try {
         `${role} used reasoning ${firstRequest?.reasoningEffort ?? "none"}, expected ${explicitChildReasoningEffort}`,
       );
     }
+  }
+  try {
+    assertCodexLifecycleRequests(requestLog, protocol);
+  } catch (error) {
+    failures.push(error instanceof Error ? error.message : String(error));
   }
   if (failures.length > 0) {
     throw new Error(
