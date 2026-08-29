@@ -108,14 +108,21 @@ export async function assertTemporaryChatPage(page: Page): Promise<void> {
   }
 }
 
-export async function ensureChatGptTemporaryChatPersonalized(page: Page): Promise<void> {
+export async function ensureChatGptTemporaryChatPersonalized(
+  page: Page,
+  options: { controlTimeoutMs?: number } = {},
+): Promise<void> {
   const buttons = page.locator(CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR).filter({ visible: true });
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + (options.controlTimeoutMs ?? 5_000);
   let buttonCount = await buttons.count();
   while (buttonCount === 0 && Date.now() < deadline) {
     await new Promise(resolveSleep => setTimeout(resolveSleep, 50));
     buttonCount = await buttons.count();
   }
+  // Some authenticated Temporary Chat variants expose connectors directly and
+  // do not render a personalization toggle. Connector discovery remains the
+  // authoritative pre-submit check on those surfaces.
+  if (buttonCount === 0) return;
   if (buttonCount !== 1) {
     throw new Error(`ChatGPT Temporary Chat exposed ${buttonCount} personalization controls`);
   }
