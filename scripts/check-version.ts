@@ -37,8 +37,10 @@ for (const [path, needle] of expected) {
   if (!readFileSync(resolve(root, path), "utf8").includes(needle)) throw new Error(`${path} is not synchronized to ${packageVersion}`);
 }
 const releaseWorkflow = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
-if (releaseWorkflow.split(`bun-version: ${bunVersion}`).length - 1 !== 2) {
-  throw new Error("release.yml must use the pinned Bun stable version in both jobs");
+const bunSetupCount = releaseWorkflow.match(/uses: oven-sh\/setup-bun@v2/g)?.length ?? 0;
+const pinnedBunCount = releaseWorkflow.split(`bun-version: ${bunVersion}`).length - 1;
+if (bunSetupCount === 0 || pinnedBunCount !== bunSetupCount) {
+  throw new Error("release.yml must pin the stable Bun version for every setup-bun step");
 }
 const launcherVersion = (JSON.parse(readFileSync(resolve(root, "launcher/package.json"), "utf8")) as { version?: string }).version;
 if (launcherVersion !== packageVersion) throw new Error(`launcher/package.json is not synchronized to ${packageVersion}`);
