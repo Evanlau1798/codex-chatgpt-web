@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting guide
+    url: https://github.com/Evanlau1798/codex-chatgpt-web/blob/main/TROUBLESHOOTING.md
+    about: Resolve common setup, routing, sign-in, model, MCP, rate-limit, image, and streaming failures first.
+  - name: Upstream questions and usage discussions
+    url: https://github.com/miuuyy/codex-chatgpt-web/discussions
+    about: The fork has no Discussions board; use the upstream board for general workflows that are not Enhanced-fork bugs.
+  - name: Security reporting policy
+    url: https://github.com/Evanlau1798/codex-chatgpt-web/blob/main/SECURITY.md
+    about: Read the fork security policy before reporting credential exposure, authentication bypass, or arbitrary tool execution.

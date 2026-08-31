@@ -9,14 +9,17 @@ export const DEFAULT_STALL_TIMEOUT_SEC = 300;
 
 export class StallTimeoutError extends Error {}
 
+// Keep a malformed or accidentally enormous configuration within a practical recovery budget.
+export const MAX_STALL_TIMEOUT_SEC = 3_600;
+
 /**
  * Resolve the effective bridge stall deadline for a turn.
  * - unset / non-finite config → {@link DEFAULT_STALL_TIMEOUT_SEC}
- * - finite config → ceil, minimum 1
+ * - finite config → ceil, clamped to the practical [1, {@link MAX_STALL_TIMEOUT_SEC}] range
  */
 export function resolveStallTimeoutSec(configuredSec: number | undefined): number {
   if (typeof configuredSec === "number" && Number.isFinite(configuredSec)) {
-    return Math.max(1, Math.ceil(configuredSec));
+    return Math.min(MAX_STALL_TIMEOUT_SEC, Math.max(1, Math.ceil(configuredSec)));
   }
   return DEFAULT_STALL_TIMEOUT_SEC;
 }

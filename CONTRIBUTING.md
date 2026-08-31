@@ -10,6 +10,10 @@ requests are expected to be small, focused, and easy to review and verify. Good 
 include isolated bug fixes, regression tests, documentation corrections, and narrow
 platform-specific fixes.
 
+Before opening a bug report, work through [TROUBLESHOOTING.md](TROUBLESHOOTING.md) and use the
+structured issue form. Reproduce once on the latest release and attach the privacy-safe export from
+**Activity → Export safe log**; never upload raw browser state, credentials, or unredacted logs.
+
 Large feature branches, broad refactors, rewrites, new providers, and changes to core behavior or
 architecture are generally not accepted. In rare cases they may be considered, but discuss the
 proposal in an issue before implementation. Prior discussion does not guarantee acceptance, and a
@@ -38,17 +42,19 @@ large unsolicited pull request may be closed even when substantial work went int
    broaden selectors speculatively.
 5. Keep Terms and trademark claims factual. Do not market the project as a quota or rate-limit
    bypass.
+6. Manually test the affected behavior. DEV mode is sufficient only when the change does not affect
+   local-tool execution, MCP execution, or the outer Codex agent loop. Execution changes require a
+   real installed Codex integration; DEV simulation is not end-to-end acceptance evidence.
 
 Launcher changes must preserve native packaging on macOS, Windows, and Linux. Platform packages
 must be built on their matching operating system. See [DEV chat mode](docs/dev-chat.md) for isolated
 browser and MCP development, and [release validation](docs/release-validation.md) for the required
 account-bound release checks.
 
-## Live lifecycle smoke gate
+## Lifecycle verification gate
 
-`bun run verify` and focused regression tests are the deterministic baseline. They do not replace
-the live lifecycle smoke when a change can alter production session ownership or cross-process
-behavior. Run the live gate before merge for changes to:
+Focused tests and the deterministic lifecycle simulator are the baseline for changes that can alter
+production session ownership or cross-process behavior, including:
 
 - agent spawn, messaging, interrupt, close, parent/child tracking, or lifecycle callback wiring;
 - tool-result delivery, steering, cancellation, compaction, resume, or retained sessions;
@@ -56,20 +62,14 @@ behavior. Run the live gate before merge for changes to:
   smoke runner itself.
 
 Documentation-only changes and isolated utilities that cannot affect those boundaries do not need
-the live gate. Run it only after deterministic verification passes and the launcher-owned daemon is
-healthy, accepting turns, and idle. The command uses the signed-in ChatGPT account, creates real Web
-sessions, consumes account usage, and writes bounded redacted artifacts under
-`tmp/lifecycle-smoke/runs/`; never commit those artifacts. Keep every model-facing lifecycle smoke
-prompt and its validation vocabulary in English so contributors reproduce the same standardized
-flow regardless of their local language.
+this gate. Keep every model-facing prompt, sentinel, and validation term in English.
 
 ```sh
-bun run scripts/lifecycle-smoke/run.ts --live --lane=codex
-bun run scripts/lifecycle-smoke/run.ts --live --lane=claude
-bun run scripts/lifecycle-smoke/run.ts --live --lane=all
+bun run lifecycle:sim --lane=all
 ```
 
-Use the Codex or Claude lane for client-specific changes and `all` for shared lifecycle changes.
-Record the resulting `LIFECYCLE_SMOKE_PASSED` path in the pull request. A contributor who cannot run
-the authenticated gate should say so explicitly; a maintainer must run the required lane before
-merge or release.
+Run one low-usage Web contract smoke only when browser UI, launcher ownership, or Web transport
+changed. It verifies the signed-in surface and one short turn; it is not a multi-turn lifecycle
+suite. Any 429 or verification limit stops the run immediately without retry. The old full live
+lifecycle flow is a manual `deep` diagnostic profile, never a default CI or release gate. Redacted
+artifacts belong under `tmp/lifecycle-smoke/runs/` and must never be committed.
