@@ -25,6 +25,7 @@ async function runTests(files: string[]): Promise<void> {
 
 async function codexLane(): Promise<void> {
   const codex = executable("codex");
+  await run([process.execPath, "run", "scripts/smoke-codex-subagents.ts", "--v1", codex]);
   await run([process.execPath, "run", "scripts/smoke-codex-subagents.ts", "--v2", codex]);
   await run([process.execPath, "run", "scripts/smoke-codex-cancel.ts", codex]);
   await runTests([
