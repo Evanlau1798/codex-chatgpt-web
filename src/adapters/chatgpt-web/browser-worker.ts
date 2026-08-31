@@ -127,6 +127,7 @@ import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGpt
 import { ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, redactChatGptUiDiagnostic } from "./browser-diagnostics";
+import { openChatGptConnectorPlusMenu } from "./connector-plus-menu";
 import {
   ChatGptBrowserObservationTimeoutError,
   MAX_CHATGPT_BROWSER_PAGE_REBINDS,
@@ -1721,6 +1722,31 @@ export class ChatGptBrowserWorker {
       return composer;
     }
 
+    const activateConnectorChoice = async (): Promise<Locator> => {
+      await page.keyboard.press("Enter");
+      await captureDiagnostic?.("connector-choice-activated");
+      // Selecting a connector replaces the Lexical composer subtree. Resolve the active composer
+      // again instead of returning the pre-selection locator, otherwise the real turn can focus a
+      // detached/hidden editor even though verification just succeeded.
+      const selectedComposer = await this.activeComposer(page);
+      const selectedConnector = this.selectedConnectorControl(selectedComposer);
+      await selectedConnector.waitFor({ state: "visible", timeout: 10_000 });
+      if (!await this.connectorIsSelected(selectedComposer)) {
+        throw new Error(`ChatGPT composer did not select ${JSON.stringify(this.config.appName)} connector`);
+      }
+      await captureDiagnostic?.("connector-selected");
+      return selectedComposer;
+    };
+
+    const plusResult = typeof page.getByTestId === "function"
+      ? await openChatGptConnectorPlusMenu(page, this.config.appName)
+      : undefined;
+    if (plusResult) {
+      await captureDiagnostic?.("connector-menu-visible");
+      await plusResult.focus();
+      return await activateConnectorChoice();
+    }
+
     const menuRows = page.locator('.__menu-item[tabindex="0"]');
     const appResult = menuRows.filter({
       has: page.getByText(this.config.appName, { exact: true }),
@@ -1796,19 +1822,7 @@ export class ChatGptBrowserWorker {
     if (!await rowHighlighted()) {
       throw new Error(`ChatGPT connector menu could not highlight ${JSON.stringify(this.config.appName)}`);
     }
-    await page.keyboard.press("Enter");
-    await captureDiagnostic?.("connector-choice-activated");
-    // Selecting a connector replaces the Lexical composer subtree. Resolve the active composer
-    // again instead of returning the pre-selection locator, otherwise the real turn can focus a
-    // detached/hidden editor even though verification just succeeded.
-    const selectedComposer = await this.activeComposer(page);
-    const selectedConnector = this.selectedConnectorControl(selectedComposer);
-    await selectedConnector.waitFor({ state: "visible", timeout: 10_000 });
-    if (!await this.connectorIsSelected(selectedComposer)) {
-      throw new Error(`ChatGPT composer did not select ${JSON.stringify(this.config.appName)} connector`);
-    }
-    await captureDiagnostic?.("connector-selected");
-    return selectedComposer;
+    return await activateConnectorChoice();
   }
 
   private async attachPrompt(
