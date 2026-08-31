@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
 import { LauncherBrowserHelperClient } from "../src/adapters/chatgpt-web/launcher-helper-client";
 import type { BrowserTurn, ResolvedBrowserConfig } from "../src/adapters/chatgpt-web/browser-worker";
-import { LAUNCHER_BROWSER_HOST_KIND } from "../src/launcher-browser-host";
+import { LAUNCHER_BROWSER_HOST_KIND, LAUNCHER_BROWSER_IDLE_URL } from "../src/launcher-browser-host";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -80,7 +80,7 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
     },
     helper: { executable: process.execPath, script: descriptorHelper },
     partition: "persist:codex-web-gpt-chatgpt",
-    idleUrl: "about:blank#codex-web-gpt-browser-host",
+    idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB",
     createdAt: new Date().toISOString(),
   })}\n`, { mode: 0o600 });
@@ -202,7 +202,7 @@ test("a rejected prompt preparation releases the helper turn before the trace ca
     },
     helper: { executable: process.execPath, script: helper },
     partition: "persist:codex-web-gpt-chatgpt",
-    idleUrl: "about:blank#codex-web-gpt-browser-host",
+    idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB",
     createdAt: new Date().toISOString(),
   })}\n`, { mode: 0o600 });

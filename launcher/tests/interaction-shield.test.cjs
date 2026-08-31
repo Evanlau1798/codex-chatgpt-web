@@ -24,6 +24,7 @@ test("turn visibility keeps the native shield above its ChatGPT view", () => {
     interactionShield: { setVisible: value => calls.push(["shield", value]) },
   };
   const fixture = {
+    window: { isVisible: () => true, isMinimized: () => false },
     visible: true,
     surfaceActive: true,
     boundsReady: true,
@@ -78,6 +79,7 @@ test("disabled turn protection exposes and focuses the ChatGPT view", () => {
     },
   };
   const fixture = {
+    window: { isVisible: () => true, isMinimized: () => false },
     visible: true,
     surfaceActive: true,
     boundsReady: true,
@@ -128,6 +130,7 @@ test("removing a turn closes both its ChatGPT view and native shield", () => {
     turnTabs: new Map([[tab.id, tab]]),
     closedTurnOwners: new Map(),
     selectedTabId: "home",
+    syncPowerSaveBlocker() {},
     syncViewVisibility() {},
     publishState() {},
     snapshot: () => ({}),

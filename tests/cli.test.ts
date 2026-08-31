@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { defaultBrokerEndpoint } from "../src/config";
+import { LAUNCHER_BROWSER_IDLE_URL } from "../src/launcher-browser-host";
 
 async function runCli(args: string[], env: Record<string, string | undefined>) {
   const child = Bun.spawn([
@@ -184,7 +185,7 @@ test("DEV browser-only setup persists only the isolated harness profile", async 
       control: { endpoint: `http://127.0.0.1:${address.port}`, token: controlToken },
       helper: { executable: process.execPath, script: helperScript },
       partition: "persist:codex-web-gpt-dev-chatgpt",
-      idleUrl: "about:blank#codex-web-gpt-browser-host",
+      idleUrl: LAUNCHER_BROWSER_IDLE_URL,
       surfaceId: "d".repeat(32),
       createdAt: new Date().toISOString(),
     })}\n`, { mode: 0o600 });
@@ -291,7 +292,7 @@ test("authorized launcher uninstall does not re-probe an already stopped full ru
     control: { endpoint: "http://127.0.0.1:48112", token },
     helper: { executable: process.execPath, script: helperScript },
     partition: "persist:codex-web-gpt-chatgpt",
-    idleUrl: "about:blank#codex-web-gpt-browser-host",
+    idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "a".repeat(32),
     createdAt: new Date().toISOString(),
   })}\n`, { mode: 0o600 });

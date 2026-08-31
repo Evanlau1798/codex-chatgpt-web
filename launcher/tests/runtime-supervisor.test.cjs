@@ -150,6 +150,14 @@ test("launcher runtime ownership cannot cross production and DEV profiles", () =
     () => validateConfig({ ...production, subagentProtocol: "v0" }, descriptorPath),
     /invalid subagent protocol/,
   );
+  assert.throws(
+    () => validateConfig({ ...production, stallTimeoutSec: 0 }, descriptorPath),
+    /invalid stallTimeoutSec/,
+  );
+  assert.equal(
+    validateConfig({ ...production, stallTimeoutSec: 900 }, descriptorPath).stallTimeoutSec,
+    900,
+  );
 });
 
 test("DEV runtime supervision starts only the isolated MCP tunnel", async () => {

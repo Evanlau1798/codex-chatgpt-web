@@ -82,12 +82,13 @@ export async function sessionForChatGptRequest(
   groupNamespace?: string,
   allowSteering = true,
   traceId?: string,
+  signal?: AbortSignal,
 ): Promise<ChatGptTurnSession> {
   const replacementConversationKey = groupNamespace
     ? chatGptConversationKey(parsed, groupNamespace)
     : undefined;
   if (parsed._compactionRequest) {
-    return sessions.getOrCreateAfterConversationRetirement(key, replacementConversationKey, start, undefined, undefined, undefined, traceId);
+    return sessions.getOrCreateAfterConversationRetirement(key, replacementConversationKey, start, undefined, undefined, undefined, traceId, signal);
   }
   const revision = JSON.stringify(extractChatGptTurnUserRevision(parsed));
   const text = extractChatGptTurnUserText(parsed) ?? "The user added a new instruction.";
@@ -104,15 +105,15 @@ export async function sessionForChatGptRequest(
     ? chatGptTurnSteeringId(identity.threadId, identity.turnId)
     : undefined;
   let session = await sessions.getOrCreateAfterConversationRetirement(
-    key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId,
+    key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId, signal,
   );
   const settled = session.settledOutcome();
   const activeClaudeRoot = Boolean(claudeRootThreadId && !settled);
   const steering = session.updateUserRevision(revision, text, !activeClaudeRoot);
   if (!allowSteering && steering) {
-    await sessions.retireAndWait(key, replacementConversationKey);
+    await sessions.retireAndWait(key, replacementConversationKey, signal);
     session = await sessions.getOrCreateAfterConversationRetirement(
-      key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId,
+      key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId, signal,
     );
     session.updateUserRevision(revision, text);
     return session;
@@ -122,9 +123,9 @@ export async function sessionForChatGptRequest(
 
   const completedClaudeSteering = session.completedClaudeSteering();
   if (claudeRootThreadId) preserveCompletedClaudeSteering(parsed, completedClaudeSteering);
-  await sessions.retireAndWait(key, replacementConversationKey);
+  await sessions.retireAndWait(key, replacementConversationKey, signal);
   session = await sessions.getOrCreateAfterConversationRetirement(
-    key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId,
+    key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId, signal,
   );
   if (claudeRootThreadId) session.inheritCompletedClaudeSteering(completedClaudeSteering);
   session.updateUserRevision(revision, text);

@@ -15,7 +15,7 @@ import {
 import { opaqueId, type BrokerRequest, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker-protocol";
 import { TurnContextStore } from "./turn-context-store";
 
-export { callTurnBroker } from "./turn-broker-client";
+export { callTurnBroker, TurnBrokerTimeoutError } from "./turn-broker-client";
 export { RemoteTurnBroker } from "./turn-broker-owner";
 export type { TurnBrokerOwner } from "./turn-broker-owner";
 export type { BrokerToolRequest, BrokerToolResult } from "./turn-broker-protocol";

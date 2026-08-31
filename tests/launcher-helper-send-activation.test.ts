@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LauncherBrowserHelperClient } from "../src/adapters/chatgpt-web/launcher-helper-client";
 import type { ResolvedBrowserConfig } from "../src/adapters/chatgpt-web/browser-worker";
-import { LAUNCHER_BROWSER_HOST_KIND } from "../src/launcher-browser-host";
+import { LAUNCHER_BROWSER_HOST_KIND, LAUNCHER_BROWSER_IDLE_URL } from "../src/launcher-browser-host";
 
 test("browser helper waits for parent activation acknowledgement before completing Send", async () => {
   const root = mkdtempSync(join(tmpdir(), "codex-launcher-helper-activation-"));
@@ -52,7 +52,7 @@ test("browser helper waits for parent activation acknowledgement before completi
     },
     helper: { executable: process.execPath, script: descriptorHelper },
     partition: "persist:codex-web-gpt-chatgpt",
-    idleUrl: "about:blank#codex-web-gpt-browser-host",
+    idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB",
     createdAt: new Date().toISOString(),
   })}\n`, { mode: 0o600 });

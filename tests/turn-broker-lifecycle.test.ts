@@ -204,6 +204,18 @@ test("turn broker creates its private runtime directory on a cold start", async 
   }
 });
 
+test("turn broker rejects a Unix socket path that leaves no room for sun_path's NUL terminator", async () => {
+  if (process.platform === "win32") return;
+  const socketPath = `/tmp/${"x".repeat(99)}`;
+  expect(Buffer.byteLength(socketPath)).toBe(104);
+  const broker = TurnBroker.forSocket(socketPath);
+  try {
+    await expect(broker.listen()).rejects.toThrow("103-byte limit");
+  } finally {
+    await broker.close();
+  }
+});
+
 test("turn broker tokens do not expire while their browser turn is still alive", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-broker-unbounded-"));
   const socketPath = defaultBrokerEndpoint(root);

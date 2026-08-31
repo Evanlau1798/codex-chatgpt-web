@@ -1,19 +1,20 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { Page } from "playwright-core";
-import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_PROMPT_INSERT_CHUNK_CHARS, CHATGPT_RESPONSE_DOM_GRACE_MS, CHATGPT_STOPPED_THINKING_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptPromptAttachmentIntegrityError, ChatGptStoppedThinkingTracker, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, assertChatGptWebInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, chatGptExternalProgressSuppressesDomHealth, chatGptSubmissionEvidence, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
 import {
   CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS,
   ChatGptBrowserObservationTimeoutError,
   MAX_CHATGPT_BROWSER_PAGE_REBINDS,
   withChatGptBrowserObservationTimeout,
 } from "../src/adapters/chatgpt-web/browser-observation";
+import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_PROMPT_INSERT_CHUNK_CHARS, CHATGPT_RESPONSE_DOM_GRACE_MS, CHATGPT_STOPPED_THINKING_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptPromptAttachmentIntegrityError, ChatGptStoppedThinkingTracker, ChatGptSuspensionClock, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, browserStageTimeouts, chatGptExternalProgressSuppressesDomHealth, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, remainingStageBudgetMs, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
-import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
+import { ChatGptWebAdapterError, chatGptStoppedThinkingError } from "../src/adapters/chatgpt-web/adapter-error";
 import { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, defaultChromeExecutable, legacyChatGptConnectorMigrationMessage } from "../src/config";
 import { chatGptEffortSliderAdvancedTowardTarget, parseChatGptEffortSliderState } from "../src/chatgpt-session";
-import type { CodexParsedRequest } from "../src/types";
+import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
+import type { CodexParsedRequest, CodexProviderConfig } from "../src/types";
 
 test("browser turns run six at once and queue the seventh in FIFO order", async () => {
   expect(MAX_CHATGPT_BROWSER_TABS).toBe(6);
@@ -286,10 +287,44 @@ test("a stalled post-submit DOM probe is bounded before same-page launcher recov
   const runBrowserTurn = workerSource.slice(workerSource.indexOf("  private async runBrowserTurn("));
   const submissionAccepted = runBrowserTurn.indexOf("submission accepted evidence=");
   const recovery = runBrowserTurn.indexOf("await rebindLauncherPage(", submissionAccepted);
-  const duplicateSend = runBrowserTurn.indexOf("activateChatGptSendControl(", recovery);
+  const duplicateSend = runBrowserTurn.indexOf("sendAttachedPrompt(", recovery);
+
+  const rebindDefinition = runBrowserTurn.indexOf("const rebindLauncherPage");
+  const previousConnection = runBrowserTurn.indexOf(
+    "const previousConnection = turnConnection;",
+    rebindDefinition,
+  );
+  const failClosedDisconnect = runBrowserTurn.indexOf(
+    "connectAfterClosingBrowserConnection(",
+    previousConnection,
+  );
+  const detachClosedConnection = runBrowserTurn.indexOf(
+    "turnConnection = undefined;",
+    failClosedDisconnect,
+  );
+  const reconnectStage = runBrowserTurn.indexOf(
+    "return this.runStage(",
+    detachClosedConnection,
+  );
+  const reconnectTransport = runBrowserTurn.indexOf(
+    "const rebound = await connectLauncherBrowserHost(",
+    reconnectStage,
+  );
+
   expect(recovery).toBeGreaterThan(submissionAccepted);
   expect(duplicateSend).toBe(-1);
-  expect(runBrowserTurn).toContain("if (!launcherSurfaceId || !this.config.browserHostDescriptorPath) throw cause");
+  expect(rebindDefinition).toBeGreaterThan(-1);
+  expect(previousConnection).toBeGreaterThan(rebindDefinition);
+  expect(failClosedDisconnect).toBeGreaterThan(previousConnection);
+  expect(detachClosedConnection).toBeGreaterThan(failClosedDisconnect);
+  expect(reconnectStage).toBeGreaterThan(detachClosedConnection);
+  expect(reconnectTransport).toBeGreaterThan(reconnectStage);
+  expect(runBrowserTurn).not.toContain(
+    "previous browser observation connection did not close after rebind",
+  );
+  expect(runBrowserTurn).toContain(
+    "if (!launcherSurfaceId || !this.config.browserHostDescriptorPath) throw cause",
+  );
   expect(runBrowserTurn.slice(recovery)).toContain("responseTurnBinding");
 });
 
@@ -323,6 +358,21 @@ test("browser stage aborts immediately when the owning turn is cancelled", async
 
   await expect(result).rejects.toMatchObject({ name: "AbortError" });
   expect(stageAborted).toBeTrue();
+});
+
+test("a failed stale-browser disconnect prevents the replacement connection", async () => {
+  let replacementAttempts = 0;
+  const disconnectFailure = new Error("stale CDP transport did not close");
+
+  await expect(connectAfterClosingBrowserConnection(
+    { close: async () => { throw disconnectFailure; } },
+    async () => {
+      replacementAttempts += 1;
+      return "replacement";
+    },
+  )).rejects.toBe(disconnectFailure);
+
+  expect(replacementAttempts).toBe(0);
 });
 
 test("closing the launcher page is an immediate terminal turn error", async () => {
@@ -1432,6 +1482,7 @@ test("Luna-only browser turns verify selector absence instead of opening an effo
   const visibleControls = { count: async () => 0 };
   const composerForm = {
     locator: () => ({ filter: () => visibleControls }),
+    getByRole: () => ({ filter: () => ({ count: async () => 0 }) }),
   };
   const composer = { locator: () => composerForm };
   const selectModelAndEffort = (ChatGptBrowserWorker.prototype as unknown as {
@@ -1456,6 +1507,44 @@ test("Luna-only browser turns verify selector absence instead of opening an effo
 
   expect(mode).toMatchObject({ displayLabel: "Luna", uiEffortIndex: null });
   expect(checkpoints).toEqual(["luna-default-confirmed"]);
+});
+
+test("Think mode follows the exact pressed state and normal Luna clears it", async () => {
+  let pressed = false;
+  let clicks = 0;
+  const control = {
+    getAttribute: async () => pressed ? "true" : "false",
+    click: async () => { clicks += 1; pressed = !pressed; },
+  };
+  const controls = {
+    count: async () => 1,
+    first: () => control,
+  };
+  const composerForm = {
+    getByRole: (role: string, options: { name: string; exact: boolean }) => {
+      expect([role, options]).toEqual(["button", { name: "Think", exact: true }]);
+      return { filter: () => controls };
+    },
+  };
+  const checkpoints: string[] = [];
+
+  await setChatGptThinkMode(composerForm as never, true, async checkpoint => { checkpoints.push(checkpoint); });
+  expect(pressed).toBeTrue();
+  expect(clicks).toBe(1);
+  await setChatGptThinkMode(composerForm as never, true);
+  expect(clicks).toBe(1);
+  await setChatGptThinkMode(composerForm as never, false, async checkpoint => { checkpoints.push(checkpoint); });
+  expect(pressed).toBeFalse();
+  expect(clicks).toBe(2);
+  expect(checkpoints).toEqual(["think-enabled", "think-disabled"]);
+});
+
+test("Think mode fails closed when the Luna composer does not expose the control", async () => {
+  const composerForm = {
+    getByRole: () => ({ filter: () => ({ count: async () => 0 }) }),
+  };
+  await expect(setChatGptThinkMode(composerForm as never, true))
+    .rejects.toThrow("Think control is not available");
 });
 
 test("effort selection handles the known ChatGPT rate-limit dialog before keyboard activation", () => {
@@ -2747,3 +2836,97 @@ test("the bundled helper is adopted only for the packaged runtime layout", () =>
   expect(tryStart).toBeGreaterThan(0);
   expect(heartbeat).toBeLessThan(tryStart);
 });
+
+test("Bigger Context stage sends get a budget sized for their payload", () => {
+  const worker = readFileSync("src/adapters/chatgpt-web/browser-worker.ts", "utf8");
+
+  // The send stage covers ChatGPT accepting the submission, not just the click. A stage posts a
+  // payload orders of magnitude larger than an ordinary prompt onto a conversation that already
+  // holds the earlier parts, and the ordinary budget expired mid-acceptance and killed the turn.
+  expect(worker).toContain("multipartStageSend: 180_000");
+  expect(worker).toContain("browserStageTimeouts.multipartStageSend,");
+
+  // The multipart commit lands on a conversation already carrying every staged part.
+  expect(worker).toContain("prepared.multipart ? browserStageTimeouts.multipartStageSend : browserStageTimeouts.send,");
+
+  // The ordinary send budget is unchanged for ordinary prompts.
+  expect(worker).toContain("send: 60_000,");
+});
+
+test("a staged Bigger Context part gets an acknowledgement window sized to its payload", () => {
+  // A staged part is two orders of magnitude larger than an ordinary prompt and ChatGPT reads all of
+  // it before answering. On this machine the same payload acknowledged at 19s and at 30s, and once
+  // took over 72s — which the ordinary grace turned into "ChatGPT accepted the message but did not
+  // expose its assistant turn in the DOM", losing an accepted turn that was merely slow.
+  expect(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS).toBeGreaterThan(CHATGPT_RESPONSE_DOM_GRACE_MS);
+
+  // No MCP activity exists yet while a part is being ingested, so nothing else can vouch for the
+  // turn: this window is the only thing between a slow ingest and a cancellation. Keep a wide margin
+  // over the slowest acknowledgement actually observed.
+  const slowestObservedAcknowledgementMs = 72_000;
+  expect(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS).toBeGreaterThan(slowestObservedAcknowledgementMs * 2);
+
+  // It is the same budget the staged send already gets; the two bound the same oversized exchange.
+  expect(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS).toBe(browserStageTimeouts.multipartStageSend);
+});
+
+test("the suspension clock charges only tick gaps that mean the process was frozen", () => {
+  const clock = new ChatGptSuspensionClock(1_000, 5_000);
+  clock.tick(1_000);
+  clock.tick(2_000);
+  clock.tick(3_100);
+  expect(clock.suspendedMs()).toBe(0);
+
+  // Fifteen minutes without a tick is a sleep; the ordinary interval is refunded from the charge.
+  clock.tick(3_100 + 15 * 60_000);
+  expect(clock.suspendedMs()).toBe(15 * 60_000 - 1_000);
+});
+
+test("remaining stage budget refunds slept time and stands once the awake budget is spent", () => {
+  expect(remainingStageBudgetMs(120_000, 901_000, 890_000)).toBe(109_000);
+  expect(remainingStageBudgetMs(120_000, 120_000, 0)).toBe(0);
+  expect(remainingStageBudgetMs(120_000, 901_000, 0)).toBe(0);
+  expect(remainingStageBudgetMs(200, 210, 50)).toBe(250);
+});
+
+test("a stage that spans a system sleep is not charged for the slept time", async () => {
+  // The live failure: effort_selection ran 901s against a 120s budget because the Mac slept
+  // 14 minutes of it, and the stage died on DarkWake. Here the fake clock reports a sleep longer
+  // than the whole budget, so the first timer firing must re-arm instead of failing.
+  const provider: CodexProviderConfig = {
+    adapter: "chatgpt-web",
+    baseUrl: `browser://suspension-stage-${Date.now()}`,
+    chatgptWeb: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+  };
+  const worker = ChatGptBrowserWorker.forProvider(provider) as unknown as {
+    runStage<T>(
+      traceId: string,
+      stage: string,
+      timeoutMs: number,
+      action: (signal: AbortSignal) => Promise<T>,
+      ownerSignal?: AbortSignal,
+      clock?: { suspendedMs(): number },
+    ): Promise<T>;
+  };
+
+  let suspended = 0;
+  const clock = { suspendedMs: () => suspended };
+  const outcome: string[] = [];
+  const stage = worker.runStage(
+    "suspension-test",
+    "probe",
+    200,
+    () => new Promise<never>(() => {}),
+    undefined,
+    clock,
+  ).catch(error => { outcome.push((error as Error).message); });
+
+  // The sleep is discovered when the first timer fires: 300ms slept against a 200ms budget.
+  suspended = 300;
+  await Bun.sleep(320);
+  expect(outcome).toEqual([]);
+
+  // No further sleep: the re-armed timer now expires on genuinely awake time.
+  await stage;
+  expect(outcome).toEqual(["ChatGPT browser stage timed out: probe"]);
+}, 10_000);

@@ -7,6 +7,13 @@ import {
   type BrokerResponse,
 } from "./turn-broker-protocol";
 
+export class TurnBrokerTimeoutError extends Error {
+  constructor() {
+    super("ChatGPT web turn broker timed out");
+    this.name = "TurnBrokerTimeoutError";
+  }
+}
+
 /**
  * A turn registered without a TTL has no deadline to bound its tool calls against, so a null
  * timeout waits for as long as the turn itself lives. Undefined keeps the bounded default, because
@@ -36,7 +43,7 @@ export async function callTurnBroker<T>(
     };
     const timer = timeoutMs === null
       ? undefined
-      : setTimeout(() => finishError(new Error("ChatGPT web turn broker timed out")), timeoutMs);
+      : setTimeout(() => finishError(new TurnBrokerTimeoutError()), timeoutMs);
     socket.setEncoding("utf8");
     if (signal?.aborted) {
       finishError(new DOMException("turn broker call aborted", "AbortError"));

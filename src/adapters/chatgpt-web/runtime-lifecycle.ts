@@ -31,7 +31,10 @@ function abortError(): DOMException {
 
 export function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return promise;
-  if (signal.aborted) return Promise.reject(abortError());
+  if (signal.aborted) {
+    void promise.catch(() => {});
+    return Promise.reject(abortError());
+  }
   return new Promise<T>((resolveWait, rejectWait) => {
     const onAbort = () => rejectWait(abortError());
     signal.addEventListener("abort", onAbort, { once: true });

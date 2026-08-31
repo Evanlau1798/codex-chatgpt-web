@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   LAUNCHER_BROWSER_HOST_KIND,
+  LAUNCHER_BROWSER_IDLE_URL,
   LauncherBrowserTurnCancelledError,
   inspectLauncherBrowserHost,
   notifyLauncherTurn,
@@ -45,7 +46,7 @@ function descriptorFile(
     partition: profile === "development"
       ? "persist:codex-web-gpt-dev-chatgpt"
       : "persist:codex-web-gpt-chatgpt",
-    idleUrl: "about:blank#codex-web-gpt-browser-host",
+    idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB",
     createdAt: new Date().toISOString(),
   })}\n`, { mode: 0o600 });
@@ -291,7 +292,7 @@ test("launcher page selection uses the owned surface marker instead of URL order
     evaluate: async () => "another_surface_id_0123456789ABC",
   } as unknown as Page;
   const ownedPage = {
-    url: () => "about:blank#codex-web-gpt-browser-host",
+    url: () => LAUNCHER_BROWSER_IDLE_URL,
     evaluate: async () => descriptor.surfaceId,
   } as unknown as Page;
   const context = {

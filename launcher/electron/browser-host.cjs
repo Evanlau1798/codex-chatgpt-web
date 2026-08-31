@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomBytes } = require("node:crypto");
-const { WebContentsView, shell } = require("electron");
+const { WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { readJsonFile } = require("./json-file.cjs");
 const {
@@ -13,6 +13,11 @@ const { createTurnInteractionShield, TURN_INTERACTION_SHIELD_URL } = require("./
 const { processRunning } = require("./process-tree.cjs");
 const { showBrowserWindow } = require("./window-activation.cjs");
 const {
+  refreshTurnLeasesAfterSuspension,
+  shouldBlockSleepForTurns,
+  sweepGapIndicatesSuspension,
+} = require("./turn-suspension.cjs");
+const {
   browserViewVisible,
   constrainBrowserBounds,
   navigateBrowser,
@@ -23,7 +28,8 @@ const {
 
 const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 const CHATGPT_ORIGIN = "https://chatgpt.com";
-const IDLE_BROWSER_URL = "about:blank#codex-web-gpt-browser-host";
+const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
+const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
 const MAX_BROWSER_VIEW_DIMENSION = 16_384;
 const MAX_BROWSER_TABS = 6;
 const MAX_CANCELLED_TURN_TRACES = 256;
@@ -37,6 +43,7 @@ const TURN_TAB_BOOTSTRAP_TIMEOUT_MS = 120_000;
 const RETAINED_TURN_TAB_TTL_MS = 30 * 60 * 1000;
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
 const CHATGPT_AUTH_SESSION_TIMEOUT_MS = 5_000;
+const WINDOW_VISIBILITY_EVENTS = ["show", "hide", "minimize", "restore"];
 const CHATGPT_BACKEND_REQUEST_FILTER = { urls: [`${CHATGPT_ORIGIN}/backend-api/*`] };
 const ZOOM_FACTORS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const SHELL_ZOOM_LEVEL_STEP = 0.5;
@@ -118,6 +125,28 @@ function allowedAuthUrl(value) {
   return AUTH_PROVIDER_HOSTS.has(parsed.hostname);
 }
 
+function navigationOriginForLog(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? parsed.origin
+      : parsed.protocol;
+  } catch {
+    return "invalid-url";
+  }
+}
+
+function navigationErrorForLog(error) {
+  if (!error || typeof error !== "object") return { errorType: typeof error };
+  const detail = {
+    errorType: typeof error.name === "string" && error.name ? error.name : "Error",
+  };
+  if (typeof error.code === "string" || typeof error.code === "number") {
+    detail.errorCode = error.code;
+  }
+  return detail;
+}
+
 function isTemporaryChatUrl(value) {
   let parsed;
   try {
@@ -163,6 +192,71 @@ class BrowserTurnCancelledError extends Error {
     this.name = "BrowserTurnCancelledError";
     this.code = "turn_cancelled";
   }
+}
+
+function loadCommittedBrowserSurface(
+  contents,
+  url,
+  timeoutMs = PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS,
+) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new Error("Browser idle document timeout must be positive");
+  }
+  if (!contents || contents.isDestroyed()) {
+    return Promise.reject(new Error("Browser closed before idle document bootstrap"));
+  }
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      contents.off("did-stop-loading", onReady);
+      contents.off("did-finish-load", onReady);
+      contents.off("did-fail-load", onFailed);
+      contents.off("render-process-gone", onRendererGone);
+      contents.off("destroyed", onDestroyed);
+    };
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const onReady = () => {
+      if (contents.isDestroyed()) {
+        finish(new Error("Browser closed during idle document bootstrap"));
+        return;
+      }
+      if (contents.getURL() === url) finish();
+    };
+    const onFailed = (_event, errorCode, errorDescription, failedUrl, mainFrame) => {
+      if (!mainFrame) return;
+      finish(new Error(
+        `Browser idle document failed: ${errorDescription} (${errorCode}) at ${failedUrl}`,
+      ));
+    };
+    const onRendererGone = (_event, details) => {
+      finish(new Error(`Browser renderer stopped during idle document bootstrap: ${details.reason}`));
+    };
+    const onDestroyed = () => finish(new Error("Browser closed during idle document bootstrap"));
+    const timeout = setTimeout(() => {
+      finish(new Error(`Browser idle document did not commit within ${timeoutMs}ms`));
+      if (!contents.isDestroyed()) contents.stop();
+    }, timeoutMs);
+    timeout.unref?.();
+    contents.on("did-stop-loading", onReady);
+    contents.on("did-finish-load", onReady);
+    contents.on("did-fail-load", onFailed);
+    contents.on("render-process-gone", onRendererGone);
+    contents.on("destroyed", onDestroyed);
+    try {
+      Promise.resolve(contents.loadURL(url)).then(onReady, error => {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      });
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 class BrowserHost {
@@ -220,8 +314,16 @@ class BrowserHost {
     this.authView = null;
     this.authNavigationError = null;
     this.homeNavigationTimeout = null;
+    this.lastTurnSweepAt = Date.now();
+    this.powerSaveBlockerId = null;
     this.turnLeaseSweep = setInterval(() => this.reapExpiredTurnTabs(), TURN_HEARTBEAT_SWEEP_MS);
     this.turnLeaseSweep.unref?.();
+    this.resumeListener = () => this.refreshTurnLeases("system_resume");
+    if (powerMonitor && typeof powerMonitor.on === "function") {
+      powerMonitor.on("resume", this.resumeListener);
+    } else {
+      this.resumeListener = null;
+    }
     this.boundsReady = false;
     this.bounds = { x: 0, y: 0, width: 1, height: 1 };
     this.state = {
@@ -248,18 +350,16 @@ class BrowserHost {
       },
     });
     window.contentView.addChildView(this.view);
-    this.view.setBounds(this.bounds);
-    this.view.setVisible(false);
+    this.windowVisibilityListener = () => this.syncViewVisibility();
+    for (const event of WINDOW_VISIBILITY_EVENTS) {
+      this.window.on(event, this.windowVisibilityListener);
+    }
     this.view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindShellZoomShortcuts(this.window.webContents);
     this.bindShellZoomShortcuts(this.view.webContents);
     this.bindChatGptBackendRecovery();
     this.bindWebContents();
-    this.initializationReady = this.view.webContents.loadURL(IDLE_BROWSER_URL).then(async () => {
-      await this.markOwnedSurface();
-      this.writeDescriptor();
-      this.logger.info("browser.initialized", { url: this.view.webContents.getURL() });
-    }).catch((error) => {
+    this.initializationReady = this.initializePrimaryView().catch((error) => {
       this.logger.error("browser.initialization_failed", {
         message: error instanceof Error ? error.message : String(error),
       });
@@ -270,6 +370,19 @@ class BrowserHost {
 
   async ready() {
     await this.initializationReady;
+  }
+
+  async initializePrimaryView() {
+    this.view.setBounds(this.hiddenTurnBounds());
+    this.view.setVisible(true);
+    try {
+      await loadCommittedBrowserSurface(this.view.webContents, IDLE_BROWSER_URL);
+      await this.markOwnedSurface();
+    } finally {
+      this.syncViewVisibility();
+    }
+    this.writeDescriptor();
+    this.logger.info("browser.initialized", { url: this.view.webContents.getURL() });
   }
 
   currentOperation() {
@@ -345,6 +458,7 @@ class BrowserHost {
       lastHeartbeatAt: Date.now(),
     };
     this.turnTabs.set(id, tab);
+    this.syncPowerSaveBlocker();
     this.window.contentView.addChildView(view);
     this.window.contentView.addChildView(interactionShield);
     this.presentTurnView(tab, false);
@@ -479,6 +593,7 @@ class BrowserHost {
         (error) => {
           tab.status = "error";
           tab.message = `Browser ownership failed: ${error instanceof Error ? error.message : String(error)}`;
+          this.syncPowerSaveBlocker();
           this.publishState?.(this.snapshot());
         },
       );
@@ -815,7 +930,42 @@ class BrowserHost {
     return this.snapshot();
   }
 
+  refreshTurnLeases(reason, now = Date.now()) {
+    const refreshed = refreshTurnLeasesAfterSuspension(
+      [...this.turnTabs.values()],
+      now,
+      TURN_TAB_BOOTSTRAP_TIMEOUT_MS,
+    );
+    if (refreshed.length > 0) {
+      this.logger.warn("browser.turn_leases_refreshed_after_suspension", { reason, traceIds: refreshed });
+    }
+  }
+
+  syncPowerSaveBlocker() {
+    // Under plain Node (the launcher test harness) require("electron") exposes no APIs; the
+    // blocker is an Electron-only concern and its absence must not break lease bookkeeping.
+    if (!powerSaveBlocker || typeof powerSaveBlocker.start !== "function") return;
+    const wanted = shouldBlockSleepForTurns([...this.turnTabs.values()]);
+    const active = this.powerSaveBlockerId !== null && powerSaveBlocker.isStarted(this.powerSaveBlockerId);
+    if (wanted && !active) {
+      this.powerSaveBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+      this.logger.info("browser.sleep_blocked_for_turns", { blockerId: this.powerSaveBlockerId });
+    } else if (!wanted && active) {
+      powerSaveBlocker.stop(this.powerSaveBlockerId);
+      this.logger.info("browser.sleep_block_released", { blockerId: this.powerSaveBlockerId });
+      this.powerSaveBlockerId = null;
+    }
+  }
+
   reapExpiredTurnTabs(now = Date.now()) {
+    const lastSweepAt = this.lastTurnSweepAt;
+    this.lastTurnSweepAt = now;
+    if (sweepGapIndicatesSuspension(lastSweepAt, now, TURN_HEARTBEAT_SWEEP_MS)) {
+      // The launcher itself was frozen, so missing heartbeats are evidence of the sleep, not of a
+      // dead helper. Reaping here is what turned every system sleep into a lost turn.
+      this.refreshTurnLeases("sweep_gap", now);
+      return;
+    }
     for (const tab of [...this.turnTabs.values()]) {
       if (tab.status === "ready") {
         if (now - (tab.lastHeartbeatAt ?? 0) < RETAINED_TURN_TAB_TTL_MS) continue;
@@ -933,7 +1083,9 @@ class BrowserHost {
   }
 
   syncViewVisibility() {
-    const visible = browserViewVisible(this.visible, this.surfaceActive, this.boundsReady);
+    const windowVisible = this.window.isVisible() && !this.window.isMinimized();
+    const visible = windowVisible
+      && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady);
     const selected = this.selectedTurnTab();
     this.view.setVisible(visible && !this.authView && !selected);
     for (const tab of this.turnTabs.values()) {
@@ -963,6 +1115,7 @@ class BrowserHost {
   removeTurnTab(tab, abortRunning) {
     if (!this.turnTabs.has(tab.id)) return;
     this.turnTabs.delete(tab.id);
+    this.syncPowerSaveBlocker();
     if (abortRunning && tab.status === "running") {
       this.closedTurnOwners.set(tab.traceId, tab.helperPid);
       tab.status = "aborted";
@@ -1329,6 +1482,7 @@ class BrowserHost {
     }
     const cancelledByUser = this.userCancelledTurnOwners.get(traceId) === helperPid;
     tab.status = status === "completed" ? "ready" : status === "aborted" ? "aborted" : "error";
+    this.syncPowerSaveBlocker();
     tab.message = status === "completed" ? "Task completed" : message || `ChatGPT turn ${status}`;
     tab.loading = false;
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.setBackgroundThrottling(true);
@@ -1711,9 +1865,20 @@ class BrowserHost {
       if (!contents.isDestroyed()) contents.off("before-input-event", handler);
     }
     this.shellZoomShortcutBindings.clear();
+    for (const event of WINDOW_VISIBILITY_EVENTS) {
+      this.window.off(event, this.windowVisibilityListener);
+    }
     this.closeAuthView(this.authView, true);
     this.clearHomeNavigationTimeout();
     if (this.turnLeaseSweep) clearInterval(this.turnLeaseSweep);
+    if (this.resumeListener && powerMonitor && typeof powerMonitor.removeListener === "function") {
+      powerMonitor.removeListener("resume", this.resumeListener);
+      this.resumeListener = null;
+    }
+    if (this.powerSaveBlockerId !== null && powerSaveBlocker && typeof powerSaveBlocker.stop === "function") {
+      powerSaveBlocker.stop(this.powerSaveBlockerId);
+      this.powerSaveBlockerId = null;
+    }
     for (const tab of this.turnTabs.values()) {
       if (tab.interactionShield) {
         try { this.window.contentView.removeChildView(tab.interactionShield); } catch {}
@@ -1735,5 +1900,8 @@ module.exports = {
   IDLE_BROWSER_URL,
   isChatGptCloudflareChallengeResponse,
   isTemporaryChatUrl,
+  loadCommittedBrowserSurface,
+  navigationErrorForLog,
+  navigationOriginForLog,
   TEMPORARY_CHAT_URL,
 };

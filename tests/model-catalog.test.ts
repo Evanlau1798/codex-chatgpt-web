@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { defaultConfig } from "../src/config";
-import { CHATGPT_WEB_LUNA_MODEL_ROUTE, CHATGPT_WEB_MODEL_ROUTES, resolveChatGptWebContextLimits } from "../src/chatgpt-web-models";
+import { CHATGPT_WEB_LUNA_MODEL_ROUTE, CHATGPT_WEB_LUNA_MODEL_ROUTES, CHATGPT_WEB_MODEL_ROUTES, resolveChatGptWebContextLimits } from "../src/chatgpt-web-models";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
 
 function source(): Record<string, unknown> {
@@ -207,12 +207,13 @@ describe("native /models augmentation", () => {
     ]);
   });
 
-  test("publishes one Luna route when the account exposes no Sol selector", () => {
+  test("publishes Luna and Think routes when the account exposes no Sol selector", () => {
     const config = defaultConfig("full");
     config.solAvailable = false;
     const models = augmentNativeModelCatalog(source(), config).models as Array<Record<string, unknown>>;
     const web = models.filter(model => String(model.slug).startsWith("chatgpt-web/"));
-    expect(web).toHaveLength(1);
+    expect(web).toHaveLength(2);
+    expect(web.map(model => model.slug)).toEqual(CHATGPT_WEB_LUNA_MODEL_ROUTES.map(route => route.slug));
     expect(web[0]).toMatchObject({
       slug: CHATGPT_WEB_LUNA_MODEL_ROUTE.slug,
       display_name: CHATGPT_WEB_LUNA_MODEL_ROUTE.displayName,

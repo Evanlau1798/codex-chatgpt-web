@@ -76,7 +76,7 @@ describe("reversible Claude Code integration", () => {
     expect(existsSync(getClaudeIntegrationJournalPath())).toBe(true);
   });
 
-  test("exposes only Luna to Claude Code on Luna-only accounts", () => {
+  test("exposes Luna and Think to Claude Code on Luna-only accounts", () => {
     fixture();
     const config = defaultConfig("browser-only");
     config.solAvailable = false;
@@ -85,7 +85,10 @@ describe("reversible Claude Code integration", () => {
 
     const installed = settings();
     expect(installed.model).toBe("claude-chatgpt-web-luna");
-    expect(installed.availableModels).toEqual(["claude-chatgpt-web-luna"]);
+    expect(installed.availableModels).toEqual([
+      "claude-chatgpt-web-luna",
+      "claude-chatgpt-web-think",
+    ]);
     uninstallClaudeIntegration();
     expect(existsSync(getClaudeSettingsPath())).toBe(false);
   });

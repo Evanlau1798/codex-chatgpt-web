@@ -64,6 +64,19 @@ test("Luna-only capability binds the default model without a UI effort selector"
     effort: "low",
     displayLabel: "Luna",
     uiEffortIndex: null,
+    thinkEnabled: false,
+    localTools: true,
+  });
+  expect(resolveChatGptWebModelMode(CHATGPT_WEB_LUNA_MODEL_ID, "medium", {
+    localToolsEnabled: true,
+    solAvailable: false,
+    proAvailable: false,
+  })).toEqual({
+    modelId: CHATGPT_WEB_LUNA_MODEL_ID,
+    effort: "medium",
+    displayLabel: "Think",
+    uiEffortIndex: null,
+    thinkEnabled: true,
     localTools: true,
   });
   expect(() => resolveChatGptWebModelMode(CHATGPT_WEB_MODEL_ID, "low", {

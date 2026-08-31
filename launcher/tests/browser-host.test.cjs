@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
+const { resolve } = require("node:path");
 const {
   browserViewVisible,
   constrainBrowserBounds,
@@ -13,9 +14,139 @@ const {
 const {
   allowedAuthUrl,
   BrowserHost,
+  IDLE_BROWSER_URL,
   isChatGptCloudflareChallengeResponse,
   isTemporaryChatUrl,
+  loadCommittedBrowserSurface,
+  navigationErrorForLog,
+  navigationOriginForLog,
 } = require("../electron/browser-host.cjs");
+
+test("Electron and Bun agree on the exact launcher idle surface", () => {
+  const clientSource = fs.readFileSync(
+    resolve(__dirname, "../../src/launcher-browser-host.ts"),
+    "utf8",
+  );
+  assert.ok(clientSource.includes(
+    `export const LAUNCHER_BROWSER_IDLE_URL = ${JSON.stringify(IDLE_BROWSER_URL)};`,
+  ));
+});
+
+test("primary browser bootstrap accepts only the exact committed idle document", async () => {
+  const calls = [];
+  const contents = new EventEmitter();
+  let currentUrl = "about:blank";
+  contents.isDestroyed = () => false;
+  contents.getURL = () => currentUrl;
+  contents.stop = () => calls.push("stop");
+  contents.loadURL = async (url) => {
+    calls.push(["load", url]);
+    currentUrl = url;
+  };
+
+  await loadCommittedBrowserSurface(contents, IDLE_BROWSER_URL, 50);
+
+  assert.deepEqual(calls, [["load", IDLE_BROWSER_URL]]);
+  assert.equal(contents.listenerCount("did-stop-loading"), 0);
+  assert.equal(contents.listenerCount("did-finish-load"), 0);
+  assert.equal(contents.listenerCount("did-fail-load"), 0);
+  assert.equal(contents.listenerCount("render-process-gone"), 0);
+  assert.equal(contents.listenerCount("destroyed"), 0);
+});
+
+test("primary browser bootstrap fails closed on navigation, renderer, and timeout boundaries", async () => {
+  const keepTestAlive = setTimeout(() => {}, 100);
+  try {
+    const failureCases = [
+      {
+        event: ["did-fail-load", {}, -2, "ERR_FAILED", IDLE_BROWSER_URL, true],
+        expected: /idle document failed: ERR_FAILED \(-2\)/,
+      },
+      {
+        event: ["render-process-gone", {}, { reason: "crashed", exitCode: -2147483645 }],
+        expected: /renderer stopped during idle document bootstrap: crashed/,
+      },
+    ];
+    for (const failure of failureCases) {
+      const contents = new EventEmitter();
+      contents.isDestroyed = () => false;
+      contents.getURL = () => "about:blank";
+      contents.stop = () => {};
+      contents.loadURL = () => {
+        queueMicrotask(() => contents.emit(...failure.event));
+        return new Promise(() => {});
+      };
+      await assert.rejects(
+        loadCommittedBrowserSurface(contents, IDLE_BROWSER_URL, 50),
+        failure.expected,
+      );
+    }
+
+    const stalled = new EventEmitter();
+    const calls = [];
+    stalled.isDestroyed = () => false;
+    stalled.getURL = () => "about:blank";
+    stalled.stop = () => calls.push("stop");
+    stalled.loadURL = () => new Promise(() => {});
+    await assert.rejects(
+      loadCommittedBrowserSurface(stalled, IDLE_BROWSER_URL, 5),
+      /idle document did not commit within 5ms/,
+    );
+    assert.deepEqual(calls, ["stop"]);
+  } finally {
+    clearTimeout(keepTestAlive);
+  }
+});
+
+test("primary browser initialization keeps its view offscreen but visible until ownership is committed", async () => {
+  const calls = [];
+  let currentUrl = "about:blank";
+  const contents = new EventEmitter();
+  contents.isDestroyed = () => false;
+  contents.getURL = () => currentUrl;
+  contents.stop = () => calls.push("stop");
+  contents.loadURL = async (url) => {
+    calls.push(["load", url]);
+    currentUrl = url;
+  };
+  const hiddenBounds = { x: 1121, y: 721, width: 1120, height: 720 };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    view: {
+      setBounds: bounds => calls.push(["bounds", bounds]),
+      setVisible: visible => calls.push(["visible", visible]),
+      webContents: contents,
+    },
+    hiddenTurnBounds: () => hiddenBounds,
+    markOwnedSurface: async () => calls.push("owned"),
+    syncViewVisibility: () => calls.push("sync"),
+    writeDescriptor: () => calls.push("descriptor"),
+    logger: { info: (event, detail) => calls.push([event, detail]) },
+  });
+
+  await BrowserHost.prototype.initializePrimaryView.call(fixture);
+
+  assert.deepEqual(calls, [
+    ["bounds", hiddenBounds],
+    ["visible", true],
+    ["load", IDLE_BROWSER_URL],
+    "owned",
+    "sync",
+    "descriptor",
+    ["browser.initialized", { url: IDLE_BROWSER_URL }],
+  ]);
+});
+
+test("authentication diagnostics retain only origin and non-sensitive error metadata", () => {
+  assert.equal(
+    navigationOriginForLog("https://accounts.google.com/o/oauth2/v2/auth?state=secret&login_hint=user@example.com"),
+    "https://accounts.google.com",
+  );
+  assert.equal(navigationOriginForLog("not a URL with user@example.com"), "invalid-url");
+  assert.deepEqual(
+    navigationErrorForLog(Object.assign(new Error("loading https://chatgpt.com/c/private"), { code: "ERR_ABORTED" })),
+    { errorType: "Error", errorCode: "ERR_ABORTED" },
+  );
+});
 
 test("only an explicit Cloudflare challenge on a ChatGPT backend response triggers recovery", () => {
   assert.equal(isChatGptCloudflareChallengeResponse({
@@ -258,7 +389,11 @@ test("hidden turn tabs receive an explicit renderer viewport before moving offsc
     selectedTabId: tab.id,
     turnTabs: new Map([[tab.id, tab]]),
     authView: null,
-    window: { getContentSize: () => [1120, 720] },
+    window: {
+      getContentSize: () => [1120, 720],
+      isMinimized: () => false,
+      isVisible: () => true,
+    },
     view: { setVisible: visible => events.push(["home", visible]) },
   });
 
@@ -281,6 +416,57 @@ test("hidden turn tabs receive an explicit renderer viewport before moving offsc
   assert.equal(tab.deviceEmulationDirty, false);
 });
 
+test("turn tabs use the hidden viewport when the launcher window is hidden", () => {
+  const events = [];
+  const tab = {
+    id: "tab-hidden-window",
+    status: "running",
+    rendererReady: true,
+    deviceEmulationViewport: null,
+    deviceEmulationDirty: true,
+    view: {
+      setBounds: bounds => events.push(["bounds", bounds]),
+      setVisible: visible => events.push(["visible", visible]),
+      webContents: {
+        enableDeviceEmulation: options => events.push(["emulate", options]),
+        disableDeviceEmulation: () => events.push(["disable-emulation"]),
+      },
+    },
+  };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    visible: true,
+    surfaceActive: true,
+    boundsReady: true,
+    bounds: { x: 280, y: 64, width: 840, height: 656 },
+    selectedTabId: tab.id,
+    turnTabs: new Map([[tab.id, tab]]),
+    authView: null,
+    window: {
+      getContentSize: () => [1120, 720],
+      isMinimized: () => false,
+      isVisible: () => false,
+    },
+    view: { setVisible: visible => events.push(["home", visible]) },
+  });
+
+  BrowserHost.prototype.syncViewVisibility.call(fixture);
+
+  assert.deepEqual(events, [
+    ["home", false],
+    ["emulate", {
+      screenPosition: "desktop",
+      screenSize: { width: 1120, height: 720 },
+      viewPosition: { x: 0, y: 0 },
+      deviceScaleFactor: 0,
+      viewSize: { width: 1120, height: 720 },
+      scale: 1,
+    }],
+    ["bounds", { x: 1121, y: 721, width: 1120, height: 720 }],
+    ["visible", true],
+  ]);
+  assert.deepEqual(tab.deviceEmulationViewport, { width: 1120, height: 720 });
+});
+
 test("new turn tabs defer device emulation until their renderer finishes loading", () => {
   const events = [];
   const tab = {
@@ -299,7 +485,11 @@ test("new turn tabs defer device emulation until their renderer finishes loading
     },
   };
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
-    window: { getContentSize: () => [1120, 720] },
+    window: {
+      getContentSize: () => [1120, 720],
+      isMinimized: () => false,
+      isVisible: () => true,
+    },
   });
 
   BrowserHost.prototype.presentTurnView.call(fixture, tab, false);
@@ -337,7 +527,11 @@ test("visible turn tabs establish native bounds before clearing background emula
     selectedTabId: tab.id,
     turnTabs: new Map([[tab.id, tab]]),
     authView: null,
-    window: { getContentSize: () => [1120, 720] },
+    window: {
+      getContentSize: () => [1120, 720],
+      isMinimized: () => false,
+      isVisible: () => true,
+    },
     view: { setVisible: visible => events.push(["home", visible]) },
   });
 
@@ -1059,7 +1253,7 @@ test("removing the final turn tab hides an uninitialized idle host instead of ex
     closedTurnOwners: new Map(),
     selectedTabId: tab.id,
     window: { contentView: { removeChildView: () => calls.push("view-remove") } },
-    view: { webContents: { getURL: () => "about:blank#codex-web-gpt-browser-host" } },
+    view: { webContents: { getURL: () => IDLE_BROWSER_URL } },
     syncViewVisibility() {},
     hide: () => calls.push("hide"),
     snapshot: () => ({ tabs: [] }),
@@ -1134,7 +1328,7 @@ test("launcher session refresh resolves persisted authentication before setup ac
     },
     view: {
       webContents: {
-        getURL: () => "about:blank#codex-web-gpt-browser-host",
+        getURL: () => IDLE_BROWSER_URL,
         loadURL: async (url) => calls.push(["load", url]),
       },
     },
@@ -1249,7 +1443,11 @@ test("selecting a task tab shows and focuses its owned Playwright surface", () =
     boundsReady: true,
     bounds: { x: 260, y: 78, width: 800, height: 600 },
     authView: null,
-    window: { getContentSize: () => [1120, 720] },
+    window: {
+      getContentSize: () => [1120, 720],
+      isMinimized: () => false,
+      isVisible: () => true,
+    },
     snapshot: () => ({ activeTabId: fixture.selectedTabId }),
     publishState() {},
     writeDescriptor() {},

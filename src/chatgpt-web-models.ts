@@ -181,6 +181,23 @@ export const CHATGPT_WEB_LUNA_MODEL_ROUTE: ChatGptWebModelRoute = {
   requiresPro: false,
 };
 
+export const CHATGPT_WEB_LUNA_THINK_MODEL_ROUTE: ChatGptWebModelRoute = {
+  slug: "chatgpt-web/think",
+  displayName: "ChatGPT Web — Think",
+  description: "ChatGPT Web Think for Luna-only accounts.",
+  backendModel: CHATGPT_WEB_LUNA_BACKEND_MODEL,
+  codexEffort: "low",
+  // The backend model remains Luna. This internal adapter effort distinguishes the explicit
+  // Think route after Codex has selected its separate catalog row.
+  adapterEffort: "medium",
+  requiresPro: false,
+};
+
+export const CHATGPT_WEB_LUNA_MODEL_ROUTES: readonly ChatGptWebModelRoute[] = [
+  CHATGPT_WEB_LUNA_MODEL_ROUTE,
+  CHATGPT_WEB_LUNA_THINK_MODEL_ROUTE,
+];
+
 /**
  * The selected Codex model is the authoritative ChatGPT browser mode. Codex's signed desktop UI
  * always renders an Effort row, so every routed model advertises exactly one immutable protocol
@@ -236,7 +253,7 @@ export const CHATGPT_WEB_MODEL_ROUTES: readonly ChatGptWebModelRoute[] = [
 ];
 
 const routesBySlug = new Map(
-  [CHATGPT_WEB_LUNA_MODEL_ROUTE, ...CHATGPT_WEB_MODEL_ROUTES].map(route => [route.slug, route]),
+  [...CHATGPT_WEB_LUNA_MODEL_ROUTES, ...CHATGPT_WEB_MODEL_ROUTES].map(route => [route.slug, route]),
 );
 
 export function isChatGptWebModelSlug(modelId: string): boolean {
@@ -246,7 +263,7 @@ export function isChatGptWebModelSlug(modelId: string): boolean {
 export function availableChatGptWebModelRoutes(
   capabilities: ChatGptWebAccountCapabilities,
 ): readonly ChatGptWebModelRoute[] {
-  if (!capabilities.solAvailable) return [CHATGPT_WEB_LUNA_MODEL_ROUTE];
+  if (!capabilities.solAvailable) return CHATGPT_WEB_LUNA_MODEL_ROUTES;
   return capabilities.proAvailable
     ? CHATGPT_WEB_MODEL_ROUTES
     : CHATGPT_WEB_MODEL_ROUTES.filter(route => !route.requiresPro);
@@ -258,7 +275,7 @@ export function requireChatGptWebModelRoute(
 ): ChatGptWebModelRoute {
   const route = routesBySlug.get(modelId);
   if (!route) throw new Error(`ChatGPT web model is not enabled: ${modelId}`);
-  if (route === CHATGPT_WEB_LUNA_MODEL_ROUTE) {
+  if (route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
     if (capabilities.solAvailable) {
       throw new Error(`${route.displayName} is only available for Luna-only accounts`);
     }

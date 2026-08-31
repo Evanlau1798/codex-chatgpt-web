@@ -5,6 +5,8 @@ import {
   CHATGPT_WEB_BACKEND_MODEL,
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
   CHATGPT_WEB_LUNA_MODEL_ROUTE,
+  CHATGPT_WEB_LUNA_MODEL_ROUTES,
+  CHATGPT_WEB_LUNA_THINK_MODEL_ROUTE,
   CHATGPT_WEB_MODEL_ROUTES,
   requireChatGptWebModelRoute,
   resolveChatGptWebContextLimits,
@@ -54,11 +56,13 @@ describe("fixed ChatGPT Web model routes", () => {
       .toThrow("Pro is not available for this account");
   });
 
-  test("exposes only Luna when the authenticated account has no Sol selector", () => {
+  test("exposes Luna and Think when the authenticated account has no Sol selector", () => {
     const free = { solAvailable: false, proAvailable: false };
-    expect(availableChatGptWebModelRoutes(free)).toEqual([CHATGPT_WEB_LUNA_MODEL_ROUTE]);
+    expect(availableChatGptWebModelRoutes(free)).toEqual(CHATGPT_WEB_LUNA_MODEL_ROUTES);
     expect(requireChatGptWebModelRoute("chatgpt-web/luna", free).backendModel)
       .toBe(CHATGPT_WEB_LUNA_BACKEND_MODEL);
+    expect(requireChatGptWebModelRoute("chatgpt-web/think", free))
+      .toBe(CHATGPT_WEB_LUNA_THINK_MODEL_ROUTE);
     expect(() => requireChatGptWebModelRoute("chatgpt-web/light", free))
       .toThrow("Luna-only account");
     expect(() => requireChatGptWebModelRoute("chatgpt-web/luna", {
@@ -243,5 +247,15 @@ describe("fixed ChatGPT Web model routes", () => {
     expect(route).toBe(CHATGPT_WEB_LUNA_MODEL_ROUTE);
     expect(request.modelId).toBe(CHATGPT_WEB_LUNA_BACKEND_MODEL);
     expect(request.options.reasoning).toBe("low");
+  });
+
+  test("binds the Think route to the Luna backend with explicit Think mode", () => {
+    const config = defaultConfig("browser-only");
+    config.solAvailable = false;
+    const request = parsed("chatgpt-web/think", "high");
+    const route = routeChatGptWebRequest(request, config);
+    expect(route).toBe(CHATGPT_WEB_LUNA_THINK_MODEL_ROUTE);
+    expect(request.modelId).toBe(CHATGPT_WEB_LUNA_BACKEND_MODEL);
+    expect(request.options.reasoning).toBe("medium");
   });
 });

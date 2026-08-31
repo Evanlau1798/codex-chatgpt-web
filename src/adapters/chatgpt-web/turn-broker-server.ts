@@ -11,6 +11,8 @@ import {
 
 type BrokerDispatch = (request: BrokerRequest) => unknown | Promise<unknown>;
 
+const MAX_UNIX_SOCKET_PATH_BYTES = 103;
+
 function writeSocketResponse(socket: Socket, response: BrokerResponse): void {
   const line = `${JSON.stringify(response)}\n`;
   if (line.length > MAX_BROKER_LINE_CHARS) {
@@ -70,7 +72,17 @@ function handleSocket(socket: Socket, dispatch: BrokerDispatch): void {
 export function startTurnBrokerServer(socketPath: string, dispatch: BrokerDispatch): Promise<Server> {
   return new Promise<Server>((resolveStart, rejectStart) => {
     const windowsPipe = isWindowsPipeEndpoint(socketPath);
-    if (!windowsPipe) mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
+    if (!windowsPipe) {
+      const encodedLength = Buffer.byteLength(socketPath);
+      if (encodedLength > MAX_UNIX_SOCKET_PATH_BYTES) {
+        rejectStart(new Error(
+          `ChatGPT web broker socket path is ${encodedLength} bytes, over the`
+          + ` ${MAX_UNIX_SOCKET_PATH_BYTES}-byte portable Unix socket limit: ${socketPath}`,
+        ));
+        return;
+      }
+      mkdirSync(dirname(socketPath), { recursive: true, mode: 0o700 });
+    }
     const listen = () => {
       const server = createServer(socket => handleSocket(socket, dispatch));
       server.once("error", rejectStart);

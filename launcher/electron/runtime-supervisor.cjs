@@ -262,6 +262,10 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     throw new Error("Runtime configuration has an invalid experimentalBiggerContext");
   }
   config = normalizeContextModes(config);
+  if (config.stallTimeoutSec !== undefined
+    && (!Number.isFinite(config.stallTimeoutSec) || config.stallTimeoutSec <= 0)) {
+    throw new Error("Runtime configuration has an invalid stallTimeoutSec");
+  }
   if (config.proAvailable && !config.solAvailable) {
     throw new Error("Runtime configuration cannot enable Pro without Sol");
   }

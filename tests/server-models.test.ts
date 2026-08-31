@@ -126,7 +126,7 @@ test("Luna-only account exposes no paid ChatGPT Web routes", async () => {
   );
   const body = await response.json() as { models: Array<{ slug: string }> };
   expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/")).map(model => model.slug))
-    .toEqual(["chatgpt-web/luna"]);
+    .toEqual(["chatgpt-web/luna", "chatgpt-web/think"]);
 });
 
 test("ChatGPT-only native catalog rows do not turn model discovery into a 502", async () => {

@@ -96,7 +96,7 @@ describe("compact mode routing", () => {
         retryable: false,
       });
     }
-    expect(events).toEqual([]);
+    expect(events).toEqual([{ type: "heartbeat" }]);
   });
 
   test("rebuilds a fresh Web compact turn when the enhanced source session was lost", async () => {

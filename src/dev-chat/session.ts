@@ -6,6 +6,7 @@ import { estimateTokens } from "../lib/token-estimate";
 
 export const DEV_CHAT_MODELS = [
   "chatgpt-web/luna",
+  "chatgpt-web/think",
   "chatgpt-web/light",
   "chatgpt-web/medium",
   "chatgpt-web/high",

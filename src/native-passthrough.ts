@@ -1,5 +1,6 @@
 import { readJsonRequestBody } from "./http-body";
 import { safeDiagnosticIdentifier, safeErrorMetadata } from "./http-stream-diagnostics";
+import { tolerateCompletedNativeSseReset } from "./native-sse-stream";
 import { BRIDGE_COMPACTION_PREFIX, compactionItemToText } from "./responses/compaction";
 import { BRIDGE_REASONING_PREFIX } from "./responses/reasoning-envelope";
 
@@ -383,7 +384,18 @@ export async function forwardNativeCodexRequest(
     errorName: null,
     errorCode: null,
   });
-  return new Response(upstream.body, {
+  const isEventStream = (upstream.headers.get("content-type") ?? "")
+    .toLowerCase()
+    .includes("text/event-stream");
+  const responseBody = upstream.body && isEventStream
+    ? tolerateCompletedNativeSseReset(upstream.body, bytes => {
+        console.warn(
+          `[codex-chatgpt-web] native_upstream_unclean_close endpoint=${endpoint} bytes=${bytes}`
+          + " (turn had already completed; closing the client stream normally)",
+        );
+      })
+    : upstream.body;
+  return new Response(responseBody, {
     status: upstream.status,
     statusText: upstream.statusText,
     headers: endToEndHeaders(upstream.headers),

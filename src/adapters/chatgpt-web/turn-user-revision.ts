@@ -16,6 +16,18 @@ function itemTurnId(value: unknown): string | undefined {
   return typeof turnId === "string" ? turnId : undefined;
 }
 
+function isTurnAbortedNotice(content: unknown): boolean {
+  const values = typeof content === "string" ? [content] : Array.isArray(content)
+    ? content.flatMap(part => {
+        const value = record(part);
+        return (value?.type === "input_text" || value?.type === "text") && typeof value.text === "string"
+          ? [value.text]
+          : [];
+      })
+    : [];
+  return /^<turn_aborted>[\s\S]*<\/turn_aborted>$/.test(values.join("\n").trim());
+}
+
 /** Select a revision from the current turn without crossing a contextual-only turn boundary. */
 export function currentTurnUserRevision(
   rawBody: unknown,
@@ -32,11 +44,13 @@ export function currentTurnUserRevision(
     const serverOwnedId = typeof item.id === "string" && item.id.length > 0;
     if (messageTurnId === undefined && !serverOwnedId) continue;
     const revision = { content: item.content, ...(messageTurnId ? { turnId: messageTurnId } : {}) };
+    const currentTurnAbortText = messageTurnId === expectedTurnId && isTurnAbortedNotice(item.content);
+    if (isTurnAbortedNotice(item.content) && messageTurnId && messageTurnId !== expectedTurnId) continue;
     if (messageTurnId !== undefined && messageTurnId !== expectedTurnId) {
       return contextualFallback ?? revision;
     }
     if (contextualFallback && messageTurnId === undefined) return contextualFallback;
-    if (isContextualCodexUserMessage(item.content)) {
+    if (!currentTurnAbortText && isContextualCodexUserMessage(item.content)) {
       contextualFallback ??= revision;
       continue;
     }
