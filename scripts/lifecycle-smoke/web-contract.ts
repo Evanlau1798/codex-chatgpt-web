@@ -131,8 +131,8 @@ const capture = deriveWebContractCapabilities({
   connectorVerified,
   responseAccepted: result.response.ok,
   finalProjection,
-  idle: await waitForBrowserIdle(baseUrl),
+  browserIdle: await waitForBrowserIdle(baseUrl),
 });
-if (Object.values(capture).some(value => !value)) throw new Error("Web contract smoke did not return idle");
+if (Object.values(capture).some(value => !value)) throw new Error("Web contract smoke did not return browser idle");
 save({ status: "passed", at: new Date(now).toISOString(), capabilities: capture });
 process.stdout.write(`WEB_CONTRACT_SMOKE_OK ${JSON.stringify(capture)}\n`);

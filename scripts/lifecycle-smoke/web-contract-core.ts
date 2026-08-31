@@ -8,7 +8,7 @@ const capabilityKeys = [
   "connector",
   "submitted",
   "finalProjection",
-  "idle",
+  "browserIdle",
 ] as const;
 
 export type WebContractCapture = Record<(typeof capabilityKeys)[number], boolean>;
@@ -38,7 +38,7 @@ export function deriveWebContractCapabilities(evidence: {
   connectorVerified: boolean;
   responseAccepted: boolean;
   finalProjection: boolean;
-  idle: boolean;
+  browserIdle: boolean;
 }): WebContractCapture {
   return captureWebContract({
     authenticated: evidence.session.authenticated,
@@ -48,7 +48,7 @@ export function deriveWebContractCapabilities(evidence: {
     connector: evidence.connectorVerified,
     submitted: evidence.responseAccepted,
     finalProjection: evidence.finalProjection,
-    idle: evidence.idle,
+    browserIdle: evidence.browserIdle,
   });
 }
 

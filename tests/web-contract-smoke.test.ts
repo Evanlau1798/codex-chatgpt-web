@@ -33,7 +33,7 @@ describe("lightweight Web contract smoke", () => {
       connector: true,
       submitted: true,
       finalProjection: true,
-      idle: true,
+      browserIdle: true,
       rawHtml: "<main>private response</main>",
       account: "private@example.test",
       url: "https://chatgpt.com/?token=secret",
@@ -47,7 +47,7 @@ describe("lightweight Web contract smoke", () => {
       connector: true,
       submitted: true,
       finalProjection: true,
-      idle: true,
+      browserIdle: true,
     });
     expect(JSON.stringify(captured)).not.toContain("private");
     expect(JSON.stringify(captured)).not.toContain("secret");
@@ -59,7 +59,7 @@ describe("lightweight Web contract smoke", () => {
       connectorVerified: false,
       responseAccepted: true,
       finalProjection: false,
-      idle: true,
+      browserIdle: true,
     })).toEqual({
       authenticated: true,
       temporary: true,
@@ -68,7 +68,7 @@ describe("lightweight Web contract smoke", () => {
       connector: false,
       submitted: true,
       finalProjection: false,
-      idle: true,
+      browserIdle: true,
     });
   });
 
