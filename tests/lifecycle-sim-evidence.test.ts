@@ -14,6 +14,10 @@ test("deterministic lifecycle evidence rejects missing and out-of-order phases",
     ["request", "tool_result", "tool_call", "compact", "interrupt", "resume", "idle"],
     ["request", "tool_call", "tool_result", "compact", "interrupt", "resume", "idle"],
   )).toThrow("out of order");
+  expect(() => assertLifecycleEvidence(
+    ["request", "tool_call", "tool_result", "idle", "idle"],
+    ["request", "tool_call", "tool_result", "idle"],
+  )).toThrow("unexpected lifecycle phase");
 });
 
 test("single lifecycle evidence rejects duplicate steering delivery", () => {

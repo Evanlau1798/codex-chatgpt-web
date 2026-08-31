@@ -39,7 +39,7 @@ writeFileSync(join(root, "models.json"), `${JSON.stringify(catalog)}\n`);
 type Role = "root" | "child" | "grandchild";
 const steps = new Map<Role, number>();
 const rolesByThread = new Map<string, Role>();
-const observed = new Set<string>();
+const observed: string[] = [];
 const failures: string[] = [];
 const requestLog: Array<{
   role: Role;
@@ -49,7 +49,8 @@ const requestLog: Array<{
   model?: string;
   reasoningEffort?: string;
   inputTypes: string[];
-  functionOutputs: string[];
+  functionCalls: Array<{ callId: string; name: string; index: number }>;
+  functionOutputs: Array<{ callId: string; output: string; index: number }>;
   encryptedContent: boolean;
 }> = [];
 
@@ -199,7 +200,8 @@ function responseFor(role: Role, step: number, body: Record<string, unknown>): A
     if (step === 3) return toolCall("wait_agent", protocol === "v1"
       ? { targets: [spawnedAgentId(body)], timeout_ms: 500 }
       : { timeout_ms: 500 });
-    return finalAnswer("ROOT_LIFECYCLE_OK");
+    if (step === 4) return finalAnswer("ROOT_LIFECYCLE_OK");
+    throw new Error(`Unexpected root lifecycle step ${step}`);
   }
   if (role === "child") {
     if (step === 0) return toolCall("spawn_agent", protocol === "v1" ? {
@@ -218,9 +220,11 @@ function responseFor(role: Role, step: number, body: Record<string, unknown>): A
       ? { targets: [spawnedAgentId(body)], timeout_ms: 500 }
       : { timeout_ms: 500 });
     if (step === 2) return finalAnswer("CHILD_LIFECYCLE_OK");
-    return finalAnswer("CHILD_FOLLOWUP_OK");
+    if (step === 3) return finalAnswer("CHILD_FOLLOWUP_OK");
+    throw new Error(`Unexpected child lifecycle step ${step}`);
   }
-  return finalAnswer("GRANDCHILD_LIFECYCLE_OK");
+  if (step === 0) return finalAnswer("GRANDCHILD_LIFECYCLE_OK");
+  throw new Error(`Unexpected grandchild lifecycle step ${step}`);
 }
 
 const server = Bun.serve({
@@ -237,7 +241,7 @@ const server = Bun.serve({
       const role = roleOf(body);
       const step = steps.get(role) ?? 0;
       steps.set(role, step + 1);
-      observed.add(`${role}:${step}`);
+      observed.push(`${role}:${step}`);
       const clientMetadata = body.client_metadata && typeof body.client_metadata === "object"
         ? body.client_metadata as Record<string, unknown>
         : {};
@@ -263,11 +267,28 @@ const server = Bun.serve({
             ? String((item as { type: string }).type)
             : "unknown")
           : [],
+        functionCalls: Array.isArray(body.input)
+          ? body.input.flatMap((item, index) => item && typeof item === "object"
+            && (item as { type?: unknown }).type === "function_call"
+            && typeof (item as { call_id?: unknown }).call_id === "string"
+            && typeof (item as { name?: unknown }).name === "string"
+            ? [{
+              callId: String((item as { call_id: string }).call_id),
+              name: String((item as { name: string }).name),
+              index,
+            }]
+            : [])
+          : [],
         functionOutputs: Array.isArray(body.input)
-          ? body.input.flatMap(item => item && typeof item === "object"
+          ? body.input.flatMap((item, index) => item && typeof item === "object"
             && (item as { type?: unknown }).type === "function_call_output"
+            && typeof (item as { call_id?: unknown }).call_id === "string"
             && typeof (item as { output?: unknown }).output === "string"
-            ? [String((item as { output: string }).output).slice(0, 500)]
+            ? [{
+              callId: String((item as { call_id: string }).call_id),
+              output: String((item as { output: string }).output).slice(0, 500),
+              index,
+            }]
             : [])
           : [],
         encryptedContent: hasEncryptedContent(body.input),
@@ -357,13 +378,6 @@ try {
         + `\nRequests: ${JSON.stringify(requestLog)}\nCodex output: ${stdout}\n${stderr}`,
     );
   }
-  for (const required of [
-    "root:0", "root:1", "root:2", "root:3", "root:4",
-    "child:0", "child:1", "child:2", "child:3",
-    "grandchild:0",
-  ]) {
-    if (!observed.has(required)) failures.push(`missing lifecycle step ${required}`);
-  }
   for (const role of ["child", "grandchild"] as const) {
     const firstRequest = requestLog.find(entry => entry.role === role && entry.step === 0);
     if (firstRequest?.model !== explicitChildModel) {
@@ -387,7 +401,7 @@ try {
         + `\nCodex stdout: ${stdout.slice(-8_000)}\nCodex stderr: ${stderr.slice(-8_000)}`,
     );
   }
-  process.stdout.write(`CODEX_SUBAGENT_${protocol.toUpperCase()}_LIFECYCLE_SMOKE_OK ${JSON.stringify([...observed].toSorted())}\n`);
+  process.stdout.write(`CODEX_SUBAGENT_${protocol.toUpperCase()}_LIFECYCLE_SMOKE_OK ${JSON.stringify(observed)}\n`);
 } finally {
   await server.stop(true);
   rmSync(root, { recursive: true, force: true });

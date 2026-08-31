@@ -42,6 +42,10 @@ function lifecycleAdapter(): ProviderAdapter {
         && typeof (parsed._rawBody as { client_metadata?: unknown }).client_metadata === "object"
         ? (parsed._rawBody as { client_metadata: Record<string, unknown> }).client_metadata
         : {};
+      const latest = parsed.context.messages.at(-1);
+      const latestText = latest
+        ? (typeof latest.content === "string" ? latest.content : JSON.stringify(latest.content))
+        : "";
       if (metadata.claude_subagent === true) {
         evidence.push("subagent_request");
         emit({ type: "text_delta", text: "CLAUDE_LIFECYCLE_CHILD_DONE", phase: "final_answer" });
@@ -57,7 +61,7 @@ function lifecycleAdapter(): ProviderAdapter {
         emit({ type: "done", stopReason: "stop", endTurn: true });
         return;
       }
-      if (context.includes("CLAUDE_LIFECYCLE_INTERRUPT")) {
+      if (latestText.includes("CLAUDE_LIFECYCLE_INTERRUPT")) {
         evidence.push("interrupt");
         interruptStarted();
         await new Promise<void>(resolveAbort => {
@@ -67,7 +71,7 @@ function lifecycleAdapter(): ProviderAdapter {
         interruptAborted();
         return;
       }
-      if (context.includes("CLAUDE_LIFECYCLE_STEERING_WAIT")) {
+      if (latestText.includes("CLAUDE_LIFECYCLE_STEERING_WAIT")) {
         evidence.push("resume", "steering_active");
         const feed = new ChatGptSteeringFeed();
         let settleBrowser!: (value: string) => void;
@@ -98,14 +102,20 @@ function lifecycleAdapter(): ProviderAdapter {
         }
         return;
       }
-      if (context.includes("CLAUDE_LIFECYCLE_CHILD_DONE")) {
-        if (!evidence.includes("subagent_result")) evidence.push("subagent_result");
+      if (latest?.role === "toolResult" && latest.toolCallId === "toolu_lifecycle_agent") {
+        evidence.push("subagent_result");
         emit({ type: "text_delta", text: "CLAUDE_LIFECYCLE_TOOL_DONE", phase: "final_answer" });
         emit({ type: "done", stopReason: "stop", endTurn: true });
         return;
       }
-      if (context.includes("CLAUDE_LIFECYCLE_TOOL_OK")) {
-        if (!evidence.includes("tool_result")) evidence.push("tool_result");
+      if (latestText.includes("[SYSTEM NOTIFICATION - NOT USER INPUT]")) {
+        evidence.push("subagent_notification");
+        emit({ type: "text_delta", text: "CLAUDE_LIFECYCLE_TOOL_DONE", phase: "final_answer" });
+        emit({ type: "done", stopReason: "stop", endTurn: true });
+        return;
+      }
+      if (latest?.role === "toolResult" && latest.toolCallId === "toolu_lifecycle") {
+        evidence.push("tool_result");
         emit({ type: "tool_call_start", id: "toolu_lifecycle_agent", name: "Agent" });
         emit({
           type: "tool_call_delta",
@@ -118,6 +128,9 @@ function lifecycleAdapter(): ProviderAdapter {
         emit({ type: "tool_call_end" });
         emit({ type: "done", stopReason: "tool_use", endTurn: false });
         return;
+      }
+      if (!latestText.includes("CLAUDE_LIFECYCLE_INITIAL")) {
+        throw new Error("Unexpected deterministic Claude lifecycle request");
       }
       evidence.push("request", "tool_call");
       emit({ type: "tool_call_start", id: "toolu_lifecycle", name: "Bash" });
@@ -243,11 +256,12 @@ try {
   evidence.push("idle");
   assertLifecycleEvidence(evidence, [
     "request", "tool_call", "tool_result", "subagent_request", "subagent_result",
-    "compact", "interrupt", "resume", "steering_active", "steering", "idle",
+    "subagent_notification", "compact", "interrupt", "resume", "steering_active", "steering", "idle",
   ]);
   assertSingleLifecycleEvidence(evidence, "steering");
   assertSingleLifecycleEvidence(evidence, "subagent_request");
   assertSingleLifecycleEvidence(evidence, "subagent_result");
+  assertSingleLifecycleEvidence(evidence, "subagent_notification");
   process.stdout.write(`CLAUDE_DETERMINISTIC_LIFECYCLE_OK ${JSON.stringify(evidence)}\n`);
 } finally {
   await server.stop(true);
