@@ -41,7 +41,7 @@ export class RetainedCompactionSourceUnavailableError extends Error {
 }
 
 export async function requestRetainedCompactionHandoff(
-  worker: ChatGptBrowserWorker,
+  worker: Pick<ChatGptBrowserWorker, "run">,
   parsed: CodexParsedRequest,
   source: ChatGptTurnSession,
   broker: TurnBroker,
@@ -100,7 +100,7 @@ export async function requestRetainedCompactionHandoff(
 }
 
 export function requestCompactionHandoff(
-  worker: ChatGptBrowserWorker, parsed: CodexParsedRequest, source: ChatGptTurnSession,
+  worker: Pick<ChatGptBrowserWorker, "run">, parsed: CodexParsedRequest, source: ChatGptTurnSession,
   broker: TurnBroker, namespace: string, capabilities: ChatGptWebCapabilities,
   traceId: string, signal?: AbortSignal, timeoutMs?: number,
 ): Promise<string | undefined> {

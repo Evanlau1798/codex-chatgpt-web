@@ -26,6 +26,7 @@ test("the all lane runs both lifecycle evidence oracle suites", () => {
   const runner = readFileSync(resolve(repo, "scripts", "lifecycle-sim", "run.ts"), "utf8");
   expect(runner).toContain("tests/lifecycle-sim-evidence.test.ts");
   expect(runner).toContain("tests/lifecycle-sim-codex-evidence.test.ts");
+  expect(runner).toContain("tests/lifecycle-sim-production-composition.test.ts");
 });
 
 test("the Codex lane covers compatibility V1 and native V2 clients", () => {

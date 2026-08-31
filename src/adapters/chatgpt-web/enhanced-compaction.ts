@@ -14,7 +14,7 @@ import { emitBrowserCompletion } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 
 interface EnhancedCompactionOptions {
-  worker: ChatGptBrowserWorker;
+  worker: Pick<ChatGptBrowserWorker, "run">;
   parsed: CodexParsedRequest;
   broker: TurnBroker;
   executionNamespace: string;

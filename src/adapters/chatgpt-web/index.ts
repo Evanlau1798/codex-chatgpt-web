@@ -5,7 +5,7 @@ import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } 
 import type { ProviderAdapter } from "../base";
 import { ChatGptWebAdapterError, chatGptSessionFailureDisposition } from "./adapter-error";
 import { chatGptAdapterRuntimeConfig } from "./adapter-runtime-config";
-import { createChatGptRuntimeStarter } from "./adapter-runtime-factory";
+import { createChatGptRuntimeStarter, type ChatGptRuntimeWorker } from "./adapter-runtime-factory";
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { codexToolResultsById } from "./compaction-handoff";
 import { runEnhancedCompaction } from "./enhanced-compaction";
@@ -39,9 +39,9 @@ export const CHATGPT_WEB_ADAPTER_HEARTBEAT_MS = 10_000;
 
 export function createChatGptWebAdapter(
   provider: CodexProviderConfig,
-  dependencies: { broker?: TurnBrokerOwner } = {},
+  dependencies: { broker?: TurnBrokerOwner; worker?: ChatGptRuntimeWorker } = {},
 ): ProviderAdapter {
-  const worker = ChatGptBrowserWorker.forProvider(provider);
+  const worker = dependencies.worker ?? ChatGptBrowserWorker.forProvider(provider);
   const broker = TurnBroker.forSocket(brokerSocketPath(provider));
   const brokerOwner = dependencies.broker ?? broker;
   const {

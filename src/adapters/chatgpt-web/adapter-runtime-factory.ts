@@ -28,7 +28,7 @@ import { resolveBiggerContextMultipartParts } from "./usage";
 
 interface ChatGptRuntimeFactoryOptions {
   provider: CodexProviderConfig;
-  worker: ChatGptBrowserWorker;
+  worker: ChatGptRuntimeWorker;
   broker: TurnBroker;
   brokerOwner: TurnBroker | TurnBrokerOwner;
   timeoutMs?: number;
@@ -38,6 +38,8 @@ interface ChatGptRuntimeFactoryOptions {
   executionNamespace: string;
   lunaCheckpointStore: ChatGptLunaCheckpointStore;
 }
+
+export type ChatGptRuntimeWorker = Pick<ChatGptBrowserWorker, "run" | "requestPreemptiveRetry">;
 
 export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOptions) {
   const {
