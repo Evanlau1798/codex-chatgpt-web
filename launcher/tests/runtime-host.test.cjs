@@ -1026,3 +1026,75 @@ test("failed terminal migration restores removed launchd ownership before verify
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("macOS passkey capture uses an isolated launcher-controlled transfer", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-passkey-runtime-"));
+  const chrome = path.join(root, "Google Chrome");
+  fs.writeFileSync(chrome, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  const host = new RuntimeHost({
+    app: { getPath: () => root, isPackaged: false },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: "/source",
+    browserDescriptorPath: path.join(root, "launcher-browser.json"),
+    platform: "darwin",
+    supervisor: {
+      readConfig: () => ({ chromeExecutablePath: chrome }),
+      readSetupConfig: () => ({ chromeExecutablePath: chrome }),
+    },
+  });
+  host.launcherControlEnvironment = () => ({ CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN: "token" });
+  let invocation;
+  host.run = async (name, args, options) => {
+    invocation = { name, args, options };
+    const statePath = args[args.indexOf("--storage-state") + 1];
+    fs.writeFileSync(statePath, `${JSON.stringify({ cookies: [], origins: [] })}\n`, { mode: 0o600 });
+    fs.writeFileSync(`${statePath}.verified.json`, `${JSON.stringify({
+      version: 1,
+      captureComplete: true,
+      source: "isolated-normal-browser-profile",
+      capturedAt: new Date().toISOString(),
+    })}\n`, { mode: 0o600 });
+    return { code: 0, stdout: "", stderr: "" };
+  };
+  try {
+    const transfer = await host.capturePasskeyLogin();
+    assert.deepEqual(transfer.storageState, { cookies: [], origins: [] });
+    assert.equal(invocation.name, "passkey-login");
+    assert.deepEqual(invocation.args.slice(0, 4), ["login", "--launcher-control", "--chrome", chrome]);
+    assert.equal(invocation.options.embedded, true);
+    assert.equal(invocation.options.controlStdin, true);
+    assert.equal(invocation.options.timeoutMs, 10 * 60_000);
+    const transferRoot = path.dirname(invocation.args[invocation.args.indexOf("--storage-state") + 1]);
+    assert.equal(fs.existsSync(transferRoot), true);
+    await transfer.cleanup();
+    assert.equal(fs.existsSync(transferRoot), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("passkey Continue is delivered only to the active owned login child", async () => {
+  const fixture = hostFor(null).host;
+  let written = "";
+  fixture.active = "passkey-login";
+  fixture.activeChild = {
+    exitCode: null,
+    signalCode: null,
+    stdin: {
+      writable: true,
+      write(value, callback) {
+        written += value;
+        callback();
+      },
+    },
+  };
+  assert.equal(await fixture.continuePasskeyLogin(), true);
+  assert.deepEqual(JSON.parse(written), { version: 1, type: "passkey-login-continue" });
+  assert.throws(() => fixture.continuePasskeyLogin(), /No passkey sign-in is waiting/);
+});
+
+test("passkey sign-in is rejected outside macOS even if IPC is invoked directly", () => {
+  const fixture = hostFor(null).host;
+  fixture.platform = "win32";
+  assert.throws(() => fixture.passkeyChromeExecutable(), /supported only on macOS/);
+});

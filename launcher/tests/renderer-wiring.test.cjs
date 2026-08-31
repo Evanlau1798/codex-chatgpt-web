@@ -74,6 +74,20 @@ test("the renderer bridge switch reaches the fail-closed runtime route", () => {
   assert.match(electronMain, /codexRestartRequired:\s*true/);
 });
 
+test("macOS passkey sign-in is additive to the unchanged embedded login action", () => {
+  assert.match(appSource, /onAction=\{openLogin\}/);
+  assert.match(appSource, /<BrowserSurface[\s\S]*?operation=\{operation\}[\s\S]*?platform=\{snapshot\.platform\}/);
+  assert.match(appSource, /platform === "darwin" && browser\?\.authenticated !== true[\s\S]*?className="toolbar-text-button"[\s\S]*?copy\.passkeySignIn/);
+  assert.match(appSource, /className="browser-empty-actions"[\s\S]*?copy\.passkeySignIn/);
+  assert.match(appSource, /snapshot\.platform === "darwin"[\s\S]*?openPasskeyLogin/);
+  assert.match(appSource, /passkeyWaiting \? continuePasskeyLogin : openPasskeyLogin/);
+  assert.match(preloadSource, /openPasskeyLogin:[\s\S]*?launcher:browser-passkey-login/);
+  assert.match(preloadSource, /continuePasskeyLogin:[\s\S]*?launcher:browser-passkey-login-continue/);
+  assert.match(electronMain, /launcher:browser-passkey-login[\s\S]*?browserHost\.openPasskeyLogin\(\)/);
+  assert.match(electronMain, /loginWithPasskey: \(\) => runtimeHost\.capturePasskeyLogin\(\)/);
+  assert.match(browserHostSource, /await this\.waitForAuthenticated\(60_000\)[\s\S]*?runSessionInspection\(false\)/);
+});
+
 test("MCP connection remains unavailable until the model catalog is verified", () => {
   assert.match(
     appSource,

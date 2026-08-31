@@ -839,6 +839,13 @@ code {
   line-height: 1.5;
 }
 
+.browser-empty-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
 /* Content surfaces */
 
 .content-surface {
@@ -1021,6 +1028,7 @@ code {
 
 .setup-row > .setup-actions {
   display: flex;
+  align-items: center;
   gap: 8px;
   padding: 0;
 }
@@ -2166,7 +2174,8 @@ code {
     padding: 10px 0;
   }
 
-  .setup-row > .button-secondary {
+  .setup-row > .button-secondary,
+  .setup-row > .setup-actions {
     grid-column: 2;
     justify-self: start;
     margin-bottom: 7px;

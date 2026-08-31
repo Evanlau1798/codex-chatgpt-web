@@ -52,6 +52,25 @@ test("setup validates the port before performing runtime work", async () => {
   }
 });
 
+test("passkey capture cannot be invoked outside the live Launcher control channel", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cli-passkey-auth-"));
+  try {
+    const result = await runCli([
+      "login",
+      "--launcher-control",
+      "--chrome",
+      process.execPath,
+      "--storage-state",
+      join(root, "storage-state.json"),
+    ], { ...process.env });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Launcher-controlled passkey login requires a live launcher authorization");
+    expect(existsSync(join(root, "storage-state.json"))).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("DEV chat list works without starting launcher, broker, or Responses services", async () => {
   const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cli-dev-list-"));
   try {

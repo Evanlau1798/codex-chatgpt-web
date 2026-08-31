@@ -44,7 +44,7 @@ const waitForVite = async () => {
 };
 
 void waitForVite().then(() => {
-  electron = spawn(electronBin, [root], {
+  electron = spawn(electronBin, [root, "--dev-profile"], {
     cwd: root,
     stdio: "inherit",
     env: {

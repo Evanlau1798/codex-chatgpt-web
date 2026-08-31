@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
-import { timingSafeEqual } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { stdin, stdout } from "node:process";
-import { checkBrowserEngine, loginToChatGpt } from "./browser-login";
-import { CHATGPT_CONNECTOR_NAME, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
-import { inspectLauncherBrowserHost, readLauncherBrowserHostDescriptor } from "./launcher-browser-host";
+import { captureSystemBrowserLoginToFile, checkBrowserEngine, loginToChatGpt } from "./browser-login";
+import { CHATGPT_CONNECTOR_NAME, defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
+import { inspectLauncherBrowserHost } from "./launcher-browser-host";
+import { authorizeLauncherControl, launcherLoginContinuation } from "./launcher-login-control";
 import {
   activateCodexIntegration,
   deactivateCodexIntegration,
@@ -133,35 +134,50 @@ function assertNoArgs(args: string[]): void {
   if (args.length > 0) throw new Error(`Unknown arguments: ${args.join(" ")}`);
 }
 
-function authorizeLauncherControl(operation: string): void {
-  const descriptorPath = process.env.CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR?.trim();
-  const supplied = process.env.CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN?.trim();
-  delete process.env.CODEX_WEB_GPT_LAUNCHER_CONTROL_TOKEN;
-  if (!descriptorPath || !supplied) {
-    throw new Error(`Launcher-controlled ${operation} requires a live launcher authorization`);
-  }
-  const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-  const expectedBytes = Buffer.from(descriptor.control.token);
-  const suppliedBytes = Buffer.from(supplied);
-  if (expectedBytes.length !== suppliedBytes.length || !timingSafeEqual(expectedBytes, suppliedBytes)) {
-    throw new Error(`Launcher-controlled ${operation} authorization is invalid`);
-  }
-}
-
 async function loginCommand(args: string[]): Promise<void> {
   const externalBrowser = takeFlag(args, "--external-browser");
-  assertNoArgs(args);
-  const config = loadConfig();
-  if (config.browserHost === "launcher") {
-    if (!externalBrowser) {
-      throw new Error("ChatGPT login is owned by the launcher; open Codex Web GPT and use its Sign in step");
-    }
-    authorizeLauncherControl("external browser login");
-  } else if (externalBrowser) {
-    throw new Error("--external-browser is reserved for the launcher-owned login flow");
+  const launcherControl = takeFlag(args, "--launcher-control");
+  if (externalBrowser && launcherControl) {
+    throw new Error("Choose either --external-browser or --launcher-control");
   }
-  const result = await loginToChatGpt(config, { electronImport: externalBrowser });
-  stdout.write(`ChatGPT login stored at ${result.storageStatePath}\n`);
+  if (!launcherControl) {
+    assertNoArgs(args);
+    const config = loadConfig();
+    if (config.browserHost === "launcher") {
+      if (!externalBrowser) {
+        throw new Error("ChatGPT login is owned by the launcher; open Codex Web GPT and use its Sign in step");
+      }
+      authorizeLauncherControl("external browser login");
+    } else if (externalBrowser) {
+      throw new Error("--external-browser is reserved for the launcher-owned login flow");
+    }
+    const result = await loginToChatGpt(config, { electronImport: externalBrowser });
+    stdout.write(`ChatGPT login stored at ${result.storageStatePath}\n`);
+    return;
+  }
+
+  const chromeExecutablePath = takeOption(args, "--chrome");
+  const storageStatePath = takeOption(args, "--storage-state");
+  assertNoArgs(args);
+  authorizeLauncherControl("passkey login");
+  if (process.platform !== "darwin") throw new Error("Passkey sign-in is currently supported only on macOS");
+  if (!chromeExecutablePath || !isAbsolute(chromeExecutablePath)) {
+    throw new Error("Launcher passkey sign-in requires --chrome with an absolute path");
+  }
+  if (!storageStatePath || !isAbsolute(storageStatePath)) {
+    throw new Error("Launcher passkey sign-in requires --storage-state with an absolute path");
+  }
+  const continuation = launcherLoginContinuation();
+  try {
+    await captureSystemBrowserLoginToFile({
+      ...defaultConfig(),
+      chromeExecutablePath,
+      storageStatePath,
+    }, { continuation: continuation.promise });
+  } finally {
+    continuation.close();
+  }
+  stdout.write("Passkey session captured for Launcher verification.\n");
 }
 
 async function setupCommand(args: string[]): Promise<void> {

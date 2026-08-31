@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   selectBrowserTab: (tabId) => ipcRenderer.invoke("launcher:browser-tab-select", tabId),
   closeBrowserTab: (tabId) => ipcRenderer.invoke("launcher:browser-tab-close", tabId),
   openLogin: () => ipcRenderer.invoke("launcher:browser-login"),
+  openPasskeyLogin: () => ipcRenderer.invoke("launcher:browser-passkey-login"),
+  continuePasskeyLogin: () => ipcRenderer.invoke("launcher:browser-passkey-login-continue"),
   logoutChatGpt: () => ipcRenderer.invoke("launcher:browser-logout"),
   dismissSessionReminder: () => ipcRenderer.invoke("launcher:session-reminder-dismiss"),
   smokeTest: () => ipcRenderer.invoke("launcher:browser-smoke"),

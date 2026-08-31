@@ -1,8 +1,15 @@
 import { expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { browserLoginStateExists, loginToChatGpt, loginVerificationMarkerPath, verifyBrowserLoginPage } from "../src/browser-login";
+import {
+  browserLoginStateExists,
+  captureSystemBrowserLogin,
+  loginToChatGpt,
+  loginVerificationMarkerPath,
+  sanitizeBrowserLoginStorageState,
+  verifyBrowserLoginPage,
+} from "../src/browser-login";
 import { CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
 import { defaultConfig } from "../src/config";
 
@@ -37,6 +44,92 @@ test("login starts with normal Chrome and captures state in a headed Keychain-aw
     else process.env.CODEX_LOGIN_ARG_LOG = previousLog;
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("passkey login authenticates in normal Chrome before isolated offline pipe capture", async () => {
+  if (process.platform !== "darwin") return;
+  const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-passkey-login-"));
+  const executable = join(root, "fake-chrome");
+  const argsLog = join(root, "args.log");
+  const pidLog = join(root, "pid.log");
+  writeFileSync(executable, [
+    "#!/bin/sh",
+    "printf '%s\\n' \"$*\" >> \"$CODEX_LOGIN_ARG_LOG\"",
+    "case \"$*\" in",
+    "  *--remote-debugging-pipe*) exit 0 ;;",
+    "esac",
+    "printf '%s\\n' \"$$\" > \"$CODEX_LOGIN_PID_LOG\"",
+    "trap 'exit 0' TERM INT HUP",
+    "while :; do sleep 1; done",
+    "",
+  ].join("\n"), { mode: 0o700 });
+  chmodSync(executable, 0o700);
+  const previousArgs = process.env.CODEX_LOGIN_ARG_LOG;
+  const previousPid = process.env.CODEX_LOGIN_PID_LOG;
+  process.env.CODEX_LOGIN_ARG_LOG = argsLog;
+  process.env.CODEX_LOGIN_PID_LOG = pidLog;
+  try {
+    const config = defaultConfig("browser-only");
+    config.chromeExecutablePath = executable;
+    config.storageStatePath = join(root, "transfer", "storage-state.json");
+    let continueLogin!: () => void;
+    const continuation = new Promise<void>(resolve => { continueLogin = resolve; });
+    const capture = captureSystemBrowserLogin(config, { continuation, timeoutMs: 5_000 });
+    for (let attempt = 0; attempt < 100 && !existsSync(pidLog); attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    expect(existsSync(pidLog)).toBe(true);
+    continueLogin();
+    const error = await capture.then(() => undefined, caught => caught as Error);
+    expect(error).toBeInstanceOf(Error);
+
+    const launches = readFileSync(argsLog, "utf8").trim().split("\n");
+    expect(launches).toHaveLength(2);
+    expect(launches[0]).toContain("--new-window");
+    expect(launches[0]).toContain("--user-data-dir=");
+    expect(launches[0]).not.toContain("--remote-debugging-pipe");
+    expect(launches[0]).not.toContain("--enable-automation");
+    expect(launches[1]).toContain("--remote-debugging-pipe");
+    expect(launches[1]).toContain("--headless");
+    expect(readdirSync(join(root, "transfer")).filter(name => name.startsWith("login-profile-"))).toEqual([]);
+  } finally {
+    if (previousArgs === undefined) delete process.env.CODEX_LOGIN_ARG_LOG;
+    else process.env.CODEX_LOGIN_ARG_LOG = previousArgs;
+    if (previousPid === undefined) delete process.env.CODEX_LOGIN_PID_LOG;
+    else process.env.CODEX_LOGIN_PID_LOG = previousPid;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("passkey storage capture excludes identity-provider and partitioned state", () => {
+  const cookie = (name: string, domain: string, extra = {}) => ({
+    name,
+    value: name,
+    domain,
+    path: "/",
+    expires: -1,
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax" as const,
+    ...extra,
+  });
+  const state = sanitizeBrowserLoginStorageState({
+    cookies: [
+      cookie("chatgpt", ".chatgpt.com"),
+      cookie("openai", "auth.openai.com"),
+      cookie("partitioned", ".chatgpt.com", { partitionKey: "https://accounts.google.com" }),
+      cookie("google", ".accounts.google.com"),
+      cookie("lookalike", ".chatgpt.com.attacker.example"),
+    ],
+    origins: [
+      { origin: "https://chatgpt.com", localStorage: [{ name: "chat", value: "kept" }] },
+      { origin: "https://accounts.google.com", localStorage: [{ name: "idp", value: "removed" }] },
+    ],
+  });
+  expect(state.cookies.map(value => value.name)).toEqual(["chatgpt", "openai"]);
+  expect(state.origins).toEqual([
+    { origin: "https://chatgpt.com", localStorage: [{ name: "chat", value: "kept" }] },
+  ]);
 });
 
 test("a storage-state file is not trusted without a verification marker", () => {

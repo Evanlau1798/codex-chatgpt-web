@@ -715,6 +715,176 @@ test("concurrent embedded login requests share one authentication operation", as
   assert.equal(inspections, 1);
 });
 
+test("explicit login waits for an in-flight saved-session refresh before taking browser ownership", async () => {
+  const calls = [];
+  let finishRefresh;
+  const sessionRefreshOperation = new Promise((resolve) => { finishRefresh = resolve; });
+  const fixture = {
+    state: { authenticated: false },
+    sessionRefreshOperation,
+    loginOperation: null,
+    authNavigationError: null,
+    activateHomeSurface() {},
+    show() {},
+    snapshot: () => ({ authenticated: true }),
+    logger: { info() {} },
+    view: { webContents: {
+      getURL: () => "https://chatgpt.com/?temporary-chat=true",
+      loadURL: async () => {},
+    } },
+    probeAuthentication: async () => calls.push("probe"),
+    waitForAuthenticated: async () => ({ authenticated: true }),
+    runSessionInspection: async () => calls.push("inspect"),
+    withManualOperation: async (name, action) => {
+      calls.push(name);
+      return await action();
+    },
+  };
+
+  const login = BrowserHost.prototype.openLogin.call(fixture);
+  await Promise.resolve();
+  assert.deepEqual(calls, []);
+  finishRefresh();
+  await login;
+  assert.deepEqual(calls, ["ChatGPT login", "probe", "inspect"]);
+});
+
+test("passkey login imports only validated state and re-proves the Launcher session", async () => {
+  const calls = [];
+  const browserSession = {
+    clearStorageData: async () => calls.push("clear"),
+    flushStorageData: () => calls.push("flush-storage"),
+    cookies: {
+      set: async cookie => calls.push(["cookie", cookie]),
+      flushStore: async () => calls.push("flush-cookies"),
+    },
+  };
+  const contents = {
+    session: browserSession,
+    isDestroyed: () => false,
+    loadURL: async url => calls.push(["load", url]),
+    executeJavaScript: async script => calls.push(["script", script]),
+  };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    authView: null,
+    turnTabs: new Map(),
+    view: { webContents: contents },
+    state: { authenticated: false },
+    waitForAuthenticated: async () => {
+      calls.push("prove-session");
+      fixture.state.authenticated = true;
+      return { authenticated: true };
+    },
+    runSessionInspection: async detectCapabilities => calls.push(["inspect", detectCapabilities]),
+    activateHomeSurface: () => calls.push("activate"),
+    show: () => calls.push("show"),
+    logger: { info: event => calls.push(["log", event]) },
+    snapshot: () => ({ ...fixture.state }),
+  });
+  let cleaned = false;
+  const result = await BrowserHost.prototype.installPasskeyLogin.call(fixture, {
+    storageState: {
+      cookies: [{
+        name: "session",
+        value: "private",
+        domain: ".chatgpt.com",
+        path: "/",
+        expires: -1,
+        httpOnly: true,
+        secure: true,
+        sameSite: "Lax",
+      }],
+      origins: [{ origin: "https://chatgpt.com", localStorage: [{ name: "setting", value: "value" }] }],
+    },
+    cleanup: async () => { cleaned = true; },
+  });
+
+  assert.equal(result.authenticated, true);
+  assert.equal(cleaned, true);
+  assert.equal(calls[0][0], "load");
+  assert.match(calls[0][1], /^data:text\/html/);
+  assert.equal(calls[1], "clear");
+  assert.ok(calls.some(value => Array.isArray(value) && value[0] === "cookie"));
+  assert.ok(calls.some(value => Array.isArray(value) && value[0] === "script" && value[1].includes("localStorage.setItem")));
+  assert.ok(calls.includes("prove-session"));
+  assert.ok(calls.some(value => Array.isArray(value) && value[0] === "inspect" && value[1] === false));
+});
+
+test("invalid passkey transfer is removed without mutating the embedded session", async () => {
+  let cleared = false;
+  let cleaned = false;
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    turnTabs: new Map(),
+    view: { webContents: {
+      isDestroyed: () => false,
+      session: { clearStorageData: async () => { cleared = true; } },
+    } },
+  });
+  await assert.rejects(
+    BrowserHost.prototype.installPasskeyLogin.call(fixture, {
+      storageState: {
+        cookies: [{
+          name: "identity-provider",
+          value: "private",
+          domain: ".accounts.google.com",
+          path: "/",
+          expires: -1,
+          httpOnly: true,
+          secure: true,
+          sameSite: "Lax",
+        }],
+        origins: [],
+      },
+      cleanup: async () => { cleaned = true; },
+    }),
+    /no ChatGPT\/OpenAI cookies/,
+  );
+  assert.equal(cleared, false);
+  assert.equal(cleaned, true);
+});
+
+test("failed private-transfer cleanup also discards an otherwise imported passkey session", async () => {
+  let resets = 0;
+  const browserSession = {
+    cookies: { set: async () => {}, flushStore: async () => {} },
+    flushStorageData() {},
+  };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    view: { webContents: {
+      session: browserSession,
+      isDestroyed: () => false,
+      loadURL: async () => {},
+    } },
+    clearOwnedSessionForPasskey: async () => {},
+    resetFailedPasskeyLogin: async () => { resets += 1; },
+    waitForAuthenticated: async () => ({ authenticated: true }),
+    runSessionInspection: async () => {},
+    activateHomeSurface() {},
+    show() {},
+    logger: { info() {} },
+    snapshot: () => ({ authenticated: true }),
+  });
+  await assert.rejects(
+    BrowserHost.prototype.installPasskeyLogin.call(fixture, {
+      storageState: {
+        cookies: [{
+          name: "session",
+          value: "private",
+          domain: ".chatgpt.com",
+          path: "/",
+          expires: -1,
+          httpOnly: true,
+          secure: true,
+          sameSite: "Lax",
+        }],
+        origins: [],
+      },
+      cleanup: async () => { throw new Error("synthetic private-file lock"); },
+    }),
+    /Removing temporary passkey state failed/,
+  );
+  assert.equal(resets, 1);
+});
 test("launcher quit remains gated through an active embedded-browser operation", () => {
   const source = fs.readFileSync(require.resolve("../electron/main.cjs"), "utf8");
   assert.match(

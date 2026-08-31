@@ -12,6 +12,7 @@ const { validateConnectorName } = require("./connector-identity.cjs");
 const { createTurnInteractionShield, TURN_INTERACTION_SHIELD_URL } = require("./interaction-shield.cjs");
 const { processRunning } = require("./process-tree.cjs");
 const { showBrowserWindow } = require("./window-activation.cjs");
+const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
@@ -85,6 +86,16 @@ const CHATGPT_VIEWPORT_CSS = `
 `;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function javaScriptLiteral(value) {
+  return JSON.stringify(value).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+}
+
+function combinedError(primary, label, secondary) {
+  const first = primary instanceof Error ? primary.message : String(primary);
+  const second = secondary instanceof Error ? secondary.message : String(secondary);
+  return new Error(`${first}; ${label}: ${second}`);
+}
 
 function visibleElementScript(selector) {
   return `Array.from(document.querySelectorAll(${JSON.stringify(selector)})).find((element) => {
@@ -269,12 +280,16 @@ class BrowserHost {
     getConnectorName,
     helper,
     logger,
+    loginWithPasskey,
     partition = "persist:codex-web-gpt-chatgpt",
     profile = "production",
     publishState,
   }) {
     if (typeof getConnectorName !== "function") {
       throw new Error("Browser host connector-name resolver is unavailable");
+    }
+    if (typeof loginWithPasskey !== "function") {
+      throw new Error("Browser host passkey login operation is unavailable");
     }
     this.window = window;
     this.descriptorPath = descriptorPath;
@@ -284,6 +299,7 @@ class BrowserHost {
     this.getConnectorName = getConnectorName;
     this.helper = helper;
     this.logger = logger;
+    this.loginWithPasskey = loginWithPasskey;
     if (profile !== "production" && profile !== "development") {
       throw new Error("Browser host profile is invalid");
     }
@@ -1531,24 +1547,164 @@ class BrowserHost {
       this.show();
       return this.loginOperation;
     }
-    const operation = this.withManualOperation("ChatGPT login", async () => {
-      this.authNavigationError = null;
-      this.show();
-      this.logger.info("browser.login_opened");
-      const current = this.view.webContents.getURL();
-      if (!current.startsWith(CHATGPT_ORIGIN)) {
-        await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+    const operation = (async () => {
+      const sessionRefresh = this.sessionRefreshOperation;
+      if (sessionRefresh) {
+        try {
+          await sessionRefresh;
+        } catch {
+          // An explicit login is the recovery path after a failed saved-session refresh.
+        }
       }
-      await this.probeAuthentication();
-      const authenticated = await this.waitForAuthenticated();
-      await this.runSessionInspection(false);
-      return authenticated;
-    });
+      return await this.withManualOperation("ChatGPT login", async () => {
+        this.authNavigationError = null;
+        this.show();
+        this.logger.info("browser.login_opened");
+        const current = this.view.webContents.getURL();
+        if (!current.startsWith(CHATGPT_ORIGIN)) {
+          await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
+        }
+        await this.probeAuthentication();
+        const authenticated = await this.waitForAuthenticated();
+        await this.runSessionInspection(false);
+        return authenticated;
+      });
+    })();
     const tracked = operation.finally(() => {
       if (this.loginOperation === tracked) this.loginOperation = null;
     });
     this.loginOperation = tracked;
     return tracked;
+  }
+
+  openPasskeyLogin() {
+    if (this.state.authenticated) {
+      this.activateHomeSurface();
+      this.show();
+      return Promise.resolve(this.snapshot());
+    }
+    if (this.loginOperation) return this.loginOperation;
+    const operation = (async () => {
+      const sessionRefresh = this.sessionRefreshOperation;
+      if (sessionRefresh) {
+        try {
+          await sessionRefresh;
+        } catch {
+          // Explicit sign-in is the recovery path after a failed saved-session refresh.
+        }
+      }
+      return await this.withManualOperation("ChatGPT passkey login", async () => {
+        this.authNavigationError = null;
+        this.setState({
+          authenticated: false,
+          status: "loading",
+          message: "Waiting for passkey sign-in in Chrome",
+          loading: true,
+        });
+        this.logger.info("browser.passkey_login_started");
+        const transfer = await this.loginWithPasskey();
+        return await this.installPasskeyLogin(transfer);
+      });
+    })();
+    const tracked = operation.finally(() => {
+      if (this.loginOperation === tracked) this.loginOperation = null;
+    });
+    this.loginOperation = tracked;
+    return tracked;
+  }
+
+  async clearOwnedSessionForPasskey() {
+    if (!(this.turnTabs instanceof Map)) throw new Error("Owned ChatGPT tab registry is unavailable");
+    if (this.authView) this.closeAuthView(this.authView, true, false);
+    const tabs = [...this.turnTabs.values()];
+    const contents = [this.view, ...tabs.map(tab => tab.view)]
+      .map(view => view?.webContents)
+      .filter(candidate => candidate && !candidate.isDestroyed());
+    if (contents.length === 0) throw new Error("Owned ChatGPT browser session is unavailable");
+    const browserSession = contents[0].session;
+    if (contents.some(candidate => candidate.session !== browserSession)) {
+      throw new Error("Owned ChatGPT views do not share one browser session");
+    }
+    await Promise.all(contents.map(candidate => candidate.loadURL(IDLE_BROWSER_URL)));
+    await browserSession.clearStorageData();
+    browserSession.flushStorageData();
+    await browserSession.cookies.flushStore();
+    for (const tab of tabs) this.removeTurnTab(tab, false);
+  }
+
+  async resetFailedPasskeyLogin() {
+    await this.clearOwnedSessionForPasskey();
+    const contents = this.view.webContents;
+    await contents.loadURL(TEMPORARY_CHAT_URL);
+    const browser = await this.probeAuthentication();
+    if (browser.authenticated) throw new Error("Partial passkey session remained authenticated after cleanup");
+    this.setState({ authenticated: false, loading: false, status: "signed-out", message: "Sign in to ChatGPT" });
+  }
+
+  async installPasskeyLogin(transfer) {
+    if (!transfer || typeof transfer !== "object" || typeof transfer.cleanup !== "function") {
+      throw new Error("Passkey sign-in returned an invalid transfer handle");
+    }
+    let error = null;
+    let result = null;
+    let sessionMutated = false;
+    let sessionDiscarded = false;
+    let state;
+    try {
+      state = validatePasskeyLoginState(transfer.storageState);
+      const contents = this.view?.webContents;
+      if (!contents || contents.isDestroyed()) throw new Error("Owned ChatGPT browser session is unavailable");
+      sessionMutated = true;
+      await this.clearOwnedSessionForPasskey();
+      for (const cookie of state.cookies) await contents.session.cookies.set(cookie);
+      contents.session.flushStorageData();
+      await contents.session.cookies.flushStore();
+      await contents.loadURL(TEMPORARY_CHAT_URL);
+      if (state.localStorage.length > 0) {
+        const entries = javaScriptLiteral(state.localStorage);
+        await contents.executeJavaScript(`(() => {
+          if (location.origin !== ${JSON.stringify(CHATGPT_ORIGIN)}) {
+            throw new Error("Passkey storage import reached an unexpected origin");
+          }
+          for (const entry of ${entries}) localStorage.setItem(entry.name, entry.value);
+        })()`, true);
+        await contents.loadURL(TEMPORARY_CHAT_URL);
+      }
+      result = await this.waitForAuthenticated(60_000);
+      await this.runSessionInspection(false);
+      this.activateHomeSurface();
+      this.show();
+      this.logger.info("browser.passkey_login_imported");
+    } catch (caught) {
+      error = caught;
+    }
+
+    if (error && sessionMutated) {
+      try {
+        await this.resetFailedPasskeyLogin();
+        sessionDiscarded = true;
+      } catch (cleanupError) {
+        error = combinedError(error, "clearing the partial passkey session failed", cleanupError);
+      }
+    }
+    try {
+      await transfer.cleanup();
+    } catch (cleanupError) {
+      error = error
+        ? combinedError(error, "removing temporary passkey state failed", cleanupError)
+        : new Error(`Removing temporary passkey state failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    }
+    if (error && sessionMutated && !sessionDiscarded) {
+      try {
+        await this.resetFailedPasskeyLogin();
+        sessionDiscarded = true;
+      } catch (cleanupError) {
+        error = combinedError(error, "retrying partial passkey session cleanup failed", cleanupError);
+      }
+    }
+    if (error) throw error;
+    if (!result?.authenticated) throw new Error("Passkey sign-in completed without an authenticated Launcher session");
+    return this.snapshot();
   }
 
   async logout() {
