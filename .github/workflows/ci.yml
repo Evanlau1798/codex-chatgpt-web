@@ -113,3 +113,20 @@ jobs:
           cache: false
       - name: Lint GitHub Actions
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -config-file .github/actionlint.yaml .github/workflows/*.yml
+
+  ci-gate:
+    if: ${{ always() }}
+    needs: [lifecycle-sim, lifecycle-client-probe, verify, actionlint]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI dependency to succeed
+        env:
+          LIFECYCLE_SIM_RESULT: ${{ needs['lifecycle-sim'].result }}
+          CLIENT_PROBE_RESULT: ${{ needs['lifecycle-client-probe'].result }}
+          VERIFY_RESULT: ${{ needs['verify'].result }}
+          ACTIONLINT_RESULT: ${{ needs['actionlint'].result }}
+        run: |
+          test "$LIFECYCLE_SIM_RESULT" = "success"
+          test "$CLIENT_PROBE_RESULT" = "success"
+          test "$VERIFY_RESULT" = "success"
+          test "$ACTIONLINT_RESULT" = "success"
