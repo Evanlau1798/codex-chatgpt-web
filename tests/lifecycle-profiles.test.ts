@@ -21,3 +21,9 @@ test("CI runs deterministic lifecycle simulation and never calls a live profile"
   expect(workflow).not.toContain("smoke:lifecycle:deep");
   expect(workflow).not.toContain("smoke:lifecycle:live");
 });
+
+test("the all lane runs both lifecycle evidence oracle suites", () => {
+  const runner = readFileSync(resolve(repo, "scripts", "lifecycle-sim", "run.ts"), "utf8");
+  expect(runner).toContain("tests/lifecycle-sim-evidence.test.ts");
+  expect(runner).toContain("tests/lifecycle-sim-codex-evidence.test.ts");
+});
