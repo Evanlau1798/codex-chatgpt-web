@@ -77,7 +77,7 @@ export function startTurnBrokerServer(socketPath: string, dispatch: BrokerDispat
       if (encodedLength > MAX_UNIX_SOCKET_PATH_BYTES) {
         rejectStart(new Error(
           `ChatGPT web broker socket path is ${encodedLength} bytes, over the`
-          + ` ${MAX_UNIX_SOCKET_PATH_BYTES}-byte portable Unix socket limit: ${socketPath}`,
+          + ` ${MAX_UNIX_SOCKET_PATH_BYTES}-byte limit for portable Unix sockets: ${socketPath}`,
         ));
         return;
       }

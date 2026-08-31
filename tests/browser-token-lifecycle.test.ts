@@ -92,7 +92,7 @@ test("a failed browser surface revokes an outstanding native tool invocation wit
 test("a browser failure remains the authoritative turn error while its token is revoked", async () => {
   const socketPath = process.platform === "win32"
     ? defaultBrokerEndpoint(join(tmpdir(), `cgw-browser-error-${process.pid}-${Date.now()}`), "win32")
-    : join(root, "browser-error.sock");
+    : join(root, "e.sock");
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: "browser://chatgpt-error-authority-test",
