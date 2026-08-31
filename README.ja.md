@@ -1,4 +1,4 @@
-<h1 align="center">Codex 用 ChatGPT Web</h1>
+<h1 align="center">Codex & Claude Code 用 ChatGPT Web — Enhanced</h1>
 
 <p align="center">
   <strong>ChatGPT Web（Pro を含む）を Codex のネイティブモデルとして使用。</strong><br>
@@ -10,13 +10,18 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/miuuyy/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/actions/workflows/ci.yml"><img src="https://github.com/Evanlau1798/codex-chatgpt-web/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT ライセンス"></a>
   <img src="https://img.shields.io/badge/macOS-arm64%20%7C%20x64-black?logo=apple" alt="macOS arm64 および x64">
   <img src="https://img.shields.io/badge/Windows-x64-0078d4?logo=windows11" alt="Windows x64">
   <img src="https://img.shields.io/badge/Linux-x64-fcc624?logo=linux&logoColor=black" alt="Linux x64">
   <img src="https://img.shields.io/badge/Free_AI-no_API_fees-10a37f" alt="API 料金なしの AI">
 </p>
+
+この独立管理の **Enhanced** fork は上流リリースを追跡し、長時間実行する Codex／Claude Code
+タスク向けの Web セッションライフサイクルを追加します。fork のバージョンは
+`<upstream>-Enhanced.<revision>` 形式で、`3.0.1-Enhanced.1` から始まりました。
+現在のバージョンは上流 v4.0.6 ベースの `4.0.6-Enhanced.1` です。
 
 Free および Go アカウントでは、Codex のネイティブモデル選択画面に
 **ChatGPT Web — Luna** が追加されます。reasoning セレクターが表示されるアカウントでは、
@@ -54,7 +59,7 @@ Full モードでは、次のコンパクション境界まで、MCP が ChatGPT
   1 つの一時チャットを再利用します。コンテキスト境界に達すると、保持中のエージェントがチェックポイントを書き、
   その後 Codex が新しいチャットを開始します。チャットが閉じられていた場合は、正規の Codex 履歴がフォールバックになります。
 - **1 つのクロスプラットフォームランチャー。** macOS、Windows、Linux 向けアプリが、サインイン、
-  モデル設定、MCP ガイド、ヘルスチェック、安全な診断、最大 5 件の表示可能なタスク紐付きブラウザータブを管理します。
+  モデル設定、MCP ガイド、ヘルスチェック、安全な診断、Enhanced モードで最大 6 件のタスク紐付きブラウザータブを管理します。
 - **Fail-closed 動作。** モデルやツールの欠落、ChatGPT UI の変更が発生した場合、ルートや機能を黙って切り替えず、
   明示的なエラーを返します。エンドツーエンドの対象範囲は
   [リリース検証](docs/release-validation.md)に記載されています。
@@ -73,21 +78,22 @@ Full モードでは、次のコンパクション境界まで、MCP が ChatGPT
 **macOS または Linux**
 
 ```bash
-curl -fsSL https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
+curl -fsSL https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/install-launcher.sh | sh
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://github.com/miuuyy/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
+irm https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/install-launcher.ps1 | iex
 ```
 
 アプリ内で次の 3 項目を完了します。
 
-1. ランチャー内蔵の ChatGPT ブラウザーで直接サインインします。ログインページと ID プロバイダーの
-   ウィンドウは、同じランチャー管理の非公開ブラウザープロファイル内に保持されます。ブラウザー間でセッションをコピーしません。
+1. 既定ではランチャー内でサインインします。Passkey が必要な場合は **Use Chrome for passkey** を選択します。
+   Chrome で一時チャットを検証した後、ランチャーは非 partitioned の ChatGPT／OpenAI セッション Cookie のみを
+   Electron の非公開プロファイルへ取り込み、composer を再検証します。
 2. ブラウザーのスモークテストを実行します。
-3. **モデルをインストール**を押し、Codex を一度再起動して、**ChatGPT Web — …** モデルを選択します。
+3. **Codex にインストール**または **Claude Code にインストール**を選び、使用するクライアントを再起動します。
 
 セットアップ時に、ランチャーが現在のアカウントの ChatGPT コントロールを検出します。
 Free/Go アカウントでは Luna のみが表示され、Pro はサインイン中のアカウントで利用可能な場合にのみ表示されます。
@@ -100,7 +106,7 @@ Free/Go アカウントでは Luna のみが表示され、Pro はサインイ�
 **ソースから実行**
 
 ```bash
-git clone https://github.com/miuuyy/codex-chatgpt-web.git && \
+git clone https://github.com/Evanlau1798/codex-chatgpt-web.git && \
 cd codex-chatgpt-web && \
 bun run app
 ```

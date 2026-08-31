@@ -20,7 +20,7 @@
 
 这是独立维护的 **Enhanced** fork：在持续跟进上游基线的同时，提供可选的长任务 Web 会话
 生命周期。Fork 版本采用 `<上游版本>-Enhanced.<修订号>`，首个版本为 `3.0.1-Enhanced.1`。
-当前版本为基于上游 v4.0.3 的 `4.0.3-Enhanced.1`。
+当前版本为基于上游 v4.0.6 的 `4.0.6-Enhanced.1`。
 
 Free 和 Go 账户会在 Codex 原生模型选择器中看到 **ChatGPT Web — Luna**。具有推理选择器的
 账户仍会按订阅权限看到 **Instant**、**Medium**、**High**、**Extra High** 和 **Pro**。
