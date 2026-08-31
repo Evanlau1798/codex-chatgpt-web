@@ -20,6 +20,12 @@ const MARKDOWN_SHORTCUT_DELIMITERS = ["`", "*", "_", "~", "=", "[", ")"] as cons
 
 type MarkdownReplacement = { marker: string; value: string; count: number };
 
+export type ChatGptPromptMarkdownRestoration = {
+  start: number;
+  end: number;
+  count: number;
+};
+
 export function previousChatGptPromptMarkdownMarker(
   text: string,
   before: number,
@@ -56,84 +62,102 @@ export function guardChatGptPromptMarkdown(text: string): {
   return { text: guarded, replacements, count: replacements.reduce((sum, value) => sum + value.count, 0) };
 }
 
+export function planChatGptPromptMarkdownRestoration(
+  text: string,
+  replacements: MarkdownReplacement[],
+  maxChars: number,
+): ChatGptPromptMarkdownRestoration[] {
+  if (!Number.isSafeInteger(maxChars) || maxChars <= 0) {
+    throw new Error("ChatGPT Markdown restoration range must be a positive integer");
+  }
+  const markers = new Set(replacements.map(replacement => replacement.marker));
+  const ranges: ChatGptPromptMarkdownRestoration[] = [];
+  let before = text.length;
+  while (before > 0) {
+    let right = -1;
+    for (let index = before - 1; index >= 0; index -= 1) {
+      if (markers.has(text[index]!)) { right = index; break; }
+    }
+    if (right < 0) break;
+    const windowStart = Math.max(0, right - maxChars + 1);
+    let start = right;
+    let count = 0;
+    for (let index = windowStart; index <= right; index += 1) {
+      if (!markers.has(text[index]!)) continue;
+      start = Math.min(start, index);
+      count += 1;
+    }
+    ranges.push({ start, end: right + 1, count });
+    before = start;
+  }
+  return ranges;
+}
+
 export async function restoreChatGptPromptMarkdown(
   composer: Locator,
   replacements: MarkdownReplacement[],
   count: number,
+  maxChars = 16_000,
+  abortSignal?: AbortSignal,
 ): Promise<boolean> {
   await composer.focus();
-  return composer.evaluate(async (element, input) => {
-    const selection = window.getSelection();
-    if (!selection) return false;
-    const end = document.createRange();
-    end.selectNodeContents(element);
-    end.collapse(false);
-    selection.removeAllRanges();
-    selection.addRange(end);
-
-    const rightmostText = (node: Node): Text | undefined => {
-      if (node.nodeType === Node.TEXT_NODE) return node as Text;
-      for (let child = node.lastChild; child; child = child.previousSibling) {
-        const text = rightmostText(child);
-        if (text) return text;
+  let remaining = count;
+  while (remaining > 0) {
+    if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
+    const restored = await composer.evaluate(async (element, input) => {
+      const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
+      const selection = window.getSelection();
+      if (!selection) return 0;
+      const replacementsByMarker = new Map(input.replacements.map(value => [value.marker, value.value]));
+      const textNodes: Text[] = [];
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const parent = (node as Text).parentElement;
+        if (!parent?.closest(ignoredSelector)) textNodes.push(node as Text);
       }
-      return undefined;
-    };
-    const previousText = (node: Node): Text | undefined => {
-      for (let current: Node | null = node; current && current !== element; current = current.parentNode) {
-        for (let sibling = current.previousSibling; sibling; sibling = sibling.previousSibling) {
-          const text = rightmostText(sibling);
-          if (text) return text;
+      for (let nodeIndex = textNodes.length - 1; nodeIndex >= 0; nodeIndex -= 1) {
+        const node = textNodes[nodeIndex]!;
+        let right = -1;
+        for (let index = node.data.length - 1; index >= 0; index -= 1) {
+          if (replacementsByMarker.has(node.data[index]!)) { right = index; break; }
         }
-      }
-      return undefined;
-    };
-    const cursor = (): { node: Text; offset: number } | undefined => {
-      const anchor = selection.anchorNode;
-      if (!anchor || (anchor !== element && !element.contains(anchor))) return undefined;
-      if (anchor.nodeType === Node.TEXT_NODE) {
-        const node = anchor as Text;
-        return { node, offset: Math.min(selection.anchorOffset, node.data.length) };
-      }
-      for (let index = Math.min(selection.anchorOffset, anchor.childNodes.length) - 1; index >= 0; index -= 1) {
-        const node = rightmostText(anchor.childNodes[index]!);
-        if (node) return { node, offset: node.data.length };
-      }
-      const node = previousText(anchor);
-      return node ? { node, offset: node.data.length } : undefined;
-    };
-    const previousMarker = (text: string, before: number) => {
-      let match: { offset: number; value: string } | undefined;
-      for (const replacement of input.replacements) {
-        const offset = text.lastIndexOf(replacement.marker, before - 1);
-        if (offset >= 0 && (!match || offset > match.offset)) match = { offset, value: replacement.value };
-      }
-      return match;
-    };
-
-    for (let remaining = input.count; remaining > 0; remaining -= 1) {
-      let position = cursor();
-      let match: { node: Text; offset: number; value: string } | undefined;
-      while (position) {
-        const found = previousMarker(position.node.data, position.offset);
-        if (found) {
-          match = { node: position.node, ...found };
-          break;
+        if (right < 0) continue;
+        const windowStart = Math.max(0, right - input.maxChars + 1);
+        let start = right;
+        let markerCount = 0;
+        for (let index = windowStart; index <= right; index += 1) {
+          if (!replacementsByMarker.has(node.data[index]!)) continue;
+          start = Math.min(start, index);
+          markerCount += 1;
         }
-        const node = previousText(position.node);
-        position = node ? { node, offset: node.data.length } : undefined;
+        const guarded = node.data.slice(start, right + 1);
+        const restoredText = Array.from(guarded, value => replacementsByMarker.get(value) ?? value).join("");
+        const range = document.createRange();
+        range.setStart(node, start);
+        range.setEnd(node, right + 1);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        if (!document.execCommand("insertText", false, restoredText)) return 0;
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
+        return markerCount;
       }
-      if (!match) return false;
-      const range = document.createRange();
-      range.setStart(match.node, match.offset);
-      range.setEnd(match.node, match.offset + 1);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      if (!document.execCommand("insertText", false, match.value)) return false;
-      await Promise.resolve();
+      return 0;
+    }, { replacements, maxChars }, { timeout: 20_000 });
+    if (!Number.isSafeInteger(restored) || restored <= 0 || restored > remaining) return false;
+    remaining -= restored;
+  }
+  if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
+  return composer.evaluate((element, markers) => {
+    const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node as Text;
+      if (!text.parentElement?.closest(ignoredSelector) && markers.some(marker => text.data.includes(marker))) {
+        return false;
+      }
     }
     return true;
-  }, { replacements, count }, { timeout: 20_000 });
+  }, replacements.map(replacement => replacement.marker), { timeout: 20_000 });
 }
 
 export function chatGptPromptAttachmentMismatch(

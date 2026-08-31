@@ -1995,6 +1995,8 @@ export class ChatGptBrowserWorker {
         await this.activeComposer(page),
         guarded.replacements,
         guarded.count,
+        CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
+        abortSignal,
       )) {
         throw chatGptWebSurfaceError("ChatGPT composer could not restore literal Markdown delimiters", false);
       }

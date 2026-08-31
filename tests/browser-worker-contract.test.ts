@@ -593,7 +593,7 @@ test("Markdown shortcut delimiters are restored right-to-left after all bounded 
     focus: async () => {},
     evaluate: async (_callback: unknown, value: unknown) => {
       restorations.push(value);
-      return true;
+      return restorations.length === 1 ? 4 : true;
     },
   };
   const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
@@ -607,13 +607,16 @@ test("Markdown shortcut delimiters are restored right-to-left after all bounded 
   }, page, prompt);
 
   expect(nativeEdits).toEqual(["Preserve \uE000literal\uE000 and \u2060.gitignore\u2060."]);
-  expect(restorations).toEqual([{
-    replacements: [
-      { marker: "\u2060", value: "`", count: 2 },
-      { marker: "\uE000", value: "*", count: 2 },
-    ],
-    count: 4,
-  }]);
+  expect(restorations).toEqual([
+    {
+      replacements: [
+        { marker: "\u2060", value: "`", count: 2 },
+        { marker: "\uE000", value: "*", count: 2 },
+      ],
+      maxChars: CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
+    },
+    ["\u2060", "\uE000"],
+  ]);
 });
 
 test("prompt insertion avoids a native edit boundary inside a text token", async () => {
@@ -773,9 +776,11 @@ test("the real compaction envelope survives simulated caret drift at every bound
   let simulatedDrifts = 0;
   const composer = {
     focus: async () => {},
-    evaluate: async () => {
+    evaluate: async (_callback: unknown, value: unknown) => {
+      if (Array.isArray(value)) return true;
       attached = compiled.text;
-      return true;
+      return (value as { replacements: Array<{ count: number }> }).replacements
+        .reduce((sum, replacement) => sum + replacement.count, 0);
     },
   };
   const page = {
