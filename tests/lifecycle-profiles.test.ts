@@ -79,3 +79,34 @@ test("release builds rerun the deterministic lifecycle gate at the tag SHA", () 
   expect(workflow).toContain("@anthropic-ai/claude-code@2.1.251");
   expect(workflow).toMatch(/build:\s+needs: lifecycle-gate/);
 });
+
+test("latest-client canary runs both offline lanes and always reports safe status", () => {
+  const workflow = readFileSync(resolve(repo, ".github", "workflows", "lifecycle-client-canary.yml"), "utf8");
+  expect(workflow).toContain('cron: "17 3 * * 1"');
+  expect(workflow).toContain("workflow_dispatch:");
+  expect(workflow).toMatch(/permissions:\s+contents: read/);
+  expect(workflow).toContain("@openai/codex@latest");
+  expect(workflow).toContain("@anthropic-ai/claude-code@latest");
+  expect(workflow).toContain("timeout-minutes: 25");
+  for (const [step, timeout] of [
+    ["Install project dependencies", 3],
+    ["Install latest lifecycle clients", 3],
+    ["Run latest Codex deterministic lane", 5],
+    ["Run latest Claude deterministic lane", 5],
+  ] as const) {
+    const block = workflow.slice(workflow.indexOf(step), workflow.indexOf("\n      - name:", workflow.indexOf(step) + 1));
+    expect(block).toContain(`timeout-minutes: ${timeout}`);
+  }
+  expect(workflow).toContain("lifecycle:sim --lane=codex");
+  expect(workflow).toContain("lifecycle:sim --lane=claude");
+  expect(workflow.match(/if: \$\{\{ always\(\) \}\}/g)).toHaveLength(5);
+  expect(workflow).toContain("actions/upload-artifact@v6");
+  expect(workflow).toContain("CANARY_INSTALL_STATUS");
+  const reportStep = workflow.slice(
+    workflow.indexOf("Write privacy-safe canary report"),
+    workflow.indexOf("Upload canary report"),
+  );
+  expect(reportStep).toContain("node -e");
+  expect(reportStep).not.toContain("bun -e");
+  expect(workflow).not.toMatch(/secret|smoke:lifecycle:web|smoke:lifecycle:deep/i);
+});

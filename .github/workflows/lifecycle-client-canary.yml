@@ -1,0 +1,105 @@
+name: Latest Lifecycle Client Canary
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        timeout-minutes: 2
+      - uses: oven-sh/setup-bun@v2
+        timeout-minutes: 2
+        with:
+          bun-version: 1.4.0
+      - name: Record Bun version
+        id: bun
+        timeout-minutes: 1
+        run: echo "version=$(bun --version)" >> "$GITHUB_OUTPUT"
+      - name: Install project dependencies
+        timeout-minutes: 3
+        run: bun install --frozen-lockfile
+      - name: Install latest lifecycle clients
+        id: install
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          client_root="$RUNNER_TEMP/lifecycle-clients"
+          mkdir -p "$client_root"
+          set +e
+          npm install --prefix "$client_root" --no-package-lock --no-audit --no-fund \
+            @openai/codex@latest @anthropic-ai/claude-code@latest
+          install_code=$?
+          set -e
+          if [ "$install_code" -eq 0 ]; then install_status=success; else install_status=failure; fi
+          codex_version=$(PACKAGE_PATH="$client_root/node_modules/@openai/codex/package.json" node -p 'require(process.env.PACKAGE_PATH).version' 2>/dev/null || echo unavailable)
+          claude_version=$(PACKAGE_PATH="$client_root/node_modules/@anthropic-ai/claude-code/package.json" node -p 'require(process.env.PACKAGE_PATH).version' 2>/dev/null || echo unavailable)
+          {
+            echo "status=$install_status"
+            echo "codex_version=$codex_version"
+            echo "claude_version=$claude_version"
+            echo "codex_path=$client_root/node_modules/.bin/codex"
+            echo "claude_path=$client_root/node_modules/.bin/claude"
+          } >> "$GITHUB_OUTPUT"
+      - name: Run latest Codex deterministic lane
+        id: codex
+        if: ${{ always() }}
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set +e
+          bun run lifecycle:sim --lane=codex --codex="${{ steps.install.outputs.codex_path }}"
+          lane_code=$?
+          if [ "$lane_code" -eq 0 ]; then lane_status=success; else lane_status=failure; fi
+          echo "status=$lane_status" >> "$GITHUB_OUTPUT"
+      - name: Run latest Claude deterministic lane
+        id: claude
+        if: ${{ always() }}
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set +e
+          bun run lifecycle:sim --lane=claude --claude="${{ steps.install.outputs.claude_path }}"
+          lane_code=$?
+          if [ "$lane_code" -eq 0 ]; then lane_status=success; else lane_status=failure; fi
+          echo "status=$lane_status" >> "$GITHUB_OUTPUT"
+      - name: Write privacy-safe canary report
+        if: ${{ always() }}
+        timeout-minutes: 1
+        env:
+          CANARY_INSTALL_STATUS: ${{ steps.install.outputs.status || 'failure' }}
+          CANARY_CODEX_STATUS: ${{ steps.codex.outputs.status || 'failure' }}
+          CANARY_CLAUDE_STATUS: ${{ steps.claude.outputs.status || 'failure' }}
+          CANARY_CODEX_VERSION: ${{ steps.install.outputs.codex_version || 'unavailable' }}
+          CANARY_CLAUDE_VERSION: ${{ steps.install.outputs.claude_version || 'unavailable' }}
+          CANARY_BUN_VERSION: ${{ steps.bun.outputs.version || 'unavailable' }}
+          CANARY_RUNNER: ${{ runner.os }}-${{ runner.arch }}
+        run: |
+          mkdir -p tmp/lifecycle-client-canary
+          node -e 'require("node:fs").writeFileSync("tmp/lifecycle-client-canary/report.json", JSON.stringify({commit:process.env.GITHUB_SHA,runner:process.env.CANARY_RUNNER,bun:process.env.CANARY_BUN_VERSION,clients:{codex:process.env.CANARY_CODEX_VERSION,claude:process.env.CANARY_CLAUDE_VERSION},status:{install:process.env.CANARY_INSTALL_STATUS,codex:process.env.CANARY_CODEX_STATUS,claude:process.env.CANARY_CLAUDE_STATUS},timestamp:new Date().toISOString()},null,2) + "\n")'
+      - name: Upload canary report
+        if: ${{ always() }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v6
+        with:
+          name: latest-lifecycle-client-canary
+          path: tmp/lifecycle-client-canary/report.json
+          if-no-files-found: error
+      - name: Require installation and both lanes to pass
+        if: ${{ always() }}
+        timeout-minutes: 1
+        env:
+          CANARY_INSTALL_STATUS: ${{ steps.install.outputs.status || 'failure' }}
+          CANARY_CODEX_STATUS: ${{ steps.codex.outputs.status || 'failure' }}
+          CANARY_CLAUDE_STATUS: ${{ steps.claude.outputs.status || 'failure' }}
+        run: |
+          test "$CANARY_INSTALL_STATUS" = "success"
+          test "$CANARY_CODEX_STATUS" = "success"
+          test "$CANARY_CLAUDE_STATUS" = "success"
