@@ -29,3 +29,11 @@ test("restoration planning ignores unguarded text and rejects invalid bounds", (
     { marker: "\uE000", value: "*", count: 1 },
   ], 0)).toThrow("positive");
 });
+
+test("restoration ranges carry trailing whitespace with one following code unit", () => {
+  expect(planChatGptPromptMarkdownRestoration(
+    "a\uE000 word",
+    [{ marker: "\uE000", value: "*", count: 1 }],
+    8,
+  )).toEqual([{ start: 1, end: 4, count: 1 }]);
+});

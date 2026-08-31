@@ -636,21 +636,31 @@ test("prompt insertion avoids a native edit boundary inside a text token", async
       },
     },
   };
+  const composer = {
+    focus: async () => {},
+    evaluate: async (_callback: unknown, input: unknown) => {
+      if (Array.isArray(input)) return input.every(marker => !attached.includes(String(marker)));
+      const replacements = (input as { replacements: Array<{ marker: string; value: string }> }).replacements;
+      for (const replacement of replacements) attached = attached.replace(replacement.marker, replacement.value);
+      return replacements.length;
+    },
+  };
   const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
     insertPromptText(page: unknown, text: string): Promise<void>;
   }).insertPromptText;
 
   await insertPromptText.call({
+    activeComposer: async () => composer,
     waitForPromptChunkAttached: async (_page: unknown, expected: string) => {
       expect(attached).toBe(expected);
     },
     reanchorPromptCaret: async () => {},
   }, page, prompt);
 
-  expect(inserted.join("")).toBe(prompt);
+  expect(inserted.join("").replaceAll("\uF8FF", " ")).toBe(prompt);
   expect(inserted[0]?.length).toBeLessThan(CHATGPT_PROMPT_INSERT_CHUNK_CHARS);
   expect(inserted[0]?.endsWith("x")).toBeTrue();
-  expect(inserted[1]?.startsWith(" ")).toBeTrue();
+  expect(inserted[1]?.startsWith("\uF8FFtonumber")).toBeTrue();
   expect(attached).toBe(prompt);
 });
 

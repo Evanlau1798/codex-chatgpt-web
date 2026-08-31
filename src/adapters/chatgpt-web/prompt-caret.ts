@@ -9,6 +9,7 @@ export interface ChatGptCaretEvidence {
 }
 
 const ZERO_WIDTH_TEXT = /[\u200B\u200C\u200D\u2060\uFEFF]/g;
+const RESTORATION_WHITESPACE = /\s/u;
 
 function codePointWindow(value: string, offset: number): string {
   return Array.from(value.slice(offset), char => (
@@ -19,6 +20,22 @@ function codePointWindow(value: string, offset: number): string {
 const MARKDOWN_SHORTCUT_DELIMITERS = ["`", "*", "_", "~", "=", "[", ")"] as const;
 
 type MarkdownReplacement = { marker: string; value: string; count: number };
+
+export function guardChatGptPromptChunkBoundary(
+  text: string,
+  chunk: string,
+  offset: number,
+): { text: string; replacement: MarkdownReplacement } | undefined {
+  if (offset <= 0 || !RESTORATION_WHITESPACE.test(chunk[0] ?? "")) return undefined;
+  let codePoint = 0xF8FF;
+  while (codePoint >= 0xE000 && text.includes(String.fromCharCode(codePoint))) codePoint -= 1;
+  if (codePoint < 0xE000) throw new Error("ChatGPT prompt has no available chunk-boundary marker");
+  const marker = String.fromCharCode(codePoint);
+  return {
+    text: `${marker}${chunk.slice(1)}`,
+    replacement: { marker, value: chunk[0]!, count: 1 },
+  };
+}
 
 export type ChatGptPromptMarkdownRestoration = {
   start: number;
@@ -79,7 +96,11 @@ export function planChatGptPromptMarkdownRestoration(
       if (markers.has(text[index]!)) { right = index; break; }
     }
     if (right < 0) break;
-    const windowStart = Math.max(0, right - maxChars + 1);
+    let end = right + 1;
+    while (end < text.length && RESTORATION_WHITESPACE.test(text[end] ?? "")) end += 1;
+    if (end > right + 1 && end < text.length) end += 1;
+    end = Math.min(end, before);
+    const windowStart = Math.max(0, end - maxChars);
     let start = right;
     let count = 0;
     for (let index = windowStart; index <= right; index += 1) {
@@ -87,7 +108,7 @@ export function planChatGptPromptMarkdownRestoration(
       start = Math.min(start, index);
       count += 1;
     }
-    ranges.push({ start, end: right + 1, count });
+    ranges.push({ start, end, count });
     before = start;
   }
   return ranges;
@@ -122,7 +143,10 @@ export async function restoreChatGptPromptMarkdown(
           if (replacementsByMarker.has(node.data[index]!)) { right = index; break; }
         }
         if (right < 0) continue;
-        const windowStart = Math.max(0, right - input.maxChars + 1);
+        let rangeEnd = right + 1;
+        while (rangeEnd < node.data.length && /\s/u.test(node.data[rangeEnd] ?? "")) rangeEnd += 1;
+        if (rangeEnd > right + 1 && rangeEnd < node.data.length) rangeEnd += 1;
+        const windowStart = Math.max(0, rangeEnd - input.maxChars);
         let start = right;
         let markerCount = 0;
         for (let index = windowStart; index <= right; index += 1) {
@@ -130,11 +154,11 @@ export async function restoreChatGptPromptMarkdown(
           start = Math.min(start, index);
           markerCount += 1;
         }
-        const guarded = node.data.slice(start, right + 1);
+        const guarded = node.data.slice(start, rangeEnd);
         const restoredText = Array.from(guarded, value => replacementsByMarker.get(value) ?? value).join("");
         const range = document.createRange();
         range.setStart(node, start);
-        range.setEnd(node, right + 1);
+        range.setEnd(node, rangeEnd);
         selection.removeAllRanges();
         selection.addRange(range);
         if (!document.execCommand("insertText", false, restoredText)) return 0;

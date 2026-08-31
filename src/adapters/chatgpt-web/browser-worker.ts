@@ -143,6 +143,7 @@ import { setChatGptThinkMode } from "./think-mode";
 import { dismissChatGptTemporaryChatOnboarding } from "./temporary-chat-onboarding";
 import {
   chatGptPromptAttachmentMismatch,
+  guardChatGptPromptChunkBoundary,
   guardChatGptPromptMarkdown,
   reanchorChatGptComposerCaret,
   restoreChatGptPromptMarkdown,
@@ -1977,14 +1978,25 @@ export class ChatGptBrowserWorker {
     for (let offset = 0; offset < insertionText.length;) {
       throwIfPromptAttachmentAborted(abortSignal);
       const end = promptInsertChunkEnd(insertionText, offset);
-      const chunk = insertionText.slice(offset, end);
+      const originalChunk = insertionText.slice(offset, end);
+      const guardedBoundary = guardChatGptPromptChunkBoundary(insertionText, originalChunk, offset);
+      const chunk = guardedBoundary?.text ?? originalChunk;
       await page.keyboard.insertText(chunk);
       throwIfPromptAttachmentAborted(abortSignal);
-      if (end < insertionText.length) {
+      if (end < insertionText.length || guardedBoundary) {
         // Lexical can rebuild the active block after an exact commit and move its native selection.
         // Re-anchor only after the verified prefix is stable, before the next irreversible edit.
-        const expectedPrefix = insertionText.slice(0, end).trimStart();
+        const expectedPrefix = `${insertionText.slice(0, offset)}${chunk}`.trimStart();
         await this.waitForPromptChunkAttached(page, expectedPrefix, abortSignal);
+        if (guardedBoundary && !await restoreChatGptPromptMarkdown(
+          await this.activeComposer(page),
+          [guardedBoundary.replacement],
+          1,
+          CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
+          abortSignal,
+        )) {
+          throw chatGptWebSurfaceError("ChatGPT composer could not restore a prompt chunk boundary", false);
+        }
         await this.reanchorPromptCaret(page, abortSignal);
       }
       offset = end;
