@@ -31,6 +31,16 @@ test("CI runs deterministic lifecycle simulation and never calls a live profile"
   expect(workflow).toContain("turn-broker-lifecycle.test.ts");
 });
 
+test("CI exposes one fail-closed aggregate gate for branch protection", () => {
+  const workflow = readFileSync(resolve(repo, ".github", "workflows", "ci.yml"), "utf8");
+  expect(workflow).toMatch(/ci-gate:\s+if: \$\{\{ always\(\) \}\}/);
+  expect(workflow).toContain("needs: [lifecycle-sim, lifecycle-client-probe, verify, actionlint]");
+  for (const dependency of ["lifecycle-sim", "lifecycle-client-probe", "verify", "actionlint"]) {
+    expect(workflow).toContain(`needs['${dependency}'].result`);
+  }
+  expect(workflow).toContain('test "$LIFECYCLE_SIM_RESULT" = "success"');
+});
+
 test("the executable manifest owns every deterministic lifecycle test", () => {
   expect(codexLifecycleTests).toContain("tests/native-steering-boundary.test.ts");
   expect(claudeLifecycleTests).toContain("tests/claude-session-abort.test.ts");
