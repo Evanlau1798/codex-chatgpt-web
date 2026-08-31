@@ -6,6 +6,8 @@
       "name": "codex-chatgpt-web",
       "dependencies": {
         "@modelcontextprotocol/sdk": "^1.30.0",
+        "ajv": "8.20.0",
+        "ajv-formats": "3.0.1",
         "chromium-bidi": "12.1.0",
         "fflate": "^0.8.2",
         "playwright-core": "^1.62.0",

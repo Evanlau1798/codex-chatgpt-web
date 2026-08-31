@@ -37,6 +37,11 @@ export function App() {
   const [operation, setOperation] = useState<OperationState | null>(null);
   const [logs, setLogs] = useState<LogRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const documentLanguage = snapshot?.state.language ?? "en";
+
+  useEffect(() => {
+    document.documentElement.lang = documentLanguage;
+  }, [documentLanguage]);
 
   useEffect(() => {
     if (!api) return;
@@ -223,17 +228,24 @@ function Onboarding({
             <div className="welcome-options" role="radiogroup" aria-label={localized.chooseLanguage}>
               <WelcomeOption
                 active={selectedLanguage === "en"}
-                detail="English"
-                label="English"
+                detail={localized.english}
+                label={localized.english}
                 marker="EN"
                 onClick={() => setSelectedLanguage("en")}
               />
               <WelcomeOption
                 active={selectedLanguage === "zh-CN"}
-                detail="简体中文"
-                label="简体中文"
+                detail={localized.chinese}
+                label={localized.chinese}
                 marker="简"
                 onClick={() => setSelectedLanguage("zh-CN")}
+              />
+              <WelcomeOption
+                active={selectedLanguage === "ja"}
+                detail={localized.japanese}
+                label={localized.japanese}
+                marker="日"
+                onClick={() => setSelectedLanguage("ja")}
               />
             </div>
           ) : (
@@ -603,7 +615,9 @@ function LauncherShell({
                 updateState={updateState}
               />
             ) : null}
-            {surface === "activity" ? <ActivitySurface copy={copy} logs={logs} setError={setError} /> : null}
+            {surface === "activity" ? (
+              <ActivitySurface copy={copy} language={language} logs={logs} setError={setError} />
+            ) : null}
             {surface === "settings" ? (
               <SettingsSurface
                 copy={copy}
@@ -1245,10 +1259,12 @@ function McpSurface({
 
 function ActivitySurface({
   copy,
+  language,
   logs,
   setError,
 }: {
   copy: Copy;
+  language: Language;
   logs: LogRecord[];
   setError: (error: string | null) => void;
 }) {
@@ -1277,7 +1293,7 @@ function ActivitySurface({
               <strong>{humanEvent(record.event)}</strong>
               <span>{logDetail(record.detail)}</span>
             </div>
-            <time>{formatTime(record.at)}</time>
+            <time>{formatTime(record.at, language)}</time>
           </div>
         ))}
       </div>
@@ -1447,7 +1463,7 @@ function SettingsSurface({
           />
         </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
-          <LanguageMenu language={language} onChange={(next) => void updateLanguage(next)} />
+          <LanguageMenu copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />
         </SettingRow>
       </div>
 
@@ -1781,11 +1797,12 @@ function Switch({
   );
 }
 
-function LanguageMenu({ language, onChange }: { language: Language; onChange: (language: Language) => void }) {
+function LanguageMenu({ copy, language, onChange }: { copy: Copy; language: Language; onChange: (language: Language) => void }) {
   const [open, setOpen] = useState(false);
   const options: Array<{ label: string; value: Language }> = [
-    { label: "English", value: "en" },
-    { label: "简体中文", value: "zh-CN" },
+    { label: copy.english, value: "en" },
+    { label: copy.chinese, value: "zh-CN" },
+    { label: copy.japanese, value: "ja" },
   ];
   const selected = options.find((option) => option.value === language) ?? options[0];
 
@@ -1809,12 +1826,12 @@ function LanguageMenu({ language, onChange }: { language: Language; onChange: (l
       {open ? (
         <>
           <button
-            aria-label="Close language menu"
+            aria-label={`${copy.close}: ${copy.language}`}
             className="language-menu-scrim"
             onClick={() => setOpen(false)}
             type="button"
           />
-          <div aria-label="Language" className="language-menu-panel" role="listbox">
+          <div aria-label={copy.language} className="language-menu-panel" role="listbox">
             {options.map((option) => (
               <button
                 aria-selected={option.value === language}
@@ -1981,9 +1998,13 @@ function logDetail(detail: Record<string, unknown>): string {
     .join(" · ");
 }
 
-function formatTime(value: string): string {
+function formatTime(value: string, language: Language): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    : date.toLocaleTimeString(language === "ja" ? "ja-JP" : language === "zh-CN" ? "zh-CN" : "en", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      });
 }

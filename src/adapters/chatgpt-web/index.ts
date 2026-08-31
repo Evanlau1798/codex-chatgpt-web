@@ -14,6 +14,8 @@ import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./env
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { reportChatGptPreparationFailure } from "./preparation-diagnostics";
 import { compileChatGptWebPrompt } from "./prompt";
+import { createChatGptStructuredOutputValidator } from "./output-validation";
+import { ChatGptExternalTurnProgress } from "./turn-progress";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { brokerSocketPath, ChatGptSurfaceRecoveryTracker, deferred, withAbort } from "./runtime-lifecycle";
 import { TurnBroker, type TurnBrokerOwner } from "./turn-broker";
@@ -93,6 +95,7 @@ export function createChatGptWebAdapter(
     const contextTtlMs = timeoutMs === undefined ? undefined : timeoutMs + 60_000;
     const trace = new ChatGptTraceFeed();
     const text = new ChatGptTextFeed();
+    const externalProgress = new ChatGptExternalTurnProgress();
     const steering = captureLunaCheckpoint || !useEnhancedWebSessionMode ? undefined : new ChatGptSteeringFeed();
     let activeToken: string | undefined;
     let toolResultDelivered = false;
@@ -204,6 +207,7 @@ export function createChatGptWebAdapter(
       ...(retainConversation ? { retainConversation: true } : {}),
       ...(conversationKey ? { conversationKey } : {}),
       abortSignal: browserAbort.signal,
+      externalProgress,
       onReasoningSummary: (text, continuation) => trace.push({ kind: "reasoning", text, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: emitCommentary,
       onProgress: () => trace.signalProgress(),
@@ -232,6 +236,7 @@ export function createChatGptWebAdapter(
       browser,
       trace,
       text, conversationKey,
+      externalProgress,
       ...(steering ? { steering } : {}),
       usageInput: checkpointInput.parsed,
       submission,
@@ -262,6 +267,10 @@ export function createChatGptWebAdapter(
         : { ...configuredCapabilities, localToolsEnabled: configuredCapabilities.localToolsEnabled && toolPolicy.tools.length > 0 };
       const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
       if (toolPolicy.requireTool && !mode.localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
+      const structuredOutputValidator = parsed._compactionRequest
+        ? undefined
+        : createChatGptStructuredOutputValidator(parsed.options.outputFormat);
+      const bufferStructuredOutput = structuredOutputValidator !== undefined;
       const retryKey = `${executionNamespace}:${chatGptTurnRetryKey(parsed)}`;
       const exhaustedRetry = chatGptWebTurnRetryPolicy.exhaustedError(retryKey);
       if (exhaustedRetry) {
@@ -339,10 +348,13 @@ export function createChatGptWebAdapter(
               const trace = session.runtime.trace.drain();
               reasoning = trace.map(event => event.text);
               emitTraceEvents(trace, emitCaptured);
-              emitTextDeltas(session.runtime.text.drain(), emitCaptured);
+              const completedTextDeltas = session.runtime.text.drain();
+              if (!bufferStructuredOutput) emitTextDeltas(completedTextDeltas, emitCaptured);
               if (session.runtime.text.value() !== settled.answer) {
                 throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
               }
+              structuredOutputValidator?.(settled.answer);
+              if (bufferStructuredOutput) emitTextDeltas([settled.answer], emitCaptured);
               session.setFinalReasoning(reasoning);
               session.setFinalEvents(events);
             }
@@ -396,7 +408,9 @@ export function createChatGptWebAdapter(
               roundReasoning.push(...trace.map(event => event.text));
               emitTraceEvents(trace, emitRound);
             };
-            const emitNewText = (deltas: string[]) => emitTextDeltas(deltas, emitRound);
+            const emitNewText = (deltas: string[]) => {
+              if (!bufferStructuredOutput) emitTextDeltas(deltas, emitRound);
+            };
             if (!parsed._compactionRequest) emitProContextWarning(parsed, turnCapabilities, emitRound);
             emitNewTrace(session.runtime.trace.drain());
             emitNewText(session.runtime.text.drain());
@@ -445,6 +459,8 @@ export function createChatGptWebAdapter(
                 if (session.runtime.text.value() !== next.outcome.answer) {
                   throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
                 }
+                structuredOutputValidator?.(next.outcome.answer);
+                if (bufferStructuredOutput) emitTextDeltas([next.outcome.answer], emitRound);
                 const answer = appendCompactionUserPrompt(
                   parsed,
                   next.outcome.answer,
@@ -456,6 +472,8 @@ export function createChatGptWebAdapter(
                   estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning: roundReasoning }, turnCapabilities),
                   emit,
                 );
+                session.setFinalReasoning(roundReasoning);
+                session.setFinalEvents(roundEvents);
                 chatGptWebTurnRetryPolicy.clear(retryKey);
                 return;
               }

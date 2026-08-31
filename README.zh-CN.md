@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a>
+  <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a>
 </p>
 
 <p align="center">
@@ -38,8 +38,8 @@ Codex / Claude Code ──Responses 或 Messages──▶ 本地桥接 ──浏
 ```
 
 Codex 会保留原生任务、上下文生命周期、界面和工具 harness。本地 Responses 桥接程序只会将
-所选模型的轮次转发到全新的 ChatGPT 临时聊天；在完整模式下，MCP 会把 ChatGPT 连接回同一个
-Codex 任务的工具。
+所选模型的任务转发到与该任务绑定的 ChatGPT 临时聊天；在完整模式下，MCP 会把 ChatGPT 连接回
+同一个 Codex 任务的工具，直到下一次上下文压缩边界。
 
 > [!TIP]
 > 我还开发了 **[ChatGPT Persona Voice](https://github.com/miuuyy/ChatGPT-Persona-Voice)**：一款
@@ -195,9 +195,18 @@ recap、resume 与 subagent 生命周期仍由客户端管理；Enhanced 模式�
 
 ## 日常操作
 
-在 **活动** 页面查看结构化本地日志，在 **设置 → 运行诊断** 中执行端到端健康检查。如果已停止的
-任务仍让 ChatGPT 继续工作，请使用 **设置 → 取消残留的浏览器任务**。删除启动器前，请使用
-**设置 → 移除 Codex 集成**，以恢复此前的 Codex 路由。
+使用 **活动** 页面查看安全的本地诊断，并通过 **设置 → 运行诊断** 执行端到端健康检查。设置页还可
+取消保留的浏览器任务，或在卸载前移除 Codex 集成。仅在需要为每个浏览器检查点保存截图时设置
+`CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1`。
+
+新安装默认使用 **Compatibility V1** 以支持跨后端 subagent。**Native** 会保留 Codex 自身的
+功能设置，并启用明文 Web-to-Web V2 委派。切换协议后，请重启 Codex 并创建新任务：
+
+```bash
+codex-chatgpt-web subagents status
+codex-chatgpt-web subagents compatibility-v1
+codex-chatgpt-web subagents native
+```
 
 Subagent 协议是独立的安装设置，与增强型 Web 会话模式互不绑定。新安装默认使用
 **Compatibility V1**，以获得最广泛的跨后端兼容性：安装程序会启用 `multi_agent`、关闭全局
@@ -220,16 +229,13 @@ codex-chatgpt-web subagents native
 
 - 这是非官方浏览器自动化，并非 OpenAI API。ChatGPT UI 变更可能破坏选择器；发生变化时会明确
   失败，而不是静默切换模型或传输方式。
-- ChatGPT 针对不同账户设置的输入框上限小于某些底层模型的上下文窗口。实测边界以及实现更大且
-  确定性传输的要求记录在
-  [#76](https://github.com/miuuyy/codex-chatgpt-web/issues/76) 中。
 - 浏览器状态是敏感的登录凭据，loopback 监听器也可被同一本地用户运行的进程访问。切勿共享
   启动器 profile，并仅在可信工作站上使用。
-- 发布包目前支持 macOS 13+（arm64/x64）、Windows x64 和 Linux x64。核心运行时、测试和原生
-  打包会在 CI 中对三种操作系统进行检查；依赖账户的浏览器与 MCP 流程必须另行完成
-  [发布验证](docs/release-validation.md)，打包 smoke 不视为端到端证明。
-- 在为发布配置平台签名证书之前，macOS Gatekeeper 或 Windows SmartScreen 可能会显示未知发布者
-  警告。一键安装脚本会在安装前验证发布的 SHA-256 清单。
+- 发布包目前支持 macOS 13+（arm64/x64）、Windows x64 和 Linux x64。运行时、测试和打包会在
+  CI 中对三种系统进行检查；依赖账户的浏览器与 MCP 流程使用单独的
+  [发布验证](docs/release-validation.md)。
+- 构建目前尚未进行平台签名，因此 Gatekeeper 或 SmartScreen 可能会显示警告。安装程序会在安装前
+  验证已发布的 SHA-256 清单。
 
 启用完整模式前，请阅读完整的[架构说明](docs/architecture.md)和
 [安全模型](docs/security-model.md)。安全漏洞请通过 [SECURITY.md](SECURITY.md) 报告。
@@ -238,11 +244,31 @@ codex-chatgpt-web subagents native
 
 ```bash
 bun run app
+bun run dev:launcher
+bun run src/cli.ts dev status
+bun run dev:chat compaction-lab "Reply with exactly: DEV READY"
 bun run verify
+bun run smoke:subagents
 bun run app:package
 ```
 
+`dev:launcher` 会在 `~/.codex-chatgpt-web-dev` 下启动第二个独立的启动器配置：Electron 状态、
+浏览器 Cookie/登录、ChatGPT 账户、配置、沙箱化 `CODEX_HOME`、聊天、诊断、broker 和 tunnel
+配置均与正式启动器隔离。它可以与正式启动器同时运行，绝不会启动 Responses daemon 或修改
+Codex。可选的完整模式只会启动并监管隔离的 DEV MCP tunnel，并使用独立连接器名称
+`Codex Native2 DEV`。
+
+`dev:chat` 是一个具名、持久的合成外层 Codex harness。它通过隔离的启动器浏览器、临时聊天、
+prompt compiler、Responses parser 和压缩处理器执行当前工作树。可选的完整模式也会测试 MCP
+连接器和 broker；工具效果会显示为明确的模拟回执。仅浏览器聊天不会暴露外层工具。该命令不会
+打开 Responses listener、修改 `openai_base_url`、停止正式 daemon，也不会占用 17841 端口。
+不带消息运行时，可使用 `/status`、`/fill 30000`、`/compact`、`/model` 和 `/reset`。首次使用时，
+请在标有 **DEV** 的窗口中登录并初始化一次配置。完整模式仅用于模拟工具轮次；DEV 启动器会保持
+DEV tunnel 就绪，具名聊天按需连接 broker。正式凭据和 `Codex Native2` 连接器绝不会被隐式复用。
+详见 [DEV chat harness](docs/dev-chat.md)。
+
 - [架构说明](docs/architecture.md)
+- [DEV chat harness](docs/dev-chat.md)
 - [安全模型](docs/security-model.md)
 - [贡献指南](CONTRIBUTING.md)
 

@@ -1,4 +1,16 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+
+export function resolveLauncherHelperScript(configured: string | undefined, advertised: string): string {
+  if (configured) return configured;
+  const entrypoint = process.argv[1];
+  if (typeof entrypoint === "string" && basename(entrypoint) === "cli.js") {
+    const sibling = join(dirname(entrypoint), "browser-helper.cjs");
+    if (existsSync(sibling)) return sibling;
+  }
+  return advertised;
+}
 
 export function writeLauncherHelperMessage(
   child: ChildProcessWithoutNullStreams,

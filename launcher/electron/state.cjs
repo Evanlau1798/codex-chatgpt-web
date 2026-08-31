@@ -51,7 +51,7 @@ function readState(filePath) {
       state.codexSetupComplete = true;
       state.claudeSetupComplete = true;
     }
-    if (state.language !== null && state.language !== "en" && state.language !== "zh-CN") {
+    if (state.language !== null && state.language !== "en" && state.language !== "zh-CN" && state.language !== "ja") {
       state.language = DEFAULT_STATE.language;
     }
     for (const key of [

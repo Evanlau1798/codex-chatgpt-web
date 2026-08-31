@@ -6,7 +6,12 @@ import {
   parseLauncherHelperMessage,
   type LauncherHelperMessage,
 } from "./launcher-helper-protocol";
-import { terminateLauncherHelperProcess, writeLauncherHelperMessage } from "./launcher-helper-process";
+import { forwardLauncherHelperProgress } from "./launcher-helper-progress";
+import {
+  resolveLauncherHelperScript,
+  terminateLauncherHelperProcess,
+  writeLauncherHelperMessage,
+} from "./launcher-helper-process";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { BrowserTurn, ResolvedBrowserConfig } from "./browser-worker";
 
@@ -20,6 +25,7 @@ interface PendingTurn {
   acknowledgeRetry?: () => void;
   localFailure?: Error;
   preemptiveRetryRequested?: boolean;
+  progressForwarding?: AbortController;
 }
 
 export class LauncherBrowserHelperClient {
@@ -28,6 +34,7 @@ export class LauncherBrowserHelperClient {
   private readyResolve?: () => void;
   private readyReject?: (error: Error) => void;
   private readonly pending = new Map<string, PendingTurn>();
+  private helperFeatures = new Set<string>();
 
   constructor(private readonly config: ResolvedBrowserConfig) {}
 
@@ -74,6 +81,8 @@ export class LauncherBrowserHelperClient {
         // Setting this before the synchronous write call makes an abort either prevent dispatch or
         // queue an `abort` after the `run` frame; it can never overtake the run frame in the pipe.
         pending.sent = true;
+        const progressForwarding = new AbortController();
+        pending.progressForwarding = progressForwarding;
         void this.send({
           type: "run",
           id: turn.traceId,
@@ -97,6 +106,15 @@ export class LauncherBrowserHelperClient {
             ...(turn.compaction ? { compaction: true } : {}),
             ...(turn.captureLunaCheckpoint ? { captureLunaCheckpoint: true } : {}),
           },
+        }).then(() => {
+          if (!progressForwarding.signal.aborted) {
+            forwardLauncherHelperProgress(
+              turn,
+              this.helperFeatures.has("progress"),
+              progressForwarding.signal,
+              message => this.send(message),
+            );
+          }
         }).catch(error => this.finishWithError(
           turn.traceId, error instanceof Error ? error : new Error(String(error)), pending,
         ));
@@ -140,7 +158,7 @@ export class LauncherBrowserHelperClient {
     const descriptor = readLauncherBrowserHostDescriptor(this.config.browserHostDescriptorPath!);
     const child = spawn(
       descriptor.helper.executable,
-      [this.config.browserHelperScriptPath ?? descriptor.helper.script],
+      [resolveLauncherHelperScript(this.config.browserHelperScriptPath, descriptor.helper.script)],
       {
         env: {
           ...process.env,
@@ -216,6 +234,7 @@ export class LauncherBrowserHelperClient {
       return;
     }
     if (message.type === "ready") {
+      this.helperFeatures = new Set(message.features ?? []);
       this.readyResolve?.();
       this.readyResolve = undefined;
       this.readyReject = undefined;
@@ -407,6 +426,7 @@ export class LauncherBrowserHelperClient {
     if (pending.abortListener && pending.turn.abortSignal) {
       pending.turn.abortSignal.removeEventListener("abort", pending.abortListener);
     }
+    pending.progressForwarding?.abort();
     pending.prepared?.release();
     this.pending.delete(id);
   }

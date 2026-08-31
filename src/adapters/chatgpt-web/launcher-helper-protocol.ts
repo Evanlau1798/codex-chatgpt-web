@@ -4,7 +4,7 @@ import {
 } from "./rolling-checkpoint";
 
 export type LauncherHelperMessage =
-  | { type: "ready" }
+  | { type: "ready"; features?: string[] }
   | { type: "event"; id: string; event: "heartbeat" | "send_activated" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
   | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
   | { type: "event"; id: string; event: "answer"; text: string; attempt: number }
@@ -40,7 +40,16 @@ export function parseLauncherHelperMessage(line: string): LauncherHelperMessage 
     throw new Error("Launcher browser helper message is not an object");
   }
   const message = value as Record<string, unknown>;
-  if (message.type === "ready") return { type: "ready" };
+  if (message.type === "ready") {
+    if (message.features !== undefined
+      && (!Array.isArray(message.features) || message.features.some(feature => typeof feature !== "string"))) {
+      throw new Error("Launcher browser helper advertised invalid features");
+    }
+    return {
+      type: "ready",
+      ...(message.features !== undefined ? { features: message.features as string[] } : {}),
+    };
+  }
   if (typeof message.id !== "string" || !message.id) {
     throw new Error("Launcher browser helper message has no turn identity");
   }

@@ -11,7 +11,11 @@ export interface ChatGptAssistantTurnBinding {
   generation: number;
 }
 
-export type ChatGptSubmissionEvidence = "user_turn" | "assistant_turn" | "generation_running";
+export type ChatGptSubmissionEvidence =
+  | "user_turn"
+  | "assistant_turn"
+  | "generation_running"
+  | "mcp_tool_call";
 
 export async function activateChatGptSendControl(
   sendButton: Pick<Locator, "press">,

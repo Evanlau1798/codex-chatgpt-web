@@ -8,6 +8,8 @@ import { createProcessLineWriter } from "./process-line-writer";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { ChatGptRetryPrompt } from "./steering";
 import { createBrowserHelperPromptSelection } from "./browser-helper-prompt-selection";
+import { ChatGptMirroredTurnProgress } from "./turn-progress";
+import type { ChatGptExternalTurnProgressSnapshot } from "./turn-progress";
 
 interface RunMessage {
   type: "run";
@@ -68,7 +70,9 @@ type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage
   | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
   | { type: "send_activated_ack"; id: string }
   | { type: "preempt_retry"; id: string; prompt: string }
-  | { type: "abort"; id: string } | { type: "shutdown" };
+  | { type: "progress"; id: string; snapshot: ChatGptExternalTurnProgressSnapshot }
+  | { type: "abort"; id: string }
+  | { type: "shutdown" };
 
 let outputFailure: Error | undefined;
 const handleOutputFailure = (error: Error): void => {
@@ -93,6 +97,7 @@ const answerRetryWaiters = new Map<string, (prompt?: string | ChatGptRetryPrompt
 const preparedSelectionWaiters = new Map<string, (prepared?: CompiledChatGptWebPrompt) => void>();
 const sendActivationWaiters = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
 const activeWorkers = new Map<string, ChatGptBrowserWorker>();
+const turnProgress = new Map<string, ChatGptMirroredTurnProgress>();
 let shuttingDown = false;
 let shutdownPromise: Promise<void> | undefined;
 
@@ -171,6 +176,12 @@ async function run(message: RunMessage): Promise<void> {
   };
   const abortController = new AbortController();
   abortControllers.set(message.id, abortController);
+  // The Codex MCP broker runs in the daemon process, so this mirror is the only way the worker can
+  // observe that a turn is still executing while its ChatGPT DOM is unavailable. Trace ids are
+  // derived deterministically and can repeat, so each run starts a fresh mirror rather than
+  // inheriting revisions recorded for an earlier turn that happened to share the id.
+  const progress = new ChatGptMirroredTurnProgress();
+  turnProgress.set(message.id, progress);
   const promptSelection = createBrowserHelperPromptSelection();
   preparedSelectionWaiters.set(message.id, prepared => {
     if (prepared) promptSelection.select(prepared);
@@ -190,6 +201,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.conversationKey ? { conversationKey: message.turn.conversationKey } : {}),
     ...(message.turn.compaction ? { compaction: true } : {}),
     abortSignal: abortController.signal,
+    externalProgress: progress,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
     onSendActivated: () => new Promise<void>((resolve, reject) => {
       if (sendActivationWaiters.has(message.id)) {
@@ -267,6 +279,7 @@ async function run(message: RunMessage): Promise<void> {
     preparedSelectionWaiters.delete(message.id);
     sendActivationWaiters.delete(message.id);
     abortControllers.delete(message.id);
+    turnProgress.delete(message.id);
   }
 }
 
@@ -342,6 +355,25 @@ input.on("line", line => {
     );
     sendActivationWaiters.delete(message.id);
     abortControllers.get(message.id)?.abort();
+  } else if (message.type === "progress") {
+    // Progress is only meaningful for a turn this helper is actually running. Creating a mirror
+    // for any unrecognised id let late, malformed, or misaddressed frames grow this map without
+    // bound, since nothing would ever remove an entry that has no turn to end it.
+    if (!abortControllers.has(message.id)) return;
+    const progress = turnProgress.get(message.id) ?? new ChatGptMirroredTurnProgress();
+    turnProgress.set(message.id, progress);
+    try {
+      progress.apply(message.snapshot);
+    } catch (error) {
+      // Progress is a liveness hint, never response content or completion. Failing the turn over a
+      // malformed frame would destroy an accepted ChatGPT turn that cannot be resent, so the frame
+      // is dropped and the turn falls back to DOM-only health, which is the behaviour it had
+      // before this transport existed.
+      diagnostic(
+        `[chatgpt-web] discarded an invalid MCP progress frame for ${message.id}:`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   } else if (message.type === "preempt_retry") {
     const worker = activeWorkers.get(message.id);
     if (typeof message.prompt !== "string" || !message.prompt.trim()
@@ -407,12 +439,21 @@ input.on("line", line => {
       id: message.id,
       message: error instanceof Error ? error.message : String(error),
     }));
-  } else {
+  } else if (message.type === "run") {
     void run(message).catch(error => writeProtocol({
       type: "error",
       id: message.id,
       message: error instanceof Error ? error.message : String(error),
     }));
+  } else {
+    // Never treat an unrecognised frame as a run. Doing so dereferenced `message.turn` on a frame
+    // that has none, so a newer daemon speaking to an older helper destroyed the turn with an
+    // opaque TypeError instead of degrading.
+    writeProtocol({
+      type: "error",
+      id: (message as { id?: string }).id ?? "unknown",
+      message: `Browser helper received an unsupported message type: ${String((message as { type?: unknown }).type)}`,
+    });
   }
 });
 input.on("close", () => {
@@ -425,4 +466,6 @@ process.once("SIGTERM", () => {
   void requestShutdown();
 });
 
-writeProtocol({ type: "ready" });
+// Advertise optional frames so a newer daemon can tell whether this helper understands them. An
+// older helper omits the field, and the daemon then withholds those frames instead of breaking it.
+writeProtocol({ type: "ready", features: ["progress"] });

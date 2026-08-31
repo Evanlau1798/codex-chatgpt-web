@@ -466,3 +466,33 @@ test("marks bounded image metadata traversal as truncated", async () => {
     outcome: "completed",
   });
 });
+
+test("repairs a missing models client_version from an exact first-party Codex user agent", async () => {
+  const request = new Request("http://127.0.0.1:17841/v1/models", {
+    headers: {
+      authorization: "Bearer codex-oauth-token",
+      "user-agent": "codex_chatgpt_desktop/0.151.0-alpha.7.2 (Mac OS 15.6; arm64) Codex",
+    },
+  });
+  let upstreamRequest: Request | undefined;
+  await forwardNativeCodexRequest(request, "models", async input => {
+    upstreamRequest = input;
+    return Response.json({ models: [] });
+  });
+  expect(upstreamRequest!.url).toBe("https://chatgpt.com/backend-api/codex/models?client_version=0.151.0");
+});
+
+test("does not invent a models client version from an unrelated user agent", async () => {
+  const request = new Request("http://127.0.0.1:17841/v1/models", {
+    headers: {
+      authorization: "Bearer codex-oauth-token",
+      "user-agent": "Mozilla/5.0 Codex/999.999.999",
+    },
+  });
+  let upstreamRequest: Request | undefined;
+  await forwardNativeCodexRequest(request, "models", async input => {
+    upstreamRequest = input;
+    return Response.json({ models: [] });
+  });
+  expect(upstreamRequest!.url).toBe("https://chatgpt.com/backend-api/codex/models");
+});

@@ -204,7 +204,8 @@ export function installRoute(
   if (previous.openai_base_url.present && !replaceExistingRoute) {
     throw new Error(
       `Codex already configures model routing (openai_base_url=${JSON.stringify(previous.openai_base_url.value)}). `
-      + "Rerun with --replace-codex-route to replace it reversibly.",
+      + "Rerun with --replace-codex-route to replace it reversibly. "
+      + "Check whether another Codex extension or wrapper (for example, OpenCodex or Headroom) is replacing the bridge port.",
     );
   }
 

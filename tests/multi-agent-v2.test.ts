@@ -167,7 +167,7 @@ describe("Codex Multi-Agent V2 plaintext transport", () => {
     });
   });
 
-  test("accepts a readable V2 child message as ordinary user context", () => {
+  test("preserves routing metadata for a readable V2 child message", () => {
     const parsed = parseRequest({
       model: "chatgpt-web/extra-high",
       input: [{
@@ -180,7 +180,9 @@ describe("Codex Multi-Agent V2 plaintext transport", () => {
 
     expect(parsed._opaqueMultiAgentV2Payload).toBeUndefined();
     expect(parsed.context.messages).toContainEqual(expect.objectContaining({
-      role: "user",
+      role: "agentMessage",
+      author: "root",
+      recipient: "child",
       content: "Inspect the test directory",
     }));
   });

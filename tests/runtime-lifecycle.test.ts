@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { ChatGptWebAdapterError, chatGptCompletionEvidenceError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptSurfaceRecoveryTracker, chatGptSameSurfaceRecoveryDecision, chatGptSurfaceRecoveryDecision } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
+import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import type { CodexParsedRequest } from "../src/types";
 import { StallTimeoutError } from "../src/stall-timeout";
 
@@ -36,6 +37,28 @@ function completeRequest(callIds: string[] = [], resultIds: string[] = []): Code
   }
   return request;
 }
+
+test("superseding a tool batch drains its external progress liveness", () => {
+  const externalProgress = new ChatGptExternalTurnProgress();
+  const session = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_test"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    usageInput: requestWithResults([]),
+    externalProgress,
+    cancel: () => {},
+  });
+  session.setOutstanding([
+    { callId: "call_1", wireName: "exec_command", freeform: false, arguments: {} },
+    { callId: "call_2", wireName: "exec_command", freeform: false, arguments: {} },
+  ]);
+
+  expect(externalProgress.snapshot().activeToolCalls).toBe(2);
+  expect(session.supersedeOutstanding()).toEqual(["call_1", "call_2"]);
+  expect(externalProgress.snapshot().activeToolCalls).toBe(0);
+});
 
 test("tool surface recovery requires one complete unstreamed batch and runs only once", () => {
   const text = new ChatGptTextFeed();

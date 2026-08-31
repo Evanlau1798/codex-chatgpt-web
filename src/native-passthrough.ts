@@ -4,6 +4,13 @@ import { BRIDGE_COMPACTION_PREFIX, compactionItemToText } from "./responses/comp
 import { BRIDGE_REASONING_PREFIX } from "./responses/reasoning-envelope";
 
 const CODEX_BACKEND = "https://chatgpt.com/backend-api/codex";
+const FIRST_PARTY_CODEX_ORIGINATORS = new Set([
+  "codex_cli_rs",
+  "codex-tui",
+  "codex_vscode",
+  "codex_atlas",
+  "codex_chatgpt_desktop",
+]);
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",
@@ -45,6 +52,28 @@ export type NativePassthroughReporter = (diagnostic: NativePassthroughDiagnostic
 type JsonObject = Record<string, unknown>;
 
 const NATIVE_DIAGNOSTIC_NODE_LIMIT = 100_000;
+
+function firstPartyCodexOriginator(value: string): boolean {
+  return FIRST_PARTY_CODEX_ORIGINATORS.has(value)
+    || /^Codex [A-Za-z0-9][A-Za-z0-9._ -]{0,63}$/.test(value);
+}
+
+/**
+ * Current Codex clients identify themselves as `<originator>/<cargo semver> (...)`. The models
+ * backend requires the release-only `major.minor.patch` value even when the client is an alpha.
+ * Derive it only from the documented first-party Codex prefix; an arbitrary browser or proxy
+ * User-Agent is not evidence of a Codex version and leaves the original request untouched.
+ */
+export function codexClientVersionFromUserAgent(userAgent: string | null): string | undefined {
+  if (!userAgent) return undefined;
+  const separator = userAgent.indexOf("/");
+  if (separator < 1) return undefined;
+  const originator = userAgent.slice(0, separator);
+  if (!firstPartyCodexOriginator(originator)) return undefined;
+  const version = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})(?:[-+][0-9A-Za-z.-]+)?(?:\s|$)/
+    .exec(userAgent.slice(separator + 1));
+  return version ? `${version[1]}.${version[2]}.${version[3]}` : undefined;
+}
 
 function isObject(value: unknown): value is JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -211,6 +240,10 @@ export async function forwardNativeCodexRequest(
   }
 
   const incomingUrl = new URL(request.url);
+  if (endpoint === "models" && !incomingUrl.searchParams.has("client_version")) {
+    const clientVersion = codexClientVersionFromUserAgent(request.headers.get("user-agent"));
+    if (clientVersion) incomingUrl.searchParams.set("client_version", clientVersion);
+  }
   const headers = endToEndHeaders(request.headers);
   if (endpoint === "models") headers.delete("if-none-match");
   const method = endpoint === "models" ? "GET" : "POST";

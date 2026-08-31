@@ -17,6 +17,7 @@ import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt, withoutSupersed
 import { MAX_CHATGPT_WEB_TURN_RETRIES } from "../src/adapters/chatgpt-web/retry-policy";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
+import { ChatGptExternalTurnProgress, ChatGptMirroredTurnProgress, chatGptExternalProgressIsLive } from "../src/adapters/chatgpt-web/turn-progress";
 import { CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, chatGptMcpInvocationTimeout } from "../src/adapters/chatgpt-web/mcp-server";
 import { defaultBrokerEndpoint } from "../src/config";
 import { estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
@@ -2864,4 +2865,83 @@ describe("ChatGPT outer-native harness v4", () => {
       await broker.close();
     }
   }, 10_000);
+});
+
+test("mirrored turn progress carries daemon MCP activity into the browser helper process", async () => {
+  const daemon = new ChatGptExternalTurnProgress();
+  const mirror = new ChatGptMirroredTurnProgress();
+
+  // A helper process with no mirrored progress reports "not live", which is exactly what let the
+  // DOM grace cancel turns whose tool calls were still completing.
+  expect(chatGptExternalProgressIsLive(mirror.snapshot(), 1_000, 60_000)).toBeFalse();
+
+  daemon.recordToolBatch(1, 1_000);
+  expect(mirror.apply(daemon.snapshot())).toBeTrue();
+  expect(chatGptExternalProgressIsLive(mirror.snapshot(), 30_000, 60_000)).toBeTrue();
+
+  daemon.recordToolResult(2_000);
+  expect(mirror.apply(daemon.snapshot())).toBeTrue();
+  expect(mirror.snapshot()).toEqual({
+    revision: 2,
+    lastToolBatchRevision: 1,
+    activeToolCalls: 0,
+    lastProgressAt: 2_000,
+  });
+
+  // Liveness still expires on the mirrored timestamp once the model genuinely stops working.
+  expect(chatGptExternalProgressIsLive(mirror.snapshot(), 61_999, 60_000)).toBeTrue();
+  expect(chatGptExternalProgressIsLive(mirror.snapshot(), 62_000, 60_000)).toBeFalse();
+});
+
+test("mirrored turn progress ignores replayed frames and rejects malformed ones", async () => {
+  const mirror = new ChatGptMirroredTurnProgress();
+  const first = { revision: 4, lastToolBatchRevision: 3, activeToolCalls: 1, lastProgressAt: 5_000 };
+
+  expect(mirror.apply(first)).toBeTrue();
+  expect(mirror.apply(first)).toBeFalse();
+  expect(mirror.apply({
+    revision: 2,
+    lastToolBatchRevision: 2,
+    activeToolCalls: 1,
+    lastProgressAt: 1_000,
+  })).toBeFalse();
+  expect(mirror.snapshot().lastProgressAt).toBe(5_000);
+
+  expect(() => mirror.apply({ ...first, revision: -1 })).toThrow("snapshot is invalid");
+  expect(() => mirror.apply({ ...first, revision: 5, lastToolBatchRevision: 9 })).toThrow("snapshot is invalid");
+});
+
+test("mirrored turn progress wakes waiters exactly like the recording instance", async () => {
+  const mirror = new ChatGptMirroredTurnProgress();
+  const changed = mirror.waitForChange(0);
+  mirror.apply({ revision: 1, lastToolBatchRevision: 1, activeToolCalls: 2, lastProgressAt: 7_000 });
+  expect(await changed).toEqual({
+    revision: 1,
+    lastToolBatchRevision: 1,
+    activeToolCalls: 2,
+    lastProgressAt: 7_000,
+  });
+});
+
+test("mirrored progress rejects frames that regress against the observed state", async () => {
+  const mirror = new ChatGptMirroredTurnProgress();
+  mirror.apply({ revision: 3, lastToolBatchRevision: 3, activeToolCalls: 1, lastProgressAt: 5_000 });
+
+  // Higher revision but contradicting what it already reported: a corrupt or forged frame, not an
+  // ordering artefact, and accepting it would desynchronise observed liveness.
+  expect(() => mirror.apply({
+    revision: 4, lastToolBatchRevision: 2, activeToolCalls: 1, lastProgressAt: 6_000,
+  })).toThrow("regressed against the observed state");
+  expect(() => mirror.apply({
+    revision: 4, lastToolBatchRevision: 3, activeToolCalls: 1, lastProgressAt: 4_000,
+  })).toThrow("regressed against the observed state");
+
+  // Recorded activity always stamps a timestamp, so a progress frame without one is malformed.
+  expect(() => mirror.apply({
+    revision: 5, lastToolBatchRevision: 3, activeToolCalls: 0,
+  })).toThrow("snapshot is invalid");
+
+  expect(mirror.snapshot()).toEqual({
+    revision: 3, lastToolBatchRevision: 3, activeToolCalls: 1, lastProgressAt: 5_000,
+  });
 });

@@ -5,6 +5,7 @@ import { ChatGptSteeringFeed, steeringFingerprint, type ClaudeSteeringDelivery }
 import { ChatGptTextFeed, ChatGptTraceFeed } from "./turn-feeds";
 import { ChatGptAgentSessionGraph } from "./agent-session-graph";
 import { trackConversationRetirement } from "./turn-retirement-state";
+import type { ChatGptExternalTurnProgress } from "./turn-progress";
 export { chatGptConversationKey, chatGptTurnTraceId } from "./conversation-key";
 export {
   chatGptCompactionSourceExecutionKey,
@@ -29,6 +30,7 @@ interface ChatGptTurnRuntimeBase {
   preemptHandoff?: (instruction: string) => boolean;
   requestHandoff?: (instruction: string, instructionDelivered?: boolean) => void;
   onToolResultDelivered?: (result?: CodexToolResultMessage) => void;
+  externalProgress?: ChatGptExternalTurnProgress;
   submission?: { phase: "prepared" | "send_activated" | "accepted" };
   cancel: (reason?: Error) => void;
   /** Release a completed retained browser surface when this canonical session is superseded. */
@@ -122,6 +124,7 @@ export class ChatGptTurnSession {
     }
     this.outstandingReasoning = [...reasoning];
     this.outstandingPrelude = [...prelude];
+    this.runtime.externalProgress?.recordToolBatch(requests.length);
   }
 
   hasOutstanding(callId: string): boolean {
@@ -132,6 +135,7 @@ export class ChatGptTurnSession {
     if (!this.outstandingById.delete(callId)) throw new Error(`ChatGPT bridge tool result does not match an outstanding call: ${callId}`);
     this.outstandingGenerationById.delete(callId);
     this.deliveredResultIds.add(callId);
+    this.runtime.externalProgress?.recordToolResult();
     this.runtime.onToolResultDelivered?.(result);
     if (this.outstandingById.size === 0) {
       this.outstandingReasoning = [];
@@ -216,6 +220,7 @@ export class ChatGptTurnSession {
     const superseded = [...this.outstandingById.keys()];
     for (const callId of superseded) {
       this.supersededResultIds.set(callId, this.outstandingGenerationById.get(callId) ?? this.canonicalGeneration);
+      this.runtime.externalProgress?.recordToolResult();
     }
     this.outstandingById.clear();
     this.outstandingGenerationById.clear();

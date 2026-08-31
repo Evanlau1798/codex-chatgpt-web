@@ -110,16 +110,20 @@ test("Claude tool prompts authenticate additive steering without changing Codex 
   expect(codexPrompt).not.toContain("CODEX_CLAUDE_STEERING_");
 });
 
-test("Pro executes directly without delegating while other Web modes keep their existing contract", () => {
+test("Pro preserves the same native Codex delegation contract as Extra High", () => {
+
   const token = "turn_12345678901234567890123456789012";
   const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true };
   const pro = compileChatGptWebPrompt(toolRequest("max"), capabilities, token);
   const extraHigh = compileChatGptWebPrompt(toolRequest("xhigh"), capabilities, token);
 
-  expect(pro.text).toContain("Complete this task directly in the current parent response.");
-  expect(pro.text).toContain("Do not create, spawn, delegate to, or wait on sub-agents");
-  expect(pro.text).toContain("Use non-agent tools directly instead.");
-  expect(extraHigh.text).not.toContain("Do not create, spawn, delegate to, or wait on sub-agents");
+  for (const compiled of [pro, extraHigh]) {
+    expect(compiled.text).toContain("For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.");
+    expect(compiled.text).toContain(`Pass this exact turn_token unchanged to every Codex Native call in this response`);
+    expect(compiled.text).not.toContain("Complete this task directly in the current parent response.");
+    expect(compiled.text).not.toContain("Do not create, spawn, delegate to, or wait on sub-agents");
+    expect(compiled.text).not.toContain("Use non-agent tools directly instead.");
+  }
 });
 
 test("read-only prompts resume without exposing a bind capability", () => {

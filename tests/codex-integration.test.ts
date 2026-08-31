@@ -454,7 +454,7 @@ describe("reversible native Codex route integration", () => {
     writeFileSync(configPath, original);
 
     expect(() => preflightCodexIntegration(nativeConfig("browser-only")))
-      .toThrow("--replace-codex-route");
+      .toThrow(/--replace-codex-route.*OpenCodex or Headroom/s);
     expect(readFileSync(configPath, "utf8")).toBe(original);
     expect(() => readFileSync(getCodexJournalPath(), "utf8")).toThrow();
   });

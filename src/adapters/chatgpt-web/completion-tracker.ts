@@ -11,6 +11,10 @@ export class ChatGptStoppedThinkingTracker {
     }
   }
 
+  clear(): void {
+    this.visibleSince = undefined;
+  }
+
   update(visible: boolean, now = Date.now()): boolean {
     if (!visible) {
       this.visibleSince = undefined;
@@ -44,6 +48,7 @@ export interface ChatGptCompletionState {
   currentText: string;
   currentHtml?: string;
   completionActionVisible: boolean;
+  externalProgressLive?: boolean;
   projection: ChatGptFinalProjectionState;
 }
 
@@ -110,6 +115,11 @@ export class ChatGptCompletionTracker {
   }
 
   update(state: ChatGptCompletionState, now = Date.now()): ChatGptCompletionDecision {
+    if (state.externalProgressLive) {
+      this.candidate = undefined;
+      this.progress = undefined;
+      return { status: "waiting" };
+    }
     if (!chatGptTurnIsComplete(state)) {
       this.candidate = undefined;
       this.progress = undefined;
