@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { bridgeToResponsesSSE } from "../src/bridge";
 import { defaultConfig } from "../src/config";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
@@ -11,18 +10,19 @@ import { resolveLifecycleExecutable } from "./lifecycle-smoke/paths";
 const codex = resolve(process.argv[2] ?? resolveLifecycleExecutable("codex"));
 if (!existsSync(codex)) throw new Error(`Codex executable is missing: ${codex}`);
 
-const bundled = spawnSync(codex, ["debug", "models", "--bundled"], {
-  encoding: "utf8",
-  stdio: ["ignore", "pipe", "pipe"],
+const bundled = Bun.spawnSync([codex, "debug", "models", "--bundled"], {
+  stdin: "ignore",
+  stdout: "pipe",
+  stderr: "pipe",
   timeout: 15_000,
 });
-if (bundled.status !== 0) {
-  throw new Error(`Could not read bundled Codex models: ${bundled.error?.message || bundled.stderr}`);
+if (bundled.exitCode !== 0) {
+  throw new Error(`Could not read bundled Codex models: ${bundled.stderr.toString()}`);
 }
 
 const config = defaultConfig("browser-only");
 config.proAvailable = true;
-const catalog = augmentNativeModelCatalog(JSON.parse(bundled.stdout), config);
+const catalog = augmentNativeModelCatalog(JSON.parse(bundled.stdout.toString()), config);
 const root = join(tmpdir(), `codex-chatgpt-web-cancel-${process.pid}-${Date.now()}`);
 const codexHome = join(root, "codex");
 mkdirSync(codexHome, { recursive: true });
