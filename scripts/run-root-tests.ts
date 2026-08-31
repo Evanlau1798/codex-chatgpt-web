@@ -15,6 +15,13 @@ export function shouldRetryBunCrash(exitCode: number, attempt: number): boolean 
   return exitCode === 3 && attempt <= MAX_BUN_CRASH_RETRIES;
 }
 
+export function rootTestEnvironment(
+  platform = process.platform,
+  environment: Record<string, string | undefined> = process.env,
+): Record<string, string | undefined> {
+  return platform === "darwin" ? { ...environment, TMPDIR: "/tmp" } : environment;
+}
+
 async function runFile(file: string): Promise<void> {
   const displayPath = relative(projectRoot, file);
   for (let attempt = 1; ; attempt += 1) {
@@ -30,6 +37,7 @@ async function runFile(file: string): Promise<void> {
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",
+      env: rootTestEnvironment(),
     });
     const exitCode = await child.exited;
     if (exitCode === 0) return;
