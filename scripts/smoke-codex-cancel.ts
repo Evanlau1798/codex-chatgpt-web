@@ -6,8 +6,9 @@ import { bridgeToResponsesSSE } from "../src/bridge";
 import { defaultConfig } from "../src/config";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
 import type { AdapterEvent } from "../src/types";
+import { resolveLifecycleExecutable } from "./lifecycle-smoke/paths";
 
-const codex = resolve(process.argv[2] ?? "/Applications/ChatGPT.app/Contents/Resources/codex");
+const codex = resolve(process.argv[2] ?? resolveLifecycleExecutable("codex"));
 if (!existsSync(codex)) throw new Error(`Codex executable is missing: ${codex}`);
 
 const bundled = spawnSync(codex, ["debug", "models", "--bundled"], {
