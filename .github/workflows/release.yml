@@ -8,7 +8,20 @@ permissions:
   contents: write
 
 jobs:
+  lifecycle-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - name: Install pinned lifecycle clients
+        run: npm install --global @openai/codex@0.150.1 @anthropic-ai/claude-code@2.1.251
+      - run: bun run lifecycle:sim --lane=all
+
   build:
+    needs: lifecycle-gate
     strategy:
       fail-fast: false
       matrix:
