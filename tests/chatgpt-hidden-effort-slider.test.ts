@@ -134,6 +134,58 @@ test("capability detection retries once when the effort picker ignores its first
   expect(presses).toBe(2);
 });
 
+test("capability detection resets a hidden picker with stale expanded state", async () => {
+  let presses = 0;
+  let escapes = 0;
+  const effortButton = {
+    last() { return this; },
+    isVisible: async () => true,
+    getAttribute: async () => "true",
+    press: async () => { presses += 1; },
+  };
+  const composers = {
+    filter() { return this; },
+    last() { return this; },
+    locator: () => ({ locator: () => effortButton }),
+  };
+  const menu = {
+    filter() { return this; },
+    last() { return this; },
+    isVisible: async () => false,
+    locator: () => ({
+      first: () => ({ waitFor: async () => await new Promise(() => {}) }),
+      count: async () => 0,
+    }),
+  };
+  const slider = {
+    count: async () => 1,
+    waitFor: async () => {
+      if (presses === 0) throw new Error("picker remained closed");
+    },
+    getAttribute: async (name: string) => ({
+      "aria-valuemin": "0",
+      "aria-valuemax": "4",
+      "aria-valuenow": "3",
+    })[name as "aria-valuemin" | "aria-valuemax" | "aria-valuenow"],
+  };
+  const page = {
+    locator: (selector: string) => {
+      if (selector === CHATGPT_COMPOSER_SELECTOR) return composers;
+      if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return menu;
+      if (selector === CHATGPT_EFFORT_SLIDER_SELECTOR) return { last: () => slider };
+      throw new Error(`Unexpected selector: ${selector}`);
+    },
+    keyboard: { press: async () => { escapes += 1; } },
+  };
+
+  await expect(detectChatGptAccountCapabilities(page as never)).resolves.toEqual({
+    solAvailable: true,
+    proAvailable: true,
+  });
+  expect(presses).toBe(1);
+  expect(escapes).toBe(2);
+});
+
 test("capability detection ignores a stale hidden effort picker", async () => {
   const effortButton = {
     last() { return this; },

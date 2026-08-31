@@ -212,7 +212,10 @@ export async function detectChatGptAccountCapabilities(
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const menuVisible = await menu.isVisible().catch(() => false);
       const menuExpanded = await effortButton.getAttribute("aria-expanded").catch(() => null);
-      if (!menuVisible && menuExpanded !== "true") await effortButton.press("Enter");
+      if (!menuVisible) {
+        if (menuExpanded === "true") await page.keyboard.press("Escape").catch(() => {});
+        await effortButton.press("Enter");
+      }
       const waitAbort = new AbortController();
       try {
         ready = await Promise.race([
