@@ -12,6 +12,7 @@ import {
   deriveWebContractCapabilities,
   requestWebContractTurn,
   responseHasFinalProjection,
+  webContractBrowserIsIdle,
 } from "./web-contract-core";
 
 const repo = resolve(import.meta.dir, "..", "..");
@@ -39,11 +40,11 @@ async function health(baseUrl: string): Promise<Record<string, unknown>> {
   return await response.json() as Record<string, unknown>;
 }
 
-async function waitForIdle(baseUrl: string): Promise<boolean> {
+async function waitForBrowserIdle(baseUrl: string): Promise<boolean> {
   const deadline = Date.now() + 10_000;
   do {
     const state = await health(baseUrl);
-    if (state.active_http_turns === 0 && state.active_browser_turns === 0) return true;
+    if (webContractBrowserIsIdle(state)) return true;
     await Bun.sleep(100);
   } while (Date.now() < deadline);
   return false;
@@ -59,8 +60,8 @@ if (!config.useEnhancedWebSessionMode) {
 const baseUrl = `http://${config.host}:${config.port}`;
 const before = await health(baseUrl);
 if (before.status !== "ok" || before.accepting_turns !== true
-  || before.active_http_turns !== 0 || before.active_browser_turns !== 0) {
-  throw new Error("Web contract smoke requires a healthy, accepting, idle daemon");
+  || !webContractBrowserIsIdle(before)) {
+  throw new Error("Web contract smoke requires a healthy, accepting daemon without another Web turn");
 }
 const now = Date.now();
 assertWebContractCooldown(lastRunAt(), now);
@@ -130,7 +131,7 @@ const capture = deriveWebContractCapabilities({
   connectorVerified,
   responseAccepted: result.response.ok,
   finalProjection,
-  idle: await waitForIdle(baseUrl),
+  idle: await waitForBrowserIdle(baseUrl),
 });
 if (Object.values(capture).some(value => !value)) throw new Error("Web contract smoke did not return idle");
 save({ status: "passed", at: new Date(now).toISOString(), capabilities: capture });

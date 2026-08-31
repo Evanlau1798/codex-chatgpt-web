@@ -7,6 +7,7 @@ import {
   requestWebContractTurn,
   responseHasFinalProjection,
   WEB_CONTRACT_COOLDOWN_MS,
+  webContractBrowserIsIdle,
 } from "../scripts/lifecycle-smoke/web-contract-core";
 
 describe("lightweight Web contract smoke", () => {
@@ -69,6 +70,11 @@ describe("lightweight Web contract smoke", () => {
       finalProjection: false,
       idle: true,
     });
+  });
+
+  test("allows unrelated HTTP turns but rejects a parallel Web turn", () => {
+    expect(webContractBrowserIsIdle({ active_http_turns: 4, active_browser_turns: 0 })).toBeTrue();
+    expect(webContractBrowserIsIdle({ active_http_turns: 0, active_browser_turns: 1 })).toBeFalse();
   });
 
   test("accepts any non-empty final projection without depending on model wording", () => {

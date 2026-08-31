@@ -58,6 +58,10 @@ export function assertWebContractCooldown(lastRunAt: number | undefined, now = D
   }
 }
 
+export function webContractBrowserIsIdle(health: Record<string, unknown>): boolean {
+  return Number(health.active_browser_turns ?? 0) === 0;
+}
+
 export async function requestWebContractTurn(
   fetcher: (request: Request) => Promise<Response>,
   request: Request,
