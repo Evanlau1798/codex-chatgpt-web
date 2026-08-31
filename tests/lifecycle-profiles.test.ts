@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  claudeLifecycleTests,
+  codexLifecycleTests,
+  sharedLifecycleTests,
+} from "../scripts/lifecycle-sim/manifest";
 
 const repo = resolve(import.meta.dir, "..");
 
@@ -26,12 +31,15 @@ test("CI runs deterministic lifecycle simulation and never calls a live profile"
   expect(workflow).toContain("turn-broker-lifecycle.test.ts");
 });
 
-test("the all lane runs both lifecycle evidence oracle suites", () => {
-  const runner = readFileSync(resolve(repo, "scripts", "lifecycle-sim", "run.ts"), "utf8");
-  expect(runner).toContain("tests/lifecycle-sim-evidence.test.ts");
-  expect(runner).toContain("tests/lifecycle-sim-codex-evidence.test.ts");
-  expect(runner).toContain("tests/lifecycle-sim-production-composition.test.ts");
-  expect(runner).toContain("tests/lifecycle-race-ordering.test.ts");
+test("the executable manifest owns every deterministic lifecycle test", () => {
+  expect(codexLifecycleTests).toContain("tests/native-steering-boundary.test.ts");
+  expect(claudeLifecycleTests).toContain("tests/claude-session-abort.test.ts");
+  expect(sharedLifecycleTests).toContain("tests/lifecycle-race-ordering.test.ts");
+  const registered = new Set<string>([...codexLifecycleTests, ...claudeLifecycleTests, ...sharedLifecycleTests]);
+  const lifecycleSimTests = readdirSync(resolve(repo, "tests"))
+    .filter(name => /^lifecycle-sim-.*\.test\.ts$/.test(name))
+    .map(name => `tests/${name}`);
+  expect(lifecycleSimTests.every(file => registered.has(file))).toBe(true);
 });
 
 test("the Codex lane covers compatibility V1 and native V2 clients", () => {

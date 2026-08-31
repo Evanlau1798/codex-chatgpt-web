@@ -1,5 +1,6 @@
 import { resolveLifecycleExecutable } from "../lifecycle-smoke/paths";
 import { resolve } from "node:path";
+import { claudeLifecycleTests, codexLifecycleTests, sharedLifecycleTests } from "./manifest";
 
 type Lane = "codex" | "claude" | "all";
 
@@ -19,7 +20,7 @@ async function run(args: string[], cwd = repo): Promise<void> {
   if (code !== 0) throw new Error(`Lifecycle command exited ${code}: ${args.slice(1).join(" ")}`);
 }
 
-async function runTests(files: string[]): Promise<void> {
+async function runTests(files: readonly string[]): Promise<void> {
   await run([process.execPath, "test", ...files.map(file => file.replace(/^tests[\\/]/, ""))], resolve(repo, "tests"));
 }
 
@@ -28,36 +29,19 @@ async function codexLane(): Promise<void> {
   await run([process.execPath, "run", "scripts/smoke-codex-subagents.ts", "--v1", codex]);
   await run([process.execPath, "run", "scripts/smoke-codex-subagents.ts", "--v2", codex]);
   await run([process.execPath, "run", "scripts/smoke-codex-cancel.ts", codex]);
-  await runTests([
-    "tests/native-steering-boundary.test.ts",
-    "tests/local-compaction-release.test.ts",
-    "tests/subagent-environment-inheritance.test.ts",
-  ]);
+  await runTests(codexLifecycleTests);
   process.stdout.write("CODEX_DETERMINISTIC_LIFECYCLE_LANE_OK\n");
 }
 
 async function claudeLane(): Promise<void> {
   await run([process.execPath, "run", "scripts/lifecycle-sim/claude.ts", `--claude=${executable("claude")}`]);
-  await runTests([
-    "tests/claude-compact-agents.test.ts",
-    "tests/claude-steering-replay.test.ts",
-    "tests/claude-session-abort.test.ts",
-  ]);
+  await runTests(claudeLifecycleTests);
   process.stdout.write("CLAUDE_DETERMINISTIC_LIFECYCLE_LANE_OK\n");
 }
 
 if (lane === "codex" || lane === "all") await codexLane();
 if (lane === "claude" || lane === "all") await claudeLane();
 if (lane === "all") {
-  await runTests([
-    "tests/server-adapter-injection.test.ts",
-    "tests/server-compaction.test.ts",
-    "tests/retained-compaction-handoff.test.ts",
-    "tests/turn-broker-lifecycle.test.ts",
-    "tests/lifecycle-sim-evidence.test.ts",
-    "tests/lifecycle-sim-codex-evidence.test.ts",
-    "tests/lifecycle-sim-production-composition.test.ts",
-    "tests/lifecycle-race-ordering.test.ts",
-  ]);
+  await runTests(sharedLifecycleTests);
   process.stdout.write("ALL_DETERMINISTIC_LIFECYCLE_LANES_OK\n");
 }
