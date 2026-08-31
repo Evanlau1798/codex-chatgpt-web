@@ -39,3 +39,16 @@ test("the Codex lane covers compatibility V1 and native V2 clients", () => {
   expect(runner).toContain('"--v1", codex');
   expect(runner).toContain('"--v2", codex');
 });
+
+test("contributor guidance defines the lifecycle profiles without untracked docs", () => {
+  const contributing = readFileSync(resolve(repo, "CONTRIBUTING.md"), "utf8");
+  const pullRequest = readFileSync(resolve(repo, ".github", "PULL_REQUEST_TEMPLATE.md"), "utf8");
+  expect(contributing).not.toContain("docs/dev-chat.md");
+  expect(contributing).not.toContain("docs/release-validation.md");
+  expect(contributing).toContain("Compatibility V1 and native V2");
+  expect(contributing).toContain("production-composed adapter");
+  expect(contributing).toContain("`browserIdle`");
+  expect(contributing).toContain("full daemon idle");
+  expect(contributing).toContain("manual `deep` diagnostic");
+  expect(pullRequest).toContain("CONTRIBUTING.md#lifecycle-verification-gate");
+});

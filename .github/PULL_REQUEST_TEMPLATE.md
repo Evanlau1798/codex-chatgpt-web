@@ -24,8 +24,8 @@ Fixes #
 - [ ] I ran `bun install --frozen-lockfile` in the repository root and `launcher/`.
 - [ ] I ran the bounded root suite and launcher suite with the Bun version pinned by `package.json`.
 - [ ] I added or updated a focused regression test for behavior changes.
-- [ ] If this changes lifecycle, ownership, compaction, steering, or interruption, I ran `bun run lifecycle:sim --lane=all`.
-- [ ] If this changes browser UI, launcher ownership, or Web transport, I ran one low-usage Web contract smoke; I did not retry a 429 or verification limit.
+- [ ] If this changes lifecycle, ownership, compaction, steering, or interruption, I followed the [lifecycle verification gate](CONTRIBUTING.md#lifecycle-verification-gate) and ran `bun run lifecycle:sim --lane=all`.
+- [ ] If this changes browser UI, launcher ownership, or Web transport, I ran one low-usage Web contract smoke; `browserIdle` was true, and I did not treat it as proof of full daemon idle or retry a 429/verification limit.
 - [ ] I did not use the manual `deep` profile as a default CI or release gate.
 - [ ] If this changes local tools, MCP execution, or the outer Codex agent loop, I tested it through a real installed Codex integration; DEV mode alone is acceptable only when execution is not affected.
 - [ ] If this changes ChatGPT browser UI handling, I included observed DOM evidence and a reproducible fixture instead of broadening selectors speculatively.

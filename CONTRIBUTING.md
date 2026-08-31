@@ -47,9 +47,7 @@ large unsolicited pull request may be closed even when substantial work went int
    real installed Codex integration; DEV simulation is not end-to-end acceptance evidence.
 
 Launcher changes must preserve native packaging on macOS, Windows, and Linux. Platform packages
-must be built on their matching operating system. See [DEV chat mode](docs/dev-chat.md) for isolated
-browser and MCP development, and [release validation](docs/release-validation.md) for the required
-account-bound release checks.
+must be built on their matching operating system.
 
 ## Lifecycle verification gate
 
@@ -64,12 +62,25 @@ production session ownership or cross-process behavior, including:
 Documentation-only changes and isolated utilities that cannot affect those boundaries do not need
 this gate. Keep every model-facing prompt, sentinel, and validation term in English.
 
+Choose the narrowest profile that covers the changed boundary:
+
+| Profile | Required evidence |
+| --- | --- |
+| Focused tests | The smallest regression test for the changed behavior. |
+| `codex` | Compatibility V1 and native V2 clients, cancellation, and Codex-owned lifecycle behavior. |
+| `claude` | Claude Messages tool, subagent, interruption, compaction, and resume behavior. |
+| `all` | Both clients, the exact evidence oracle, production-composed adapter/session/TurnBroker wiring, deterministic race orderings, and shared cleanup. |
+| Web contract | One short account-bound turn plus allowlisted browser capabilities; `browserIdle` means only that no browser turn remains. |
+| `deep` | A manual `deep` diagnostic for account-bound investigation, never a default gate. |
+
 ```sh
 bun run lifecycle:sim --lane=all
 ```
 
 Run one low-usage Web contract smoke only when browser UI, launcher ownership, or Web transport
 changed. It verifies the signed-in surface and one short turn; it is not a multi-turn lifecycle
-suite. Any 429 or verification limit stops the run immediately without retry. The old full live
-lifecycle flow is a manual `deep` diagnostic profile, never a default CI or release gate. Redacted
-artifacts belong under `tmp/lifecycle-smoke/runs/` and must never be committed.
+suite. Its `browserIdle` result does not prove full daemon idle. Full daemon idle requires no active
+HTTP or browser turn, no live session registry entry, and no active broker capability. Any 429 or
+verification limit stops the run immediately without retry. The old full live lifecycle flow is a
+manual `deep` diagnostic profile, never a default CI or release gate. Redacted artifacts belong
+under `tmp/lifecycle-smoke/runs/` and must never be committed.
