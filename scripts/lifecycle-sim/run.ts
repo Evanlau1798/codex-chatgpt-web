@@ -57,6 +57,7 @@ if (lane === "all") {
     "tests/lifecycle-sim-evidence.test.ts",
     "tests/lifecycle-sim-codex-evidence.test.ts",
     "tests/lifecycle-sim-production-composition.test.ts",
+    "tests/lifecycle-race-ordering.test.ts",
   ]);
   process.stdout.write("ALL_DETERMINISTIC_LIFECYCLE_LANES_OK\n");
 }
