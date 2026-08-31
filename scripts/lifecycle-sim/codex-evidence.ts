@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export type CodexLifecycleRole = "root" | "child" | "grandchild";
 
 export type CodexLifecycleRequestEvidence = {
@@ -6,9 +8,42 @@ export type CodexLifecycleRequestEvidence = {
   threadId?: string;
   agentName?: string;
   inputTypes: string[];
-  functionCalls: Array<{ callId: string; name: string; index: number }>;
-  functionOutputs: Array<{ callId: string; output: string; index: number }>;
+  functionCalls: Array<{ callId: string; name: string; argumentsDigest: string; index: number }>;
+  functionOutputs: Array<{ callId: string; outputDigest: string; index: number }>;
 };
+
+type HistoryEvent =
+  | { kind: "call"; callId: string; name: string; digest: string }
+  | { kind: "output"; callId: string; digest: string };
+
+export const digestLifecyclePayload = (value: string): string => (
+  createHash("sha256").update(value).digest("hex")
+);
+
+function orderedHistory(request: CodexLifecycleRequestEvidence): HistoryEvent[] {
+  return [
+    ...request.functionCalls.map(call => ({
+      kind: "call" as const,
+      callId: call.callId,
+      name: call.name,
+      digest: call.argumentsDigest,
+      index: call.index,
+    })),
+    ...request.functionOutputs.map(output => ({
+      kind: "output" as const,
+      callId: output.callId,
+      digest: output.outputDigest,
+      index: output.index,
+    })),
+  ].toSorted((left, right) => left.index - right.index)
+    .map(({ index: _index, ...event }) => event);
+}
+
+function assertAppendOnly(previous: HistoryEvent[], current: HistoryEvent[], role: CodexLifecycleRole): void {
+  if (previous.some((event, index) => JSON.stringify(event) !== JSON.stringify(current[index]))) {
+    throw new Error(`${role} violated append-only history`);
+  }
+}
 
 const v2AgentNames: Record<CodexLifecycleRole, string> = {
   root: "/root",
@@ -33,6 +68,7 @@ export function assertCodexLifecycleRequests(
   protocol: "v1" | "v2",
 ): void {
   const threads = new Map<CodexLifecycleRole, string>();
+  const histories = new Map<CodexLifecycleRole, HistoryEvent[]>();
   for (const request of requests) {
     if (!expectedSteps[request.role].includes(request.step)) {
       throw new Error(`${request.role} did not follow exact lifecycle steps: unexpected ${request.step}`);
@@ -51,6 +87,11 @@ export function assertCodexLifecycleRequests(
       throw new Error(`${request.role}:${request.step} has duplicate function call IDs`);
     }
     const resultIds = new Set<string>();
+    for (const call of request.functionCalls) {
+      if (!/^[a-f0-9]{64}$/.test(call.argumentsDigest)) {
+        throw new Error(`${request.role}:${request.step} has invalid function-call arguments digest`);
+      }
+    }
     for (const result of request.functionOutputs) {
       if (resultIds.has(result.callId)) {
         throw new Error(`${request.role}:${request.step} has duplicate results for call ID ${result.callId}`);
@@ -60,6 +101,9 @@ export function assertCodexLifecycleRequests(
       if (!call) throw new Error(`${request.role}:${request.step} has an unknown result call ID ${result.callId}`);
       if (call.index >= result.index) {
         throw new Error(`${request.role}:${request.step} has reversed function-call ordering for ${result.callId}`);
+      }
+      if (!/^[a-f0-9]{64}$/.test(result.outputDigest)) {
+        throw new Error(`${request.role}:${request.step} has invalid function output digest`);
       }
     }
     if (request.functionCalls.length !== request.functionOutputs.length) {
@@ -77,6 +121,9 @@ export function assertCodexLifecycleRequests(
       || names.some((name, index) => name !== expectedNames[index])) {
       throw new Error(`${request.role}:${request.step} used unexpected tool history: ${JSON.stringify(names)}`);
     }
+    const history = orderedHistory(request);
+    assertAppendOnly(histories.get(request.role) ?? [], history, request.role);
+    histories.set(request.role, history);
   }
   const owners = [...threads.values()];
   if (new Set(owners).size !== owners.length) throw new Error("nested roles reused a thread owner");

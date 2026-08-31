@@ -6,7 +6,7 @@ import { bridgeToResponsesSSE } from "../src/bridge";
 import { defaultConfig } from "../src/config";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
 import type { AdapterEvent } from "../src/types";
-import { assertCodexLifecycleRequests } from "./lifecycle-sim/codex-evidence";
+import { assertCodexLifecycleRequests, digestLifecyclePayload } from "./lifecycle-sim/codex-evidence";
 
 const protocol = process.argv.includes("--v1") ? "v1" : "v2";
 const explicitChildModel = "gpt-5.6-sol";
@@ -49,8 +49,8 @@ const requestLog: Array<{
   model?: string;
   reasoningEffort?: string;
   inputTypes: string[];
-  functionCalls: Array<{ callId: string; name: string; index: number }>;
-  functionOutputs: Array<{ callId: string; output: string; index: number }>;
+  functionCalls: Array<{ callId: string; name: string; argumentsDigest: string; index: number }>;
+  functionOutputs: Array<{ callId: string; outputDigest: string; index: number }>;
   encryptedContent: boolean;
 }> = [];
 
@@ -272,9 +272,11 @@ const server = Bun.serve({
             && (item as { type?: unknown }).type === "function_call"
             && typeof (item as { call_id?: unknown }).call_id === "string"
             && typeof (item as { name?: unknown }).name === "string"
+            && typeof (item as { arguments?: unknown }).arguments === "string"
             ? [{
               callId: String((item as { call_id: string }).call_id),
               name: String((item as { name: string }).name),
+              argumentsDigest: digestLifecyclePayload(String((item as { arguments: string }).arguments)),
               index,
             }]
             : [])
@@ -286,7 +288,7 @@ const server = Bun.serve({
             && typeof (item as { output?: unknown }).output === "string"
             ? [{
               callId: String((item as { call_id: string }).call_id),
-              output: String((item as { output: string }).output).slice(0, 500),
+              outputDigest: digestLifecyclePayload(String((item as { output: string }).output)),
               index,
             }]
             : [])

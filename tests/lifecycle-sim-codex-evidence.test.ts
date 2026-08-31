@@ -1,106 +1,101 @@
 import { describe, expect, test } from "bun:test";
-import { assertCodexLifecycleRequests } from "../scripts/lifecycle-sim/codex-evidence";
+import {
+  assertCodexLifecycleRequests,
+  digestLifecyclePayload as digest,
+} from "../scripts/lifecycle-sim/codex-evidence";
 
-const request = (
-  role: "root" | "child" | "grandchild",
-  step: number,
-  threadId: string,
-  agentName: string,
-  inputTypes: string[] = ["message"],
-  functionCalls: Array<{ callId: string; name: string; index: number }> = [],
-  functionOutputs: Array<{ callId: string; output: string; index: number }> = [],
-) => ({ role, step, threadId, agentName, inputTypes, functionCalls, functionOutputs });
+type Role = "root" | "child" | "grandchild";
+type Call = { callId: string; name: string; argumentsDigest: string; index: number };
+type Output = { callId: string; outputDigest: string; index: number };
+
+const names = {
+  root: ["spawn_agent", "wait_agent", "followup_task", "wait_agent"],
+  child: ["spawn_agent", "wait_agent"],
+  grandchild: [],
+} satisfies Record<Role, string[]>;
+const steps = { root: 5, child: 4, grandchild: 1 } satisfies Record<Role, number>;
+const agents = {
+  root: "/root",
+  child: "/root/lifecycle_child",
+  grandchild: "/root/lifecycle_child/lifecycle_grandchild",
+} satisfies Record<Role, string>;
+
+function evidence() {
+  return (Object.keys(steps) as Role[]).flatMap(role => (
+    Array.from({ length: steps[role] }, (_, step) => {
+      const count = role === "root" ? step : role === "child" ? Math.min(step, 2) : 0;
+      const offset = step % 2;
+      const functionCalls: Call[] = names[role].slice(0, count).map((name, index) => ({
+        callId: `${role}-${index}`,
+        name,
+        argumentsDigest: digest(`${role}-arguments-${index}`),
+        index: offset + index * 2,
+      }));
+      const functionOutputs: Output[] = functionCalls.map((call, index) => ({
+        callId: call.callId,
+        outputDigest: digest(`${role}-output-${index}`),
+        index: offset + index * 2 + 1,
+      }));
+      return {
+        role,
+        step,
+        threadId: `${role}-thread`,
+        agentName: agents[role],
+        inputTypes: [],
+        functionCalls,
+        functionOutputs,
+      };
+    })
+  ));
+}
+
+function validate(values = evidence()) {
+  assertCodexLifecycleRequests(values, "v2");
+}
 
 describe("Codex deterministic lifecycle request evidence", () => {
-  test("accepts stable distinct nested ownership and ordered tool results", () => {
-    const values = [
-      request("root", 0, "root-thread", "/root"),
-      request("root", 1, "root-thread", "/root", ["message", "function_call", "function_call_output"],
-        [{ callId: "root-spawn", name: "spawn_agent", index: 1 }],
-        [{ callId: "root-spawn", output: "spawn", index: 2 }]),
-      request("root", 2, "root-thread", "/root", ["function_call", "function_call_output", "function_call", "function_call_output"],
-        [
-          { callId: "root-spawn", name: "spawn_agent", index: 0 },
-          { callId: "root-wait", name: "wait_agent", index: 2 },
-        ], [
-          { callId: "root-spawn", output: "spawn", index: 1 },
-          { callId: "root-wait", output: "wait", index: 3 },
-        ]),
-      request("root", 3, "root-thread", "/root", ["function_call", "function_call_output", "function_call", "function_call_output", "function_call", "function_call_output"],
-        [
-          { callId: "root-spawn", name: "spawn_agent", index: 0 },
-          { callId: "root-wait", name: "wait_agent", index: 2 },
-          { callId: "root-followup", name: "followup_task", index: 4 },
-        ], [
-          { callId: "root-spawn", output: "spawn", index: 1 },
-          { callId: "root-wait", output: "wait", index: 3 },
-          { callId: "root-followup", output: "followup", index: 5 },
-        ]),
-      request("root", 4, "root-thread", "/root", ["function_call", "function_call_output", "function_call", "function_call_output", "function_call", "function_call_output", "function_call", "function_call_output"],
-        [
-          { callId: "root-spawn", name: "spawn_agent", index: 0 },
-          { callId: "root-wait", name: "wait_agent", index: 2 },
-          { callId: "root-followup", name: "followup_task", index: 4 },
-          { callId: "root-wait-2", name: "wait_agent", index: 6 },
-        ], [
-          { callId: "root-spawn", output: "spawn", index: 1 },
-          { callId: "root-wait", output: "wait", index: 3 },
-          { callId: "root-followup", output: "followup", index: 5 },
-          { callId: "root-wait-2", output: "wait", index: 7 },
-        ]),
-      request("child", 0, "child-thread", "/root/lifecycle_child"),
-      request("child", 1, "child-thread", "/root/lifecycle_child", ["agent_message", "function_call", "function_call_output"],
-        [{ callId: "child-spawn", name: "spawn_agent", index: 1 }],
-        [{ callId: "child-spawn", output: "spawn", index: 2 }]),
-      request("child", 2, "child-thread", "/root/lifecycle_child", ["function_call", "function_call_output", "function_call", "function_call_output"],
-        [
-          { callId: "child-spawn", name: "spawn_agent", index: 0 },
-          { callId: "child-wait", name: "wait_agent", index: 2 },
-        ], [
-          { callId: "child-spawn", output: "spawn", index: 1 },
-          { callId: "child-wait", output: "wait", index: 3 },
-        ]),
-      request("child", 3, "child-thread", "/root/lifecycle_child", ["function_call", "function_call_output", "function_call", "function_call_output"],
-        [
-          { callId: "child-spawn", name: "spawn_agent", index: 0 },
-          { callId: "child-wait", name: "wait_agent", index: 2 },
-        ], [
-          { callId: "child-spawn", output: "spawn", index: 1 },
-          { callId: "child-wait", output: "wait", index: 3 },
-        ]),
-      request("grandchild", 0, "grandchild-thread", "/root/lifecycle_child/lifecycle_grandchild"),
-    ];
-    expect(() => assertCodexLifecycleRequests(values, "v2")).not.toThrow();
+  test("accepts append-only history despite shifted absolute input indexes", () => {
+    expect(validate).not.toThrow();
   });
 
-  test("rejects cross-role thread reuse, missing results, and reversed ordering", () => {
-    expect(() => assertCodexLifecycleRequests([
-      request("root", 0, "shared", "/root"),
-      request("child", 0, "shared", "/root/lifecycle_child"),
-      request("child", 1, "shared", "/root/lifecycle_child", ["function_call_output", "function_call"],
-        [{ callId: "call", name: "spawn_agent", index: 1 }],
-        [{ callId: "wrong", output: "result", index: 0 }]),
-    ], "v2")).toThrow(/thread|tool result|ordering|call id/i);
+  test.each([
+    ["call ID rewrite", (values: ReturnType<typeof evidence>) => {
+      values[2]!.functionCalls[0]!.callId = "rewritten";
+      values[2]!.functionOutputs[0]!.callId = "rewritten";
+    }],
+    ["arguments rewrite", (values: ReturnType<typeof evidence>) => {
+      values[2]!.functionCalls[0]!.argumentsDigest = digest("rewritten arguments");
+    }],
+    ["output rewrite", (values: ReturnType<typeof evidence>) => {
+      values[2]!.functionOutputs[0]!.outputDigest = digest("rewritten output");
+    }],
+    ["historical call and result replacement", (values: ReturnType<typeof evidence>) => {
+      values[3]!.functionCalls[1]!.callId = "replacement";
+      values[3]!.functionOutputs[1]!.callId = "replacement";
+    }],
+    ["result reordering", (values: ReturnType<typeof evidence>) => {
+      values[3]!.functionCalls[1]!.index = 1;
+      values[3]!.functionOutputs[0]!.index = 3;
+      values[3]!.functionOutputs[1]!.index = 2;
+    }],
+    ["child step 3 drops step 2 history", (values: ReturnType<typeof evidence>) => {
+      const childStep3 = values.find(value => value.role === "child" && value.step === 3)!;
+      childStep3.functionCalls[0]!.callId = "new-child-call";
+      childStep3.functionOutputs[0]!.callId = "new-child-call";
+    }],
+  ])("rejects %s across adjacent requests", (_label, mutate) => {
+    const values = evidence();
+    mutate(values);
+    expect(() => validate(values)).toThrow(/append-only history/i);
   });
 
-  test("rejects extra rounds, duplicate results, and mismatched call ids", () => {
-    const base = request("root", 0, "root-thread", "/root");
-    expect(() => assertCodexLifecycleRequests([base, { ...base, step: 5 }], "v2"))
-      .toThrow(/exact lifecycle steps/i);
-    expect(() => assertCodexLifecycleRequests([
-      request("root", 0, "root-thread", "/root"),
-      request("root", 1, "root-thread", "/root", ["function_call", "function_call_output", "function_call_output"],
-        [{ callId: "spawn", name: "spawn_agent", index: 0 }],
-        [
-          { callId: "spawn", output: "one", index: 1 },
-          { callId: "spawn", output: "two", index: 2 },
-        ]),
-    ], "v2")).toThrow(/duplicate|exact/i);
-    expect(() => assertCodexLifecycleRequests([
-      request("root", 0, "root-thread", "/root"),
-      request("root", 1, "root-thread", "/root", ["function_call", "function_call_output"],
-        [{ callId: "spawn", name: "spawn_agent", index: 0 }],
-        [{ callId: "other", output: "one", index: 1 }]),
-    ], "v2")).toThrow(/call id/i);
+  test("rejects duplicate results and cross-role thread reuse", () => {
+    const duplicate = evidence();
+    duplicate[1]!.functionOutputs.push({ ...duplicate[1]!.functionOutputs[0]!, index: 99 });
+    expect(() => validate(duplicate)).toThrow(/duplicate|exact/i);
+
+    const reused = evidence();
+    reused.find(value => value.role === "child")!.threadId = "root-thread";
+    expect(() => validate(reused)).toThrow(/thread/i);
   });
 });
