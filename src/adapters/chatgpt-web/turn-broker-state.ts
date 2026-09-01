@@ -33,7 +33,9 @@ export interface TurnChannel {
   completionCommitted: boolean;
   completionRevision?: number;
   batchTimer?: ReturnType<typeof setTimeout>;
-  handoffInstruction?: string;
+  compactionRequested: boolean;
+  compactionResult?: BrokerToolResult;
+  compactionDeliveryCount: number;
   steeringInstruction?: string;
 }
 

@@ -112,6 +112,16 @@ export function createChatGptWebAdapter(
             worker, parsed, broker, executionNamespace, capabilities: turnCapabilities,
             responseExecutionKey, nativeConnectorAvailable: configuredCapabilities.localToolsEnabled,
             abortSignal: incoming.abortSignal, timeoutMs, emit,
+            startFallback: async (fallbackTraceId, signal) => {
+              const runtime = startRuntime(parsed, undefined, fallbackTraceId, turnCapabilities);
+              try {
+                return await withAbort(runtime.browser, signal);
+              } catch (error) {
+                runtime.cancel(error instanceof Error ? error : new Error(String(error)));
+                await runtime.browser.catch(() => {});
+                throw error;
+              }
+            },
           });
           if (enhancedCompaction === "completed") return;
           console.info("[chatgpt-web] Web session mode=enhanced path=reconstructed_compact result=started");

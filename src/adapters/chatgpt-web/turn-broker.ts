@@ -108,6 +108,8 @@ export class TurnBroker implements TurnBrokerOwner {
       completedActivities: new Set(),
       activityRevision: 0,
       completionCommitted: false,
+      compactionRequested: false,
+      compactionDeliveryCount: 0,
     };
     this.channels.set(token, channel);
     this.pending.set(token, channel);
@@ -168,6 +170,9 @@ export class TurnBroker implements TurnBrokerOwner {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
+    if (channel.compactionRequested) {
+      throw new Error("Codex context compaction superseded ordinary MCP tool delivery");
+    }
     const ready = takeQueuedTools(channel);
     if (ready.length > 0) return ready;
     if (signal?.aborted) throw new DOMException("tool wait aborted", "AbortError");
@@ -214,18 +219,34 @@ export class TurnBroker implements TurnBrokerOwner {
     return committed;
   }
 
-  requestHandoff(token: string, instruction: string): "queued" | "delivered" {
+  requestCompaction(token: string, queuedResult: BrokerToolResult): number {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
-    const delivered = channel.invocations.size > 0;
-    channel.handoffInstruction = instruction;
-    channel.queuedCallIds.length = 0;
-    for (const [callId, invocation] of channel.invocations) {
-      channel.invocations.delete(callId);
-      invocation.resolve({ content: [{ type: "text", text: instruction }], isError: true });
+    if (channel.compactionRequested) {
+      throw new Error("Codex context compaction was already requested for this turn");
     }
-    return delivered ? "delivered" : "queued";
+    channel.compactionRequested = true;
+    channel.compactionResult = structuredClone(queuedResult);
+    if (channel.batchTimer) {
+      clearTimeout(channel.batchTimer);
+      channel.batchTimer = undefined;
+    }
+    const queued = channel.queuedCallIds.splice(0);
+    for (const callId of queued) {
+      const invocation = channel.invocations.get(callId);
+      if (!invocation) continue;
+      channel.invocations.delete(callId);
+      channel.compactionDeliveryCount += 1;
+      invocation.resolve(structuredClone(queuedResult));
+    }
+    return queued.length;
+  }
+
+  compactionDeliveryCount(token: string): number {
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("Cannot read compaction delivery after the turn capability retired");
+    return channel.compactionDeliveryCount;
   }
 
   requestSteering(token: string, instruction: string): "queued" | "delivered" {
@@ -261,11 +282,6 @@ export class TurnBroker implements TurnBrokerOwner {
       console.info(`[chatgpt-web] broker trace=${channel.traceId} recovered undelivered native steering for same-conversation follow-up`);
     }
     return instruction;
-  }
-
-  handoffRequested(token: string): boolean {
-    this.prune();
-    return Boolean(this.channels.get(token)?.handoffInstruction);
   }
 
   revoke(token: string, reason = new Error("Codex turn binding was revoked")): void {
@@ -434,11 +450,11 @@ export class TurnBroker implements TurnBrokerOwner {
     }
     if (request.method === "resolve") return { environment: binding.channel.environment };
 
-    if (binding.channel.handoffInstruction) {
-      return {
-        content: [{ type: "text", text: binding.channel.handoffInstruction }],
-        isError: true,
-      } satisfies BrokerToolResult;
+    if (binding.channel.compactionRequested) {
+      const result = binding.channel.compactionResult;
+      if (!result) throw new Error("Codex context compaction control result is unavailable");
+      binding.channel.compactionDeliveryCount += 1;
+      return structuredClone(result);
     }
 
     if (binding.channel.steeringInstruction) {

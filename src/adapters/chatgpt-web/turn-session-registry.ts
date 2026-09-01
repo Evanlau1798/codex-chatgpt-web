@@ -56,7 +56,7 @@ export class ChatGptTurnSessions {
       const activeOwner = conversationKey
         ? [...this.entries].find(([ownedKey, session]) => (
             ownedKey !== key
-            && session.runtime.conversationKey === conversationKey
+            && session.conversationKey() === conversationKey
             && session.browserTurnPending()
           ))
         : undefined;
@@ -105,25 +105,60 @@ export class ChatGptTurnSessions {
   }
 
   async retireConversationAndWait(conversationKey: string): Promise<number> {
+    return this.closeConversationAndWait(conversationKey);
+  }
+
+  async retireConversationPreservingFinalResponse(
+    conversationKey: string,
+    preserved: ChatGptTurnSession,
+    preservedExecutionKey: string,
+  ): Promise<number> {
+    if (!preservedExecutionKey) throw new Error("Preserved ChatGPT response execution key is required");
+    if (preserved.settledOutcome()?.type !== "final") {
+      throw new Error("Only a settled final ChatGPT response can survive retained-conversation retirement");
+    }
+    return this.closeConversationAndWait(conversationKey, {
+      session: preserved,
+      executionKey: preservedExecutionKey,
+    });
+  }
+
+  private async closeConversationAndWait(
+    conversationKey: string,
+    preserved?: { session: ChatGptTurnSession; executionKey: string },
+  ): Promise<number> {
     const pending = this.conversationRetirements.get(conversationKey);
     if (pending) {
       await pending;
       return 0;
     }
     const owned = [...this.entries].filter(([, session]) => (
-      session.runtime.conversationKey === conversationKey
+      session.conversationKey() === conversationKey
     ));
     if (owned.length === 0) return 0;
-    for (const [key, session] of owned) {
-      if (this.entries.get(key) !== session) continue;
-      this.entries.delete(key);
-      session.cancel();
+    if (preserved && !owned.some(([, session]) => session === preserved.session)) {
+      throw new Error("The final ChatGPT response does not own the retained conversation being retired");
     }
+    const target = preserved ? this.entries.get(preserved.executionKey) : undefined;
+    if (target && target !== preserved?.session) {
+      throw new Error("The compacted ChatGPT response execution key is already owned by another session");
+    }
+    for (const [key, session] of owned) {
+      if (this.entries.get(key) === session
+        && (session !== preserved?.session || key !== preserved.executionKey)) {
+        this.entries.delete(key);
+      }
+      if (session.isActive()) session.cancel();
+      if (!session.detachConversation(conversationKey)) {
+        throw new Error("ChatGPT retained-conversation ownership changed during retirement");
+      }
+    }
+    if (preserved) this.entries.set(preserved.executionKey, preserved.session);
     const release = owned.find(([, session]) => session.runtime.release)?.[1].runtime.release;
     const retirement = trackConversationRetirement(
       this.conversationRetirements,
       conversationKey,
-      Promise.all(owned.map(([, session]) => session.browserOutcome)).then(async () => { await release?.(); }),
+      Promise.all(owned.map(([, session]) => session.physicalSettlement)).then(async () => { await release?.(); }),
     );
     for (const [key] of owned) this.retirements.set(key, retirement);
     try {
@@ -148,13 +183,14 @@ export class ChatGptTurnSessions {
   private beginRetirement(key: string, session: ChatGptTurnSession, preserveConversationKey?: string): Promise<void> {
     session.cancel();
     const preserveSurface = preserveConversationKey !== undefined
-      && session.runtime.conversationKey === preserveConversationKey;
+      && session.conversationKey() === preserveConversationKey;
     const release = preserveSurface ? undefined : session.runtime.release;
     const retirement = trackConversationRetirement(
       this.retirements, key, session.browserOutcome.then(async () => { await release?.(); }),
     );
-    if (session.runtime.conversationKey) {
-      trackConversationRetirement(this.conversationRetirements, session.runtime.conversationKey, retirement);
+    const conversationKey = session.conversationKey();
+    if (conversationKey) {
+      trackConversationRetirement(this.conversationRetirements, conversationKey, retirement);
     }
     return retirement;
   }
