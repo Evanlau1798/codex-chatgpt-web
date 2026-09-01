@@ -91,7 +91,7 @@ async function effortMenuError(itemCount: number): Promise<ChatGptWebAdapterErro
 }
 
 describe("ChatGPT effort menu failure classification", () => {
-  test("prefers a visible effort slider over model radio rows in the same picker", async () => {
+  test("prefers an attached semantic effort slider over model radio rows in the same picker", async () => {
     let sliderValue = 3;
     const pressed: string[] = [];
     const modelRow = {
@@ -101,7 +101,8 @@ describe("ChatGPT effort menu failure classification", () => {
     };
     const slider = {
       waitFor: async () => await new Promise(resolve => setTimeout(resolve, 0)),
-      isVisible: async () => true,
+      count: async () => 1,
+      isVisible: async () => false,
       getAttribute: async (name: string) => ({
         "aria-valuemin": "0",
         "aria-valuemax": "4",

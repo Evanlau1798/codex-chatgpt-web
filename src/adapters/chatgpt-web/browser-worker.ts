@@ -1177,7 +1177,14 @@ export class ChatGptBrowserWorker {
       ]);
       if (ready === "rate-limit") await throwIfChatGptRateLimitDialog(page);
       if (ready === "session-expired") await throwIfChatGptSessionFailureAlert(page);
-      if (ready !== "slider" && await effortSlider.isVisible().catch(() => false)) ready = "slider";
+      if (ready !== "slider" && (await effortSlider.count().catch(() => 0)) > 0) {
+        const attachedSliderState = parseChatGptEffortSliderState(
+          await effortSlider.getAttribute("aria-valuemin"),
+          await effortSlider.getAttribute("aria-valuemax"),
+          await effortSlider.getAttribute("aria-valuenow"),
+        );
+        if (attachedSliderState) ready = "slider";
+      }
       await captureDiagnostic?.(ready === "slider" ? "effort-slider-visible" : "effort-choice-visible");
     } catch (error) {
       if (error instanceof ChatGptWebAdapterError) throw error;
