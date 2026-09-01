@@ -172,6 +172,12 @@ test("macOS package smoke unregisters its staged app from LaunchServices", () =>
   );
 });
 
+test("source runtime smoke validates the relocated schema-v2 bundle", () => {
+  const smoke = fs.readFileSync(path.join(repositoryRoot, "scripts", "smoke-release.ts"), "utf8");
+  assert.match(smoke, /validateRuntimeBundle\(runtimeRoot/);
+  assert.match(smoke, /manifest\.schemaVersion !== 2/);
+  assert.match(smoke, /manifest\.files\.length === 0/);
+});
 test("release publishes the repository demo as a checksummed versioned asset", () => {
   const release = fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "release.yml"), "utf8");
   const demo = fs.readFileSync(path.join(repositoryRoot, "assets", "demo.gif"));

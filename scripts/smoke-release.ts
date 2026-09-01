@@ -1,21 +1,37 @@
 import { cpSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { defaultBrokerEndpoint } from "../src/config";
 import { VERSION } from "../src/version";
+
+const require = createRequire(import.meta.url);
+const { validateRuntimeBundle } = require("../launcher/electron/runtime-install.cjs") as {
+  validateRuntimeBundle: (
+    runtimeRoot: string,
+    identity: { version: string; platform: string; arch: string },
+  ) => string;
+};
 
 const sourceBundle = resolve(process.argv[2] ?? "dist/runtime");
 const sourceRoot = resolve(import.meta.dir, "..");
 const root = join(homedir(), `.codex-chatgpt-web-release-smoke-${process.pid}-${Date.now()}`);
 const firstLocation = join(root, "first-location");
 const runtimeRoot = join(root, "relocated-runtime");
-cpSync(sourceBundle, firstLocation, { recursive: true });
+cpSync(sourceBundle, firstLocation, { recursive: true, verbatimSymlinks: true });
 renameSync(firstLocation, runtimeRoot);
+validateRuntimeBundle(runtimeRoot, {
+  version: VERSION,
+  platform: process.platform,
+  arch: process.arch,
+});
 
 const manifest = JSON.parse(readFileSync(join(runtimeRoot, "manifest.json"), "utf8")) as Record<string, unknown>;
-if (manifest.schemaVersion !== 1
+if (manifest.schemaVersion !== 2
   || manifest.appVersion !== VERSION
   || manifest.playwright !== "1.62.0"
+  || !Array.isArray(manifest.files)
+  || manifest.files.length === 0
   || !/^[a-f0-9]{64}$/.test(String(manifest.bundleId ?? ""))) {
   throw new Error(`Unexpected runtime manifest: ${JSON.stringify(manifest)}`);
 }
