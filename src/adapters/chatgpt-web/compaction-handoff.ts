@@ -1,17 +1,13 @@
 import { parseDataUrl } from "../image";
-import { COMPACT_PROMPT, isUsableCompactionSummary } from "../../responses/compaction";
+import { isUsableCompactionSummary } from "../../responses/compaction";
 import type { CodexContentPart, CodexParsedRequest, CodexToolResultMessage } from "../../types";
 import { extractChatGptCompactionSourceRevision } from "./environment";
 import type { BrokerToolResult, TurnBroker } from "./turn-broker";
-import type { ChatGptBrowserOutcome, ChatGptTurnSession } from "./turn-execution";
-import { structuredCompactionHandoffInstruction } from "./native-compaction-control";
+import type { ChatGptTurnSession } from "./turn-execution";
+import { activeCompactionToolResultInstruction } from "./native-compaction-control";
 
-export const COMPACTION_HANDOFF_MARKER = "CODEX_COMPACTION_HANDOFF";
 export const LATEST_USER_PROMPT_MARKER = "CODEX_LATEST_USER_PROMPT_JSON";
-
-export const HANDOFF_INSTRUCTION = `Automatic Codex context compaction has started. Do not call any more tools.
-${COMPACT_PROMPT}
-Return only the checkpoint summary. Start the response with exactly ${COMPACTION_HANDOFF_MARKER} on its own line.`;
+export const MAX_COMPACTION_HANDOFF_TIMEOUT_MS = 5 * 60_000;
 
 function brokerContent(content: string | CodexContentPart[]): unknown[] {
   if (typeof content === "string") return [{ type: "text", text: content }];
@@ -44,19 +40,11 @@ export function codexToolResultToBrokerResult(message: CodexToolResultMessage): 
   };
 }
 
-function withHandoffInstruction(result: BrokerToolResult, instruction = HANDOFF_INSTRUCTION): BrokerToolResult {
-  return {
-    ...result,
-    content: [...result.content, { type: "text", text: instruction }],
-  };
-}
-
-function missingToolResult(instruction?: string): BrokerToolResult {
-  const suffix = instruction ? `\n\n${instruction}` : "";
+function interruptedByActiveCompaction(): BrokerToolResult {
   return {
     content: [{
       type: "text",
-      text: `Codex did not supply this tool result before compaction. Its execution status is unknown; do not assume success or failure.${suffix}`,
+      text: activeCompactionToolResultInstruction(),
     }],
     isError: true,
   };
@@ -105,123 +93,88 @@ export function canonicalizeCompactionHandoff(parsed: CodexParsedRequest, summar
   return `${summary.trimEnd()}\n\n${appendix}`;
 }
 
-export function createActiveCompactionHandoffPrompts() {
-  let requested = false;
-  let instruction: string | undefined;
-  let instructionDelivered = false;
-  return {
-    request(nextInstruction: string, delivered = false): void {
-      requested = true;
-      instruction = nextInstruction;
-      instructionDelivered ||= delivered;
-    },
-    retryPromptForAnswer(_answer: string): string | undefined {
-      if (!requested || !instruction || instructionDelivered) return undefined;
-      instructionDelivered = true;
-      return instruction;
-    },
-    retryPromptForError(error: unknown): string | undefined {
-      if (!requested || !instruction || instructionDelivered || !retryableBrowserFailure(error)) return undefined;
-      instructionDelivered = true;
-      return instruction;
-    },
-  };
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException("ChatGPT compaction handoff aborted", "AbortError");
 }
 
-export function activeCompactionRuntimeHooks(
-  prompts: ReturnType<typeof createActiveCompactionHandoffPrompts>,
-  preemptHandoff: (instruction: string) => boolean,
-) {
-  return { preemptHandoff, requestHandoff: prompts.request };
+export function withCompactionAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      value => { signal.removeEventListener("abort", onAbort); resolve(value); },
+      error => { signal.removeEventListener("abort", onAbort); reject(error); },
+    );
+  });
 }
 
-function retryableBrowserFailure(error: unknown): boolean {
-  if (error instanceof DOMException && error.name === "AbortError") return false;
-  if (!(error instanceof Error)) return false;
-  const retryable = (error as Error & { retryable?: unknown }).retryable;
-  if (typeof retryable === "boolean") return retryable;
-  return error.message.includes("ChatGPT composer did not")
-    || error.message.includes("completed-turn action")
-    || error.message.includes("completed text block");
-}
-
-async function rejectOnBrowserFailure(
-  session: ChatGptTurnSession,
-  broker: TurnBroker,
-  transactionToken: string,
-): Promise<never> {
-  const outcome: ChatGptBrowserOutcome = await session.browserOutcome;
-  if (outcome.type === "error") {
-    broker.abortCompactionTransaction(transactionToken);
-    throw outcome.error;
-  }
-  // A clean browser completion cannot make a structured checkpoint appear later, but the broker
-  // submission may still be crossing the local socket. Keep waiting on the transaction itself;
-  // its bounded TTL remains the authoritative deadline.
-  return new Promise<never>(() => {});
-}
-
-export async function requestActiveCompactionHandoff(
+export async function settleActiveCompactionSource(
   parsed: CodexParsedRequest,
-  session: ChatGptTurnSession,
+  source: ChatGptTurnSession,
   broker: TurnBroker,
   signal?: AbortSignal,
-  timeoutMs = 120_000,
-): Promise<string | undefined> {
-  const cached = session.compactionHandoff();
-  if (cached) return cached;
-  if (!session.isActive()) return undefined;
-  if (session.runtime.mode === "read-only" && !session.runtime.requestHandoff) return undefined;
-  if (signal?.aborted) {
-    throw new DOMException("ChatGPT web compaction aborted", "AbortError");
-  }
-  const transaction = await broker.beginCompactionTransaction(
-    session.runtime.conversationKey ?? "active-compaction",
-    timeoutMs,
-  );
-  const instruction = structuredCompactionHandoffInstruction(transaction);
-  const structuredHandoff = broker.waitForCompactionHandoff(transaction.token, signal);
-  try {
-    if (session.runtime.mode === "tools") {
-      const token = await session.runtime.token;
-      const results = codexToolResultsById(parsed, session);
-      let instructionDelivered = false;
-      const outstanding = session.outstanding();
-      for (const [index, request] of outstanding.entries()) {
-        const result = results.get(request.callId);
-        const boundaryInstruction = index === outstanding.length - 1 ? instruction : undefined;
-        const brokerResult = result
-          ? codexToolResultToBrokerResult(result)
-          : missingToolResult();
-        broker.completeTool(token, request.callId, boundaryInstruction
-          ? withHandoffInstruction(brokerResult, boundaryInstruction)
-          : brokerResult);
-        session.markResultDelivered(request.callId, result);
-        instructionDelivered ||= boundaryInstruction !== undefined;
-      }
-      const handoffDelivery = instructionDelivered ? undefined : broker.requestHandoff(token, instruction);
-      const boundaryDelivered = instructionDelivered || handoffDelivery === "delivered";
-      const preempted = !boundaryDelivered && session.runtime.preemptHandoff?.(instruction) === true;
-      session.runtime.requestHandoff?.(instruction, boundaryDelivered || preempted);
-    } else {
-      const preempted = session.runtime.preemptHandoff?.(instruction) === true;
-      session.runtime.requestHandoff!(instruction, preempted);
+): Promise<{ answer: string; compactionInstructionDelivered: boolean }> {
+  return source.runExclusive(async () => {
+    if (signal?.aborted) { source.cancel(abortReason(signal)); throw abortReason(signal); }
+    if (!source.isActive() || source.runtime.mode !== "tools") {
+      throw new Error("The active ChatGPT compaction source has no MCP tool boundary");
     }
-    // The one-shot control submission contains the complete checkpoint and is validated by the
-    // broker before it resolves. Once present it is stronger evidence than a fragile ChatGPT DOM
-    // completion control; runEnhancedCompaction retires the remaining browser work before exposing
-    // the checkpoint to Codex.
-    const summary = await Promise.race([
-      structuredHandoff,
-      rejectOnBrowserFailure(session, broker, transaction.token),
-    ]);
-    session.setCompactionHandoff(summary);
-    return summary;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
-    console.warn(`[chatgpt-web] active compact handoff unavailable: ${error instanceof Error ? error.message : String(error)}`);
-    return undefined;
-  } finally {
-    broker.abortCompactionTransaction(transaction.token);
+    const outstanding = source.outstanding();
+    const results = codexToolResultsById(parsed, source);
+    if (results.size !== outstanding.length) {
+      throw new Error(`Codex supplied ${results.size} of ${outstanding.length} required tool results for compaction`);
+    }
+    let token: string | undefined;
+    try {
+      token = await source.runtime.token;
+      broker.requestCompaction(token, interruptedByActiveCompaction());
+      for (const request of outstanding) {
+        const result = results.get(request.callId)!;
+        broker.completeTool(token, request.callId, codexToolResultToBrokerResult(result));
+        source.markResultDelivered(request.callId, result);
+      }
+      const outcome = await withCompactionAbort(source.browserOutcome, signal);
+      if (outcome.type === "error") throw outcome.error;
+      const compactionInstructionDelivered = broker.compactionDeliveryCount(token) > 0;
+      await withCompactionAbort(source.physicalSettlement, signal);
+      return { answer: outcome.answer, compactionInstructionDelivered };
+    } catch (error) {
+      if (signal?.aborted) source.cancel(abortReason(signal));
+      throw error;
+    } finally {
+      if (token) await broker.revoke(token);
+    }
+  });
+}
+
+interface CachedCompactionRun { createdAt: number; promise: Promise<string> }
+const structuredCompactionRuns = new Map<string, CachedCompactionRun>();
+const STRUCTURED_COMPACTION_RUN_TTL_MS = 30 * 60_000;
+
+function pruneStructuredCompactionRuns(): void {
+  const cutoff = Date.now() - STRUCTURED_COMPACTION_RUN_TTL_MS;
+  for (const [key, run] of structuredCompactionRuns) {
+    if (run.createdAt < cutoff) structuredCompactionRuns.delete(key);
   }
+}
+
+export function existingStructuredCompactionRun(key: string): Promise<string> | undefined {
+  pruneStructuredCompactionRuns();
+  return structuredCompactionRuns.get(key)?.promise;
+}
+
+export function runStructuredCompactionOnce(key: string, start: () => Promise<string>): Promise<string> {
+  pruneStructuredCompactionRuns();
+  const existing = structuredCompactionRuns.get(key);
+  if (existing) return existing.promise;
+  const promise = Promise.resolve().then(start);
+  structuredCompactionRuns.set(key, { createdAt: Date.now(), promise });
+  void promise.catch(() => {
+    if (structuredCompactionRuns.get(key)?.promise === promise) structuredCompactionRuns.delete(key);
+  });
+  return promise;
 }

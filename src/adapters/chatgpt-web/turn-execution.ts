@@ -24,9 +24,6 @@ interface ChatGptTurnRuntimeBase {
   /** Exact bounded request used to prepare this browser turn and report Codex usage. */
   usageInput?: CodexParsedRequest;
   steering?: ChatGptSteeringFeed;
-  /** Stop only the active Web generation and continue on the same retained surface. */
-  preemptHandoff?: (instruction: string) => boolean;
-  requestHandoff?: (instruction: string, instructionDelivered?: boolean) => void;
   onToolResultDelivered?: (result?: CodexToolResultMessage) => void;
   externalProgress?: ChatGptExternalTurnProgress;
   submission?: { phase: "prepared" | "send_activated" | "accepted" };
@@ -42,6 +39,7 @@ export class ChatGptTurnSession {
   readonly createdAt = Date.now();
   private lastTouchedAt = this.createdAt;
   readonly browserOutcome: Promise<ChatGptBrowserOutcome>;
+  readonly physicalSettlement: Promise<void>;
   private readonly outstandingById = new Map<string, BrokerToolRequest>();
   private readonly deliveredResultIds = new Set<string>();
   private outstandingReasoning: string[] = [];
@@ -56,7 +54,7 @@ export class ChatGptTurnSession {
   private canonicalResultIds = new Set<string>();
   private cancelledBeforeCanonical = 0;
   private resolvedSuperseded = 0;
-  private handoff?: string;
+  private attachedConversationKey: string | undefined;
   private userRevision?: string; private readonly seenUserRevisions: string[] = [];
   private readonly hookedSteeringReplays: string[] = [];
   private readonly steering: ChatGptSteeringFeed;
@@ -71,6 +69,7 @@ export class ChatGptTurnSession {
     readonly claudeRootThreadId?: string,
     readonly traceId?: string,
   ) {
+    this.attachedConversationKey = runtime.conversationKey;
     this.steering = runtime.steering ?? new ChatGptSteeringFeed();
     this.browserOutcome = runtime.browser
       .then(answer => ({ type: "final", answer }) as ChatGptBrowserOutcome)
@@ -81,6 +80,7 @@ export class ChatGptTurnSession {
       this.physicalBrowserSettled = true;
       return this.settledBrowserOutcome;
     });
+    this.physicalSettlement = this.browserOutcome.then(() => undefined);
   }
 
   runExclusive<T>(task: () => Promise<T>): Promise<T> {
@@ -104,6 +104,12 @@ export class ChatGptTurnSession {
 
   settledOutcome(): ChatGptBrowserOutcome | undefined {
     return this.settledBrowserOutcome;
+  }
+  conversationKey(): string | undefined { return this.attachedConversationKey; }
+  detachConversation(conversationKey: string): boolean {
+    if (this.attachedConversationKey !== conversationKey) return false;
+    this.attachedConversationKey = undefined;
+    return true;
   }
   setTerminalError(error: Error): void { this.settledBrowserOutcome = { type: "error", error }; }
   isActive(): boolean {
@@ -164,10 +170,6 @@ export class ChatGptTurnSession {
   eventsForFinalReplay(): AdapterEvent[] {
     return [...this.finalPrelude];
   }
-
-  setCompactionHandoff(text: string): void { this.handoff = text; }
-
-  compactionHandoff(): string | undefined { return this.handoff; }
 
   updateUserRevision(revision: string, steering: string, queue = true): string | undefined {
     if (this.userRevision === undefined) {
