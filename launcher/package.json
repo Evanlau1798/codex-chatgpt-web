@@ -65,6 +65,9 @@
       "icon": "assets/icon.png",
       "minimumSystemVersion": "13.0",
       "hardenedRuntime": true,
+      "signIgnore": [
+        "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]runtime[/\\\\]bun$"
+      ],
       "target": ["dmg", "zip"]
     },
     "win": {
