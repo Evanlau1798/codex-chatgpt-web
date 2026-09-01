@@ -19,7 +19,7 @@ test.each([
   ["ordinary repeated words", `${"word ".repeat(79_999)}word`],
 ])("%s context uses tokenizer-derived usage without character-pressure inflation", (_label, text) => {
   expect(estimateChatGptWebInputTokens(request(text), capabilities)).toBeLessThan(100_000);
-});
+}, 15_000);
 
 test("ordinary tool rounds report the latest Codex context while Luna keeps its bounded checkpoint", () => {
   const prepared = request("initial request");

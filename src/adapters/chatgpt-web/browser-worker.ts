@@ -166,6 +166,7 @@ export {
 } from "./multipart-browser-transport";
 import {
   chatGptExternalProgressIsLive,
+  chatGptExternalToolCallsAreInFlight,
 } from "./turn-progress";
 import type {
   ChatGptExternalTurnProgressSnapshot,
@@ -533,6 +534,11 @@ export interface BrowserTurn {
   onTextDelta: (delta: string) => void;
   /** Proven current-turn MCP activity; liveness only, never response content or completion. */
   externalProgress?: ChatGptTurnProgressReader;
+  /** Atomically fences browser completion against concurrent MCP work accepted by the broker. */
+  completionFence?: {
+    begin(): Promise<number | undefined>;
+    commit(revision: number): Promise<boolean>;
+  };
   /** Allow one clean pre-submit composer retry for isolated history compaction only. */
   compaction?: boolean;
   /** Require and remove the private Luna checkpoint tail from the visible Markdown stream. */
@@ -1546,6 +1552,12 @@ export class ChatGptBrowserWorker {
       const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible().catch(() => false);
       const snapshot = await this.responseDomSnapshot(responseTurn, undefined, running);
       const progress = externalProgress?.snapshot();
+      if (externalProgress
+        && progress
+        && completionTracker.needsToolBatchObservation(progress.lastToolBatchRevision)) {
+        completionTracker.observeToolBatch(progress.lastToolBatchRevision, snapshot.visibleText);
+        await externalProgress.acknowledgeToolBatch(progress.lastToolBatchRevision);
+      }
       const externalProgressLive = chatGptExternalProgressSuppressesDomHealth(progress, Date.now());
       if (externalProgressLive) stoppedThinkingTracker.clear();
       else if (stoppedThinkingTracker.update(snapshot.stoppedThinkingVisible)) {
@@ -1571,6 +1583,7 @@ export class ChatGptBrowserWorker {
         completionActionVisible: snapshot.completionActionVisible,
         projection: snapshot.projection,
         externalProgressLive,
+        externalToolCallsInFlight: chatGptExternalToolCallsAreInFlight(progress),
       });
       if (completion.status === "complete") {
         const actual = snapshot.visibleText.trim();
@@ -3151,6 +3164,7 @@ export class ChatGptBrowserWorker {
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
         const stoppedThinkingTracker = new ChatGptStoppedThinkingTracker();
         const nativeToolActivityTracker = new ChatGptNativeToolActivityTracker();
+        let completionFenceRevision: number | undefined;
         let consecutiveObservationRebinds = 0;
         let internalObservationFaults = 0;
         for (;;) {
@@ -3281,6 +3295,15 @@ export class ChatGptBrowserWorker {
         internalObservationFaults = 0;
         observedThisIteration = true;
         const externalProgressSnapshot = turn.externalProgress?.snapshot();
+        if (turn.externalProgress
+          && externalProgressSnapshot
+          && completionTracker.needsToolBatchObservation(externalProgressSnapshot.lastToolBatchRevision)) {
+          completionTracker.observeToolBatch(
+            externalProgressSnapshot.lastToolBatchRevision,
+            snapshot.visibleText,
+          );
+          await turn.externalProgress.acknowledgeToolBatch(externalProgressSnapshot.lastToolBatchRevision);
+        }
         const externalProgressLive = chatGptExternalProgressSuppressesDomHealth(
           externalProgressSnapshot,
           Date.now(),
@@ -3399,7 +3422,9 @@ export class ChatGptBrowserWorker {
             completionActionVisible: snapshot.completionActionVisible,
             projection: snapshot.projection,
             externalProgressLive,
+            externalToolCallsInFlight: chatGptExternalToolCallsAreInFlight(externalProgressSnapshot),
           });
+          if (completion.status !== "complete") completionFenceRevision = undefined;
           if (completion.status === "stalled") {
             throw new ChatGptWebAdapterError(
               `ChatGPT final Markdown projection stopped before completion (${JSON.stringify(completion.diagnostic)})`,
@@ -3413,6 +3438,17 @@ export class ChatGptBrowserWorker {
             );
           }
           if (completion.status === "complete") {
+            if (turn.completionFence) {
+              if (completionFenceRevision === undefined) {
+                completionFenceRevision = await turn.completionFence.begin();
+                if (completionFenceRevision === undefined) continue;
+                continue;
+              }
+              if (!await turn.completionFence.commit(completionFenceRevision)) {
+                completionFenceRevision = undefined;
+                continue;
+              }
+            }
 
             if (snapshot.visibleText === "api_tool unavailable") {
               throw new ChatGptWebAdapterError(

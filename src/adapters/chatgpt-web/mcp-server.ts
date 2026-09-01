@@ -18,35 +18,22 @@ import {
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
 import { callTurnBroker, type BrokerToolResult } from "./turn-broker";
 import { invokeChatGptMcpTool } from "./mcp-invocation";
+import { withClaimedTurn, type ClaimedTurn } from "./mcp-turn-activity";
+import {
+  assertBrowserToolArguments,
+  boundedConnectorToolArguments,
+  browserToolDescription,
+  browserToolParameters,
+  CHATGPT_WEB_AGENT_WAIT_POLL_MS,
+  matchingToolInventory,
+} from "./mcp-tool-inventory";
 
 export { CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, chatGptMcpInvocationTimeout } from "./mcp-invocation";
-
-interface ClaimedTurn {
-  bindingId: string;
-  environment: ChatGptTurnEnvironment & { expiresAt?: number };
-}
+export { CHATGPT_WEB_AGENT_WAIT_POLL_MS, boundedConnectorToolArguments, matchingToolInventory } from "./mcp-tool-inventory";
 
 const turnTokenSchema = z.string().min(20).max(256);
 const contextTokenSchema = z.string().min(20).max(256);
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
-export const CHATGPT_WEB_AGENT_WAIT_POLL_MS = 10_000;
-
-export function matchingToolInventory(tools: CodexTool[], query?: string): CodexTool[] {
-  const terms = query?.trim().toLowerCase().split(/[\s,]+/).filter(Boolean) ?? [];
-  return tools.map((tool, index) => {
-    const name = wireName(tool).toLowerCase();
-    const haystack = [name, tool.name, tool.namespace ?? "", tool.description].join("\n").toLowerCase();
-    return {
-      tool,
-      index,
-      exact: terms.some(term => term === name || term === tool.name.toLowerCase()),
-      matches: terms.length === 0 || terms.some(term => haystack.includes(term)),
-    };
-  }).filter(({ matches }) => matches)
-    .sort((left, right) => Number(right.exact) - Number(left.exact) || left.index - right.index)
-    .map(({ tool }) => tool);
-}
-
 function scopeHash(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
@@ -113,55 +100,6 @@ function namedTool(environment: ChatGptTurnEnvironment, requestedWireName: strin
   return tool;
 }
 
-function isAgentWaitTool(tool: CodexTool): boolean {
-  return tool.name === "wait_agent"
-    && (tool.namespace === "multi_agent_v1" || tool.namespace === "multi_agent_v2");
-}
-
-function browserToolDescription(tool: CodexTool): string {
-  if (!isAgentWaitTool(tool)) return tool.description;
-  return `${tool.description}\n\nChatGPT Web transport rule: wait for exactly 10 seconds per call, then release the MCP channel so spawned Web agents can use their own tools. Repeat with the same target ids until a terminal status is returned.`;
-}
-
-function browserToolParameters(tool: CodexTool): Record<string, unknown> {
-  if (!isAgentWaitTool(tool)) return tool.parameters;
-  const parameters = structuredClone(tool.parameters);
-  const properties = parameters.properties && typeof parameters.properties === "object" && !Array.isArray(parameters.properties)
-    ? parameters.properties as Record<string, unknown>
-    : {};
-  const timeout = properties.timeout_ms && typeof properties.timeout_ms === "object" && !Array.isArray(properties.timeout_ms)
-    ? properties.timeout_ms as Record<string, unknown>
-    : {};
-  const required = Array.isArray(parameters.required)
-    ? parameters.required.filter((value): value is string => typeof value === "string")
-    : [];
-  return {
-    ...parameters,
-    properties: {
-      ...properties,
-      timeout_ms: {
-        ...timeout,
-        type: "number",
-        const: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
-        minimum: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
-        maximum: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
-        description: "Required transport-safe polling interval. Use exactly 10000 and repeat the same targets until completion.",
-      },
-    },
-    required: [...new Set([...required, "timeout_ms"])],
-  };
-}
-
-function assertBrowserToolArguments(tool: CodexTool, args: Record<string, unknown>): void {
-  if (!isAgentWaitTool(tool)) return;
-  if (args.timeout_ms !== CHATGPT_WEB_AGENT_WAIT_POLL_MS) {
-    throw new Error(
-      `ChatGPT Web wait_agent requires timeout_ms=${CHATGPT_WEB_AGENT_WAIT_POLL_MS}`
-      + " so the shared MCP channel remains available to spawned Web agents",
-    );
-  }
-}
-
 function asMcpResult(value: BrokerToolResult) {
   return {
     content: value.content as never,
@@ -180,34 +118,21 @@ function execGateway(environment: ChatGptTurnEnvironment): CodexTool | undefined
   return tool?.freeform ? tool : undefined;
 }
 
-const CONNECTOR_LONG_POLL_SLICE_MS = 30_000;
-
-export function boundedConnectorToolArguments(tool: CodexTool, args: Record<string, unknown>): Record<string, unknown> {
-  if (!["wait", "multi_agent_v1__wait_agent", "collaboration__wait_agent"].includes(wireName(tool))) return args;
-  const timeoutKey = typeof args.timeout_ms === "number" ? "timeout_ms"
-    : typeof args.yield_time_ms === "number" ? "yield_time_ms" : undefined;
-  if (!timeoutKey || (args[timeoutKey] as number) <= CONNECTOR_LONG_POLL_SLICE_MS) return args;
-  return { ...args, [timeoutKey]: CONNECTOR_LONG_POLL_SLICE_MS };
-}
-
 export async function runChatGptMcpServer(options: { brokerSocketPath: string }): Promise<void> {
   const server = new McpServer({ name: "codex-native", version: VERSION });
 
-  const claimTurn = async (
+  const withTurn = async <T>(
     toolName: string,
     turnToken: string,
     extra: Parameters<typeof requestScopeSummary>[0],
-  ): Promise<ClaimedTurn> => {
+    action: (claimed: ClaimedTurn) => Promise<T> | T,
+  ): Promise<T> => {
     logToolPhase(toolName, "claim", "started", ` scope=${requestScopeSummary(extra)}`);
     try {
-      const claimed = await callTurnBroker<ClaimedTurn>(
-        options.brokerSocketPath,
-        { method: "claim", token: turnToken },
-        5_000,
-        extra.signal,
-      );
-      logToolPhase(toolName, "claim", "completed", ` binding=${scopeHash(claimed.bindingId)}`);
-      return claimed;
+      return await withClaimedTurn(options.brokerSocketPath, turnToken, extra.signal, claimed => {
+        logToolPhase(toolName, "claim", "completed", ` binding=${scopeHash(claimed.bindingId)}`);
+        return action(claimed);
+      });
     } catch (error) {
       logToolPhase(toolName, "claim", "failed", ` errorType=${diagnosticErrorType(error)}`);
       throw error;
@@ -336,14 +261,13 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     async ({ turn_token, cmd, workdir, yield_time_ms, max_output_tokens, tty }, extra) => {
-      const claimed = await claimTurn("codex_exec", turn_token, extra);
-      return invokeNativeCommand(claimed, {
-        cmd,
-        ...(workdir ? { workdir } : {}),
-        ...(yield_time_ms !== undefined ? { yieldTimeMs: yield_time_ms } : {}),
-        ...(max_output_tokens !== undefined ? { maxOutputTokens: max_output_tokens } : {}),
-        ...(tty !== undefined ? { tty } : {}),
-      }, extra.signal);
+      return withTurn("codex_exec", turn_token, extra, claimed => invokeNativeCommand(claimed, {
+          cmd,
+          ...(workdir ? { workdir } : {}),
+          ...(yield_time_ms !== undefined ? { yieldTimeMs: yield_time_ms } : {}),
+          ...(max_output_tokens !== undefined ? { maxOutputTokens: max_output_tokens } : {}),
+          ...(tty !== undefined ? { tty } : {}),
+        }, extra.signal));
     },
   );
 
@@ -362,20 +286,21 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     async ({ turn_token, session_id, chars, yield_time_ms, max_output_tokens }, extra) => {
-      const claimed = await claimTurn("codex_write_stdin", turn_token, extra);
-      const bound = claimed.environment;
-      const cellId = typeof session_id === "string" ? session_id : undefined;
-      const toolName = cellId !== undefined && chars === undefined ? "wait" : "write_stdin";
-      const tool = exactTool(bound, toolName);
-      const payload = { arguments: {
-        ...(toolName === "wait" ? { cell_id: cellId } : { session_id }),
-        ...(chars !== undefined ? { chars } : {}),
-        ...(yield_time_ms !== undefined ? { yield_time_ms } : {}),
-        ...(max_output_tokens !== undefined ? { [toolName === "wait" ? "max_tokens" : "max_output_tokens"]: max_output_tokens } : {}),
-      } };
-      return tool
-        ? invoke(claimed.bindingId, bound, tool, payload, extra.signal)
-        : invokeNestedNative(claimed.bindingId, bound, toolName, false, payload, extra.signal);
+      return withTurn("codex_write_stdin", turn_token, extra, claimed => {
+        const bound = claimed.environment;
+        const cellId = typeof session_id === "string" ? session_id : undefined;
+        const toolName = cellId !== undefined && chars === undefined ? "wait" : "write_stdin";
+        const tool = exactTool(bound, toolName);
+        const payload = { arguments: {
+          ...(toolName === "wait" ? { cell_id: cellId } : { session_id }),
+          ...(chars !== undefined ? { chars } : {}),
+          ...(yield_time_ms !== undefined ? { yield_time_ms } : {}),
+          ...(max_output_tokens !== undefined ? { [toolName === "wait" ? "max_tokens" : "max_output_tokens"]: max_output_tokens } : {}),
+        } };
+        return tool
+          ? invoke(claimed.bindingId, bound, tool, payload, extra.signal)
+          : invokeNestedNative(claimed.bindingId, bound, toolName, false, payload, extra.signal);
+      });
     },
   );
 
@@ -388,13 +313,14 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async ({ turn_token, patch }, extra) => {
-      const claimed = await claimTurn("codex_apply_patch", turn_token, extra);
-      const bound = claimed.environment;
-      const tool = exactTool(bound, "apply_patch");
-      if (!tool) return invokeNestedNative(claimed.bindingId, bound, "apply_patch", true, { input: patch }, extra.signal);
-      return tool.freeform
-        ? invoke(claimed.bindingId, bound, tool, { input: patch }, extra.signal)
-        : invoke(claimed.bindingId, bound, tool, { arguments: { input: patch } }, extra.signal);
+      return withTurn("codex_apply_patch", turn_token, extra, claimed => {
+        const bound = claimed.environment;
+        const tool = exactTool(bound, "apply_patch");
+        if (!tool) return invokeNestedNative(claimed.bindingId, bound, "apply_patch", true, { input: patch }, extra.signal);
+        return tool.freeform
+          ? invoke(claimed.bindingId, bound, tool, { input: patch }, extra.signal)
+          : invoke(claimed.bindingId, bound, tool, { arguments: { input: patch } }, extra.signal);
+      });
     },
   );
 
@@ -411,13 +337,14 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async ({ turn_token, path, detail }, extra) => {
-      const claimed = await claimTurn("codex_view_image", turn_token, extra);
-      const bound = claimed.environment;
-      const tool = exactTool(bound, "view_image");
-      const payload = { arguments: { path, ...(detail ? { detail } : {}) } };
-      return tool
-        ? invoke(claimed.bindingId, bound, tool, payload, extra.signal)
-        : invokeNestedNative(claimed.bindingId, bound, "view_image", false, payload, extra.signal);
+      return withTurn("codex_view_image", turn_token, extra, claimed => {
+        const bound = claimed.environment;
+        const tool = exactTool(bound, "view_image");
+        const payload = { arguments: { path, ...(detail ? { detail } : {}) } };
+        return tool
+          ? invoke(claimed.bindingId, bound, tool, payload, extra.signal)
+          : invokeNestedNative(claimed.bindingId, bound, "view_image", false, payload, extra.signal);
+      });
     },
   );
 
@@ -439,21 +366,22 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       const deferredSearch = /^__codex_tool_search__:([\s\S]+)$/.exec(query ?? "");
       const readFile = /^__codex_read_file__:([\s\S]+)$/.exec(query ?? "");
       if (deferredSearch || readFile) {
-        const claimed = await claimTurn("codex_tool_inventory", turn_token, extra);
-        if (deferredSearch) {
-          const searchQuery = deferredSearch[1]!.trim();
-          if (!searchQuery) throw new Error("Codex deferred tool search query is empty");
-          const searchTool = exactTool(claimed.environment, "tool_search");
-          if (!searchTool?.toolSearch) throw new Error("This Codex turn did not advertise deferred tool search");
-          return invoke(claimed.bindingId, claimed.environment, searchTool, {
-            arguments: { query: searchQuery },
+        return withTurn("codex_tool_inventory", turn_token, extra, claimed => {
+          if (deferredSearch) {
+            const searchQuery = deferredSearch[1]!.trim();
+            if (!searchQuery) throw new Error("Codex deferred tool search query is empty");
+            const searchTool = exactTool(claimed.environment, "tool_search");
+            if (!searchTool?.toolSearch) throw new Error("This Codex turn did not advertise deferred tool search");
+            return invoke(claimed.bindingId, claimed.environment, searchTool, {
+              arguments: { query: searchQuery },
+            }, extra.signal);
+          }
+          return invokeNativeCommand(claimed, {
+            cmd: readTextFileCommand(readFile![1]!),
+            yieldTimeMs: 30_000,
+            maxOutputTokens: 1_000_000,
           }, extra.signal);
-        }
-        return invokeNativeCommand(claimed, {
-          cmd: readTextFileCommand(readFile![1]!),
-          yieldTimeMs: 30_000,
-          maxOutputTokens: 1_000_000,
-        }, extra.signal);
+        });
       }
       const archiveMatch = /^__codex_context__:(\d+)$/.exec(query?.trim() ?? "");
       if (archiveMatch) {
@@ -475,21 +403,21 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
           text: formatContextArchiveChunk(archive),
         }] };
       }
-      const claimed = await claimTurn("codex_tool_inventory", turn_token, extra);
-      const bound = claimed.environment;
-      const matches = matchingToolInventory(bound.tools, query);
-      const page = matches.slice(offset, offset + limit).map(tool => ({
-        wire_name: wireName(tool),
-        name: tool.name,
-        namespace: tool.namespace ?? null,
-        description: browserToolDescription(tool),
-        kind: tool.freeform ? "freeform" : tool.toolSearch ? "tool_search" : "function",
-        ...(include_schema ? { parameters: browserToolParameters(tool) } : {}),
-      }));
-      return result({
-        tools: page,
-        total: matches.length,
-        next_offset: offset + page.length < matches.length ? offset + page.length : null,
+      return withTurn("codex_tool_inventory", turn_token, extra, claimed => {
+        const matches = matchingToolInventory(claimed.environment.tools, query);
+        const page = matches.slice(offset, offset + limit).map(tool => ({
+          wire_name: wireName(tool),
+          name: tool.name,
+          namespace: tool.namespace ?? null,
+          description: browserToolDescription(tool),
+          kind: tool.freeform ? "freeform" : tool.toolSearch ? "tool_search" : "function",
+          ...(include_schema ? { parameters: browserToolParameters(tool) } : {}),
+        }));
+        return result({
+          tools: page,
+          total: matches.length,
+          next_offset: offset + page.length < matches.length ? offset + page.length : null,
+        });
       });
     },
   );
@@ -524,21 +452,22 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
         }, 5_000, extra.signal);
         return result({ submitted: true });
       }
-      const claimed = await claimTurn("codex_tool_call", turn_token, extra);
-      const bound = claimed.environment;
-      const tool = namedTool(bound, wire_name);
-      if (tool.freeform) {
-        if (input === undefined) throw new Error(`Freeform Codex tool ${wire_name} requires input`);
-        if (args && Object.keys(args).length > 0) throw new Error(`Freeform Codex tool ${wire_name} does not accept arguments`);
-        return invoke(claimed.bindingId, bound, tool, { input }, extra.signal);
-      }
-      if (input !== undefined) throw new Error(`Function Codex tool ${wire_name} does not accept freeform input`);
-      const toolArguments = boundedConnectorToolArguments(tool, args ?? {});
-      assertBrowserToolArguments(tool, toolArguments);
-      if (tool.name === "Bash" && typeof toolArguments.command === "string") {
-        assertClaudeBashCommand(toolArguments.command);
-      }
-      return invoke(claimed.bindingId, bound, tool, { arguments: toolArguments }, extra.signal);
+      return withTurn("codex_tool_call", turn_token, extra, claimed => {
+        const bound = claimed.environment;
+        const tool = namedTool(bound, wire_name);
+        if (tool.freeform) {
+          if (input === undefined) throw new Error(`Freeform Codex tool ${wire_name} requires input`);
+          if (args && Object.keys(args).length > 0) throw new Error(`Freeform Codex tool ${wire_name} does not accept arguments`);
+          return invoke(claimed.bindingId, bound, tool, { input }, extra.signal);
+        }
+        if (input !== undefined) throw new Error(`Function Codex tool ${wire_name} does not accept freeform input`);
+        const toolArguments = boundedConnectorToolArguments(tool, args ?? {});
+        assertBrowserToolArguments(tool, toolArguments);
+        if (tool.name === "Bash" && typeof toolArguments.command === "string") {
+          assertClaudeBashCommand(toolArguments.command);
+        }
+        return invoke(claimed.bindingId, bound, tool, { arguments: toolArguments }, extra.signal);
+      });
     },
   );
 

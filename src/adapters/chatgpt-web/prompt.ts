@@ -491,6 +491,7 @@ export function compileChatGptWebPrompt(
       "After a deterministic tool failure, update the working hypothesis from that result and inspect the relevant repository or environment before choosing a different next action; do not repeat the same call unless its inputs or observable state changed.",
       ...(toolPolicy.requireTool ? ["You must execute at least one of the request-authorized local tools before returning a final answer."] : []),
       "Continue using the available tools until the requested work is complete and verified.",
+      "Write the user-facing final answer only after the last required tool result has settled. Do not call another tool after beginning that final answer.",
     ]
     : [
       nativeControlConnector

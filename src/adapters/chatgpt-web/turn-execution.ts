@@ -111,7 +111,7 @@ export class ChatGptTurnSession {
   }
   browserTurnPending(): boolean { return !this.physicalBrowserSettled; }
 
-  setOutstanding(requests: BrokerToolRequest[], reasoning: string[] = [], prelude: AdapterEvent[] = []): void {
+  setOutstanding(requests: BrokerToolRequest[], reasoning: string[] = [], prelude: AdapterEvent[] = []): number | undefined {
     if (this.outstandingById.size > 0) throw new Error("cannot emit a new ChatGPT tool batch while the previous batch is unresolved");
     for (const request of requests) {
       if (this.deliveredResultIds.has(request.callId) || this.outstandingById.has(request.callId)) {
@@ -122,7 +122,7 @@ export class ChatGptTurnSession {
     }
     this.outstandingReasoning = [...reasoning];
     this.outstandingPrelude = [...prelude];
-    this.runtime.externalProgress?.recordToolBatch(requests.length);
+    return this.runtime.externalProgress?.recordToolBatch(requests.length);
   }
 
   hasOutstanding(callId: string): boolean {

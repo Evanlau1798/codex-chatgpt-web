@@ -9,7 +9,7 @@ import {
   type BrokerResponse,
 } from "./turn-broker-protocol";
 
-type BrokerDispatch = (request: BrokerRequest) => unknown | Promise<unknown>;
+type BrokerDispatch = (request: BrokerRequest, signal: AbortSignal) => unknown | Promise<unknown>;
 
 const MAX_UNIX_SOCKET_PATH_BYTES = 103;
 
@@ -31,7 +31,9 @@ function validateRequest(request: BrokerRequest): void {
     && request.method !== "submit_compaction_handoff"
     && request.method !== "owner_status" && request.method !== "owner_register"
     && request.method !== "owner_update" && request.method !== "owner_next"
-    && request.method !== "owner_complete" && request.method !== "owner_revoke") {
+    && request.method !== "owner_complete" && request.method !== "owner_completion_fence_begin"
+    && request.method !== "owner_completion_fence_commit" && request.method !== "owner_revoke"
+    && request.method !== "activity_complete") {
     throw new Error("turn broker method is invalid");
   }
 }
@@ -62,7 +64,9 @@ function handleSocket(socket: Socket, dispatch: BrokerDispatch): void {
       writeSocketResponse(socket, { id: request?.id ?? "unknown", error: errorOf(error).message });
       return;
     }
-    void Promise.resolve().then(() => dispatch(request!)).then(
+    const requestAbort = new AbortController();
+    socket.once("close", () => requestAbort.abort());
+    void Promise.resolve().then(() => dispatch(request!, requestAbort.signal)).then(
       result => writeSocketResponse(socket, { id: request!.id, result }),
       error => writeSocketResponse(socket, { id: request!.id, error: errorOf(error).message }),
     );
