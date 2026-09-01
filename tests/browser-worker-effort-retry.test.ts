@@ -91,6 +91,73 @@ async function effortMenuError(itemCount: number): Promise<ChatGptWebAdapterErro
 }
 
 describe("ChatGPT effort menu failure classification", () => {
+  test("prefers a visible effort slider over model radio rows in the same picker", async () => {
+    let sliderValue = 3;
+    const pressed: string[] = [];
+    const modelRow = {
+      waitFor: async () => {},
+      getAttribute: async () => "false",
+      press: async () => { throw new Error("model row was activated as effort"); },
+    };
+    const slider = {
+      waitFor: async () => await new Promise(resolve => setTimeout(resolve, 0)),
+      isVisible: async () => true,
+      getAttribute: async (name: string) => ({
+        "aria-valuemin": "0",
+        "aria-valuemax": "4",
+        "aria-valuenow": String(sliderValue),
+      })[name as "aria-valuemin" | "aria-valuemax" | "aria-valuenow"],
+      locator: () => ({
+        press: async (key: string) => {
+          pressed.push(key);
+          sliderValue += key === "ArrowLeft" ? -1 : 1;
+        },
+      }),
+    };
+    const effortMenu = {
+      last() { return this; },
+      isVisible: async () => true,
+      locator: () => ({ nth: () => modelRow }),
+    };
+    const effortControl = {
+      last() { return this; },
+      waitFor: async () => {},
+      getAttribute: async () => "true",
+    };
+    const hiddenDialog = {
+      filter() { return this; },
+      last() { return this; },
+      isVisible: async () => false,
+      waitFor: () => new Promise(() => {}),
+    };
+    const page = {
+      locator: (selector: string) => {
+        if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return effortMenu;
+        if (selector === CHATGPT_EFFORT_SLIDER_SELECTOR) return { last: () => slider };
+        if (selector.includes('[role="alert"]') || selector.includes('[role="dialog"]')) return hiddenDialog;
+        throw new Error(`Unexpected selector: ${selector}`);
+      },
+      keyboard: { press: async () => {} },
+    };
+    const composer = { locator: () => ({ locator: () => effortControl }) };
+    const selectModelAndEffort = (ChatGptBrowserWorker.prototype as unknown as {
+      selectModelAndEffort(
+        page: unknown,
+        modelId: string,
+        reasoning: string,
+        capabilities: { localToolsEnabled: boolean; solAvailable: boolean; proAvailable: boolean },
+      ): Promise<unknown>;
+    }).selectModelAndEffort;
+
+    await expect(selectModelAndEffort.call({ activeComposer: async () => composer },
+      page, CHATGPT_WEB_MODEL_ID, "medium", {
+        localToolsEnabled: true,
+        solAvailable: true,
+        proAvailable: false,
+      })).resolves.toBeDefined();
+    expect(pressed).toEqual(["ArrowLeft", "ArrowLeft"]);
+  });
+
   test("selects an attached semantic slider even when its thumb has no visible box", async () => {
     let sliderValue = 3;
     const pressed: string[] = [];
