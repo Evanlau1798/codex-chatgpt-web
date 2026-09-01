@@ -1,8 +1,11 @@
 const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
+const { validateRuntimeBundle } = require("../electron/runtime-install.cjs");
 
 const root = path.resolve(__dirname, "..");
+const launcherManifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const executable = "node";
 const electronBuilderCli = require.resolve("electron-builder/out/cli/cli.js", { paths: [root] });
 const requested = process.argv[2];
@@ -38,6 +41,33 @@ if (target === "--mac" && !env.CSC_LINK && !env.CSC_NAME) {
 
 const staging = path.join(root, "release");
 const artifactsDirectory = path.join(root, "artifacts");
+
+function runChecked(command, args) {
+  const result = spawnSync(command, args, { cwd: root, env, stdio: "inherit", shell: false });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${command} failed with status ${result.status ?? "unknown"}`);
+}
+
+function verifySignedMacArchive() {
+  const archives = fs.readdirSync(staging).filter(name => /-mac-(?:arm64|x64)\.zip$/.test(name));
+  if (archives.length !== 1) {
+    throw new Error(`Expected exactly one macOS ZIP for verification; found ${archives.join(", ") || "none"}`);
+  }
+  const verificationRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-mac-verify-"));
+  try {
+    runChecked("ditto", ["-x", "-k", path.join(staging, archives[0]), verificationRoot]);
+    const appBundle = path.join(verificationRoot, `${launcherManifest.build.productName}.app`);
+    runChecked("codesign", ["--verify", "--deep", "--strict", appBundle]);
+    validateRuntimeBundle(path.join(appBundle, "Contents", "Resources", "runtime"), {
+      version: launcherManifest.version,
+      platform: "darwin",
+      arch: process.arch,
+    });
+  } finally {
+    fs.rmSync(verificationRoot, { recursive: true, force: true });
+  }
+}
+
 try {
   fs.rmSync(staging, { recursive: true, force: true });
   fs.mkdirSync(staging, { recursive: true });
@@ -52,6 +82,7 @@ try {
   });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
+  if (target === "--mac") verifySignedMacArchive();
 
   fs.mkdirSync(artifactsDirectory, { recursive: true });
   for (const entry of fs.readdirSync(artifactsDirectory, { withFileTypes: true })) {
