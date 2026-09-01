@@ -952,9 +952,14 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
   const initialComposer = {
     fill: async (value: string) => { calls.push(["fill", value]); },
     focus: async () => { calls.push(["focus"]); },
-    pressSequentially: async (value: string, options: { delay: number }) => {
-      expect(options).toEqual({ delay: 25 });
+    pressSequentially: async (value: string, options: { delay: number; signal?: AbortSignal; timeout: number }) => {
+      expect(options).toEqual({ delay: 25, signal: undefined, timeout: 10_000 });
       calls.push(["pressSequentially", value]);
+    },
+    press: async (key: string) => {
+      expect(key).toBe("Enter");
+      connectorSelected = true;
+      calls.push(["press"]);
     },
   };
   const page = {
@@ -975,13 +980,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
       }
       throw new Error(`Unexpected locator: ${selector}`);
     },
-    keyboard: {
-      press: async (key: string) => {
-        expect(key).toBe("Enter");
-        connectorSelected = true;
-        calls.push(["press"]);
-      },
-    },
+    keyboard: { press: async () => {} },
   };
   const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
     selectConnector(page: unknown): Promise<unknown>;
@@ -1055,18 +1054,21 @@ test("connector selection moves highlight to the exact hidden-viewport row befor
       ? { count: async () => 3 }
       : appResult,
   };
-  const initialComposer = { fill: async () => {}, focus: async () => {}, press: async () => {}, pressSequentially: async () => {} };
+  const initialComposer = {
+    fill: async () => {},
+    focus: async () => {},
+    press: async (key: string) => {
+      keys.push(key);
+      if (key === "ArrowDown") arrowCount += 1;
+      if (key === "Enter") selected = true;
+    },
+    pressSequentially: async () => {},
+  };
   const selectedComposer = { selected: true };
   const page = {
     getByText: () => ({ exactConnectorLabel: true }),
     locator: () => menuRows,
-    keyboard: {
-      press: async (key: string) => {
-        keys.push(key);
-        if (key === "ArrowDown") arrowCount += 1;
-        if (key === "Enter") selected = true;
-      },
-    },
+    keyboard: { press: async () => {} },
   };
   const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
     selectConnector(page: unknown): Promise<unknown>;
@@ -1110,6 +1112,11 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
   const initialComposer = {
     fill: async () => { calls.push("clear"); },
     focus: async () => { calls.push("focus"); },
+    press: async (key: string) => {
+      expect(key).toBe("Enter");
+      selected = true;
+      calls.push("activate");
+    },
     pressSequentially: async (value: string) => {
       expect(value).toBe("@codex");
       calls.push("type");
@@ -1120,13 +1127,7 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
     locator: (selector: string) => selector.includes("__menu-item")
       ? { filter: () => appResult, evaluateAll: async () => [] }
       : (() => { throw new Error(`Unexpected locator: ${selector}`); })(),
-    keyboard: {
-      press: async (key: string) => {
-        expect(key).toBe("Enter");
-        selected = true;
-        calls.push("activate");
-      },
-    },
+    keyboard: { press: async () => {} },
   };
   const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
     selectConnector(page: unknown): Promise<unknown>;
@@ -1216,6 +1217,7 @@ test("connector verification preserves the host-refreshed catalog evidence", asy
     },
     activeComposer: async () => selected ? selectedComposer : initialComposer,
     ensureConnectorSurface: async () => {},
+    clearChatGptComposerState: async () => {},
     connectorIsSelected: async () => selected,
     connectorMentionFailure: prototype.connectorMentionFailure,
     connectorMentionRowTitles: prototype.connectorMentionRowTitles,
@@ -1277,6 +1279,7 @@ test("connector catalog refresh stays fail-closed for absent, legacy, and exact 
       return await selectConnector.call({
         config: { appName: CHATGPT_CONNECTOR_NAME },
         ensureConnectorSurface: async () => {},
+        clearChatGptComposerState: async () => {},
         activeComposer: async () => ({
           fill: async () => {},
           focus: async () => {},
@@ -1325,6 +1328,11 @@ test("tool-capable prompts use the shared Playwright connector selection before 
   const initialComposer = {
     fill: async (value: string) => { calls.push(["fill", value]); },
     focus: async () => { calls.push(["focus"]); },
+    press: async (value: string) => {
+      expect(value).toBe("Enter");
+      selected = true;
+      calls.push(["selectConnector"]);
+    },
     pressSequentially: async (value: string) => { calls.push(["type", value]); },
   };
   const page = {
@@ -1334,15 +1342,7 @@ test("tool-capable prompts use the shared Playwright connector selection before 
       : (() => { throw new Error(`Unexpected locator: ${selector}`); })(),
     keyboard: {
       insertText: async (value: string) => { calls.push(["insertText", value]); },
-      press: async (value: string) => {
-        if (!selected) {
-          expect(value).toBe("Enter");
-          selected = true;
-          calls.push(["selectConnector"]);
-          return;
-        }
-        calls.push(["press", value]);
-      },
+      press: async (value: string) => { calls.push(["press", value]); },
     },
   };
   const attachPrompt = (ChatGptBrowserWorker.prototype as unknown as {

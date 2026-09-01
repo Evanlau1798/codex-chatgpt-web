@@ -931,7 +931,8 @@ class BrowserHost {
     this.publishState?.(this.snapshot());
   }
 
-  heartbeatTurn(traceId, helperPid) {
+  heartbeatTurn(traceId, helperPid, refreshViewport = false) {
+    if (typeof refreshViewport !== "boolean") throw new Error("refreshViewport is invalid");
     const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
     if (!tab) {
       const closedOwner = this.closedTurnOwners.get(traceId);
@@ -943,6 +944,10 @@ class BrowserHost {
     }
     if (tab.status !== "running") throw new Error(`Browser turn ${traceId} is no longer running`);
     tab.lastHeartbeatAt = Date.now();
+    if (refreshViewport) {
+      tab.deviceEmulationDirty = true;
+      this.syncViewVisibility();
+    }
     return this.snapshot();
   }
 
@@ -1013,7 +1018,6 @@ class BrowserHost {
       { width, height },
     );
     this.boundsReady = true;
-    this.view.setBounds(this.bounds);
     for (const tab of this.turnTabs.values()) {
       tab.view.setBounds(this.bounds);
       tab.interactionShield?.setBounds(this.bounds);
@@ -1090,6 +1094,11 @@ class BrowserHost {
     tab.view.setVisible(visible || tab.status === "running");
   }
 
+  presentPrimaryView(visible) {
+    this.view.setBounds(visible ? this.bounds : this.hiddenTurnBounds());
+    this.view.setVisible(true);
+  }
+
   activateHomeSurface() {
     this.selectedTabId = "home";
     this.syncViewVisibility();
@@ -1103,7 +1112,7 @@ class BrowserHost {
     const visible = windowVisible
       && browserViewVisible(this.visible, this.surfaceActive, this.boundsReady);
     const selected = this.selectedTurnTab();
-    this.view.setVisible(visible && !this.authView && !selected);
+    this.presentPrimaryView(visible && !this.authView && !selected);
     for (const tab of this.turnTabs.values()) {
       const tabVisible = visible && !this.authView && selected?.id === tab.id;
       this.presentTurnView(tab, tabVisible);
