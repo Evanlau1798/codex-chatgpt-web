@@ -782,7 +782,37 @@ class RuntimeSupervisor {
     }
   }
 
-  async waitForTunnelMcpTransport(timeoutMs = 10_000) {
+  async discoverTunnelHealthBaseUrl(config) {
+    const tunnel = config.tunnel;
+    if (!tunnel) throw new Error("launcher-owned tunnel has no runtime configuration");
+    const result = await this.runTunnelCommand(
+      config,
+      ["runtimes", "status", tunnel.alias, "--json"],
+      5_000,
+      "Local tunnel health discovery",
+    );
+    if (result.code !== 0) {
+      throw new Error(`Local tunnel health discovery failed: ${tunnelControlDiagnostic(result)}`);
+    }
+    let parsed;
+    try { parsed = JSON.parse(result.output); }
+    catch (error) {
+      throw new Error(`Local tunnel health discovery returned invalid JSON: ${errorMessage(error)}`);
+    }
+    const candidates = [
+      parsed?.local?.effective_health?.base_url,
+      parsed?.local?.health?.base_url,
+      parsed?.health_url,
+      parsed?.ui_url,
+    ];
+    const baseUrl = candidates.map(loopbackHealthBaseURL).find(Boolean);
+    if (!baseUrl) throw new Error("Local tunnel health discovery returned no verified loopback endpoint");
+    this.tunnelHealthBaseUrl = baseUrl;
+    return baseUrl;
+  }
+
+  async waitForTunnelMcpTransport(config, timeoutMs = 10_000) {
+    if (!this.tunnelHealthBaseUrl) await this.discoverTunnelHealthBaseUrl(config);
     const deadline = Date.now() + timeoutMs;
     let health;
     do {
@@ -964,7 +994,7 @@ class RuntimeSupervisor {
       }
       await this.waitForTunnel(config, TUNNEL_START_TIMEOUT_MS, operationName);
       if (!this.tunnel) throw new Error("Tunnel runtime became ready without a managed process identity");
-      if (forceRestart) await this.waitForTunnelMcpTransport();
+      if (forceRestart) await this.waitForTunnelMcpTransport(config);
       this.startTunnelMonitor(config);
     } catch (error) {
       let cleanupError;
