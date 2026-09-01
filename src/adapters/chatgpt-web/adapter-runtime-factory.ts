@@ -209,6 +209,10 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       ...(conversationKey ? { conversationKey } : {}),
       abortSignal: browserAbort.signal,
       externalProgress,
+      completionFence: {
+        begin: async () => brokerOwner.beginCompletionFence(activeToken ?? await token.promise),
+        commit: async revision => brokerOwner.commitCompletionFence(activeToken ?? await token.promise, revision),
+      },
       onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: emitCommentary,
       onProgress: () => trace.signalProgress(),

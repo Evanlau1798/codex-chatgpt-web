@@ -19,7 +19,8 @@ export interface BrokerToolResult {
 export interface BrokerRequest {
   id: string;
   method: "claim" | "resolve" | "release" | "invoke" | "read_context" | "submit_compaction_handoff"
-    | "owner_status" | "owner_register" | "owner_update" | "owner_next" | "owner_complete" | "owner_revoke";
+    | "owner_status" | "owner_register" | "owner_update" | "owner_next" | "owner_complete"
+    | "owner_completion_fence_begin" | "owner_completion_fence_commit" | "owner_revoke" | "activity_complete";
   token?: string;
   bindingId?: string;
   wireName?: string;
@@ -34,6 +35,8 @@ export interface BrokerRequest {
   ttlMs?: number;
   traceId?: string;
   callId?: string;
+  activityId?: string;
+  revision?: number;
   toolResult?: BrokerToolResult;
 }
 

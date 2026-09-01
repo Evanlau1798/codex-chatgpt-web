@@ -49,6 +49,7 @@ export interface ChatGptCompletionState {
   currentHtml?: string;
   completionActionVisible: boolean;
   externalProgressLive?: boolean;
+  externalToolCallsInFlight?: boolean;
   projection: ChatGptFinalProjectionState;
 }
 
@@ -101,10 +102,14 @@ function projectionSignature(
 export class ChatGptCompletionTracker {
   private candidate?: { signature: string; since: number };
   private progress?: { signature: string; at: number };
+  private lastToolBatchRevision = 0;
+  private postToolAnswerBaselineText?: string;
+  private missingPostToolAnswerSince?: number;
 
   constructor(
     private readonly stableMs = CHATGPT_COMPLETION_SETTLE_MS,
     private readonly projectionStallMs = CHATGPT_COMPLETION_PROJECTION_STALL_MS,
+    private readonly missingPostToolAnswerMs = 60_000,
   ) {
     if (!Number.isFinite(stableMs) || stableMs < 0) {
       throw new Error("ChatGPT completion stability window must be a non-negative finite number");
@@ -112,14 +117,49 @@ export class ChatGptCompletionTracker {
     if (!Number.isFinite(projectionStallMs) || projectionStallMs <= 0) {
       throw new Error("ChatGPT projection stall window must be a positive finite number");
     }
+    if (!Number.isFinite(missingPostToolAnswerMs) || missingPostToolAnswerMs <= 0) {
+      throw new Error("ChatGPT post-tool answer window must be a positive finite number");
+    }
+  }
+
+  needsToolBatchObservation(revision: number): boolean {
+    if (!Number.isSafeInteger(revision) || revision < this.lastToolBatchRevision) {
+      throw new Error("ChatGPT completion received an invalid tool-batch revision");
+    }
+    return revision > this.lastToolBatchRevision;
+  }
+
+  observeToolBatch(revision: number, currentText: string): boolean {
+    if (!this.needsToolBatchObservation(revision)) return false;
+    this.postToolAnswerBaselineText = currentText;
+    this.lastToolBatchRevision = revision;
+    this.missingPostToolAnswerSince = undefined;
+    this.candidate = undefined;
+    this.progress = undefined;
+    return true;
   }
 
   update(state: ChatGptCompletionState, now = Date.now()): ChatGptCompletionDecision {
-    if (state.externalProgressLive) {
+    if (state.externalToolCallsInFlight) {
       this.candidate = undefined;
       this.progress = undefined;
+      this.missingPostToolAnswerSince = undefined;
       return { status: "waiting" };
     }
+    if (this.postToolAnswerBaselineText === state.currentText) {
+      this.candidate = undefined;
+      this.progress = undefined;
+      if (!chatGptTurnIsComplete(state)) {
+        this.missingPostToolAnswerSince = undefined;
+        return { status: "waiting" };
+      }
+      this.missingPostToolAnswerSince ??= now;
+      if (now - this.missingPostToolAnswerSince >= this.missingPostToolAnswerMs) {
+        throw new Error("ChatGPT completed without producing a final answer after its last Codex tool call");
+      }
+      return { status: "waiting" };
+    }
+    this.missingPostToolAnswerSince = undefined;
     if (!chatGptTurnIsComplete(state)) {
       this.candidate = undefined;
       this.progress = undefined;

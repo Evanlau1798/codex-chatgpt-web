@@ -8,6 +8,8 @@ export interface TurnBrokerOwner {
   updateEnvironment(token: string, environment: ChatGptTurnEnvironment): void | Promise<void>;
   nextToolBatch(token: string, signal?: AbortSignal): Promise<BrokerToolRequest[]>;
   completeTool(token: string, callId: string, result: BrokerToolResult): void | Promise<void>;
+  beginCompletionFence(token: string): number | undefined | Promise<number | undefined>;
+  commitCompletionFence(token: string, revision: number): boolean | Promise<boolean>;
   revoke(token: string, reason?: Error): void | Promise<void>;
 }
 
@@ -19,9 +21,10 @@ export interface ExternalOwnerDispatchTarget extends TurnBrokerOwner {
 export function dispatchExternalOwnerRequest(
   request: BrokerRequest,
   target: ExternalOwnerDispatchTarget,
+  signal?: AbortSignal,
 ): unknown | Promise<unknown> {
   if (request.method === "owner_status") {
-    return { protocolVersion: 1, acceptingExternalOwners: target.accepting() };
+    return { protocolVersion: 2, acceptingExternalOwners: target.accepting() };
   }
   if (request.method === "owner_register") {
     const environment = ownerEnvironment(request.environment);
@@ -36,7 +39,7 @@ export function dispatchExternalOwnerRequest(
     return { updated: true };
   }
   if (request.method === "owner_next") {
-    return target.nextToolBatch(request.token).then(requests => ({ requests }));
+    return target.nextToolBatch(request.token, signal).then(requests => ({ requests }));
   }
   if (request.method === "owner_complete") {
     if (!request.callId) throw new Error("turn owner call id is required");
@@ -45,6 +48,16 @@ export function dispatchExternalOwnerRequest(
     }
     target.completeTool(request.token, request.callId, request.toolResult);
     return { completed: true };
+  }
+  if (request.method === "owner_completion_fence_begin") {
+    return Promise.resolve(target.beginCompletionFence(request.token)).then(revision => ({ revision: revision ?? null }));
+  }
+  if (request.method === "owner_completion_fence_commit") {
+    if (!Number.isSafeInteger(request.revision) || request.revision! < 0) {
+      throw new Error("turn completion fence revision is invalid");
+    }
+    return Promise.resolve(target.commitCompletionFence(request.token, request.revision!))
+      .then(committed => ({ committed }));
   }
   if (request.method === "owner_revoke") {
     target.revoke(request.token);
@@ -93,7 +106,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
         + ` (${error instanceof Error ? error.message : String(error)})`,
       );
     }
-    if (status.protocolVersion !== 1) {
+    if (status.protocolVersion !== 2) {
       throw new Error(`Unsupported DEV turn-owner protocol version: ${String(status.protocolVersion)}`);
     }
     if (status.acceptingExternalOwners !== true) {
@@ -143,6 +156,30 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       callId,
       toolResult: result,
     }, null);
+  }
+
+  async beginCompletionFence(token: string): Promise<number | undefined> {
+    const response = await callTurnBroker<{ revision?: unknown }>(this.socketPath, {
+      method: "owner_completion_fence_begin",
+      token,
+    });
+    if (response.revision === null) return undefined;
+    if (!Number.isSafeInteger(response.revision) || (response.revision as number) < 0) {
+      throw new Error("DEV turn owner received an invalid completion fence revision");
+    }
+    return response.revision as number;
+  }
+
+  async commitCompletionFence(token: string, revision: number): Promise<boolean> {
+    const response = await callTurnBroker<{ committed?: unknown }>(this.socketPath, {
+      method: "owner_completion_fence_commit",
+      token,
+      revision,
+    });
+    if (typeof response.committed !== "boolean") {
+      throw new Error("DEV turn owner received an invalid completion fence result");
+    }
+    return response.committed;
   }
 
   async revoke(token: string, _reason?: Error): Promise<void> {

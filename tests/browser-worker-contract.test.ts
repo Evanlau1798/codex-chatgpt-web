@@ -2554,6 +2554,7 @@ test("the launcher helper transport carries MCP progress into the out-of-process
   const client = readFileSync("src/adapters/chatgpt-web/launcher-helper-client.ts", "utf8");
   const forwarding = readFileSync("src/adapters/chatgpt-web/launcher-helper-progress.ts", "utf8");
   const helper = readFileSync("src/adapters/chatgpt-web/browser-helper-main.ts", "utf8");
+  const fence = readFileSync("src/adapters/chatgpt-web/browser-helper-fence.ts", "utf8");
 
   // The browser worker runs in the helper process while the Codex MCP broker runs in the daemon.
   // If progress stops crossing that boundary the worker silently observes "never live" and cancels
@@ -2561,8 +2562,8 @@ test("the launcher helper transport carries MCP progress into the out-of-process
   expect(client).toContain("forwardLauncherHelperProgress");
   expect(forwarding).toMatch(/type: "progress", id: turn\.traceId, snapshot/);
   expect(helper).toMatch(/message\.type === "progress"/);
-  expect(helper).toContain("ChatGptMirroredTurnProgress");
-  expect(helper).toMatch(/externalProgress: progress/);
+  expect(fence).toContain("ChatGptMirroredTurnProgress");
+  expect(fence).toMatch(/externalProgress: session\.progress/);
 });
 
 test("turn cancellation heuristics defer to proven MCP progress in both wait loops", () => {
@@ -2681,6 +2682,7 @@ test("the daemon prefers the browser helper that shipped beside its own entrypoi
   const client = readFileSync("src/adapters/chatgpt-web/launcher-helper-client.ts", "utf8");
   const processHelper = readFileSync("src/adapters/chatgpt-web/launcher-helper-process.ts", "utf8");
   const helper = readFileSync("src/adapters/chatgpt-web/browser-helper-main.ts", "utf8");
+  const fence = readFileSync("src/adapters/chatgpt-web/browser-helper-fence.ts", "utf8");
 
   // The launcher advertises the helper inside its signed application bundle while the daemon runs
   // from a versioned runtime directory, so the two update independently. A daemon that spoke a
@@ -2692,12 +2694,12 @@ test("the daemon prefers the browser helper that shipped beside its own entrypoi
 
   // Belt and braces: negotiate the frame, and never treat an unrecognised frame as a run.
   expect(client).toContain('this.helperFeatures.has("progress")');
-  expect(helper).toContain('features: ["progress"]');
+  expect(helper).toContain('features: ["progress", "tool-boundary-ack", "completion-fence"]');
   expect(helper).toMatch(/message\.type === "run"/);
   expect(helper).toContain("Browser helper received an unsupported message type");
 
   // A malformed liveness hint must not destroy an accepted turn that can never be resent.
-  expect(helper).toContain("discarded an invalid MCP progress frame");
+  expect(fence).toContain("discarded an invalid MCP progress frame");
 });
 
 
@@ -2785,7 +2787,7 @@ test("the shipped commentary classifier separates answer Markdown from reasoning
   expect(answerFor('<div class="markdown">ONLY ANSWER</div>')).toBe("ONLY ANSWER");
 });
 
-test("proven MCP progress vetoes completion, not only the health verdicts", () => {
+test("active MCP calls veto completion while settled progress does not add a success delay", () => {
   const tracker = new ChatGptCompletionTracker(500);
   const finishedLooking = {
     responsePresent: true,
@@ -2805,8 +2807,8 @@ test("proven MCP progress vetoes completion, not only the health verdicts", () =
 
   // Between two tool calls the rendered message can look finished. Completing there returns a
   // truncated answer and retires the turn while its own tool calls are still in flight.
-  expect(tracker.update({ ...finishedLooking, externalProgressLive: true }, 1_000).status).toBe("waiting");
-  expect(tracker.update({ ...finishedLooking, externalProgressLive: true }, 5_000).status).toBe("waiting");
+  expect(tracker.update({ ...finishedLooking, externalToolCallsInFlight: true }, 1_000).status).toBe("waiting");
+  expect(tracker.update({ ...finishedLooking, externalToolCallsInFlight: true }, 5_000).status).toBe("waiting");
 
   // Once the model is genuinely idle the settle window starts fresh rather than completing at once.
   expect(tracker.update(finishedLooking, 5_100).status).toBe("waiting");
@@ -2841,7 +2843,9 @@ test("the bundled helper is adopted only for the packaged runtime layout", () =>
   // Trace ids are derived deterministically and can repeat, so a run must not inherit revisions
   // recorded for an earlier turn that happened to share the id.
   const helper = readFileSync("src/adapters/chatgpt-web/browser-helper-main.ts", "utf8");
-  expect(helper).toContain("const progress = new ChatGptMirroredTurnProgress();");
+  const fence = readFileSync("src/adapters/chatgpt-web/browser-helper-fence.ts", "utf8");
+  expect(helper).toContain("completionFences.start(message.id");
+  expect(fence).toContain("new ChatGptMirroredTurnProgress");
 
   // A consumer callback must not be retried as though the page could not be read.
   const worker = readFileSync("src/adapters/chatgpt-web/browser-worker.ts", "utf8");

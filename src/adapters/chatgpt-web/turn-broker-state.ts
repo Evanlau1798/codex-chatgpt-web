@@ -27,6 +27,11 @@ export interface TurnChannel {
   queuedCallIds: string[];
   invocations: Map<string, PendingInvocation>;
   waiters: Set<ToolWaiter>;
+  activities: Set<string>;
+  completedActivities: Set<string>;
+  activityRevision: number;
+  completionCommitted: boolean;
+  completionRevision?: number;
   batchTimer?: ReturnType<typeof setTimeout>;
   handoffInstruction?: string;
   steeringInstruction?: string;

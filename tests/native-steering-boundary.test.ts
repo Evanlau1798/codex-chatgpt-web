@@ -188,6 +188,38 @@ test("delivers a canonical tool result before a later native V2 revision", async
   const nativeResults: string[] = [];
   let browserStarts = 0;
 
+  const invoke = async (turn: BrowserTurn, bindingId: string, cmd: string): Promise<BrokerToolResult> => {
+    const progress = turn.externalProgress;
+    if (!progress) throw new Error("tool-capable browser has no progress transport");
+    const previousBatchRevision = progress.snapshot().lastToolBatchRevision;
+    const result = callTurnBroker<BrokerToolResult>(socketPath, {
+      method: "invoke",
+      bindingId,
+      wireName: "exec_command",
+      arguments: { cmd },
+    }, 10_000);
+    const waitAbort = new AbortController();
+    const waitSignal = turn.abortSignal
+      ? AbortSignal.any([turn.abortSignal, waitAbort.signal])
+      : waitAbort.signal;
+    try {
+      const outcome = await Promise.race([
+        result.then(value => ({ kind: "result" as const, value })),
+        progress.waitForChange(progress.snapshot().revision, waitSignal)
+          .then(snapshot => ({ kind: "progress" as const, snapshot })),
+      ]);
+      if (outcome.kind === "result") return outcome.value;
+      let snapshot = outcome.snapshot;
+      while (snapshot.lastToolBatchRevision <= previousBatchRevision) {
+        snapshot = await progress.waitForChange(snapshot.revision, waitSignal);
+      }
+      await progress.acknowledgeToolBatch(snapshot.lastToolBatchRevision);
+      return result;
+    } finally {
+      waitAbort.abort();
+    }
+  };
+
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     browserStarts += 1;
     const prepared = await turn.prepare();
@@ -195,18 +227,8 @@ test("delivers a canonical tool result before a later native V2 revision", async
       const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
       if (!token) throw new Error("turn token missing from compiled prompt");
       const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
-      nativeResults.push(textOf(await callTurnBroker<BrokerToolResult>(socketPath, {
-        method: "invoke",
-        bindingId: claimed.bindingId,
-        wireName: "exec_command",
-        arguments: { cmd: "inspect" },
-      }, 10_000)));
-      nativeResults.push(textOf(await callTurnBroker<BrokerToolResult>(socketPath, {
-        method: "invoke",
-        bindingId: claimed.bindingId,
-        wireName: "exec_command",
-        arguments: { cmd: "next-boundary" },
-      }, 10_000)));
+      nativeResults.push(textOf(await invoke(turn, claimed.bindingId, "inspect")));
+      nativeResults.push(textOf(await invoke(turn, claimed.bindingId, "next-boundary")));
       const answer = "Boundary ordering completed.";
       turn.onTextDelta(answer);
       return answer;
