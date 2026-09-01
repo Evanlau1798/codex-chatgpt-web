@@ -1,6 +1,7 @@
 import { namespacedToolName, type CodexTool } from "../../types";
 
 export const CHATGPT_WEB_AGENT_WAIT_POLL_MS = 10_000;
+export const CHATGPT_WEB_AGENT_WAIT_RULE = "ChatGPT Web transport rule: wait for exactly 10 seconds per call, then release the MCP channel so spawned Web agents can use their own tools. Repeat with the same target ids until a terminal status is returned.";
 const CONNECTOR_LONG_POLL_SLICE_MS = 30_000;
 
 const wireName = (tool: CodexTool): string => namespacedToolName(tool.namespace, tool.name);
@@ -23,8 +24,11 @@ export function matchingToolInventory(tools: CodexTool[], query?: string): Codex
 }
 
 export function browserToolDescription(tool: CodexTool): string {
-  if (!isAgentWaitTool(tool)) return tool.description;
-  return `${tool.description}\n\nChatGPT Web transport rule: wait for exactly 10 seconds per call, then release the MCP channel so spawned Web agents can use their own tools. Repeat with the same target ids until a terminal status is returned.`;
+  if (isAgentWaitTool(tool)) return `${tool.description}\n\n${CHATGPT_WEB_AGENT_WAIT_RULE}`;
+  if (!tool.namespace && tool.name === "exec") {
+    return `${tool.description}\n\n${CHATGPT_WEB_AGENT_WAIT_RULE} This rule is enforced for wait_agent calls made inside exec; recursive raw exec is unavailable.`;
+  }
+  return tool.description;
 }
 
 export function browserToolParameters(tool: CodexTool): Record<string, unknown> {

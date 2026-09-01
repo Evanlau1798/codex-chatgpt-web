@@ -1,4 +1,6 @@
 import { posix, win32 } from "node:path";
+import { GATEWAY_AGENT_WAIT_TOOL_NAMES, gatewayToolNameIsValid } from "./mcp-gateway";
+import { CHATGPT_WEB_AGENT_WAIT_POLL_MS } from "./mcp-tool-inventory";
 
 export const ONE_SHOT_SHELL_TTY_ERROR = "The one-shot shell_command cannot provide a TTY or accept later stdin. Pipe input inside the same command and use APIs compatible with the active platform shell.";
 
@@ -30,11 +32,69 @@ export function execGatewayProgram(
   nestedToolName: string,
   freeform: boolean,
   payload: { arguments?: Record<string, unknown>; input?: string },
+  excludedNames: string[] = [],
 ): string {
+  if (!gatewayToolNameIsValid(nestedToolName) || excludedNames.includes(nestedToolName)) {
+    throw new Error(`Codex nested tool is not available in this turn: ${nestedToolName}`);
+  }
+  const gatewayName = gatewayNestedToolName(nestedToolName);
   const nestedInput = freeform ? payload.input ?? "" : payload.arguments ?? {};
   return execGatewayResultProgram([
-    `const result = await tools[${JSON.stringify(gatewayNestedToolName(nestedToolName))}](${JSON.stringify(nestedInput)});`,
+    "if (typeof ALL_TOOLS === \"undefined\" || !Array.isArray(ALL_TOOLS)) throw new Error(\"Native nested tool registry is unavailable\");",
+    `const nestedToolName = ${JSON.stringify(gatewayName)};`,
+    `const excludedNames = new Set(${JSON.stringify(excludedNames)});`,
+    "if (excludedNames.has(nestedToolName)) throw new Error(\"Native nested tool is not callable through the structured gateway\");",
+    "if (!ALL_TOOLS.some(tool => tool?.name === nestedToolName)) throw new Error(\"Native nested tool is not listed in this turn\");",
+    "const nestedTool = tools[nestedToolName];",
+    "if (typeof nestedTool !== \"function\") throw new Error(\"Native nested tool is listed but unavailable\");",
+    `const result = await nestedTool(${JSON.stringify(nestedInput)});`,
   ]);
+}
+
+export function transportBoundRawExecProgram(input: string, blockedExecName: string): string {
+  return [
+    "await (async (tools) => {",
+    input,
+    "})((() => {",
+    "  const source = tools;",
+    `  const waitNames = new Set(${JSON.stringify(GATEWAY_AGENT_WAIT_TOOL_NAMES)});`,
+    `  const blockedExecName = ${JSON.stringify(blockedExecName)};`,
+    `  const pollMs = ${CHATGPT_WEB_AGENT_WAIT_POLL_MS};`,
+    "  const registryNames = new Set(Reflect.ownKeys(source));",
+    "  if (typeof ALL_TOOLS !== \"undefined\" && Array.isArray(ALL_TOOLS)) {",
+    "    for (const tool of ALL_TOOLS) if (typeof tool?.name === \"string\") registryNames.add(tool.name);",
+    "  }",
+    "  const wrappers = new Map();",
+    "  const expose = name => {",
+    "    if (wrappers.has(name)) return wrappers.get(name);",
+    "    const value = Reflect.get(source, name, source);",
+    "    let exposed = value;",
+    "    if (typeof value === \"function\" && name === blockedExecName) {",
+    "      exposed = () => { throw new Error(\"Nested raw exec is unavailable inside ChatGPT Web exec\"); };",
+    "    } else if (typeof value === \"function\" && typeof name === \"string\" && waitNames.has(name)) {",
+    "      exposed = args => {",
+    "        if (!args || typeof args !== \"object\" || Array.isArray(args) || args.timeout_ms !== pollMs) {",
+    "          throw new Error(\"ChatGPT Web wait_agent requires timeout_ms=\" + pollMs + \" so the shared MCP channel remains available to spawned Web agents\");",
+    "        }",
+    "        return Reflect.apply(value, source, [args]);",
+    "      };",
+    "    } else if (typeof value === \"function\") {",
+    "      exposed = (...args) => Reflect.apply(value, source, args);",
+    "    }",
+    "    wrappers.set(name, exposed);",
+    "    return exposed;",
+    "  };",
+    "  return new Proxy(Object.create(null), {",
+    "    get: (_target, name) => expose(name),",
+    "    has: (_target, name) => registryNames.has(name) || Reflect.has(source, name),",
+    "    ownKeys: () => [...registryNames],",
+    "    getOwnPropertyDescriptor: (_target, name) => registryNames.has(name) || Reflect.has(source, name)",
+    "      ? { configurable: true, enumerable: true, writable: false, value: expose(name) } : undefined,",
+    "    set: () => false, defineProperty: () => false, deleteProperty: () => false,",
+    "    setPrototypeOf: () => false, getPrototypeOf: () => null, preventExtensions: () => false,",
+    "  });",
+    "})());",
+  ].join("\n");
 }
 
 export function execCommandGatewayProgram(

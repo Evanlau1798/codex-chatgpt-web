@@ -94,7 +94,7 @@ async function executeGatewayProgram(
   program: string,
   availableToolNames: string[],
   calls: GatewayProgramCall[],
-): Promise<void> {
+): Promise<Array<{ type: "text"; text: string }>> {
   const nestedTools = Object.fromEntries(availableToolNames.map(name => [
     name,
     async (input: unknown) => {
@@ -106,15 +106,20 @@ async function executeGatewayProgram(
     ...args: string[]
   ) => (...values: unknown[]) => Promise<void>;
   const execute = new AsyncFunction("tools", "ALL_TOOLS", "text", "image", "audio", "generatedImage", program);
+  const emitted: Array<{ type: "text"; text: string }> = [];
+  const emitText = (value: unknown): void => {
+    emitted.push({ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) });
+  };
   const ignoreOutput = (_value: unknown): void => {};
   await execute(
     nestedTools,
     availableToolNames.map(name => ({ name, description: `${name} test tool` })),
-    ignoreOutput,
+    emitText,
     ignoreOutput,
     ignoreOutput,
     ignoreOutput,
   );
+  return emitted;
 }
 
 function parsed(developerText?: string): CodexParsedRequest {
@@ -2583,11 +2588,20 @@ describe("ChatGPT outer-native harness v4", () => {
       broker.completeTool(token, waitRequest!.callId, toolResult({ output: "completed" }));
       expect((await waitPromise).structuredContent).toEqual({ output: "completed" });
 
-      const agentInventory = await call("codex_tool_inventory", {
+      const pendingAgentInventory = call("codex_tool_inventory", {
         turn_token: token,
         query: "wait_agent",
         include_schema: true,
       });
+      const [agentInventoryRequest] = await broker.nextToolBatch(token);
+      expect(agentInventoryRequest).toMatchObject({ wireName: "exec", freeform: true });
+      const inventoryContent = await executeGatewayProgram(
+        agentInventoryRequest!.input!,
+        ["exec", "multi_agent_v1__wait_agent"],
+        [],
+      );
+      broker.completeTool(token, agentInventoryRequest!.callId, { content: inventoryContent });
+      const agentInventory = await pendingAgentInventory;
       expect(agentInventory.structuredContent).toMatchObject({
         total: 1,
         tools: [{
