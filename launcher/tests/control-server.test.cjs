@@ -37,6 +37,15 @@ test("browser control server authenticates and owns turn visibility", async () =
     });
     assert.equal(invalidOwner.status, 400);
 
+    const invalidViewportRoute = await fetch(`${descriptor.endpoint}/v1/turn/start`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${descriptor.token}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        phase: "start", traceId: "abcdef123456", helperPid: process.pid, refreshViewport: true,
+      }),
+    });
+    assert.equal(invalidViewportRoute.status, 400);
+
     const start = await fetch(`${descriptor.endpoint}/v1/turn/start`, {
       method: "POST",
       headers: { authorization: `Bearer ${descriptor.token}`, "content-type": "application/json" },
@@ -54,7 +63,9 @@ test("browser control server authenticates and owns turn visibility", async () =
     const heartbeat = await fetch(`${descriptor.endpoint}/v1/turn/heartbeat`, {
       method: "POST",
       headers: { authorization: `Bearer ${descriptor.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ phase: "heartbeat", traceId: "abcdef123456", helperPid: process.pid }),
+      body: JSON.stringify({
+        phase: "heartbeat", traceId: "abcdef123456", helperPid: process.pid, refreshViewport: true,
+      }),
     });
     assert.equal(heartbeat.status, 200);
 
@@ -80,7 +91,7 @@ test("browser control server authenticates and owns turn visibility", async () =
     assert.equal(end.status, 200);
     assert.deepEqual(calls, [
       ["start", "abcdef123456", true, process.pid, true, "a".repeat(64), "Codex Native2", true],
-      ["heartbeat", "abcdef123456", process.pid],
+      ["heartbeat", "abcdef123456", process.pid, true],
       ["end", "abcdef123456", process.pid, "completed", true, undefined, true, true],
     ]);
     assert.equal(logs.some(([, event]) => event === "browser.turn_started"), true);

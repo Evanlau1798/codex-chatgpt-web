@@ -18,6 +18,7 @@ test("opens the connector plus menu and resolves one exact ARIA connector row", 
           return {
             count: async () => 1,
             focus: async () => { calls.push("plus:focus"); },
+            press: async (key: string) => { calls.push(`key:${key}`); },
           };
         },
       };
@@ -33,7 +34,7 @@ test("opens the connector plus menu and resolves one exact ARIA connector row", 
   };
 
   expect(await openChatGptConnectorPlusMenu(page as never, "Codex Native2")).toBe(row as never);
-  expect(calls).toEqual(["plus:focus", "key:Enter", "row:visible"]);
+  expect(calls).toEqual(["plus:focus", "key:Enter", "row:visible", "row:focus"]);
 });
 
 test("production connector selection activates the exact plus-menu row", async () => {
@@ -42,11 +43,16 @@ test("production connector selection activates the exact plus-menu row", async (
   const plus = {
     count: async () => 1,
     focus: async () => { calls.push("plus:focus"); },
+    press: async (key: string) => { calls.push(`key:${key}`); },
   };
   const row = {
     count: async () => 1,
     focus: async () => { calls.push("row:focus"); },
     waitFor: async () => { calls.push("row:visible"); },
+    press: async (key: string) => {
+      calls.push(`key:${key}`);
+      selected = true;
+    },
   };
   const selectedConnector = {
     waitFor: async () => { calls.push("selected:visible"); },
@@ -54,25 +60,23 @@ test("production connector selection activates the exact plus-menu row", async (
   const page = {
     getByTestId: () => ({ filter: () => plus }),
     getByRole: () => ({ filter: () => row }),
-    keyboard: {
-      press: async (key: string) => {
-        calls.push(`key:${key}`);
-        if (calls.filter(call => call === "key:Enter").length === 2) selected = true;
-      },
-    },
+    getByText: () => ({}),
+    locator: () => ({ filter: () => ({}) }),
+    keyboard: { press: async () => {} },
   };
   const selectedComposer = { selected: true };
   const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
     selectConnector(page: unknown): Promise<unknown>;
   }).selectConnector;
 
-  await expect(selectConnector.call({
+  const resolved = await selectConnector.call({
     config: { appName: "Codex Native2" },
     ensureConnectorSurface: async () => {},
     activeComposer: async () => selected ? selectedComposer : { fill: async () => {} },
     connectorIsSelected: async () => selected,
     selectedConnectorControl: () => selectedConnector,
-  }, page)).resolves.toBe(selectedComposer);
+  }, page);
+  expect(resolved).toBe(selectedComposer);
   expect(calls).toEqual([
     "plus:focus",
     "key:Enter",
