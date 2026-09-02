@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "release": "v4.0.8",
+  "targetVersion": "4.0.8-Enhanced.1",
+  "recordedAt": "2026-09-02T01:55:40.0906145Z",
+  "integration": {
+    "baseline": "65b90de8246f0ff5860cccae69ad8cb40271bb45",
+    "candidate": "0d7d77f4585006357289d6112e511f20919e7342",
+    "pilot": "304870ff77491724be72745756f9acaaf4e0e2aa",
+    "upstream": "bd535d8359cf1980de2b449a7d3b79af97862226",
+    "githubMerge": "d483c4e091fac70deeb1029935903210dab50fa4",
+    "tree": "dbd7639a33098e0317399aed962e4e11a3da10dd",
+    "pullRequest": {
+      "number": 9,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/9"
+    }
+  },
+  "ledger": {
+    "path": ".github/upstream-audit/v4.0.8.json",
+    "blob": "a80b3a032b0e337f9fef5ebfb987d5d4cbf6a5a1",
+    "sha256": "ae23cf797cac720be9c582af7dcd93d8e11d5818cb16fc045d015d0c49a4667b"
+  },
+  "ci": {
+    "upstream": {
+      "verify": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/33525810594",
+      "release": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/33525825047"
+    },
+    "fork": {
+      "pullRequest": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33580299887",
+      "main": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33580730225",
+      "latestClientCanary": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33581196279"
+    }
+  },
+  "validation": {
+    "pilotFirstParentIsCandidate": true,
+    "pilotSecondParentIsUpstream": true,
+    "candidateTreeMatchesPilot": true,
+    "upstreamIsMainAncestor": true,
+    "githubMergeTreeMatchesPilot": true,
+    "pullRequestCiPassed": true,
+    "mainCiPassed": true,
+    "latestClientCanaryPassed": true
+  }
+}
