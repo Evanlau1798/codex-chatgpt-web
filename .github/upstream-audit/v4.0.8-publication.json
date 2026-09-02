@@ -18,7 +18,7 @@
   "ledger": {
     "path": ".github/upstream-audit/v4.0.8.json",
     "blob": "a80b3a032b0e337f9fef5ebfb987d5d4cbf6a5a1",
-    "sha256": "ae23cf797cac720be9c582af7dcd93d8e11d5818cb16fc045d015d0c49a4667b"
+    "sha256": "c904f0095bb830c0df4955f3aa273d8e09d7f4a2faf05f196bfe8fa4ceb2bb47"
   },
   "ci": {
     "upstream": {
