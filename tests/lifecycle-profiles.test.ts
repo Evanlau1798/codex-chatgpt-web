@@ -19,6 +19,19 @@ test("default lifecycle commands stay offline and deep live smoke remains explic
   expect(pkg.scripts["smoke:lifecycle"]).toBe("bun run lifecycle:sim --lane=all");
 });
 
+test("the local release gate runs verification before the account-bound Web smoke", () => {
+  const pkg = JSON.parse(readFileSync(resolve(repo, "package.json"), "utf8")) as {
+    scripts: Record<string, string>;
+  };
+  expect(pkg.scripts["verify:release"]).toBe("bun run verify && bun run smoke:lifecycle:web");
+
+  for (const workflowName of ["ci.yml", "release.yml"]) {
+    const workflow = readFileSync(resolve(repo, ".github", "workflows", workflowName), "utf8");
+    expect(workflow).not.toContain("verify:release");
+    expect(workflow).not.toContain("smoke:lifecycle:web");
+  }
+});
+
 test("CI runs deterministic lifecycle simulation and never calls a live profile", () => {
   const workflow = readFileSync(resolve(repo, ".github", "workflows", "ci.yml"), "utf8");
   expect(workflow).toContain("bun run lifecycle:sim --lane=all");
