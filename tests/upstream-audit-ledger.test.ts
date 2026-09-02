@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
@@ -24,10 +25,21 @@ type Ledger = {
   entries: LedgerEntry[];
 };
 
+type PublicationReceipt = {
+  integration: { githubMerge: string };
+  ledger: { path: string; blob: string; sha256: string };
+};
+
+const repositoryRoot = resolve(import.meta.dir, "..");
+
 const ledger = JSON.parse(readFileSync(
-  resolve(import.meta.dir, "..", ".github", "upstream-audit", "v4.0.8.json"),
+  resolve(repositoryRoot, ".github", "upstream-audit", "v4.0.8.json"),
   "utf8",
 )) as Ledger;
+const publication = JSON.parse(readFileSync(
+  resolve(repositoryRoot, ".github", "upstream-audit", "v4.0.8-publication.json"),
+  "utf8",
+)) as PublicationReceipt;
 const sha = /^[0-9a-f]{40}$/;
 
 describe("upstream v4.0.8 audit ledger", () => {
@@ -67,5 +79,20 @@ describe("upstream v4.0.8 audit ledger", () => {
       return { changeType: match[1], path: match[2] };
     });
     expect(paths).toEqual(ledger.entries.map(({ changeType, path }) => ({ changeType, path })));
+  });
+
+  test("binds the publication receipt to canonical Git blob bytes", () => {
+    const committedBlob = spawnSync("git", [
+      "rev-parse", `${publication.integration.githubMerge}:${publication.ledger.path}`,
+    ], { cwd: repositoryRoot, encoding: "utf8" });
+    expect(committedBlob.status).toBe(0);
+    expect(committedBlob.stdout.trim()).toBe(publication.ledger.blob);
+
+    const blob = spawnSync("git", ["cat-file", "blob", publication.ledger.blob], {
+      cwd: repositoryRoot,
+    });
+    expect(blob.status).toBe(0);
+    expect(createHash("sha256").update(blob.stdout).digest("hex"))
+      .toBe(publication.ledger.sha256);
   });
 });
