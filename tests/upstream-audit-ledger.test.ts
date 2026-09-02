@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
 type LedgerEntry = {
@@ -18,7 +19,8 @@ type Ledger = {
   release: string;
   targetVersion: string;
   upstream: { tagObject: string; commit: string; sourceRange: string };
-  closure: { expectedPathCount: number };
+  baseline: { upstreamRangeBase: string };
+  closure: { status: string; expectedPathCount: number };
   entries: LedgerEntry[];
 };
 
@@ -47,6 +49,23 @@ describe("upstream v4.0.8 audit ledger", () => {
       if (entry.source.parentBlob !== null) expect(entry.source.parentBlob).toMatch(sha);
       expect(entry.reason.length).toBeGreaterThan(0);
       expect(entry.surfaces.length).toBeGreaterThan(0);
+      expect(entry.classification).not.toBe("missing");
+      expect(entry.evidence.length).toBeGreaterThan(0);
     }
+    expect(ledger.closure.status).toBe("candidate-complete");
+  });
+
+  test("mechanically covers the complete raw upstream delta", () => {
+    const diff = spawnSync("git", [
+      "--no-pager", "diff", "--raw", "--no-abbrev", "--no-renames", "--no-ext-diff", "--no-textconv",
+      `${ledger.baseline.upstreamRangeBase}..${ledger.upstream.commit}`, "--",
+    ], { cwd: resolve(import.meta.dir, ".."), encoding: "utf8" });
+    expect(diff.status).toBe(0);
+    const paths = diff.stdout.trim().split(/\r?\n/).filter(Boolean).map(line => {
+      const match = line.match(/^:[0-7]{6} [0-7]{6} [0-9a-f]{40} [0-9a-f]{40} ([A-Z])\t(.+)$/);
+      if (!match) throw new Error(`Unexpected raw diff record: ${line}`);
+      return { changeType: match[1], path: match[2] };
+    });
+    expect(paths).toEqual(ledger.entries.map(({ changeType, path }) => ({ changeType, path })));
   });
 });

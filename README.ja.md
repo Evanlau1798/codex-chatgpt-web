@@ -25,7 +25,7 @@
 この独立管理の **Enhanced** fork は上流リリースを追跡し、長時間実行する Codex／Claude Code
 タスク向けの Web セッションライフサイクルを追加します。fork のバージョンは
 `<upstream>-Enhanced.<revision>` 形式で、`3.0.1-Enhanced.1` から始まりました。
-現在のバージョンは上流 v4.0.7 ベースの `4.0.7-Enhanced.3` です。
+現在のバージョンは上流 v4.0.8 ベースの `4.0.8-Enhanced.1` です。
 
 Free および Go アカウントでは、Codex のネイティブモデル選択画面に
 **ChatGPT Web — Luna** が追加されます。reasoning セレクターが表示されるアカウントでは、
