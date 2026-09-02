@@ -142,6 +142,7 @@ import { setChatGptThinkMode } from "./think-mode";
 import { dismissChatGptTemporaryChatOnboarding } from "./temporary-chat-onboarding";
 import {
   chatGptPromptAttachmentMismatch,
+  clearChatGptComposerInput,
   guardChatGptPromptChunkBoundary,
   guardChatGptPromptMarkdown,
   reanchorChatGptComposerCaret,
@@ -1758,7 +1759,7 @@ export class ChatGptBrowserWorker {
     await runChatGptMutationCleanup(async signal => {
       await page.locator("body").press("Escape", { signal, timeout: 5_000 });
       const composer = await this.activeComposer(page, 5_000, signal);
-      await composer.fill("", { signal, timeout: 5_000 });
+      await clearChatGptComposerInput(composer, signal);
       await withBrowserTurnAbort(settleChatGptUi(), signal);
       const text = await composer.evaluate(
         element => element.textContent?.trim() ?? "",

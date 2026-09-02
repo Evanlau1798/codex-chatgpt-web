@@ -21,6 +21,25 @@ const MARKDOWN_SHORTCUT_DELIMITERS = ["`", "*", "_", "~", "=", "[", ")"] as cons
 
 type MarkdownReplacement = { marker: string; value: string; count: number };
 
+const CHATGPT_COMPOSER_SELECT_ALL_KEY = process.platform === "darwin" ? "Meta+A" : "Control+A";
+
+export async function clearChatGptComposerInput(
+  composer: Locator,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  const options = { signal: abortSignal, timeout: 5_000 };
+  await composer.fill("", options);
+  const hasText = await composer.evaluate(
+    element => (element.textContent?.trim().length ?? 0) > 0,
+    undefined,
+    options,
+  );
+  if (!hasText) return;
+  await composer.focus(options);
+  await composer.press(CHATGPT_COMPOSER_SELECT_ALL_KEY, options);
+  await composer.press("Backspace", options);
+}
+
 export function guardChatGptPromptChunkBoundary(
   text: string,
   chunk: string,
@@ -135,6 +154,29 @@ export async function restoreChatGptPromptMarkdown(
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         const parent = (node as Text).parentElement;
         if (!parent?.closest(ignoredSelector)) textNodes.push(node as Text);
+      }
+      const clone = element.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll(ignoredSelector).forEach(part => part.remove());
+      const guardedText = Array.from(clone.childNodes, child => child.textContent ?? "").join("\n");
+      if (guardedText.length <= input.maxChars) {
+        let markerCount = 0;
+        const restoredText = Array.from(guardedText, value => {
+          const replacement = replacementsByMarker.get(value);
+          if (replacement === undefined) return value;
+          markerCount += 1;
+          return replacement;
+        }).join("");
+        const firstText = textNodes[0];
+        const lastText = textNodes.at(-1);
+        if (markerCount === 0 || !firstText || !lastText) return 0;
+        const range = document.createRange();
+        range.setStart(firstText, 0);
+        range.setEnd(lastText, lastText.data.length);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        if (!document.execCommand("insertText", false, restoredText)) return 0;
+        await Promise.resolve();
+        return markerCount;
       }
       for (let nodeIndex = textNodes.length - 1; nodeIndex >= 0; nodeIndex -= 1) {
         const node = textNodes[nodeIndex]!;

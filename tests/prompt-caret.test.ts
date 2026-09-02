@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   chatGptCaretAtLogicalEnd,
   chatGptPromptAttachmentMismatch,
+  clearChatGptComposerInput,
   previousChatGptPromptMarkdownMarker,
 } from "../src/adapters/chatgpt-web/prompt-caret";
 
@@ -89,4 +90,43 @@ test("finds Markdown restoration markers strictly right-to-left", () => {
     value: "`",
   });
   expect(previousChatGptPromptMarkdownMarker(text, 1, replacements)).toBeUndefined();
+});
+
+test("falls back to native selection when Lexical leaves the mention probe after fill", async () => {
+  const calls: string[] = [];
+  let text = "@codex";
+  const composer = {
+    fill: async () => { calls.push("fill"); },
+    evaluate: async (reader: (element: { textContent: string }) => unknown) => reader({ textContent: text }),
+    focus: async () => { calls.push("focus"); },
+    press: async (key: string) => {
+      calls.push(key);
+      if (key === "Backspace") text = "";
+    },
+  };
+
+  await clearChatGptComposerInput(composer as never);
+
+  expect(text).toBe("");
+  expect(calls).toEqual([
+    "fill",
+    "focus",
+    process.platform === "darwin" ? "Meta+A" : "Control+A",
+    "Backspace",
+  ]);
+});
+
+test("does not issue native clearing keys when fill empties the composer", async () => {
+  const calls: string[] = [];
+  let text = "@codex";
+  const composer = {
+    fill: async () => { text = ""; calls.push("fill"); },
+    evaluate: async (reader: (element: { textContent: string }) => unknown) => reader({ textContent: text }),
+    focus: async () => { calls.push("focus"); },
+    press: async (key: string) => { calls.push(key); },
+  };
+
+  await clearChatGptComposerInput(composer as never);
+
+  expect(calls).toEqual(["fill"]);
 });
