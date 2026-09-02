@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
   assertWebContractCooldown,
+  assertWebContractRuntimeVersion,
   captureWebContract,
   deriveWebContractCapabilities,
   requestWebContractTurn,
@@ -108,5 +109,29 @@ describe("lightweight Web contract smoke", () => {
     expect(WEB_CONTRACT_COOLDOWN_MS).toBe(120_000);
     expect(() => assertWebContractCooldown(1_000, 120_999)).toThrow("two-minute cooldown");
     expect(() => assertWebContractCooldown(1_000, 121_000)).not.toThrow();
+  });
+
+  test("requires the live daemon to match the exact release candidate version", () => {
+    expect(assertWebContractRuntimeVersion(
+      { version: "4.0.8-Enhanced.1", pid: 1234 },
+      "4.0.8-Enhanced.1",
+    )).toBe(1234);
+    expect(() => assertWebContractRuntimeVersion({ version: "4.0.7-Enhanced.3" }, "4.0.8-Enhanced.1"))
+      .toThrow("candidate version");
+    expect(() => assertWebContractRuntimeVersion({}, "4.0.8-Enhanced.1"))
+      .toThrow("candidate version");
+    expect(() => assertWebContractRuntimeVersion({ version: "4.0.8-Enhanced.1" }, "4.0.8-Enhanced.1"))
+      .toThrow("runtime process");
+    expect(() => assertWebContractRuntimeVersion(
+      { version: "4.0.8-Enhanced.1", pid: 5678 },
+      "4.0.8-Enhanced.1",
+      1234,
+    )).toThrow("changed process");
+  });
+
+  test("checks the same live runtime process before and after the account-bound turn", () => {
+    const script = readFileSync(new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url), "utf8");
+    expect(script.match(/assertWebContractRuntimeVersion\(/g)).toHaveLength(2);
+    expect(script).toContain("runtimePid");
   });
 });
