@@ -53,6 +53,25 @@ test("normal shutdown persists the ChatGPT session before closing browser views"
   assert.ok(destroy > persist, "browser views must close only after session persistence completes");
 });
 
+test("packaged runtime is verified before launcher browser surfaces can bind ports", () => {
+  const start = electronMain.indexOf("async function start()");
+  const runtimeValidation = electronMain.indexOf("installedRuntimeRoot = runtimeRootProvider();", start);
+  const cdpPortAllocation = electronMain.indexOf("cdpPort = await findFreePort();", start);
+  const windowCreation = electronMain.indexOf("mainWindow = createWindow({", start);
+  const controlServerStart = electronMain.indexOf("browserControl = await new BrowserControlServer({", start);
+  const browserReady = electronMain.indexOf("await browserHost.ready();", start);
+
+  assert.ok(runtimeValidation > start, "startup must eagerly verify the packaged runtime");
+  for (const [surface, position] of [
+    ["CDP port allocation", cdpPortAllocation],
+    ["launcher window", windowCreation],
+    ["browser control server", controlServerStart],
+    ["embedded browser", browserReady],
+  ]) {
+    assert.ok(position > runtimeValidation, `${surface} must start only after runtime verification`);
+  }
+});
+
 test("DEV launcher exposes its profile and supervises only its Full-mode MCP runtime", () => {
   assert.match(electronMain, /profile:\s*LAUNCHER_PROFILE\.kind/);
   assert.match(electronMain, /if \(IS_DEV_PROFILE\) \{[\s\S]*?config\?\.mode === "full"[\s\S]*?runtimeSupervisor\.startIfConfigured\(\)[\s\S]*?\} else void \(async \(\) => \{/);

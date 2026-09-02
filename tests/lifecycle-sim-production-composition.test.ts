@@ -66,6 +66,22 @@ function startProductionServer(
   });
 }
 
+async function beginAcknowledgedToolInvocation<T>(
+  turn: BrowserTurn,
+  invoke: () => Promise<T>,
+): Promise<{ result: Promise<T> }> {
+  const progress = turn.externalProgress;
+  if (!progress) throw new Error("tool-capable browser has no progress transport");
+  const previousBatchRevision = progress.snapshot().lastToolBatchRevision;
+  const result = invoke();
+  let snapshot = progress.snapshot();
+  while (snapshot.lastToolBatchRevision <= previousBatchRevision) {
+    snapshot = await progress.waitForChange(snapshot.revision, turn.abortSignal);
+  }
+  await progress.acknowledgeToolBatch(snapshot.lastToolBatchRevision);
+  return { result };
+}
+
 test("the deterministic lane composes production routing, adapter, broker, compact, and cancellation", async () => {
   const root = join(tmpdir(), `cgw-production-lifecycle-${process.pid}-${Date.now()}`);
   mkdirSync(root, { recursive: true });
@@ -103,13 +119,16 @@ test("the deterministic lane composes production routing, adapter, broker, compa
           config.brokerSocketPath,
           { method: "claim", token },
         );
-        const result = await callTurnBroker<BrokerToolResult>(config.brokerSocketPath, {
-          method: "invoke",
-          bindingId: claimed.bindingId,
-          wireName: "exec_command",
-          freeform: false,
-          arguments: { cmd: "echo production-composed" },
-        }, 10_000);
+        const invocation = await beginAcknowledgedToolInvocation(turn, () => (
+          callTurnBroker<BrokerToolResult>(config.brokerSocketPath, {
+            method: "invoke",
+            bindingId: claimed.bindingId,
+            wireName: "exec_command",
+            freeform: false,
+            arguments: { cmd: "echo production-composed" },
+          }, 10_000)
+        ));
+        const result = await invocation.result;
         expect(result.isError).not.toBe(true);
         const answer = "PRODUCTION_COMPOSITION_OK";
         turn.onTextDelta(answer);
@@ -238,13 +257,16 @@ test("Enhanced streaming retains one production surface and fully cleans an abor
           config.brokerSocketPath,
           { method: "claim", token },
         );
-        const result = await callTurnBroker<BrokerToolResult>(config.brokerSocketPath, {
-          method: "invoke",
-          bindingId: claimed.bindingId,
-          wireName: "exec_command",
-          freeform: false,
-          arguments: { cmd: "echo enhanced-stream" },
-        }, 10_000);
+        const invocation = await beginAcknowledgedToolInvocation(turn, () => (
+          callTurnBroker<BrokerToolResult>(config.brokerSocketPath, {
+            method: "invoke",
+            bindingId: claimed.bindingId,
+            wireName: "exec_command",
+            freeform: false,
+            arguments: { cmd: "echo enhanced-stream" },
+          }, 10_000)
+        ));
+        const result = await invocation.result;
         expect(result.isError).not.toBe(true);
         const answer = "ENHANCED_STREAM_OK";
         turn.onTextDelta(answer);

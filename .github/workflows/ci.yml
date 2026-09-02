@@ -55,6 +55,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Validate launcher installer with Windows PowerShell 5.1
         if: runner.os == 'Windows'
         shell: powershell

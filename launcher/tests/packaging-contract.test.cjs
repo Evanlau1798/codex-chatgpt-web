@@ -172,6 +172,27 @@ test("macOS package smoke unregisters its staged app from LaunchServices", () =>
   );
 });
 
+test("source runtime smoke validates the relocated schema-v2 bundle", () => {
+  const smoke = fs.readFileSync(path.join(repositoryRoot, "scripts", "smoke-release.ts"), "utf8");
+  assert.match(smoke, /validateRuntimeBundle\(runtimeRoot/);
+  assert.match(smoke, /manifest\.schemaVersion !== 2/);
+  assert.match(smoke, /manifest\.files\.length === 0/);
+});
+
+test("macOS packaging verifies the signed archive and embedded runtime", () => {
+  const packager = fs.readFileSync(path.join(launcherRoot, "scripts", "package.cjs"), "utf8");
+  const smoke = fs.readFileSync(path.join(launcherRoot, "scripts", "smoke-package.cjs"), "utf8");
+  assert.deepEqual(manifest.build.mac.signIgnore, [
+    "[/\\\\]Contents[/\\\\]Resources[/\\\\]runtime[/\\\\]runtime[/\\\\]bun$",
+  ]);
+  assert.match(packager, /codesign[\s\S]*--verify[\s\S]*--deep[\s\S]*--strict/);
+  assert.match(packager, /mkdtempSync\(path\.join\(os\.tmpdir\(\), "codex-web-gpt-package-"\)\)/);
+  assert.match(packager, /env\.CSC_FOR_PULL_REQUEST = "true"/);
+  assert.match(packager, /validateRuntimeBundle[\s\S]*platform:\s*"darwin"/);
+  assert.match(smoke, /validateRuntimeBundle\(installedRuntime/);
+  assert.match(smoke, /installedManifest\.schemaVersion !== 2/);
+  assert.match(smoke, /installedManifest\.files\.length === 0/);
+});
 test("release publishes the repository demo as a checksummed versioned asset", () => {
   const release = fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "release.yml"), "utf8");
   const demo = fs.readFileSync(path.join(repositoryRoot, "assets", "demo.gif"));

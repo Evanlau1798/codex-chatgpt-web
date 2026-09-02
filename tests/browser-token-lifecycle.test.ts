@@ -61,6 +61,9 @@ test("a failed browser surface revokes an outstanding native tool invocation wit
       const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
       if (!token) throw new Error("turn token missing from compiled prompt");
       const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
+      const progress = turn.externalProgress;
+      if (!progress) throw new Error("tool-capable browser has no progress transport");
+      const previousBatchRevision = progress.snapshot().lastToolBatchRevision;
       const invocation = callTurnBroker(socketPath, {
         method: "invoke",
         bindingId: claimed.bindingId,
@@ -69,6 +72,11 @@ test("a failed browser surface revokes an outstanding native tool invocation wit
         arguments: { cmd: "long-running-read" },
       }, 2_000);
       invocationOutcome = invocation.then(() => "completed", error => error instanceof Error ? error.message : String(error));
+      let snapshot = progress.snapshot();
+      while (snapshot.lastToolBatchRevision <= previousBatchRevision) {
+        snapshot = await progress.waitForChange(snapshot.revision, turn.abortSignal);
+      }
+      await progress.acknowledgeToolBatch(snapshot.lastToolBatchRevision);
       await Promise.race([invocation, surfaceFailure]);
       return "unexpected completion";
     } finally {

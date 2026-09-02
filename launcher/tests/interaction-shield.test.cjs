@@ -30,16 +30,21 @@ test("turn visibility keeps the native shield above its ChatGPT view", () => {
     boundsReady: true,
     bounds: { x: 0, y: 0, width: 800, height: 600 },
     hiddenTurnBounds: () => ({ x: 0, y: 0, width: 1280, height: 720 }),
-    view: { setVisible: value => calls.push(["home", value]) },
+    view: {
+      setBounds: bounds => calls.push(["home-bounds", bounds]),
+      setVisible: value => calls.push(["home", value]),
+    },
     turnTabs: new Map([[tab.id, tab]]),
     selectedTurnTab: () => tab,
+    presentPrimaryView: BrowserHost.prototype.presentPrimaryView,
     presentTurnView: BrowserHost.prototype.presentTurnView,
   };
 
   BrowserHost.prototype.syncViewVisibility.call(fixture);
 
   assert.deepEqual(calls, [
-    ["home", false],
+    ["home-bounds", fixture.hiddenTurnBounds()],
+    ["home", true],
     ["turn-bounds", fixture.bounds],
     ["turn", true],
     ["shield", true],
@@ -85,11 +90,15 @@ test("disabled turn protection exposes and focuses the ChatGPT view", () => {
     boundsReady: true,
     bounds: { x: 0, y: 0, width: 800, height: 600 },
     hiddenTurnBounds: () => ({ x: 0, y: 0, width: 1280, height: 720 }),
-    view: { setVisible: value => calls.push(["home", value]) },
+    view: {
+      setBounds: bounds => calls.push(["home-bounds", bounds]),
+      setVisible: value => calls.push(["home", value]),
+    },
     turnTabs: new Map([[tab.id, tab]]),
     selectedTabId: tab.id,
     selectedTurnTab: () => tab,
     activeView: () => tab.view,
+    presentPrimaryView: BrowserHost.prototype.presentPrimaryView,
     presentTurnView: BrowserHost.prototype.presentTurnView,
   };
 
@@ -97,7 +106,8 @@ test("disabled turn protection exposes and focuses the ChatGPT view", () => {
   BrowserHost.prototype.focusActiveSurface.call(fixture);
 
   assert.deepEqual(calls, [
-    ["home", false],
+    ["home-bounds", fixture.hiddenTurnBounds()],
+    ["home", true],
     ["turn-bounds", fixture.bounds],
     ["turn", true],
     ["shield", false],

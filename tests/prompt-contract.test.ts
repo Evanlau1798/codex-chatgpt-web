@@ -65,6 +65,7 @@ test("tool-capable prompts pass one stable turn token directly to native actions
   expect(transportOnly).toContain("inspect the relevant repository or environment before choosing a different next action");
   expect(transportOnly).toContain("do not repeat the same call unless its inputs or observable state changed");
   expect(transportOnly).toContain("Continue using the available tools until the requested work is complete and verified.");
+  expect(transportOnly).toContain("Write the user-facing final answer only after the last required tool result has settled.");
   expect(transportOnly).toContain("Request independent tool calls together");
   expect(transportOnly).toContain("A skill catalog entry is an instruction source, not proof that its runtime tool is loaded.");
   expect(transportOnly).toContain("codex_tool_inventory");

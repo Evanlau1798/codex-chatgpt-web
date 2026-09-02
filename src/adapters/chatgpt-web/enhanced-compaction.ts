@@ -2,14 +2,21 @@ import { createHash } from "node:crypto";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import type { ChatGptBrowserWorker } from "./browser-worker";
-import { canonicalizeCompactionHandoff } from "./compaction-handoff";
+import {
+  canonicalizeCompactionHandoff,
+  existingStructuredCompactionRun,
+  MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+  runStructuredCompactionOnce,
+  settleActiveCompactionSource,
+  withCompactionAbort,
+} from "./compaction-handoff";
 import type { ChatGptWebCapabilities } from "./model";
 import {
-  requestCompactionHandoff,
+  requestRetainedCompactionHandoff,
   RetainedCompactionSourceUnavailableError,
 } from "./retained-compaction-handoff";
 import type { TurnBroker } from "./turn-broker";
-import { chatGptTurnSessions } from "./turn-execution";
+import { chatGptTurnExecutionKey, chatGptTurnSessions } from "./turn-execution";
 import { emitBrowserCompletion } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 
@@ -23,6 +30,7 @@ interface EnhancedCompactionOptions {
   nativeConnectorAvailable: boolean;
   abortSignal?: AbortSignal;
   timeoutMs?: number;
+  startFallback: (traceId: string, signal: AbortSignal) => Promise<string>;
   emit: (event: AdapterEvent) => void;
 }
 
@@ -31,7 +39,7 @@ export async function runEnhancedCompaction(
 ): Promise<"completed" | "rebuild"> {
   const {
     worker, parsed, broker, executionNamespace, capabilities, responseExecutionKey,
-    nativeConnectorAvailable, abortSignal, timeoutMs, emit,
+    nativeConnectorAvailable, abortSignal, timeoutMs, startFallback, emit,
   } = options;
   if (!nativeConnectorAvailable) {
     throw new ChatGptWebAdapterError(
@@ -44,36 +52,85 @@ export async function runEnhancedCompaction(
       },
     );
   }
-  const sourceSession = chatGptTurnSessions.find(responseExecutionKey);
-  if (!sourceSession) {
-    console.info(
-      "[chatgpt-web] Web session mode=enhanced path=active_handoff"
-      + " result=source_session_unavailable action=rebuild",
-    );
-    return "rebuild";
-  }
+  const compactionExecutionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
   const traceId = createHash("sha256")
-    .update(`${responseExecutionKey}:handoff`)
+    .update(`${compactionExecutionKey}:handoff`)
     .digest("hex")
     .slice(0, 12);
-  let activeHandoff: string | undefined;
+  let shared = existingStructuredCompactionRun(compactionExecutionKey);
+  if (!shared) shared = runStructuredCompactionOnce(compactionExecutionKey, async () => {
+    const handoffTimeoutMs = Math.min(
+      timeoutMs ?? MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+      MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+    );
+    const deadline = new AbortController();
+    const timer = setTimeout(
+      () => deadline.abort(new Error(`ChatGPT compaction did not fully settle within ${handoffTimeoutMs}ms`)),
+      handoffTimeoutMs,
+    );
+    timer.unref?.();
+    const source = chatGptTurnSessions.find(responseExecutionKey);
+    let preserveFinal = !source?.isActive() && source?.settledOutcome()?.type === "final";
+    const fallback = async (reason: string): Promise<string> => {
+      console.warn(`[chatgpt-web] retained compaction fallback=${reason}`);
+      const raw = await startFallback(`${traceId}_fallback`, deadline.signal);
+      const canonical = canonicalizeCompactionHandoff(parsed, raw);
+      if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");
+      return canonical;
+    };
+    try {
+      const conversationKey = source?.conversationKey();
+      if (!source || !conversationKey) {
+        if (source) await withCompactionAbort(
+          chatGptTurnSessions.retireAndWait(responseExecutionKey), deadline.signal,
+        );
+        return await fallback("source_unavailable_before_handoff");
+      }
+      if (source.isActive() && source.runtime.mode === "tools") {
+        const settled = await settleActiveCompactionSource(parsed, source, broker, deadline.signal);
+        preserveFinal = !settled.compactionInstructionDelivered;
+      } else if (source.isActive()) {
+        const outcome = await withCompactionAbort(source.browserOutcome, deadline.signal);
+        if (outcome.type === "error") throw outcome.error;
+        await withCompactionAbort(source.physicalSettlement, deadline.signal);
+        preserveFinal = true;
+      }
+      const raw = await requestRetainedCompactionHandoff(
+        worker, parsed, source, broker, capabilities, traceId, deadline.signal, handoffTimeoutMs,
+      );
+      const canonical = canonicalizeCompactionHandoff(parsed, raw);
+      if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");
+      await withCompactionAbort(
+        preserveFinal
+          ? chatGptTurnSessions.retireConversationPreservingFinalResponse(
+              conversationKey, source, responseExecutionKey,
+            )
+          : chatGptTurnSessions.retireConversationAndWait(conversationKey),
+        deadline.signal,
+      );
+      return canonical;
+    } catch (error) {
+      const conversationKey = source?.conversationKey();
+      if (source && conversationKey) {
+        await withCompactionAbort(
+          preserveFinal
+            ? chatGptTurnSessions.retireConversationPreservingFinalResponse(
+                conversationKey, source, responseExecutionKey,
+              )
+            : chatGptTurnSessions.retireConversationAndWait(conversationKey),
+          deadline.signal,
+        );
+      }
+      if (error instanceof RetainedCompactionSourceUnavailableError) {
+        return await fallback("source_disappeared_before_handoff");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  });
   try {
-    activeHandoff = await requestCompactionHandoff(
-      worker, parsed, sourceSession, broker, executionNamespace, capabilities,
-      traceId, abortSignal, timeoutMs,
-    );
-  } catch (error) {
-    if (!(error instanceof RetainedCompactionSourceUnavailableError)) throw error;
-    await chatGptTurnSessions.retireAndWait(responseExecutionKey);
-    console.info(
-      "[chatgpt-web] Web session mode=enhanced path=active_handoff"
-      + " result=retained_source_unavailable action=rebuild",
-    );
-    return "rebuild";
-  }
-  const handoff = canonicalizeCompactionHandoff(parsed, activeHandoff ?? "");
-  if (handoff) {
-    await chatGptTurnSessions.retireAndWait(responseExecutionKey);
+    const handoff = await withCompactionAbort(shared, abortSignal);
     console.info("[chatgpt-web] Web session mode=enhanced path=active_handoff result=completed");
     emit({ type: "text_delta", text: handoff, phase: "final_answer" });
     emitBrowserCompletion(
@@ -82,15 +139,11 @@ export async function runEnhancedCompaction(
       emit,
     );
     return "completed";
+  } catch (error) {
+    if (abortSignal?.aborted) throw error;
+    throw new ChatGptWebAdapterError(
+      error instanceof Error ? error.message : String(error),
+      { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_failed", retryable: false },
+    );
   }
-  // The source-side handoff is an optimization. If its bounded attempt cannot produce a validated
-  // checkpoint, retire that surface and rebuild once from Codex's canonical request in this same
-  // HTTP compact operation. This is the exact recovery a client reconnect previously triggered,
-  // without surfacing a false failure or asking Codex to repeat an ambiguous request.
-  await chatGptTurnSessions.retireAndWait(responseExecutionKey);
-  console.warn(
-    "[chatgpt-web] Web session mode=enhanced path=active_handoff"
-    + " result=checkpoint_unavailable action=rebuild",
-  );
-  return "rebuild";
 }

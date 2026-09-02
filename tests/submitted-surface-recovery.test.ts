@@ -185,12 +185,21 @@ test("rebuilds a submitted tool surface once from complete canonical state", asy
       if (browserStarts === 1) {
         turn.onSubmitted?.();
         const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
-        const result = await callTurnBroker<BrokerToolResult>(socketPath, {
+        const progress = turn.externalProgress;
+        if (!progress) throw new Error("tool-capable browser has no progress transport");
+        const previousBatchRevision = progress.snapshot().lastToolBatchRevision;
+        const resultPromise = callTurnBroker<BrokerToolResult>(socketPath, {
           method: "invoke",
           bindingId: claimed.bindingId,
           wireName: "exec_command",
           arguments: { cmd: "inspect" },
         }, 10_000);
+        let snapshot = progress.snapshot();
+        while (snapshot.lastToolBatchRevision <= previousBatchRevision) {
+          snapshot = await progress.waitForChange(snapshot.revision, turn.abortSignal);
+        }
+        await progress.acknowledgeToolBatch(snapshot.lastToolBatchRevision);
+        const result = await resultPromise;
         expect(textOf(result)).toContain("CANONICAL_RECOVERY_RESULT");
         throw chatGptWebSurfaceError("completion action disappeared after the tool result", false);
       }

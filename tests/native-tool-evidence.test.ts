@@ -86,7 +86,7 @@ test("MCP diagnostics distinguish claims from native invocation results without 
     roots: [process.cwd()],
     writableRoots: [process.cwd()],
     sandboxPolicy: { type: "dangerFullAccess" },
-    tools: [{ name: "exec", description: "Outer native gateway", parameters: {}, freeform: true }],
+    tools: [{ name: "exec_command", description: "Run a command", parameters: { type: "object" } }],
   };
   const token = await broker.register(environment, 60_000);
   const transport = new StdioClientTransport({
@@ -110,7 +110,7 @@ test("MCP diagnostics distinguish claims from native invocation results without 
 
     await client.callTool({
       name: "codex_tool_inventory",
-      arguments: { turn_token: token, query: "exec", include_schema: false },
+      arguments: { turn_token: token, query: "exec_command", include_schema: false },
     });
     await waitForLog(() => stderr, "tool=codex_tool_inventory phase=claim status=completed");
 
@@ -128,7 +128,7 @@ test("MCP diagnostics distinguish claims from native invocation results without 
     await waitForLog(() => stderr, "phase=invoke status=completed isError=true");
 
     expect(stderr).toContain("tool=codex_exec phase=claim status=completed");
-    expect(stderr).toContain("tool=exec phase=invoke status=started");
+    expect(stderr).toContain("tool=exec_command phase=invoke status=started");
     expect(stderr).not.toContain(commandMarker);
     expect(stderr).not.toContain(token);
   } finally {

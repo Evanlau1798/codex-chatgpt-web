@@ -952,9 +952,14 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
   const initialComposer = {
     fill: async (value: string) => { calls.push(["fill", value]); },
     focus: async () => { calls.push(["focus"]); },
-    pressSequentially: async (value: string, options: { delay: number }) => {
-      expect(options).toEqual({ delay: 25 });
+    pressSequentially: async (value: string, options: { delay: number; signal?: AbortSignal; timeout: number }) => {
+      expect(options).toEqual({ delay: 25, signal: undefined, timeout: 10_000 });
       calls.push(["pressSequentially", value]);
+    },
+    press: async (key: string) => {
+      expect(key).toBe("Enter");
+      connectorSelected = true;
+      calls.push(["press"]);
     },
   };
   const page = {
@@ -975,13 +980,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
       }
       throw new Error(`Unexpected locator: ${selector}`);
     },
-    keyboard: {
-      press: async (key: string) => {
-        expect(key).toBe("Enter");
-        connectorSelected = true;
-        calls.push(["press"]);
-      },
-    },
+    keyboard: { press: async () => {} },
   };
   const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
     selectConnector(page: unknown): Promise<unknown>;
@@ -1055,18 +1054,21 @@ test("connector selection moves highlight to the exact hidden-viewport row befor
       ? { count: async () => 3 }
       : appResult,
   };
-  const initialComposer = { fill: async () => {}, focus: async () => {}, press: async () => {}, pressSequentially: async () => {} };
+  const initialComposer = {
+    fill: async () => {},
+    focus: async () => {},
+    press: async (key: string) => {
+      keys.push(key);
+      if (key === "ArrowDown") arrowCount += 1;
+      if (key === "Enter") selected = true;
+    },
+    pressSequentially: async () => {},
+  };
   const selectedComposer = { selected: true };
   const page = {
     getByText: () => ({ exactConnectorLabel: true }),
     locator: () => menuRows,
-    keyboard: {
-      press: async (key: string) => {
-        keys.push(key);
-        if (key === "ArrowDown") arrowCount += 1;
-        if (key === "Enter") selected = true;
-      },
-    },
+    keyboard: { press: async () => {} },
   };
   const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
     selectConnector(page: unknown): Promise<unknown>;
@@ -1110,6 +1112,11 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
   const initialComposer = {
     fill: async () => { calls.push("clear"); },
     focus: async () => { calls.push("focus"); },
+    press: async (key: string) => {
+      expect(key).toBe("Enter");
+      selected = true;
+      calls.push("activate");
+    },
     pressSequentially: async (value: string) => {
       expect(value).toBe("@codex");
       calls.push("type");
@@ -1120,13 +1127,7 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
     locator: (selector: string) => selector.includes("__menu-item")
       ? { filter: () => appResult, evaluateAll: async () => [] }
       : (() => { throw new Error(`Unexpected locator: ${selector}`); })(),
-    keyboard: {
-      press: async (key: string) => {
-        expect(key).toBe("Enter");
-        selected = true;
-        calls.push("activate");
-      },
-    },
+    keyboard: { press: async () => {} },
   };
   const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
     selectConnector(page: unknown): Promise<unknown>;
@@ -1216,6 +1217,7 @@ test("connector verification preserves the host-refreshed catalog evidence", asy
     },
     activeComposer: async () => selected ? selectedComposer : initialComposer,
     ensureConnectorSurface: async () => {},
+    clearChatGptComposerState: async () => {},
     connectorIsSelected: async () => selected,
     connectorMentionFailure: prototype.connectorMentionFailure,
     connectorMentionRowTitles: prototype.connectorMentionRowTitles,
@@ -1277,6 +1279,7 @@ test("connector catalog refresh stays fail-closed for absent, legacy, and exact 
       return await selectConnector.call({
         config: { appName: CHATGPT_CONNECTOR_NAME },
         ensureConnectorSurface: async () => {},
+        clearChatGptComposerState: async () => {},
         activeComposer: async () => ({
           fill: async () => {},
           focus: async () => {},
@@ -1325,6 +1328,11 @@ test("tool-capable prompts use the shared Playwright connector selection before 
   const initialComposer = {
     fill: async (value: string) => { calls.push(["fill", value]); },
     focus: async () => { calls.push(["focus"]); },
+    press: async (value: string) => {
+      expect(value).toBe("Enter");
+      selected = true;
+      calls.push(["selectConnector"]);
+    },
     pressSequentially: async (value: string) => { calls.push(["type", value]); },
   };
   const page = {
@@ -1334,15 +1342,7 @@ test("tool-capable prompts use the shared Playwright connector selection before 
       : (() => { throw new Error(`Unexpected locator: ${selector}`); })(),
     keyboard: {
       insertText: async (value: string) => { calls.push(["insertText", value]); },
-      press: async (value: string) => {
-        if (!selected) {
-          expect(value).toBe("Enter");
-          selected = true;
-          calls.push(["selectConnector"]);
-          return;
-        }
-        calls.push(["press", value]);
-      },
+      press: async (value: string) => { calls.push(["press", value]); },
     },
   };
   const attachPrompt = (ChatGptBrowserWorker.prototype as unknown as {
@@ -2554,6 +2554,7 @@ test("the launcher helper transport carries MCP progress into the out-of-process
   const client = readFileSync("src/adapters/chatgpt-web/launcher-helper-client.ts", "utf8");
   const forwarding = readFileSync("src/adapters/chatgpt-web/launcher-helper-progress.ts", "utf8");
   const helper = readFileSync("src/adapters/chatgpt-web/browser-helper-main.ts", "utf8");
+  const fence = readFileSync("src/adapters/chatgpt-web/browser-helper-fence.ts", "utf8");
 
   // The browser worker runs in the helper process while the Codex MCP broker runs in the daemon.
   // If progress stops crossing that boundary the worker silently observes "never live" and cancels
@@ -2561,8 +2562,8 @@ test("the launcher helper transport carries MCP progress into the out-of-process
   expect(client).toContain("forwardLauncherHelperProgress");
   expect(forwarding).toMatch(/type: "progress", id: turn\.traceId, snapshot/);
   expect(helper).toMatch(/message\.type === "progress"/);
-  expect(helper).toContain("ChatGptMirroredTurnProgress");
-  expect(helper).toMatch(/externalProgress: progress/);
+  expect(fence).toContain("ChatGptMirroredTurnProgress");
+  expect(fence).toMatch(/externalProgress: session\.progress/);
 });
 
 test("turn cancellation heuristics defer to proven MCP progress in both wait loops", () => {
@@ -2681,6 +2682,7 @@ test("the daemon prefers the browser helper that shipped beside its own entrypoi
   const client = readFileSync("src/adapters/chatgpt-web/launcher-helper-client.ts", "utf8");
   const processHelper = readFileSync("src/adapters/chatgpt-web/launcher-helper-process.ts", "utf8");
   const helper = readFileSync("src/adapters/chatgpt-web/browser-helper-main.ts", "utf8");
+  const fence = readFileSync("src/adapters/chatgpt-web/browser-helper-fence.ts", "utf8");
 
   // The launcher advertises the helper inside its signed application bundle while the daemon runs
   // from a versioned runtime directory, so the two update independently. A daemon that spoke a
@@ -2692,12 +2694,12 @@ test("the daemon prefers the browser helper that shipped beside its own entrypoi
 
   // Belt and braces: negotiate the frame, and never treat an unrecognised frame as a run.
   expect(client).toContain('this.helperFeatures.has("progress")');
-  expect(helper).toContain('features: ["progress"]');
+  expect(helper).toContain('features: ["progress", "tool-boundary-ack", "completion-fence"]');
   expect(helper).toMatch(/message\.type === "run"/);
   expect(helper).toContain("Browser helper received an unsupported message type");
 
   // A malformed liveness hint must not destroy an accepted turn that can never be resent.
-  expect(helper).toContain("discarded an invalid MCP progress frame");
+  expect(fence).toContain("discarded an invalid MCP progress frame");
 });
 
 
@@ -2785,7 +2787,7 @@ test("the shipped commentary classifier separates answer Markdown from reasoning
   expect(answerFor('<div class="markdown">ONLY ANSWER</div>')).toBe("ONLY ANSWER");
 });
 
-test("proven MCP progress vetoes completion, not only the health verdicts", () => {
+test("active MCP calls veto completion while settled progress does not add a success delay", () => {
   const tracker = new ChatGptCompletionTracker(500);
   const finishedLooking = {
     responsePresent: true,
@@ -2805,8 +2807,8 @@ test("proven MCP progress vetoes completion, not only the health verdicts", () =
 
   // Between two tool calls the rendered message can look finished. Completing there returns a
   // truncated answer and retires the turn while its own tool calls are still in flight.
-  expect(tracker.update({ ...finishedLooking, externalProgressLive: true }, 1_000).status).toBe("waiting");
-  expect(tracker.update({ ...finishedLooking, externalProgressLive: true }, 5_000).status).toBe("waiting");
+  expect(tracker.update({ ...finishedLooking, externalToolCallsInFlight: true }, 1_000).status).toBe("waiting");
+  expect(tracker.update({ ...finishedLooking, externalToolCallsInFlight: true }, 5_000).status).toBe("waiting");
 
   // Once the model is genuinely idle the settle window starts fresh rather than completing at once.
   expect(tracker.update(finishedLooking, 5_100).status).toBe("waiting");
@@ -2841,7 +2843,9 @@ test("the bundled helper is adopted only for the packaged runtime layout", () =>
   // Trace ids are derived deterministically and can repeat, so a run must not inherit revisions
   // recorded for an earlier turn that happened to share the id.
   const helper = readFileSync("src/adapters/chatgpt-web/browser-helper-main.ts", "utf8");
-  expect(helper).toContain("const progress = new ChatGptMirroredTurnProgress();");
+  const fence = readFileSync("src/adapters/chatgpt-web/browser-helper-fence.ts", "utf8");
+  expect(helper).toContain("completionFences.start(message.id");
+  expect(fence).toContain("new ChatGptMirroredTurnProgress");
 
   // A consumer callback must not be retried as though the page could not be read.
   const worker = readFileSync("src/adapters/chatgpt-web/browser-worker.ts", "utf8");

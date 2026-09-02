@@ -210,6 +210,8 @@ describe("ChatGPT Web surface resilience", () => {
     const composer = {
       fill: async () => {},
       focus: async () => {},
+      evaluate: async () => "",
+      press: async (key: string) => { if (key === "Enter") selected = true; },
       pressSequentially: async (value: string) => { mentionInserted = value === "@codex"; },
     };
     const appResult = {
@@ -217,10 +219,12 @@ describe("ChatGPT Web surface resilience", () => {
       count: async () => 1,
       getAttribute: async (name: string) => name === "data-highlighted" ? "" : null,
     };
-    const menuRows = { filter: () => appResult };
+    const menuRows = { filter: () => appResult, evaluateAll: async () => [] };
+    const absent = { filter: () => absent, count: async () => 0 };
     const page = {
-      locator: (selector: string) => selector === CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR
-        ? { filter: () => ({ count: async () => 0 }) }
+      getByRole: () => absent,
+      locator: (selector: string) => selector === "body"
+        ? { press: async () => {} }
         : menuRows,
       getByText: (value: string, options: { exact: boolean }) => ({ value, options }),
       keyboard: { press: async (key: string) => { if (key === "Enter") selected = true; } },
@@ -234,14 +238,7 @@ describe("ChatGPT Web surface resilience", () => {
     internal.activeComposer = async () => composer;
     internal.connectorIsSelected = async () => selected;
     internal.selectedConnectorControl = () => ({ waitFor: async () => {} });
-    const realDateNow = Date.now;
-    let now = realDateNow();
-    Date.now = () => (now += 5_001);
-    try {
-      expect(await internal.selectConnector(page)).toBe(composer);
-    } finally {
-      Date.now = realDateNow;
-    }
+    expect(await internal.selectConnector(page)).toBe(composer);
     expect(mentionInserted).toBeTrue();
     expect(selected).toBeTrue();
   });

@@ -394,13 +394,17 @@ test("hidden turn tabs receive an explicit renderer viewport before moving offsc
       isMinimized: () => false,
       isVisible: () => true,
     },
-    view: { setVisible: visible => events.push(["home", visible]) },
+    view: {
+      setBounds: bounds => events.push(["home-bounds", bounds]),
+      setVisible: visible => events.push(["home-visible", visible]),
+    },
   });
 
   BrowserHost.prototype.syncViewVisibility.call(fixture);
 
   assert.deepEqual(events, [
-    ["home", false],
+    ["home-bounds", { x: 1121, y: 721, width: 1120, height: 720 }],
+    ["home-visible", true],
     ["emulate", {
       screenPosition: "desktop",
       screenSize: { width: 1120, height: 720 },
@@ -446,13 +450,17 @@ test("turn tabs use the hidden viewport when the launcher window is hidden", () 
       isMinimized: () => false,
       isVisible: () => false,
     },
-    view: { setVisible: visible => events.push(["home", visible]) },
+    view: {
+      setBounds: bounds => events.push(["home-bounds", bounds]),
+      setVisible: visible => events.push(["home-visible", visible]),
+    },
   });
 
   BrowserHost.prototype.syncViewVisibility.call(fixture);
 
   assert.deepEqual(events, [
-    ["home", false],
+    ["home-bounds", { x: 1121, y: 721, width: 1120, height: 720 }],
+    ["home-visible", true],
     ["emulate", {
       screenPosition: "desktop",
       screenSize: { width: 1120, height: 720 },
@@ -532,13 +540,17 @@ test("visible turn tabs establish native bounds before clearing background emula
       isMinimized: () => false,
       isVisible: () => true,
     },
-    view: { setVisible: visible => events.push(["home", visible]) },
+    view: {
+      setBounds: bounds => events.push(["home-bounds", bounds]),
+      setVisible: visible => events.push(["home-visible", visible]),
+    },
   });
 
   BrowserHost.prototype.syncViewVisibility.call(fixture);
 
   assert.deepEqual(events, [
-    ["home", false],
+    ["home-bounds", { x: 1121, y: 721, width: 1120, height: 720 }],
+    ["home-visible", true],
     ["bounds", { x: 280, y: 64, width: 840, height: 656 }],
     ["disable-emulation"],
     ["visible", true],
@@ -1627,7 +1639,7 @@ test("selecting a task tab shows and focuses its owned Playwright surface", () =
 
   assert.equal(fixture.selectedTabId, second.id);
   assert.deepEqual(visibility, [
-    ["home", false],
+    ["home", true],
     ["first", true],
     ["second", true],
   ]);

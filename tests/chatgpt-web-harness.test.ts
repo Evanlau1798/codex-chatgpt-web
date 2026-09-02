@@ -69,6 +69,22 @@ function brokerTestEndpoint(name: string): string {
     : join(tmpdir(), `${name}.sock`);
 }
 
+async function beginAcknowledgedToolInvocation<T>(
+  turn: BrowserTurn,
+  invoke: () => Promise<T>,
+): Promise<{ result: Promise<T> }> {
+  const progress = turn.externalProgress;
+  if (!progress) throw new Error("tool-capable browser has no progress transport");
+  const previousBatchRevision = progress.snapshot().lastToolBatchRevision;
+  const result = invoke();
+  let snapshot = progress.snapshot();
+  while (snapshot.lastToolBatchRevision <= previousBatchRevision) {
+    snapshot = await progress.waitForChange(snapshot.revision, turn.abortSignal);
+  }
+  await progress.acknowledgeToolBatch(snapshot.lastToolBatchRevision);
+  return { result };
+}
+
 interface GatewayProgramCall {
   name: string;
   input: unknown;
@@ -78,7 +94,7 @@ async function executeGatewayProgram(
   program: string,
   availableToolNames: string[],
   calls: GatewayProgramCall[],
-): Promise<void> {
+): Promise<Array<{ type: "text"; text: string }>> {
   const nestedTools = Object.fromEntries(availableToolNames.map(name => [
     name,
     async (input: unknown) => {
@@ -90,15 +106,20 @@ async function executeGatewayProgram(
     ...args: string[]
   ) => (...values: unknown[]) => Promise<void>;
   const execute = new AsyncFunction("tools", "ALL_TOOLS", "text", "image", "audio", "generatedImage", program);
+  const emitted: Array<{ type: "text"; text: string }> = [];
+  const emitText = (value: unknown): void => {
+    emitted.push({ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) });
+  };
   const ignoreOutput = (_value: unknown): void => {};
   await execute(
     nestedTools,
     availableToolNames.map(name => ({ name, description: `${name} test tool` })),
-    ignoreOutput,
+    emitText,
     ignoreOutput,
     ignoreOutput,
     ignoreOutput,
   );
+  return emitted;
 }
 
 function parsed(developerText?: string): CodexParsedRequest {
@@ -759,12 +780,15 @@ describe("ChatGPT outer-native harness v4", () => {
       const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
       if (!token) throw new Error("turn token missing from compiled prompt");
       const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
-      steeringResult = await callTurnBroker<BrokerToolResult>(socketPath, {
-        method: "invoke",
-        bindingId: claimed.bindingId,
-        wireName: "exec_command",
-        arguments: { cmd: "long-running-task" },
-      }, 10_000);
+      const invocation = await beginAcknowledgedToolInvocation(turn, () => (
+        callTurnBroker<BrokerToolResult>(socketPath, {
+          method: "invoke",
+          bindingId: claimed.bindingId,
+          wireName: "exec_command",
+          arguments: { cmd: "long-running-task" },
+        }, 10_000)
+      ));
+      steeringResult = await invocation.result;
       const answer = "Stopped and reviewed the existing implementation.";
       turn.onTextDelta(answer);
       return answer;
@@ -1770,13 +1794,16 @@ describe("ChatGPT outer-native harness v4", () => {
         const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
         if (!token) throw new Error("turn token missing from compiled prompt");
         const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
-        const nativeResult = await callTurnBroker<BrokerToolResult>(socketPath, {
-          method: "invoke",
-          bindingId: claimed.bindingId,
-          wireName: "exec_command",
-          freeform: false,
-          arguments: { cmd: "collect-large-evidence", workdir: tempRoot },
-        }, 30_000);
+        const invocation = await beginAcknowledgedToolInvocation(turn, () => (
+          callTurnBroker<BrokerToolResult>(socketPath, {
+            method: "invoke",
+            bindingId: claimed.bindingId,
+            wireName: "exec_command",
+            freeform: false,
+            arguments: { cmd: "collect-large-evidence", workdir: tempRoot },
+          }, 30_000)
+        ));
+        const nativeResult = await invocation.result;
         const output = (nativeResult.structuredContent as { output: string }).output;
         turn.onTextDelta("Evidence bytes: ");
         turn.onTextDelta(String(output.length));
@@ -1957,12 +1984,15 @@ describe("ChatGPT outer-native harness v4", () => {
         turnTokens.push(token);
         if (browserStarts === 1) {
           const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
-          retiredInvocation = callTurnBroker<BrokerToolResult>(socketPath, {
-            method: "invoke",
-            bindingId: claimed.bindingId,
-            wireName: "exec_command",
-            arguments: { cmd: "collect-recovery-evidence" },
-          }, 30_000).then(() => undefined, () => undefined);
+          const invocation = await beginAcknowledgedToolInvocation(turn, () => (
+            callTurnBroker<BrokerToolResult>(socketPath, {
+              method: "invoke",
+              bindingId: claimed.bindingId,
+              wireName: "exec_command",
+              arguments: { cmd: "collect-recovery-evidence" },
+            }, 30_000)
+          ));
+          retiredInvocation = invocation.result.then(() => undefined, () => undefined);
           await new Promise(resolveWait => setTimeout(resolveWait, 25));
           throw chatGptWebSurfaceError("surface changed before the tool result arrived", false);
         }
@@ -2054,13 +2084,16 @@ describe("ChatGPT outer-native harness v4", () => {
         if (prepared.text.includes("The project was inspected and the pending command completed.")) {
           continuationTurnToken = token;
           turn.onReasoningSummary?.("Resumed from the compacted Codex history");
-          const nativeResult = await callTurnBroker<BrokerToolResult>(socketPath, {
-            method: "invoke",
-            bindingId: claimed.bindingId,
-            wireName: "exec_command",
-            freeform: false,
-            arguments: { cmd: "git status --short", workdir: tempRoot },
-          }, 30_000);
+          const invocation = await beginAcknowledgedToolInvocation(turn, () => (
+            callTurnBroker<BrokerToolResult>(socketPath, {
+              method: "invoke",
+              bindingId: claimed.bindingId,
+              wireName: "exec_command",
+              freeform: false,
+              arguments: { cmd: "git status --short", workdir: tempRoot },
+            }, 30_000)
+          ));
+          const nativeResult = await invocation.result;
           turn.onReasoningSummary?.("Verified the continued task");
           const answer = `## Browser final\n\nStatus: ${(nativeResult.structuredContent as { output: string }).output}`;
           turn.onTextDelta("## Browser final");
@@ -2072,13 +2105,16 @@ describe("ChatGPT outer-native harness v4", () => {
         turn.onReasoningSummary?.("Mapped the repository surface");
         turn.onReasoningSummary?.("Inspected the working directory");
         try {
-          const nativeResult = await callTurnBroker<BrokerToolResult>(socketPath, {
-            method: "invoke",
-            bindingId: claimed.bindingId,
-            wireName: "exec_command",
-            freeform: false,
-            arguments: { cmd: "pwd", workdir: tempRoot },
-          }, 30_000);
+          const invocation = await beginAcknowledgedToolInvocation(turn, () => (
+            callTurnBroker<BrokerToolResult>(socketPath, {
+              method: "invoke",
+              bindingId: claimed.bindingId,
+              wireName: "exec_command",
+              freeform: false,
+              arguments: { cmd: "pwd", workdir: tempRoot },
+            }, 30_000)
+          ));
+          const nativeResult = await invocation.result;
           originalBrowserReceivedToolResult = true;
           return `stale browser continued with ${(nativeResult.structuredContent as { output: string }).output}`;
         } catch (error) {
@@ -2265,13 +2301,16 @@ describe("ChatGPT outer-native harness v4", () => {
         if (!token) throw new Error("turn token missing from compiled Pro prompt");
         const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
         turn.onReasoningSummary?.("Pro requested live workspace evidence");
-        const nativeResult = await callTurnBroker<BrokerToolResult>(socketPath, {
-          method: "invoke",
-          bindingId: claimed.bindingId,
-          wireName: "exec_command",
-          freeform: false,
-          arguments: { cmd: "pwd", workdir: tempRoot },
-        }, 30_000);
+        const invocation = await beginAcknowledgedToolInvocation(turn, () => (
+          callTurnBroker<BrokerToolResult>(socketPath, {
+            method: "invoke",
+            bindingId: claimed.bindingId,
+            wireName: "exec_command",
+            freeform: false,
+            arguments: { cmd: "pwd", workdir: tempRoot },
+          }, 30_000)
+        ));
+        const nativeResult = await invocation.result;
         const output = (nativeResult.structuredContent as { output: string }).output;
         turn.onReasoningSummary?.("Pro received the native tool result");
         turn.onTextDelta("## Pro result");
@@ -2549,11 +2588,20 @@ describe("ChatGPT outer-native harness v4", () => {
       broker.completeTool(token, waitRequest!.callId, toolResult({ output: "completed" }));
       expect((await waitPromise).structuredContent).toEqual({ output: "completed" });
 
-      const agentInventory = await call("codex_tool_inventory", {
+      const pendingAgentInventory = call("codex_tool_inventory", {
         turn_token: token,
         query: "wait_agent",
         include_schema: true,
       });
+      const [agentInventoryRequest] = await broker.nextToolBatch(token);
+      expect(agentInventoryRequest).toMatchObject({ wireName: "exec", freeform: true });
+      const inventoryContent = await executeGatewayProgram(
+        agentInventoryRequest!.input!,
+        ["exec", "multi_agent_v1__wait_agent"],
+        [],
+      );
+      broker.completeTool(token, agentInventoryRequest!.callId, { content: inventoryContent });
+      const agentInventory = await pendingAgentInventory;
       expect(agentInventory.structuredContent).toMatchObject({
         total: 1,
         tools: [{

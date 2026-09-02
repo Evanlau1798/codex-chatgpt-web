@@ -162,7 +162,7 @@ test("DEV chat attaches its broker to the launcher-owned tunnel without a Respon
     });
     expect(transport.config).toBe(config);
     expect(await callTurnBroker(transport.config.brokerSocketPath, { method: "owner_status" }))
-      .toMatchObject({ protocolVersion: 1 });
+      .toMatchObject({ protocolVersion: 2 });
     expect(await (await fetch(`http://127.0.0.1:${occupied.port}`)).text()).toBe("normal Codex route");
   } finally {
     await transport?.close();
@@ -230,12 +230,21 @@ test("DEV driver uses shared browser methods and its own broker while an unrelat
       if (!token) throw new Error("missing DEV broker token");
       const claimed = await callTurnBroker<{ bindingId: string }>(config.brokerSocketPath, { method: "claim", token });
       turn.onReasoningSummary?.("Exercising the real broker round");
-      const result = await callTurnBroker<BrokerToolResult>(config.brokerSocketPath, {
+      const progress = turn.externalProgress;
+      if (!progress) throw new Error("DEV tool-capable browser has no progress transport");
+      const previousBatchRevision = progress.snapshot().lastToolBatchRevision;
+      const invocation = callTurnBroker<BrokerToolResult>(config.brokerSocketPath, {
         method: "invoke",
         bindingId: claimed.bindingId,
         wireName: "exec_command",
         arguments: { cmd: "git status --short" },
       }, 30_000);
+      let snapshot = progress.snapshot();
+      while (snapshot.lastToolBatchRevision <= previousBatchRevision) {
+        snapshot = await progress.waitForChange(snapshot.revision, turn.abortSignal);
+      }
+      await progress.acknowledgeToolBatch(snapshot.lastToolBatchRevision);
+      const result = await invocation;
       const simulated = (result.structuredContent as { simulated: boolean }).simulated;
       const answer = `DEV receipt simulated=${simulated}`;
       turn.onTextDelta(answer);

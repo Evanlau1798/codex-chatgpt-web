@@ -6,6 +6,9 @@ import {
 export type LauncherHelperMessage =
   | { type: "ready"; features?: string[] }
   | { type: "event"; id: string; event: "heartbeat" | "send_activated" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
+  | { type: "event"; id: string; event: "tool_batch_observed"; revision: number }
+  | { type: "event"; id: string; event: "completion_fence_begin"; requestId: number }
+  | { type: "event"; id: string; event: "completion_fence_commit"; requestId: number; revision: number }
   | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
   | { type: "event"; id: string; event: "answer"; text: string; attempt: number }
   | {
@@ -66,6 +69,28 @@ export function parseLauncherHelperMessage(line: string): LauncherHelperMessage 
 
 function parseEvent(message: Record<string, unknown> & { id: string }): LauncherHelperMessage {
   const event = message.event;
+  if (event === "tool_batch_observed") {
+    if (!Number.isSafeInteger(message.revision) || Number(message.revision) <= 0) {
+      throw new Error("Launcher browser helper tool-boundary revision is invalid");
+    }
+    return { type: "event", id: message.id, event, revision: Number(message.revision) };
+  }
+  if (event === "completion_fence_begin") {
+    if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) <= 0) {
+      throw new Error("Launcher browser helper completion fence request id is invalid");
+    }
+    return { type: "event", id: message.id, event, requestId: Number(message.requestId) };
+  }
+  if (event === "completion_fence_commit") {
+    if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) <= 0
+      || !Number.isSafeInteger(message.revision) || Number(message.revision) < 0) {
+      throw new Error("Launcher browser helper completion fence revision is invalid");
+    }
+    return {
+      type: "event", id: message.id, event,
+      requestId: Number(message.requestId), revision: Number(message.revision),
+    };
+  }
   if (event === "answer" || event === "error_retry") {
     if (typeof message.text !== "string" || !Number.isSafeInteger(message.attempt) || Number(message.attempt) < 1) {
       throw new Error("Launcher browser helper answer event is invalid");

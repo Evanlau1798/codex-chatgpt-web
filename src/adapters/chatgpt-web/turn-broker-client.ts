@@ -27,6 +27,9 @@ export async function callTurnBroker<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   const id = opaqueId("request");
+  const wireRequest = request.method === "claim" && request.activityId === undefined
+    ? { ...request, activityId: opaqueId("activity") }
+    : request;
   return new Promise<T>((resolveCall, rejectCall) => {
     const socket = createConnection(socketPath);
     let buffered = "";
@@ -54,7 +57,7 @@ export async function callTurnBroker<T>(
     const finishClosed = () => finishError(new Error("ChatGPT web turn broker closed the connection"));
     socket.once("end", finishClosed);
     socket.once("close", finishClosed);
-    socket.once("connect", () => socket.write(`${JSON.stringify({ id, ...request })}\n`));
+    socket.once("connect", () => socket.write(`${JSON.stringify({ id, ...wireRequest })}\n`));
     socket.on("data", chunk => {
       if (settled) return;
       buffered += chunk;

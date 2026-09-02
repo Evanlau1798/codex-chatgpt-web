@@ -7,6 +7,7 @@ import {
   type LauncherHelperMessage,
 } from "./launcher-helper-protocol";
 import { forwardLauncherHelperProgress } from "./launcher-helper-progress";
+import { assertLauncherHelperFenceFeatures, handleLauncherHelperFenceEvent } from "./launcher-helper-fence";
 import {
   resolveLauncherHelperScript,
   terminateLauncherHelperProcess,
@@ -42,6 +43,7 @@ export class LauncherBrowserHelperClient {
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     await this.ensureChild();
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+    assertLauncherHelperFenceFeatures(turn, this.helperFeatures);
     return new Promise<string>((resolveResult, rejectResult) => {
         if (this.pending.has(turn.traceId)) {
           rejectResult(new Error(`Duplicate launcher browser turn: ${turn.traceId}`));
@@ -105,6 +107,7 @@ export class LauncherBrowserHelperClient {
             ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
             ...(turn.compaction ? { compaction: true } : {}),
             ...(turn.captureLunaCheckpoint ? { captureLunaCheckpoint: true } : {}),
+            ...(turn.externalProgress ? { externalProgress: true } : {}),
           },
         }).then(() => {
           if (!progressForwarding.signal.aborted) {
@@ -243,7 +246,12 @@ export class LauncherBrowserHelperClient {
     const pending = this.pending.get(message.id);
     if (!pending) return;
     if (message.type === "event") {
-      if (message.event === "heartbeat") {
+      if (message.event === "tool_batch_observed" || message.event === "completion_fence_begin"
+        || message.event === "completion_fence_commit") {
+        handleLauncherHelperFenceEvent(message, pending.turn, () => this.pending.get(message.id) === pending,
+          value => this.send(value), error => this.abortWithLocalFailure(message.id, error, pending));
+      }
+      else if (message.event === "heartbeat") {
         this.invokeEventCallback(message.id, pending, () => pending.turn.onHeartbeat?.());
       }
       else if (message.event === "send_activated") {

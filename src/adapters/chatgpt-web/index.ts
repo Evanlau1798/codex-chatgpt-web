@@ -14,6 +14,7 @@ import { resolveChatGptWebModelMode } from "./model";
 import { createChatGptStructuredOutputValidator } from "./output-validation";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { brokerSocketPath, ChatGptSurfaceRecoveryTracker, withAbort } from "./runtime-lifecycle";
+import { CHATGPT_TOOL_BOUNDARY_OBSERVATION_TIMEOUT_MS } from "./turn-progress";
 import { TurnBroker, type TurnBrokerOwner } from "./turn-broker";
 import { chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, chatGptTurnTraceId, type ChatGptTraceEvent } from "./turn-execution";
 import { chatGptTurnRetryKey } from "./turn-retry-identity";
@@ -111,6 +112,16 @@ export function createChatGptWebAdapter(
             worker, parsed, broker, executionNamespace, capabilities: turnCapabilities,
             responseExecutionKey, nativeConnectorAvailable: configuredCapabilities.localToolsEnabled,
             abortSignal: incoming.abortSignal, timeoutMs, emit,
+            startFallback: async (fallbackTraceId, signal) => {
+              const runtime = startRuntime(parsed, undefined, fallbackTraceId, turnCapabilities);
+              try {
+                return await withAbort(runtime.browser, signal);
+              } catch (error) {
+                runtime.cancel(error instanceof Error ? error : new Error(String(error)));
+                await runtime.browser.catch(() => {});
+                throw error;
+              }
+            },
           });
           if (enhancedCompaction === "completed") return;
           console.info("[chatgpt-web] Web session mode=enhanced path=reconstructed_compact result=started");
@@ -297,7 +308,31 @@ export function createChatGptWebAdapter(
               }
               if (next.requests.length === 0) throw new Error("ChatGPT tool bridge returned an empty batch");
               validateBatchTools(parsed, next.requests);
-              session.setOutstanding(next.requests, roundReasoning, roundEvents);
+              const toolBatchRevision = session.setOutstanding(next.requests, roundReasoning, roundEvents);
+              if (toolBatchRevision !== undefined && session.runtime.externalProgress) {
+                const observationTimeout = new AbortController();
+                const timer = setTimeout(
+                  () => observationTimeout.abort(),
+                  CHATGPT_TOOL_BOUNDARY_OBSERVATION_TIMEOUT_MS,
+                );
+                try {
+                  await session.runtime.externalProgress.waitForToolBatchObservation(
+                    toolBatchRevision,
+                    AbortSignal.any([toolWaitAbort.signal, observationTimeout.signal]),
+                  );
+                } catch (error) {
+                  if (observationTimeout.signal.aborted && !toolWaitAbort.signal.aborted) {
+                    throw new Error(
+                      `ChatGPT browser did not acknowledge Codex tool batch ${toolBatchRevision}`
+                      + ` within ${CHATGPT_TOOL_BOUNDARY_OBSERVATION_TIMEOUT_MS}ms`,
+                      { cause: error },
+                    );
+                  }
+                  throw error;
+                } finally {
+                  clearTimeout(timer);
+                }
+              }
               emitToolBatch(
                 next.requests,
                 estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning: roundReasoning, toolRequests: next.requests }, turnCapabilities),

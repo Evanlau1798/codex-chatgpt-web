@@ -2,7 +2,6 @@ import type { CodexParsedRequest, CodexProviderConfig } from "../../types";
 import { retainedConversationRelease } from "./adapter-runtime-config";
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { claudeBrowserTurnOptions, isClaudeClientSession } from "./claude-subagent";
-import { activeCompactionRuntimeHooks, createActiveCompactionHandoffPrompts } from "./compaction-handoff";
 import { prepareChatGptWebContext } from "./context-bootstrap";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
@@ -39,7 +38,7 @@ interface ChatGptRuntimeFactoryOptions {
   lunaCheckpointStore: ChatGptLunaCheckpointStore;
 }
 
-export type ChatGptRuntimeWorker = Pick<ChatGptBrowserWorker, "run" | "requestPreemptiveRetry">;
+export type ChatGptRuntimeWorker = Pick<ChatGptBrowserWorker, "run">;
 
 export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOptions) {
   const {
@@ -102,10 +101,9 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     let toolResultDelivered = false;
     const toolEvidence = mode.localTools && !parsed._compactionRequest ? new ChatGptToolEvidenceGuard() : undefined;
     const submission: NonNullable<ChatGptTurnRuntime["submission"]> = { phase: "prepared" };
-    const handoffPrompts = useEnhancedWebSessionMode ? createActiveCompactionHandoffPrompts() : undefined;
     const runtimeExecutionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
     const { retainConversation: requestedRetention, retryPromptForAnswer: upstreamRetry } = claudeBrowserTurnOptions(
-      checkpointInput.parsed, handoffPrompts?.retryPromptForAnswer,
+      checkpointInput.parsed, undefined,
       { toolResultDelivered: () => toolResultDelivered, turnToken: () => activeToken },
     );
     const evidenceRetry = toolEvidence
@@ -118,7 +116,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     const releaseRetainedConversation = retainedConversationRelease(provider, conversationKey);
     const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
     const retryPromptForAnswer = parsed._compactionRequest || !steering ? evidenceRetry : browserSteeringRetry(steering, traceId, evidenceRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, isClaudeClientSession(checkpointInput.parsed));
-    const retryPromptForError = createChatGptSameSurfaceRetry({ traceId, executionKey: runtimeExecutionKey, enhancedMode: useEnhancedWebSessionMode, abortSignal: browserAbort.signal, upstream: handoffPrompts?.retryPromptForError });
+    const retryPromptForError = createChatGptSameSurfaceRetry({ traceId, executionKey: runtimeExecutionKey, enhancedMode: useEnhancedWebSessionMode, abortSignal: browserAbort.signal });
     const emitCommentary = (value: string, continuation?: boolean): void => {
       if (toolEvidence && !toolEvidence.shouldEmitCommentary(value)) return;
       trace.push({ kind: "commentary", text: value, ...(continuation ? { continuation: true } : {}) });
@@ -168,7 +166,6 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         ...(steering ? { steering } : {}),
         usageInput: checkpointInput.parsed,
         submission,
-        ...(handoffPrompts ? activeCompactionRuntimeHooks(handoffPrompts, instruction => worker.requestPreemptiveRetry(traceId, instruction)) : {}),
         cancel: () => browserAbort.abort(),
         ...(releaseRetainedConversation ? { release: releaseRetainedConversation } : {}),
       };
@@ -209,6 +206,10 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       ...(conversationKey ? { conversationKey } : {}),
       abortSignal: browserAbort.signal,
       externalProgress,
+      completionFence: {
+        begin: async () => brokerOwner.beginCompletionFence(activeToken ?? await token.promise),
+        commit: async revision => brokerOwner.commitCompletionFence(activeToken ?? await token.promise, revision),
+      },
       onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: emitCommentary,
       onProgress: () => trace.signalProgress(),
@@ -243,7 +244,6 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         toolResultDelivered = true;
         if (result) toolEvidence?.observeToolResult(result);
       },
-      ...(handoffPrompts ? activeCompactionRuntimeHooks(handoffPrompts, instruction => worker.requestPreemptiveRetry(traceId, instruction)) : {}),
       cancel: (reason?: Error) => {
         browserAbort.abort(reason);
         if (activeToken) void Promise.resolve(brokerOwner.revoke(activeToken, reason)).catch(error => {

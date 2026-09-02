@@ -41,6 +41,12 @@ test("CI exposes one fail-closed aggregate gate for branch protection", () => {
   expect(workflow).toContain('test "$LIFECYCLE_SIM_RESULT" = "success"');
 });
 
+test("CI verify fetches the ancestry required by the upstream audit ledger", () => {
+  const workflow = readFileSync(resolve(repo, ".github", "workflows", "ci.yml"), "utf8");
+  const verify = workflow.match(/\r?\n  verify:\r?\n([\s\S]*?)\r?\n  actionlint:/)?.[1];
+  expect(verify).toContain("fetch-depth: 0");
+});
+
 test("the executable manifest owns every deterministic lifecycle test", () => {
   expect(codexLifecycleTests).toContain("tests/native-steering-boundary.test.ts");
   expect(claudeLifecycleTests).toContain("tests/claude-session-abort.test.ts");
