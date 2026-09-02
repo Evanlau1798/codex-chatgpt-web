@@ -84,3 +84,9 @@ HTTP or browser turn, no live session registry entry, and no active broker capab
 verification limit stops the run immediately without retry. The old full live lifecycle flow is a
 manual `deep` diagnostic profile, never a default CI or release gate. Redacted artifacts belong
 under `tmp/lifecycle-smoke/runs/` and must never be committed.
+
+Before a release-bound push, tag, or publication, run every account-bound smoke required by the
+changed scope against the exact candidate runtime. Browser UI or Web transport changes always
+require `bun run smoke:lifecycle:web`; an earlier run against another installed version is not
+release evidence. Run the request-heavy `deep` profile only when the changed lifecycle scope or a
+specific investigation requires it, and keep the no-retry rule for 429 or verification limits.

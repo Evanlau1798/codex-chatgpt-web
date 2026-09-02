@@ -62,6 +62,26 @@ export function webContractBrowserIsIdle(health: Record<string, unknown>): boole
   return Number(health.active_browser_turns ?? 0) === 0;
 }
 
+export function assertWebContractRuntimeVersion(
+  health: Record<string, unknown>,
+  expectedVersion: string,
+  expectedPid?: number,
+): number {
+  if (health.version !== expectedVersion) {
+    throw new Error(
+      `Web contract smoke requires the candidate version: expected=${expectedVersion} actual=${String(health.version ?? "missing")}`,
+    );
+  }
+  const pid = Number(health.pid);
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    throw new Error("Web contract smoke requires a verified runtime process");
+  }
+  if (expectedPid !== undefined && pid !== expectedPid) {
+    throw new Error(`Web contract smoke changed process during the live turn: expectedPid=${expectedPid} actualPid=${pid}`);
+  }
+  return pid;
+}
+
 export async function requestWebContractTurn(
   fetcher: (request: Request) => Promise<Response>,
   request: Request,

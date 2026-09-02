@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { detectChatGptAccountCapabilities, isTemporaryChatGptUrl } from "../../src/chatgpt-session";
 import { loadConfig } from "../../src/config";
+import { VERSION } from "../../src/version";
 import {
   connectLauncherBrowserHost,
   inspectLauncherBrowserHost,
@@ -9,6 +10,7 @@ import {
 } from "../../src/launcher-browser-host";
 import {
   assertWebContractCooldown,
+  assertWebContractRuntimeVersion,
   deriveWebContractCapabilities,
   requestWebContractTurn,
   responseHasFinalProjection,
@@ -63,6 +65,7 @@ if (before.status !== "ok" || before.accepting_turns !== true
   || !webContractBrowserIsIdle(before)) {
   throw new Error("Web contract smoke requires a healthy, accepting daemon without another Web turn");
 }
+const runtimePid = assertWebContractRuntimeVersion(before, VERSION);
 const now = Date.now();
 assertWebContractCooldown(lastRunAt(), now);
 mkdirSync(artifactDir, { recursive: true });
@@ -119,20 +122,22 @@ const request = new Request(`${baseUrl}/v1/responses`, {
 });
 const result = await requestWebContractTurn(fetch, request);
 if (result.status === "account-blocked") {
-  save({ status: "account-blocked", httpStatus: 429, at: new Date(now).toISOString() });
+  save({ status: "account-blocked", runtimeVersion: VERSION, httpStatus: 429, at: new Date(now).toISOString() });
   throw new Error("WEB_CONTRACT_ACCOUNT_BLOCKED: ChatGPT returned a rate or verification limit; no retry was attempted");
 }
 if (!result.response.ok) throw new Error(`Web contract turn failed: HTTP ${result.response.status}`);
 const payload = await result.response.json();
 const finalProjection = responseHasFinalProjection(payload);
 if (!finalProjection) throw new Error("Web contract turn did not complete a final projection");
+const browserIdle = await waitForBrowserIdle(baseUrl);
+assertWebContractRuntimeVersion(await health(baseUrl), VERSION, runtimePid);
 const capture = deriveWebContractCapabilities({
   session,
   connectorVerified,
   responseAccepted: result.response.ok,
   finalProjection,
-  browserIdle: await waitForBrowserIdle(baseUrl),
+  browserIdle,
 });
 if (Object.values(capture).some(value => !value)) throw new Error("Web contract smoke did not return browser idle");
-save({ status: "passed", at: new Date(now).toISOString(), capabilities: capture });
+save({ status: "passed", runtimeVersion: VERSION, at: new Date(now).toISOString(), capabilities: capture });
 process.stdout.write(`WEB_CONTRACT_SMOKE_OK ${JSON.stringify(capture)}\n`);
