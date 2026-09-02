@@ -23,7 +23,11 @@ test("the local release gate runs verification before the account-bound Web smok
   const pkg = JSON.parse(readFileSync(resolve(repo, "package.json"), "utf8")) as {
     scripts: Record<string, string>;
   };
-  expect(pkg.scripts["verify:release"]).toBe("bun run verify && bun run smoke:lifecycle:web");
+  expect(pkg.scripts["verify:release"]).toBe("bun run scripts/verify.ts --live-web");
+
+  const verify = readFileSync(resolve(repo, "scripts", "verify.ts"), "utf8");
+  expect(verify).toContain('process.argv.includes("--live-web")');
+  expect(verify).toContain('"scripts/smoke-candidate-web.ts", runtimeBundle');
 
   for (const workflowName of ["ci.yml", "release.yml"]) {
     const workflow = readFileSync(resolve(repo, ".github", "workflows", workflowName), "utf8");

@@ -54,7 +54,7 @@
     "launcher:build": "bun run --cwd launcher build",
     "launcher:test": "bun run --cwd launcher test",
     "verify": "bun run scripts/verify.ts",
-    "verify:release": "bun run verify && bun run smoke:lifecycle:web"
+    "verify:release": "bun run scripts/verify.ts --live-web"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

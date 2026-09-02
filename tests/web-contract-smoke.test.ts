@@ -8,6 +8,7 @@ import {
   requestWebContractTurn,
   responseHasFinalProjection,
   WEB_CONTRACT_COOLDOWN_MS,
+  WEB_CONTRACT_TURN_TIMEOUT_MS,
   webContractBrowserIsIdle,
 } from "../scripts/lifecycle-smoke/web-contract-core";
 
@@ -76,6 +77,9 @@ describe("lightweight Web contract smoke", () => {
   test("allows unrelated HTTP turns but rejects a parallel Web turn", () => {
     expect(webContractBrowserIsIdle({ active_http_turns: 4, active_browser_turns: 0 })).toBeTrue();
     expect(webContractBrowserIsIdle({ active_http_turns: 0, active_browser_turns: 1 })).toBeFalse();
+    for (const invalid of [undefined, null, "", "0", -1, 0.5]) {
+      expect(webContractBrowserIsIdle({ active_browser_turns: invalid })).toBeFalse();
+    }
   });
 
   test("accepts any non-empty final projection without depending on model wording", () => {
@@ -133,5 +137,8 @@ describe("lightweight Web contract smoke", () => {
     const script = readFileSync(new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url), "utf8");
     expect(script.match(/assertWebContractRuntimeVersion\(/g)).toHaveLength(2);
     expect(script).toContain("runtimePid");
+    expect(WEB_CONTRACT_TURN_TIMEOUT_MS).toBe(180_000);
+    expect(script).toContain("AbortSignal.timeout(WEB_CONTRACT_TURN_TIMEOUT_MS)");
+    expect(script).toContain("**bold**, `code`, and _emphasis_");
   });
 });
