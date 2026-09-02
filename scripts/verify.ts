@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 const root = resolve(import.meta.dir, "..");
 const scratch = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-verify-"));
 const runtimeBundle = join(scratch, "runtime");
+const liveWeb = process.argv.includes("--live-web");
 
 async function run(args: string[]): Promise<void> {
   const child = Bun.spawn([process.execPath, ...args], {
@@ -34,6 +35,7 @@ try {
     "--include-launcher",
   ]);
   await run(["run", "scripts/smoke-release.ts", runtimeBundle]);
+  if (liveWeb) await run(["run", "scripts/smoke-candidate-web.ts", runtimeBundle]);
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

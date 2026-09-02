@@ -1,4 +1,5 @@
 export const WEB_CONTRACT_COOLDOWN_MS = 2 * 60_000;
+export const WEB_CONTRACT_TURN_TIMEOUT_MS = 3 * 60_000;
 
 const capabilityKeys = [
   "authenticated",
@@ -59,7 +60,7 @@ export function assertWebContractCooldown(lastRunAt: number | undefined, now = D
 }
 
 export function webContractBrowserIsIdle(health: Record<string, unknown>): boolean {
-  return Number(health.active_browser_turns ?? 0) === 0;
+  return Number.isSafeInteger(health.active_browser_turns) && health.active_browser_turns === 0;
 }
 
 export function assertWebContractRuntimeVersion(

@@ -14,6 +14,7 @@ import {
   deriveWebContractCapabilities,
   requestWebContractTurn,
   responseHasFinalProjection,
+  WEB_CONTRACT_TURN_TIMEOUT_MS,
   webContractBrowserIsIdle,
 } from "./web-contract-core";
 
@@ -107,6 +108,7 @@ const metadata = {
 const request = new Request(`${baseUrl}/v1/responses`, {
   method: "POST",
   headers: { "content-type": "application/json" },
+  signal: AbortSignal.timeout(WEB_CONTRACT_TURN_TIMEOUT_MS),
   body: JSON.stringify({
     model: "chatgpt-web/high",
     stream: false,
@@ -116,7 +118,10 @@ const request = new Request(`${baseUrl}/v1/responses`, {
       thread_id: threadId,
       "x-codex-turn-metadata": JSON.stringify(metadata),
     },
-    input: [item("msg_web_contract_environment", environment), item("msg_web_contract_prompt", "Reply briefly to confirm this turn completed.")],
+    input: [
+      item("msg_web_contract_environment", environment),
+      item("msg_web_contract_prompt", "Reply briefly to confirm this turn completed.\n\nVerification: **bold**, `code`, and _emphasis_."),
+    ],
     tools: [],
   }),
 });

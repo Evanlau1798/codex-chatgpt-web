@@ -85,9 +85,9 @@ verification limit stops the run immediately without retry. The old full live li
 manual `deep` diagnostic profile, never a default CI or release gate. Redacted artifacts belong
 under `tmp/lifecycle-smoke/runs/` and must never be committed.
 
-Before a release-bound push, tag, or publication, run `bun run verify:release` locally against the
-exact candidate runtime. This hard gate runs the full offline verification first, then sends one
-short account-bound Web request through `bun run smoke:lifecycle:web`; CI intentionally runs only
+Before a release-bound push, tag, or publication, run `bun run verify:release` locally. This hard
+gate runs the full offline verification, starts the freshly built candidate runtime on an isolated
+loopback port, then sends one short account-bound Web request through it. CI intentionally runs only
 `bun run verify` because hosted runners have no login state. An earlier run against another runtime
 is not release evidence. Run the request-heavy `deep` profile only when the changed lifecycle scope
 or a specific investigation requires it, and keep the no-retry rule for 429 or verification limits.
