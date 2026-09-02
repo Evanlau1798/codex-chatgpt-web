@@ -79,11 +79,13 @@ test("contributor guidance defines the lifecycle profiles without untracked docs
 
 test("release builds rerun the deterministic lifecycle gate at the tag SHA", () => {
   const workflow = readFileSync(resolve(repo, ".github", "workflows", "release.yml"), "utf8");
+  const build = workflow.match(/\r?\n  build:\r?\n([\s\S]*?)\r?\n  publish:/)?.[1];
   expect(workflow).toContain("lifecycle-gate:");
   expect(workflow).toContain("bun run lifecycle:sim --lane=all");
   expect(workflow).toContain("@openai/codex@0.150.1");
   expect(workflow).toContain("@anthropic-ai/claude-code@2.1.251");
   expect(workflow).toMatch(/build:\s+needs: lifecycle-gate/);
+  expect(build).toContain("fetch-depth: 0");
 });
 
 test("latest-client canary runs both offline lanes and always reports safe status", () => {
