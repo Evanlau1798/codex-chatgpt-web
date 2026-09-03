@@ -68,6 +68,9 @@ export async function callTurnBroker<T>(
     }
     signal?.addEventListener("abort", onAbort, { once: true });
     socket.once("error", error => finishError(new Error(`ChatGPT web turn broker unavailable: ${error.message}`)));
+    socket.once("end", () => {
+      if (!response) finishResponse();
+    });
     socket.once("close", finishResponse);
     socket.once("connect", () => socket.write(`${JSON.stringify({ id, ...wireRequest })}\n`));
     socket.on("data", chunk => {
