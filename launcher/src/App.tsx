@@ -12,6 +12,7 @@ import { copyFor, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import { biggerContextSwitchState } from "./context-mode";
 import { InteractionModePicker } from "./interaction-mode-picker";
+import { TutorialVideo } from "./tutorial-video";
 import type {
   BrowserInteractionMode,
   BrowserState,
@@ -28,9 +29,9 @@ const api = window.codexWebLauncher;
 const PANEL_TRANSITION = { duration: 0.3, ease: [0.16, 1, 0.3, 1] } as const;
 const COMPACT_SIDEBAR_QUERY = "(max-width: 820px)";
 const MCP_GUIDE_MEDIA = [
-  new URL("./assets/mcp-create-tunnel.gif", import.meta.url).href,
-  new URL("./assets/mcp-connect-connector.gif", import.meta.url).href,
-  new URL("./assets/mcp-connect-connector.gif", import.meta.url).href,
+  new URL("./assets/mcp-create-tunnel.mp4", import.meta.url).href,
+  new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
+  new URL("./assets/mcp-connect-connector.mp4", import.meta.url).href,
 ] as const;
 
 export function App() {
@@ -1279,9 +1280,7 @@ function McpSurface({
       </div>
 
       <div className="mcp-stage">
-        <div className="guide-media">
-          <img alt={`${copy.guideVideo}: ${steps[step]!.title}`} src={MCP_GUIDE_MEDIA[step]} />
-        </div>
+        <TutorialVideo copy={copy} label={`${copy.guideVideo}: ${steps[step]!.title}`} src={MCP_GUIDE_MEDIA[step]!} />
 
         <AnimatePresence mode="wait" initial={false}>
           <motion.section

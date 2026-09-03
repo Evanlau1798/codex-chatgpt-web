@@ -17,7 +17,8 @@ test("Japanese is a complete launcher language across state, IPC, onboarding, an
   assert.match(languageTypes, /export type Language = "en" \| "zh-CN" \| "ja";/);
   assert.match(stateSource, /state\.language !== "ja"/);
   assert.match(electronMain, /value !== "ja"/);
-  assert.match(i18nSource, /const ja: Record<keyof typeof en, string> = \{/);
+  assert.match(i18nSource, /import \{ ja \} from "\.\/i18n-ja"/);
+  assert.match(read("launcher", "src", "i18n-ja.ts"), /export const ja: Record<keyof Copy, string> = \{/);
   assert.match(i18nSource, /if \(language === "ja"\) return ja as Copy;/);
   assert.match(appSource, /active=\{selectedLanguage === "ja"\}/);
   assert.match(appSource, /onClick=\{\(\) => setSelectedLanguage\("ja"\)\}/);
