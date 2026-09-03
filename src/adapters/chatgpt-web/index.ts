@@ -143,7 +143,7 @@ export function createChatGptWebAdapter(
         environment = resolveTrustedCodexEnvironment(environmentStore, parsed);
       }
       if (parsed._compactionRequest) {
-        const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`; if (useEnhancedWebSessionMode) {
+        const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`; if (useEnhancedWebSessionMode && !manualRequest) {
           const enhancedCompaction = await runEnhancedCompaction({
             worker, parsed, broker, executionNamespace, capabilities: turnCapabilities,
             responseExecutionKey, nativeConnectorAvailable: configuredCapabilities.localToolsEnabled,

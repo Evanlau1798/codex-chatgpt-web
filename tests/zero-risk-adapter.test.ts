@@ -5,9 +5,12 @@ import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import {
   createChatGptWebAdapter,
+  chatGptWebExecutionNamespace,
   type ChatGptZeroRiskManualControl,
 } from "../src/adapters/chatgpt-web/index";
-import { chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
+import {
+  ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptTurnSessions,
+} from "../src/adapters/chatgpt-web/turn-execution";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL } from "../src/chatgpt-web-models";
 import { defaultBrokerEndpoint } from "../src/config";
@@ -311,8 +314,9 @@ test("Zero Risk offers only the new Codex suffix when the launcher reuses its re
   }
 });
 
-test("Zero Risk compaction uses a fresh manual checkpoint without leaking guide text into the summary", async () => {
+for (const activeSource of [false, true]) test(`Zero Risk compaction uses a fresh manual checkpoint (active source: ${activeSource})`, async () => {
   const config = provider("compaction");
+  config.chatgptWeb!.useEnhancedWebSessionMode = true;
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
   let exactBinding: ReturnType<typeof binding> | undefined;
   const control: ChatGptZeroRiskManualControl = {
@@ -332,9 +336,23 @@ test("Zero Risk compaction uses a fresh manual checkpoint without leaking guide 
   };
   const input = request("turn_safe_compaction");
   input._compactionRequest = true;
+  let sourceCancelled = false;
+  if (activeSource) {
+    let settleSource!: (answer: string) => void;
+    const browser = new Promise<string>(resolve => { settleSource = resolve; });
+    const sourceKey = `${chatGptWebExecutionNamespace(config)}:${chatGptCompactionSourceExecutionKey(input)}`;
+    chatGptTurnSessions.getOrCreate(sourceKey, () => ({
+      mode: "read-only", browser, trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(),
+      conversationKey: "manual-source", physicalSettlement: browser.then(() => {}),
+      cancel() { sourceCancelled = true; settleSource("retired"); },
+    }));
+  }
   const events: AdapterEvent[] = [];
   try {
-    await createChatGptWebAdapter(config, { broker, zeroRiskManualControl: control }).runTurn!(
+    await createChatGptWebAdapter(config, {
+      broker, zeroRiskManualControl: control,
+      worker: { run: async () => { throw new Error("manual compaction must never run an automatic worker"); } },
+    }).runTurn!(
       input,
       { headers: new Headers() },
       event => events.push(event),
@@ -346,6 +364,7 @@ test("Zero Risk compaction uses a fresh manual checkpoint without leaking guide 
     expect(deltas.map(event => event.text).join(""))
       .toContain("Zero Risk checkpoint summary\n\nCODEX_LATEST_USER_PROMPT_JSON");
     expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+    expect(sourceCancelled).toBe(activeSource);
   } finally {
     chatGptTurnSessions.clear();
     await broker.close();
