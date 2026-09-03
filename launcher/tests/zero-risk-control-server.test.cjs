@@ -8,6 +8,7 @@ test("manual control endpoints require the token and preserve lifecycle order", 
     browserInteractionMode: () => "manual",
     beginManualTurn: (...args) => { calls.push(["start", ...args]); return { tabId: "tab", reused: false, deadlineAt: null, state: "awaiting-user" }; },
     waitManualSent: async () => ({ status: "sent", sentAt: null }),
+    waitManualTerminal: async () => ({ status: "timeout" }),
     markManualTurnStarted: (...args) => { calls.push(["started", ...args]); return {}; },
     endManualTurn: (...args) => { calls.push(["end", ...args]); return { cancelledByUser: false }; },
   };
@@ -24,6 +25,9 @@ test("manual control endpoints require the token and preserve lifecycle order", 
     assert.equal((await post("started", { traceId: "trace-z1", helperPid: 7 })).status, 200);
     assert.equal((await post("end", { traceId: "trace-z1", helperPid: 7, status: "completed" })).status, 200);
     assert.deepEqual(calls.map(call => call[0]), ["start", "started", "end"]);
+    const timedOut = await post("wait-terminal", { traceId: "trace-z1", helperPid: 7 });
+    assert.equal(timedOut.status, 408);
+    assert.equal((await timedOut.json()).code, "manual_turn_timed_out");
   } finally {
     await server.close();
   }

@@ -139,6 +139,9 @@ class BrowserControlServer {
         } else if (manualAction === "wait-terminal") {
           value = await host.waitManualTerminal(body.traceId, body.helperPid);
           if (value.status === "pending") { writeJson(response, 202, value); return; }
+          if (value.status === "timeout") {
+            writeJson(response, 408, { error: "Zero Risk turn timed out", code: "manual_turn_timed_out" }); return;
+          }
         } else if (manualAction === "started") {
           value = host.markManualTurnStarted(body.traceId, body.helperPid);
         } else if (manualAction === "end") {
