@@ -3,6 +3,10 @@ import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worke
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import { handleClaudeSteeringHook } from "./messages/steering-hook";
+import {
+  cancelAllStructuredCompactions,
+  cancelStructuredCompactionTrace,
+} from "./adapters/chatgpt-web/compaction-handoff";
 import { chatGptBrowserTabClosedError } from "./adapters/chatgpt-web/adapter-error";
 import {
   CHATGPT_TURN_REVISION_CONFLICT_MESSAGE,
@@ -44,7 +48,11 @@ export type { ResponseRequestOptions } from "./server-dependencies";
 export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppConfig): ChatGptWebModelRoute {
   const route = requireChatGptWebModelRoute(parsed.modelId, config);
   parsed.modelId = route.backendModel;
-  parsed.options.reasoning = route.adapterEffort;
+  // Zero Risk preserves a distinct backend identity. Its immutable Codex effort is only a
+  // protocol/catalog value; the manual adapter must never reinterpret it as a ChatGPT selection.
+  parsed.options.reasoning = route.interactionMode === "automatic"
+    ? route.adapterEffort
+    : route.codexEffort;
   return route;
 }
 
@@ -340,24 +348,41 @@ export function startServer(
           );
         }
         const reason = chatGptBrowserTabClosedError();
-        const cancelledBrowserTurns = await chatGptTurnSessions.cancelTrace(traceId, reason);
+        // Revoke the owner first. This prevents a compaction callback that observes its retained
+        // source being cancelled below from starting a fresh fallback during operator shutdown.
+        const compactionCancellation = cancelStructuredCompactionTrace(traceId, reason);
+        const browserCancellation = chatGptTurnSessions.cancelTrace(traceId, reason);
+        const [cancelledBrowserTurns, cancelledCompactionRuns] = await Promise.all([
+          browserCancellation,
+          compactionCancellation,
+        ]);
         const cancelledBrokerTurns = turnBroker?.revokeTrace(traceId, reason) ?? 0;
         return Response.json({
           status: "ok",
           trace_id: traceId,
           cancelled_browser_turns: cancelledBrowserTurns,
           cancelled_broker_turns: cancelledBrokerTurns,
+          cancelled_compaction_runs: cancelledCompactionRuns,
           ...activity(),
         });
       }
       if (req.method === "POST" && url.pathname === "/admin/cancel-turns") {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
+        const reason = new Error("Active turn cancelled by launcher");
+        // Abort shared compaction owners before clearing their retained source sessions. The
+        // owner signal is the only cancellation boundary for a fresh fallback not in the session
+        // registry.
+        const compactionCancellation = cancelAllStructuredCompactions(reason);
         const cancelledBrowserTurns = chatGptTurnSessions.clear() + (turnBroker?.revokeExternalOwners() ?? 0);
-        const cancelledHttpTurns = await httpTurns.cancelAll(new Error("Active turn cancelled by launcher"));
+        const [cancelledHttpTurns, cancelledCompactionRuns] = await Promise.all([
+          httpTurns.cancelAll(reason),
+          compactionCancellation,
+        ]);
         return Response.json({
           status: "ok",
           cancelled_http_turns: cancelledHttpTurns,
           cancelled_browser_turns: cancelledBrowserTurns,
+          cancelled_compaction_runs: cancelledCompactionRuns,
           ...activity(),
         });
       }

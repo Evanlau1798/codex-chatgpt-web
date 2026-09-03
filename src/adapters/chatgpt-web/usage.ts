@@ -1,6 +1,7 @@
 import { estimateTokens } from "../../lib/token-estimate";
 import {
   CHATGPT_WEB_BACKEND_MODEL,
+  isChatGptWebZeroRiskBackendModel,
   resolveChatGptWebContextLimits,
 } from "../../chatgpt-web-models";
 import type { CodexParsedRequest, CodexUsage } from "../../types";
@@ -39,13 +40,17 @@ export function estimateChatGptWebInputTokens(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
 ): number {
-  const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
+  const manual = isChatGptWebZeroRiskBackendModel(parsed.modelId);
+  const mode = manual
+    ? { localTools: true }
+    : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
   const identity = extractChatGptTurnIdentity(parsed);
   const compiled = compileChatGptWebPrompt(
     parsed,
     capabilities,
     mode.localTools ? ESTIMATE_TURN_TOKEN : undefined,
     {
+      ...(manual ? { manualControl: true as const } : {}),
       captureLunaCheckpoint: parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID
         && !parsed._compactionRequest
         && Boolean(identity.threadId && identity.turnId),
@@ -63,6 +68,9 @@ export function resolveBiggerContextMultipartParts(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
 ): ChatGptWebMultipartPartCount | undefined {
+  if (isChatGptWebZeroRiskBackendModel(parsed.modelId)) {
+    throw new Error("Bigger Context is unavailable for ChatGPT Zero Risk");
+  }
   if (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error("Bigger Context is unavailable for Luna because its accumulated browser transcript still shares one 28,000-token transport budget");
   }

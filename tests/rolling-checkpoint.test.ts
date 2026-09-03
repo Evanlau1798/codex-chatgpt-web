@@ -103,9 +103,9 @@ test("Luna checkpoint marker survives the real ChatGPT DOM-to-Markdown serialize
   expect(completed.captured.checkpoint).toEqual({ version: 2, summary: domCheckpoint });
 });
 
-test("Luna checkpoint treats the malformed quoted payload from issue 89 as opaque semantic state", () => {
+test("Luna checkpoint treats a malformed quoted payload as opaque semantic state", () => {
   const stream = new ChatGptLunaCheckpointStream();
-  const checkpointText = `{"version":1,"objective":"Acknowledge the user's latest message.","state":["Latest human-authored request was "di OK".","No substantive task was requested in the provided context."],"evidence":["The final human message in the task context is "di OK"."],"decisions":["Respond with a concise acknowledgment."],"pending":[]}`;
+  const checkpointText = `{"version":1,"objective":"Preserve an opaque record.","state":["A field contains "unescaped quoted text"."],"evidence":[],"decisions":[],"pending":[]}`;
   const raw = `OK.\n\n${CHATGPT_LUNA_CHECKPOINT_MARKER}\n${checkpointText}`;
   stream.push(raw);
 

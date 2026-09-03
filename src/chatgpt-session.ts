@@ -58,6 +58,84 @@ export interface ChatGptEffortSliderState {
   value: number;
 }
 
+export interface ChatGptEffortActivation {
+  method: "already-open" | "click" | "pointerdown";
+  menu: Locator;
+  slider: Locator;
+}
+
+function effortMenuSelectorForId(menuId: string): string {
+  return `[id=${JSON.stringify(menuId)}]`;
+}
+
+export async function chatGptEffortMenuForControl(page: Page, control: Locator): Promise<Locator> {
+  const menuId = await control.getAttribute("aria-controls").catch(() => null);
+  if (menuId) return page.locator(effortMenuSelectorForId(menuId));
+  return page.locator(CHATGPT_EFFORT_MENU_SELECTOR).filter({ visible: true }).last();
+}
+
+async function visibleEffortSurface(
+  page: Page,
+  control: Locator,
+): Promise<{ menu: Locator; slider: Locator } | undefined> {
+  const menu = await chatGptEffortMenuForControl(page, control);
+  const slider = page.locator(CHATGPT_EFFORT_SLIDER_SELECTOR).filter({ visible: true }).last();
+  if (await menu.isVisible().catch(() => false) || await slider.isVisible().catch(() => false)) {
+    return { menu, slider };
+  }
+  return undefined;
+}
+
+async function waitForEffortSurface(
+  page: Page,
+  control: Locator,
+  timeoutMs: number,
+): Promise<{ menu: Locator; slider: Locator } | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    const surface = await visibleEffortSurface(page, control);
+    if (surface) return surface;
+    if (Date.now() >= deadline) return undefined;
+    await new Promise(resolveSleep => setTimeout(resolveSleep, 50));
+  } while (true);
+}
+
+async function clearGhostEffortState(page: Page, control: Locator): Promise<void> {
+  const expanded = await control.getAttribute("aria-expanded").catch(() => null);
+  const state = await control.getAttribute("data-state").catch(() => null);
+  if (expanded === "true" || state === "open") {
+    await page.keyboard.press("Escape").catch(() => {});
+  }
+}
+
+export async function activateChatGptEffortMenu(
+  page: Page,
+  control: Locator,
+  options: { settleMs?: number } = {},
+): Promise<ChatGptEffortActivation> {
+  const openSurface = await visibleEffortSurface(page, control);
+  if (openSurface) return { method: "already-open", ...openSurface };
+
+  const settleMs = options.settleMs ?? 3_000;
+  await clearGhostEffortState(page, control);
+  await control.click({ force: true, timeout: Math.max(1, settleMs) });
+  const clickedSurface = await waitForEffortSurface(page, control, settleMs);
+  if (clickedSurface) return { method: "click", ...clickedSurface };
+
+  await clearGhostEffortState(page, control);
+  await control.dispatchEvent("pointerdown", {
+    button: 0,
+    buttons: 1,
+    pointerType: "mouse",
+    isPrimary: true,
+  });
+  const pointerSurface = await waitForEffortSurface(page, control, settleMs);
+  if (pointerSurface) return { method: "pointerdown", ...pointerSurface };
+  throw new Error(
+    "ChatGPT effort control did not expose its owned menu or structural slider after click and primary pointerdown",
+  );
+}
+
 function safeIntegerAttribute(value: string | null): number | undefined {
   if (value === null || !/^-?\d+$/.test(value)) return undefined;
   const parsed = Number(value);

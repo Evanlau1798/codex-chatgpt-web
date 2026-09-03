@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatGptWebTraceId } from "../src/adapters/chatgpt-web";
+import { runStructuredCompactionOnce } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { callTurnBroker, closeTurnBrokers, RemoteTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint, defaultConfig, providerConfig } from "../src/config";
@@ -356,6 +357,80 @@ test("authenticated targeted cancellation terminates one browser trace without r
     }, undefined, undefined, undefined, "trace_target")).toBe(target);
   } finally {
     chatGptTurnSessions.clear();
+    await server.stop(true);
+  }
+});
+
+test("authenticated targeted cancellation aborts a shared structured compaction owner", async () => {
+  const config = { ...defaultConfig("browser-only"), port: 0 };
+  const server = startServer(config);
+  const handoffTraceId = "a1b2c3d4e5f6";
+  const traceId = `${handoffTraceId}_fallback`;
+  let aborted = false;
+  const run = runStructuredCompactionOnce(
+    `structured-${Date.now()}-${Math.random()}`,
+    { ownerKey: `owner-${traceId}`, traceIds: [handoffTraceId, traceId] },
+    signal => new Promise<string>((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        aborted = true;
+        reject(signal.reason);
+      }, { once: true });
+    }),
+  );
+
+  try {
+    await Bun.sleep(0);
+    const response = await fetch(`http://127.0.0.1:${server.port}/admin/cancel-turn`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${config.controlToken}`,
+      },
+      body: JSON.stringify({ traceId }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: "ok",
+      trace_id: traceId,
+      cancelled_compaction_runs: 1,
+    });
+    await expect(run).rejects.toThrow("The ChatGPT browser tab was closed");
+    expect(aborted).toBeTrue();
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test("authenticated cancel-all aborts fresh structured compaction work", async () => {
+  const config = { ...defaultConfig("browser-only"), port: 0 };
+  const server = startServer(config);
+  const key = `structured-all-${Date.now()}-${Math.random()}`;
+  let aborted = false;
+  const run = runStructuredCompactionOnce(
+    key,
+    { ownerKey: `owner-${key}`, traceIds: [`trace-${key}`] },
+    signal => new Promise<string>((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        aborted = true;
+        reject(signal.reason);
+      }, { once: true });
+    }),
+  );
+
+  try {
+    await Bun.sleep(0);
+    const response = await fetch(`http://127.0.0.1:${server.port}/admin/cancel-turns`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${config.controlToken}` },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: "ok",
+      cancelled_compaction_runs: 1,
+    });
+    await expect(run).rejects.toThrow("Active turn cancelled by launcher");
+    expect(aborted).toBeTrue();
+  } finally {
     await server.stop(true);
   }
 });

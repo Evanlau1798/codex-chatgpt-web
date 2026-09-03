@@ -134,7 +134,7 @@ describe("tunnel launchd ownership", () => {
     expect(command).toBe(
       `"${runtime.replaceAll("\\", "\\\\")}" `
       + `"${join(root, "Program Files", "app", "cli.js").replaceAll("\\", "\\\\")}" `
-      + '"mcp" "--broker-socket" "\\\\\\\\.\\\\pipe\\\\codex-chatgpt-web-test"',
+      + '"mcp" "--contract" "native" "--broker-socket" "\\\\\\\\.\\\\pipe\\\\codex-chatgpt-web-test"',
     );
     expect(command).not.toContain("cmd.exe");
     expect(existsSync(join(root, "bin", "mcp-launcher.cmd"))).toBe(false);
@@ -142,9 +142,14 @@ describe("tunnel launchd ownership", () => {
       runtime,
       join(root, "Program Files", "app", "cli.js"),
       "mcp",
+      "--contract",
+      "native",
       "--broker-socket",
       "\\\\.\\pipe\\codex-chatgpt-web-test",
     ]);
+
+    config.browserInteractionMode = "manual";
+    expect(parsePinnedTunnelCommand(mcpCommand(config, "win32"))).toContain("safe");
   });
 
 });

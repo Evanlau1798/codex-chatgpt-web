@@ -9,9 +9,11 @@ export type IconName =
   | "chevron"
   | "close"
   | "external"
+  | "expand"
   | "forward"
   | "github"
   | "globe"
+  | "info"
   | "logs"
   | "mcp"
   | "minus"
@@ -35,9 +37,11 @@ export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGEle
       {name === "chevron" ? <path {...common} d="m9 6 6 6-6 6" /> : null}
       {name === "close" ? <path {...common} d="m6 6 12 12M18 6 6 18" /> : null}
       {name === "external" ? <><path {...common} d="M14 5h5v5M19 5l-8 8" /><path {...common} d="M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></> : null}
+      {name === "expand" ? <><path {...common} d="M8 3H3v5M3 3l6 6M16 3h5v5M21 3l-6 6M8 21H3v-5M3 21l6-6M16 21h5v-5M21 21l-6-6" /></> : null}
       {name === "forward" ? <path {...common} d="m9.5 6 6 6-6 6" /> : null}
       {name === "github" ? <path fill="currentColor" d="M12 2.6a9.6 9.6 0 0 0-3 18.7c.5.1.7-.2.7-.5v-1.9c-2.8.6-3.4-1.2-3.4-1.2-.5-1.2-1.1-1.5-1.1-1.5-.9-.6.1-.6.1-.6 1 0 1.6 1.1 1.6 1.1.9 1.6 2.4 1.1 3 .8.1-.7.4-1.1.7-1.4-2.3-.3-4.7-1.1-4.7-4.8 0-1.1.4-2 1-2.6-.1-.3-.4-1.3.1-2.6 0 0 .8-.3 2.7 1a9.3 9.3 0 0 1 4.9 0c1.9-1.3 2.7-1 2.7-1 .5 1.3.2 2.3.1 2.6.7.7 1 1.5 1 2.6 0 3.7-2.4 4.5-4.7 4.8.4.3.7 1 .7 1.9v2.8c0 .4.2.6.7.5A9.6 9.6 0 0 0 12 2.6Z" /> : null}
       {name === "globe" ? <><circle {...common} cx="12" cy="12" r="9" /><path {...common} d="M3 12h18M12 3c2.4 2.4 3.6 5.4 3.6 9S14.4 18.6 12 21c-2.4-2.4-3.6-5.4-3.6-9S9.6 5.4 12 3Z" /></> : null}
+      {name === "info" ? <><circle {...common} cx="12" cy="12" r="9" /><path {...common} d="M12 10.5V17M12 7h.01" /></> : null}
       {name === "logs" ? <><path {...common} d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h4" /></> : null}
       {name === "mcp" ? <><path {...common} d="M8 7.5 12 4l4 3.5v5L12 16l-4-3.5v-5Z" /><path {...common} d="m8 12.5-3 2.7v3.3L8 21l3-2.5V16M16 12.5l3 2.7v3.3L16 21l-3-2.5V16" /></> : null}
       {name === "minus" ? <path {...common} d="M5 12h14" /> : null}

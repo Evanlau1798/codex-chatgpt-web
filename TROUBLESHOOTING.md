@@ -90,6 +90,11 @@ missing paid selector on those accounts is not itself a sign-in failure.
 
 ## Full harness or MCP verification fails
 
+Video walkthroughs:
+
+- [Create an OpenAI tunnel and API key](launcher/src/assets/mcp-create-tunnel.mp4)
+- [Connect the local harness and attach the ChatGPT connector](launcher/src/assets/mcp-connect-connector.mp4)
+
 Browser-only mode needs no connector. Full harness mode requires all of the following:
 
 - a newly created connector named exactly **Codex Native2**;

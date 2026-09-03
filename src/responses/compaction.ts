@@ -133,6 +133,9 @@ export function extractCompactUserMessages(input: unknown): CompactMessageItem[]
     const rec = item as CompactMessageItem & { type?: string; role?: string; content?: unknown };
     if (rec.type !== undefined && rec.type !== "message") continue;
     if (rec.role !== "user") continue;
+    if (isReadableCompactionSummaryText(
+      compactContentBlocks(rec).filter(textBlock).map(block => block.text).join(""),
+    )) continue;
     out.push(structuredClone(rec));
   }
   return out;

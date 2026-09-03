@@ -1,10 +1,12 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { defaultBrokerEndpoint } from "../src/config";
+import { defaultBrokerEndpoint, defaultConfig, ZERO_RISK_CHATGPT_CONNECTOR_NAME } from "../src/config";
 import { LAUNCHER_BROWSER_IDLE_URL } from "../src/launcher-browser-host";
+
+setDefaultTimeout(30_000);
 
 async function runCli(args: string[], env: Record<string, string | undefined>) {
   const child = Bun.spawn([
@@ -51,6 +53,83 @@ test("setup validates the port before performing runtime work", async () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("setup browser-interaction flags are explicit and mutually exclusive", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cli-interaction-"));
+  try {
+    const result = await runCli([
+      "setup",
+      "--browser-only",
+      "--automatic-browser-interaction",
+      "--zero-risk-browser-interaction",
+      "--acknowledge-unofficial",
+    ], {
+      ...process.env,
+      CODEX_HOME: join(root, "codex"),
+      CODEX_CHATGPT_WEB_HOME: join(root, "app"),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("Choose at most one browser interaction mode");
+
+    const profileConflict = await runCli([
+      "setup",
+      "--browser-only",
+      "--zero-risk-browser-interaction",
+      "--zero-risk-pro",
+      "--zero-risk-default",
+      "--acknowledge-unofficial",
+    ], {
+      ...process.env,
+      CODEX_HOME: join(root, "codex"),
+      CODEX_CHATGPT_WEB_HOME: join(root, "app"),
+    });
+    expect(profileConflict.exitCode).toBe(1);
+    expect(profileConflict.stderr).toContain("Choose at most one Zero Risk model profile");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("manual setup rejects capability refresh and Bigger Context", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cli-manual-invalid-"));
+  try {
+    const env = {
+      ...process.env,
+      CODEX_HOME: join(root, "codex"),
+      CODEX_CHATGPT_WEB_HOME: join(root, "app"),
+    };
+    const refresh = await runCli([
+      "setup",
+      "--browser-only",
+      "--zero-risk-browser-interaction",
+      "--refresh-account-capabilities",
+      "--acknowledge-unofficial",
+    ], env);
+    expect(refresh.exitCode).toBe(1);
+    expect(refresh.stderr).toContain("cannot refresh account capabilities");
+
+    const bigger = await runCli([
+      "setup",
+      "--browser-only",
+      "--zero-risk-browser-interaction",
+      "--bigger-context",
+      "--acknowledge-unofficial",
+    ], env);
+    expect(bigger.exitCode).toBe(1);
+    expect(bigger.stderr).toContain("does not support Bigger Context");
+
+    const browserOnly = await runCli([
+      "setup",
+      "--browser-only",
+      "--zero-risk-browser-interaction",
+      "--acknowledge-unofficial",
+    ], env);
+    expect(browserOnly.exitCode).toBe(1);
+    expect(browserOnly.stderr).toContain("requires --full");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 20_000);
 
 test("passkey capture cannot be invoked outside the live Launcher control channel", async () => {
   const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cli-passkey-auth-"));
@@ -244,6 +323,134 @@ test("DEV browser-only setup persists only the isolated harness profile", async 
     expect(existsSync(join(devHome, "codex-home", "config.toml"))).toBe(false);
   } finally {
     await new Promise<void>(resolveClose => control.close(() => resolveClose()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("DEV setup accepts explicit browser-interaction flags and preserves manual fail-closed validation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cli-dev-interaction-"));
+  const devHome = join(root, "dev");
+  const descriptorPath = join(devHome, "runtime", "launcher-browser.json");
+  const helperScript = join(root, "helper.cjs");
+  try {
+    mkdirSync(join(devHome, "runtime"), { recursive: true });
+    writeFileSync(helperScript, "module.exports = {};\n", { mode: 0o700 });
+    writeFileSync(descriptorPath, `${JSON.stringify({
+      version: 2,
+      kind: "codex-web-gpt-launcher",
+      profile: "development",
+      pid: process.pid,
+      endpoint: "http://127.0.0.1:48131",
+      control: {
+        endpoint: "http://127.0.0.1:48132",
+        token: "dev-manual-control-token-0123456789abcdefghijklmnop",
+      },
+      helper: { executable: process.execPath, script: helperScript },
+      partition: "persist:codex-web-gpt-dev-chatgpt",
+      idleUrl: LAUNCHER_BROWSER_IDLE_URL,
+      surfaceId: "m".repeat(32),
+      createdAt: new Date().toISOString(),
+    })}\n`, { mode: 0o600 });
+    const env = {
+      ...process.env,
+      CODEX_WEB_GPT_DEV_HOME: devHome,
+      CODEX_CHATGPT_WEB_HOME: join(root, "production"),
+      CODEX_HOME: join(root, "production-codex"),
+    };
+
+    const manualBrowserOnly = await runCli([
+      "dev",
+      "setup",
+      "--browser-only",
+      "--browser-host-descriptor",
+      descriptorPath,
+      "--zero-risk-browser-interaction",
+      "--acknowledge-unofficial",
+    ], env);
+    expect(manualBrowserOnly.exitCode).toBe(1);
+    expect(manualBrowserOnly.stderr).toContain("requires --full");
+    expect(manualBrowserOnly.stderr).not.toContain("Unknown DEV arguments");
+
+    const conflicting = await runCli([
+      "dev",
+      "setup",
+      "--browser-only",
+      "--automatic-browser-interaction",
+      "--zero-risk-browser-interaction",
+    ], env);
+    expect(conflicting.exitCode).toBe(1);
+    expect(conflicting.stderr).toContain("Choose at most one browser interaction mode");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("browser check uses metadata-only launcher liveness in Zero Risk", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cli-manual-browser-check-"));
+  const appHome = join(root, "app");
+  const descriptorPath = join(appHome, "runtime", "launcher-browser.json");
+  const helperScript = join(root, "helper.cjs");
+  let requests = 0;
+  const cdp = createServer((request, response) => {
+    requests += 1;
+    expect(request.url).toBe("/json/version");
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      webSocketDebuggerUrl: "ws://127.0.0.1:48142/devtools/browser/manual-check",
+    }));
+  });
+  await new Promise<void>((resolveListen, rejectListen) => {
+    cdp.once("error", rejectListen);
+    cdp.listen(0, "127.0.0.1", resolveListen);
+  });
+  try {
+    const address = cdp.address();
+    if (!address || typeof address === "string") throw new Error("CDP test server has no port");
+    mkdirSync(join(appHome, "runtime"), { recursive: true });
+    writeFileSync(helperScript, "module.exports = {};\n", { mode: 0o700 });
+    writeFileSync(descriptorPath, `${JSON.stringify({
+      version: 2,
+      kind: "codex-web-gpt-launcher",
+      profile: "production",
+      pid: process.pid,
+      endpoint: `http://127.0.0.1:${address.port}`,
+      control: {
+        endpoint: "http://127.0.0.1:48143",
+        token: "manual-browser-check-token-0123456789abcdefghijklmnop",
+      },
+      helper: { executable: process.execPath, script: helperScript },
+      partition: "persist:codex-web-gpt-chatgpt",
+      idleUrl: LAUNCHER_BROWSER_IDLE_URL,
+      surfaceId: "s".repeat(32),
+      createdAt: new Date().toISOString(),
+    })}\n`, { mode: 0o600 });
+    const config = {
+      ...defaultConfig("full"),
+      appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+      browserHost: "launcher",
+      browserInteractionMode: "manual",
+      browserHostDescriptorPath: descriptorPath,
+      tunnel: {
+        binaryPath: process.execPath,
+        tunnelId: `tunnel_${"a".repeat(32)}`,
+        runtimeKeyFile: join(root, "runtime.key"),
+        profileDir: join(root, "tunnel-profile"),
+        profileName: "manual-check",
+        alias: "manual-check",
+      },
+    };
+    writeFileSync(join(appHome, "config.json"), `${JSON.stringify(config)}\n`, { mode: 0o600 });
+
+    const result = await runCli(["browser", "check"], {
+      ...process.env,
+      CODEX_CHATGPT_WEB_HOME: appHome,
+      CODEX_HOME: join(root, "codex"),
+    });
+    expect({ exitCode: result.exitCode, stderr: result.stderr }).toEqual({ exitCode: 0, stderr: "" });
+    expect(result.stdout).toContain("DOM inspection is intentionally disabled");
+    expect(requests).toBe(1);
+  } finally {
+    await new Promise<void>(resolveClose => cdp.close(() => resolveClose()));
     rmSync(root, { recursive: true, force: true });
   }
 });

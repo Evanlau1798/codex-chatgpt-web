@@ -56,6 +56,14 @@ function browserProcessExited(browser: ChildProcess): boolean {
   return browser.exitCode !== null || browser.signalCode !== null;
 }
 
+function removeTemporaryChromeTabSessions(profileDir: string): void {
+  const defaultProfile = join(profileDir, "Default");
+  rmSync(join(defaultProfile, "Sessions"), { recursive: true, force: true });
+  for (const name of ["Current Session", "Current Tabs", "Last Session", "Last Tabs"]) {
+    rmSync(join(defaultProfile, name), { force: true });
+  }
+}
+
 async function waitForBrowserExit(browser: ChildProcess, timeoutMs: number): Promise<boolean> {
   if (browserProcessExited(browser)) return true;
   return await new Promise(resolve => {
@@ -323,13 +331,16 @@ export async function captureSystemBrowserLogin(
       if (timeout) clearTimeout(timeout);
     }
 
-    // Authentication happens before Playwright ever owns this profile. Capture is then performed
-    // offline over an inherited pipe, so the automated phase cannot reach ChatGPT or the identity
-    // provider and cannot interfere with the platform passkey challenge.
+    // Authentication happens before Playwright ever owns this profile. Chrome does not load
+    // session-only cookies after a normal restart unless session restore is requested. Remove only
+    // the disposable profile's tab-session files first, so restoring cookies cannot reopen the
+    // authenticated or identity-provider pages during the offline capture.
+    removeTemporaryChromeTabSessions(profileDir);
     context = await chromium.launchPersistentContext(profileDir, {
       executablePath: config.chromeExecutablePath,
       headless: true,
       chromiumSandbox: true,
+      offline: true,
       serviceWorkers: "block",
       ignoreDefaultArgs: [
         "--no-sandbox",
@@ -337,7 +348,13 @@ export async function captureSystemBrowserLogin(
         "--password-store=basic",
         "--use-mock-keychain",
       ],
-      args: ["--disable-background-mode", "--no-first-run", "--no-default-browser-check"],
+      args: [
+        "--disable-background-mode",
+        "--disable-background-networking",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--restore-last-session",
+      ],
       timeout: Math.min(30_000, remainingTime()),
     });
     await context.setOffline(true);

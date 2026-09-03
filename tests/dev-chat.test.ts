@@ -56,6 +56,63 @@ test("new DEV chats default to the cheapest account-supported browser model", ()
   expect(defaultDevChatModel({ ...defaultConfig("full"), solAvailable: true })).toBe("chatgpt-web/light");
   expect(defaultDevChatModel({ ...defaultConfig("full"), solAvailable: false })).toBe("chatgpt-web/luna");
   expect(DEV_CHAT_MODELS).toContain("chatgpt-web/think");
+  expect(defaultDevChatModel({
+    ...defaultConfig("full"),
+    browserInteractionMode: "manual",
+  })).toBe("chatgpt-web/zero-risk");
+});
+
+test("Zero Risk DEV chats open only the generic route", () => {
+  const root = scratch("cgw-dev-safe-model");
+  const config = {
+    ...defaultConfig("full"),
+    browserInteractionMode: "manual" as const,
+  };
+  const driver = new DevChatDriver(
+    config,
+    new DevChatStore(join(root, "chats")),
+    (_provider: CodexProviderConfig): ProviderAdapter => {
+      throw new Error("adapter is not needed to open a DEV chat");
+    },
+    root,
+  );
+  expect(driver.open("safe").state.model).toBe("chatgpt-web/zero-risk");
+  expect(() => driver.open("automatic", "chatgpt-web/high")).toThrow(
+    "not available while Zero Risk is enabled",
+  );
+});
+
+test("an existing DEV chat changes route only when the user explicitly requests it", () => {
+  const root = scratch("cgw-dev-safe-model-migration");
+  const store = new DevChatStore(join(root, "chats"));
+  const automatic = new DevChatDriver(
+    defaultConfig("full"),
+    store,
+    (_provider: CodexProviderConfig): ProviderAdapter => {
+      throw new Error("adapter is not needed to open a DEV chat");
+    },
+    root,
+  );
+  const original = automatic.open("switchable", "chatgpt-web/high").state;
+  original.input.push({ type: "message", role: "user", content: "preserve me" });
+  store.save(original);
+
+  const manual = new DevChatDriver(
+    { ...defaultConfig("full"), browserInteractionMode: "manual" },
+    store,
+    (_provider: CodexProviderConfig): ProviderAdapter => {
+      throw new Error("adapter is not needed to open a DEV chat");
+    },
+    root,
+  );
+  expect(() => manual.open("switchable")).toThrow(
+    "not available while Zero Risk is enabled",
+  );
+  const migrated = manual.open("switchable", "chatgpt-web/zero-risk").state;
+  expect(migrated).toMatchObject({
+    model: "chatgpt-web/zero-risk",
+    input: [{ type: "message", role: "user", content: "preserve me" }],
+  });
 });
 
 test("Bigger Context triples the DEV compaction window and fails closed for Luna", async () => {
@@ -162,7 +219,7 @@ test("DEV chat attaches its broker to the launcher-owned tunnel without a Respon
     });
     expect(transport.config).toBe(config);
     expect(await callTurnBroker(transport.config.brokerSocketPath, { method: "owner_status" }))
-      .toMatchObject({ protocolVersion: 2 });
+      .toMatchObject({ protocolVersion: 4 });
     expect(await (await fetch(`http://127.0.0.1:${occupied.port}`)).text()).toBe("normal Codex route");
   } finally {
     await transport?.close();

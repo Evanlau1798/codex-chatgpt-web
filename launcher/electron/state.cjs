@@ -18,6 +18,8 @@ const DEFAULT_STATE = Object.freeze({
   keepRunningOnClose: true,
   showBrowserDuringTurns: true,
   lockBrowserDuringTurns: true,
+  browserInteractionMode: "automatic",
+  zeroRiskProEnabled: false,
   browserSmokePassed: false,
   browserSmokeVersion: null,
   codexSetupComplete: false,
@@ -65,6 +67,7 @@ function readState(filePath) {
       "keepRunningOnClose",
       "showBrowserDuringTurns",
       "lockBrowserDuringTurns",
+      "zeroRiskProEnabled",
       "browserSmokePassed",
       "codexSetupComplete",
       "claudeSetupComplete",
@@ -72,6 +75,13 @@ function readState(filePath) {
       "sidebarOpen",
     ]) {
       if (typeof state[key] !== "boolean") state[key] = DEFAULT_STATE[key];
+    }
+    if (state.browserInteractionMode !== "automatic" && state.browserInteractionMode !== "manual") {
+      state.browserInteractionMode = DEFAULT_STATE.browserInteractionMode;
+    }
+    if (state.coreSetupComplete !== true) {
+      if (state.onboardingComplete !== true) state.browserInteractionMode = "automatic";
+      state.zeroRiskProEnabled = false;
     }
     if (state.browserSmokeVersion !== null
       && (typeof state.browserSmokeVersion !== "string" || state.browserSmokeVersion.length > 128)) {

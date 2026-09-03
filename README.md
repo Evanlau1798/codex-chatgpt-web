@@ -140,12 +140,18 @@ This source path requires Bun 1.4.0+34cbb9a40. The command installs locked depen
 | Mode | Models | Local Codex tools | Extra setup |
 | --- | --- | --- | --- |
 | **Browser-only** | Free/Go: Luna; Plus: Instant–High; Pro: adds Extra High and Pro | No; Codex shows a warning | None |
-| **Full harness** | Free/Go: Luna; Plus: Instant–High; Pro: adds Extra High and Pro | Yes for every listed effort, including Pro | OpenAI tunnel + ChatGPT connector |
+| **Full harness (With Automation)** | Free/Go: Luna; Plus: Instant–High; Pro: adds Extra High and Pro | Yes for every listed effort, including Pro | OpenAI tunnel + ChatGPT connector |
+| **Zero Risk** | Choose the ChatGPT model and effort manually; optional Pro-sized context | Yes; the full turn-bound Codex harness remains available | Separate OpenAI tunnel + `Codex Zero Risk` connector; paste and send manually |
 
-Every picker entry has one fixed ChatGPT mode. Codex still displays its built-in Effort and Speed
-rows, but changing them cannot silently change the selected browser model. In Full mode every
-available effort receives the same turn-bound MCP capability. Pro has no separate restriction or
-reduced tool contract.
+Each automatic picker entry has one fixed ChatGPT mode. Codex still displays its built-in Effort and
+Speed rows, but changing them cannot silently change the selected browser model. In automatic Full
+mode every available effort receives the same turn-bound MCP capability. Pro has no separate
+restriction or reduced tool contract.
+
+Zero Risk keeps the local Responses bridge and full Codex harness, but never reads or changes the
+ChatGPT page and never sends a prompt for you. The launcher prepares and copies the prompt; you
+choose the model, effort, and `Codex Zero Risk` connector, then paste and send it yourself. This
+removes the account risk specifically associated with ChatGPT web automation.
 
 ### Enhanced Web session mode (Beta)
 
@@ -193,26 +199,21 @@ Full mode connects ChatGPT's tool calls back to the current Codex task through t
 [OpenAI tunnel-client](https://github.com/openai/tunnel-client). The tunnel is outbound: it does
 not expose a public IP, open an inbound port, or require router forwarding.
 
+The launcher's **MCP** page guides the complete setup. For the exact clicks, see the
+[video walkthroughs](TROUBLESHOOTING.md).
+
 > [!WARNING]
 > Create a **new** connector named **Codex Native2** and set its permissions to
 > **Allow all actions**. Do not rename, refresh, or reuse an older **Codex Native** connector:
 > ChatGPT caches the public MCP contract by connector identity, and **Allow low-risk actions**
 > blocks commands and patches before they reach the Codex harness.
 
-1. Finish the required launcher setup.
-2. Open **MCP** in the launcher. Create the Tunnel and a regular API key on the same OpenAI account
-   that will use the ChatGPT connector; creating the key is free and does not consume model API
-   credits.
-3. Paste the Tunnel ID and API key, then press **Connect harness**.
-4. Enable **Developer Mode** in ChatGPT settings. Create a **new** connector using **Tunnel**, select
-   that exact Tunnel, set **Authentication** to **None**, and name it exactly **Codex Native2**.
-5. If an older **Codex Native** connector exists, leave it untouched. Do not rename or refresh it:
-   ChatGPT caches the public MCP contract by connector identity, and this release uses a new direct
-   turn-token contract. Under **Permissions** on **Codex Native2**, choose **Allow all actions**;
-   **Allow low-risk actions** blocks commands and patches before they reach this runtime. The outer
-   Codex harness still enforces its sandbox and approvals.
-6. Run **Verify runtime**. It selects **Codex Native2** exactly. If only **Codex Native** is found,
-   verification fails with an explicit migration error instead of accepting the legacy connector.
+1. Finish the required setup, open **MCP**, create the Tunnel and regular API key, then press
+   **Connect harness**.
+2. Enable ChatGPT **Developer Mode** and create a new Tunnel connector named exactly
+   **Codex Native2**, with **Authentication: None** and **Allow all actions**.
+3. Run **Verify runtime**. If only the legacy **Codex Native** connector exists, leave it untouched
+   and create **Codex Native2** instead of renaming or refreshing it.
 
 Write/modify actions also require the ChatGPT workspace and its administrator policy to permit
 them. See
@@ -319,3 +320,5 @@ reused implicitly.
 This is independent software and is not affiliated with or endorsed by OpenAI. Use it only with
 your own account and in accordance with applicable [Terms of Use](https://openai.com/policies/terms-of-use/)
 and workspace policies; it does not bypass authentication or access controls.
+
+Having trouble? See [Troubleshooting](TROUBLESHOOTING.md) for common problems and their solutions.

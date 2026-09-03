@@ -7,9 +7,8 @@ const {
 } = require("../electron/turn-suspension.cjs");
 const { BrowserHost } = require("../electron/browser-host.cjs");
 
-// System sleep froze the launcher for 15 minutes twice in a row; on each wake the first sweep saw
-// heartbeats that were minutes stale and reaped two live turns as orphans. pmset matched both waves
-// to the second. These tests pin the wake-side tolerance and the sleep-side prevention.
+// Suspension freezes both launcher sweeps and helper heartbeats. These tests pin wake-side lease
+// re-baselining and sleep prevention without treating suspended time as helper failure.
 
 test("a sweep gap of multiples of the interval is recognised as a suspension", () => {
   assert.equal(sweepGapIndicatesSuspension(1_000, 1_000 + 5_000 * 6, 5_000), true);
