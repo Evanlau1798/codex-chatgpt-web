@@ -100,13 +100,16 @@ test("a lost manual-start response still releases the possibly committed launche
     async waitSent() { throw new Error("must not wait after start failed"); },
     waitTerminal: noManualTerminal,
     async markStarted() {},
-    async end(_path, activity) { ended.push(activity.status); },
+    async end(_path, activity) {
+      await new Promise(resolve => setTimeout(resolve, 25));
+      ended.push(activity.status);
+    },
     async cancel() {},
   };
   try {
-    await createChatGptWebAdapter(config, { broker, zeroRiskManualControl: control }).runTurn!(
+    await expect(createChatGptWebAdapter(config, { broker, zeroRiskManualControl: control }).runTurn!(
       request("turn_lost_start_response"), { headers: new Headers() }, () => {},
-    ).catch(() => {});
+    )).rejects.toThrow("response lost after launcher committed the tab");
     expect(ended).toEqual(["failed"]);
   } finally {
     chatGptTurnSessions.clear();

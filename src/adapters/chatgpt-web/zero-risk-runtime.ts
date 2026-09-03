@@ -168,7 +168,6 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
           options.timeoutMs === undefined ? undefined : options.timeoutMs + 60_000,
           traceId,
         );
-        token.resolve(activeToken);
         const full = compileChatGptWebPrompt(parsed, options.capabilities, activeToken, { manualControl: true });
         const suffix = resume
           ? compileChatGptWebPrompt(resume, options.capabilities, activeToken, { manualControl: true })
@@ -189,6 +188,7 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
           ...(suffix ? { resumePrompt: suffix.text } : {}),
           ...(conversationKey ? { conversationKey } : {}),
         });
+        token.resolve(activeToken);
         await options.control.waitSent(descriptorPath, owner, { abortSignal: browserAbort.signal });
         await options.broker.confirmSafeTurnSent(activeToken, surfaceNonce);
         submission.phase = "accepted";
