@@ -58,7 +58,10 @@ export async function runEnhancedCompaction(
     .digest("hex")
     .slice(0, 12);
   let shared = existingStructuredCompactionRun(compactionExecutionKey);
-  if (!shared) shared = runStructuredCompactionOnce(compactionExecutionKey, async () => {
+  if (!shared) shared = runStructuredCompactionOnce(compactionExecutionKey, {
+    ownerKey: responseExecutionKey,
+    traceIds: [traceId, `${traceId}_fallback`],
+  }, async operatorSignal => {
     const handoffTimeoutMs = Math.min(
       timeoutMs ?? MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
       MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
@@ -69,11 +72,12 @@ export async function runEnhancedCompaction(
       handoffTimeoutMs,
     );
     timer.unref?.();
+    const operationSignal = AbortSignal.any([deadline.signal, operatorSignal]);
     const source = chatGptTurnSessions.find(responseExecutionKey);
     let preserveFinal = !source?.isActive() && source?.settledOutcome()?.type === "final";
     const fallback = async (reason: string): Promise<string> => {
       console.warn(`[chatgpt-web] retained compaction fallback=${reason}`);
-      const raw = await startFallback(`${traceId}_fallback`, deadline.signal);
+      const raw = await startFallback(`${traceId}_fallback`, operationSignal);
       const canonical = canonicalizeCompactionHandoff(parsed, raw);
       if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");
       return canonical;
@@ -82,21 +86,21 @@ export async function runEnhancedCompaction(
       const conversationKey = source?.conversationKey();
       if (!source || !conversationKey) {
         if (source) await withCompactionAbort(
-          chatGptTurnSessions.retireAndWait(responseExecutionKey), deadline.signal,
+          chatGptTurnSessions.retireAndWait(responseExecutionKey), operationSignal,
         );
         return await fallback("source_unavailable_before_handoff");
       }
       if (source.isActive() && source.runtime.mode === "tools") {
-        const settled = await settleActiveCompactionSource(parsed, source, broker, deadline.signal);
+        const settled = await settleActiveCompactionSource(parsed, source, broker, operationSignal);
         preserveFinal = !settled.compactionInstructionDelivered;
       } else if (source.isActive()) {
-        const outcome = await withCompactionAbort(source.browserOutcome, deadline.signal);
+        const outcome = await withCompactionAbort(source.browserOutcome, operationSignal);
         if (outcome.type === "error") throw outcome.error;
-        await withCompactionAbort(source.physicalSettlement, deadline.signal);
+        await withCompactionAbort(source.physicalSettlement, operationSignal);
         preserveFinal = true;
       }
       const raw = await requestRetainedCompactionHandoff(
-        worker, parsed, source, broker, capabilities, traceId, deadline.signal, handoffTimeoutMs,
+        worker, parsed, source, broker, capabilities, traceId, operationSignal, handoffTimeoutMs,
       );
       const canonical = canonicalizeCompactionHandoff(parsed, raw);
       if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");
@@ -106,7 +110,7 @@ export async function runEnhancedCompaction(
               conversationKey, source, responseExecutionKey,
             )
           : chatGptTurnSessions.retireConversationAndWait(conversationKey),
-        deadline.signal,
+        operationSignal,
       );
       return canonical;
     } catch (error) {
@@ -118,7 +122,7 @@ export async function runEnhancedCompaction(
                 conversationKey, source, responseExecutionKey,
               )
             : chatGptTurnSessions.retireConversationAndWait(conversationKey),
-          deadline.signal,
+          operationSignal,
         );
       }
       if (error instanceof RetainedCompactionSourceUnavailableError) {

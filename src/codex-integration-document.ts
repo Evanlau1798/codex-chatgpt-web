@@ -1,5 +1,6 @@
 import {
   MANAGED_COMMENT,
+  MANAGED_ROUTE_COMMENT,
   MANAGED_MULTI_AGENT_LINE,
   MANAGED_MULTI_AGENT_V2_LINE,
   MANAGED_MULTI_AGENT_V2_TABLE_LINE,
@@ -25,6 +26,11 @@ import {
   stripTomlComment,
 } from "./codex-integration-toml";
 import type { CodexConfigDocument } from "./codex-integration-toml";
+import {
+  managedMultiAgentV2AssignmentLine,
+  parseInlineBooleanField,
+} from "./codex-integration-inline";
+export { managedMultiAgentV2AssignmentLine } from "./codex-integration-inline";
 export {
   assignments,
   findTopLevelAssignment,
@@ -40,7 +46,9 @@ export {
 
 export function removeManagedComment(document: CodexConfigDocument): void {
   for (let index = document.lines.length - 1; index >= 0; index -= 1) {
-    if (document.lines[index] === MANAGED_COMMENT) removeDocumentLine(document, index);
+    if (document.lines[index] === MANAGED_COMMENT || document.lines[index] === MANAGED_ROUTE_COMMENT) {
+      removeDocumentLine(document, index);
+    }
   }
 }
 
@@ -89,7 +97,7 @@ function setScalarFeature(
   insertDocumentLine(document, table.endIndex, managedLine);
 }
 
-function findBooleanAssignmentInTable(
+function rawAssignmentInTable(
   lines: string[],
   tableName: "features" | "features.multi_agent_v2",
   key: string,
@@ -102,17 +110,26 @@ function findBooleanAssignmentInTable(
     const line = lines[index]!;
     if (/^\s*#/.test(line)) continue;
     const match = regex.exec(line);
-    if (!match) continue;
-    const value = stripTomlComment(match[1]!).trim();
-    if (value !== "true" && value !== "false") {
-      throw new Error(`${key} in Codex [${tableName}] must be a boolean`);
-    }
-    matches.push({ present: true, rawLine: line, value, index });
+    if (match) matches.push({ present: true, rawLine: line, value: match[1]!, index });
   }
   if (matches.length > 1) {
     throw new Error(`Codex config contains duplicate [${tableName}].${key} assignments`);
   }
   return { ...(matches[0] ?? { present: false }), tablePresent: true, tableName };
+}
+
+function findBooleanAssignmentInTable(
+  lines: string[],
+  tableName: "features" | "features.multi_agent_v2",
+  key: string,
+): PreviousFeatureAssignment {
+  const assignment = rawAssignmentInTable(lines, tableName, key);
+  if (!assignment.present) return assignment;
+  const value = stripTomlComment(assignment.value!).trim();
+  if (value !== "true" && value !== "false") {
+    throw new Error(`${key} in Codex [${tableName}] must be a boolean`);
+  }
+  return { ...assignment, value };
 }
 
 export function findAgentMaxDepthAssignment(lines: string[]): PreviousAgentAssignment {
@@ -158,16 +175,20 @@ export function findFeatureAssignment(lines: string[], key: string): PreviousFea
 }
 
 export function findMultiAgentV2Assignment(lines: string[]): PreviousFeatureAssignment {
-  const scalar = findFeatureAssignment(lines, "multi_agent_v2");
+  const rawScalar = rawAssignmentInTable(lines, "features", "multi_agent_v2");
   const table = findTomlTable(lines, "features.multi_agent_v2");
-  if (scalar.present && table) {
+  if (rawScalar.present && table) {
     throw new Error(
       "Codex config defines multi_agent_v2 as both [features] scalar and [features.multi_agent_v2] table",
     );
   }
-  return table
-    ? findBooleanAssignmentInTable(lines, "features.multi_agent_v2", "enabled")
-    : scalar;
+  if (table) return findBooleanAssignmentInTable(lines, "features.multi_agent_v2", "enabled");
+  if (!rawScalar.present) return rawScalar;
+  const scalarValue = stripTomlComment(rawScalar.value!).trim();
+  if (scalarValue === "true" || scalarValue === "false") return { ...rawScalar, value: scalarValue };
+  const inline = parseInlineBooleanField(rawScalar.value!, "multi_agent_v2");
+  if (!inline) throw new Error("multi_agent_v2 in Codex [features] must be a boolean or inline table");
+  return { ...rawScalar, value: inline.value, inlineTable: true };
 }
 
 export function installCompatibilityV1Features(text: string): {
@@ -191,7 +212,12 @@ export function installCompatibilityV1Features(text: string): {
     MIN_COMPATIBILITY_V1_AGENT_DEPTH,
   );
   setScalarFeature(document, "multi_agent", MANAGED_MULTI_AGENT_LINE);
-  if (previousMultiAgentV2.tableName === "features.multi_agent_v2") {
+  if (previousMultiAgentV2.inlineTable) {
+    if (previousMultiAgentV2.index === undefined) {
+      throw new Error("Codex [features].multi_agent_v2 inline table disappeared during setup");
+    }
+    document.lines[previousMultiAgentV2.index] = managedMultiAgentV2AssignmentLine(previousMultiAgentV2);
+  } else if (previousMultiAgentV2.tableName === "features.multi_agent_v2") {
     const current = findBooleanAssignmentInTable(
       document.lines,
       "features.multi_agent_v2",
@@ -235,6 +261,17 @@ function verifyInstalledMultiAgentV2Feature(
   text: string,
   previous: PreviousFeatureAssignment,
 ): void {
+  if (previous.inlineTable) {
+    const current = findMultiAgentV2Assignment(splitLines(text));
+    if (!current.inlineTable
+      || current.value !== "false"
+      || current.rawLine !== managedMultiAgentV2AssignmentLine(previous)) {
+      throw new Error(
+        "Codex [features].multi_agent_v2 changed after setup; refusing to overwrite the user's newer value",
+      );
+    }
+    return;
+  }
   if (previous.tableName !== "features.multi_agent_v2") {
     const current = findMultiAgentV2Assignment(splitLines(text));
     if (current.tableName !== "features"
@@ -303,6 +340,16 @@ export function restoreMultiAgentV2Feature(
   text: string,
   previous: PreviousFeatureAssignment,
 ): string {
+  if (previous.inlineTable) {
+    verifyInstalledMultiAgentV2Feature(text, previous);
+    const document = parseDocument(text);
+    const current = findMultiAgentV2Assignment(document.lines);
+    if (current.index === undefined || !previous.rawLine) {
+      throw new Error("Managed Codex multi_agent_v2 inline table is missing");
+    }
+    document.lines[current.index] = previous.rawLine;
+    return renderDocument(document);
+  }
   if (previous.tableName !== "features.multi_agent_v2") {
     return restoreBooleanFeature(
       text,
