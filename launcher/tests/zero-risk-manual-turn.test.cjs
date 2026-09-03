@@ -83,3 +83,13 @@ test("invalid resume prompts cannot mutate retained ownership or the clipboard",
   assert.deepEqual(clipboard, ["full", "suffix"]);
   controller.cancel("trace-next", 10);
 });
+
+test("a cancelled owner cannot recreate the same trace over its terminal evidence", async () => {
+  const { controller, host, clipboard } = fixture();
+  controller.begin("trace-cancel", 10, "full");
+  controller.cancel("trace-cancel", 10);
+  assert.throws(() => controller.begin("trace-cancel", 10, "full"), /already.*cancelled/);
+  assert.equal(host.turnTabs.size, 0);
+  assert.deepEqual(clipboard, ["full"]);
+  assert.deepEqual(await controller.waitSent("trace-cancel", 10), { status: "cancelled" });
+});

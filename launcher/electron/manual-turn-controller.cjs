@@ -94,6 +94,10 @@ class ManualTurnController {
       || resumePrompt.length < 1 || resumePrompt.length > MAX_PROMPT_CHARS)) {
       throw new Error("Manual resume prompt size is invalid");
     }
+    const terminal = this.terminals.get(traceId);
+    if (terminal?.helperPid === helperPid) {
+      throw new Error(`Zero Risk turn ${traceId} was already ${terminal.status}`);
+    }
     const existing = this.find(traceId);
     if (existing) {
       if (existing.interactionMode !== "manual" || existing.helperPid !== helperPid) {
