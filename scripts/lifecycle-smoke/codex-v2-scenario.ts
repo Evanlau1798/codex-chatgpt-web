@@ -268,7 +268,7 @@ export async function runV2HierarchyScenario(
   try {
     const turn = await run.request("turn/start", {
       threadId,
-      effort: "xhigh",
+      effort: "ultra",
       input: [{ type: "text", text: hierarchyPrompt }],
     });
     turnId = String(turn.turn.id);
@@ -326,7 +326,7 @@ export async function runV2HierarchyScenario(
       await run.request("thread/resume", {
         threadId: grandchildId,
         cwd: repo,
-        model: "chatgpt-web/extra-high",
+        model: "chatgpt-web/pro",
         approvalPolicy: "never",
         sandbox: "read-only",
       }, 60_000);

@@ -205,7 +205,7 @@ export class ClaudeRun {
 
 const args = (sessionId: string, resume: boolean, tools: string[], streamInput = true) => [
   "-p", resume ? "--resume" : "--session-id", sessionId,
-  "--model", "claude-chatgpt-web-extra-high", "--effort", "xhigh",
+  "--model", "claude-chatgpt-web-pro", "--effort", "max",
   "--autocompact", "100k",
   ...(streamInput ? ["--input-format", "stream-json"] : []),
   "--output-format", "stream-json", "--include-partial-messages",
@@ -242,7 +242,10 @@ export async function runClaudeLane(runRoot: string): Promise<LaneResult> {
   const configDir = join(laneRoot, "config");
   mkdirSync(configDir, { recursive: true });
   const runtimeConfig = loadConfig();
-  writeFileSync(join(configDir, "settings.json"), `${JSON.stringify(buildClaudeSmokeSettings(runtimeConfig), null, 2)}\n`, "utf8");
+  const settings = buildClaudeSmokeSettings(runtimeConfig);
+  assert(settings.availableModels.includes("claude-chatgpt-web-pro"), "Claude live smoke requires Pro; no lower-model fallback is allowed");
+  settings.model = "claude-chatgpt-web-pro";
+  writeFileSync(join(configDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`, "utf8");
   writeFileSync(join(configDir, ".claude.json"), '{"autoCompactEnabled":true}', "utf8");
   const sessionId = crypto.randomUUID();
   const timelines: Record<string, any>[] = [];
