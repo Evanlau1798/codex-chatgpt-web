@@ -88,6 +88,29 @@ function noManualTerminal(): Promise<never> {
   return new Promise<never>(() => {});
 }
 
+test("a lost manual-start response still releases the possibly committed launcher turn", async () => {
+  const config = provider("lost-start-response");
+  const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
+  const ended: string[] = [];
+  const control: ChatGptZeroRiskManualControl = {
+    async start() { throw new Error("response lost after launcher committed the tab"); },
+    async waitSent() { throw new Error("must not wait after start failed"); },
+    waitTerminal: noManualTerminal,
+    async markStarted() {},
+    async end(_path, activity) { ended.push(activity.status); },
+    async cancel() {},
+  };
+  try {
+    await createChatGptWebAdapter(config, { broker, zeroRiskManualControl: control }).runTurn!(
+      request("turn_lost_start_response"), { headers: new Headers() }, () => {},
+    ).catch(() => {});
+    expect(ended).toEqual(["failed"]);
+  } finally {
+    chatGptTurnSessions.clear();
+    await broker.close();
+  }
+});
+
 test("Zero Risk adapter never starts the automatic browser worker and completes only through Zero Risk MCP", async () => {
   const config = provider("complete");
   const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);

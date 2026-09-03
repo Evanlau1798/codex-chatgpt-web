@@ -148,11 +148,11 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
       : undefined;
     const submission: NonNullable<ChatGptTurnRuntime["submission"]> = { phase: "prepared" };
     let activeToken: string | undefined;
-    let launcherStarted = false;
+    let launcherStartAttempted = false;
     let launcherEnded = false;
 
     const finishLauncher = async (status: LauncherManualTurnEnd["status"]): Promise<void> => {
-      if (!launcherStarted || launcherEnded) return;
+      if (!launcherStartAttempted || launcherEnded) return;
       await options.control.end(descriptorPath, {
         ...owner,
         status,
@@ -182,13 +182,13 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
           kind: "commentary",
           text: "> **Action required in Zero Risk**\n>\n> Open the launcher, copy and paste the prompt into ChatGPT, add any images yourself because Zero Risk cannot transfer them, select the `Codex Zero Risk` plugin and the model you want, send the prompt, then confirm it was sent in the launcher.",
         });
+        launcherStartAttempted = true;
         await options.control.start(descriptorPath, {
           ...owner,
           prompt: full.text,
           ...(suffix ? { resumePrompt: suffix.text } : {}),
           ...(conversationKey ? { conversationKey } : {}),
         });
-        launcherStarted = true;
         await options.control.waitSent(descriptorPath, owner, { abortSignal: browserAbort.signal });
         await options.broker.confirmSafeTurnSent(activeToken, surfaceNonce);
         submission.phase = "accepted";
