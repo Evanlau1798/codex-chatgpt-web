@@ -18,6 +18,26 @@ export interface ToolWaiter {
   onAbort?: () => void;
 }
 
+export type SafeTurnState = "awaiting_start" | "running" | "completed" | "revoked";
+
+export interface SafeWaiter<T> {
+  resolve: (value: T) => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+}
+
+export interface SafeTurnControl {
+  state: SafeTurnState;
+  surfaceNonce: string;
+  launcherSent: boolean;
+  connectorStarted: boolean;
+  finalAnswer?: string;
+  sentWaiters: Set<SafeWaiter<void>>;
+  startWaiters: Set<SafeWaiter<void>>;
+  completionWaiters: Set<SafeWaiter<string>>;
+}
+
 export interface TurnChannel {
   traceId: string;
   externalOwner: boolean;
@@ -25,6 +45,7 @@ export interface TurnChannel {
   environment: PendingTurn;
   bindingId?: string;
   queuedCallIds: string[];
+  deliveredCallIds: Set<string>;
   invocations: Map<string, PendingInvocation>;
   waiters: Set<ToolWaiter>;
   activities: Set<string>;
@@ -37,6 +58,7 @@ export interface TurnChannel {
   compactionResult?: BrokerToolResult;
   compactionDeliveryCount: number;
   steeringInstruction?: string;
+  safe?: SafeTurnControl;
 }
 
 export interface PendingContext {

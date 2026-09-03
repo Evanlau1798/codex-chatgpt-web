@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
 import { expandUserPath } from "../../config";
 import { withStallTimeout } from "../../stall-timeout";
 import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
@@ -28,6 +29,12 @@ import { effectiveChatGptToolPolicy } from "./tool-policy";
 import { chatGptAgentLifecycleOptions } from "./agent-session-lifecycle";
 import { submittedBrowserFailure, submittedStallFailure } from "./submitted-turn";
 import { ChatGptLunaCheckpointStore } from "./rolling-checkpoint";
+import {
+  createZeroRiskRuntimeStarter,
+  launcherZeroRiskManualControl,
+  type ChatGptZeroRiskManualControl,
+} from "./zero-risk-runtime";
+export type { ChatGptZeroRiskManualControl } from "./zero-risk-runtime";
 export function chatGptWebExecutionNamespace(provider: CodexProviderConfig): string {
   return chatGptAdapterRuntimeConfig(provider).executionNamespace;
 }
@@ -40,7 +47,11 @@ export const CHATGPT_WEB_ADAPTER_HEARTBEAT_MS = 10_000;
 
 export function createChatGptWebAdapter(
   provider: CodexProviderConfig,
-  dependencies: { broker?: TurnBrokerOwner; worker?: ChatGptRuntimeWorker } = {},
+  dependencies: {
+    broker?: TurnBrokerOwner;
+    worker?: ChatGptRuntimeWorker;
+    zeroRiskManualControl?: ChatGptZeroRiskManualControl;
+  } = {},
 ): ProviderAdapter {
   const worker = dependencies.worker ?? ChatGptBrowserWorker.forProvider(provider);
   const broker = TurnBroker.forSocket(brokerSocketPath(provider));
@@ -54,7 +65,7 @@ export function createChatGptWebAdapter(
   } = chatGptAdapterRuntimeConfig(provider);
   const environmentStore = new ChatGptThreadEnvironmentStore(provider.chatgptWeb?.threadEnvironmentStatePath ? resolve(expandUserPath(provider.chatgptWeb.threadEnvironmentStatePath)) : undefined);
   const lunaCheckpointStore = new ChatGptLunaCheckpointStore(provider.chatgptWeb?.lunaCheckpointStatePath ? resolve(expandUserPath(provider.chatgptWeb.lunaCheckpointStatePath)) : undefined);
-  const startRuntime = createChatGptRuntimeStarter({
+  const automaticStartRuntime = createChatGptRuntimeStarter({
     provider,
     worker,
     broker,
@@ -66,6 +77,17 @@ export function createChatGptWebAdapter(
     executionNamespace,
     lunaCheckpointStore,
   });
+  const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
+  const startRuntime = manualInteraction
+    ? createZeroRiskRuntimeStarter({
+        provider,
+        broker: brokerOwner,
+        capabilities: configuredCapabilities,
+        executionNamespace,
+        control: dependencies.zeroRiskManualControl ?? launcherZeroRiskManualControl,
+        timeoutMs,
+      })
+    : automaticStartRuntime;
   return {
     name: "chatgpt-web",
     async runTurn(parsed, incoming, emit) {
@@ -81,9 +103,23 @@ export function createChatGptWebAdapter(
           + "Start a new enhanced Web task so Codex can use direct plaintext Multi-Agent V2 transport.",
         );
       }
-      const toolPolicy = effectiveChatGptToolPolicy(parsed); const turnCapabilities = parsed._compactionRequest ? { ...configuredCapabilities, localToolsEnabled: false }
-        : { ...configuredCapabilities, localToolsEnabled: configuredCapabilities.localToolsEnabled && toolPolicy.tools.length > 0 };
-      const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
+      const manualRequest = isChatGptWebZeroRiskBackendModel(parsed.modelId);
+      if (manualRequest !== manualInteraction) {
+        throw new ChatGptWebAdapterError(
+          manualInteraction
+            ? "ChatGPT Zero Risk requires the Zero Risk Web model route."
+            : "The Zero Risk Web model route is unavailable while automatic browser interaction is enabled.",
+          { status: 409, errorType: "invalid_request_error", code: "browser_interaction_mode_mismatch", retryable: false },
+        );
+      }
+      const toolPolicy = effectiveChatGptToolPolicy(parsed); const turnCapabilities = manualRequest
+        ? configuredCapabilities
+        : parsed._compactionRequest
+          ? { ...configuredCapabilities, localToolsEnabled: false }
+          : { ...configuredCapabilities, localToolsEnabled: configuredCapabilities.localToolsEnabled && toolPolicy.tools.length > 0 };
+      const mode = manualRequest
+        ? { localTools: true }
+        : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
       if (toolPolicy.requireTool && !mode.localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
       const structuredOutputValidator = parsed._compactionRequest
         ? undefined
@@ -170,7 +206,9 @@ export function createChatGptWebAdapter(
                 events.push(event);
                 emit(event);
               };
-              if (!parsed._compactionRequest) emitProContextWarning(parsed, turnCapabilities, emitCaptured);
+              if (!parsed._compactionRequest && !manualRequest) {
+                emitProContextWarning(parsed, turnCapabilities, emitCaptured);
+              }
               const trace = session.runtime.trace.drain();
               reasoning = trace.map(event => event.text);
               emitTraceEvents(trace, emitCaptured);
@@ -184,7 +222,12 @@ export function createChatGptWebAdapter(
               session.setFinalReasoning(reasoning);
               session.setFinalEvents(events);
             }
-            const answer = appendCompactionUserPrompt(parsed, settled.answer, emit, useEnhancedWebSessionMode);
+            const answer = appendCompactionUserPrompt(
+              parsed,
+              settled.answer,
+              emit,
+              useEnhancedWebSessionMode || manualRequest,
+            );
             emitBrowserCompletion(
               { ...settled, answer },
               estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning }, turnCapabilities),
@@ -237,7 +280,9 @@ export function createChatGptWebAdapter(
             const emitNewText = (deltas: string[]) => {
               if (!bufferStructuredOutput) emitTextDeltas(deltas, emitRound);
             };
-            if (!parsed._compactionRequest) emitProContextWarning(parsed, turnCapabilities, emitRound);
+            if (!parsed._compactionRequest && !manualRequest) {
+              emitProContextWarning(parsed, turnCapabilities, emitRound);
+            }
             emitNewTrace(session.runtime.trace.drain());
             emitNewText(session.runtime.text.drain());
             const nextTools = turnToken
@@ -291,7 +336,7 @@ export function createChatGptWebAdapter(
                   parsed,
                   next.outcome.answer,
                   emitRound,
-                  useEnhancedWebSessionMode,
+                  useEnhancedWebSessionMode || manualRequest,
                 );
                 emitBrowserCompletion(
                   { ...next.outcome, answer },

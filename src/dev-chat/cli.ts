@@ -337,6 +337,13 @@ export async function runDevCommand(args: string[]): Promise<void> {
     const descriptorPath = takeOption(args, "--browser-host-descriptor") ?? paths.descriptorPath;
     const acknowledgedUnofficial = takeFlag(args, "--acknowledge-unofficial");
     const refreshAccountCapabilities = takeFlag(args, "--refresh-account-capabilities");
+    const automaticBrowserInteraction = takeFlag(args, "--automatic-browser-interaction");
+    const manualBrowserInteraction = takeFlag(args, "--zero-risk-browser-interaction");
+    if (automaticBrowserInteraction && manualBrowserInteraction) {
+      throw new Error(
+        "Choose at most one browser interaction mode: --automatic-browser-interaction or --zero-risk-browser-interaction",
+      );
+    }
     const enhancedSession = takeFlag(args, "--enhanced-session");
     const standardSession = takeFlag(args, "--standard-session");
     if (enhancedSession && standardSession) {
@@ -353,6 +360,9 @@ export async function runDevCommand(args: string[]): Promise<void> {
       browserHostDescriptorPath: descriptorPath,
       refreshAccountCapabilities,
       acknowledgedUnofficial,
+      ...(automaticBrowserInteraction || manualBrowserInteraction
+        ? { browserInteractionMode: manualBrowserInteraction ? "manual" as const : "automatic" as const }
+        : {}),
       ...(enhancedSession || standardSession ? { useEnhancedWebSessionMode: enhancedSession } : {}),
       ...(biggerContext || standardContext ? { experimentalBiggerContext: biggerContext } : {}),
       ...(tunnelId ? { tunnelId } : {}),

@@ -2,11 +2,8 @@ import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import type { AppConfig, RuntimeMode, SubagentProtocol } from "./config";
+import type { AppConfig, RuntimeMode } from "./config";
 import {
-  currentRuntimeCommand,
-  defaultBrokerEndpoint,
-  defaultConfig,
   getConfigPath,
   loadConfigForSetup,
   resolveDevSetupConnectorName,
@@ -43,30 +40,19 @@ import {
   restartService,
   uninstallService,
 } from "./service";
-import { connectTunnel, createTunnelConfig, installRuntimeKey, installRuntimeKeyBytes, installTunnelClient, managedRuntimeKeyPath, stopTunnel, waitForTunnelReady } from "./tunnel";
+import { connectTunnel, stopTunnel, waitForTunnelReady } from "./tunnel";
 import { getTunnelServiceStatus, installTunnelService, restartTunnelService, stopTunnelService, tunnelServiceDefinitionMatches, uninstallTunnelService } from "./tunnel-service";
 import { VERSION } from "./version";
+import {
+  buildSetupConfig,
+  configureSetupTunnel,
+  existingFullSetupCredentials,
+  launcherCapabilityProbeRequired,
+  type SetupOptions,
+} from "./setup-config";
 
-export interface SetupOptions {
-  mode: RuntimeMode;
-  integration?: "all" | "codex" | "claude";
-  subagentProtocol?: SubagentProtocol;
-  port?: number;
-  chromeExecutablePath?: string;
-  browserHostDescriptorPath?: string;
-  refreshAccountCapabilities?: boolean;
-  appName?: string;
-  forceLogin?: boolean;
-  autoApproveToolCalls?: boolean;
-  useEnhancedWebSessionMode?: boolean;
-  experimentalBiggerContext?: boolean;
-  replaceCodexRoute?: boolean;
-  restartService?: boolean;
-  acknowledgedUnofficial?: boolean;
-  tunnelId?: string;
-  runtimeKeyFile?: string;
-  runtimeKeyValue?: string;
-}
+export { existingFullSetupCredentials, launcherCapabilityProbeRequired } from "./setup-config";
+export type { SetupOptions } from "./setup-config";
 
 export interface SetupResult {
   mode: RuntimeMode;
@@ -92,29 +78,6 @@ export interface DevProfileSetupResult {
   configPath: string;
   tunnelReady: boolean | null;
   connectorSetupRequired: boolean;
-}
-
-export interface ExistingFullSetupCredentials {
-  tunnelId: boolean;
-  runtimeKey: boolean;
-}
-
-export function launcherCapabilityProbeRequired(
-  existing: AppConfig | undefined,
-  refreshAccountCapabilities = false,
-): boolean {
-  return refreshAccountCapabilities
-    || existing?.browserHost !== "launcher"
-    || typeof existing.solAvailable !== "boolean"
-    || typeof existing.proAvailable !== "boolean";
-}
-
-export function existingFullSetupCredentials(existing: AppConfig | undefined): ExistingFullSetupCredentials {
-  const tunnel = existing?.mode === "full" ? existing.tunnel : undefined;
-  return {
-    tunnelId: Boolean(tunnel?.tunnelId),
-    runtimeKey: Boolean(tunnel?.runtimeKeyFile && existsSync(tunnel.runtimeKeyFile)),
-  };
 }
 
 function loadExistingConfig(): AppConfig | undefined {
@@ -222,49 +185,17 @@ async function waitForProxy(config: AppConfig, timeoutMs = 10_000): Promise<void
   throw new Error(`Responses proxy did not become ready: ${lastError}`);
 }
 
-function baseConfig(existing: AppConfig | undefined, options: SetupOptions): AppConfig {
-  const config = existing ? structuredClone(existing) : defaultConfig(options.mode);
-  config.mode = options.mode;
-  if (options.subagentProtocol) config.subagentProtocol = options.subagentProtocol;
-  config.releaseVersion = VERSION;
-  config.runtimeCommand = currentRuntimeCommand();
-  if (options.port !== undefined) {
-    if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65_535) throw new Error("--port must be an integer from 1 to 65535");
-    config.port = options.port;
-  }
-  if (options.chromeExecutablePath) config.chromeExecutablePath = options.chromeExecutablePath;
-  if (options.browserHostDescriptorPath) {
-    config.browserHost = "launcher";
-    config.browserHostDescriptorPath = options.browserHostDescriptorPath;
-    config.brokerSocketPath = defaultBrokerEndpoint();
-  } else if (options.chromeExecutablePath) {
-    config.browserHost = "managed-chrome";
-    delete config.browserHostDescriptorPath;
-  }
-  config.appName = resolveSetupConnectorName(existing?.appName, options.appName);
-  if (options.autoApproveToolCalls !== undefined) config.autoApproveToolCalls = options.autoApproveToolCalls;
-  if (options.useEnhancedWebSessionMode !== undefined) {
-    config.useEnhancedWebSessionMode = options.useEnhancedWebSessionMode;
-    if (options.useEnhancedWebSessionMode) config.experimentalBiggerContext = false;
-  }
-  if (options.experimentalBiggerContext !== undefined) {
-    if (options.experimentalBiggerContext && config.useEnhancedWebSessionMode) throw new Error("Bigger Context is unavailable while Enhanced Web session mode is enabled");
-    config.experimentalBiggerContext = options.experimentalBiggerContext;
-  }
-  if (options.acknowledgedUnofficial) config.acknowledgedUnofficialAt = new Date().toISOString();
-  if (!config.acknowledgedUnofficialAt) {
-    throw new Error("Setup requires explicit acknowledgement that this is unofficial browser automation. Pass --acknowledge-unofficial.");
-  }
-  return config;
-}
-
 async function inspectLauncherCapabilities(
   config: AppConfig,
   existing: AppConfig | undefined,
   refreshAccountCapabilities: boolean,
   expectedProfile: "production" | "development",
 ): Promise<{ solAvailable: boolean; proAvailable: boolean }> {
-  const detectCapabilities = launcherCapabilityProbeRequired(existing, refreshAccountCapabilities);
+  const detectCapabilities = launcherCapabilityProbeRequired(
+    existing,
+    refreshAccountCapabilities,
+    config.browserInteractionMode,
+  );
   const inspected = await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, {
     detectCapabilities,
     expectedProfile,
@@ -273,33 +204,6 @@ async function inspectLauncherCapabilities(
     solAvailable: detectCapabilities ? inspected.solAvailable === true : existing!.solAvailable,
     proAvailable: detectCapabilities ? inspected.proAvailable === true : existing!.proAvailable,
   };
-}
-
-async function configureTunnel(config: AppConfig, existing: AppConfig | undefined, options: SetupOptions): Promise<void> {
-  if (config.mode === "browser-only") {
-    delete config.tunnel;
-    return;
-  }
-  const existingTunnel = existing?.mode === "full" ? existing.tunnel : undefined;
-  const tunnelId = options.tunnelId ?? existingTunnel?.tunnelId;
-  if (!tunnelId) {
-    throw new Error("Full mode requires --tunnel-id. Create it at https://platform.openai.com/settings/organization/tunnels");
-  }
-  let runtimeKeyFile = existingTunnel?.runtimeKeyFile;
-  if (!runtimeKeyFile && existsSync(managedRuntimeKeyPath())) runtimeKeyFile = managedRuntimeKeyPath();
-  if (options.runtimeKeyFile) runtimeKeyFile = installRuntimeKey(options.runtimeKeyFile);
-  if (options.runtimeKeyValue) runtimeKeyFile = installRuntimeKeyBytes(options.runtimeKeyValue);
-  if (!runtimeKeyFile || !existsSync(runtimeKeyFile)) {
-    throw new Error("Full mode requires a runtime key. Import it interactively or pass --runtime-key-file; create it at https://platform.openai.com/settings/organization/api-keys");
-  }
-  const installedBinary = await installTunnelClient();
-  config.tunnel = createTunnelConfig({
-    binaryPath: installedBinary,
-    tunnelId,
-    runtimeKeyFile,
-    profileName: existingTunnel?.profileName,
-    alias: existingTunnel?.alias,
-  });
 }
 
 async function bootstrapTunnelProfile(config: AppConfig): Promise<void> {
@@ -332,7 +236,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   if (existing?.purpose === DEV_CONFIG_PURPOSE) {
     throw new Error("A DEV harness configuration cannot be installed into Codex");
   }
-  const config = baseConfig(existing, {
+  const config = buildSetupConfig(existing, {
     ...options,
     subagentProtocol: options.subagentProtocol
       ?? readCodexSubagentProtocol(existing?.subagentProtocol ?? "compatibility-v1"),
@@ -375,9 +279,11 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   }
 
   let loginCreated = false;
-  let solAvailable: boolean | undefined;
-  let proAvailable: boolean | undefined;
-  if (config.browserHost === "launcher") {
+  let solAvailable: boolean | undefined = config.solAvailable;
+  let proAvailable: boolean | undefined = config.proAvailable;
+  if (config.browserInteractionMode === "manual") {
+    // The generic manual route is independent of account capabilities and never inspects the DOM.
+  } else if (config.browserHost === "launcher") {
     if (options.forceLogin) throw new Error("Launcher browser login is owned by the launcher UI; --login cannot replace it");
     const capabilities = await inspectLauncherCapabilities(
       config,
@@ -425,7 +331,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     );
   }
   if (beforeService.loaded && preliminaryChange && existing) await assertServiceIdle(existing);
-  await configureTunnel(config, existing, options);
+  await configureSetupTunnel(config, existing, options);
 
   const changedWhileLoaded = Boolean(existing && beforeService.loaded && meaningfulRuntimeChange(existing, config));
   if (changedWhileLoaded && !options.restartService) {
@@ -522,7 +428,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   if (!options.browserHostDescriptorPath) {
     throw new Error("DEV profile setup requires the isolated launcher browser descriptor");
   }
-  const config = baseConfig(existing, {
+  const config = buildSetupConfig(existing, {
     ...options,
     appName: resolveDevSetupConnectorName(existing?.appName, options.appName),
   });
@@ -530,17 +436,19 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     throw new Error("DEV profile setup requires the desktop launcher browser host");
   }
   config.purpose = DEV_CONFIG_PURPOSE;
-  const capabilities = await inspectLauncherCapabilities(
-    config,
-    existing,
-    options.refreshAccountCapabilities === true,
-    DEV_LAUNCHER_PROFILE,
-  );
-  config.solAvailable = capabilities.solAvailable;
-  config.proAvailable = capabilities.solAvailable && capabilities.proAvailable;
+  if (config.browserInteractionMode === "automatic") {
+    const capabilities = await inspectLauncherCapabilities(
+      config,
+      existing,
+      options.refreshAccountCapabilities === true,
+      DEV_LAUNCHER_PROFILE,
+    );
+    config.solAvailable = capabilities.solAvailable;
+    config.proAvailable = capabilities.solAvailable && capabilities.proAvailable;
+  }
 
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
-  await configureTunnel(config, existing, options);
+  await configureSetupTunnel(config, existing, options);
   let tunnelReady: boolean | null = null;
   if (config.mode === "full") {
     config.tunnel!.alias = DEV_TUNNEL_BASE_NAME;

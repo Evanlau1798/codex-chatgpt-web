@@ -18,6 +18,7 @@ export type ChatGptBrowserOutcome =
   | { type: "error"; error: Error };
 interface ChatGptTurnRuntimeBase {
   browser: Promise<string>;
+  physicalSettlement?: Promise<void>;
   trace: ChatGptTraceFeed;
   text: ChatGptTextFeed;
   conversationKey?: string;
@@ -27,6 +28,7 @@ interface ChatGptTurnRuntimeBase {
   onToolResultDelivered?: (result?: CodexToolResultMessage) => void;
   externalProgress?: ChatGptExternalTurnProgress;
   submission?: { phase: "prepared" | "send_activated" | "accepted" };
+  manualControl?: { surfaceNonce: string };
   cancel: (reason?: Error) => void;
   /** Release a completed retained browser surface when this canonical session is superseded. */
   release?: () => Promise<void>;
@@ -80,7 +82,7 @@ export class ChatGptTurnSession {
       this.physicalBrowserSettled = true;
       return this.settledBrowserOutcome;
     });
-    this.physicalSettlement = this.browserOutcome.then(() => undefined);
+    this.physicalSettlement = runtime.physicalSettlement ?? this.browserOutcome.then(() => undefined);
   }
 
   runExclusive<T>(task: () => Promise<T>): Promise<T> {

@@ -2,7 +2,9 @@ import type { BrokerToolRequest } from "./turn-broker-protocol";
 import type { TurnChannel } from "./turn-broker-state";
 
 export function takeQueuedTools(channel: TurnChannel): BrokerToolRequest[] {
-  return channel.queuedCallIds.splice(0)
+  const ids = channel.queuedCallIds.splice(0);
+  for (const id of ids) if (channel.invocations.has(id)) channel.deliveredCallIds.add(id);
+  return ids
     .map(id => channel.invocations.get(id)?.request)
     .filter((request): request is BrokerToolRequest => Boolean(request));
 }
@@ -44,4 +46,5 @@ export function rejectTurnChannel(channel: TurnChannel, error: Error): void {
   for (const invocation of channel.invocations.values()) invocation.reject(error);
   channel.invocations.clear();
   channel.queuedCallIds = [];
+  channel.deliveredCallIds.clear();
 }

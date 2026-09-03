@@ -27,6 +27,7 @@ export async function callTurnBroker<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   const id = opaqueId("request");
+  const settleOnResponseFrame = timeoutMs === null;
   const wireRequest = request.method === "claim" && request.activityId === undefined
     ? { ...request, activityId: opaqueId("activity") }
     : request;
@@ -34,6 +35,7 @@ export async function callTurnBroker<T>(
     const socket = createConnection(socketPath);
     let buffered = "";
     let settled = false;
+    let response: BrokerResponse | undefined;
     const onAbort = () => finishError(new DOMException("turn broker call aborted", "AbortError"));
     const cleanup = () => signal?.removeEventListener("abort", onAbort);
     const finishError = (error: Error) => {
@@ -43,6 +45,18 @@ export async function callTurnBroker<T>(
       cleanup();
       socket.destroy();
       rejectCall(error);
+    };
+    const finishResponse = () => {
+      if (settled) return;
+      if (!response) {
+        finishError(new Error("ChatGPT web turn broker closed the connection"));
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      cleanup();
+      if (response.error) rejectCall(new Error(response.error));
+      else resolveCall(response.result as T);
     };
     const timer = timeoutMs === null
       ? undefined
@@ -54,9 +68,7 @@ export async function callTurnBroker<T>(
     }
     signal?.addEventListener("abort", onAbort, { once: true });
     socket.once("error", error => finishError(new Error(`ChatGPT web turn broker unavailable: ${error.message}`)));
-    const finishClosed = () => finishError(new Error("ChatGPT web turn broker closed the connection"));
-    socket.once("end", finishClosed);
-    socket.once("close", finishClosed);
+    socket.once("close", finishResponse);
     socket.once("connect", () => socket.write(`${JSON.stringify({ id, ...wireRequest })}\n`));
     socket.on("data", chunk => {
       if (settled) return;
@@ -67,23 +79,24 @@ export async function callTurnBroker<T>(
       }
       const newline = buffered.indexOf("\n");
       if (newline < 0) return;
-      let response: BrokerResponse;
+      let parsed: BrokerResponse;
       try {
-        response = JSON.parse(buffered.slice(0, newline)) as BrokerResponse;
+        parsed = JSON.parse(buffered.slice(0, newline)) as BrokerResponse;
       } catch (error) {
         finishError(new Error(`ChatGPT web turn broker returned invalid JSON: ${errorOf(error).message}`));
         return;
       }
-      if (response.id !== id) {
+      if (parsed.id !== id) {
         finishError(new Error("ChatGPT web turn broker response id mismatch"));
         return;
       }
-      settled = true;
-      clearTimeout(timer);
-      cleanup();
-      socket.destroy();
-      if (response.error) rejectCall(new Error(response.error));
-      else resolveCall(response.result as T);
+      response = parsed;
+      if (settleOnResponseFrame) {
+        finishResponse();
+        socket.destroy();
+      } else {
+        socket.end();
+      }
     });
   });
 }
