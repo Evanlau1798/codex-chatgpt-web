@@ -24,7 +24,7 @@
 
 这是独立维护的 **Enhanced** fork：在持续跟进上游基线的同时，提供可选的长任务 Web 会话
 生命周期。Fork 版本采用 `<上游版本>-Enhanced.<修订号>`，首个版本为 `3.0.1-Enhanced.1`。
-当前版本为基于上游 v4.0.8 的 `4.0.8-Enhanced.2`。
+当前版本为基于上游 v5.0.0 的 `5.0.0-Enhanced.1`。
 
 Free 和 Go 账户会在 Codex 原生模型选择器中看到 **ChatGPT Web — Luna**。具有推理选择器的
 账户仍会按订阅权限看到 **Instant**、**Medium**、**High**、**Extra High** 和 **Pro**。
@@ -128,11 +128,16 @@ bun run app
 | 模式 | 模型 | 本地 Codex 工具 | 额外设置 |
 | --- | --- | --- | --- |
 | **仅浏览器** | Free/Go：Luna；Plus：Instant–High；Pro：增加 Extra High 和 Pro | 不可用；Codex 会显示警告 | 无 |
-| **完整 harness** | Free/Go：Luna；Plus：Instant–High；Pro：增加 Extra High 和 Pro | 每个列出的 effort 均支持，包括 Pro | OpenAI 隧道 + ChatGPT 连接器 |
+| **完整 harness（自动化）** | Free/Go：Luna；Plus：Instant–High；Pro：增加 Extra High 和 Pro | 每个列出的 effort 均支持，包括 Pro | OpenAI 隧道 + ChatGPT 连接器 |
+| **Zero Risk** | 手动选择 ChatGPT 模型与 effort；可选 Pro 上下文 | 支持；保留完整的回合绑定 Codex harness | 独立 OpenAI 隧道 + `Codex Zero Risk` 连接器；手动贴上并发送 |
 
 模型选择器中的每一项都对应一个固定的 ChatGPT 模式。Codex 仍会显示内置的 Effort 和 Speed
 选项，但更改它们不会在后台静默切换所选的浏览器模型。在完整模式下，每一个可用 effort 都会
 获得同一个与当前回合绑定的 MCP 能力；Pro 没有单独限制，也没有缩减后的工具契约。
+
+Zero Risk 保留本地 Responses bridge 与完整 Codex harness，但不会读取或修改 ChatGPT 页面，也不会
+替你发送提示。启动器只准备并复制提示；模型、effort、`Codex Zero Risk` 连接器、贴上与发送均由
+你手动完成，以排除 ChatGPT 网页自动化本身带来的帐号风险。
 
 ### 增强型 Web 工作阶段模式（Beta）
 
