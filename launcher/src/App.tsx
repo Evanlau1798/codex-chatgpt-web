@@ -293,7 +293,7 @@ function Onboarding({
       <footer className="welcome-footer">
         <div>
           {!isLanguage ? (
-            <button className="text-button" onClick={() => setStage("language")} type="button">
+            <button className="text-button" onClick={() => setStage(isInteraction ? "language" : "interaction")} type="button">
               {localized.previous}
             </button>
           ) : null}
