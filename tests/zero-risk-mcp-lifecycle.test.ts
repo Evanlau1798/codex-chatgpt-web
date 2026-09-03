@@ -127,29 +127,26 @@ describe("Zero Risk turn broker lifecycle", () => {
     }
   });
 
-  test("holds an early Zero Risk completion behind the Launcher confirmation", async () => {
+  test("holds connector start until Sent and rejects completion before start", async () => {
     const socketPath = endpoint("early-completion");
     const broker = TurnBroker.forSocket(socketPath);
     try {
       const requestId = await broker.registerSafe(environment(), nonceA, undefined, "safe-early-completion");
-      const completion = callTurnBroker<{ completed: true; duplicate: boolean }>(socketPath, {
+      expect(() => broker.startSafeTurn(requestId)).toThrow("Sent confirmation");
+      await expect(callTurnBroker(socketPath, {
         method: "safe_complete",
         token: requestId,
         finalAnswer: "early final",
-      }, null);
+      })).rejects.toThrow("has not started");
+      const start = callTurnBroker(socketPath, { method: "safe_start", token: requestId }, null);
       expect(await Promise.race([
-        completion.then(() => "completed"),
-        Bun.sleep(20).then(() => "waiting_for_confirmation"),
-      ])).toBe("waiting_for_confirmation");
-
-      broker.startSafeTurn(requestId);
-      expect(await Promise.race([
-        completion.then(() => "completed"),
+        start.then(() => "started"),
         Bun.sleep(20).then(() => "waiting_for_confirmation"),
       ])).toBe("waiting_for_confirmation");
       broker.confirmSafeTurnSent(requestId, nonceA);
-      await expect(completion).resolves.toEqual({ completed: true, duplicate: false });
-      await expect(broker.waitForSafeCompletion(requestId)).resolves.toBe("early final");
+      await expect(start).resolves.toEqual({ started: true, duplicate: false });
+      broker.completeSafeTurn(requestId, "final after start");
+      await expect(broker.waitForSafeCompletion(requestId)).resolves.toBe("final after start");
     } finally {
       await broker.close();
     }
@@ -169,8 +166,8 @@ describe("Zero Risk turn broker lifecycle", () => {
       const secondCompletion = broker.waitForSafeCompletion(second);
 
       expect(() => broker.startSafeTurn(`${first}_wrong`)).toThrow("request_id is invalid");
-      broker.startSafeTurn(first);
       broker.confirmSafeTurnSent(first, nonceA);
+      broker.startSafeTurn(first);
       await expect(broker.waitForSafeStart(first)).resolves.toBeUndefined();
       expect(await Promise.race([
         secondStart.then(() => "started"),
@@ -183,8 +180,8 @@ describe("Zero Risk turn broker lifecycle", () => {
 
       broker.revoke(first, new Error("operator cancelled first Zero Risk turn"));
       await expect(firstCompletion).rejects.toThrow("operator cancelled first Zero Risk turn");
-      broker.startSafeTurn(second);
       broker.confirmSafeTurnSent(second, nonceB);
+      broker.startSafeTurn(second);
       broker.completeSafeTurn(second, "second survived");
       await expect(secondCompletion).resolves.toBe("second survived");
 
@@ -199,8 +196,8 @@ describe("Zero Risk turn broker lifecycle", () => {
     const broker = TurnBroker.forSocket(socketPath);
     try {
       const requestId = await broker.registerSafe(environment(), nonceA, undefined, "safe-compaction");
-      broker.startSafeTurn(requestId);
       broker.confirmSafeTurnSent(requestId, nonceA);
+      broker.startSafeTurn(requestId);
       broker.requestCompaction(requestId, toolResult({ compact: true }));
       await expect(callTurnBroker(socketPath, { method: "claim", token: requestId, contract: "safe" }))
         .rejects.toThrow("awaiting completion for Codex context compaction");

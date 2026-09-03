@@ -131,9 +131,11 @@ test("Zero Risk adapter never starts the automatic browser worker and completes 
     },
     async waitSent() {
       calls.push("sent");
-      broker.startSafeTurn(exactBinding!.request_id);
     },
-    waitTerminal: noManualTerminal,
+    waitTerminal() {
+      broker.startSafeTurn(exactBinding!.request_id);
+      return noManualTerminal();
+    },
     async markStarted() {
       calls.push("started");
       broker.completeSafeTurn(exactBinding!.request_id, "Zero Risk final answer");
@@ -185,8 +187,8 @@ test("Zero Risk keeps image handoff manual and says so in the paste instruction"
       manualPrompt = activity.prompt;
       exactBinding = binding(activity.prompt);
     },
-    async waitSent() { broker.startSafeTurn(exactBinding!.request_id); },
-    waitTerminal: noManualTerminal,
+    async waitSent() {},
+    waitTerminal() { broker.startSafeTurn(exactBinding!.request_id); return noManualTerminal(); },
     async markStarted() { broker.completeSafeTurn(exactBinding!.request_id, "Manual image handoff completed"); },
     async end() {},
     async cancel() {},
@@ -288,10 +290,11 @@ test("Zero Risk offers only the new Codex suffix when the launcher reuses its re
       resumePrompt = activity.resumePrompt ?? "";
       exactBinding = binding(resumePrompt);
     },
-    async waitSent() {
+    async waitSent() {},
+    waitTerminal() {
       broker.startSafeTurn(exactBinding!.request_id);
+      return noManualTerminal();
     },
-    waitTerminal: noManualTerminal,
     async markStarted() {
       broker.completeSafeTurn(exactBinding!.request_id, "Incremental answer");
     },
@@ -321,10 +324,11 @@ for (const activeSource of [false, true]) test(`Zero Risk compaction uses a fres
   let exactBinding: ReturnType<typeof binding> | undefined;
   const control: ChatGptZeroRiskManualControl = {
     async start(_path, activity) { exactBinding = binding(activity.prompt); },
-    async waitSent() {
+    async waitSent() {},
+    waitTerminal() {
       broker.startSafeTurn(exactBinding!.request_id);
+      return noManualTerminal();
     },
-    waitTerminal: noManualTerminal,
     async markStarted() {
       broker.completeSafeTurn(
         exactBinding!.request_id,
@@ -379,10 +383,9 @@ test("closing the Zero Risk Launcher tab revokes the bound turn instead of waiti
   const terminal = new Promise<void>(resolve => { releaseTerminal = resolve; });
   const control: ChatGptZeroRiskManualControl = {
     async start(_path, activity) { exactBinding = binding(activity.prompt); },
-    async waitSent() {
-      broker.startSafeTurn(exactBinding!.request_id);
-    },
+    async waitSent() {},
     async waitTerminal() {
+      broker.startSafeTurn(exactBinding!.request_id);
       await terminal;
       return { status: "cancelled" };
     },

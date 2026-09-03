@@ -28,6 +28,7 @@ export function requireSafeTurn(channel: TurnChannel | undefined): SafeTurnContr
 export function startSafeTurn(channel: TurnChannel | undefined): { started: true; duplicate: boolean } {
   const safe = requireSafeTurn(channel);
   if (safe.state === "completed" || safe.state === "revoked") throw new Error("Zero Risk turn is already terminal");
+  if (!safe.launcherSent) throw new Error("Zero Risk turn is waiting for the user's Sent confirmation");
   if (safe.connectorStarted) return { started: true, duplicate: true };
   safe.connectorStarted = true;
   activateSafeTurn(channel!, safe);

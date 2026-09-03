@@ -82,7 +82,7 @@ export function registerZeroRiskLifecycleTools(server: McpServer, brokerSocketPa
     return result(await callTurnBroker<Record<string, unknown>>(brokerSocketPath, {
       method: "safe_start",
       token: request_id,
-    }, 5_000, extra.signal));
+    }, null, extra.signal));
   });
 
   server.registerTool("codex_turn_complete", {

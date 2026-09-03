@@ -47,15 +47,12 @@ export async function dispatchTurnBrokerRequest(
   const { owner } = state;
   if (request.method === "safe_start") {
     if (!request.token) throw new Error("Zero Risk request_id is required");
+    await waitForSafeSent(state.channels.get(request.token), signal);
     return state.startSafeTurn(request.token);
   }
   if (request.method === "safe_complete") {
     if (!request.token) throw new Error("Zero Risk request_id is required");
     if (typeof request.finalAnswer !== "string") throw new Error("Zero Risk turn final_answer is required");
-    const channel = state.channels.get(request.token);
-    if (channel?.safe?.state === "awaiting_start" && !channel.safe.launcherSent) {
-      await waitForSafeSent(channel, signal);
-    }
     return state.completeSafeTurn(request.token, request.finalAnswer);
   }
   if (request.method.startsWith("owner_")) return dispatchExternalOwnerRequest(request, {
