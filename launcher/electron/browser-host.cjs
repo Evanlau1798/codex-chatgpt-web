@@ -1028,6 +1028,10 @@ class BrowserHost {
         continue;
       }
       if (tab.status !== "running") continue;
+      if (tab.interactionMode === "manual") {
+        this.manualTurns.reap(tab);
+        continue;
+      }
       const bootstrapExpired = tab.bootstrapReady !== true
         && now >= (tab.bootstrapDeadlineAt ?? Number.POSITIVE_INFINITY);
       const heartbeatExpired = tab.bootstrapReady === true

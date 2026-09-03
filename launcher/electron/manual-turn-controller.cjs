@@ -1,4 +1,5 @@
 const { createHash } = require("node:crypto");
+const { processRunning } = require("./process-tree.cjs");
 
 const MAX_PROMPT_CHARS = 2_000_000;
 const MAX_TERMINALS = 256;
@@ -18,6 +19,15 @@ class ManualTurnController {
 
   find(traceId) {
     return [...this.host.turnTabs.values()].find(tab => tab.traceId === traceId);
+  }
+
+  reap(tab) {
+    if (processRunning(tab.helperPid)) return;
+    this.logger.warn("browser.manual_orphan_turn_reaped", {
+      tabId: tab.id, traceId: tab.traceId, helperPid: tab.helperPid, evidence: "owner_process_exited",
+    });
+    this.removed(tab, "failed");
+    this.host.removeTurnTab(tab, true);
   }
 
   validateOwner(traceId, helperPid) {
