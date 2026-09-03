@@ -1,5 +1,5 @@
 import type { Language } from "./types";
-
+import { zeroRiskCopy } from "./zero-risk-copy";
 const en = {
   product: "Codex Web GPT",
   devBadge: "DEV",
@@ -132,6 +132,7 @@ const en = {
   bridgeRouteBody: "Route Codex through this launcher. Turning it off restores your previous model route without deleting setup or saved credentials. Restart Codex after changing it.",
   enhancedWebSessionMode: "Enhanced Web session mode (Beta)",
   enhancedWebSessionModeBody: "Enabled by default on new installs. Adds retained conversations, steering, handoff compaction, and large-context archive transport for ChatGPT Web models. Changing this restarts the local runtime.",
+  ...zeroRiskCopy.en,
   keepRunningOnClose: "Keep server running when window closes",
   keepRunningOnCloseBody: "Hide the launcher in the system tray so native and ChatGPT Web models remain available.",
   showDuringTurns: "Show browser during turns",
@@ -163,7 +164,6 @@ const en = {
   sessionReminderBody: "We recommend signing in again every two days. A stale ChatGPT session can interrupt Web model turns and MCP tools.",
   logOut: "Log out",
 } as const;
-
 const zh: Record<keyof typeof en, string> = {
   product: "Codex Web GPT",
   devBadge: "DEV",
@@ -296,6 +296,7 @@ const zh: Record<keyof typeof en, string> = {
   bridgeRouteBody: "让 Codex 通过此启动器路由。关闭后会恢复此前的模型路由，但不会删除设置或已保存的凭据。更改后请重启 Codex。",
   enhancedWebSessionMode: "增強型 Web 工作階段模式（Beta）",
   enhancedWebSessionModeBody: "新安裝預設啟用。為 ChatGPT Web 模型加入對話保留、steering、handoff 壓縮與大型上下文封存傳輸。變更此設定會重新啟動本機執行階段。",
+  ...zeroRiskCopy["zh-CN"],
   keepRunningOnClose: "关闭窗口后保持服务器运行",
   keepRunningOnCloseBody: "将启动器隐藏到系统托盘，使原生模型和 ChatGPT Web 模型保持可用。",
   showDuringTurns: "任务期间显示浏览器",
@@ -327,7 +328,6 @@ const zh: Record<keyof typeof en, string> = {
   sessionReminderBody: "建议每两天重新登录一次。失效的 ChatGPT 会话可能会中断 Web 模型任务和 MCP 工具。",
   logOut: "退出登录",
 };
-
 const ja: Record<keyof typeof en, string> = {
   product: "Codex Web GPT",
   devBadge: "DEV",
@@ -460,6 +460,7 @@ const ja: Record<keyof typeof en, string> = {
   bridgeRouteBody: "Codex をこのランチャー経由でルーティングします。無効にすると、セットアップや保存済み認証情報を削除せずに以前のモデルルートへ戻します。変更後は Codex を再起動してください。",
   enhancedWebSessionMode: "Enhanced Web セッションモード（Beta）",
   enhancedWebSessionModeBody: "新規インストールでは既定で有効です。ChatGPT Web モデルに会話の保持、steering、handoff compaction、大規模コンテキストのアーカイブ転送を追加します。変更するとローカルランタイムが再起動します。",
+  ...zeroRiskCopy.ja,
   keepRunningOnClose: "ウィンドウを閉じてもサーバーを実行",
   keepRunningOnCloseBody: "ランチャーをシステムトレイに隠し、ネイティブモデルと ChatGPT Web モデルを利用可能な状態に保ちます。",
   showDuringTurns: "ターン中にブラウザーを表示",
@@ -491,9 +492,7 @@ const ja: Record<keyof typeof en, string> = {
   sessionReminderBody: "2 日ごとの再サインインを推奨します。古い ChatGPT セッションは、Web モデルのターンや MCP ツールを中断する場合があります。",
   logOut: "ログアウト",
 };
-
 export type Copy = typeof en;
-
 export function copyFor(language: Language): Copy {
   if (language === "zh-CN") return zh as Copy;
   if (language === "ja") return ja as Copy;

@@ -158,6 +158,7 @@ class RuntimeHost {
     platform = process.platform,
     publishOperation,
     supervisor,
+    getBrowserInteractionMode = () => "automatic",
   }) {
     this.app = app;
     this.logger = logger;
@@ -188,6 +189,7 @@ class RuntimeHost {
       : path.join(os.homedir(), "Library", "LaunchAgents");
     this.publishOperation = publishOperation;
     this.supervisor = supervisor;
+    this.getBrowserInteractionMode = getBrowserInteractionMode;
     this.active = null;
     this.activeChild = null;
     this.lifecycleOperation = null;
@@ -207,6 +209,19 @@ class RuntimeHost {
       && this.activeChild.exitCode === null
       && this.activeChild.signalCode === null;
     return this.lifecycleOperation || this.active || (stuckChild ? "previous runtime process shutdown" : null);
+  }
+
+  browserInteractionMode() {
+    const mode = this.getBrowserInteractionMode();
+    if (mode !== "automatic" && mode !== "manual") throw new Error("Launcher browser interaction mode is invalid");
+    return mode;
+  }
+
+  browserInteractionArgs({ refreshCapabilities = false, mode = this.browserInteractionMode() } = {}) {
+    return [
+      mode === "manual" ? "--zero-risk-browser-interaction" : "--automatic-browser-interaction",
+      ...(mode === "automatic" && refreshCapabilities ? ["--refresh-account-capabilities"] : []),
+    ];
   }
 
   assertProductionProfile(operation) {
@@ -408,9 +423,13 @@ class RuntimeHost {
     };
   }
 
-  mcpCredentialsConfigured() {
+  mcpCredentialsConfigured(mode = this.browserInteractionMode()) {
     const config = this.runtimeConfigSnapshot().config;
-    const tunnel = config?.mode === "full" ? config.tunnel : null;
+    const explicit = mode === "manual" ? config?.manualTunnel : config?.automaticTunnel;
+    const hasProfiles = Boolean(config?.manualTunnel || config?.automaticTunnel);
+    const tunnel = config?.mode === "full"
+      ? explicit ?? (!hasProfiles && mode === "automatic" ? config.tunnel : null)
+      : null;
     return Boolean(
       tunnel
       && /^tunnel_[a-f0-9]{32}$/.test(tunnel.tunnelId)
@@ -963,13 +982,22 @@ class RuntimeHost {
       : requireCurrentRuntimeConnectorName(current.config?.appName);
   }
 
-  browserConnectorName() {
+  browserConnectorName(mode = this.browserInteractionMode()) {
     const current = this.runtimeConfigSnapshot();
+    const configured = mode === "manual" ? current.config?.manualAppName : current.config?.automaticAppName;
     if (this.launcherProfile === "development") {
-      return connectorNameForDevSetup(current.config?.appName);
+      return connectorNameForDevSetup(configured ?? current.config?.appName);
     }
-    if (!current.configured || current.mode !== "full") return CURRENT_CONNECTOR_NAME;
-    return connectorNameForSetup(current.config?.appName);
+    if (!current.configured || current.mode !== "full") return configured ?? CURRENT_CONNECTOR_NAME;
+    return connectorNameForSetup(configured ?? current.config?.appName);
+  }
+
+  setupConnectorName() {
+    const config = this.runtimeConfigSnapshot().config;
+    const value = config?.automaticAppName ?? config?.appName;
+    return this.launcherProfile === "development"
+      ? connectorNameForDevSetup(value)
+      : value ? connectorNameForSetup(value) : CURRENT_CONNECTOR_NAME;
   }
 
   cancelActiveTurns() {
@@ -1042,18 +1070,24 @@ class RuntimeHost {
     }
     const existing = this.runtimeConfigSnapshot();
     const mode = existing.mode;
+    const interactionMode = existing.configured
+      ? existing.config?.browserInteractionMode ?? this.browserInteractionMode()
+      : this.browserInteractionMode();
+    if (!existing.configured && interactionMode === "manual") {
+      throw new Error("Zero Risk must be installed through MCP setup because tunnel credentials are required");
+    }
     const args = [
       "setup",
       mode === "full" ? "--full" : "--browser-only",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
-      "--refresh-account-capabilities",
+      ...this.browserInteractionArgs({ mode: interactionMode, refreshCapabilities: true }),
     ];
     if (integration === "codex") args.push("--codex-only");
     if (integration === "claude") args.push("--claude-only");
     args.push("--replace-codex-route");
     args.push("--acknowledge-unofficial", "--restart-service");
-    if (mode === "full") args.push("--app-name", this.browserConnectorName());
+    if (mode === "full") args.push("--app-name", this.setupConnectorName());
     const result = await this.runSetup("core-setup", args, {
       message: integration === "claude"
         ? "Installing ChatGPT Web models into Claude Code"
@@ -1071,16 +1105,19 @@ class RuntimeHost {
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const existing = this.runtimeConfigSnapshot();
     const mode = existing.mode;
+    const interactionMode = existing.configured
+      ? existing.config?.browserInteractionMode ?? this.browserInteractionMode()
+      : "automatic";
     const args = [
       "dev",
       "setup",
       mode === "full" ? "--full" : "--browser-only",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
-      "--refresh-account-capabilities",
+      ...this.browserInteractionArgs({ mode: interactionMode, refreshCapabilities: true }),
       "--acknowledge-unofficial",
     ];
-    if (mode === "full") args.push("--app-name", this.browserConnectorName());
+    if (mode === "full") args.push("--app-name", this.setupConnectorName());
     const result = await this.runDevSetup("dev-profile-setup", args, {
       message: "Configuring the isolated DEV harness",
       successMessage: "Isolated DEV harness configured",
@@ -1104,6 +1141,7 @@ class RuntimeHost {
         mode === "full" ? "--full" : "--browser-only",
         "--browser-host-descriptor",
         this.browserDescriptorPath,
+        ...this.browserInteractionArgs(),
         "--acknowledge-unofficial",
         contextFlag,
       ];
@@ -1121,6 +1159,7 @@ class RuntimeHost {
       mode === "full" ? "--full" : "--browser-only",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
       "--replace-codex-route",
       "--acknowledge-unofficial",
       "--restart-service",
@@ -1176,10 +1215,11 @@ class RuntimeHost {
     };
   }
 
-  setupMcp({ tunnelId = "", runtimeKey = "", replace = false } = {}) {
+  setupMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode } = {}) {
     this.assertProductionProfile("Native Codex MCP setup");
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
-    const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured();
+    const targetMode = interactionMode ?? this.browserInteractionMode();
+    const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured(targetMode);
     if (!reuseSavedCredentials && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
       throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
     }
@@ -1191,8 +1231,9 @@ class RuntimeHost {
       "--full",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
+      ...this.browserInteractionArgs({ mode: targetMode }),
       "--app-name",
-      this.browserConnectorName(),
+      this.browserConnectorName(targetMode),
       "--replace-codex-route",
     ];
     if (reuseSavedCredentials) {
@@ -1223,12 +1264,13 @@ class RuntimeHost {
     }).finally(() => fs.rmSync(keyPath, { force: true }));
   }
 
-  setupDevMcp({ tunnelId = "", runtimeKey = "", replace = false } = {}) {
+  setupDevMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode } = {}) {
     if (this.launcherProfile !== "development") {
       throw new Error("DEV MCP setup requires the isolated DEV launcher");
     }
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
-    const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured();
+    const targetMode = interactionMode ?? this.browserInteractionMode();
+    const reuseSavedCredentials = replace !== true && this.mcpCredentialsConfigured(targetMode);
     if (!reuseSavedCredentials && !/^tunnel_[a-f0-9]{32}$/.test(tunnelId)) {
       throw new Error("Tunnel ID must be tunnel_ followed by 32 lowercase hexadecimal characters");
     }
@@ -1241,8 +1283,9 @@ class RuntimeHost {
       "--full",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
+      ...this.browserInteractionArgs({ mode: targetMode }),
       "--app-name",
-      this.browserConnectorName(),
+      this.browserConnectorName(targetMode),
       "--acknowledge-unofficial",
     ];
     if (reuseSavedCredentials) {
@@ -1263,6 +1306,58 @@ class RuntimeHost {
       successMessage: "DEV Full harness is configured",
       timeoutMs: MCP_SETUP_TIMEOUT_MS,
     }).finally(() => fs.rmSync(keyPath, { force: true }));
+  }
+
+  async setZeroRiskPro(enabled) {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Install the Codex integration before changing Zero Risk model profiles");
+    if (current.mode !== "full" || current.config?.browserInteractionMode !== "manual") {
+      throw new Error("Zero Risk Pro is available only while the Full Zero Risk harness is active");
+    }
+    const args = [
+      ...(this.launcherProfile === "development" ? ["dev", "setup"] : ["setup"]),
+      "--full", "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs({ mode: "manual" }),
+      "--app-name", this.browserConnectorName("manual"), "--acknowledge-unofficial", "--standard-context",
+      enabled ? "--zero-risk-pro" : "--zero-risk-default",
+      ...(this.launcherProfile === "production" ? ["--replace-codex-route", "--restart-service"] : []),
+    ];
+    const options = {
+      message: enabled ? "Installing the Zero Risk Pro model" : "Removing the Zero Risk Pro model",
+      successMessage: enabled ? "Zero Risk Pro installed; restart Codex" : "Default Zero Risk model restored; restart Codex",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = this.launcherProfile === "development"
+      ? await this.runDevSetup("zero-risk-pro", args, options)
+      : await this.runSetup("zero-risk-pro", args, options);
+    return { ...result, mode: current.mode, enabled: enabled === true };
+  }
+
+  async setBrowserInteractionMode(mode) {
+    if (mode !== "automatic" && mode !== "manual") throw new Error("Browser interaction mode is invalid");
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Install the Codex integration before changing browser interaction mode");
+    if (mode === "manual" && current.mode !== "full") throw new Error("Connect the Full MCP harness before enabling Zero Risk");
+    const args = [
+      ...(this.launcherProfile === "development" ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs({ mode, refreshCapabilities: true }),
+      "--acknowledge-unofficial",
+      ...(this.launcherProfile === "production" ? ["--replace-codex-route", "--restart-service"] : []),
+      mode === "automatic" && current.config?.experimentalBiggerContext === true
+        ? "--bigger-context" : "--standard-context",
+    ];
+    if (current.mode === "full") args.push("--app-name", this.browserConnectorName(mode));
+    const options = {
+      message: mode === "manual" ? "Enabling Zero Risk" : "Enabling automatic browser interaction",
+      successMessage: `${mode === "manual" ? "Zero Risk" : "Automatic browser interaction"} enabled; restart Codex`,
+      timeoutMs: current.mode === "full" ? MCP_SETUP_TIMEOUT_MS : CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = this.launcherProfile === "development"
+      ? await this.runDevSetup("browser-interaction-mode", args, options)
+      : await this.runSetup("browser-interaction-mode", args, options);
+    return { configured: true, mode, stdout: result.stdout };
   }
 
   async runDevSetup(name, args, options) {

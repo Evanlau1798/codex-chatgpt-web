@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomBytes } = require("node:crypto");
-const { WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
+const { clipboard, WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { readJsonFile } = require("./json-file.cjs");
 const {
@@ -13,6 +13,7 @@ const { createTurnInteractionShield, TURN_INTERACTION_SHIELD_URL } = require("./
 const { processRunning } = require("./process-tree.cjs");
 const { showBrowserWindow } = require("./window-activation.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
+const { ManualTurnController } = require("./manual-turn-controller.cjs");
 const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
@@ -278,6 +279,7 @@ class BrowserHost {
     control,
     cancelTurn,
     getConnectorName,
+    getBrowserInteractionMode = () => "automatic",
     helper,
     logger,
     loginWithPasskey,
@@ -297,6 +299,7 @@ class BrowserHost {
     this.control = control;
     this.cancelTurn = cancelTurn;
     this.getConnectorName = getConnectorName;
+    this.getBrowserInteractionMode = getBrowserInteractionMode;
     this.helper = helper;
     this.logger = logger;
     this.loginWithPasskey = loginWithPasskey;
@@ -316,6 +319,7 @@ class BrowserHost {
     this.visible = false;
     this.surfaceActive = true;
     this.turnTabs = new Map();
+    this.manualTurns = new ManualTurnController({ clipboard, host: this, logger });
     this.closedTurnOwners = new Map();
     this.userCancelledTurnOwners = new Map();
     this.selectedTabId = "home";
@@ -418,14 +422,27 @@ class BrowserHost {
       loading: tab.loading === true,
       active: this.selectedTabId === tab.id,
       closable: true,
+      ...(tab.interactionMode === "manual" ? {
+        interactionMode: "manual",
+        manualState: tab.manualState,
+        manualDeadlineAt: tab.manualDeadlineAt ? new Date(tab.manualDeadlineAt).toISOString() : undefined,
+        canCopyPrompt: typeof tab.prompt === "string",
+        canConfirmSent: tab.manualState === "awaiting-user",
+      } : {}),
     };
+  }
+
+  browserInteractionMode() {
+    const mode = this.getBrowserInteractionMode();
+    if (mode !== "automatic" && mode !== "manual") throw new Error("Launcher browser interaction mode is invalid");
+    return mode;
   }
 
   selectedTurnTab() {
     return this.turnTabs.get(this.selectedTabId) || null;
   }
 
-  createTurnTab(traceId, helperPid, interactionLocked = true, conversationKey, connectorIdentity) {
+  createTurnTab(traceId, helperPid, interactionLocked = true, conversationKey, connectorIdentity, manual = false) {
     if (this.turnTabs.size >= MAX_BROWSER_TABS
       && !BrowserHost.prototype.evictOldestRetainedTurnTab.call(this)) {
       throw new Error(
@@ -447,7 +464,7 @@ class BrowserHost {
         backgroundThrottling: false,
       },
     });
-    const interactionShield = createTurnInteractionShield(WebContentsView);
+    const interactionShield = manual ? null : createTurnInteractionShield(WebContentsView);
     const tab = {
       id,
       surfaceId,
@@ -459,13 +476,14 @@ class BrowserHost {
       view,
       interactionShield,
       interactionLocked,
+      interactionMode: manual ? "manual" : "automatic",
       status: "running",
       ordinal,
       label: `ChatGPT ${ordinal}`,
       pageTitle: "ChatGPT",
       url: IDLE_BROWSER_URL,
       loading: true,
-      message: "ChatGPT is working",
+      message: manual ? "Preparing Zero Risk turn" : "ChatGPT is working",
       bootstrapReady: false,
       rendererReady: false,
       deviceEmulationViewport: null,
@@ -476,14 +494,14 @@ class BrowserHost {
     this.turnTabs.set(id, tab);
     this.syncPowerSaveBlocker();
     this.window.contentView.addChildView(view);
-    this.window.contentView.addChildView(interactionShield);
-    this.presentTurnView(tab, false);
-    interactionShield.setBounds(this.bounds);
-    interactionShield.setVisible(false);
+    if (interactionShield) this.window.contentView.addChildView(interactionShield);
+    this.presentTurnView(tab, manual);
+    interactionShield?.setBounds(this.bounds);
+    interactionShield?.setVisible(false);
     view.webContents.setZoomFactor(this.state.zoomFactor);
     this.bindShellZoomShortcuts(view.webContents);
     this.bindTurnContents(tab);
-    void interactionShield.webContents.loadURL(TURN_INTERACTION_SHIELD_URL).catch((error) => {
+    void interactionShield?.webContents.loadURL(TURN_INTERACTION_SHIELD_URL).catch((error) => {
       this.logger.error("browser.interaction_shield_failed", {
         tabId: tab.id,
         traceId: tab.traceId,
@@ -491,7 +509,7 @@ class BrowserHost {
       });
       this.removeTurnTab(tab, true);
     });
-    void view.webContents.loadURL(IDLE_BROWSER_URL).catch((error) => {
+    void view.webContents.loadURL(manual ? TEMPORARY_CHAT_URL : IDLE_BROWSER_URL).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error("browser.tab_initialization_failed", {
         tabId: tab.id,
@@ -501,6 +519,16 @@ class BrowserHost {
       this.removeTurnTab(tab, true);
     });
     return tab;
+  }
+
+  createManualTurnTab(traceId, helperPid, conversationKey) {
+    return this.createTurnTab(traceId, helperPid, false, conversationKey, undefined, true);
+  }
+
+  presentManualTurn(tab) {
+    this.selectedTabId = tab.id;
+    this.show({ activate: true });
+    this.publishState?.(this.snapshot());
   }
 
   evictOldestRetainedTurnTab() {
@@ -564,7 +592,7 @@ class BrowserHost {
       return { action: "deny" };
     });
     const blockAuthenticationNavigation = (event, url) => {
-      if (!allowedAuthUrl(url)) return;
+      if (tab.interactionMode === "manual" || !allowedAuthUrl(url)) return;
       event.preventDefault();
       tab.message = "ChatGPT requires a fresh sign-in; finish this turn, then sign in from Setup";
       this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
@@ -1139,6 +1167,7 @@ class BrowserHost {
 
   removeTurnTab(tab, abortRunning) {
     if (!this.turnTabs.has(tab.id)) return;
+    this.manualTurns?.removed(tab, abortRunning ? "cancelled" : "failed");
     this.turnTabs.delete(tab.id);
     this.syncPowerSaveBlocker();
     if (abortRunning && tab.status === "running") {
@@ -1532,6 +1561,15 @@ class BrowserHost {
     this.logger.info("browser.tab_released", { tabId: tab.id, traceId, status: tab.status });
     return { cancelledByUser };
   }
+
+  beginManualTurn(...args) { return this.manualTurns.begin(...args); }
+  waitManualSent(...args) { return this.manualTurns.waitSent(...args); }
+  waitManualTerminal(...args) { return this.manualTurns.waitTerminal(...args); }
+  copyManualPrompt(tabId) { return this.manualTurns.copy(tabId); }
+  confirmManualSent(tabId) { return this.manualTurns.confirmSent(tabId); }
+  markManualTurnStarted(...args) { return this.manualTurns.started(...args); }
+  endManualTurn(...args) { return this.manualTurns.end(...args); }
+  cancelManualTurn(...args) { return this.manualTurns.cancel(...args); }
 
   async returnToIdle() {
     this.hide();

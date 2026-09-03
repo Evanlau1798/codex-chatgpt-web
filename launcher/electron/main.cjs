@@ -426,6 +426,10 @@ function registerIpc({ logger, stateStore }) {
       state,
       browser: browserHost?.snapshot() ?? null,
       connectorName: runtimeHost.browserConnectorName(),
+      connectorNames: {
+        automatic: runtimeHost.browserConnectorName("automatic"),
+        manual: runtimeHost.browserConnectorName("manual"),
+      },
       mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
       logs: logger.recent(),
       urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
@@ -450,11 +454,12 @@ function registerIpc({ logger, stateStore }) {
     const patch = target === "github" ? { githubOpened: true } : { xOpened: true };
     return stateStore.update(patch);
   });
-  handle("launcher:complete-onboarding", (_event, language) => {
+  handle("launcher:complete-onboarding", (_event, language, browserInteractionMode) => {
     const current = stateStore.read();
     if (!current.githubOpened || !current.xOpened) throw new Error("Open the GitHub and X pages before continuing");
     if (current.autoStart) setAutostart(app, true);
-    const next = stateStore.update({ language: validateLanguage(language), onboardingComplete: true });
+    const mode = browserInteractionMode === "manual" ? "manual" : "automatic";
+    const next = stateStore.update({ language: validateLanguage(language), browserInteractionMode: mode, onboardingComplete: true });
     updateTrayMenu(next.language);
     logger.info("launcher.onboarding_completed", { language: next.language });
     return next;
@@ -477,6 +482,8 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:browser-zoom", (_event, action) => browserHost.zoom(action));
   handle("launcher:browser-tab-select", (_event, tabId) => browserHost.selectTab(tabId));
   handle("launcher:browser-tab-close", (_event, tabId) => browserHost.closeTab(tabId));
+  handle("launcher:manual-prompt-copy", (_event, tabId) => browserHost.copyManualPrompt(tabId));
+  handle("launcher:manual-prompt-sent", (_event, tabId) => browserHost.confirmManualSent(tabId));
   handle("launcher:browser-login", async () => {
     const browser = await openBrowserLogin({ browserHost, runtimeHost, isDevProfile: IS_DEV_PROFILE });
     if (browser.authenticated) {
@@ -506,6 +513,9 @@ function registerIpc({ logger, stateStore }) {
     return state;
   });
   handle("launcher:browser-smoke", async () => {
+    if (stateStore.read().browserInteractionMode === "manual") {
+      throw new Error("Browser smoke testing is disabled in Zero Risk mode");
+    }
     const result = await browserHost.smokeTest();
     stateStore.update({ browserSmokePassed: true, browserSmokeVersion: app.getVersion() });
     smokePassedThisSession = true;
@@ -545,6 +555,12 @@ function registerIpc({ logger, stateStore }) {
       const state = stateStore.update({ mcpSetupComplete: false });
       send("launcher:state-changed", state);
       publishOperation({ name: operationName, status: "failed", message });
+      return report;
+    }
+    if (stateStore.read().browserInteractionMode === "manual") {
+      const state = stateStore.update({ mcpSetupComplete: true });
+      send("launcher:state-changed", state);
+      publishOperation({ name: operationName, status: "completed", message: "Local Zero Risk runtime is healthy" });
       return report;
     }
     try {
@@ -620,6 +636,30 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return state;
   });
+  handle("launcher:zero-risk-pro", async (_event, enabled) => {
+    const result = await runtimeHost.setZeroRiskPro(enabled === true);
+    const state = stateStore.update({ zeroRiskProEnabled: result.enabled, codexRestartRequired: !IS_DEV_PROFILE });
+    send("launcher:state-changed", state);
+    return state;
+  });
+  handle("launcher:browser-interaction-mode", async (_event, mode) => {
+    if (mode !== "automatic" && mode !== "manual") throw new Error("Browser interaction mode is invalid");
+    const current = stateStore.read();
+    if (current.browserInteractionMode === mode) {
+      return { state: current, credentialsRequired: false, targetMode: mode };
+    }
+    if (mode === "manual" && !runtimeHost.mcpCredentialsConfigured("manual")) {
+      return { state: current, credentialsRequired: true, targetMode: mode };
+    }
+    await runtimeHost.setBrowserInteractionMode(mode);
+    const state = stateStore.update({
+      browserInteractionMode: mode,
+      experimentalBiggerContext: mode === "manual" ? false : current.experimentalBiggerContext,
+      codexRestartRequired: !IS_DEV_PROFILE,
+    });
+    send("launcher:state-changed", state);
+    return { state, credentialsRequired: false, targetMode: mode };
+  });
   handle("launcher:uninstall-integration", async () => {
     if (IS_DEV_PROFILE) throw new Error("DEV profile has no Codex integration to remove");
     const copy = nativeCopyFor(stateStore.read().language);
@@ -656,8 +696,9 @@ function registerIpc({ logger, stateStore }) {
     return { cancelled: false, state };
   });
   const setupIntegration = async (integration) => {
-    const browser = await browserHost.probeAuthentication();
-    if (!browser.authenticated) {
+    const manual = stateStore.read().browserInteractionMode === "manual";
+    const browser = manual ? { authenticated: true } : await browserHost.probeAuthentication();
+    if (!manual && !browser.authenticated) {
       throw new Error(
         IS_DEV_PROFILE
           ? "Sign in to the isolated DEV ChatGPT profile before configuring the harness"
@@ -665,7 +706,7 @@ function registerIpc({ logger, stateStore }) {
       );
     }
     const setupState = stateStore.read();
-    if (!setupState.coreSetupComplete
+    if (!manual && !setupState.coreSetupComplete
       && !(smokePassedThisSession || smokePassedForCurrentVersion(setupState))) {
       throw new Error(
         IS_DEV_PROFILE
@@ -710,6 +751,9 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:setup-claude", () => setupIntegration("claude"));
   handle("launcher:setup-mcp", async (_event, input) => {
     await browserHost.reveal();
+    const interactionMode = input?.interactionMode === "manual" ? "manual"
+      : input?.interactionMode === "automatic" ? "automatic"
+        : stateStore.read().browserInteractionMode;
     const setup = IS_DEV_PROFILE
       ? runtimeHost.setupDevMcp.bind(runtimeHost)
       : runtimeHost.setupMcp.bind(runtimeHost);
@@ -717,12 +761,15 @@ function registerIpc({ logger, stateStore }) {
       tunnelId: typeof input?.tunnelId === "string" ? input.tunnelId.trim() : "",
       runtimeKey: typeof input?.runtimeKey === "string" ? input.runtimeKey : "",
       replace: input?.replace === true,
+      interactionMode,
     });
     stateStore.update({
       mcpRuntimeInstalled: true,
       mcpSetupComplete: false,
       mcpGuideStep: 2,
       codexRestartRequired: IS_DEV_PROFILE ? false : true,
+      browserInteractionMode: interactionMode,
+      ...(interactionMode === "manual" ? { experimentalBiggerContext: false } : {}),
     });
     return { ok: true, stdout: result.stdout };
   });
@@ -920,7 +967,13 @@ async function start() {
     launcherProfile: LAUNCHER_PROFILE.kind,
     publishOperation,
     supervisor: runtimeSupervisor,
+    getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
   });
+  const configuredInteractionMode = runtimeHost.runtimeConfigSnapshot().config?.browserInteractionMode;
+  if ((configuredInteractionMode === "automatic" || configuredInteractionMode === "manual")
+    && stateStore.read().browserInteractionMode !== configuredInteractionMode) {
+    stateStore.update({ browserInteractionMode: configuredInteractionMode });
+  }
   const configuredEnhancedMode = runtimeHost.runtimeConfigSnapshot().config?.useEnhancedWebSessionMode === true;
   if (stateStore.read().useEnhancedWebSessionMode !== configuredEnhancedMode) {
     stateStore.update({ useEnhancedWebSessionMode: configuredEnhancedMode });
@@ -936,6 +989,7 @@ async function start() {
     control: browserControl.descriptor(),
     cancelTurn: IS_DEV_PROFILE ? undefined : traceId => runtimeSupervisor.cancelBrowserTurn(traceId),
     getConnectorName: () => runtimeHost.browserConnectorName(),
+    getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
     loginWithPasskey: () => runtimeHost.capturePasskeyLogin(),

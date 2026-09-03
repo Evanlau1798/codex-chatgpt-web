@@ -98,8 +98,9 @@ class BrowserControlServer {
     const isSessionInspect = request.url === "/v1/session/inspect";
     const isConnectorVerify = request.url === "/v1/session/verify-connector";
     const isDebugCutoff = request.url === "/v1/debug/turn/cutoff";
+    const manualAction = request.url?.match(/^\/v1\/manual\/(start|wait-sent|wait-terminal|started|end|cancel)$/)?.[1];
     if (request.method !== "POST"
-      || (!isTurn && !isTurnRelease && !isSessionInspect && !isConnectorVerify && !isDebugCutoff)) {
+      || (!isTurn && !isTurnRelease && !isSessionInspect && !isConnectorVerify && !isDebugCutoff && !manualAction)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -107,6 +108,48 @@ class BrowserControlServer {
       const body = await readJson(request);
       const host = this.getBrowserHost();
       if (!host) throw new Error("browser host is not ready");
+      const interactionMode = host.browserInteractionMode?.() ?? "automatic";
+      if ((isTurn || isSessionInspect || isConnectorVerify) && interactionMode === "manual") {
+        throw new Error("Automatic browser control is disabled in Zero Risk mode");
+      }
+      if (manualAction) {
+        if (interactionMode !== "manual") throw new Error("Zero Risk is not enabled");
+        if (!body || !/^[A-Za-z0-9_-]{6,128}$/.test(body.traceId || "")) throw new Error("traceId is invalid");
+        if (!Number.isInteger(body.helperPid) || body.helperPid < 1) throw new Error("browser helper pid is invalid");
+        let value;
+        if (manualAction === "start") {
+          if (body.conversationKey !== undefined && !/^[a-f0-9]{64}$/.test(body.conversationKey)) {
+            throw new Error("conversationKey is invalid");
+          }
+          value = host.beginManualTurn(
+            body.traceId, body.helperPid, body.prompt, body.conversationKey, body.resumePrompt,
+          );
+        } else if (manualAction === "wait-sent") {
+          value = await host.waitManualSent(body.traceId, body.helperPid);
+          if (value.status === "pending") { writeJson(response, 202, value); return; }
+          if (value.status === "timeout") {
+            writeJson(response, 408, { error: "Zero Risk turn timed out", code: "manual_turn_timed_out" }); return;
+          }
+          if (value.status === "cancelled") {
+            writeJson(response, 409, { error: "Zero Risk turn was cancelled", code: "turn_cancelled" }); return;
+          }
+          if (value.status === "failed") {
+            writeJson(response, 409, { error: "Zero Risk turn failed", code: "manual_turn_failed" }); return;
+          }
+        } else if (manualAction === "wait-terminal") {
+          value = await host.waitManualTerminal(body.traceId, body.helperPid);
+          if (value.status === "pending") { writeJson(response, 202, value); return; }
+        } else if (manualAction === "started") {
+          value = host.markManualTurnStarted(body.traceId, body.helperPid);
+        } else if (manualAction === "end") {
+          if (!["completed", "failed", "aborted"].includes(body.status)) throw new Error("manual turn status is invalid");
+          value = host.endManualTurn(body.traceId, body.helperPid, body.status, body.retain === true);
+        } else {
+          value = host.cancelManualTurn(body.traceId, body.helperPid);
+        }
+        writeJson(response, 200, { ok: true, ...value });
+        return;
+      }
       if (isSessionInspect) {
         const result = await host.inspectSession(body?.detectCapabilities === true);
         writeJson(response, 200, result);
