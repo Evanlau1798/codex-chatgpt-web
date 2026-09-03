@@ -834,10 +834,13 @@ describe("reversible native Codex route integration", () => {
     writeFileSync(configPath, original);
     const routeJournal = installCodexIntegration(nativeConfig("full"));
     const installedUrl = "http://127.0.0.1:17841/v1";
-    const managed = readFileSync(configPath, "utf8").replace(
+    const managed = readFileSync(configPath, "utf8")
+      .replace(MANAGED_ROUTE_COMMENT, MANAGED_COMMENT)
+      .replace(/^experimental_realtime_webrtc_call_base_url = .*\r?\n/m, "")
+      .replace(
       "[features]",
       `[features]\nremote_compaction_v2 = false # Managed by codex-chatgpt-web: bounds retained Web image history.\nmulti_agent = true # Managed by codex-chatgpt-web: enables routed Web subagents.`,
-    );
+      );
     writeFileSync(configPath, managed);
     const legacy = {
       version: 5,
@@ -854,7 +857,7 @@ describe("reversible native Codex route integration", () => {
     writeFileSync(getCodexJournalRecoveryPath(), legacyJournal);
 
     const upgraded = installCodexIntegration(defaultConfig("full"));
-    expect(upgraded.version).toBe(8);
+    expect(upgraded.version).toBe(9);
     expect(readFileSync(configPath, "utf8")).toContain(
       "multi_agent_v2 = false # Managed by codex-chatgpt-web: keeps routed Web subagent payloads readable.",
     );

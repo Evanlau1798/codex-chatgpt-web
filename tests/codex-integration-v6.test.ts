@@ -11,6 +11,7 @@ import {
   uninstallCodexIntegration,
 } from "../src/codex-integration";
 import { defaultConfig } from "../src/config";
+import { MANAGED_COMMENT, MANAGED_ROUTE_COMMENT } from "../src/codex-integration-shared";
 
 const roots: string[] = [];
 
@@ -38,6 +39,12 @@ for (const nested of [false, true]) {
     const routeConfig = defaultConfig("full");
     routeConfig.subagentProtocol = "native";
     const route = installCodexIntegration(routeConfig);
+    writeFileSync(
+      configPath,
+      readFileSync(configPath, "utf8")
+        .replace(MANAGED_ROUTE_COMMENT, MANAGED_COMMENT)
+        .replace(/^experimental_realtime_webrtc_call_base_url = .*\r?\n/m, ""),
+    );
     const routed = readFileSync(configPath, "utf8");
     const managedV2 = nested
       ? "enabled = false # Managed by codex-chatgpt-web: keeps routed Web subagent payloads readable."
@@ -77,7 +84,7 @@ for (const nested of [false, true]) {
     writeFileSync(getCodexJournalPath(), serialized);
     writeFileSync(getCodexJournalRecoveryPath(), serialized);
 
-    expect(installCodexIntegration(defaultConfig("full")).version).toBe(8);
+    expect(installCodexIntegration(defaultConfig("full")).version).toBe(9);
     expect(deactivateCodexIntegration()).toEqual({ changed: true, active: false });
     expect(readFileSync(configPath, "utf8")).toBe(original);
     expect(activateCodexIntegration()).toEqual({ changed: true, active: true });
