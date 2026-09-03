@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
-import { defaultConfig } from "../src/config";
+import { defaultConfig, type AppConfig } from "../src/config";
 import { buildSetupConfig } from "../src/setup-config";
 
 test("Automatic to Zero Risk to Automatic setup preserves the Automatic connector identity", () => {
-  const original = {
+  const original: AppConfig = {
     ...defaultConfig("full"),
     appName: "Codex Native2",
     automaticAppName: "Codex Native2",
     manualAppName: "Codex Zero Risk",
-    browserHost: "launcher" as const,
+    browserHost: "launcher",
     acknowledgedUnofficialAt: new Date(0).toISOString(),
   };
   const manual = buildSetupConfig(original, {
