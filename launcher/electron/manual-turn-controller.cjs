@@ -100,7 +100,8 @@ class ManualTurnController {
         throw new Error(`Zero Risk turn ${traceId} was retried with a different prompt`);
       }
       this.host.presentManualTurn?.(existing);
-      return { tabId: existing.id, reused: true, state: existing.manualState };
+      return { tabId: existing.id, reused: true, state: existing.manualState,
+        deadlineAt: existing.manualDeadlineAt ? new Date(existing.manualDeadlineAt).toISOString() : null };
     }
     const retained = conversationKey
       ? [...this.host.turnTabs.values()].filter(tab => tab.interactionMode === "manual"

@@ -46,6 +46,17 @@ test("Zero Risk rejects ownership changes and prompt rewrites", () => {
   assert.throws(() => controller.begin("trace-a2", 10, "rewritten"), /different prompt/);
 });
 
+test("duplicate manual start preserves the original deadline and running lease shape", () => {
+  const { controller } = fixture();
+  const first = controller.begin("trace-retry", 10, "original");
+  const repeated = controller.begin("trace-retry", 10, "original");
+  assert.equal(repeated.deadlineAt, first.deadlineAt);
+  controller.confirmSent(first.tabId);
+  controller.started("trace-retry", 10);
+  assert.equal(controller.begin("trace-retry", 10, "original").deadlineAt, null);
+  controller.end("trace-retry", 10, "completed");
+});
+
 test("Zero Risk cancellation resolves only the selected turn", async () => {
   const { controller, host } = fixture();
   controller.begin("trace-a3", 10, "one", undefined, undefined);
