@@ -3,6 +3,7 @@ const { randomBytes, timingSafeEqual } = require("node:crypto");
 const { releaseRetainedConversation } = require("./retained-turn-release.cjs");
 
 const MAX_BODY_BYTES = 16 * 1024;
+const MAX_MANUAL_START_BODY_BYTES = 3 * 1024 * 1024;
 
 function secureTokenMatches(expected, authorization) {
   const prefix = "Bearer ";
@@ -12,12 +13,12 @@ function secureTokenMatches(expected, authorization) {
   return supplied.length === wanted.length && timingSafeEqual(supplied, wanted);
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes = MAX_BODY_BYTES) {
   const chunks = [];
   let bytes = 0;
   for await (const chunk of request) {
     bytes += chunk.length;
-    if (bytes > MAX_BODY_BYTES) throw new Error("request body is too large");
+    if (bytes > maxBytes) throw new Error("request body is too large");
     chunks.push(chunk);
   }
   const text = Buffer.concat(chunks).toString("utf8");
@@ -105,7 +106,7 @@ class BrowserControlServer {
       return;
     }
     try {
-      const body = await readJson(request);
+      const body = await readJson(request, manualAction === "start" ? MAX_MANUAL_START_BODY_BYTES : MAX_BODY_BYTES);
       const host = this.getBrowserHost();
       if (!host) throw new Error("browser host is not ready");
       const interactionMode = host.browserInteractionMode?.() ?? "automatic";
