@@ -68,7 +68,8 @@ export function buildSetupConfig(existing: AppConfig | undefined, options: Setup
   const config = existing ? structuredClone(existing) : defaultConfig(options.mode);
   config.mode = options.mode;
   if (options.browserInteractionMode) config.browserInteractionMode = options.browserInteractionMode;
-  Object.assign(config, resolveInteractionConnectorIdentities(existing, config.browserInteractionMode, options.appName));
+  const automaticAppName = config.browserInteractionMode === "automatic" ? options.appName : undefined;
+  Object.assign(config, resolveInteractionConnectorIdentities(existing, config.browserInteractionMode, automaticAppName));
   if (options.subagentProtocol) config.subagentProtocol = options.subagentProtocol;
   config.releaseVersion = VERSION;
   config.runtimeCommand = currentRuntimeCommand();
