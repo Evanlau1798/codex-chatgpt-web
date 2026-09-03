@@ -625,6 +625,10 @@ class BrowserHost {
       tab.rendererReady = true;
       if (tab.url.startsWith(CHATGPT_ORIGIN)) tab.bootstrapReady = true;
       this.syncViewVisibility();
+      if (tab.interactionMode === "manual") {
+        this.publishState?.(this.snapshot());
+        return;
+      }
       void contents.insertCSS(CHATGPT_VIEWPORT_CSS).catch(() => {});
       const encoded = JSON.stringify(tab.surfaceId);
       void contents.executeJavaScript(`(() => {
@@ -643,6 +647,7 @@ class BrowserHost {
       );
     });
     contents.on("page-title-updated", (_event, title) => {
+      if (tab.interactionMode === "manual") return;
       if (typeof title === "string" && title.trim()) tab.pageTitle = title.trim();
       this.publishState?.(this.snapshot());
     });
