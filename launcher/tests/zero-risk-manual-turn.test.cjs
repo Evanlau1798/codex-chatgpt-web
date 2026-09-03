@@ -66,3 +66,20 @@ test("Zero Risk cancellation resolves only the selected turn", async () => {
   assert.equal((await terminal).status, "cancelled");
   assert.equal(host.turnTabs.has("trace-a4"), true);
 });
+
+test("invalid resume prompts cannot mutate retained ownership or the clipboard", () => {
+  const { controller, host, clipboard } = fixture();
+  const key = "a".repeat(64);
+  const first = controller.begin("trace-full", 10, "full", key);
+  controller.confirmSent(first.tabId);
+  controller.started("trace-full", 10);
+  controller.end("trace-full", 10, "completed", true);
+  for (const suffix of ["", 42, "x".repeat(2_000_001)]) {
+    assert.throws(() => controller.begin("trace-next", 10, "full", key, suffix), /resume prompt/i);
+    assert.equal(host.turnTabs.get(first.tabId).traceId, "trace-full");
+    assert.deepEqual(clipboard, ["full"]);
+  }
+  controller.begin("trace-next", 10, "full", key, "suffix");
+  assert.deepEqual(clipboard, ["full", "suffix"]);
+  controller.cancel("trace-next", 10);
+});

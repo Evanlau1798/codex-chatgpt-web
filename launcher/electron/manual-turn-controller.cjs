@@ -90,6 +90,10 @@ class ManualTurnController {
     if (typeof prompt !== "string" || prompt.length < 1 || prompt.length > MAX_PROMPT_CHARS) {
       throw new Error("Manual prompt size is invalid");
     }
+    if (resumePrompt !== undefined && (typeof resumePrompt !== "string"
+      || resumePrompt.length < 1 || resumePrompt.length > MAX_PROMPT_CHARS)) {
+      throw new Error("Manual resume prompt size is invalid");
+    }
     const existing = this.find(traceId);
     if (existing) {
       if (existing.interactionMode !== "manual" || existing.helperPid !== helperPid) {
