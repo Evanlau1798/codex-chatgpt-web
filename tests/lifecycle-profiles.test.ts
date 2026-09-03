@@ -64,6 +64,14 @@ test("CI verify fetches the ancestry required by the upstream audit ledger", () 
   expect(verify).toContain("fetch-depth: 0");
 });
 
+test("the aggregate gate checks the actual PR head preserves the pinned v5 ancestor", () => {
+  const workflow = readFileSync(resolve(repo, ".github", "workflows", "ci.yml"), "utf8");
+  const gate = workflow.slice(workflow.indexOf("  ci-gate:"));
+  expect(gate).toContain("fetch-depth: 0");
+  expect(gate).toContain("github.event.pull_request.head.sha || github.sha");
+  expect(gate).toContain('git merge-base --is-ancestor b2793cfd22342b0c6409df5eb855c163cefc16ea "$CANDIDATE_HEAD"');
+});
+
 test("the executable manifest owns every deterministic lifecycle test", () => {
   expect(codexLifecycleTests).toContain("tests/native-steering-boundary.test.ts");
   expect(claudeLifecycleTests).toContain("tests/claude-session-abort.test.ts");

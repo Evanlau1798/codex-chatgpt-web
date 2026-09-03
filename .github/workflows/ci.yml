@@ -121,6 +121,13 @@ jobs:
     needs: [lifecycle-sim, lifecycle-client-probe, verify, actionlint]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Preserve the pinned upstream v5 ancestry
+        env:
+          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: git merge-base --is-ancestor b2793cfd22342b0c6409df5eb855c163cefc16ea "$CANDIDATE_HEAD"
       - name: Require every CI dependency to succeed
         env:
           LIFECYCLE_SIM_RESULT: ${{ needs['lifecycle-sim'].result }}
