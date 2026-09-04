@@ -251,6 +251,7 @@ export class TurnBroker implements TurnBrokerOwner {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
+    assertSafeHarnessRunning(channel);
     if (channel.compactionRequested) {
       throw new Error("Codex context compaction was already requested for this turn");
     }
