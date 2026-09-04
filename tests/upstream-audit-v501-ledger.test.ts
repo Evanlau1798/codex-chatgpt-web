@@ -83,10 +83,10 @@ test("v5.0.1 ledger closes every binary-capable path obligation", () => {
   expect(new Set(ledger.entries.map(entry => entry.path)).size).toBe(ledger.entries.length);
   expect(ledger.entries.some(entry => entry.classification === "missing")).toBeFalse();
   expect(ledger.closure.status).toBe("candidate-complete");
-  const counts = Object.fromEntries(Object.entries(Object.groupBy(
-    ledger.entries,
-    entry => entry.classification,
-  )).map(([key, values]) => [key, values.length]));
+  const counts: Record<string, number> = {};
+  for (const entry of ledger.entries) {
+    counts[entry.classification] = (counts[entry.classification] ?? 0) + 1;
+  }
   expect(counts).toEqual({ adapted: 51, exact: 3, superseded: 1 });
   expect(ledger.closure.classifications).toMatchObject({ ...counts, rejected: 0, missing: 0 });
 });
@@ -99,8 +99,10 @@ test("v5.0.1 candidate blobs and upstream test mappings remain executable", () =
   ).split(/\r?\n/);
   expect(hashes).toHaveLength(present.length);
   for (const [index, entry] of present.entries()) {
-    expect(hashes[index], entry.path).toBe(entry.candidateBlob);
-    if (entry.classification === "exact") expect(entry.candidateBlob, entry.path).toBe(entry.source.targetBlob);
+    const candidateBlob = entry.candidateBlob;
+    if (candidateBlob === null) throw new Error(`Missing candidate blob: ${entry.path}`);
+    expect(hashes[index], entry.path).toBe(candidateBlob);
+    if (entry.classification === "exact") expect(candidateBlob, entry.path).toBe(entry.source.targetBlob);
     expect(entry.reason.length, entry.path).toBeGreaterThan(20);
   }
   const superseded = ledger.entries.filter(entry => entry.classification === "superseded");
