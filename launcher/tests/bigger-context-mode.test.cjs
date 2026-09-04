@@ -32,3 +32,16 @@ test("Bigger Context cannot be enabled while Enhanced Web session mode is active
   );
   assert.equal(invoked, false);
 });
+
+test("manual Bigger Context is rejected before setup can stop the runtime", async () => {
+  const { assertBiggerContextChangeAllowed } = require("../electron/context-mode.cjs");
+  assert.throws(() => assertBiggerContextChangeAllowed({ browserInteractionMode: "manual" }, true), /Zero Risk/);
+  assert.doesNotThrow(() => assertBiggerContextChangeAllowed({ browserInteractionMode: "manual" }, false));
+});
+
+test("manual settings wire the interaction boundary and explain standard context", () => {
+  const source = require("node:fs").readFileSync(path.join(__dirname, "../src/App.tsx"), "utf8");
+  assert.match(source, /biggerContextSwitchState\(\{\s*browserInteractionMode: snapshot\.state\.browserInteractionMode,/);
+  assert.match(source, /browserInteractionMode === "manual" \? copy\.manualBiggerContextBody : copy\.biggerContextBody/);
+  assert.match(source, /checked=\{snapshot\.state\.showBrowserDuringTurns\}\s*disabled=\{snapshot\.state\.browserInteractionMode === "manual"\}/);
+});

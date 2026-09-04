@@ -3,6 +3,7 @@ interface BiggerContextSwitchInput {
   coreSetupComplete: boolean;
   useEnhancedWebSessionMode: boolean;
   experimentalBiggerContext: boolean;
+  browserInteractionMode?: "automatic" | "manual";
 }
 
 export function biggerContextSwitchState(input: BiggerContextSwitchInput): {
@@ -10,7 +11,7 @@ export function biggerContextSwitchState(input: BiggerContextSwitchInput): {
   disabled: boolean;
 } {
   return {
-    checked: !input.useEnhancedWebSessionMode && input.experimentalBiggerContext,
-    disabled: input.busy || !input.coreSetupComplete || input.useEnhancedWebSessionMode,
+    checked: input.browserInteractionMode !== "manual" && !input.useEnhancedWebSessionMode && input.experimentalBiggerContext,
+    disabled: input.browserInteractionMode === "manual" || input.busy || !input.coreSetupComplete || input.useEnhancedWebSessionMode,
   };
 }

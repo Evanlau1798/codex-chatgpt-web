@@ -1,5 +1,6 @@
 export const zeroRiskCopy = {
   en: {
+    manualBiggerContextBody: "Unavailable in Zero Risk. Manual turns use the selected route's standard compaction threshold, without multipart staging.",
     interactionMode: "Zero Risk",
     interactionModeOnboardingBody: "Choose how the launcher works with ChatGPT. Automation is the default and can be changed later in Settings.",
     automaticInteraction: "With Automation",
@@ -14,6 +15,7 @@ export const zeroRiskCopy = {
     manualPromptSent: "Sent",
   },
   "zh-CN": {
+    manualBiggerContextBody: "Zero Risk 不支援 Bigger Context；手動回合使用所選路由的標準壓縮門檻，不使用分段傳送。",
     interactionMode: "Zero Risk",
     interactionModeOnboardingBody: "選擇啟動器與 ChatGPT 的互動方式。預設使用自動化，之後可在設定中變更。",
     automaticInteraction: "自動化模式",
@@ -28,6 +30,7 @@ export const zeroRiskCopy = {
     manualPromptSent: "已送出",
   },
   ja: {
+    manualBiggerContextBody: "Zero Risk では使用できません。手動ターンは選択したルートの標準圧縮しきい値を使い、分割送信しません。",
     interactionMode: "Zero Risk",
     interactionModeOnboardingBody: "ランチャーが ChatGPT を操作する方法を選びます。既定は自動操作で、後から設定で変更できます。",
     automaticInteraction: "自動操作あり",

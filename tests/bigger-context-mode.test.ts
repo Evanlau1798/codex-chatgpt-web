@@ -30,3 +30,12 @@ test("Bigger Context switch is off and locked only while Enhanced Web mode is ac
     experimentalBiggerContext: true,
   })).toEqual({ checked: true, disabled: false });
 });
+
+test("manual mode keeps Bigger Context off regardless of Enhanced or stale preferences", () => {
+  for (const useEnhancedWebSessionMode of [false, true]) {
+    expect(biggerContextSwitchState({
+      busy: false, coreSetupComplete: true, useEnhancedWebSessionMode,
+      experimentalBiggerContext: true, browserInteractionMode: "manual",
+    })).toEqual({ checked: false, disabled: true });
+  }
+});

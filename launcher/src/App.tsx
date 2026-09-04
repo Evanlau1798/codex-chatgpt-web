@@ -1597,6 +1597,7 @@ function SettingsSurface({
     }
   };
   const biggerContextState = biggerContextSwitchState({
+    browserInteractionMode: snapshot.state.browserInteractionMode,
     busy,
     coreSetupComplete: snapshot.state.coreSetupComplete === true,
     useEnhancedWebSessionMode: snapshot.state.useEnhancedWebSessionMode,
@@ -1644,7 +1645,7 @@ function SettingsSurface({
             onChange={(enabled) => void setUseEnhancedWebSessionMode(enabled)}
           />
         </SettingRow>
-        <SettingRow body={copy.biggerContextBody} label={copy.biggerContext}>
+        <SettingRow body={snapshot.state.browserInteractionMode === "manual" ? copy.manualBiggerContextBody : copy.biggerContextBody} label={copy.biggerContext}>
           <Switch
             checked={biggerContextState.checked}
             disabled={biggerContextState.disabled}
@@ -1682,6 +1683,7 @@ function SettingsSurface({
         <SettingRow body={copy.showDuringTurnsBody} label={copy.showDuringTurns}>
           <Switch
             checked={snapshot.state.showBrowserDuringTurns}
+            disabled={snapshot.state.browserInteractionMode === "manual"}
             onChange={(checked) => void api!.setPreference("showBrowserDuringTurns", checked)
               .then(updateState)
               .catch((cause) => setError(messageOf(cause)))}
