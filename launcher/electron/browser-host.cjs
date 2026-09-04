@@ -516,6 +516,7 @@ class BrowserHost {
         traceId: tab.traceId,
         message,
       });
+      this.manualTurns?.removed(tab, "failed");
       this.removeTurnTab(tab, true);
     });
     return tab;
@@ -666,6 +667,7 @@ class BrowserHost {
         errorDescription,
         url,
       });
+      this.manualTurns?.removed(tab, "failed");
       this.removeTurnTab(tab, true);
     });
     contents.on("render-process-gone", (_event, details) => {
@@ -676,6 +678,7 @@ class BrowserHost {
         reason: details.reason,
         exitCode: details.exitCode,
       });
+      this.manualTurns?.removed(tab, "failed");
       this.removeTurnTab(tab, true);
     });
     contents.on("unresponsive", () => {
