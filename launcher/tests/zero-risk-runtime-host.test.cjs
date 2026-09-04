@@ -26,6 +26,9 @@ function fixture(config, mode = "automatic", profile = "production") {
 }
 
 test("Zero Risk requires a Full installation and explicit credentials", async () => {
+  const absent = fixture(null);
+  await assert.rejects(absent.host.setBrowserInteractionMode("manual"), /Install the Codex integration/);
+  assert.equal(absent.invocation(), undefined);
   await assert.rejects(fixture(null, "manual").host.setupCore(), /must be installed through MCP setup/);
   await assert.rejects(
     fixture({ mode: "browser-only", browserHost: "launcher" }).host.setBrowserInteractionMode("manual"),
@@ -40,15 +43,26 @@ test("interaction mode setup preserves the Automatic connector and refreshes onl
     automaticAppName: "Codex Native2", manualAppName: "Codex Zero Risk", browserInteractionMode: "manual",
   };
   const automatic = fixture(config, "manual");
-  await automatic.host.setBrowserInteractionMode("automatic");
+  assert.equal((await automatic.host.setBrowserInteractionMode("automatic")).mode, "automatic");
   assert.equal(automatic.invocation().args.includes("--refresh-account-capabilities"), true);
   assert.deepEqual(automatic.invocation().args.slice(-2), ["--app-name", "Codex Native2"]);
 
   const manual = fixture({ ...config, browserInteractionMode: "automatic" });
-  await manual.host.setBrowserInteractionMode("manual");
+  assert.equal((await manual.host.setBrowserInteractionMode("manual")).mode, "manual");
   assert.equal(manual.invocation().args.includes("--refresh-account-capabilities"), false);
   assert.equal(manual.invocation().args.includes("--standard-context"), true);
   assert.deepEqual(manual.invocation().args.slice(-2), ["--app-name", "Codex Zero Risk"]);
+});
+
+test("Automatic mode setup preserves enabled Bigger Context without Enhanced mode", async () => {
+  const value = fixture({
+    mode: "full", browserHost: "launcher", browserInteractionMode: "automatic",
+    experimentalBiggerContext: true, useEnhancedWebSessionMode: false,
+    appName: "Codex Native2", automaticAppName: "Codex Native2", manualAppName: "Codex Zero Risk",
+  });
+  await value.host.setBrowserInteractionMode("automatic");
+  assert.equal(value.invocation().args.includes("--bigger-context"), true);
+  assert.equal(value.invocation().args.includes("--standard-context"), false);
 });
 
 test("MCP setup provisions credentials for the requested inactive interaction mode", async () => {

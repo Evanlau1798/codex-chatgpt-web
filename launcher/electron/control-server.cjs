@@ -111,6 +111,10 @@ class BrowserControlServer {
       if (!host) throw new Error("browser host is not ready");
       const interactionMode = host.browserInteractionMode?.() ?? "automatic";
       if ((isTurn || isSessionInspect || isConnectorVerify) && interactionMode === "manual") {
+        if (isSessionInspect) {
+          writeJson(response, 409, { error: "Automatic browser inspection is disabled in Zero Risk mode", code: "manual_browser_inspection_disabled" });
+          return;
+        }
         throw new Error("Automatic browser control is disabled in Zero Risk mode");
       }
       if (manualAction) {

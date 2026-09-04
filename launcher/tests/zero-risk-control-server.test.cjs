@@ -2,6 +2,33 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { BrowserControlServer } = require("../electron/control-server.cjs");
 
+test("manual mode rejects automatic admission and typed inspection without dispatch", async () => {
+  const calls = [];
+  const host = {
+    browserInteractionMode: () => "manual",
+    beginTurn() { calls.push("start"); },
+    inspectSession() { calls.push("inspect"); },
+  };
+  const server = await new BrowserControlServer({
+    logger: { info() {}, warn() {}, error() {} }, getBrowserHost: () => host, getPreferences: () => ({}),
+  }).start();
+  const { endpoint, token } = server.descriptor();
+  try {
+    for (const [path, status, code] of [
+      ["/v1/turn/start", 400, undefined],
+      ["/v1/session/inspect", 409, "manual_browser_inspection_disabled"],
+    ]) {
+      const response = await fetch(endpoint + path, {
+        method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ traceId: "manual-denied", helperPid: process.pid, detectCapabilities: true }),
+      });
+      assert.equal(response.status, status);
+      if (code) assert.equal((await response.json()).code, code);
+    }
+    assert.deepEqual(calls, []);
+  } finally { await server.close(); }
+});
+
 test("manual control endpoints require the token and preserve lifecycle order", async () => {
   const calls = [];
   const host = {

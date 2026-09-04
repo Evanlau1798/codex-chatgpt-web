@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
 
 test("converts Obsidian aliases and headings but preserves code examples and embeds", () => {
+  expect(chatGptHtmlToMarkdown("<p>Open [[Notes/weekly-review]].</p>"))
+    .toBe("Open [Notes/weekly-review](<Notes/weekly-review.md>).");
   const html = [
     "<p>Open [[Notes/weekly-review|review]] and [[Projects/sample#Status]].</p>",
     "<p>Keep <code>[[wiki/example]]</code> and ![[image.png]] literal.</p>",

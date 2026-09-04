@@ -9,6 +9,7 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
   let opened = false;
   let expanded = false;
   const events: string[] = [];
+  const clickOptions: unknown[] = [];
   const hidden = {
     filter() { return this; }, last() { return this; },
     isVisible: async () => false, count: async () => 0,
@@ -37,7 +38,10 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
       if (name === "data-state") return expanded ? "open" : "closed";
       return null;
     },
-    click: async () => { events.push("click"); expanded = true; opened = openWith === "click"; },
+    click: async (options: unknown) => {
+      clickOptions.push(options);
+      events.push("click"); expanded = true; opened = openWith === "click";
+    },
     press: async () => { events.push("control-enter"); },
     dispatchEvent: async (event: string, detail: unknown) => {
       expect(event).toBe("pointerdown");
@@ -54,7 +58,7 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
     },
     keyboard: { press: async (key: string) => { events.push(key); expanded = false; } },
   };
-  return { page, control, owned, slider, events };
+  return { page, control, owned, slider, events, clickOptions };
 }
 
 test("effort activation returns the menu owned by the clicked control", async () => {
@@ -63,6 +67,7 @@ test("effort activation returns the menu owned by the clicked control", async ()
   expect(result.method).toBe("click");
   expect(result.menu).toBe(f.owned as never);
   expect(f.events).toEqual(["click"]);
+  expect(f.clickOptions).toEqual([{ force: true, timeout: 1 }]);
 });
 
 test("a ghost click is reset before a single primary pointerdown fallback", async () => {
