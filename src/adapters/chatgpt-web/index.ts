@@ -10,6 +10,7 @@ import { createChatGptRuntimeStarter, type ChatGptRuntimeWorker } from "./adapte
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { codexToolResultsById } from "./compaction-handoff";
 import { runEnhancedCompaction } from "./enhanced-compaction";
+import { runManualCompaction } from "./manual-compaction";
 import { extractChatGptTurnEnvironment } from "./environment";
 import { resolveChatGptWebModelMode } from "./model";
 import { createChatGptStructuredOutputValidator } from "./output-validation";
@@ -142,7 +143,20 @@ export function createChatGptWebAdapter(
         environment = resolveTrustedCodexEnvironment(environmentStore, parsed);
       }
       if (parsed._compactionRequest) {
-        const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`; if (useEnhancedWebSessionMode && !manualRequest) {
+        const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
+        if (manualRequest) {
+          const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
+          const traceId = chatGptTurnTraceId(parsed, executionNamespace);
+          await runManualCompaction({ parsed, executionKey, sourceKey: responseExecutionKey, traceId,
+            timeoutMs, abortSignal: incoming.abortSignal, capabilities: turnCapabilities, emit,
+            start: signal => sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
+              () => { signal.throwIfAborted(); return startRuntime(parsed, environment, traceId, turnCapabilities); },
+              // Let prior physical cleanup settle, then check cancellation before creating a checkpoint.
+              executionNamespace, useEnhancedWebSessionMode, traceId),
+          });
+          return;
+        }
+        if (useEnhancedWebSessionMode) {
           const enhancedCompaction = await runEnhancedCompaction({
             worker, parsed, broker, executionNamespace, capabilities: turnCapabilities,
             responseExecutionKey, nativeConnectorAvailable: configuredCapabilities.localToolsEnabled,
