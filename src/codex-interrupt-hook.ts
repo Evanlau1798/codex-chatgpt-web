@@ -52,7 +52,21 @@ export function codexInterruptHookCommand(
   windowsRoot = process.env.SystemRoot ?? process.env.WINDIR,
 ): string {
   const absoluteHome = platform === "win32" ? win32.resolve(home) : posix.resolve(home);
-  const args = [...config.runtimeCommand, "--home", absoluteHome, "hook", "interrupt"];
+  const runtimeCommand = [...config.runtimeCommand];
+  const path = platform === "win32" ? win32 : posix;
+  const entry = runtimeCommand[1];
+  const wrapper = path.basename(runtimeCommand[0] ?? "").toLowerCase();
+  if (runtimeCommand.length === 1
+    && path.basename(path.dirname(runtimeCommand[0] ?? "")).toLowerCase() === "bin"
+    && (wrapper === "codex-chatgpt-web" || wrapper === "codex-chatgpt-web.cmd")) {
+    const root = path.dirname(path.dirname(runtimeCommand[0]));
+    runtimeCommand.splice(0, 1,
+      path.join(root, "runtime", platform === "win32" ? "bun.exe" : "bun"),
+      path.join(root, "app", "codex-interrupt-cli.js"));
+  } else if (entry && (path.basename(entry) === "cli.js" || path.basename(entry) === "cli.ts")) {
+    runtimeCommand[1] = path.join(path.dirname(entry), `codex-interrupt-cli.${path.extname(entry).slice(1)}`);
+  }
+  const args = [...runtimeCommand, "--home", absoluteHome, "hook", "interrupt"];
   if (platform !== "win32") return args.map(posixShellArgument).join(" ");
   // Codex runs hooks through the turn's shell, which may be cmd or PowerShell. An encoded native
   // PowerShell invocation survives either parser without expanding path metacharacters.

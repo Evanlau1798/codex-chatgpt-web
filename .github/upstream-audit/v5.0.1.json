@@ -413,7 +413,7 @@
       "contains": "Codex process probes use Bun's native spawn path consistently"
     }
   ],
-  "candidateBlob": "e6acedca4be64b7c66df9cffbbdf96a44df9000b"
+  "candidateBlob": "7daad52d1ea26c3f9b8fbde13c5daae2fda88f34"
     },
     {
       "id": "v501-020",
@@ -689,7 +689,7 @@
           "contains": "expect(cancelled).toBeTrue();"
         }
       ],
-      "candidateBlob": "cca5d49940f0d9b704ea4494e3c1e30510798978"
+  "candidateBlob": "a38ab8e6b5dc4d89161c9b2701f787d75c6f8905"
     },
     {
       "id": "v501-032",
@@ -833,7 +833,7 @@
           "contains": "expect(cancelled).toBeTrue();"
         }
       ],
-      "candidateBlob": "db7a6357e1c15e03e8c41b216c219a509c1f6cdf"
+  "candidateBlob": "bc92704b04c8b3f67c4861affcafb0887a08456e"
     },
     {
       "id": "v501-038",
@@ -1037,7 +1037,7 @@
           "contains": "expect(cancelled).toBeTrue();"
         }
       ],
-      "candidateBlob": "9ff227efbd19effddac0120de98bea7266ea0f82"
+  "candidateBlob": "e881579ffad8daa83eb5bdc5a3d87a6f7b95996d"
     },
     {
       "id": "v501-047",

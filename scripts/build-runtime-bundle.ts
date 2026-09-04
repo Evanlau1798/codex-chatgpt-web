@@ -68,13 +68,13 @@ mkdirSync(runtimeDir, { recursive: true });
 mkdirSync(binDir, { recursive: true });
 
 const build = await Bun.build({
-  entrypoints: [join(root, "src", "cli.ts")],
+  entrypoints: [join(root, "src", "cli.ts"), join(root, "src", "codex-interrupt-cli.ts")],
   target: "bun",
   minify: true,
   external: ["playwright-core"],
   packages: "external",
   outdir: appDir,
-  naming: "cli.js",
+  naming: "[name].js",
 });
 if (!build.success) {
   throw new Error(`Runtime bundle failed: ${build.logs.map(log => log.message).join("; ")}`);
@@ -132,7 +132,7 @@ while [ -L "$script" ]; do
 done
 bin_dir="$(CDPATH= cd -- "$(dirname "$script")" && pwd -P)"
 root="$(CDPATH= cd -- "$bin_dir/.." && pwd -P)"
-export CODEX_CHATGPT_WEB_LAUNCHER="$invoked"
+export CODEX_CHATGPT_WEB_LAUNCHER="$script"
 exec "$root/runtime/bun" "$root/app/cli.js" "$@"
 `;
 writeFileSync(join(binDir, launcherName), launcher, process.platform === "win32" ? undefined : { mode: 0o755 });
