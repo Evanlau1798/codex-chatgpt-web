@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import {
   LAUNCHER_BROWSER_HOST_KIND, LAUNCHER_BROWSER_IDLE_URL, LauncherBrowserTurnCancelledError,
 } from "../src/launcher-browser-host";
-import { LauncherManualTurnTimedOutError, startLauncherManualTurn } from "../src/launcher-manual-control";
+import { LauncherManualTurnFailedError, LauncherManualTurnTimedOutError, startLauncherManualTurn } from "../src/launcher-manual-control";
 
 const { BrowserControlServer } = require("../launcher/electron/control-server.cjs");
 const { ManualTurnController } = require("../launcher/electron/manual-turn-controller.cjs");
@@ -12,6 +12,7 @@ const { ManualTurnController } = require("../launcher/electron/manual-turn-contr
 for (const [terminal, status, code, errorClass] of [
   ["cancelled", 409, "turn_cancelled", LauncherBrowserTurnCancelledError],
   ["timeout", 408, "manual_turn_timed_out", LauncherManualTurnTimedOutError],
+  ["failed", 409, "manual_turn_failed", LauncherManualTurnFailedError],
 ] as const) {
   test(`terminal ${terminal} retains its classification through controller, HTTP and client`, async () => {
     const logger = { info() {}, warn() {}, error() {} };

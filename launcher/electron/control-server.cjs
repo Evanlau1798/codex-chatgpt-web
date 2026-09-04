@@ -261,10 +261,12 @@ class BrowserControlServer {
       this.logger.warn("browser.control_rejected", { message });
       const cancelled = error?.code === "turn_cancelled";
       const timedOut = error?.code === "manual_turn_timed_out";
-      writeJson(response, cancelled ? 409 : timedOut ? 408 : 400, {
+      const manualFailed = error?.code === "manual_turn_failed";
+      writeJson(response, cancelled || manualFailed ? 409 : timedOut ? 408 : 400, {
         error: message,
         ...(cancelled ? { code: "turn_cancelled" } : {}),
         ...(timedOut ? { code: "manual_turn_timed_out" } : {}),
+        ...(manualFailed ? { code: "manual_turn_failed" } : {}),
       });
     }
   }
