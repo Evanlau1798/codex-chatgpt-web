@@ -19,6 +19,7 @@ import {
 import type { CodexParsedRequest, CodexProviderConfig } from "../../types";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { retainedConversationRelease } from "./adapter-runtime-config";
+import { canonicalizeCompactionHandoff } from "./compaction-handoff";
 import type { ChatGptTurnEnvironment } from "./environment";
 import type { ChatGptWebCapabilities } from "./model";
 import { compileChatGptWebPrompt } from "./prompt";
@@ -205,10 +206,12 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
         try {
           await Promise.race([options.broker.waitForSafeStart(activeToken, browserAbort.signal), terminalFailure]);
           await options.control.markStarted(descriptorPath, owner);
-          const answer = await Promise.race([
+          const completed = await Promise.race([
             options.broker.waitForSafeCompletion(activeToken, browserAbort.signal),
             terminalFailure,
           ]);
+          const answer = parsed._compactionRequest ? canonicalizeCompactionHandoff(parsed, completed) : completed;
+          if (answer === undefined) throw new Error("ChatGPT returned an invalid structured compaction handoff");
           text.push(answer);
           await finishLauncher("completed");
           return answer;
