@@ -465,14 +465,19 @@ class RuntimeHost {
       path.join(this.codexHome, "models_cache.json"),
       path.join(this.claudeHome, "settings.json"),
       path.join(coreHome, "secrets", "tunnel-runtime.key"),
+      path.join(coreHome, "secrets", "tunnel-runtime-automatic.key"),
+      path.join(coreHome, "secrets", "tunnel-runtime-zero-risk.key"),
       path.join(coreHome, "tunnel", "profiles", "codex-chatgpt-web.yaml"),
+      path.join(coreHome, "tunnel", "profiles", "codex-chatgpt-web-zero-risk.yaml"),
+      path.join(coreHome, "tunnel", "profiles", "codex-chatgpt-web-dev.yaml"),
+      path.join(coreHome, "tunnel", "profiles", "codex-chatgpt-web-dev-zero-risk.yaml"),
     ]);
     if (snapshot.owner === "external" && this.platform === "darwin") {
       paths.add(path.join(this.launchAgentsDir, "io.github.codex-chatgpt-web.daemon.plist"));
       paths.add(path.join(this.launchAgentsDir, "io.github.codex-chatgpt-web.tunnel.plist"));
     }
-    const tunnel = snapshot.config?.tunnel;
-    if (tunnel && typeof tunnel === "object") {
+    for (const tunnel of [snapshot.config?.tunnel, snapshot.config?.automaticTunnel, snapshot.config?.manualTunnel]) {
+      if (!tunnel || typeof tunnel !== "object") continue;
       if (typeof tunnel.runtimeKeyFile === "string" && tunnel.runtimeKeyFile) {
         paths.add(tunnel.runtimeKeyFile);
       }
