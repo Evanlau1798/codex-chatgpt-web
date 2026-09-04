@@ -26,7 +26,6 @@ import { inspectLauncherBrowserHost } from "./launcher-browser-host";
 import {
   DEV_CONFIG_PURPOSE,
   DEV_LAUNCHER_PROFILE,
-  DEV_TUNNEL_BASE_NAME,
 } from "./dev-chat/constants";
 import {
   assertServiceIdle,
@@ -401,7 +400,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   }
   const config = buildSetupConfig(existing, {
     ...options,
-    appName: resolveDevSetupConnectorName(existing?.appName, options.appName),
+    appName: resolveDevSetupConnectorName(existing?.automaticAppName, options.appName),
   });
   if (config.browserHost !== "launcher") {
     throw new Error("DEV profile setup requires the desktop launcher browser host");
@@ -422,8 +421,6 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   await configureSetupTunnel(config, existing, options);
   let tunnelReady: boolean | null = null;
   if (config.mode === "full") {
-    config.tunnel!.alias = DEV_TUNNEL_BASE_NAME;
-    config.tunnel!.profileName = DEV_TUNNEL_BASE_NAME;
     const profilePath = join(config.tunnel!.profileDir, `${config.tunnel!.profileName}.yaml`);
     const needsProfile = !existsSync(profilePath);
     if (needsProfile || tunnelWorkerRuntimeChanged(existing, config) || explicitTunnelChange) {
