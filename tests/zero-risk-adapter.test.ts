@@ -15,6 +15,7 @@ import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL } from "../src/chatgpt-web-models";
 import { defaultBrokerEndpoint } from "../src/config";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig } from "../src/types";
+import { LauncherManualTurnTimedOutError } from "../src/launcher-manual-control";
 
 const testTempRoot = process.platform === "win32" ? tmpdir() : "/tmp";
 const root = mkdtempSync(join(testTempRoot, "cgw-zero-risk-adapter-"));
@@ -90,6 +91,33 @@ function provider(name: string): CodexProviderConfig {
 function noManualTerminal(): Promise<never> {
   return new Promise<never>(() => {});
 }
+
+test("post-Sent timeout stays terminal across native reconnects without another manual tab", async () => {
+  const config = provider("sent-timeout-replay");
+  const broker = TurnBroker.forSocket(config.chatgptWeb!.brokerSocketPath!);
+  let starts = 0;
+  const control: ChatGptZeroRiskManualControl = {
+    async start() { starts++; }, async waitSent() {},
+    async waitTerminal() { throw new LauncherManualTurnTimedOutError("Zero Risk turn timed out"); },
+    async markStarted() { throw new Error("MCP did not start"); },
+    async end() {}, async cancel() {},
+  };
+  try {
+    const adapter = createChatGptWebAdapter(config, { broker, zeroRiskManualControl: control });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const events: AdapterEvent[] = [];
+      await adapter.runTurn!(request("turn_sent_timeout"), { headers: new Headers() }, event => events.push(event));
+      expect(events.at(-1)).toMatchObject({
+        type: "error", code: "manual_handoff_timeout", status: 408,
+        message: "Zero Risk turn timed out", retryable: false,
+      });
+    }
+    expect(starts).toBe(1);
+  } finally {
+    chatGptTurnSessions.clear();
+    await broker.close();
+  }
+});
 
 test("a lost manual-start response still releases the possibly committed launcher turn", async () => {
   const config = provider("lost-start-response");
