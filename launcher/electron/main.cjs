@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const { runtimePreferenceState, manualMcpSetupState } = require("./runtime-setup-state.cjs");
 const net = require("node:net");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
@@ -784,12 +785,16 @@ function registerIpc({ logger, stateStore }) {
     const setup = IS_DEV_PROFILE
       ? runtimeHost.setupDevMcp.bind(runtimeHost)
       : runtimeHost.setupMcp.bind(runtimeHost);
-    const runSetup = () => setup({
-      tunnelId: typeof input?.tunnelId === "string" ? input.tunnelId.trim() : "",
-      runtimeKey: typeof input?.runtimeKey === "string" ? input.runtimeKey : "",
-      replace: input?.replace === true,
-      interactionMode,
-    });
+    const runSetup = async () => {
+      const result = await setup({
+        tunnelId: typeof input?.tunnelId === "string" ? input.tunnelId.trim() : "",
+        runtimeKey: typeof input?.runtimeKey === "string" ? input.runtimeKey : "",
+        replace: input?.replace === true,
+        interactionMode,
+      });
+      return { ...result, setupState: interactionMode === "manual"
+        ? await manualMcpSetupState(runtimeHost, IS_DEV_PROFILE) : {} };
+    };
     if (!interactionModeChange && interactionMode === "automatic") await browserHost.reveal();
     const result = interactionModeChange
       ? await browserHost.withInteractionModeChange(interactionMode, runSetup)
@@ -801,6 +806,7 @@ function registerIpc({ logger, stateStore }) {
       codexRestartRequired: IS_DEV_PROFILE ? false : true,
       browserInteractionMode: interactionMode,
       ...(interactionMode === "manual" ? { experimentalBiggerContext: false } : {}),
+      ...result.setupState,
     });
     if (interactionModeChange) send("launcher:browser-state", browserHost.snapshot());
     return { ok: true, stdout: result.stdout };
@@ -1001,18 +1007,9 @@ async function start() {
     supervisor: runtimeSupervisor,
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
   });
-  const configuredInteractionMode = runtimeHost.runtimeConfigSnapshot().config?.browserInteractionMode;
-  if ((configuredInteractionMode === "automatic" || configuredInteractionMode === "manual")
-    && stateStore.read().browserInteractionMode !== configuredInteractionMode) {
-    stateStore.update({ browserInteractionMode: configuredInteractionMode });
-  }
-  const configuredEnhancedMode = runtimeHost.runtimeConfigSnapshot().config?.useEnhancedWebSessionMode === true;
-  if (stateStore.read().useEnhancedWebSessionMode !== configuredEnhancedMode) {
-    stateStore.update({ useEnhancedWebSessionMode: configuredEnhancedMode });
-  }
-  const configuredBiggerContext = runtimeHost.runtimeConfigSnapshot().config?.experimentalBiggerContext === true;
-  if (stateStore.read().experimentalBiggerContext !== configuredBiggerContext) {
-    stateStore.update({ experimentalBiggerContext: configuredBiggerContext });
+  const configuredPreferences = runtimePreferenceState(runtimeHost.runtimeConfigSnapshot().config);
+  if (Object.entries(configuredPreferences).some(([key, value]) => stateStore.read()[key] !== value)) {
+    stateStore.update(configuredPreferences);
   }
   browserHost = new BrowserHost({
     window: mainWindow,
