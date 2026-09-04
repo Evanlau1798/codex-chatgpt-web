@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "release": "v5.0.0",
+  "targetVersion": "5.0.0-Enhanced.1",
+  "recordedAt": "2026-09-04T16:15:18.929Z",
+  "integration": {
+    "path": "direct-candidate-preserving-existing-upstream-ancestry",
+    "repository": "https://github.com/Evanlau1798/codex-chatgpt-web",
+    "ref": "refs/heads/main",
+    "baseline": "1e6f0289eec32e062dfe208c6dc627b6c73a6e0a",
+    "publicationBase": "1e6f0289eec32e062dfe208c6dc627b6c73a6e0a",
+    "executionBase": "1e6f0289eec32e062dfe208c6dc627b6c73a6e0a",
+    "sourceCandidate": "a3a83c9a389a4e4e16265b45f614dc1c29355a40",
+    "candidate": "ea294a5d63e29a69b765149e38f0b01c51e28f80",
+    "upstreamMerge": "35d78493e65ea7cb152325149389fcb6636c066b",
+    "upstream": "b2793cfd22342b0c6409df5eb855c163cefc16ea",
+    "githubMerge": "3989ffa034b8abce40b4a4115705bf8b2b11d9f1",
+    "parents": [
+      "1e6f0289eec32e062dfe208c6dc627b6c73a6e0a",
+      "ea294a5d63e29a69b765149e38f0b01c51e28f80"
+    ],
+    "tree": "9578ba980403c15e68e3faddf8f43855a30588ae",
+    "method": "merge",
+    "pullRequest": {
+      "number": 14,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/14"
+    }
+  },
+  "ledger": {
+    "path": ".github/upstream-audit/v5.0.0.json",
+    "commit": "3989ffa034b8abce40b4a4115705bf8b2b11d9f1",
+    "blob": "4caf1c7a4e1222b862861d24b4ecc5ea796651b7",
+    "bytes": 138747,
+    "sha256": "7d34447dcec4ebfcf164c32d1895f9bb46f70ab9df68202d03bca4826136da31"
+  },
+  "archive": {
+    "path": ".github/upstream-audit/v5.0.0-evidence.tar.gz",
+    "commit": "3989ffa034b8abce40b4a4115705bf8b2b11d9f1",
+    "blob": "4abc8d7333794c2b4e87af7c7965787590a05935",
+    "bytes": 7207578,
+    "sha256": "276aba0dbf0a4c69753ac94a35ec9e5dfc47c708c743a0af03c380fd404b570f",
+    "originalArchiveCommit": "c7400a2e369e2003b1928360a0462335da1bf577",
+    "url": "https://github.com/Evanlau1798/codex-chatgpt-web/blob/c7400a2e369e2003b1928360a0462335da1bf577/.github/upstream-audit/v5.0.0-evidence.tar.gz"
+  },
+  "postArchiveChange": {
+    "commit": "ea294a5d63e29a69b765149e38f0b01c51e28f80",
+    "paths": [
+      "tests/zero-risk-launcher-mcp-contract.test.ts"
+    ],
+    "reason": "Test-only short Unix socket fixture correction; real safe/native assertions retained; focused RED/GREEN, bounded root tests, independent review and cross-platform PR/main CI passed.",
+    "runtimeChanged": false,
+    "evidence": "https://github.com/Evanlau1798/codex-chatgpt-web/commit/ea294a5d63e29a69b765149e38f0b01c51e28f80"
+  },
+  "tagIdentity": {
+    "ref": "refs/tags/v5.0.0",
+    "tagObject": "817080b1d185760b57741a59080a2c16aa4ae4b9",
+    "peeledCommit": "b2793cfd22342b0c6409df5eb855c163cefc16ea",
+    "signature": "unsigned",
+    "preMergeCheckedAt": "2026-09-04T16:02:57.8281597Z",
+    "postMergeCheckedAt": "2026-09-04T16:03:20.1587796Z",
+    "unchanged": true,
+    "claim": "Bounded UTC observations, not a permanently immutable upstream ref."
+  },
+  "ci": {
+    "upstream": {
+      "verify": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/33764476157",
+      "release": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/33764546004"
+    },
+    "fork": {
+      "pullRequest": {
+        "id": 33892156044,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33892156044",
+        "head": "ea294a5d63e29a69b765149e38f0b01c51e28f80",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "name": "lifecycle-client-probe (macos-15)",
+            "conclusion": "success"
+          },
+          {
+            "name": "actionlint",
+            "conclusion": "success"
+          },
+          {
+            "name": "verify (ubuntu-latest)",
+            "conclusion": "success"
+          },
+          {
+            "name": "lifecycle-sim",
+            "conclusion": "success"
+          },
+          {
+            "name": "lifecycle-client-probe (windows-latest)",
+            "conclusion": "success"
+          },
+          {
+            "name": "verify (windows-latest)",
+            "conclusion": "success"
+          },
+          {
+            "name": "verify (macos-15)",
+            "conclusion": "success"
+          },
+          {
+            "name": "ci-gate",
+            "conclusion": "success"
+          }
+        ]
+      },
+      "main": {
+        "id": 33892982662,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33892982662",
+        "head": "3989ffa034b8abce40b4a4115705bf8b2b11d9f1",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "name": "actionlint",
+            "conclusion": "success"
+          },
+          {
+            "name": "verify (ubuntu-latest)",
+            "conclusion": "success"
+          },
+          {
+            "name": "verify (windows-latest)",
+            "conclusion": "success"
+          },
+          {
+            "name": "verify (macos-15)",
+            "conclusion": "success"
+          },
+          {
+            "name": "lifecycle-sim",
+            "conclusion": "success"
+          },
+          {
+            "name": "lifecycle-client-probe (macos-15)",
+            "conclusion": "success"
+          },
+          {
+            "name": "lifecycle-client-probe (windows-latest)",
+            "conclusion": "success"
+          },
+          {
+            "name": "ci-gate",
+            "conclusion": "success"
+          }
+        ]
+      },
+      "latestClientCanary": {
+        "id": 33893940851,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33893940851",
+        "head": "3989ffa034b8abce40b4a4115705bf8b2b11d9f1",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "name": "canary",
+            "conclusion": "success"
+          }
+        ],
+        "clients": {
+          "codex": "0.153.2",
+          "claude": "2.1.260"
+        },
+        "reportTimestamp": "2026-09-04T16:14:16.167Z"
+      }
+    }
+  },
+  "validation": {
+    "expectedHeadMerged": true,
+    "firstParentIsExecutionBase": true,
+    "secondParentIsCandidate": true,
+    "githubMergeTreeMatchesCandidate": true,
+    "upstreamIsMainAncestor": true,
+    "auditArchiveHashesVerified": true,
+    "sourceClosureImportedIntoEmptyRepository": true,
+    "pullRequestCiPassed": true,
+    "mainCiPassed": true,
+    "latestClientCanaryPassed": true,
+    "localAutomaticAndUserOperatedZeroRiskPassed": true
+  },
+  "limitation": {
+    "kind": "missing-contemporaneous-merge-snapshot",
+    "replacement": "Explicitly labeled exact-parent post-hoc ort reproduction, not original execution evidence.",
+    "authority": "Requesting user explicitly acting as release owner; approval recorded 2026-09-04 and included in the archive.",
+    "residualRisk": "Original merge execution cannot be reconstructed as contemporaneous evidence. Coverage and Git graph are not proof of complete semantic parity.",
+    "reReviewCondition": "Original evidence becomes available or a regression challenges recorded mappings."
+  },
+  "publicationBoundary": "This records integration and its CI/canary, not a release that has not yet run. The receipt PR and its main CI must pass before tagging. Four-platform release/package/signature/checksum gates remain required; their actual identities will be linked in release metadata."
+}
