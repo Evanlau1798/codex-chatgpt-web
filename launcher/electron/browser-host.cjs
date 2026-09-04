@@ -1172,7 +1172,7 @@ class BrowserHost {
     if (visible) {
       // Establish native on-screen bounds before removing the background viewport contract.
       tab.view.setBounds(this.bounds);
-      if (tab.rendererReady && tab.deviceEmulationViewport) {
+      if (tab.interactionMode !== "manual" && tab.rendererReady && tab.deviceEmulationViewport) {
         tab.view.webContents.disableDeviceEmulation();
         tab.deviceEmulationViewport = null;
       }
@@ -1182,7 +1182,7 @@ class BrowserHost {
       // native bounds and View visibility are non-zero. Device emulation gives background turns
       // an explicit renderer viewport before moving the view outside the launcher surface.
       const bounds = this.hiddenTurnBounds();
-      if (tab.rendererReady
+      if (tab.interactionMode !== "manual" && tab.rendererReady
         && (tab.deviceEmulationDirty
           || tab.deviceEmulationViewport?.width !== bounds.width
           || tab.deviceEmulationViewport?.height !== bounds.height)) {

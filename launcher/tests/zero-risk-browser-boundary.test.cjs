@@ -3,6 +3,28 @@ const test = require("node:test");
 const { EventEmitter } = require("node:events");
 const { BrowserHost, IDLE_BROWSER_URL } = require("../electron/browser-host.cjs");
 
+test("loaded hidden manual tabs use native placement without device emulation", () => {
+  const placements = [];
+  const hidden = { x: 1401, y: 901, width: 1400, height: 900 };
+  const shown = { x: 0, y: 0, width: 800, height: 600 };
+  const forbidden = () => { throw new Error("manual tab must not use device emulation"); };
+  const host = Object.assign(Object.create(BrowserHost.prototype), {
+    bounds: shown, hiddenTurnBounds: () => hidden, enableHiddenTurnViewport: forbidden,
+  });
+  const tab = { interactionMode: "manual", rendererReady: true, deviceEmulationDirty: true,
+    status: "running", deviceEmulationViewport: null,
+    view: { setBounds: bounds => placements.push(bounds), setVisible: visible => placements.push(visible),
+      webContents: { disableDeviceEmulation: forbidden, enableDeviceEmulation: forbidden } } };
+  host.presentTurnView(tab, false);
+  host.presentTurnView(tab, true);
+  // Even stale renderer bookkeeping cannot authorize a manual emulation operation.
+  tab.deviceEmulationViewport = { width: 1, height: 1 };
+  host.presentTurnView(tab, true);
+  tab.status = "ready";
+  host.presentTurnView(tab, false);
+  assert.deepEqual(placements, [hidden, true, shown, true, shown, true, hidden, false]);
+});
+
 test("manual turn navigation never injects code, styles, or page-derived titles", async () => {
   const calls = [];
   const contents = new EventEmitter();
