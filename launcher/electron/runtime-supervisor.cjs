@@ -192,6 +192,10 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     throw new Error("Production launcher refuses a DEV harness configuration");
   }
   if (config.solAvailable === undefined) config = { ...config, solAvailable: true };
+  if (config.browserInteractionMode === undefined) config.browserInteractionMode = "automatic";
+  if (config.browserInteractionMode !== "automatic" && config.browserInteractionMode !== "manual") {
+    throw new Error("Runtime configuration has an invalid browser interaction mode");
+  }
   if (config.useEnhancedWebSessionMode !== undefined && typeof config.useEnhancedWebSessionMode !== "boolean") {
     throw new Error("Runtime configuration has an invalid useEnhancedWebSessionMode");
   }
@@ -274,27 +278,45 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     || config.runtimeCommand.some(part => typeof part !== "string" || !part.trim())) {
     throw new Error("Runtime configuration has an invalid runtime command");
   }
-  if (config.mode === "full") {
-    if (!config.tunnel || typeof config.tunnel !== "object") {
-      throw new Error("Full mode is missing tunnel configuration");
+  const validateTunnel = (tunnel, label) => {
+    if (!tunnel || typeof tunnel !== "object") {
+      throw new Error(`Full mode is missing ${label}`);
     }
     for (const key of ["binaryPath", "tunnelId", "runtimeKeyFile", "profileDir", "profileName", "alias"]) {
-      if (typeof config.tunnel[key] !== "string" || !config.tunnel[key].trim()) {
-        throw new Error(`Full mode is missing tunnel.${key}`);
+      if (typeof tunnel[key] !== "string" || !tunnel[key].trim()) {
+        throw new Error(`Full mode is missing ${label}.${key}`);
       }
     }
-    if (!/^tunnel_[a-f0-9]{32}$/.test(config.tunnel.tunnelId)) {
-      throw new Error("Full mode has an invalid tunnel id");
+    if (!/^tunnel_[a-f0-9]{32}$/.test(tunnel.tunnelId)) {
+      throw new Error(`Full mode has an invalid ${label} id`);
     }
     for (const key of ["profileName", "alias"]) {
-      if (!/^[A-Za-z0-9._-]+$/.test(config.tunnel[key])) {
-        throw new Error(`Full mode has an invalid tunnel.${key}`);
+      if (!/^[A-Za-z0-9._-]+$/.test(tunnel[key])) {
+        throw new Error(`Full mode has an invalid ${label}.${key}`);
       }
     }
     for (const key of ["binaryPath", "runtimeKeyFile", "profileDir"]) {
-      if (!absolutePath(config.tunnel[key], platform)) {
-        throw new Error(`Full mode requires an absolute tunnel.${key}`);
+      if (!absolutePath(tunnel[key], platform)) {
+        throw new Error(`Full mode requires an absolute ${label}.${key}`);
       }
+    }
+  };
+  if (config.mode === "full") {
+    validateTunnel(config.tunnel, "tunnel");
+    if (config.automaticTunnel !== undefined) validateTunnel(config.automaticTunnel, "automaticTunnel");
+    if (config.manualTunnel !== undefined) validateTunnel(config.manualTunnel, "manualTunnel");
+    if (config.automaticTunnel && config.manualTunnel
+      && config.automaticTunnel.tunnelId === config.manualTunnel.tunnelId) {
+      throw new Error("Automatic and Zero Risk tunnel IDs must differ");
+    }
+    const activeTunnel = config.browserInteractionMode === "manual"
+      ? config.manualTunnel
+      : config.automaticTunnel;
+    if ((config.automaticTunnel || config.manualTunnel) && !activeTunnel) {
+      throw new Error("Active browser interaction mode has no tunnel configuration");
+    }
+    if (activeTunnel && JSON.stringify(activeTunnel) !== JSON.stringify(config.tunnel)) {
+      throw new Error("Active browser interaction mode does not match the active tunnel");
     }
   }
   return config;

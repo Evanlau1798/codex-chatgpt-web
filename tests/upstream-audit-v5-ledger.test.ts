@@ -115,7 +115,7 @@ describe("upstream v5.0.0 audit ledger", () => {
       "manual-mcp-contract",
       "manual-navigation-superseded",
       "manual-owner-death", "manual-owner-liveness", "manual-resume-validation",
-      "manual-retained-ttl", "manual-surface-failure", "manual-terminal-errors", "manual-ui-close",
+      "manual-retained-ttl", "manual-supervisor-identity", "manual-surface-failure", "manual-terminal-errors", "manual-ui-close",
     ]);
     const sources = new Map<string, string>();
     for (const item of review.obligations) {

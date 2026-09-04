@@ -12,24 +12,31 @@ for (const mode of ["manual", "automatic"] as const) {
   test(`actual launcher ${mode} MCP invocation exposes the matching protocol`, async () => {
     const socketPath = defaultBrokerEndpoint(resolve(root, "tmp", `mcp-contract-${mode}-${crypto.randomUUID()}`));
     const broker = TurnBroker.forSocket(socketPath);
-    let invocation!: { executable: string; args: string[]; cwd: string };
     let serialized = "";
-    const supervisor = Object.assign(Object.create(RuntimeSupervisor.prototype), {
-      runtimeCommand(args: string[]) {
-        invocation = { executable: process.execPath, args: [resolve(root, "src/cli.ts"), ...args], cwd: root };
-        return invocation;
-      },
-      async runTunnelCommand(_config: unknown, args: string[]) {
-        serialized = args[args.indexOf("--mcp-command") + 1]!;
-        return { code: 0 };
-      },
+    const supervisor = new RuntimeSupervisor({
+      app: { isPackaged: false }, sourceRoot: root, coreHome: root,
+      browserDescriptorPath: resolve(root, "test-descriptor.json"), logger: {},
     });
-    await supervisor.runTunnelConnectCommand({
-      browserInteractionMode: mode, brokerSocketPath: socketPath, tunnel: {},
-    });
+    supervisor.runTunnelCommand = async (_config: unknown, args: string[]) => {
+      serialized = args[args.indexOf("--mcp-command") + 1]!;
+      return { code: 0 };
+    };
+    const previousBun = process.env.CODEX_CHATGPT_WEB_BUN;
+    try {
+      process.env.CODEX_CHATGPT_WEB_BUN = process.execPath;
+      await supervisor.runTunnelConnectCommand({
+        browserInteractionMode: mode, brokerSocketPath: socketPath, tunnel: {},
+      });
+    } finally {
+      if (previousBun === undefined) delete process.env.CODEX_CHATGPT_WEB_BUN;
+      else process.env.CODEX_CHATGPT_WEB_BUN = previousBun;
+    }
+    const quoted = serialized.match(/"(?:\\.|[^"\\])*"/g)!;
+    expect(quoted.join(" ")).toBe(serialized);
+    const [command, ...args] = quoted.map(value => JSON.parse(value) as string);
     const client = new Client({ name: "launcher-contract-regression", version: "1.0.0" });
     const transport = new StdioClientTransport({
-      command: invocation.executable, args: invocation.args, cwd: root, stderr: "pipe",
+      command: command!, args, cwd: root, stderr: "pipe",
     });
     try {
       await client.connect(transport);
@@ -37,8 +44,8 @@ for (const mode of ["manual", "automatic"] as const) {
       expect(tools.includes("codex_turn_start")).toBe(mode === "manual");
       expect(tools.includes("codex_turn_complete")).toBe(mode === "manual");
       const contract = mode === "manual" ? "safe" : "native";
-      expect(invocation.args).toEqual([
-        resolve(root, "src/cli.ts"), "mcp", "--contract", contract, "--broker-socket", socketPath,
+      expect(args).toEqual([
+        "run", resolve(root, "src/cli.ts"), "mcp", "--contract", contract, "--broker-socket", socketPath,
       ]);
       expect(serialized).toContain('"--contract"');
       expect(serialized).toContain(`"${contract}"`);
