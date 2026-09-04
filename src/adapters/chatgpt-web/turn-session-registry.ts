@@ -104,6 +104,11 @@ export class ChatGptTurnSessions {
     if (pending) await withAbort(pending, signal);
   }
 
+  async waitForConversationRetirement(key: string, signal?: AbortSignal): Promise<void> {
+    const pending = this.conversationRetirements.get(key);
+    if (pending) await withAbort(pending, signal);
+  }
+
   async retireAndWait(
     key: string,
     preserveConversationKeyOrSignal?: string | AbortSignal,

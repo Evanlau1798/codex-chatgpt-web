@@ -117,6 +117,7 @@ describe("upstream v5.0.0 audit ledger", () => {
       "dev-chat-readiness", "dev-chat-saved-model",
       "dev-setup-interaction",
       "environment-cwdless",
+      "enhanced-compaction-physical-settlement",
       "interaction-mode-http-drain",
       "launcher-foreground-request", "launcher-interaction-operations",
       "manual-body-limit", "manual-clipboard-transaction", "manual-compaction-canonical", "manual-compaction-reconnect", "manual-duplicate-deadline",

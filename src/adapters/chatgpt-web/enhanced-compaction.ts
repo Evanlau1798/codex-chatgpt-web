@@ -16,7 +16,7 @@ import {
   RetainedCompactionSourceUnavailableError,
 } from "./retained-compaction-handoff";
 import type { TurnBroker } from "./turn-broker";
-import { chatGptTurnExecutionKey, chatGptTurnSessions } from "./turn-execution";
+import { chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptTurnSession } from "./turn-execution";
 import { emitBrowserCompletion } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 
@@ -73,9 +73,11 @@ export async function runEnhancedCompaction(
     );
     timer.unref?.();
     const operationSignal = AbortSignal.any([deadline.signal, operatorSignal]);
-    const source = chatGptTurnSessions.find(responseExecutionKey);
-    let preserveFinal = !source?.isActive() && source?.settledOutcome()?.type === "final";
+    let source: ChatGptTurnSession | undefined;
+    let preserveFinal = false;
+    const sourceConversationKey = chatGptConversationKey(parsed, executionNamespace);
     const fallback = async (reason: string): Promise<string> => {
+      operationSignal.throwIfAborted();
       console.warn(`[chatgpt-web] retained compaction fallback=${reason}`);
       const raw = await startFallback(`${traceId}_fallback`, operationSignal);
       const canonical = canonicalizeCompactionHandoff(parsed, raw);
@@ -83,6 +85,10 @@ export async function runEnhancedCompaction(
       return canonical;
     };
     try {
+      await chatGptTurnSessions.waitForRetirement(responseExecutionKey, operationSignal);
+      if (sourceConversationKey) await chatGptTurnSessions.waitForConversationRetirement(sourceConversationKey, operationSignal);
+      source = chatGptTurnSessions.find(responseExecutionKey);
+      preserveFinal = !source?.isActive() && source?.settledOutcome()?.type === "final";
       const conversationKey = source?.conversationKey();
       if (!source || !conversationKey) {
         if (source) await withCompactionAbort(
@@ -115,16 +121,21 @@ export async function runEnhancedCompaction(
       return canonical;
     } catch (error) {
       const conversationKey = source?.conversationKey();
-      if (source && conversationKey) {
-        await withCompactionAbort(
-          preserveFinal
+      try {
+        if (source && conversationKey) {
+          await (preserveFinal
             ? chatGptTurnSessions.retireConversationPreservingFinalResponse(
                 conversationKey, source, responseExecutionKey,
               )
-            : chatGptTurnSessions.retireConversationAndWait(conversationKey),
-          operationSignal,
-        );
+            : chatGptTurnSessions.retireConversationAndWait(conversationKey));
+        }
+        // A successful handoff can detach the source before cancellation reaches this catch.
+        await chatGptTurnSessions.waitForRetirement(responseExecutionKey);
+        if (sourceConversationKey) await chatGptTurnSessions.waitForConversationRetirement(sourceConversationKey);
+      } catch (retirementError) {
+        throw new AggregateError([error, retirementError], "Structured compaction failed and its retained conversation could not be retired");
       }
+      operationSignal.throwIfAborted();
       if (error instanceof RetainedCompactionSourceUnavailableError) {
         return await fallback("source_disappeared_before_handoff");
       }
@@ -147,7 +158,7 @@ export async function runEnhancedCompaction(
     if (abortSignal?.aborted) throw error;
     throw new ChatGptWebAdapterError(
       error instanceof Error ? error.message : String(error),
-      { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_failed", retryable: false },
+      { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_failed", retryable: false, cause: error },
     );
   }
 }

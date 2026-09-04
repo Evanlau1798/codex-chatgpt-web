@@ -85,7 +85,7 @@ export async function requestRetainedCompactionHandoff(
   } finally {
     browserAbort.abort();
     if (transaction) broker.abortCompactionTransaction(transaction.token);
-    if (browser) await withCompactionAbort(browser.then(() => undefined, () => undefined), operationSignal).catch(() => {});
+    if (browser) await browser.then(() => undefined, () => undefined);
     operationSignal.removeEventListener("abort", abortBrowser);
     clearTimeout(timer);
   }
