@@ -44,6 +44,15 @@ test("mixed contextual blocks do not hide real user instructions in the same mes
   expect(output.some(item => item.id === "old")).toBe(false);
 });
 
+test("image-only retention also charges its message metadata", () => {
+  const old = { type: "message", role: "user", id: "old-image",
+    metadata: { note: "metadata ".repeat(21_000) },
+    content: [{ type: "input_image", image_url: "https://example.invalid/reference.png" }] };
+  const output = buildCompactV1Output([old, user("Inspect only.")], "Checkpoint.");
+  expect(estimateTokens(JSON.stringify(output.slice(0, -1)))).toBeLessThanOrEqual(20_000);
+  expect(output.some(item => item.id === "old-image")).toBe(false);
+});
+
 test("fixed history and summary reach a stable replacement across 100 compactions", () => {
   let input: Record<string, unknown>[] = [user("Continue the current task.")];
   let baseline = "";

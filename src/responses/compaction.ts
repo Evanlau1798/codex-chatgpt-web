@@ -203,13 +203,13 @@ export function buildCompactV1Output(
     const blocks = compactContentBlocks(message);
     const cost = retainedMessageTokens(message);
     const keepText = i === latest || cost <= remaining;
-    if (keepText && i !== latest) remaining -= cost;
     const retainedReversed: CompactContentBlock[] = [];
+    let messageImages = 0;
     for (let blockIndex = blocks.length - 1; blockIndex >= 0; blockIndex -= 1) {
       const block = blocks[blockIndex]!;
       if (imageBlock(block)) {
-        if (retainedImages < maxImages) {
-          retainedImages += 1;
+        if (retainedImages + messageImages < maxImages) {
+          messageImages += 1;
           retainedReversed.push(block);
         }
         continue;
@@ -221,6 +221,12 @@ export function buildCompactV1Output(
       message.type = "message";
       message.role = "user";
       message.content = content;
+      const actualCost = retainedMessageTokens(message);
+      if (i !== latest) {
+        if (actualCost > remaining) continue;
+        remaining -= actualCost;
+      }
+      retainedImages += messageImages;
       selected.push(message);
     }
   }
