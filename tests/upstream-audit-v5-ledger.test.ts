@@ -112,6 +112,7 @@ describe("upstream v5.0.0 audit ledger", () => {
     }
     expect(review.obligations.map(item => item.id).sort()).toEqual([
       "manual-body-limit", "manual-clipboard-transaction", "manual-duplicate-deadline",
+      "manual-navigation-superseded",
       "manual-owner-death", "manual-owner-liveness", "manual-resume-validation",
       "manual-retained-ttl", "manual-surface-failure", "manual-terminal-errors", "manual-ui-close",
     ]);
