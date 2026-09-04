@@ -1347,6 +1347,7 @@ class RuntimeHost {
       enabled ? "--zero-risk-pro" : "--zero-risk-default",
       ...(this.launcherProfile === "production" ? ["--replace-codex-route", "--restart-service"] : []),
     ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
     const options = {
       message: enabled ? "Installing the Zero Risk Pro model" : "Removing the Zero Risk Pro model",
       successMessage: enabled ? "Zero Risk Pro installed; restart Codex" : "Default Zero Risk model restored; restart Codex",
@@ -1373,6 +1374,7 @@ class RuntimeHost {
       mode === "automatic" && current.config?.experimentalBiggerContext === true
         ? "--bigger-context" : "--standard-context",
     ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
     if (current.mode === "full") args.push("--app-name", this.browserConnectorName(mode));
     const options = {
       message: mode === "manual" ? "Enabling Zero Risk" : "Enabling automatic browser interaction",

@@ -354,12 +354,20 @@ export async function runDevCommand(args: string[]): Promise<void> {
     if (biggerContext && standardContext) {
       throw new Error("Choose at most one context mode: --bigger-context or --standard-context");
     }
+    const autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
+    const zeroRiskPro = takeFlag(args, "--zero-risk-pro");
+    const zeroRiskDefault = takeFlag(args, "--zero-risk-default");
+    if (zeroRiskPro && zeroRiskDefault) {
+      throw new Error("Choose at most one Zero Risk model profile: --zero-risk-pro or --zero-risk-default");
+    }
     if (args.length > 0) throw new Error(`Unknown DEV setup arguments: ${args.join(" ")}`);
     const result = await setupDevProfile({
       mode: full ? "full" : "browser-only",
       browserHostDescriptorPath: descriptorPath,
       refreshAccountCapabilities,
       acknowledgedUnofficial,
+      ...(autoApproveToolCalls ? { autoApproveToolCalls: true } : {}),
+      ...(zeroRiskPro || zeroRiskDefault ? { zeroRiskProEnabled: zeroRiskPro } : {}),
       ...(automaticBrowserInteraction || manualBrowserInteraction
         ? { browserInteractionMode: manualBrowserInteraction ? "manual" as const : "automatic" as const }
         : {}),

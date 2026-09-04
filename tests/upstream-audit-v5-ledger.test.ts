@@ -114,6 +114,7 @@ describe("upstream v5.0.0 audit ledger", () => {
       "automatic-tool-observation",
       "dev-setup-interaction",
       "environment-cwdless",
+      "launcher-interaction-operations",
       "manual-body-limit", "manual-clipboard-transaction", "manual-compaction-canonical", "manual-compaction-reconnect", "manual-duplicate-deadline",
       "manual-mcp-contract",
       "manual-native-owner",
