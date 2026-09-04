@@ -19,4 +19,6 @@ export const sharedLifecycleTests = [
   "tests/lifecycle-sim-codex-evidence.test.ts",
   "tests/lifecycle-sim-production-composition.test.ts",
   "tests/lifecycle-race-ordering.test.ts",
+  "tests/zero-risk-http-composition.test.ts",
+  "tests/zero-risk-owner-retirement.test.ts",
 ] as const;
