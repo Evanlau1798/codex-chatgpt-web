@@ -23,3 +23,21 @@ test("inactive mode provisioning does not require the active Automatic catalog",
   assert.match(wizard, /manualInteraction \|\| configuringInactiveMode \|\| snapshot\.state\.codexCatalogVerified/);
   assert.match(wizard, /api!\.setupMcp\(\{\s*interactionMode,/);
 });
+
+test("ordinary MCP navigation drops an abandoned target in both directions", () => {
+  const body = source.match(/const navigateSurface = \(next: Surface\) => \{([\s\S]*?)\n  \};/)[1];
+  for (const active of ["automatic", "manual"]) {
+    let target = active === "automatic" ? "manual" : "automatic";
+    let surface = "settings";
+    new Function("next", "setSurface", "setMcpTargetMode", "compactSidebar", "setSidebarOpen", body)(
+      "mcp", next => { surface = next; }, next => { target = next; }, false, () => {},
+    );
+    assert.equal(surface, "mcp");
+    assert.equal(target ?? active, active);
+  }
+  assert.match(source, /showMcp=\{\(\) => navigateSurface\("mcp"\)\}/);
+  assert.match(source, /<McpSurface\s+key=\{mcpTargetMode \?\? snapshot\.state\.browserInteractionMode\}/);
+  assert.match(source, /configureInteractionMode=\{\(mode\) => \{\s*setMcpTargetMode\(mode\);\s*setSurface\("mcp"\);/);
+  assert.match(wizard, /configuringInactiveMode \? false : snapshot\.mcpCredentialsConfigured/);
+  assert.match(wizard, /snapshot\.connectorNames\[interactionMode\]/);
+});

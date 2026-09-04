@@ -456,6 +456,7 @@ function LauncherShell({
   };
 
   const navigateSurface = (next: Surface) => {
+    setMcpTargetMode(null);
     setSurface(next);
     if (compactSidebar) setSidebarOpen(false);
   };
@@ -641,13 +642,14 @@ function LauncherShell({
                 devProfile={devProfile}
                 operation={operation}
                 setError={setError}
-                showMcp={() => setSurface("mcp")}
+                showMcp={() => navigateSurface("mcp")}
                 snapshot={snapshot}
                 updateState={updateState}
               />
             ) : null}
             {surface === "mcp" ? (
               <McpSurface
+                key={mcpTargetMode ?? snapshot.state.browserInteractionMode}
                 copy={copy}
                 devProfile={devProfile}
                 interactionMode={mcpTargetMode ?? snapshot.state.browserInteractionMode}
