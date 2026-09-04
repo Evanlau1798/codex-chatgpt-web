@@ -20,7 +20,7 @@ type Ledger = {
       classification: Classification;
       behavior: string;
       interface: string;
-      source: { path: string; anchor: string };
+      source: { path: string; symbol: string; anchor: string };
       implementation: string;
       tests: Array<{ path: string; assertion: string }>;
     }>;
@@ -113,7 +113,7 @@ describe("upstream v5.0.0 audit ledger", () => {
     expect(review.obligations.map(item => item.id).sort()).toEqual([
       "manual-body-limit", "manual-clipboard-transaction", "manual-duplicate-deadline",
       "manual-owner-death", "manual-owner-liveness", "manual-resume-validation",
-      "manual-retained-ttl", "manual-terminal-errors",
+      "manual-retained-ttl", "manual-surface-failure", "manual-terminal-errors", "manual-ui-close",
     ]);
     const sources = new Map<string, string>();
     for (const item of review.obligations) {
@@ -129,6 +129,7 @@ describe("upstream v5.0.0 audit ledger", () => {
         sources.set(item.source.path, source.stdout);
       }
       expect(item.source.anchor.length).toBeGreaterThan(0);
+      expect(sources.get(item.source.path)).toContain(`${item.source.symbol}(`);
       expect(sources.get(item.source.path)).toContain(item.source.anchor);
       expect(readFileSync(resolve(repositoryRoot, item.implementation), "utf8").length).toBeGreaterThan(0);
       expect(item.tests.length).toBeGreaterThan(0);
