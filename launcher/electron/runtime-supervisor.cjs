@@ -8,6 +8,7 @@ const { redactText } = require("./logging.cjs");
 const {
   DETACH_OWNED_CHILD,
   processRunning,
+  runtimeOwnershipPredatesCurrentBoot,
   terminateOwnedProcessTree,
 } = require("./process-tree.cjs");
 const { runtimeInvocation } = require("./runtime-command.cjs");
@@ -97,7 +98,7 @@ function tunnelRuntimeStopped(health) {
 }
 
 function runtimeOwnershipMayBeLive(state) {
-  if (!state) return false;
+  if (!state || runtimeOwnershipPredatesCurrentBoot(state)) return false;
   if (processRunning(state.daemonPid) || processRunning(state.tunnelPid)) return true;
   return ["starting", "ready", "degraded", "stopping"].includes(state.status);
 }
@@ -485,7 +486,7 @@ class RuntimeSupervisor {
       throw new Error("Launcher-owned runtime children exist while an external installation is configured");
     }
     const state = this.readState();
-    if (state && (
+    if (state && !runtimeOwnershipPredatesCurrentBoot(state) && (
       processRunning(state.ownerPid)
       || processRunning(state.daemonPid)
       || processRunning(state.tunnelPid)
@@ -497,7 +498,7 @@ class RuntimeSupervisor {
 
   writeExternalState(detail) {
     const existing = this.readState();
-    const preservesLiveOwnership = existing && (
+    const preservesLiveOwnership = existing && !runtimeOwnershipPredatesCurrentBoot(existing) && (
       processRunning(existing.ownerPid)
       || processRunning(existing.daemonPid)
       || processRunning(existing.tunnelPid)
@@ -1187,7 +1188,7 @@ class RuntimeSupervisor {
     }
     if (!config) {
       const ownershipState = this.readState();
-      if (ownershipState && (
+      if (ownershipState && !runtimeOwnershipPredatesCurrentBoot(ownershipState) && (
         processRunning(ownershipState.daemonPid)
         || processRunning(ownershipState.tunnelPid)
         || foreignLauncherOwnerMayRecover(ownershipState)
@@ -1721,6 +1722,10 @@ class RuntimeSupervisor {
   async stopStaleOwnedRuntime(config) {
     const state = this.readState();
     if (!state) return false;
+    if (runtimeOwnershipPredatesCurrentBoot(state)) {
+      this.clearState();
+      return false;
+    }
     const tunnelOnly = this.launcherProfile === "development";
     if (tunnelOnly && processRunning(state.daemonPid)) {
       throw new Error("DEV launcher ownership unexpectedly contains a Responses daemon");
@@ -1992,7 +1997,7 @@ class RuntimeSupervisor {
       }
       if (!this.daemon && !this.tunnel) {
         if (!config) {
-          if (ownershipState && (
+          if (ownershipState && !runtimeOwnershipPredatesCurrentBoot(ownershipState) && (
             processRunning(ownershipState.daemonPid)
             || processRunning(ownershipState.tunnelPid)
           )) {

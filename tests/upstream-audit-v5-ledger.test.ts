@@ -119,7 +119,7 @@ describe("upstream v5.0.0 audit ledger", () => {
       "manual-navigation-superseded",
       "manual-owner-death", "manual-owner-liveness", "manual-resume-validation",
       "manual-retained-ttl", "manual-supervisor-identity", "manual-surface-failure", "manual-terminal-errors", "manual-tool-boundary", "manual-ui-close",
-      "tunnel-command-contract", "tunnel-key-isolation",
+      "supervisor-boot-ownership", "tunnel-command-contract", "tunnel-key-isolation",
     ]);
     const sources = new Map<string, string>();
     for (const item of review.obligations) {
