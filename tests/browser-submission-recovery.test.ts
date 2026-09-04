@@ -24,6 +24,8 @@ interface Worker {
     initialRevision?: number, recover?: Recovery): Promise<string>;
   waitForNewAssistantTurn(page: Page, responses: Locator, initial: State, deadline?: number,
     signal?: AbortSignal, progress?: ChatGptExternalTurnProgress, grace?: number, recover?: Recovery): Promise<Locator>;
+  waitForMultipartAcknowledgement(page: Page, response: Locator, stage: { acknowledgement: string },
+    deadline?: number, signal?: AbortSignal, progress?: ChatGptExternalTurnProgress): Promise<void>;
 }
 
 function surface(read: () => Promise<State>) {
@@ -109,6 +111,44 @@ test("submission recovery preserves the original MCP batch revision", async () =
     return fixture.page;
   });
   expect(evidence).toBe("mcp_tool_call");
+});
+
+test("recovered MCP batch is acknowledged by the real worker observation before its waiter resumes", async () => {
+  const first = surface(timeout);
+  const next = surface(async () => ({ count: 1, lastId: "conversation-turn-recovered" }));
+  const progress = new ChatGptExternalTurnProgress();
+  const boundary = new Error("stop after the first production observation iteration");
+  let sends = 0, rebinds = 0, observed = false, revision = 0;
+  let observation: Promise<void> | undefined;
+  const instance = Object.assign(worker(), {
+    activeComposer: async () => ({ locator: () => ({ getByTestId: () => ({
+      waitFor: async () => {}, isEnabled: async () => true, press: async () => { sends++; },
+    }) }) }),
+    responseDomSnapshot: async (response: Locator) => {
+      expect(response).toBe(next.assistant);
+      expect(observed).toBe(false);
+      return { responsePresent: true, visibleText: "Tool-boundary fixture", fullHtml: "",
+        completionActionVisible: false, stoppedThinkingVisible: false };
+    },
+    waitForTurnDomOrExternalProgress: async () => { throw boundary; },
+  });
+  const evidence = await instance.sendAttachedPrompt(first.page, first.baseline, initial,
+    undefined, undefined, undefined, progress, async () => {
+      rebinds++;
+      revision = progress.recordToolBatch(1);
+      observation = progress.waitForToolBatchObservation(revision).then(() => { observed = true; });
+      return next.page;
+    });
+  expect(evidence).toBe("mcp_tool_call");
+  expect(observed).toBe(false);
+  const response = await instance.waitForNewAssistantTurn(next.page, next.responses, initial,
+    undefined, undefined, progress);
+  await expect(instance.waitForMultipartAcknowledgement(next.page, response,
+    { acknowledgement: "not a completion assertion" }, undefined, undefined, progress)).rejects.toBe(boundary);
+  await observation;
+  expect(observed).toBe(true);
+  expect(progress.snapshot().lastToolBatchRevision).toBe(revision);
+  expect([sends, rebinds]).toEqual([1, 1]);
 });
 
 test("assistant recovery binds the new stable identity on the rebound page", async () => {
