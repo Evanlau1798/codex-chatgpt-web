@@ -39,6 +39,13 @@ function fixture(startHidden = true) {
   return { show: context.show, attach: context.attach, window };
 }
 
+test("second-instance foreground registration precedes runtime materialization", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../electron/main.cjs"), "utf8");
+  const registration = source.indexOf('app.on("second-instance"');
+  const materialization = source.indexOf("await waitForPackagedRuntimeSource(");
+  assert.ok(registration >= 0 && materialization > registration);
+});
+
 test("a foreground request before window creation is replayed when a hidden launcher is ready", () => {
   const state = fixture();
   state.show();
