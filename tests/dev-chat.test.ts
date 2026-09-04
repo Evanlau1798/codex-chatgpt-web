@@ -354,6 +354,10 @@ test("synthetic fill crosses the production threshold and triggers the real comp
   const driver = new DevChatDriver(config, store, factory, root);
   const state = driver.open("auto-compact", "chatgpt-web/light").state;
   driver.fill(state, 30_000);
+  // The filler is old history, not an irreducible latest instruction. Compact must preserve a
+  // real recent request rather than silently slicing the oversized synthetic user record.
+  state.input.push({ type: "message", role: "user", id: "recent-dev-instruction",
+    content: [{ type: "input_text", text: "Summarize the synthetic history and continue inspection." }] });
   expect(driver.status(state).inputTokens).toBeGreaterThanOrEqual(32_000);
   const events: string[] = [];
   const result = await driver.send(state, "Continue after compacting the synthetic history.", event => events.push(event.type));
