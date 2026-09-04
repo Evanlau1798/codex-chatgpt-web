@@ -16,10 +16,11 @@ import { extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import type { BrokerToolRequest } from "./turn-broker";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
+import { claudeSteeringMarker } from "./tool-result-delivery";
 
-// The real capability has the same length. Keeping it out of usage accounting would make
-// estimates differ slightly between the prepared browser prompt and later Codex tool rounds.
+// Placeholders have production handle lengths; input-tokens charges variable bytes conservatively.
 const ESTIMATE_TURN_TOKEN = "turn_00000000000000000000000000000000";
+const ESTIMATE_REQUEST_ID = "request_00000000000000000000000000000000";
 
 export interface ChatGptWebRoundEvidence {
   answer?: string;
@@ -48,11 +49,12 @@ export function estimateChatGptWebInputTokens(
     ? { localTools: true }
     : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
   const identity = extractChatGptTurnIdentity(parsed);
+  const token = manual ? ESTIMATE_REQUEST_ID
+    : mode.localTools && effectiveChatGptToolPolicy(parsed).tools.length > 0 ? ESTIMATE_TURN_TOKEN : undefined;
   const compiled = compileChatGptWebPrompt(
     parsed,
     capabilities,
-    manual || (mode.localTools && effectiveChatGptToolPolicy(parsed).tools.length > 0)
-      ? ESTIMATE_TURN_TOKEN : undefined,
+    token,
     {
       ...options,
       ...(manual ? { manualControl: true as const } : {}),
@@ -61,7 +63,8 @@ export function estimateChatGptWebInputTokens(
         && Boolean(identity.threadId && identity.turnId),
     },
   );
-  return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId);
+  return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId,
+    token ? [token, claudeSteeringMarker(token)] : []);
 }
 
 /**

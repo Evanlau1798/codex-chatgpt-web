@@ -6,6 +6,7 @@ import { estimateChatGptWebInputTokens } from "../src/adapters/chatgpt-web/usage
 import { resolveChatGptWebContextLimits } from "../src/chatgpt-web-models";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { estimateCompiledChatGptWebInputTokens } from "../src/adapters/chatgpt-web/input-tokens";
+import { effectiveChatGptToolPolicy } from "../src/adapters/chatgpt-web/tool-policy";
 
 const user = (text: string, id = "latest") => ({ type: "message", role: "user", id, content: text });
 const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: false };
@@ -29,8 +30,15 @@ async function compact(raw: Record<string, unknown>, summary: string, config = d
 function measure(raw: Record<string, unknown>, output: unknown[], config: AppConfig) {
   const parsed = parseRequest({ ...raw, input: output });
   const route = routeChatGptWebRequest(parsed, config);
+  const manual = route.interactionMode === "manual";
+  const localTools = manual || effectiveChatGptToolPolicy(parsed).tools.length > 0;
+  const compiled = compileChatGptWebPrompt(parsed, { ...capabilities,
+    localToolsEnabled: config.mode === "full" && localTools, proAvailable: config.proAvailable },
+  localTools ? "turn_00000000000000000000000000000000" : undefined,
+  { ...(manual ? { manualControl: true as const } : {}),
+    nativeControlConnector: !manual && config.useEnhancedWebSessionMode && config.mode === "full" });
   return {
-    tokens: estimateChatGptWebInputTokens(parsed, { ...capabilities, proAvailable: config.proAvailable }),
+    tokens: estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId),
     limit: resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config,
       config.useEnhancedWebSessionMode).autoCompactTokenLimit,
   };
@@ -50,6 +58,18 @@ test("Enhanced estimates use the same native-control contract as production comp
   expect(estimateChatGptWebInputTokens(parsed, capabilities, options))
     .toBe(estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId));
 });
+
+test.each(["7da86c5be913f040a8b76c3f1da952e4", "fedcba98765432100123456789abcdef"])(
+  "tool-token estimates conservatively bound variable hexadecimal contents (%s)", hex => {
+    const parsed = parseRequest({ model: "chatgpt-web/medium", input: [user("Inspect only.")],
+      tools: [{ type: "function", name: "inspect", parameters: { type: "object", properties: {} } }] });
+    routeChatGptWebRequest(parsed, defaultConfig("full"));
+    const options = { nativeControlConnector: true };
+    const compiled = compileChatGptWebPrompt(parsed, capabilities, `turn_${hex}`, options);
+    expect(estimateChatGptWebInputTokens(parsed, capabilities, options))
+      .toBeGreaterThanOrEqual(estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId));
+  },
+);
 
 test("irreducible replacement fails once without a partial history", async () => {
   const raw = { model: "chatgpt-web/medium", input: [user("Inspect only.")] };
