@@ -14,6 +14,7 @@ const { processRunning } = require("./process-tree.cjs");
 const { showBrowserWindow } = require("./window-activation.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { ManualTurnController } = require("./manual-turn-controller.cjs");
+const { initializeAutomaticTurnTab, markTurnTabSurface } = require("./automatic-turn-surface.cjs");
 const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
@@ -559,7 +560,8 @@ class BrowserHost {
       });
       this.removeTurnTab(tab, true);
     });
-    void view.webContents.loadURL(manual ? TEMPORARY_CHAT_URL : IDLE_BROWSER_URL).catch((error) => {
+    if (!manual) return initializeAutomaticTurnTab(this, tab, loadCommittedBrowserSurface, IDLE_BROWSER_URL, CHATGPT_VIEWPORT_CSS);
+    void view.webContents.loadURL(TEMPORARY_CHAT_URL).catch((error) => {
       if (manual && isAbortedNavigationError(error)) return;
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error("browser.tab_initialization_failed", {
@@ -681,14 +683,8 @@ class BrowserHost {
         this.publishState?.(this.snapshot());
         return;
       }
-      void contents.insertCSS(CHATGPT_VIEWPORT_CSS).catch(() => {});
-      const encoded = JSON.stringify(tab.surfaceId);
-      void contents.executeJavaScript(`(() => {
-        Object.defineProperty(globalThis, "__CODEX_WEB_GPT_SURFACE_ID__", {
-          value: ${encoded}, configurable: true, enumerable: false, writable: false,
-        });
-        document.documentElement.dataset.codexWebGptSurface = ${encoded};
-      })()`, true).then(
+      if (tab.initializingSurface) return;
+      void markTurnTabSurface(this, tab, CHATGPT_VIEWPORT_CSS).then(
         () => this.publishState?.(this.snapshot()),
         (error) => {
           tab.status = "error";
@@ -1528,7 +1524,7 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  beginTurn(traceId, reveal, helperPid, interactionLocked = true, conversationKey, connectorIdentity, requireRetainedConversation = false) {
+  async beginTurn(traceId, reveal, helperPid, interactionLocked = true, conversationKey, connectorIdentity, requireRetainedConversation = false) {
     if (this.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.manualOperation}`);
     }
@@ -1548,6 +1544,10 @@ class BrowserHost {
         && (!connectorIdentity || tab.connectorBound === true)
       )) : undefined);
     if (existing) {
+      if (existing.initializingSurface) {
+        await existing.initialization;
+        return this.beginTurn(traceId, reveal, helperPid, interactionLocked, conversationKey, connectorIdentity, requireRetainedConversation);
+      }
       const reused = existing.status === "ready";
       if (existing.status === "running" && existing.helperPid !== helperPid) {
         if (processRunning(existing.helperPid)) {
@@ -1591,7 +1591,7 @@ class BrowserHost {
     if (requireRetainedConversation) {
       throw new Error("The retained ChatGPT conversation is no longer available");
     }
-    const tab = this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity);
+    const tab = await this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity);
     this.selectedTabId = tab.id;
     if (reveal) this.show({ activate: false });
     else this.syncViewVisibility();

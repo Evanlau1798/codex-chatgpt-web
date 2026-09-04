@@ -224,7 +224,7 @@ class BrowserControlServer {
       }
       const preferences = this.getPreferences();
       if (request.url === "/v1/turn/start") {
-        const lease = host.beginTurn(
+        const lease = await host.beginTurn(
           body.traceId,
           preferences.showBrowserDuringTurns === true,
           body.helperPid,

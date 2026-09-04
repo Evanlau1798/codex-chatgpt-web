@@ -1290,14 +1290,14 @@ test("connector verification is effort-independent and works while the browser s
   );
 });
 
-test("a live helper retains exclusive ownership of its running turn", () => {
+test("a live helper retains exclusive ownership of its running turn", async () => {
   const tab = {
     id: "tab-live-owner",
     traceId: "trace_live_owner",
     helperPid: process.pid,
     status: "running",
   };
-  assert.throws(
+  await assert.rejects(
     () => BrowserHost.prototype.beginTurn.call({
       manualOperation: null,
       turnTabs: new Map([[tab.id, tab]]),
@@ -1307,7 +1307,7 @@ test("a live helper retains exclusive ownership of its running turn", () => {
   );
 });
 
-test("a replacement helper takes over only after the previous owner exited", () => {
+test("a replacement helper takes over only after the previous owner exited", async () => {
   const deadPid = 2_147_483_647;
   const tab = {
     id: "tab-dead-owner",
@@ -1337,7 +1337,7 @@ test("a replacement helper takes over only after the previous owner exited", () 
     logger: { info() {}, warn: (event, detail) => warnings.push([event, detail]) },
   });
 
-  const lease = BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, process.pid);
+  const lease = await BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, process.pid);
 
   assert.deepEqual(lease, { surfaceId: tab.surfaceId, tabId: tab.id, reused: false });
   assert.equal(tab.helperPid, process.pid);
@@ -1697,7 +1697,7 @@ test("closing a running browser tab reports terminal user cancellation to its he
   assert.equal(fixture.closedTurnOwners.get("trace_running"), 333);
   assert.equal(fixture.userCancelledTurnOwners.get("trace_running"), 333);
   assert.equal(fixture.selectedTabId, "home");
-  assert.throws(
+  await assert.rejects(
     () => BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, 444),
     error => error?.code === "turn_cancelled",
   );
@@ -1752,7 +1752,7 @@ test("a failed runtime cancellation keeps the running DOM attached", async () =>
   assert.deepEqual(closed, []);
 });
 
-test("a later provider round reuses the connector-bound conversation with a new trace id", () => {
+test("a later provider round reuses the connector-bound conversation with a new trace id", async () => {
   const throttling = [];
   const tab = {
     id: "tab-reused",
@@ -1785,7 +1785,7 @@ test("a later provider round reuses the connector-bound conversation with a new 
     logger: { info: (event) => events.push(event) },
   });
 
-  const lease = BrowserHost.prototype.beginTurn.call(
+  const lease = await BrowserHost.prototype.beginTurn.call(
     fixture,
     "trace_next",
     false,
@@ -1823,7 +1823,7 @@ test("six browser tabs are a hard account-safety limit", () => {
   );
 });
 
-test("a retained conversation is not reused for a different connector identity", () => {
+test("a retained conversation is not reused for a different connector identity", async () => {
   const retained = {
     id: "retained",
     traceId: "trace_old",
@@ -1847,7 +1847,7 @@ test("a retained conversation is not reused for a different connector identity",
     logger: { info() {} },
   });
 
-  const lease = BrowserHost.prototype.beginTurn.call(
+  const lease = await BrowserHost.prototype.beginTurn.call(
     fixture,
     "trace_next",
     false,
@@ -1860,7 +1860,7 @@ test("a retained conversation is not reused for a different connector identity",
   assert.equal(retained.status, "ready");
 });
 
-test("a required retained conversation fails before creating a browser tab", () => {
+test("a required retained conversation fails before creating a browser tab", async () => {
   const retained = {
     id: "retained",
     traceId: "trace_old",
@@ -1880,7 +1880,7 @@ test("a required retained conversation fails before creating a browser tab", () 
     },
   });
 
-  assert.throws(
+  await assert.rejects(
     () => BrowserHost.prototype.beginTurn.call(
       fixture,
       "trace_next",
@@ -1981,7 +1981,7 @@ test("completed Claude conversations retain and reuse their browser tab", async 
   assert.equal(fixture.turnTabs.get(tab.id), tab);
   assert.equal(tab.status, "ready");
 
-  const lease = BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, 777);
+  const lease = await BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, 777);
   assert.deepEqual(lease, { surfaceId: tab.surfaceId, tabId: tab.id, reused: true });
   assert.equal(tab.status, "running");
   assert.equal(tab.helperPid, 777);
