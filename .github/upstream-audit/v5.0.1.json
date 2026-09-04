@@ -1,0 +1,791 @@
+{
+  "schemaVersion": 1,
+  "release": "v5.0.1",
+  "targetVersion": "5.0.1-Enhanced.1",
+  "baseline": {
+    "forkCommit": "eef6d28680a88eea48864a4391921137dbeb554c",
+    "upstream": "b2793cfd22342b0c6409df5eb855c163cefc16ea",
+    "inheritedLimitation": "v5.0.0 contemporaneous snapshot unavailable; accepted limitation remains in its published receipt"
+  },
+  "upstream": {
+    "tagObject": "4473f90a1f09348eb52d0db36d283550653ea62a",
+    "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+    "signed": false
+  },
+  "closure": {
+    "expectedPaths": 55,
+    "status": "in-progress"
+  },
+  "entries": [
+    {
+      "id": "v501-001",
+      "path": ".github/workflows/release.yml",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "9a24029b5b1a81bbef37be9b0e6c40228c783881",
+        "targetBlob": "46f260d5a2291bd3983eda822600d21cf17d6e1e",
+        "deltaSha256": "018ac88b3a0be2644c69248c366528bcbe5c1e7ae5dcc7a2d5dfd9ce19175ba4"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-002",
+      "path": "README.ja.md",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "19595da3996cd212cff60a2eb4b30cc021b88b88",
+        "targetBlob": "dde6af5ce6cb0aeba29e6c1734d25b1b10854b9f",
+        "deltaSha256": "d90f17bbd69169579bff8fa2184bbff1f3435786deeb4c6d753b24dce9fd9527"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-003",
+      "path": "README.md",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "987895bef697ec44ab3c1ad4481880d6dc11edcd",
+        "targetBlob": "0fcb85d950cb97c506c14dcfd3dbc1ff62ab63ea",
+        "deltaSha256": "517002478e2f4d07a3cd33db374ffd4e9890b63a1f944940dceba54d16379eef"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-004",
+      "path": "README.zh-CN.md",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "57524099aa97af900dc241bd425008902a382f3e",
+        "targetBlob": "e5324952638656ded78f2fc5bbb07fe6f5978573",
+        "deltaSha256": "65a90556380af367af5290450c6f0cb144ce7aafdae498b994f5fe7c00e5fab0"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-005",
+      "path": "TROUBLESHOOTING.md",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "451ff60f67e08b41e40d3ad40672b10fa4985de4",
+        "targetBlob": "69e3e832f16b3650d14ce6d4561fb3f212053b52",
+        "deltaSha256": "8f33c846160d181853ddbe69dfe6a4f03169504d3c5db6c6a15bf93592d768be"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-006",
+      "path": "launcher/electron/browser-helper-verifier.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "a13981c91ff69db1b15125ab93a7b990bd50c1a6",
+        "targetBlob": "f13998ebf44dc7439637113f8969033b02240816",
+        "deltaSha256": "c1e1c34a4e553059cede4c419b60dfb26da2b75857217e7e5bd121f30cd94d30"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-007",
+      "path": "launcher/electron/browser-host.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "0c56f1871378cca40eb42987992e75abd2b5942a",
+        "targetBlob": "ad7f39b69ea4a42e1f9be4e0aa3f7e4a014ee499",
+        "deltaSha256": "e4493392dab545fa50f20caeaff10f03dbdc096158902e832e3b021de744d420"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-008",
+      "path": "launcher/electron/main.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "d3a5fe1bc923c6ef951c38e68d2221c47c5fbe6d",
+        "targetBlob": "492b950873502be461c9563dad4d639485976ea5",
+        "deltaSha256": "a3a2f726ce4860304e662ba7133958374af88f0f8ccfb91638b1fc9e822cf075"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-009",
+      "path": "launcher/electron/runtime.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "a192a4ee502feb2d0c082743761863f41ed15285",
+        "targetBlob": "bbcd398f1c86606633664a869109893fe059a027",
+        "deltaSha256": "c3f7c9299d67d449837871487532e549b8c7512ee2ef50a420224c4fcd78851a"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-010",
+      "path": "launcher/package.json",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "1c092a42333c694606a0b039edc6c37d4a1bf586",
+        "targetBlob": "f00ab1900652ff41b8cfe97adbb01fe942860f75",
+        "deltaSha256": "a4d79749c12494b060fe305f5b2b54dfc6ca19e98e7d49624878fcc0087daad5"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-011",
+      "path": "launcher/src/App.tsx",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "9fd5107ce7c817744960da7066c51b8ea07e893f",
+        "targetBlob": "ab5713e9294eaab12d20b98cdf8d29d89008657e",
+        "deltaSha256": "08776c29244b37d68ddfcff76c5e1f5fc9f07d81dd3aa711e6291b66db037493"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-012",
+      "path": "launcher/tests/browser-helper-verifier.test.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "340b45e2dde36d42700f7be8c6986fed7d249e41",
+        "targetBlob": "355b4ca1689ba06e3846f93ea40537850b10c54a",
+        "deltaSha256": "467ff1d81374f0cba396aa1774f069607797dfe8425cd89c934a56b8f83d2125"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-013",
+      "path": "launcher/tests/browser-host.test.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "9857c7a7e2e281f2bf9b744a187aa642440353a6",
+        "targetBlob": "485e707df7687ecc28167aa619ffcb2fd6e4d9de",
+        "deltaSha256": "f6c88c1b280935ed3cc34472d823e80a50568df964e8c577743f3aa75a376719"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-014",
+      "path": "launcher/tests/control-server.test.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "022f9b1ee1c3a6431af1802f0ebd7b9c4641f8af",
+        "targetBlob": "14624064853e53016a39a2367399d2c141e0bd27",
+        "deltaSha256": "15b88abb2fcd0ed3c2c2a55fc4e33ab91752e84e1b7aa93b75b3aa8b6260361f"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-015",
+      "path": "launcher/tests/renderer-wiring.test.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "a075d81e303c98c813509566159e4adfea46cf41",
+        "targetBlob": "1ac91c031c288a4c5b159100836458fe177ed643",
+        "deltaSha256": "60d4e46ad7f905283339858c2d740ea40033df7d15a3fb3c326e671b8f3ab43b"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-016",
+      "path": "launcher/tests/runtime-host.test.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "05a5d673a401a4eadfec7e26a86c68d0465845bf",
+        "targetBlob": "69f37fee4e3c9b84adad740b4403cabd3ccd1d0b",
+        "deltaSha256": "475857d0c0cc0e41c4c9a2d8b2835b1c889b2749760af5fbd15cf980c02d8a3f"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-017",
+      "path": "package.json",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "40b31e17491fd1602d69100215c7bad2ee8d6276",
+        "targetBlob": "545cac63881a6be0a1bc9283960022bf8814ddaa",
+        "deltaSha256": "4651003ff5754ab9b1d633f5beaeb11e4e6b865477eeabe0c08df3577acb47d6"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-018",
+      "path": "scripts/install.sh",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "664d7d86f0247d62abf4eca371510a978669adb2",
+        "targetBlob": "30849f6f984df8680b5bd629ab38bfd0256dfca1",
+        "deltaSha256": "525a1d082484e5f84c4e67d5f6e0c49913d49022c2b2710e84c8976d97631bcf"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-019",
+      "path": "scripts/smoke-codex-interrupt.ts",
+      "changeType": "A",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": null,
+        "targetBlob": "1cc29f1b2970d0b018e9d02853da0822a89618ca",
+        "deltaSha256": "239e97b4cdb400d3e85331e3a41cffad95b647af30e68dfa313bec4486be9d0b"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-020",
+      "path": "src/adapters/chatgpt-web/browser-helper-main.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "c20a635d01b5615beeffaab808a756343d5bd256",
+        "targetBlob": "ff4caec7d5be45da6af87f252c988d66ceceec66",
+        "deltaSha256": "077f71fb69664397b8cdcf96696a7071f218c4b2c07088fbe2c579c075ed9c3f"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-021",
+      "path": "src/adapters/chatgpt-web/browser-worker.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "de18af374ea8401cb6046c5db0102a22d615eff4",
+        "targetBlob": "c11612a8b31acae8548640493bc61bc197c98519",
+        "deltaSha256": "3ba970d2837da58572cf271d36edb0b5fddd6df22ff113276a76f290a63c71ef"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-022",
+      "path": "src/adapters/chatgpt-web/codex-rollout-environment.ts",
+      "changeType": "A",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": null,
+        "targetBlob": "fbd3fda90cbd6ef971bd386e2128b2c3919c7ab8",
+        "deltaSha256": "55e10514dc9dbc6476f52c9f916f3d31c57b49166184acded30bd62b333609a0"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-023",
+      "path": "src/adapters/chatgpt-web/compaction-handoff.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "cc2a6c3753773850abe9c725dfdd219e76f7b1f5",
+        "targetBlob": "25df8baa92e02099db7ef197b4595d9614fb6c56",
+        "deltaSha256": "66dcf252d655d5abaff24b44f47bd7e29bd861f520e7b6ccfbb518c66c36cede"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-024",
+      "path": "src/adapters/chatgpt-web/environment.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "ed23d98f64e80b9a559d289a6eb5c12322362d40",
+        "targetBlob": "7307792cc2f016640a2d556973c96bab901878d5",
+        "deltaSha256": "4c6bdfddfeb58a9890ab813214d57b20f96a1e91d43a63bf871fd9bc488b8188"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-025",
+      "path": "src/adapters/chatgpt-web/index.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "8314e3b5169e97c7adcc6f055fe3b34e77912bc6",
+        "targetBlob": "22445135c07f47a62f549524430d7113a8598f09",
+        "deltaSha256": "5c0aec1071baeb04eaaf59f063f4a19e6d5ebd0c2abb7a77bf846627b410e5fc"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-026",
+      "path": "src/adapters/chatgpt-web/mcp-server.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "5fe13dd7cef941269a893048e818acf4a018d006",
+        "targetBlob": "3dd15c9457dbf8273076a2eae919247221de287b",
+        "deltaSha256": "3dcb89f0f7a90ba7f2e504eb97c38d830a5604806b7918054df559038f52dae5"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-027",
+      "path": "src/adapters/chatgpt-web/thread-environment.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "7126778f63b1e3c5e82478fc3dc499d80c44d0b5",
+        "targetBlob": "d2c2049582dae5e4a01799fb1210f915f75e907d",
+        "deltaSha256": "2aad14de2b1a7ed8d214e2388ea33bccc6ed93a6c2109ad628f7342b3827cad8"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-028",
+      "path": "src/adapters/chatgpt-web/turn-broker.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "92b60af95ae1a4e3c458ab098b004a0d2a4098b8",
+        "targetBlob": "f7151b0b101318d209e5a4312f3c00119d566a5b",
+        "deltaSha256": "268ab5dffbbb9101f9c08c5bce4b9254c7ca1180a26b7ae2ce393d7f6f0860ad"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-029",
+      "path": "src/adapters/chatgpt-web/turn-execution.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "d293dfe6273c9f7424dd14d0c200658333612f9b",
+        "targetBlob": "09b64d00a59665a781d85255545bd8f39d331671",
+        "deltaSha256": "88e2b64fdf946f17bf820c3767583406d17aaa9d4bb996d378b7045317e073af"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-030",
+      "path": "src/adapters/chatgpt-web/turn-progress.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "49bb9ae0ec70dadcbe7c98fb7bd537cfb868a4b1",
+        "targetBlob": "72201fef83f2e7d529b183ef5095ec07f480c4d2",
+        "deltaSha256": "72337a80f0a677528d66396e93a484306db4052ba09a1d7bc6f8c127255a32d7"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-031",
+      "path": "src/cli.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "082e595f6034a8170b5b93243933fd8fce968d1e",
+        "targetBlob": "7cd1f4f55c750c8c993342fd7e91541c13997bcd",
+        "deltaSha256": "99ce2064751905df8f6c7e4bd92f0c81b520226240b2d6cd3989673fe363bcec"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-032",
+      "path": "src/codex-integration-document.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "a204edd51873ef2ae691027193754aa7db9a1b0d",
+        "targetBlob": "41bd99d5d9916f2da745a6c9fbeb20d91140a055",
+        "deltaSha256": "578394982e09e68d4929500081691f4079052437ea420c6a2a4da261193c655f"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-033",
+      "path": "src/codex-integration-journal.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "e29967bd0282ba91874d6ce9f6901490bfca8b6f",
+        "targetBlob": "45004b6727193c60b53af77eee303a89cdb345a8",
+        "deltaSha256": "cc4413c8982cd32321117d848ffd2fe1039cb671c080e689534e4d6feb2a0627"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-034",
+      "path": "src/codex-integration-route.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "bcaec72c364a8699472ea4fcab9672231bb7c2b9",
+        "targetBlob": "768535650449ed3ead3abbfff54bb75def668f28",
+        "deltaSha256": "59068939b0aaee767a5a777b56d94bf200c2929eb8fa8ef96964fad617b6df0e"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-035",
+      "path": "src/codex-integration-shared.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "53493229fc68ce59f60a03e380ec916a24870753",
+        "targetBlob": "2b038c4846379480a2a0441f1b81945eb9070183",
+        "deltaSha256": "e1b14119b5112da5e1ef3dddb2f91de3c729e4a3ed5caa6b4976a86f2918c362"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-036",
+      "path": "src/codex-integration.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "eab6e3298d58fad5f54cbff1cd10bb5914cf11c2",
+        "targetBlob": "3d1376ca427907686ab948d8ea4f7ac2d435944b",
+        "deltaSha256": "c1db8694cf3b97cb7fadfb8b35aa8589202aa3470c373ebb5c0d7e0994e71aea"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-037",
+      "path": "src/codex-interrupt-hook.ts",
+      "changeType": "A",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": null,
+        "targetBlob": "9fc246529fb28c0fc3d721dbddfe63c23c01e1eb",
+        "deltaSha256": "15ab9f2ceac0dd0bb5f59dffcb55a6d5f24d2cfc30c33e796074f732005db2e9"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-038",
+      "path": "src/config.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "da6e4fbc92c4ea077df8fabb976ae8429aaf0262",
+        "targetBlob": "e2b7c4e64fb5a4ff5a944df4d8152e3d3d2c2d5f",
+        "deltaSha256": "e07ff91621c13b26fd80847102962e3825ae95be333629ce70d83c707a3a1931"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-039",
+      "path": "src/launcher-browser-host.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "c140db8047a580948c6fcef7f7fd58429768b6f2",
+        "targetBlob": "10d56e1585f90e7d7c0cfe2939cbae954b568380",
+        "deltaSha256": "1e9836415284fdce053183536950c9bdb5fb1374063a607795a93d51bb81694d"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-040",
+      "path": "src/server.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "57111c5bba1e151a8086f4c1fa91c7225f125bdd",
+        "targetBlob": "a0f15b92e034bfd0ce500b9cee975be04519a5ef",
+        "deltaSha256": "45cc34bc6a9a627197adceda78c5cf5451bae17572615382698d94533b56a578"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-041",
+      "path": "src/service.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "bf89a287cca47d9a418d1313f04da29c7f527659",
+        "targetBlob": "93289a9c52b51c22c3ac05fae1f7e26e30632ff2",
+        "deltaSha256": "2c9927a6e5ce20fa7513710adaa5622a80734ea32024580150644de1c34db237"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-042",
+      "path": "src/version.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "86cf45bf48e0fcba47779bf270d36c0f1f27fbc0",
+        "targetBlob": "be03919d49910b1b37a2aaca3a7033158b1e494c",
+        "deltaSha256": "a5ffa89d2480560b091e6e9f30bc2c94274d951c40aee4ec2d0a902e5f331db3"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-043",
+      "path": "tests/browser-worker-contract.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "2d5bd1d3546a1d8d70b2dc45fecc6976152db2d7",
+        "targetBlob": "7747ce4b46f53d676dd31321f3f391de49daa666",
+        "deltaSha256": "ceba6978149cca5f6010cf251228545ed1704651c5176c359f7c78cb2eacb246"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-044",
+      "path": "tests/chatgpt-web-harness.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "4f1189bcfc0d01c9f044f7d1152400b83ec1b976",
+        "targetBlob": "7578ac2453cc1f64feb1ddd13a0c81f12d5df668",
+        "deltaSha256": "48789aebf222d7287197567f00445cdc961c4cf4ef95fdc78aa53885f7e5c66e"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-045",
+      "path": "tests/codex-integration.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "00f4ca0131e28606510ea509f3638c220051367f",
+        "targetBlob": "622ac888ddcaf830e3c858e70ae2e3252f6fdf3f",
+        "deltaSha256": "f36d56a3a740e0b191ad5c4770af897bf9a35144d1866c5f7ab6d4295e987fe0"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-046",
+      "path": "tests/codex-interrupt-hook.test.ts",
+      "changeType": "A",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": null,
+        "targetBlob": "0feca81d686de8640a17fabd410a36cdb8b87392",
+        "deltaSha256": "73fe663f4f5601ed6be0ef844dec61cd20a0f3cf5e23abd2cbb5109ea631a2a7"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-047",
+      "path": "tests/dev-chat.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "3076ecd4a49443267deabbc4c3657ee26bb0c91f",
+        "targetBlob": "5f42b4ca7345e5ab68dcbcd6767d97112ca51820",
+        "deltaSha256": "e1ec1e7f773f08de04cdc6eea7fe581b8c06d405c49ecaf400e95abbe44b0c17"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-048",
+      "path": "tests/environment.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "e146ceb515fa43b8b353ae325719068f1e5b32fc",
+        "targetBlob": "9cdbda9750d2c729c1cf0cd1f836c1b9f96a86c7",
+        "deltaSha256": "935e5239f4fa472690f61c00441fc5bb593ed547d29ed4c69193557cc2d34297"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-049",
+      "path": "tests/launcher-browser-host.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "62b95a1f6f011379f3ce272d4e77f28c6ab6d0e6",
+        "targetBlob": "2730fda50fe1e56e9c45c35359af3ebf6a2201ea",
+        "deltaSha256": "105f53c644c82d3400ae211d1f4a8b338ffc1d6d243b9ef8fa0363fcff033ce5"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-050",
+      "path": "tests/retained-compaction.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "e165170d23cdf983095f150252e4a63ae171c9d2",
+        "targetBlob": "af0f7f8a6b1935377006e4cd0f1392a60de73773",
+        "deltaSha256": "2c062d2dfa90afeda38f3cfe844ad979dbf4f60662f67bf3e8daa4752fab49b6"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-051",
+      "path": "tests/runtime-layout.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "d00e0769e454e597491d296454368e22343c71c7",
+        "targetBlob": "5379346f759e11b43a31f6a28a5e86988a6bde2b",
+        "deltaSha256": "9b315f3ce4a6e17c3a8024b4aaa5bb86ae1b78e965201003b34bddb42fb4e90d"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-052",
+      "path": "tests/server-lifecycle.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "6ba69dcba2ce43d917482ee0b5abbc93ee3f9951",
+        "targetBlob": "4565891ac5bc6684257fb5afec961c2aa52a5e4e",
+        "deltaSha256": "eb4c65408b9c7ccf234291575516198d0a51d7a2b84594a678fcf959fea7fb58"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-053",
+      "path": "tests/turn-broker-lifecycle.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "6ea368dae1905e70b2d0ab9f3c42034a4174f8ec",
+        "targetBlob": "f51d376b80bb13fb8911dc99e8876fea88b19205",
+        "deltaSha256": "03efb6a93ca8565c48d5a878215ba6304a5400f1bcbedf3edf5f25229b0e7deb"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-054",
+      "path": "tests/zero-risk-adapter.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "49db01fe79b07a7fd3358adeb4bdc9144284bdd4",
+        "targetBlob": "e59831074b26d495c931959fb1b596e51f776ed8",
+        "deltaSha256": "e1c06553a6cdeb61d086605a2db3f95006f62ec01a78a3e7790a6afc9eb8e3e4"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    },
+    {
+      "id": "v501-055",
+      "path": "tests/zero-risk-mcp-lifecycle.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+        "parentBlob": "c7fdb2235e8dc3ec0bc16e5132649726512c1e96",
+        "targetBlob": "6cdc8a884955f67b8cae27ce2d68e08c3d8ea7d5",
+        "deltaSha256": "9fa188c0a646d68f666e0a11d7bbdb46a845849ebec27ba3b2731211deabd6dc"
+      },
+      "classification": "missing",
+      "reason": "Awaiting semantic integration and assertion mapping",
+      "assertions": []
+    }
+  ]
+}
