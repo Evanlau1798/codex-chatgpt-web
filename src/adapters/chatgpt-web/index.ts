@@ -354,7 +354,7 @@ export function createChatGptWebAdapter(
               if (next.requests.length === 0) throw new Error("ChatGPT tool bridge returned an empty batch");
               validateBatchTools(parsed, next.requests);
               const toolBatchRevision = session.setOutstanding(next.requests, roundReasoning, roundEvents);
-              if (toolBatchRevision !== undefined && session.runtime.externalProgress) {
+              if (!session.runtime.manualControl && toolBatchRevision !== undefined && session.runtime.externalProgress) {
                 const observationTimeout = new AbortController();
                 const timer = setTimeout(
                   () => observationTimeout.abort(),
