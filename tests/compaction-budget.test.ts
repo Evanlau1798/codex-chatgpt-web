@@ -1,10 +1,17 @@
 import { expect, test } from "bun:test";
-import { buildCompactV1Output, extractCompactUserMessages } from "../src/responses/compaction";
+import { buildCompactV1Output, COMPACT_PROMPT, extractCompactUserMessages } from "../src/responses/compaction";
 import { estimateTokens } from "../src/lib/token-estimate";
 
 const user = (text: string, id = "latest") => ({
   type: "message", role: "user", id,
   content: [{ type: "input_text", text }],
+});
+
+test("checkpoint instructions distinguish current work from superseded history", () => {
+  expect(COMPACT_PROMPT).toContain("cancelled or superseded");
+  expect(COMPACT_PROMPT).toContain("Replace prior summaries");
+  expect(COMPACT_PROMPT).toContain("language preference");
+  expect(COMPACT_PROMPT).toContain("re-read when evidence is stale");
 });
 
 test("many short messages charge their envelopes against the retained token budget", () => {

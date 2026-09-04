@@ -102,3 +102,26 @@ test("inventory-only tool descriptions do not inflate the compiled prompt budget
   raw.tools[0]!.description = "Inspect the task.";
   expect(measure(raw, output, config).tokens).toBe(huge.tokens);
 });
+
+test("100 production compact cycles stay bounded in a hypothetical 200k window", async () => {
+  const config = defaultConfig("full");
+  let input: unknown[] = [user("Continue the current task.")];
+  let baseline = 0;
+  for (let cycle = 0; cycle < 100; cycle++) {
+    const raw = { model: "chatgpt-web/medium", input };
+    const response = await compact(raw, "Verified checkpoint. Continue pending work.", config);
+    expect(response.status).toBe(200);
+    input = (await response.json() as { output: unknown[] }).output;
+    const { tokens } = measure(raw, input, config);
+    if (cycle === 0) baseline = tokens;
+    expect(tokens).toBe(baseline);
+    expect(200_000 - tokens).toBeGreaterThan(0);
+  }
+  const parsed = parseRequest({ model: "chatgpt-web/medium", input });
+  routeChatGptWebRequest(parsed, config);
+  parsed.context.messages.push({ role: "user", content: "file evidence ".repeat(20_000), timestamp: 1 });
+  expect(estimateChatGptWebInputTokens(parsed, capabilities)).toBeGreaterThan(baseline + 20_000);
+  // New evidence consumes context; repeated compact alone did not inflate the baseline.
+  console.info(JSON.stringify({ scenario: "compact-100", cycles: 100, context_window: 200_000,
+    estimated_input_tokens: baseline, remaining_tokens: 200_000 - baseline }));
+}, 15_000);

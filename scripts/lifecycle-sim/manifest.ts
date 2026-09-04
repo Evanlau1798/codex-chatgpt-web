@@ -13,6 +13,8 @@ export const claudeLifecycleTests = [
 export const sharedLifecycleTests = [
   "tests/server-adapter-injection.test.ts",
   "tests/server-compaction.test.ts",
+  "tests/compaction-budget.test.ts",
+  "tests/compact-replacement-budget.test.ts",
   "tests/retained-compaction-handoff.test.ts",
   "tests/turn-broker-lifecycle.test.ts",
   "tests/lifecycle-sim-evidence.test.ts",

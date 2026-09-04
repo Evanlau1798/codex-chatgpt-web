@@ -32,6 +32,10 @@ Include:
 - Lifecycle evidence needed for verification, including spawn, interaction, interrupt, completion, and retained or TTL resume events
 
 Do not claim that no work remains while a resumable agent or pending collaboration still exists.
+Prioritize the current goal, active constraints, the user's language preference, and the next unfinished action.
+Distinguish completed work from pending work. Mark cancelled or superseded requests as inactive, not as tasks to resume.
+Replace prior summaries with one consolidated current checkpoint; do not append a history of checkpoints.
+Preserve verified file locations, findings, and essential test results so the next model need not repeat completed investigation; re-read when evidence is stale or incomplete.
 Be concise, structured, and focused on helping the next LLM seamlessly continue the work.`;
 
 /** Mirrors codex-rs core/templates/compact/summary_prefix.md (framing for a replayed summary). */
