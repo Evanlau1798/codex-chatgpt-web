@@ -53,7 +53,7 @@ test("Interrupt hook command is absolute, quoted, and bound to the exact applica
     "/Users/test/Application Support/Codex Web GPT",
     "darwin",
   )).toBe(
-    "'/Applications/Codex Web GPT.app/runtime/bun' '/Applications/Codex Web GPT.app/app/cli.js'"
+    "'/Applications/Codex Web GPT.app/runtime/bun' '/Applications/Codex Web GPT.app/app/codex-interrupt-cli.js'"
       + " '--home' '/Users/test/Application Support/Codex Web GPT' 'hook' 'interrupt'",
   );
   const windowsCommand = codexInterruptHookCommand(
@@ -64,9 +64,35 @@ test("Interrupt hook command is absolute, quoted, and bound to the exact applica
   );
   expect(windowsCommand).toStartWith("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ");
   expect(Buffer.from(windowsCommand.split(" ").at(-1)!, "base64").toString("utf16le")).toBe(
-    "& 'C:\\Program Files\\Codex Web GPT\\bun.exe' 'C:\\Program Files\\Codex Web GPT\\cli.js'"
+    "& 'C:\\Program Files\\Codex Web GPT\\bun.exe' 'C:\\Program Files\\Codex Web GPT\\codex-interrupt-cli.js'"
       + " '--home' 'C:\\Users\\test\\Codex Web GPT' 'hook' 'interrupt'; exit $LASTEXITCODE",
   );
+});
+
+test("source-mode Interrupt hooks select the lightweight TypeScript entrypoint", () => {
+  expect(codexInterruptHookCommand(
+    { runtimeCommand: ["/opt/bun", "/workspace/src/cli.ts"] },
+    "/tmp/app",
+    "linux",
+  )).toStartWith("'/opt/bun' '/workspace/src/codex-interrupt-cli.ts'");
+});
+
+test("packaged wrapper Interrupt hooks bypass the general CLI", () => {
+  const windowsCommand = codexInterruptHookCommand(
+    { runtimeCommand: ["C:\\Program Files\\Codex Web GPT\\bin\\codex-chatgpt-web.cmd"] },
+    "C:\\Users\\test\\Codex Web GPT",
+    "win32",
+    "C:\\Windows",
+  );
+  expect(Buffer.from(windowsCommand.split(" ").at(-1)!, "base64").toString("utf16le")).toStartWith(
+    "& 'C:\\Program Files\\Codex Web GPT\\runtime\\bun.exe'"
+      + " 'C:\\Program Files\\Codex Web GPT\\app\\codex-interrupt-cli.js'",
+  );
+  expect(codexInterruptHookCommand(
+    { runtimeCommand: ["/opt/custom-runner"] },
+    "/tmp/app",
+    "linux",
+  )).toStartWith("'/opt/custom-runner' '--home'");
 });
 
 test("Interrupt hook trust hash is deterministic and changes with its exact command", () => {

@@ -32,13 +32,16 @@ const codexHome = join(root, "codex");
 const appHome = join(root, "app");
 const cliBundle = join(root, "cli.js");
 const cliBuild = await Bun.build({
-  entrypoints: [resolve(import.meta.dir, "../src/cli.ts")],
+  entrypoints: [
+    resolve(import.meta.dir, "../src/cli.ts"),
+    resolve(import.meta.dir, "../src/codex-interrupt-cli.ts"),
+  ],
   target: "bun",
   minify: true,
   external: ["playwright-core"],
   packages: "external",
   outdir: root,
-  naming: "cli.js",
+  naming: "[name].js",
 });
 if (!cliBuild.success) {
   rmSync(root, { recursive: true, force: true });
