@@ -404,12 +404,16 @@
           "path": "tests/codex-interrupt-shell.test.ts",
           "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
         },
-        {
-          "path": "tests/server-native-interrupt.test.ts",
-          "contains": "expect(cancelled).toBeTrue();"
-        }
-      ],
-      "candidateBlob": "0de41ab528e5e200470db2c36b060e63d2c75a7e"
+    {
+      "path": "tests/server-native-interrupt.test.ts",
+      "contains": "expect(cancelled).toBeTrue();"
+    },
+    {
+      "path": "tests/lifecycle-smoke-paths.test.ts",
+      "contains": "Codex process probes use Bun's native spawn path consistently"
+    }
+  ],
+  "candidateBlob": "aa026e46b6f23ea65cb2d4d748667b8c81975f97"
     },
     {
       "id": "v501-020",

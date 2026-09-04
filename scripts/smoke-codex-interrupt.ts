@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
 import {
   ChatGptTextFeed,
@@ -15,15 +14,16 @@ import { resolveLifecycleExecutable } from "./lifecycle-smoke/paths";
 const codex = resolve(process.argv[2] ?? resolveLifecycleExecutable("codex"));
 if (!existsSync(codex)) throw new Error(`Codex executable is missing: ${codex}`);
 
-const bundled = spawnSync(codex, ["debug", "models", "--bundled"], {
-  encoding: "utf8",
-  stdio: ["ignore", "pipe", "pipe"],
+const bundled = Bun.spawnSync([codex, "debug", "models", "--bundled"], {
+  stdin: "ignore",
+  stdout: "pipe",
+  stderr: "pipe",
   timeout: 15_000,
 });
-if (bundled.status !== 0) {
+if (bundled.exitCode !== 0) {
   throw new Error("Could not read bundled Codex models for the isolated interrupt probe");
 }
-const nativeCatalog = JSON.parse(bundled.stdout);
+const nativeCatalog = JSON.parse(bundled.stdout.toString());
 
 const scratch = resolve(import.meta.dir, "..", "tmp");
 mkdirSync(scratch, { recursive: true });
