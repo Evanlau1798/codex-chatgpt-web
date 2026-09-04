@@ -13,6 +13,7 @@ import { Icon, type IconName } from "./icons";
 import { biggerContextSwitchState } from "./context-mode";
 import { InteractionModePicker } from "./interaction-mode-picker";
 import { TutorialVideo } from "./tutorial-video";
+import { ManualTurnGuide } from "./manual-turn-guide";
 import type {
   BrowserInteractionMode,
   BrowserState,
@@ -930,23 +931,14 @@ function BrowserSurface({
         </button>
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
-      {manualTab ? (
-        <div className="manual-turn-guide">
-          <div>
-            <strong>{copy.manualPromptTitle}</strong>
-            <span>{copy.manualPromptInstruction}</span>
-          </div>
-          <div className="manual-turn-actions">
-            <SecondaryButton
-              disabled={!manualTab.canCopyPrompt}
-              onClick={() => void api!.copyManualPrompt(manualTab.id).catch(cause => setError(messageOf(cause)))}
-            >{copy.manualPromptCopy}</SecondaryButton>
-            <PrimaryButton
-              disabled={!manualTab.canConfirmSent}
-              onClick={() => void api!.confirmManualSent(manualTab.id).catch(cause => setError(messageOf(cause)))}
-            >{copy.manualPromptSent}</PrimaryButton>
-          </div>
-        </div>
+      {manualTab && ["awaiting-user", "sent"].includes(manualTab.manualState ?? "") ? (
+        <ManualTurnGuide
+          key={manualTab.id}
+          copy={copy}
+          tab={manualTab}
+          onCopy={() => void api!.copyManualPrompt(manualTab.id).catch(cause => setError(messageOf(cause)))}
+          onSent={() => void api!.confirmManualSent(manualTab.id).catch(cause => setError(messageOf(cause)))}
+        />
       ) : null}
       <div className="browser-viewport" ref={browserSlotRef}>
         {!visible ? (
