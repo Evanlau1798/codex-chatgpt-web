@@ -36,6 +36,14 @@ test("contextual wrappers cannot crowd out the latest actual instruction", () =>
   expect(output.some(item => item.id === "environment")).toBe(false);
 });
 
+test("mixed contextual blocks do not hide real user instructions in the same message", () => {
+  const latest = user("Cancel deployment. " + "reference ".repeat(21_000));
+  latest.content.unshift({ type: "input_text", text: "<environment_context>cwd</environment_context>" });
+  const output = buildCompactV1Output([user("Deploy the release.", "old"), latest], "Deployment cancelled.");
+  expect(output.find(item => item.id === "latest")).toEqual(latest);
+  expect(output.some(item => item.id === "old")).toBe(false);
+});
+
 test("fixed history and summary reach a stable replacement across 100 compactions", () => {
   let input: Record<string, unknown>[] = [user("Continue the current task.")];
   let baseline = "";

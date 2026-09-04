@@ -181,7 +181,8 @@ function imageBlock(block: CompactContentBlock): boolean {
  * the visual context the browser model can actually receive.
  */
 export function latestCompactUserMessage(userMessages: CompactMessageItem[]): CompactMessageItem | undefined {
-  return userMessages.findLast(item => !isContextualCodexUserMessage(item.content));
+  return userMessages.findLast(item => compactContentBlocks(item).some(block =>
+    imageBlock(block) || (textBlock(block) && !isContextualCodexUserMessage(block.text))));
 }
 
 export function buildCompactV1Output(
