@@ -77,6 +77,8 @@ installProcessDiagnosticGuards({
 });
 
 let mainWindow = null;
+let mainWindowReadyToShow = false;
+let mainWindowShowRequested = false;
 let browserHost = null;
 let runtimeHost = null;
 let browserControl = null;
@@ -255,7 +257,10 @@ function createTray(logger, language) {
 }
 
 function showMainWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+  // A second-instance request can arrive while the hidden launcher prepares its runtime.
+  mainWindowShowRequested = true;
+  if (!mainWindowReadyToShow || !mainWindow || mainWindow.isDestroyed()) return;
+  mainWindowShowRequested = false;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -358,7 +363,10 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden }) {
     else void requestQuit();
   });
   window.on("closed", () => {
-    if (mainWindow === window) mainWindow = null;
+    if (mainWindow === window) {
+      mainWindow = null;
+      mainWindowReadyToShow = false;
+    }
   });
   for (const event of ["enter-full-screen", "leave-full-screen", "maximize", "unmaximize"]) {
     window.on(event, () => send("launcher:window-state-changed", windowStateSnapshot(window)));
@@ -367,7 +375,9 @@ function createWindow({ logger, stateStore, windowStatePath, startHidden }) {
     if (!state.onboardingComplete && !Number.isFinite(windowState.bounds.x)) window.center();
     if (windowState.maximized) window.maximize();
     if (windowState.fullscreen) window.setFullScreen(true);
-    if (!startHidden) window.show();
+    if (mainWindow === window) mainWindowReadyToShow = true;
+    if (mainWindowShowRequested) showMainWindow();
+    else if (!startHidden) window.show();
   });
   trackWindowState(window, windowStatePath, (error) => {
     logger.warn("launcher.window_state_write_failed", {
