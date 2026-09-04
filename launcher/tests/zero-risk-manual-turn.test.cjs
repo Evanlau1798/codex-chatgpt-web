@@ -93,3 +93,19 @@ test("a cancelled owner cannot recreate the same trace over its terminal evidenc
   assert.deepEqual(clipboard, ["full"]);
   assert.deepEqual(await controller.waitSent("trace-cancel", 10), { status: "cancelled" });
 });
+
+test("retained TTL starts at successful manual completion, including suffix reuse", () => {
+  const { controller, host } = fixture();
+  const key = "b".repeat(64);
+  const first = controller.begin("trace-ttl", 10, "full", key);
+  for (const traceId of ["trace-ttl", "trace-ttl-next"]) {
+    if (traceId !== "trace-ttl") controller.begin(traceId, 10, "full", key, "suffix");
+    controller.confirmSent(first.tabId);
+    controller.started(traceId, 10);
+    host.turnTabs.get(first.tabId).lastHeartbeatAt = 1;
+    const before = Date.now();
+    controller.end(traceId, 10, "completed", true);
+    assert.ok(host.turnTabs.get(first.tabId).lastHeartbeatAt >= before);
+    assert.equal(host.turnTabs.get(first.tabId).status, "ready");
+  }
+});

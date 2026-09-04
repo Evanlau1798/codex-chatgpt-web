@@ -198,7 +198,10 @@ class ManualTurnController {
     }
     clearTimeout(tab.manualTimer);
     if (status === "completed" && retain && tab.conversationKey) {
-      Object.assign(tab, { manualState: "completed", status: "ready", prompt: null, promptDigest: null });
+      Object.assign(tab, {
+        manualState: "completed", status: "ready", prompt: null, promptDigest: null,
+        lastHeartbeatAt: Date.now(),
+      });
       this.host.publishState?.(this.host.snapshot());
       return { cancelledByUser: false };
     }
