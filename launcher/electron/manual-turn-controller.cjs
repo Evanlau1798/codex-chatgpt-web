@@ -242,6 +242,10 @@ class ManualTurnController {
     if (tab.manualTerminalStatus) return;
     tab.manualTerminalStatus = status;
     clearTimeout(tab.manualTimer);
+    Object.assign(tab, {
+      manualState: status === "timeout" ? "timed-out" : status,
+      manualTimer: null, manualDeadlineAt: null, prompt: null, promptDigest: null,
+    });
     this.remember(tab.traceId, tab.helperPid, status);
     this.notify(tab.manualWaiters, { status });
     this.notify(tab.manualTerminalWaiters, { status });

@@ -49,6 +49,27 @@ test("manual UI close notifies both observers before a failing cancellation RPC"
   assert.equal(host.turnTabs.get(sibling.id), sibling);
 });
 
+test("manual cancellation cannot become retained completion while its RPC is pending", async () => {
+  const { host, tab } = fixture();
+  Object.assign(tab, { manualState: "running", conversationKey: "a".repeat(64), prompt: "private prompt" });
+  let release;
+  host.cancelTurn = () => new Promise(resolve => { release = resolve; });
+  const closing = host.closeTab(tab.id);
+  try {
+    assert.throws(() => host.endManualTurn(tab.traceId, tab.helperPid, "completed", true));
+    assert.throws(() => host.markManualTurnStarted(tab.traceId, tab.helperPid));
+    assert.throws(() => host.copyManualPrompt(tab.id));
+    assert.equal(tab.manualState, "cancelled");
+    assert.equal(tab.prompt, null);
+    assert.equal(tab.manualDeadlineAt, null);
+    assert.notEqual(tab.status, "ready");
+  } finally {
+    release();
+    await closing;
+  }
+  assert.equal(host.turnTabs.size, 0);
+});
+
 for (const [name, event] of [
   ["navigation", ["did-fail-load", {}, -2, "ERR_FAILED", "https://chatgpt.com/", true]],
   ["renderer", ["render-process-gone", {}, { reason: "crashed", exitCode: 1 }]],
