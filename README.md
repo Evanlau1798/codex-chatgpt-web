@@ -25,7 +25,7 @@
 This independently maintained **Enhanced** fork tracks the upstream release base and adds an
 opt-in Web-session lifecycle for long-running Codex and Claude Code work. Fork releases use the
 `<upstream>-Enhanced.<revision>` version format, beginning with `3.0.1-Enhanced.1`.
-The current version is `5.0.0-Enhanced.1`, based on upstream v5.0.0.
+The current version is `5.0.1-Enhanced.1`, based on upstream v5.0.1.
 
 Free and Go accounts get **ChatGPT Web — Luna** in Codex's native model picker. Accounts that
 expose the reasoning selector keep **Instant**, **Medium**, **High**, **Extra High**, and **Pro** as
