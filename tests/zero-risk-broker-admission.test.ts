@@ -8,6 +8,22 @@ import { defaultBrokerEndpoint } from "../src/config";
 const nonce = "surface_nonce_admission_0123456789";
 const result = { content: [{ type: "text", text: "compact fixture" }] };
 
+test("invalid local safe registration leaves no channel or pending claim", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-admit-"));
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
+  try {
+    await expect(broker.registerSafe({
+      cwd: root, roots: [root], writableRoots: [root], sandboxPolicy: { type: "dangerFullAccess" }, tools: [],
+    }, "invalid", undefined, "invalid-registration")).rejects.toThrow("local browser binding is invalid");
+    const state = broker as unknown as { channels: Map<string, unknown>; pending: Map<string, unknown> };
+    expect(state.channels.size).toBe(0);
+    expect(state.pending.size).toBe(0);
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test.each(["before-sent", "before-start", "completed"])("owner compaction rejects non-running safe state: %s", async phase => {
   const root = mkdtempSync(join(tmpdir(), "cgw-admit-"));
   const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));

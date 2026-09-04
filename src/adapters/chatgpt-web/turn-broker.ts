@@ -126,10 +126,11 @@ export class TurnBroker implements TurnBrokerOwner {
     environment: ChatGptTurnEnvironment, surfaceNonce: string, ttlMs?: number,
     traceId = "unknown", externalOwner = false,
   ): Promise<string> {
+    const safe = createSafeTurn(surfaceNonce);
     const token = await this.register(environment, ttlMs, traceId, undefined, externalOwner, "request");
     const channel = this.channels.get(token);
     if (!channel) throw new Error("Zero Risk turn registration was revoked before initialization");
-    channel.safe = createSafeTurn(surfaceNonce);
+    channel.safe = safe;
     return token;
   }
 

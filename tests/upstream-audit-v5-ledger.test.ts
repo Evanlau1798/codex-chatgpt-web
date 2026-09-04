@@ -126,7 +126,7 @@ describe("upstream v5.0.0 audit ledger", () => {
       "manual-native-owner",
       "manual-native-placement",
       "manual-navigation-superseded",
-      "manual-owner-death", "manual-owner-liveness", "manual-primary-surface", "manual-provider-catalog", "manual-resume-validation",
+      "manual-owner-death", "manual-owner-liveness", "manual-primary-surface", "manual-provider-catalog", "manual-registration-validation", "manual-resume-validation",
       "manual-retained-ttl", "manual-supervisor-identity", "manual-surface-failure", "manual-terminal-errors", "manual-tool-boundary", "manual-ui-close",
       "markdown-wiki-links",
       "renderer-manual-guidance", "renderer-manual-settings", "renderer-mode-provisioning", "renderer-onboarding-validation",
