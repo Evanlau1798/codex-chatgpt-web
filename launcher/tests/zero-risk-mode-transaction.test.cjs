@@ -20,17 +20,19 @@ function hostFixture() {
 
 test("interaction-mode changes preserve retained tabs on failure and isolate them after commit", async () => {
   const { host, removed } = hostFixture();
+  host.turnTabs.set("automatic", { id: "automatic", status: "ready", interactionMode: "automatic" });
   await assert.rejects(async () => host.withInteractionModeChange("automatic", async () => {
     assert.equal(host.currentOperation(), "browser interaction mode change");
     assert.equal(host.browserInteractionMode(), "automatic");
     throw new Error("fixture setup failure");
   }), /fixture setup failure/);
   assert.deepEqual(removed, []);
-  assert.equal(host.turnTabs.size, 1);
+  assert.equal(host.turnTabs.size, 2);
   assert.equal(host.currentOperation(), null);
   assert.equal(host.browserInteractionMode(), "manual");
   assert.equal(await host.withInteractionModeChange("automatic", async () => "configured"), "configured");
-  assert.deepEqual(removed, ["retained"]);
+  assert.deepEqual(removed, ["retained", "automatic"]);
+  assert.equal(host.turnTabs.size, 0);
   assert.equal(host.selectedTabId, "home");
   assert.equal(host.currentOperation(), null);
   assert.equal(host.browserInteractionMode(), "manual");
