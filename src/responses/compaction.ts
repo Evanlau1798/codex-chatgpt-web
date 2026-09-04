@@ -176,6 +176,10 @@ function imageBlock(block: CompactContentBlock): boolean {
  * immediately refilling Codex's context window after a successful compact while still preserving
  * the visual context the browser model can actually receive.
  */
+export function latestCompactUserMessage(userMessages: CompactMessageItem[]): CompactMessageItem | undefined {
+  return userMessages.findLast(item => !isContextualCodexUserMessage(item.content));
+}
+
 export function buildCompactV1Output(
   userMessages: CompactMessageItem[],
   summary: string,
@@ -183,7 +187,7 @@ export function buildCompactV1Output(
   retainedTokenBudget = COMPACT_V1_RETAINED_TOKEN_BUDGET,
 ): CompactMessageItem[] {
   const selected: CompactMessageItem[] = [];
-  const latest = userMessages.findLastIndex(item => !isContextualCodexUserMessage(item.content));
+  const latest = userMessages.lastIndexOf(latestCompactUserMessage(userMessages)!);
   // Reserve the latest instruction before considering newer contextual wrappers. Never cut its
   // text to fit the optional-history allowance; the route-level replacement check owns overflow.
   let remaining = Math.max(0, retainedTokenBudget - 2
@@ -224,7 +228,7 @@ export function buildCompactV1Output(
 
 function retainedMessageTokens(item: CompactMessageItem): number {
   // Image payloads stay attachments; their token reserves are charged by the full prompt check.
-  const content = compactContentBlocks(item).flatMap(block => textBlock(block)
+  const content = compactContentBlocks(item).flatMap<CompactContentBlock>(block => textBlock(block)
     ? [{ ...block, type: "input_text" }]
     : imageBlock(block) ? [{ ...block, image_url: "" }] : []);
   return estimateTokens(JSON.stringify({ ...item, type: "message", role: "user", content })) + 2;

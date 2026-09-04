@@ -14,6 +14,7 @@ import {
 import { extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import type { BrokerToolRequest } from "./turn-broker";
+import { effectiveChatGptToolPolicy } from "./tool-policy";
 
 // The real capability has the same length. Keeping it out of usage accounting would make
 // estimates differ slightly between the prepared browser prompt and later Codex tool rounds.
@@ -48,7 +49,8 @@ export function estimateChatGptWebInputTokens(
   const compiled = compileChatGptWebPrompt(
     parsed,
     capabilities,
-    mode.localTools ? ESTIMATE_TURN_TOKEN : undefined,
+    manual || (mode.localTools && effectiveChatGptToolPolicy(parsed).tools.length > 0)
+      ? ESTIMATE_TURN_TOKEN : undefined,
     {
       ...(manual ? { manualControl: true as const } : {}),
       captureLunaCheckpoint: parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID
