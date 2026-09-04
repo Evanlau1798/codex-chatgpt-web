@@ -1220,6 +1220,7 @@ class BrowserHost {
   async closeTab(tabId) {
     const tab = this.turnTabs.get(tabId);
     if (!tab) throw new Error("Browser tab does not exist");
+    if (tab.interactionMode === "manual") return this.manualTurns.close(tab);
     const running = tab.status === "running";
     if (running) {
       this.rememberUserCancelledTurn(tab.traceId, tab.helperPid);

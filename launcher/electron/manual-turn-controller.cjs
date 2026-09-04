@@ -220,6 +220,22 @@ class ManualTurnController {
     return { cancelledByUser: true };
   }
 
+  async close(tab) {
+    this.removed(tab, "cancelled");
+    if (tab.status === "running" && this.host.cancelTurn) {
+      try {
+        await this.host.cancelTurn(tab.traceId);
+      } catch (error) {
+        this.logger.warn("browser.manual_turn_cancel_failed", {
+          tabId: tab.id, traceId: tab.traceId, errorType: error?.name || "Error",
+        });
+      }
+    }
+    if (this.host.turnTabs.get(tab.id) === tab) this.host.removeTurnTab(tab, true);
+    this.logger.info("browser.tab_closed", { tabId: tab.id, traceId: tab.traceId, status: tab.status });
+    return this.host.snapshot();
+  }
+
   removed(tab, status = "cancelled") {
     if (tab.interactionMode !== "manual") return;
     if (tab.manualTerminalStatus) return;
