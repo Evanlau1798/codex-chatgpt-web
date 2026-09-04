@@ -69,7 +69,7 @@ export interface DevProfileSetupResult {
   connectorSetupRequired: boolean;
 }
 
-function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
+export function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
   return JSON.stringify({
     mode: before.mode,
     subagentProtocol: before.subagentProtocol,
@@ -78,7 +78,10 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     port: before.port,
     contextWindow: before.contextWindow,
     appName: before.appName,
+    automaticAppName: before.automaticAppName,
+    manualAppName: before.manualAppName,
     browserHost: before.browserHost,
+    browserInteractionMode: before.browserInteractionMode,
     browserHostDescriptorPath: before.browserHostDescriptorPath,
     chromeExecutablePath: before.chromeExecutablePath,
     storageStatePath: before.storageStatePath,
@@ -87,10 +90,13 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     solAvailable: before.solAvailable,
     proAvailable: before.proAvailable,
     experimentalBiggerContext: before.experimentalBiggerContext,
+    zeroRiskProEnabled: before.zeroRiskProEnabled,
     autoApproveToolCalls: before.autoApproveToolCalls,
     controlToken: before.controlToken,
     runtimeCommand: before.runtimeCommand,
     tunnel: before.tunnel,
+    automaticTunnel: before.automaticTunnel,
+    manualTunnel: before.manualTunnel,
   }) !== JSON.stringify({
     mode: after.mode,
     subagentProtocol: after.subagentProtocol,
@@ -99,7 +105,10 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     port: after.port,
     contextWindow: after.contextWindow,
     appName: after.appName,
+    automaticAppName: after.automaticAppName,
+    manualAppName: after.manualAppName,
     browserHost: after.browserHost,
+    browserInteractionMode: after.browserInteractionMode,
     browserHostDescriptorPath: after.browserHostDescriptorPath,
     chromeExecutablePath: after.chromeExecutablePath,
     storageStatePath: after.storageStatePath,
@@ -108,10 +117,13 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     solAvailable: after.solAvailable,
     proAvailable: after.proAvailable,
     experimentalBiggerContext: after.experimentalBiggerContext,
+    zeroRiskProEnabled: after.zeroRiskProEnabled,
     autoApproveToolCalls: after.autoApproveToolCalls,
     controlToken: after.controlToken,
     runtimeCommand: after.runtimeCommand,
     tunnel: after.tunnel,
+    automaticTunnel: after.automaticTunnel,
+    manualTunnel: after.manualTunnel,
   });
 }
 
@@ -119,7 +131,9 @@ export function tunnelWorkerRuntimeChanged(before: AppConfig | undefined, after:
   if (!before || before.mode !== "full" || after.mode !== "full") return false;
   return before.releaseVersion !== after.releaseVersion
     || JSON.stringify(before.runtimeCommand) !== JSON.stringify(after.runtimeCommand)
-    || before.brokerSocketPath !== after.brokerSocketPath;
+    || before.brokerSocketPath !== after.brokerSocketPath
+    || before.browserInteractionMode !== after.browserInteractionMode
+    || JSON.stringify(before.tunnel) !== JSON.stringify(after.tunnel);
 }
 
 async function assertPortAvailable(host: string, port: number): Promise<void> {
