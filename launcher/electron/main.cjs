@@ -468,9 +468,12 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:complete-onboarding", (_event, language, browserInteractionMode) => {
     const current = stateStore.read();
     if (!current.githubOpened || !current.xOpened) throw new Error("Open the GitHub and X pages before continuing");
+    if (browserInteractionMode !== "automatic" && browserInteractionMode !== "manual") {
+      throw new Error("Browser interaction mode is invalid");
+    }
+    const validLanguage = validateLanguage(language);
     if (current.autoStart) setAutostart(app, true);
-    const mode = browserInteractionMode === "manual" ? "manual" : "automatic";
-    const next = stateStore.update({ language: validateLanguage(language), browserInteractionMode: mode, onboardingComplete: true });
+    const next = stateStore.update({ language: validLanguage, browserInteractionMode, onboardingComplete: true });
     updateTrayMenu(next.language);
     logger.info("launcher.onboarding_completed", { language: next.language });
     return next;
