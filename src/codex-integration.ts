@@ -100,13 +100,7 @@ export type {
   UninstallCodexIntegrationResult,
 } from "./codex-integration-shared";
 
-export function readCodexSubagentProtocol(
-  fallback: AppConfig["subagentProtocol"] = "compatibility-v1",
-): AppConfig["subagentProtocol"] {
-  const journal = readJournal();
-  return journal?.version === 8 || journal?.version === 9 ? journal.installed.subagent_protocol : fallback;
-}
-
+export { readCodexSubagentProtocol } from "./codex-integration-journal";
 export function setCodexSubagentProtocol(
   config: AppConfig,
   protocol: AppConfig["subagentProtocol"],
@@ -156,7 +150,7 @@ export function preflightCodexIntegration(
   const configPath = getCodexConfigPath();
   const configExists = existsSync(configPath);
   const currentText = configExists ? readFileSync(configPath, "utf8") : "";
-  const existing = readJournal();
+  const existing = readJournal({ repair: false });
   const installedUrl = routeUrl(config);
   if (existing) assertJournalTargetsConfig(existing, configPath);
   if (existing && existing.version !== 2) {

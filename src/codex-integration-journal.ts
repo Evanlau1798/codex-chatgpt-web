@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { atomicWriteFile, stripUtf8Bom } from "./config";
+import type { AppConfig } from "./config";
 import {
   CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
   getCodexConfigPath,
@@ -118,7 +119,7 @@ function journalMatchesConfig(journal: AnyCodexIntegrationJournal): boolean {
   }
 }
 
-export function readJournal(): AnyCodexIntegrationJournal | undefined {
+export function readJournal({ repair = true } = {}): AnyCodexIntegrationJournal | undefined {
   const primaryPath = getCodexJournalPath();
   const recoveryPath = getCodexJournalRecoveryPath();
   let primary: AnyCodexIntegrationJournal | undefined;
@@ -138,14 +139,14 @@ export function readJournal(): AnyCodexIntegrationJournal | undefined {
   }
   if (primary && recovery && serializeJournal(primary) === serializeJournal(recovery)) return primary;
   if (primary && !recovery && !recoveryError) {
-    atomicWriteFile(recoveryPath, serializeJournal(primary));
+    if (repair) atomicWriteFile(recoveryPath, serializeJournal(primary));
     return primary;
   }
   if (recovery && !primary && !primaryError) {
     if (!journalMatchesConfig(recovery)) {
       throw new Error("Codex integration recovery journal does not match the active config");
     }
-    atomicWriteFile(primaryPath, serializeJournal(recovery));
+    if (repair) atomicWriteFile(primaryPath, serializeJournal(recovery));
     return recovery;
   }
 
@@ -160,11 +161,21 @@ export function readJournal(): AnyCodexIntegrationJournal | undefined {
   }
   const selected = primaryMatches ? primary! : recovery!;
   const data = serializeJournal(selected);
-  writeFilesWithCompensation([
-    { path: recoveryPath, data },
-    { path: primaryPath, data },
-  ]);
+  if (repair) {
+    writeFilesWithCompensation([
+      { path: recoveryPath, data },
+      { path: primaryPath, data },
+    ]);
+  }
   return selected;
+}
+
+export function readCodexSubagentProtocol(
+  fallback: AppConfig["subagentProtocol"] = "compatibility-v1",
+  options: { repair?: boolean } = {},
+): AppConfig["subagentProtocol"] {
+  const journal = readJournal(options);
+  return journal?.version === 8 || journal?.version === 9 ? journal.installed.subagent_protocol : fallback;
 }
 
 export function assertJournalTargetsConfig(

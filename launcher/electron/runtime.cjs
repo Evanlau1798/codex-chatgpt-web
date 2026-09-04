@@ -1402,7 +1402,17 @@ class RuntimeHost {
     const checkpoint = this.captureSetupCheckpoint(previousRuntime);
     this.lifecycleOperation = name;
     let setupCommandStarted = false;
+    let runtimeTransitionStarted = false;
     try {
+      if (this.launcherProfile === "production") {
+        await this.run(name, [...args, "--preflight-only"], {
+          ...options,
+          message: "Validating Codex configuration before changing the runtime",
+          successMessage: "Codex configuration is ready for setup",
+          timeoutMs: Math.min(options.timeoutMs || 15_000, 15_000),
+        });
+      }
+      runtimeTransitionStarted = true;
       if (previousRuntime.owner === "external") this.supervisor.prepareExternalMigration();
       else await this.supervisor.stopForSetup();
       setupCommandStarted = true;
@@ -1426,7 +1436,7 @@ class RuntimeHost {
           );
         }
       }
-      if (previousRuntime.configured && checkpoint) {
+      if (runtimeTransitionStarted && previousRuntime.configured && checkpoint) {
         try {
           checkpointChanged = this.setupCheckpointChanged(checkpoint);
         } catch (caught) {
@@ -1443,9 +1453,11 @@ class RuntimeHost {
       }
       let recoveryError;
       try {
-        await this.restorePreviousRuntime(previousRuntime, name, {
-          repairExternal: previousRuntime.owner === "external" && checkpointChanged,
-        });
+        if (runtimeTransitionStarted) {
+          await this.restorePreviousRuntime(previousRuntime, name, {
+            repairExternal: previousRuntime.owner === "external" && checkpointChanged,
+          });
+        }
       } catch (caught) {
         recoveryError = caught;
       }

@@ -5,7 +5,6 @@ import { join } from "node:path";
 import type { AppConfig, RuntimeMode } from "./config";
 import {
   getConfigPath,
-  loadConfigForSetup,
   resolveDevSetupConnectorName,
   resolveSetupConnectorName,
   saveConfig,
@@ -18,12 +17,9 @@ import {
 } from "./browser-login";
 import {
   installCodexIntegration,
-  preflightCodexIntegration,
-  readCodexSubagentProtocol,
 } from "./codex-integration";
 import {
   installClaudeIntegration,
-  preflightClaudeIntegration,
   refreshClaudeIntegrationRuntimeCredentials,
 } from "./claude-integration";
 import { inspectLauncherBrowserHost } from "./launcher-browser-host";
@@ -43,6 +39,8 @@ import {
 import { connectTunnel, stopTunnel, waitForTunnelReady } from "./tunnel";
 import { getTunnelServiceStatus, installTunnelService, restartTunnelService, stopTunnelService, tunnelServiceDefinitionMatches, uninstallTunnelService } from "./tunnel-service";
 import { VERSION } from "./version";
+import { loadExistingConfig, prepareSetup } from "./setup-preflight";
+export { preflightSetup, setupIntegrationSelection } from "./setup-preflight";
 import {
   buildSetupConfig,
   configureSetupTunnel,
@@ -64,25 +62,11 @@ export interface SetupResult {
   connectorSetupRequired: boolean;
 }
 
-export function setupIntegrationSelection(
-  integration: SetupOptions["integration"] = "all",
-): { codex: boolean; claude: boolean } {
-  return {
-    codex: integration !== "claude",
-    claude: integration !== "codex",
-  };
-}
-
 export interface DevProfileSetupResult {
   mode: RuntimeMode;
   configPath: string;
   tunnelReady: boolean | null;
   connectorSetupRequired: boolean;
-}
-
-function loadExistingConfig(): AppConfig | undefined {
-  if (!existsSync(getConfigPath())) return undefined;
-  return loadConfigForSetup();
 }
 
 function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
@@ -232,34 +216,7 @@ async function bootstrapTunnelProfile(config: AppConfig): Promise<void> {
 }
 
 export async function setup(options: SetupOptions): Promise<SetupResult> {
-  const existing = loadExistingConfig();
-  if (existing?.purpose === DEV_CONFIG_PURPOSE) {
-    throw new Error("A DEV harness configuration cannot be installed into Codex");
-  }
-  const config = buildSetupConfig(existing, {
-    ...options,
-    subagentProtocol: options.subagentProtocol
-      ?? readCodexSubagentProtocol(existing?.subagentProtocol ?? "compatibility-v1"),
-  });
-  delete config.purpose;
-  const integrations = setupIntegrationSelection(options.integration);
-  const launcherOwned = config.browserHost === "launcher";
-  if (!launcherOwned && process.platform !== "darwin") {
-    throw new Error(
-      "Terminal-only managed Chrome setup currently requires macOS. "
-      + "Use the Codex Web GPT launcher on Windows or Linux.",
-    );
-  }
-  if (integrations.codex) {
-    preflightCodexIntegration(config, {
-      replaceExistingRoute: options.replaceCodexRoute,
-    });
-  }
-  if (integrations.claude) {
-    preflightClaudeIntegration(config, {
-      replaceExistingRoute: options.replaceCodexRoute,
-    });
-  }
+  const { existing, config, launcherOwned, integrations } = prepareSetup(options);
   const refreshTunnelWorker = tunnelWorkerRuntimeChanged(existing, config);
   if (existing && options.restartService) config.controlToken = randomBytes(32).toString("base64url");
   const beforeService = getServiceStatus();

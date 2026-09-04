@@ -24,7 +24,7 @@ import { runCommand } from "./process";
 import { reconcileRuntimeIntegrationCredentials } from "./runtime-startup";
 import { startServer } from "./server";
 import { assertServiceIdle, cancelActiveTurns, getServiceStatus, installService, restartService, startService, stopService, uninstallService } from "./service";
-import { existingFullSetupCredentials, setup, type SetupOptions } from "./setup";
+import { existingFullSetupCredentials, preflightSetup, setup, type SetupOptions } from "./setup";
 import { installRuntimeKeyBytes, managedRuntimeKeyPath, stopTunnel, tunnelStatus, waitForTunnelReady } from "./tunnel";
 import { getTunnelServiceStatus, restartTunnelService, startTunnelService, stopTunnelService, uninstallTunnelService } from "./tunnel-service";
 import { VERSION } from "./version";
@@ -127,6 +127,7 @@ async function loginCommand(args: string[]): Promise<void> {
 }
 
 async function setupCommand(args: string[]): Promise<void> {
+  const preflightOnly = takeFlag(args, "--preflight-only");
   const browserOnly = takeFlag(args, "--browser-only");
   const full = takeFlag(args, "--full");
   if (browserOnly === full) throw new Error("Choose exactly one setup mode: --browser-only or --full");
@@ -201,6 +202,12 @@ async function setupCommand(args: string[]): Promise<void> {
   }
   if (!acknowledged) throw new Error("Setup cancelled: acknowledgement was not provided");
   options.acknowledgedUnofficial = true;
+
+  if (preflightOnly) {
+    preflightSetup(options);
+    stdout.write("Setup preflight complete.\n");
+    return;
+  }
 
   const existing = existsSync(getConfigPath()) ? loadConfigForSetup() : undefined;
   const interactionMode = options.browserInteractionMode ?? existing?.browserInteractionMode ?? "automatic";
