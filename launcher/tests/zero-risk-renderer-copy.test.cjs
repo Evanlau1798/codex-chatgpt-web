@@ -24,3 +24,17 @@ test("manual MCP setup explains separate credentials and local-only verification
   assert.match(app, /manualInteraction \? copy\.manualConnectorNotice : devProfile \? copy\.devConnectorIsolationNotice : copy\.connectorMigrationNotice/);
   assert.match(app, /snapshot\.connectorNames\[interactionMode\]/);
 });
+
+test("all locales disclose Pro selection prerequisites and automation policy risk", () => {
+  for (const [language, terms] of Object.entries({
+    en: [/Pro account/, /every turn/, /effort/, /cannot verify/, /terms.*account polic/],
+    "zh-CN": [/Pro 帳戶/, /每回合/, /effort/, /無法驗證/, /條款.*帳戶政策/],
+    ja: [/Pro アカウント/, /毎ターン/, /effort/, /検証できません/, /規約.*アカウントポリシー/],
+  })) {
+    const copy = dictionaries[language];
+    for (const term of terms.slice(0, -1)) assert.match(copy.zeroRiskModelSettingsBody, term);
+    assert.match(copy.automaticInteractionBody, terms.at(-1));
+  }
+  assert.match(app, /SettingRow body=\{copy\.zeroRiskModelSettingsBody\}/);
+  assert.match(read("interaction-mode-picker.tsx"), /<small>\{value === "automatic" \? copy\.automaticInteractionBody : copy\.manualInteractionBody\}/);
+});
