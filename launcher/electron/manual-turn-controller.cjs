@@ -96,7 +96,9 @@ class ManualTurnController {
     }
     const terminal = this.terminals.get(traceId);
     if (terminal?.helperPid === helperPid) {
-      throw new Error(`Zero Risk turn ${traceId} was already ${terminal.status}`);
+      throw Object.assign(new Error(`Zero Risk turn ${traceId} was already ${terminal.status}`), {
+        code: terminal.status === "timeout" ? "manual_turn_timed_out" : "turn_cancelled",
+      });
     }
     const existing = this.find(traceId);
     if (existing) {
