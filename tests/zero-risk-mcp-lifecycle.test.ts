@@ -47,7 +47,10 @@ describe("Zero Risk turn broker lifecycle", () => {
     const socketPath = endpoint("strict-lifecycle");
     const broker = TurnBroker.forSocket(socketPath);
     try {
-      const requestId = await broker.registerSafe(environment(), nonceA, 150, "safe-lifecycle");
+      // The TTL bounds human setup, not local named-pipe scheduling. Keep enough margin for loaded
+      // Windows CI, then cross that exact boundary after activation to prove the turn remains live.
+      const setupTtlMs = 5_000;
+      const requestId = await broker.registerSafe(environment(), nonceA, setupTtlMs, "safe-lifecycle");
       const earlyClaim = callTurnBroker<{ bindingId: string }>(
         socketPath,
         { method: "claim", token: requestId, contract: "safe" },
@@ -80,7 +83,7 @@ describe("Zero Risk turn broker lifecycle", () => {
       expect(broker.confirmSafeTurnSent(requestId, nonceA)).toEqual({ confirmed: true, duplicate: true });
       expect(broker.startSafeTurn(requestId)).toEqual({ started: true, duplicate: true });
 
-      await Bun.sleep(175);
+      await Bun.sleep(setupTtlMs + 25);
       const claimed = await callTurnBroker<{ bindingId: string; activityId: string }>(socketPath, {
         method: "claim",
         token: requestId,
@@ -125,7 +128,7 @@ describe("Zero Risk turn broker lifecycle", () => {
     } finally {
       await broker.close();
     }
-  });
+  }, 15_000);
 
   test("holds connector start until Sent and rejects completion before start", async () => {
     const socketPath = endpoint("early-completion");

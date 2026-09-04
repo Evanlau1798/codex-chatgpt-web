@@ -1,6 +1,6 @@
 {
   "name": "codex-chatgpt-web",
-  "version": "5.0.0-Enhanced.1",
+  "version": "5.0.1-Enhanced.1",
   "private": true,
   "description": "A focused local Responses bridge that runs Codex tasks through a user-authenticated ChatGPT web session.",
   "repository": {
@@ -38,6 +38,7 @@
     "smoke": "bun run scripts/smoke-release.ts dist/runtime",
     "smoke:codex": "bun run scripts/smoke-codex-catalog.ts",
     "smoke:cancel": "bun run scripts/smoke-codex-cancel.ts",
+    "smoke:interrupt": "bun run scripts/smoke-codex-interrupt.ts",
     "smoke:subagents": "bun run scripts/smoke-codex-subagents.ts --v1 && bun run scripts/smoke-codex-subagents.ts --v2",
     "smoke:subagents:live": "bun run scripts/smoke-codex-web-subagents.ts",
     "lifecycle:sim": "bun run scripts/lifecycle-sim/run.ts",

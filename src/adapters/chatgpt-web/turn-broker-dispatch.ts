@@ -71,6 +71,7 @@ export async function dispatchTurnBrokerRequest(
     compactionDeliveryCount: owner.compactionDeliveryCount.bind(owner),
     beginCompletionFence: owner.beginCompletionFence.bind(owner),
     commitCompletionFence: owner.commitCompletionFence.bind(owner),
+    waitForRetirement: owner.waitForRetirement.bind(owner),
     revoke: owner.revoke.bind(owner),
   }, signal);
   if (request.method === "submit_compaction_handoff") {
@@ -151,6 +152,7 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
   const binding = state.bindings.get(bindingId);
   if (!binding) {
     const retiredTurn = state.retiredBindings.get(bindingId);
+    if (request.method === "release" && retiredTurn !== undefined) return { released: true, duplicate: true };
     console.error(`[chatgpt-web] broker rejected ${request.method} (binding=${bindingId.slice(0, 17)}, retiredTurn=${retiredTurn ?? "unknown"})`);
     throw new Error(retiredTurn !== undefined
       ? `${retiredTurnLabel(retiredTurn)} has already finished; this Codex Native action can no longer run.`

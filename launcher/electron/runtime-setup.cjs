@@ -23,6 +23,7 @@ async function runSetup(name, args, options) {
     if (runtime.status !== "ready") {
       throw new Error(`Setup completed, but the launcher-owned runtime is ${runtime.status}: ${runtime.detail || "not ready"}`);
     }
+    await options.afterRuntimeReady?.();
     return result;
   } catch (error) {
     const primary = error instanceof Error ? error.message : String(error);

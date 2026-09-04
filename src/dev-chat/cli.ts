@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { existsSync } from "node:fs";
 import { stdin, stdout } from "node:process";
-import { loadConfig, resolveDevSetupConnectorName } from "../config";
+import { loadConfig, resolveDevSetupConnectorName, ZERO_RISK_CHATGPT_CONNECTOR_NAME } from "../config";
 import {
   inspectLauncherBrowserHost, inspectLauncherBrowserHostLiveness, readLauncherBrowserHostDescriptor,
 } from "../launcher-browser-host";
@@ -406,7 +406,9 @@ export async function runDevCommand(args: string[]): Promise<void> {
     );
   }
   const config = loadConfig();
-  if (config.mode === "full" && config.appName !== resolveDevSetupConnectorName(config.appName)) {
+  const expectedConnector = config.browserInteractionMode === "manual"
+    ? ZERO_RISK_CHATGPT_CONNECTOR_NAME : resolveDevSetupConnectorName(config.appName);
+  if (config.mode === "full" && config.appName !== expectedConnector) {
     throw new Error("DEV connector identity is outdated. Refresh the DEV profile in the launcher before starting a named chat");
   }
   const runtimeStateRoot = paths.runtimePath;

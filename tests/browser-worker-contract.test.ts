@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Page } from "playwright-core";
 import {
   CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS,
@@ -1156,6 +1158,7 @@ test("connector selection retriggers the complete mention after a fresh-page hyd
 
 test("connector verification preserves the host-refreshed catalog evidence", async () => {
   const calls: string[] = [];
+  const diagnosticsRoot = mkdtempSync(join(tmpdir(), "cgw-catalog-verification-"));
   const catalogFresh = false;
   let selected = false;
   let now = Date.now();
@@ -1193,6 +1196,20 @@ test("connector verification preserves the host-refreshed catalog evidence", asy
     reload: async () => { calls.push("reload"); },
     getByText: () => ({ exactConnectorLabel: true }),
     locator: () => menuRows,
+    evaluate: async () => ({
+      url: "https://chatgpt.com/?temporary-chat=true",
+      title: "ChatGPT",
+      viewport: { width: 800, height: 600 },
+      surfaceId: null,
+      bodyTextChars: 0,
+      composer: { visibleCount: 1, textChars: [0], selectedConnectors: [] },
+      effortControls: [],
+      effortItems: [],
+      menus: [],
+      connectorRows: [],
+      overlays: [],
+      turns: { user: 0, assistant: [] },
+    }),
     keyboard: {
       press: async (key: string) => {
         expect(key).toBe("Enter");
@@ -1209,7 +1226,7 @@ test("connector verification preserves the host-refreshed catalog evidence", asy
   };
   let prepared = 0;
   const fixture = {
-    config: { appName: "Codex Native2" },
+    config: { appName: "Codex Native2", browserDiagnosticsPath: diagnosticsRoot },
     ensurePage: async () => page,
     prepareTemporaryChatSurface: async () => {
       prepared += 1;
@@ -1236,6 +1253,61 @@ test("connector verification preserves the host-refreshed catalog evidence", asy
     expect(calls).not.toContain("menu:fresh");
   } finally {
     Date.now = realDateNow;
+    rmSync(diagnosticsRoot, { recursive: true, force: true });
+  }
+});
+
+test("connector verification persists ordered browser checkpoints when selection fails", async () => {
+  const diagnosticsRoot = mkdtempSync(join(tmpdir(), "cgw-connector-verification-"));
+  const page = {
+    evaluate: async () => ({
+      composerVisible: true,
+      connectorSelected: false,
+      mentionMenuVisible: false,
+      effortControlVisible: false,
+      effortItemsVisible: false,
+      menuVisible: false,
+      connectorRowsVisible: false,
+      overlayVisible: false,
+    }),
+  };
+  const failure = new Error("connector proof failed");
+  const verifyConnectorExclusive = (ChatGptBrowserWorker.prototype as unknown as {
+    verifyConnectorExclusive(traceId: string): Promise<string>;
+  }).verifyConnectorExclusive;
+
+  try {
+    await expect(verifyConnectorExclusive.call({
+      config: { appName: "Codex Native2", browserDiagnosticsPath: diagnosticsRoot },
+      ensurePage: async () => page,
+      prepareTemporaryChatSurface: async (_page: unknown, capture: (checkpoint: string) => Promise<void>) => {
+        await capture("composer-ready");
+      },
+      selectConnector: async (_page: unknown, capture: (checkpoint: string) => Promise<void>) => {
+        await capture("connector-mention-triggered");
+        throw failure;
+      },
+    }, "verify_contract_trace")).rejects.toBe(failure);
+
+    const [traceDirectory] = readdirSync(diagnosticsRoot);
+    expect(traceDirectory).toStartWith("verify_contract_trace-");
+    const checkpoints = readdirSync(join(diagnosticsRoot, traceDirectory!))
+      .filter(name => name.endsWith(".json"))
+      .sort()
+      .map(name => JSON.parse(readFileSync(join(diagnosticsRoot, traceDirectory!, name), "utf8")));
+    expect(checkpoints.map(checkpoint => checkpoint.checkpoint)).toEqual([
+      "connector-verification-started",
+      "composer-ready",
+      "connector-mention-triggered",
+      "connector-verification-failed",
+    ]);
+    expect(checkpoints.at(-1)).toMatchObject({
+      traceId: "verify_contract_trace",
+      error: "verification_failed",
+      state: { composerVisible: true },
+    });
+  } finally {
+    rmSync(diagnosticsRoot, { recursive: true, force: true });
   }
 });
 

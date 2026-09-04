@@ -254,6 +254,13 @@ export function loadConfigForSetup(): AppConfig {
     raw.version = 3;
     raw.browserHost = "managed-chrome";
   }
+  const interactionMode = raw.browserInteractionMode ?? "automatic";
+  const automaticName = raw.automaticAppName
+    ?? (interactionMode === "automatic" ? raw.appName : CHATGPT_CONNECTOR_NAME);
+  if (automaticName === ZERO_RISK_CHATGPT_CONNECTOR_NAME) {
+    raw.automaticAppName = CHATGPT_CONNECTOR_NAME;
+    if (interactionMode === "automatic") raw.appName = CHATGPT_CONNECTOR_NAME;
+  }
   return parseConfig(raw, path);
 }
 
@@ -318,6 +325,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   }
   if (manualAppName !== ZERO_RISK_CHATGPT_CONNECTOR_NAME) {
     throw new Error(`manualAppName must be ${JSON.stringify(ZERO_RISK_CHATGPT_CONNECTOR_NAME)} in ${path}`);
+  }
+  if (automaticAppName === manualAppName) {
+    throw new Error(`Automatic and Zero Risk connector names must differ in ${path}; rerun setup`);
   }
   const expectedAppName = browserInteractionMode === "manual" ? manualAppName : automaticAppName;
   if (parsed.appName !== expectedAppName) {

@@ -17,80 +17,7 @@ import { defaultBrokerEndpoint } from "../src/config";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig } from "../src/types";
 import { LauncherManualTurnTimedOutError } from "../src/launcher-manual-control";
 
-const testTempRoot = process.platform === "win32" ? tmpdir() : "/tmp";
-const root = mkdtempSync(join(testTempRoot, "cgw-zero-risk-adapter-"));
-afterAll(() => {
-  chatGptTurnSessions.clear();
-  rmSync(root, { recursive: true, force: true });
-});
-
-function request(turnId: string): CodexParsedRequest {
-  const threadId = "thread_safe_adapter";
-  const environment = `<environment_context>
-  <cwd>${root}</cwd>
-  <filesystem><workspace_roots><root>${root}</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
-</environment_context>`;
-  return {
-    modelId: CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
-    stream: true,
-    options: { reasoning: "low" },
-    context: {
-      tools: [],
-      messages: [
-        { role: "developer", content: environment, timestamp: 1 },
-        { role: "user", content: "Inspect the Zero Risk transport.", timestamp: 2 },
-      ],
-    },
-    _rawBody: {
-      prompt_cache_key: threadId,
-      client_metadata: {
-        "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: turnId }),
-      },
-      input: [
-        {
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: environment }],
-          internal_chat_message_metadata_passthrough: { turn_id: turnId },
-        },
-        {
-          type: "message",
-          role: "user",
-          content: [{ type: "input_text", text: "Inspect the Zero Risk transport." }],
-          internal_chat_message_metadata_passthrough: { turn_id: turnId },
-        },
-      ],
-    },
-  };
-}
-
-function binding(prompt: string): { request_id: string } {
-  const match = prompt.match(/<codex_zero_risk_request_json>\n(\{[^\n]+\})\n<\/codex_zero_risk_request_json>/);
-  if (!match) throw new Error("Zero Risk prompt did not expose its request id");
-  return JSON.parse(match[1]!) as { request_id: string };
-}
-
-function provider(name: string): CodexProviderConfig {
-  return {
-    adapter: "chatgpt-web",
-    baseUrl: `manual://${name}-${Date.now()}`,
-    chatgptWeb: {
-      appName: "Codex Zero Risk",
-      browserInteractionMode: "manual",
-      browserHost: "launcher",
-      browserHostDescriptorPath: join(root, `${name}-launcher.json`),
-      brokerSocketPath: defaultBrokerEndpoint(join(root, name)),
-      localToolsEnabled: true,
-      solAvailable: false,
-      proAvailable: false,
-      experimentalBiggerContext: false,
-    },
-  };
-}
-
-function noManualTerminal(): Promise<never> {
-  return new Promise<never>(() => {});
-}
+import { root, request, binding, provider, noManualTerminal } from "./zero-risk-adapter-fixture";
 
 test("post-Sent timeout stays terminal across native reconnects without another manual tab", async () => {
   const config = provider("sent-timeout-replay");
@@ -300,16 +227,24 @@ test("Zero Risk offers only the new Codex suffix when the launcher reuses its re
     { role: "assistant", content: [{ type: "text", text: "Earlier answer already visible in ChatGPT." }], timestamp: 3 },
     { role: "user", content: "Continue with only this new request.", timestamp: 4 },
   );
-  (input._rawBody as { input: unknown[] }).input.push(
+  const rawInput = (input._rawBody as { input: Array<Record<string, unknown>> }).input;
+  const historicalTurnId = "turn_safe_incremental_previous";
+  for (const item of rawInput) {
+    item.internal_chat_message_metadata_passthrough = { turn_id: historicalTurnId };
+  }
+  rawInput.push(
     {
       type: "message",
+      id: "msg_safe_incremental_previous_answer",
       role: "assistant",
       content: [{ type: "output_text", text: "Earlier answer already visible in ChatGPT." }],
     },
     {
       type: "message",
+      id: "msg_safe_incremental_current_prompt",
       role: "user",
       content: [{ type: "input_text", text: "Continue with only this new request." }],
+      internal_chat_message_metadata_passthrough: { turn_id: "turn_safe_incremental" },
     },
   );
   let exactBinding: ReturnType<typeof binding> | undefined;

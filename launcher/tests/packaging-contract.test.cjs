@@ -130,7 +130,8 @@ test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
   assert.match(release, /archlinux:base/);
   assert.match(release, /codesign --verify --deep --strict --verbose=2/);
   assert.match(release, /Codex Web GPT\.app/);
-  assert.doesNotMatch(release, /gh release create[\s\S]*?--draft/);
+  assert.match(release, /gh release create[\s\S]*?--draft/);
+  assert.ok(release.indexOf("scripts/reconcile-release-checksums.ts") < release.lastIndexOf("--draft=false"));
 });
 
 test("Linux AppImage packaging owns its runner and compatible libnotify toolset", () => {

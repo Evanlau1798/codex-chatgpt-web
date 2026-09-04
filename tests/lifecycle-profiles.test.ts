@@ -45,6 +45,9 @@ test("CI runs deterministic lifecycle simulation and never calls a live profile"
   expect(workflow).toContain("lifecycle-client-probe:");
   expect(workflow).toContain("os: [macos-15, windows-latest]");
   expect(workflow).toContain("bun run scripts/smoke-codex-cancel.ts");
+  expect(workflow).toContain("bun run scripts/smoke-codex-interrupt.ts");
+  expect(workflow).toContain("@openai/codex@0.153.3");
+  expect(workflow).toContain("@anthropic-ai/claude-code@2.1.260");
   expect(workflow).toContain("turn-broker-lifecycle.test.ts");
 });
 
@@ -69,13 +72,16 @@ test("the aggregate gate checks the actual PR head preserves the pinned v5 ances
   const gate = workflow.slice(workflow.indexOf("  ci-gate:"));
   expect(gate).toContain("fetch-depth: 0");
   expect(gate).toContain("github.event.pull_request.head.sha || github.sha");
-  expect(gate).toContain('git merge-base --is-ancestor b2793cfd22342b0c6409df5eb855c163cefc16ea "$CANDIDATE_HEAD"');
+  expect(gate).toContain('git merge-base --is-ancestor 9a7428a9d1fced9baaa85112994c02c011a3b7c9 "$CANDIDATE_HEAD"');
 });
 
 test("the executable manifest owns every deterministic lifecycle test", () => {
   expect(codexLifecycleTests).toContain("tests/native-steering-boundary.test.ts");
+  expect(codexLifecycleTests).toContain("tests/environment-rollout.test.ts");
   expect(claudeLifecycleTests).toContain("tests/claude-session-abort.test.ts");
   expect(sharedLifecycleTests).toContain("tests/lifecycle-race-ordering.test.ts");
+  expect(sharedLifecycleTests).toContain("tests/broker-retirement-boundary.test.ts");
+  expect(sharedLifecycleTests).toContain("tests/zero-risk-adapter-outcomes.test.ts");
   const registered = new Set<string>([...codexLifecycleTests, ...claudeLifecycleTests, ...sharedLifecycleTests]);
   const lifecycleSimTests = readdirSync(resolve(repo, "tests"))
     .filter(name => /^lifecycle-sim-.*\.test\.ts$/.test(name))
@@ -87,6 +93,8 @@ test("the Codex lane covers compatibility V1 and native V2 clients", () => {
   const runner = readFileSync(resolve(repo, "scripts", "lifecycle-sim", "run.ts"), "utf8");
   expect(runner).toContain('"--v1", codex');
   expect(runner).toContain('"--v2", codex');
+  expect(runner).toContain('"scripts/smoke-codex-interrupt.ts", codex');
+  expect(codexLifecycleTests).toContain("tests/native-interrupt-owner-fence.test.ts");
 });
 
 test("contributor guidance defines the lifecycle profiles without untracked docs", () => {
@@ -107,8 +115,8 @@ test("release builds rerun the deterministic lifecycle gate at the tag SHA", () 
   const build = workflow.match(/\r?\n  build:\r?\n([\s\S]*?)\r?\n  publish:/)?.[1];
   expect(workflow).toContain("lifecycle-gate:");
   expect(workflow).toContain("bun run lifecycle:sim --lane=all");
-  expect(workflow).toContain("@openai/codex@0.150.1");
-  expect(workflow).toContain("@anthropic-ai/claude-code@2.1.251");
+  expect(workflow).toContain("@openai/codex@0.153.3");
+  expect(workflow).toContain("@anthropic-ai/claude-code@2.1.260");
   expect(workflow).toMatch(/build:\s+needs: lifecycle-gate/);
   expect(build).toContain("fetch-depth: 0");
 });

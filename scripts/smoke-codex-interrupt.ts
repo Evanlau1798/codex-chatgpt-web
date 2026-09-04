@@ -1,0 +1,302 @@
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
+import {
+  ChatGptTextFeed,
+  ChatGptTraceFeed,
+  chatGptTurnSessions,
+} from "../src/adapters/chatgpt-web/turn-execution";
+import { defaultConfig, saveConfig } from "../src/config";
+import { installCodexIntegration } from "../src/codex-integration";
+import { startServer } from "../src/server";
+import { resolveLifecycleExecutable } from "./lifecycle-smoke/paths";
+
+const codex = resolve(process.argv[2] ?? resolveLifecycleExecutable("codex"));
+if (!existsSync(codex)) throw new Error(`Codex executable is missing: ${codex}`);
+
+const bundled = Bun.spawnSync([codex, "debug", "models", "--bundled"], {
+  stdin: "ignore",
+  stdout: "pipe",
+  stderr: "pipe",
+  timeout: 15_000,
+});
+if (bundled.exitCode !== 0) {
+  throw new Error("Could not read bundled Codex models for the isolated interrupt probe");
+}
+const nativeCatalog = JSON.parse(bundled.stdout.toString());
+
+const scratch = resolve(import.meta.dir, "..", "tmp");
+mkdirSync(scratch, { recursive: true });
+const root = mkdtempSync(join(scratch, "codex-interrupt-"));
+const codexHome = join(root, "codex");
+const appHome = join(root, "app");
+const cliBundle = join(root, "cli.js");
+const cliBuild = await Bun.build({
+  entrypoints: [resolve(import.meta.dir, "../src/cli.ts")],
+  target: "bun",
+  minify: true,
+  external: ["playwright-core"],
+  packages: "external",
+  outdir: root,
+  naming: "cli.js",
+});
+if (!cliBuild.success) {
+  rmSync(root, { recursive: true, force: true });
+  throw new Error(`Interrupt smoke CLI bundle failed: ${cliBuild.logs.map(log => log.message).join("; ")}`);
+}
+mkdirSync(codexHome, { recursive: true });
+const previousCodexHome = process.env.CODEX_HOME;
+const previousAppHome = process.env.CODEX_CHATGPT_WEB_HOME;
+process.env.CODEX_HOME = codexHome;
+process.env.CODEX_CHATGPT_WEB_HOME = appHome;
+
+let adapterStarted = false;
+let adapterAborted = false;
+let browserAborted = false;
+chatGptTurnSessions.clear();
+const config = { ...defaultConfig("browser-only"), port: 0, subagentProtocol: "native" as const };
+config.runtimeCommand = [resolve(process.execPath), cliBundle];
+const server = startServer(config, {
+  fetchUpstream: async request => {
+    if (new URL(request.url).pathname.endsWith("/models")) return Response.json(nativeCatalog);
+    return new Response("Unexpected native request", { status: 500 });
+  },
+  adapterFactory: () => ({
+    name: "interrupt-smoke",
+    runTurn: (parsed, incoming) => new Promise<void>((_resolve, reject) => {
+      adapterStarted = true;
+      const identity = extractChatGptTurnIdentity(parsed);
+      if (!identity.threadId || !identity.turnId) {
+        reject(new Error("Routed smoke turn has no native Codex identity"));
+        return;
+      }
+      let rejectBrowser!: (error: Error) => void;
+      const browser = new Promise<string>((_resolveBrowser, rejectBrowserPromise) => {
+        rejectBrowser = rejectBrowserPromise;
+      });
+      chatGptTurnSessions.getOrCreate(
+        `interrupt-smoke:${identity.threadId}:${identity.turnId}`,
+        () => ({
+          mode: "read-only",
+          nativeIdentity: { threadId: identity.threadId!, turnId: identity.turnId! },
+          browser,
+          physicalSettlement: browser.then(() => undefined, () => undefined),
+          trace: new ChatGptTraceFeed(),
+          text: new ChatGptTextFeed(),
+          cancel: reason => {
+            browserAborted = true;
+            rejectBrowser(reason ?? new Error("native turn interrupted"));
+          },
+        }),
+        undefined, undefined, undefined, "interrupt-smoke",
+      );
+      incoming.abortSignal!.addEventListener("abort", () => {
+        adapterAborted = true;
+        reject(incoming.abortSignal!.reason);
+      }, { once: true });
+    }),
+  }),
+});
+if (server.port === undefined) throw new Error("Interrupt smoke server did not bind a port");
+config.port = server.port;
+saveConfig(config);
+const journal = installCodexIntegration(config);
+
+type RpcResponse = { id: number; result?: any; error?: { code?: number; message?: string; data?: unknown } };
+
+class AppServerClient {
+  private nextId = 1;
+  private readonly pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+  readonly notifications: any[] = [];
+  private readonly input: Bun.FileSink;
+  private readonly output: ReadableStream<Uint8Array>;
+  private readonly errors: Promise<void>;
+  private readonly outputTask: Promise<void>;
+  private buffered = "";
+  readonly child: ReturnType<typeof Bun.spawn>;
+
+  constructor() {
+    const child = Bun.spawn([codex, "app-server"], {
+      cwd: root,
+      env: { ...process.env, CODEX_HOME: codexHome, OPENAI_API_KEY: "local-interrupt-smoke" },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (typeof child.stdin === "number" || child.stdin === undefined) {
+      throw new Error("Codex app-server stdin is not writable");
+    }
+    if (!(child.stdout instanceof ReadableStream) || !(child.stderr instanceof ReadableStream)) {
+      throw new Error("Codex app-server output pipes are unavailable");
+    }
+    this.child = child;
+    this.input = child.stdin;
+    this.output = child.stdout;
+    this.errors = (async () => { for await (const _chunk of child.stderr as ReadableStream<Uint8Array>) { /* Drain without storing contents. */ } })();
+    this.outputTask = this.readLoop();
+  }
+
+  private async readLoop(): Promise<void> {
+    const reader = this.output.getReader();
+    const decoder = new TextDecoder();
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        this.buffered += decoder.decode(chunk.value, { stream: true });
+        for (;;) {
+          const newline = this.buffered.indexOf("\n");
+          if (newline < 0) break;
+          const line = this.buffered.slice(0, newline).trim();
+          this.buffered = this.buffered.slice(newline + 1);
+          if (!line) continue;
+          const message = JSON.parse(line) as RpcResponse & { method?: string; params?: unknown };
+          if (typeof message.id === "number") {
+            const waiting = this.pending.get(message.id);
+            if (!waiting) continue;
+            this.pending.delete(message.id);
+            if (message.error) waiting.reject(new Error(`${message.error.code ?? "RPC"}: ${message.error.message ?? "unknown error"}`));
+            else waiting.resolve(message.result);
+          } else if (message.method) {
+            this.notifications.push(message);
+          }
+        }
+      }
+    } finally {
+      for (const waiting of this.pending.values()) waiting.reject(new Error("Codex app-server exited"));
+      this.pending.clear();
+    }
+  }
+
+  notify(method: string, params: unknown = {}): void {
+    this.input.write(`${JSON.stringify({ method, params })}\n`);
+    this.input.flush();
+  }
+
+  async request(method: string, params: unknown = {}): Promise<any> {
+    const id = this.nextId++;
+    const result = new Promise<any>((resolveRequest, rejectRequest) => {
+      this.pending.set(id, { resolve: resolveRequest, reject: rejectRequest });
+    });
+    this.input.write(`${JSON.stringify({ id, method, params })}\n`);
+    this.input.flush();
+    let timer: Timer;
+    try {
+      return await Promise.race([result, new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Codex RPC timed out: ${method}`)), 30_000);
+      })]);
+    } finally {
+      clearTimeout(timer!);
+      this.pending.delete(id);
+    }
+  }
+
+  async waitForNotification(method: string, predicate: (message: any) => boolean, timeoutMs = 5_000): Promise<any> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const index = this.notifications.findIndex(message => message.method === method && predicate(message));
+      if (index >= 0) return this.notifications.splice(index, 1)[0];
+      if (this.child.exitCode !== null) throw new Error("Codex exited before the expected notification");
+      await Bun.sleep(10);
+    }
+    throw new Error(`Timed out waiting for ${method}`);
+  }
+
+  async close(): Promise<void> {
+    this.child.kill();
+    await Promise.all([this.child.exited, this.outputTask, this.errors]);
+  }
+}
+
+const client = new AppServerClient();
+let smokeError: unknown;
+try {
+  await client.request("initialize", {
+    clientInfo: { name: "codex-chatgpt-web-interrupt-smoke", version: "1" },
+    capabilities: { experimentalApi: true },
+  });
+  client.notify("initialized");
+
+  const hookList = await client.request("hooks/list", { cwds: [root] });
+  const hooks = Array.isArray(hookList?.data) ? hookList.data.flatMap((entry: any) => entry.hooks ?? []) : [];
+  const installedHook = hooks.find((hook: any) => hook.command === journal.interruptHook.command);
+  if (!installedHook) throw new Error("Codex did not discover the installed Interrupt hook");
+  if (installedHook.currentHash !== journal.interruptHook.trustedHash || installedHook.trustStatus !== "trusted") {
+    throw new Error("Codex did not trust the exact installed Interrupt hook");
+  }
+
+  const started = await client.request("thread/start", {
+    cwd: root,
+    model: "chatgpt-web/high",
+    approvalPolicy: "never",
+    sandbox: "danger-full-access",
+    ephemeral: true,
+  });
+  const threadId = started?.thread?.id;
+  if (typeof threadId !== "string") throw new Error("thread/start returned no thread id");
+  const turnStarted = await client.request("turn/start", {
+    threadId,
+    input: [{ type: "text", text: "Wait until this turn is interrupted." }],
+  });
+  const turnId = turnStarted?.turn?.id;
+  if (typeof turnId !== "string") throw new Error("turn/start returned no turn id");
+
+  const activeDeadline = Date.now() + 10_000;
+  let activeHttpTurns = 0;
+  let activeBrowserTurns = 0;
+  while (Date.now() < activeDeadline && (activeHttpTurns !== 1 || activeBrowserTurns !== 1)) {
+    const health = await (await fetch(`http://${config.host}:${config.port}/healthz`)).json() as {
+      active_http_turns: number;
+      active_browser_turns: number;
+    };
+    activeHttpTurns = health.active_http_turns;
+    activeBrowserTurns = health.active_browser_turns;
+    if (activeHttpTurns !== 1 || activeBrowserTurns !== 1) await Bun.sleep(20);
+  }
+  if (!adapterStarted || activeHttpTurns !== 1 || activeBrowserTurns !== 1) {
+    throw new Error(
+      `Routed turn did not become active: adapterStarted=${adapterStarted} `
+      + `activeHttpTurns=${activeHttpTurns} activeBrowserTurns=${activeBrowserTurns}`,
+    );
+  }
+
+  await client.request("turn/interrupt", { threadId, turnId });
+  await client.waitForNotification(
+    "turn/completed",
+    message => message.params?.threadId === threadId
+      && message.params?.turn?.id === turnId
+      && message.params?.turn?.status === "interrupted",
+  );
+
+  const releasedDeadline = Date.now() + 5_000;
+  do {
+    const health = await (await fetch(`http://${config.host}:${config.port}/healthz`)).json() as {
+      active_http_turns: number;
+      active_browser_turns: number;
+    };
+    activeHttpTurns = health.active_http_turns;
+    activeBrowserTurns = health.active_browser_turns;
+    if (activeHttpTurns !== 0 || activeBrowserTurns !== 0) await Bun.sleep(20);
+  } while (Date.now() < releasedDeadline && (activeHttpTurns !== 0 || activeBrowserTurns !== 0));
+  if (!adapterAborted || !browserAborted || activeHttpTurns !== 0 || activeBrowserTurns !== 0) {
+    process.stderr.write(JSON.stringify(client.notifications.filter(message => message.method === "hook/completed")
+      .map(message => ({ status: message.params?.run?.status, durationMs: message.params?.run?.durationMs }))) + "\n");
+    throw new Error(
+      `Interrupt leaked routed work: adapterAborted=${adapterAborted} browserAborted=${browserAborted} `
+      + `activeHttpTurns=${activeHttpTurns} activeBrowserTurns=${activeBrowserTurns}`,
+    );
+  }
+  process.stdout.write("NATIVE_CODEX_INTERRUPT_LIFECYCLE_SMOKE_OK\n");
+} catch (error) {
+  smokeError = error;
+} finally {
+  await client.close();
+  chatGptTurnSessions.clear();
+  await server.stop(true);
+  rmSync(root, { recursive: true, force: true });
+  if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+  else process.env.CODEX_HOME = previousCodexHome;
+  if (previousAppHome === undefined) delete process.env.CODEX_CHATGPT_WEB_HOME;
+  else process.env.CODEX_CHATGPT_WEB_HOME = previousAppHome;
+  if (smokeError) throw smokeError;
+}

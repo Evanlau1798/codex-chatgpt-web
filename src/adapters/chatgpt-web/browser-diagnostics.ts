@@ -64,6 +64,14 @@ function diagnosticError(error: unknown): string {
   return redactChatGptUiDiagnostic(error instanceof Error ? error.message : String(error));
 }
 
+function verificationFailure(error: unknown): string {
+  if (error instanceof Error && error.name === "AbortError") return "cancelled";
+  if (error instanceof Error && error.name === "TimeoutError") return "timeout";
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  return typeof code === "string" && ["chatgpt_connector_unavailable", "chatgpt_rate_limited", "chatgpt_session_expired", "chatgpt_surface_changed"].includes(code)
+    ? code : "verification_failed";
+}
+
 export class ChatGptBrowserDiagnostics {
   private readonly directory: string;
   private sequence = 0;
@@ -73,6 +81,7 @@ export class ChatGptBrowserDiagnostics {
   constructor(
     private readonly traceId: string,
     private readonly root = join(getConfigDir(), "diagnostics", "browser-turns"),
+    private readonly contentFree = false,
   ) {
     if (!/^[A-Za-z0-9_-]{6,128}$/.test(traceId)) {
       throw new Error("ChatGPT browser diagnostic trace id is invalid");
@@ -93,11 +102,11 @@ export class ChatGptBrowserDiagnostics {
       let state: unknown = null;
       let stateError: string | undefined;
       try {
-        state = await withChatGptBrowserObservationTimeout(
-          captureBrowserDiagnosticState(page, this.assistantTurnBinding),
-        );
+        state = await withChatGptBrowserObservationTimeout(this.contentFree
+          ? captureVerificationCapabilities(page)
+          : captureBrowserDiagnosticState(page, this.assistantTurnBinding));
       } catch (captureError) {
-        stateError = diagnosticError(captureError);
+        stateError = this.contentFree ? verificationFailure(captureError) : diagnosticError(captureError);
       }
 
       const envelope: Record<string, unknown> = {
@@ -105,14 +114,14 @@ export class ChatGptBrowserDiagnostics {
         capturedAt,
         traceId: this.traceId,
         checkpoint,
-        ...(error !== undefined ? { error: diagnosticError(error) } : {}),
+        ...(error !== undefined ? { error: this.contentFree ? verificationFailure(error) : diagnosticError(error) } : {}),
         state,
         ...(stateError ? { stateError } : {}),
       };
       const jsonPath = join(this.directory, `${stem}.json`);
       this.writeEnvelope(jsonPath, envelope);
 
-      if (browserDiagnosticIncludesScreenshot(checkpoint)) {
+      if (!this.contentFree && browserDiagnosticIncludesScreenshot(checkpoint)) {
         try {
           const mask = diagnosticScreenshotMask(page);
           const screenshot = await page.screenshot({ animations: "disabled", caret: "hide", mask, timeout: 5_000, type: "png" });
@@ -126,11 +135,11 @@ export class ChatGptBrowserDiagnostics {
           );
         }
       }
-      console.info(`[chatgpt-web] browser diagnostic trace=${this.traceId} checkpoint=${stem} path=${this.directory}`);
+      console.info(`[chatgpt-web] browser diagnostic trace=${this.traceId} checkpoint=${stem}${this.contentFree ? "" : ` path=${this.directory}`}`);
     } catch (captureError) {
       console.warn(
         `[chatgpt-web] browser diagnostic capture failed trace=${this.traceId}`
-        + ` checkpoint=${browserDiagnosticCheckpoint(checkpoint)}: ${diagnosticError(captureError)}`,
+        + ` checkpoint=${browserDiagnosticCheckpoint(checkpoint)}: ${this.contentFree ? verificationFailure(captureError) : diagnosticError(captureError)}`,
       );
     }
   }
@@ -146,6 +155,36 @@ export class ChatGptBrowserDiagnostics {
   private writeEnvelope(path: string, envelope: Record<string, unknown>): void {
     atomicWriteFile(path, `${JSON.stringify(envelope, null, 2)}\n`);
   }
+}
+
+async function captureVerificationCapabilities(page: Page): Promise<Record<string, boolean>> {
+  return page.evaluate(selectors => {
+    const rendered = (element: Element): boolean => {
+      const candidate = element as HTMLElement;
+      const style = getComputedStyle(candidate);
+      return candidate.isConnected && style.display !== "none"
+        && style.visibility !== "hidden" && style.opacity !== "0";
+    };
+    const any = (selector: string, root: ParentNode = document): boolean =>
+      [...root.querySelectorAll(selector)].some(rendered);
+    const composers = [...document.querySelectorAll(selectors.composer)].filter(rendered);
+    const composerForm = composers.length === 1 ? composers[0]!.closest("form") : null;
+    return {
+      composerVisible: composers.length === 1,
+      connectorSelected: composerForm !== null
+        && any('[data-id^="plugin:"][data-keyword]', composerForm),
+      mentionMenuVisible: any('.__menu-item[tabindex="0"][data-id^="plugin:"][data-keyword], .__menu-item[tabindex="0"] [data-id^="plugin:"][data-keyword]'),
+      effortControlVisible: any(selectors.effortControl),
+      effortItemsVisible: any(selectors.effortItem),
+      menuVisible: any('[role="menu"], [role="listbox"], [data-testid="composer-intelligence-picker-content"]'),
+      connectorRowsVisible: any('.__menu-item[tabindex="0"]'),
+      overlayVisible: any('[role="dialog"], [role="alert"], [role="status"]'),
+    };
+  }, {
+    composer: CHATGPT_COMPOSER_SELECTOR,
+    effortControl: CHATGPT_EFFORT_CONTROL_SELECTOR,
+    effortItem: CHATGPT_EFFORT_ITEM_SELECTOR,
+  });
 }
 
 async function captureBrowserDiagnosticState(

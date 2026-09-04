@@ -13,12 +13,13 @@ function hostFixture() {
     getBrowserInteractionMode: () => "manual", manualOperation: null,
     turnTabs: new Map([["retained", { id: "retained", status: "ready", interactionMode: "manual" }]]),
     selectedTabId: "retained", snapshot: () => ({ activeTabId: "home" }),
+    markOwnedSurface: async () => {},
     removeTurnTab(tab, abort) { assert.equal(abort, false); removed.push(tab.id); this.turnTabs.delete(tab.id); },
   });
   return { host, removed };
 }
 
-test("interaction-mode changes preserve retained tabs on failure and isolate them after commit", async () => {
+test("interaction-mode changes preserve mode-bound retained tabs on failure and after commit", async () => {
   const { host, removed } = hostFixture();
   host.turnTabs.set("automatic", { id: "automatic", status: "ready", interactionMode: "automatic" });
   await assert.rejects(async () => host.withInteractionModeChange("automatic", async () => {
@@ -30,10 +31,10 @@ test("interaction-mode changes preserve retained tabs on failure and isolate the
   assert.equal(host.turnTabs.size, 2);
   assert.equal(host.currentOperation(), null);
   assert.equal(host.browserInteractionMode(), "manual");
-  assert.equal(await host.withInteractionModeChange("automatic", async () => "configured"), "configured");
-  assert.deepEqual(removed, ["retained", "automatic"]);
-  assert.equal(host.turnTabs.size, 0);
-  assert.equal(host.selectedTabId, "home");
+  assert.equal(await host.withInteractionModeChange("automatic", async commit => { await commit(); return "configured"; }), "configured");
+  assert.deepEqual(removed, []);
+  assert.equal(host.turnTabs.size, 2);
+  assert.equal(host.selectedTabId, "retained");
   assert.equal(host.currentOperation(), null);
   assert.equal(host.browserInteractionMode(), "manual");
 });
@@ -78,8 +79,8 @@ test("manual-to-automatic transaction exposes capability inspection and preserve
     }), /fixture setup failure/);
     assert.equal(host.browserInteractionMode(), "manual");
     assert.deepEqual(removed, []);
-    await host.withInteractionModeChange("automatic", async () => assert.equal((await inspect()).status, 200));
-    assert.deepEqual(removed, ["retained"]);
+    await host.withInteractionModeChange("automatic", async commit => { assert.equal((await inspect()).status, 200); await commit(); });
+    assert.deepEqual(removed, []);
     assert.equal(inspections, 2);
     assert.notEqual((await inspect()).status, 200);
   } finally { await server.close(); }
@@ -114,10 +115,12 @@ for (const entry of ["browser-interaction-mode", "setup-mcp"]) {
     let state = { browserInteractionMode: "manual", experimentalBiggerContext: false };
     host.getBrowserInteractionMode = () => state.browserInteractionMode;
     host.reveal = async () => { throw new Error("mode transition must not reveal before transaction"); };
-    const setup = async () => {
+    const setup = async (_input, afterRuntimeReady) => {
       assert.equal(host.browserInteractionMode(), "automatic");
       assert.equal(host.currentOperation(), "browser interaction mode change");
       assert.equal(host.turnTabs.size, 1);
+      assert.equal(typeof afterRuntimeReady, "function");
+      await afterRuntimeReady();
       return { configured: true, stdout: "fixture configured" };
     };
     const handler = ipc(entry, {
@@ -129,7 +132,7 @@ for (const entry of ["browser-interaction-mode", "setup-mcp"]) {
     });
     await handler({}, entry === "setup-mcp" ? { interactionMode: "automatic" } : "automatic");
     assert.equal(state.browserInteractionMode, "automatic");
-    assert.deepEqual(removed, ["retained"]);
+    assert.deepEqual(removed, []);
   });
 }
 

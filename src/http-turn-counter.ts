@@ -14,6 +14,8 @@ type Clock = () => number;
 type StreamStage = HttpStreamTimingDiagnostic["stage"];
 type StreamOutcome = HttpStreamTimingDiagnostic["outcome"];
 
+export interface NativeCodexTurnIdentity { threadId: string; turnId: string }
+
 interface StreamCounters {
   chunks: number;
   bytes: number;
@@ -31,7 +33,9 @@ export class HttpTurnCounter {
     abort: AbortController;
     done: Promise<void>;
     finish: () => void;
+    identity?: NativeCodexTurnIdentity;
   }>();
+  private readonly interrupted = new Map<string, unknown>();
   private nextId = 1;
 
   constructor(
@@ -54,7 +58,7 @@ export class HttpTurnCounter {
   }
 
   async track(
-    run: (signal: AbortSignal) => Promise<Response>,
+    run: (signal: AbortSignal, bindIdentity: (identity: NativeCodexTurnIdentity) => void) => Promise<Response>,
     clientSignal?: AbortSignal,
     platform: NodeJS.Platform = process.platform,
     route = "unknown",
@@ -134,7 +138,16 @@ export class HttpTurnCounter {
     else clientSignal?.addEventListener("abort", clientAbortListener, { once: true });
 
     try {
-      const response = await run(abort.signal);
+      const response = await run(abort.signal, identity => {
+        if (!identity.threadId.trim() || !identity.turnId.trim()) throw new Error("Native Codex turn identity requires threadId and turnId");
+        const tracked = this.active.get(id)!;
+        if (tracked.identity && (tracked.identity.threadId !== identity.threadId || tracked.identity.turnId !== identity.turnId)) {
+          throw new Error("An HTTP request cannot change its native Codex turn identity");
+        }
+        tracked.identity = { ...identity };
+        const key = JSON.stringify([identity.threadId, identity.turnId]);
+        if (this.interrupted.has(key) && !abort.signal.aborted) abort.abort(this.interrupted.get(key));
+      });
       headersMs = elapsed(this.now(), startedAt);
       status = response.status;
       requestId = safeDiagnosticIdentifier(response.headers.get("x-request-id"));
@@ -177,6 +190,22 @@ export class HttpTurnCounter {
       finalize(abort.signal.aborted ? "aborted" : "failed", "headers", error);
       throw error;
     }
+  }
+
+  beginCancelTurn(identity: NativeCodexTurnIdentity, reason: unknown = new DOMException("Codex turn interrupted", "AbortError")) {
+    const key = JSON.stringify([identity.threadId, identity.turnId]);
+    this.interrupted.delete(key);
+    this.interrupted.set(key, reason);
+    while (this.interrupted.size > 1_024) this.interrupted.delete(this.interrupted.keys().next().value!);
+    const turns = [...this.active.values()].filter(turn => turn.identity?.threadId === identity.threadId && turn.identity.turnId === identity.turnId);
+    for (const turn of turns) if (!turn.abort.signal.aborted) turn.abort.abort(reason);
+    return { cancelled: turns.length, settlement: Promise.all(turns.map(turn => turn.done)).then(() => undefined) };
+  }
+
+  async cancelTurn(identity: NativeCodexTurnIdentity, reason?: unknown): Promise<number> {
+    const cancellation = this.beginCancelTurn(identity, reason);
+    await cancellation.settlement;
+    return cancellation.cancelled;
   }
 
   private trackDirectStream(

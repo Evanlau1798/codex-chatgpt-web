@@ -23,8 +23,9 @@ function hostFor(existingConfig) {
     },
   });
   let invocation;
-  host.runSetup = async (name, args) => {
+  host.runSetup = async (name, args, options = {}) => {
     invocation = { name, args };
+    await options.afterRuntimeReady?.();
     return { code: 0, stdout: "", stderr: "" };
   };
   return { host, invocation: () => invocation };
@@ -49,8 +50,9 @@ function devHostFor(existingConfig) {
     },
   });
   let invocation;
-  host.runDevSetup = async (name, args) => {
+  host.runDevSetup = async (name, args, options = {}) => {
     invocation = { name, args };
+    await options.afterRuntimeReady?.();
     return { code: 0, stdout: "", stderr: "" };
   };
   return { host, invocation: () => invocation };
@@ -805,6 +807,43 @@ test("failed first-time setup removes its route before restoring the unconfigure
   }
 });
 
+test("a failed setup preflight leaves the previous runtime running and untouched", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-setup-preflight-"));
+  const configPath = path.join(root, "config.json");
+  const config = { mode: "browser-only", browserHost: "launcher", releaseVersion: "4.0.7" };
+  fs.writeFileSync(configPath, `${JSON.stringify(config)}\n`);
+  let stops = 0;
+  let starts = 0;
+  const host = new RuntimeHost({
+    app: { getPath: () => root },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: "/source",
+    browserDescriptorPath: path.join(root, "launcher-browser.json"),
+    codexHome: path.join(root, "codex"),
+    supervisor: {
+      configPath,
+      readSetupConfig: () => config,
+      readConfig: () => config,
+      stopForSetup: async () => { stops += 1; },
+      startIfConfigured: async () => { starts += 1; return { status: "needs-setup" }; },
+    },
+  });
+  host.run = async (_name, args) => {
+    assert.equal(args.includes("--preflight-only"), true);
+    throw new Error("multi_agent_v2 in Codex [features] is unsupported");
+  };
+  try {
+    await assert.rejects(
+      host.runSetup("runtime-upgrade", ["setup", "--browser-only"], {}),
+      /multi_agent_v2 in Codex \[features\] is unsupported$/,
+    );
+    assert.equal(stops, 0);
+    assert.equal(starts, 0);
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath, "utf8")), config);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 test("launcher delegates an existing terminal-managed installation to the migration-aware CLI", async () => {
   let config = { mode: "full", browserHost: "managed-chrome", releaseVersion: "0.1.16" };
   let prepared = 0;

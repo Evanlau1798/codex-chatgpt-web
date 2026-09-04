@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { stripUtf8Bom } from "./config";
-import { getCodexConfigPath } from "./codex-integration-shared";
+import { getCodexConfigPath, MANAGED_COMMENT, MANAGED_ROUTE_COMMENT } from "./codex-integration-shared";
 import type {
   CodexIntegrationJournal,
   CodexModelContextOverride,
@@ -171,4 +171,12 @@ export function removeDocumentLine(document: CodexConfigDocument, index: number)
   document.lines.splice(index, 1);
   document.endings.splice(index, 1);
   if (wasLast && document.endings.length > 0) document.endings[document.endings.length - 1] = trailing;
+}
+
+export function removeManagedComment(document: CodexConfigDocument): void {
+  for (let index = document.lines.length - 1; index >= 0; index -= 1) {
+    if (document.lines[index] === MANAGED_COMMENT || document.lines[index] === MANAGED_ROUTE_COMMENT) {
+      removeDocumentLine(document, index);
+    }
+  }
 }

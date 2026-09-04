@@ -17,7 +17,7 @@ import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt, withoutSupersed
 import { MAX_CHATGPT_WEB_TURN_RETRIES } from "../src/adapters/chatgpt-web/retry-policy";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
-import { ChatGptExternalTurnProgress, ChatGptMirroredTurnProgress, chatGptExternalProgressIsLive } from "../src/adapters/chatgpt-web/turn-progress";
+import { ChatGptExternalTurnProgress, ChatGptMirroredTurnProgress, chatGptExternalProgressIsLive, chatGptExternalToolCallsAreInFlight } from "../src/adapters/chatgpt-web/turn-progress";
 import { CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, chatGptMcpInvocationTimeout } from "../src/adapters/chatgpt-web/mcp-server";
 import { defaultBrokerEndpoint } from "../src/config";
 import { estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
@@ -26,23 +26,7 @@ import { decodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compac
 import { parseRequest } from "../src/responses/parser";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig, CodexTool } from "../src/types";
 
-const tempRoot = join(tmpdir(), `codex-chatgpt-web-harness-${process.pid}-${Date.now()}`);
-mkdirSync(tempRoot, { recursive: true });
-afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
-
-const tools: CodexTool[] = [
-  { name: "exec", description: "Run nested Codex tools", parameters: {}, freeform: true },
-  { name: "exec_command", description: "Run command", parameters: { type: "object" } },
-  { name: "write_stdin", description: "Continue command", parameters: { type: "object" } },
-  { name: "apply_patch", description: "Patch files", parameters: {}, freeform: true },
-  { name: "view_image", description: "View image", parameters: { type: "object" } },
-  { name: "search_openai_docs", namespace: "mcp__openaiDeveloperDocs", description: "Search docs", parameters: { type: "object" } },
-];
-
-const environmentXml = `<environment_context>
-  <cwd>${tempRoot}</cwd>
-  <filesystem><workspace_roots><root>${tempRoot}</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
-</environment_context>`;
+import { tempRoot, tools, environmentXml, brokerTestEndpoint, beginAcknowledgedToolInvocation, parsed, rawWireRequest, toolResult } from "./chatgpt-harness-fixture";
 const toolCapabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true };
 const browserOnlyCapabilities = { localToolsEnabled: false, solAvailable: true, proAvailable: true };
 
@@ -63,27 +47,6 @@ test("Claude conversation resume keeps only context after the latest assistant t
   expect(claudeConversationResumeRequest(parsed())).toBeUndefined();
 });
 
-function brokerTestEndpoint(name: string): string {
-  return process.platform === "win32"
-    ? defaultBrokerEndpoint(join(tmpdir(), name), "win32")
-    : join(tmpdir(), `${name}.sock`);
-}
-
-async function beginAcknowledgedToolInvocation<T>(
-  turn: BrowserTurn,
-  invoke: () => Promise<T>,
-): Promise<{ result: Promise<T> }> {
-  const progress = turn.externalProgress;
-  if (!progress) throw new Error("tool-capable browser has no progress transport");
-  const previousBatchRevision = progress.snapshot().lastToolBatchRevision;
-  const result = invoke();
-  let snapshot = progress.snapshot();
-  while (snapshot.lastToolBatchRevision <= previousBatchRevision) {
-    snapshot = await progress.waitForChange(snapshot.revision, turn.abortSignal);
-  }
-  await progress.acknowledgeToolBatch(snapshot.lastToolBatchRevision);
-  return { result };
-}
 
 interface GatewayProgramCall {
   name: string;
@@ -122,47 +85,6 @@ async function executeGatewayProgram(
   return emitted;
 }
 
-function parsed(developerText?: string): CodexParsedRequest {
-  return {
-    modelId: CHATGPT_WEB_MODEL_ID,
-    stream: true,
-    context: {
-      tools,
-      messages: [
-        ...(developerText ? [{ role: "developer" as const, content: developerText, timestamp: 1 }] : []),
-        { role: "user", content: "Inspect the project", timestamp: 2 },
-      ],
-    },
-    options: { reasoning: "high" },
-  };
-}
-
-function rawWireRequest(environmentText: string): CodexParsedRequest {
-  const request = parsed();
-  const turnId = "turn_test_123";
-  const threadId = "thread_test_123";
-  request._rawBody = {
-    prompt_cache_key: threadId,
-    client_metadata: {
-      "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: turnId }),
-    },
-    input: [
-      {
-        type: "message",
-        role: "user",
-        content: [{ type: "input_text", text: environmentText }],
-        internal_chat_message_metadata_passthrough: { turn_id: turnId },
-      },
-      {
-        type: "message",
-        role: "user",
-        content: [{ type: "input_text", text: "Inspect the project" }],
-        internal_chat_message_metadata_passthrough: { turn_id: turnId },
-      },
-    ],
-  };
-  return request;
-}
 
 function canonicalCurrentWireRequest(environmentText: string): CodexParsedRequest {
   const request = rawWireRequest(environmentText);
@@ -196,13 +118,6 @@ function proRequest(environmentText = environmentXml): CodexParsedRequest {
   const request = rawWireRequest(environmentText);
   request.options.reasoning = "max";
   return request;
-}
-
-function toolResult(value: Record<string, unknown>): BrokerToolResult {
-  return {
-    content: [{ type: "text", text: JSON.stringify(value) }],
-    structuredContent: value,
-  };
 }
 
 function canonicalJson(value: unknown): string {
@@ -2963,6 +2878,17 @@ describe("ChatGPT outer-native harness v4", () => {
       });
       const [request] = await broker.nextToolBatch(timedOutToken);
       expect(request).toMatchObject({ wireName: "exec_command" });
+      const externalProgress = new ChatGptExternalTurnProgress();
+      const toolBatchRevision = externalProgress.recordToolBatch(1, 1_000);
+      const toolBoundary = externalProgress.waitForToolBatchObservation(toolBatchRevision);
+      const pendingAdapterBatch = toolBoundary.then(() => request);
+      const pendingAdapterBatchOutcome = pendingAdapterBatch.then(
+        value => ({ type: "value" as const, value }),
+        error => ({ type: "error" as const, error: error instanceof Error ? error : new Error(String(error)) }),
+      );
+      const retirement = broker.waitForRetirement(timedOutToken).then(() => {
+        externalProgress.retire(new Error("MCP invocation retired its turn binding"));
+      });
 
       const timeoutResult = await timedOut;
       expect(timeoutResult.isError).toBe(true);
@@ -2972,6 +2898,14 @@ describe("ChatGPT outer-native harness v4", () => {
         retryable: false,
       });
       expect(JSON.stringify(timeoutResult.content)).toContain("did not complete before the MCP transport deadline");
+      await retirement;
+      expect(externalProgress.snapshot().activeToolCalls).toBe(0);
+      expect(chatGptExternalToolCallsAreInFlight(externalProgress.snapshot())).toBeFalse();
+      const batchOutcome = await pendingAdapterBatchOutcome;
+      expect(batchOutcome.type).toBe("error");
+      if (batchOutcome.type !== "error") throw new Error("retired tool batch crossed its browser boundary");
+      expect(batchOutcome.error.message).toContain("retired its turn binding");
+      expect(() => externalProgress.recordToolResult()).toThrow("retired its turn binding");
 
       await expect(callTurnBroker(socketPath, { method: "claim", token: timedOutToken }))
         .rejects.toThrow("already finished");
@@ -2993,6 +2927,7 @@ describe("ChatGPT outer-native harness v4", () => {
       await broker.close();
     }
   }, 10_000);
+
 });
 
 test("mirrored turn progress carries daemon MCP activity into the browser helper process", async () => {

@@ -18,6 +18,8 @@ import { beginTurnCompletionFence, commitTurnCompletionFence } from "./turn-brok
 import { rejectTurnChannel, takeQueuedTools } from "./turn-broker-queue";
 import {
   assertSafeHarnessRunning,
+  waitForSafeState,
+  resolveSafeWaiters,
   confirmSafeTurnSent as confirmSafeSent,
   completeSafeTurn as completeSafe,
   createSafeTurn,
@@ -116,6 +118,7 @@ export class TurnBroker implements TurnBrokerOwner {
       completionCommitted: false,
       compactionRequested: false,
       compactionDeliveryCount: 0,
+      retirementWaiters: new Set(),
     };
     this.channels.set(token, channel);
     this.pending.set(token, channel);
@@ -248,6 +251,13 @@ export class TurnBroker implements TurnBrokerOwner {
     return committed;
   }
 
+  waitForRetirement(token: string, signal?: AbortSignal): Promise<void> {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) return Promise.resolve();
+    return waitForSafeState(channel.retirementWaiters, signal, "turn retirement wait aborted");
+  }
+
   requestCompaction(token: string, queuedResult: BrokerToolResult): number {
     this.prune();
     const channel = this.channels.get(token);
@@ -350,6 +360,7 @@ export class TurnBroker implements TurnBrokerOwner {
     }
     revokeSafeTurn(channel, reason);
     this.retire(this.retiredTokens, token, channel.traceId);
+    resolveSafeWaiters(channel.retirementWaiters, undefined);
     rejectTurnChannel(channel, reason);
   }
 

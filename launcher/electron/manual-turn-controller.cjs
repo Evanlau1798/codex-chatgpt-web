@@ -15,6 +15,7 @@ class ManualTurnController {
     this.host = host;
     this.logger = logger;
     this.terminals = new Map();
+    this.completions = new Map();
   }
 
   find(traceId) {
@@ -42,6 +43,12 @@ class ManualTurnController {
     this.terminals.delete(traceId);
     this.terminals.set(traceId, { helperPid, status });
     while (this.terminals.size > MAX_TERMINALS) this.terminals.delete(this.terminals.keys().next().value);
+  }
+
+  rememberCompletion(traceId, helperPid) {
+    this.completions.delete(traceId);
+    this.completions.set(traceId, helperPid);
+    while (this.completions.size > MAX_TERMINALS) this.completions.delete(this.completions.keys().next().value);
   }
 
   notify(waiters, value) {
@@ -93,6 +100,11 @@ class ManualTurnController {
     if (resumePrompt !== undefined && (typeof resumePrompt !== "string"
       || resumePrompt.length < 1 || resumePrompt.length > MAX_PROMPT_CHARS)) {
       throw new Error("Manual resume prompt size is invalid");
+    }
+    if (this.completions.has(traceId)) {
+      throw new Error(this.completions.get(traceId) === helperPid
+        ? `Zero Risk turn ${traceId} is already completed`
+        : `Zero Risk turn ${traceId} is owned by another process`);
     }
     const terminal = this.terminals.get(traceId);
     if (terminal?.helperPid === helperPid) {
@@ -197,11 +209,21 @@ class ManualTurnController {
   }
 
   end(traceId, helperPid, status, retain = false) {
+    if (this.completions.get(traceId) === helperPid) return { cancelledByUser: false };
+    if (!this.find(traceId)) {
+      const terminal = this.terminals.get(traceId);
+      if (terminal?.helperPid === helperPid) return { cancelledByUser: terminal.status === "cancelled" };
+    }
     const tab = this.validateOwner(traceId, helperPid);
+    if (tab.manualState === "completed") {
+      this.rememberCompletion(traceId, helperPid);
+      return { cancelledByUser: false };
+    }
     if (status === "completed" && !["sent", "running"].includes(tab.manualState)) {
       throw new Error(`Zero Risk turn ${traceId} cannot complete before Sent confirmation`);
     }
     clearTimeout(tab.manualTimer);
+    if (status === "completed") this.rememberCompletion(traceId, helperPid);
     if (status === "completed" && retain && tab.conversationKey) {
       Object.assign(tab, {
         manualState: "completed", status: "ready", prompt: null, promptDigest: null,
@@ -240,12 +262,14 @@ class ManualTurnController {
 
   removed(tab, status = "cancelled") {
     if (tab.interactionMode !== "manual") return;
+    if (this.completions.get(tab.traceId) === tab.helperPid) return;
     if (tab.manualTerminalStatus) return;
     tab.manualTerminalStatus = status;
     clearTimeout(tab.manualTimer);
     Object.assign(tab, {
       manualState: status === "timeout" ? "timed-out" : status,
       manualTimer: null, manualDeadlineAt: null, prompt: null, promptDigest: null,
+      lastHeartbeatAt: Date.now(),
     });
     this.remember(tab.traceId, tab.helperPid, status);
     this.notify(tab.manualWaiters, { status });

@@ -5,6 +5,7 @@ import type { ChatGptWebCapabilities } from "./model";
 import { chatGptTurnSessions, type ChatGptTurnSession } from "./turn-execution";
 import { emitBrowserCompletion } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
+import { extractChatGptTurnIdentity } from "./environment";
 
 /** A native disconnect detaches its observer, not the user-operated checkpoint. */
 export async function runManualCompaction(options: {
@@ -19,8 +20,10 @@ export async function runManualCompaction(options: {
   emit: (event: AdapterEvent) => void;
 }): Promise<void> {
   options.abortSignal?.throwIfAborted();
+  const identity = extractChatGptTurnIdentity(options.parsed);
   const shared = runStructuredCompactionOnce(options.executionKey, {
     ownerKey: options.sourceKey, traceIds: [options.traceId],
+    nativeThreadId: identity.threadId, nativeTurnId: identity.turnId,
   }, async operatorSignal => {
     const timeoutMs = Math.min(options.timeoutMs ?? MAX_COMPACTION_HANDOFF_TIMEOUT_MS, MAX_COMPACTION_HANDOFF_TIMEOUT_MS);
     const deadline = new AbortController();

@@ -26,6 +26,20 @@ test("Windows lifecycle commands prefer native executables over command shims", 
     .toBe("C:\\native\\codex.exe");
 });
 
+test("Codex process probes use Bun's native spawn path consistently", () => {
+  for (const name of ["smoke-codex-cancel.ts", "smoke-codex-interrupt.ts"]) {
+    const source = readFileSync(join(import.meta.dir, "..", "scripts", name), "utf8");
+    expect(source).toContain("Bun.spawnSync");
+    expect(source).not.toContain('from "node:child_process"');
+  }
+});
+
+test("the interrupt probe exercises the production-shaped bundled CLI hook", () => {
+  const source = readFileSync(join(import.meta.dir, "..", "scripts", "smoke-codex-interrupt.ts"), "utf8");
+  expect(source).toContain("await Bun.build");
+  expect(source).toContain("config.runtimeCommand = [resolve(process.execPath), cliBundle]");
+});
+
 test("Codex lifecycle prompts use the portable smoke path helper", () => {
   const source = readFileSync(join(import.meta.dir, "..", "scripts", "lifecycle-smoke", "codex-lane.ts"), "utf8");
   expect(source).not.toContain("${repo}\\\\tests");

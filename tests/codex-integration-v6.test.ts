@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 for (const nested of [false, true]) {
-  test(`upgrades a v6 journal and restores ${nested ? "table" : "scalar"} multi_agent_v2 exactly`, () => {
+  test.serial(`upgrades a v6 journal and restores ${nested ? "table" : "scalar"} multi_agent_v2 exactly`, () => {
     const root = join(tmpdir(), `codex-chatgpt-web-v6-${process.pid}-${Date.now()}-${nested}`);
     const codexHome = join(root, "codex");
     const appHome = join(root, "app");
@@ -42,6 +42,7 @@ for (const nested of [false, true]) {
     writeFileSync(
       configPath,
       readFileSync(configPath, "utf8")
+        .replace(route.interruptHook.fragment, "")
         .replace(MANAGED_ROUTE_COMMENT, MANAGED_COMMENT)
         .replace(/^experimental_realtime_webrtc_call_base_url = .*\r?\n/m, ""),
     );
@@ -84,7 +85,7 @@ for (const nested of [false, true]) {
     writeFileSync(getCodexJournalPath(), serialized);
     writeFileSync(getCodexJournalRecoveryPath(), serialized);
 
-    expect(installCodexIntegration(defaultConfig("full")).version).toBe(9);
+    expect(installCodexIntegration(defaultConfig("full")).version).toBe(10);
     expect(deactivateCodexIntegration()).toEqual({ changed: true, active: false });
     expect(readFileSync(configPath, "utf8")).toBe(original);
     expect(activateCodexIntegration()).toEqual({ changed: true, active: true });

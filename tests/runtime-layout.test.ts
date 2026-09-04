@@ -5,6 +5,8 @@ import { join } from "node:path";
 import {
   assertDurableRuntimeCommand,
   CHATGPT_CONNECTOR_NAME,
+  ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+  resolveInteractionConnectorIdentities,
   DEV_CHATGPT_CONNECTOR_NAME,
   defaultBrokerEndpoint,
   defaultConfig,
@@ -97,10 +99,13 @@ test("the direct-turn connector identity migrates known legacy setup without ove
   expect(defaultConfig("full").useEnhancedWebSessionMode).toBe(true);
   expect(defaultConfig("full").subagentProtocol).toBe("compatibility-v1");
   expect(resolveSetupConnectorName("Codex Native")).toBe("Codex Native2");
+  expect(resolveSetupConnectorName(ZERO_RISK_CHATGPT_CONNECTOR_NAME)).toBe(CHATGPT_CONNECTOR_NAME);
   expect(resolveSetupConnectorName("Team Codex Harness")).toBe("Team Codex Harness");
   expect(resolveSetupConnectorName(undefined, "Team Codex Harness")).toBe("Team Codex Harness");
   expect(() => resolveSetupConnectorName(undefined, "Codex Native"))
     .toThrow(/requires a newly created connector named "Codex Native2"/);
+  expect(() => resolveSetupConnectorName(undefined, ZERO_RISK_CHATGPT_CONNECTOR_NAME))
+    .toThrow(/reserved for Zero Risk/);
 });
 
 test("enhanced Web session mode migrates the legacy key and rejects conflicting values", () => {
@@ -148,10 +153,60 @@ test("existing Web session mode choices remain stable while missing legacy setti
   expect(loadConfig().useEnhancedWebSessionMode).toBe(true);
 });
 
+test("manual connector selection preserves and restores a custom automatic identity", () => {
+  const automatic = {
+    appName: "Team Codex Harness",
+    automaticAppName: "Team Codex Harness",
+    browserInteractionMode: "automatic" as const,
+  };
+  const manual = resolveInteractionConnectorIdentities(automatic, "manual");
+  expect(manual).toEqual({
+    appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+    automaticAppName: "Team Codex Harness",
+    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+  });
+  expect(resolveInteractionConnectorIdentities({
+    ...manual,
+    browserInteractionMode: "manual",
+  }, "automatic")).toEqual({
+    appName: "Team Codex Harness",
+    automaticAppName: "Team Codex Harness",
+    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+  });
+  expect(resolveInteractionConnectorIdentities({
+    appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+    automaticAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+    browserInteractionMode: "automatic",
+  }, "manual")).toEqual({
+    appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+    automaticAppName: CHATGPT_CONNECTOR_NAME,
+    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+  });
+});
+
+test("setup repairs a legacy automatic connector name that collides with Zero Risk", () => {
+  const root = join(tmpdir(), `codex-chatgpt-web-connector-collision-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const collided = defaultConfig("browser-only");
+  collided.appName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  collided.automaticAppName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  writeFileSync(join(root, "config.json"), `${JSON.stringify(collided)}\n`);
+
+  expect(() => loadConfig()).toThrow(/Automatic and Zero Risk connector names must differ/);
+  expect(loadConfigForSetup()).toMatchObject({
+    appName: CHATGPT_CONNECTOR_NAME,
+    automaticAppName: CHATGPT_CONNECTOR_NAME,
+    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+  });
+});
+
 test("the DEV profile uses a distinct connector identity without overwriting custom names", () => {
   expect(resolveDevSetupConnectorName()).toBe(DEV_CHATGPT_CONNECTOR_NAME);
   expect(resolveDevSetupConnectorName("Codex Native")).toBe(DEV_CHATGPT_CONNECTOR_NAME);
   expect(resolveDevSetupConnectorName(CHATGPT_CONNECTOR_NAME)).toBe(DEV_CHATGPT_CONNECTOR_NAME);
+  expect(resolveDevSetupConnectorName(ZERO_RISK_CHATGPT_CONNECTOR_NAME)).toBe(DEV_CHATGPT_CONNECTOR_NAME);
   expect(resolveDevSetupConnectorName("Team DEV Harness")).toBe("Team DEV Harness");
   expect(resolveDevSetupConnectorName(undefined, "Explicit DEV Harness")).toBe("Explicit DEV Harness");
 });

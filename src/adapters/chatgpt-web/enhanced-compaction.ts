@@ -19,6 +19,7 @@ import type { TurnBroker } from "./turn-broker";
 import { chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptTurnSession } from "./turn-execution";
 import { emitBrowserCompletion } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
+import { extractChatGptTurnIdentity } from "./environment";
 
 interface EnhancedCompactionOptions {
   worker: Pick<ChatGptBrowserWorker, "run">;
@@ -58,9 +59,11 @@ export async function runEnhancedCompaction(
     .digest("hex")
     .slice(0, 12);
   let shared = existingStructuredCompactionRun(compactionExecutionKey);
+  const identity = extractChatGptTurnIdentity(parsed);
   if (!shared) shared = runStructuredCompactionOnce(compactionExecutionKey, {
     ownerKey: responseExecutionKey,
     traceIds: [traceId, `${traceId}_fallback`],
+    nativeThreadId: identity.threadId, nativeTurnId: identity.turnId,
   }, async operatorSignal => {
     const handoffTimeoutMs = Math.min(
       timeoutMs ?? MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
