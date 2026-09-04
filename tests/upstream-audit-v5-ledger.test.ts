@@ -112,6 +112,7 @@ describe("upstream v5.0.0 audit ledger", () => {
     }
     expect(review.obligations.map(item => item.id).sort()).toEqual([
       "automatic-tool-observation",
+      "environment-cwdless",
       "manual-body-limit", "manual-clipboard-transaction", "manual-duplicate-deadline",
       "manual-mcp-contract",
       "manual-navigation-superseded",
