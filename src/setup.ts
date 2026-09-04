@@ -270,6 +270,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     const loginRequired = options.forceLogin || !browserLoginStateExists(config);
     const capabilityProbeRequired = !loginRequired
       && (options.refreshAccountCapabilities === true
+        || existing?.browserInteractionMode === "manual"
         || solAvailable === undefined
         || proAvailable === undefined);
     if (beforeService.loaded && (loginRequired || capabilityProbeRequired) && !options.restartService) {
