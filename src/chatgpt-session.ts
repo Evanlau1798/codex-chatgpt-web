@@ -79,8 +79,11 @@ async function visibleEffortSurface(
   control: Locator,
 ): Promise<{ menu: Locator; slider: Locator } | undefined> {
   const menu = await chatGptEffortMenuForControl(page, control);
-  const slider = page.locator(CHATGPT_EFFORT_SLIDER_SELECTOR).filter({ visible: true }).last();
-  if (await menu.isVisible().catch(() => false) || await slider.isVisible().catch(() => false)) {
+  const slider = page.locator(CHATGPT_EFFORT_SLIDER_SELECTOR).last();
+  // The ARIA slider may have no box; its keyboard-owning menuitem must still be visible.
+  if (await menu.isVisible().catch(() => false)
+    || await slider.isVisible().catch(() => false)
+    || await slider.locator("xpath=ancestor::*[@role='menuitem'][1]").isVisible().catch(() => false)) {
     return { menu, slider };
   }
   return undefined;

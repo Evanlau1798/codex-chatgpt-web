@@ -111,7 +111,7 @@ describe("upstream v5.0.0 audit ledger", () => {
       expect(ledger.closure.status).toBe("obligations-recorded");
     }
     expect(review.obligations.map(item => item.id).sort()).toEqual([
-      "automatic-submission-recovery", "automatic-tool-observation",
+      "automatic-effort-activation", "automatic-submission-recovery", "automatic-tool-observation",
       "dev-chat-readiness", "dev-chat-saved-model",
       "dev-setup-interaction",
       "environment-cwdless",

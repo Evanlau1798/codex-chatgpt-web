@@ -100,6 +100,7 @@ import {
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   CHATGPT_EFFORT_ITEM_SELECTOR,
   CHATGPT_EFFORT_MENU_SELECTOR,
+  activateChatGptEffortMenu,
   CHATGPT_EFFORT_SLIDER_SELECTOR,
   CHATGPT_STOP_BUTTON_SELECTOR,
   CHATGPT_TEMPORARY_CHAT_URL,
@@ -1179,20 +1180,20 @@ export class ChatGptBrowserWorker {
     await settleChatGptUi();
     await throwIfChatGptRateLimitDialog(page);
     await captureDiagnostic?.("effort-control-ready");
-    const effortMenu = page.locator(CHATGPT_EFFORT_MENU_SELECTOR).last();
-    const menuVisible = await effortMenu.isVisible().catch(() => false);
-    const menuExpanded = await currentEffort.getAttribute("aria-expanded").catch(() => null);
-    if (!menuVisible && menuExpanded !== "true") {
-      await throwIfChatGptRateLimitDialog(page);
-      await currentEffort.press("Enter");
-    }
-    await captureDiagnostic?.("effort-menu-open-requested");
-    const effortChoices = effortMenu.locator(CHATGPT_EFFORT_ITEM_SELECTOR);
-    const effortChoice = effortChoices.nth(uiEffortIndex);
-    const effortSlider = page.locator(CHATGPT_EFFORT_SLIDER_SELECTOR).last();
+    let effortMenu: Locator;
+    let effortChoices: Locator | undefined;
+    let effortChoice: Locator;
+    let effortSlider: Locator;
     const waitAbort = new AbortController();
     let ready: "effort" | "slider" | "rate-limit" | "session-expired";
     try {
+      const activation = await activateChatGptEffortMenu(page, currentEffort);
+      if (activation.method === "pointerdown") await captureDiagnostic?.("effort-menu-pointerdown-fallback");
+      await captureDiagnostic?.("effort-menu-open-requested");
+      effortMenu = activation.menu;
+      effortChoices = effortMenu.locator(CHATGPT_EFFORT_ITEM_SELECTOR);
+      effortChoice = effortChoices.nth(uiEffortIndex);
+      effortSlider = activation.slider;
       ready = await Promise.race([
         effortChoice.waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal }).then(() => "effort" as const),
         effortSlider.waitFor({ state: "attached", timeout: 70_000, signal: waitAbort.signal }).then(() => "slider" as const),
@@ -1214,7 +1215,8 @@ export class ChatGptBrowserWorker {
       if (error instanceof ChatGptWebAdapterError) throw error;
       await throwIfChatGptRateLimitDialog(page);
       await throwIfChatGptSessionFailureAlert(page);
-      const effortChoiceCount = await effortChoices.count().catch(() => 0);
+      const effortChoiceCount = await (effortChoices ?? page.locator(CHATGPT_EFFORT_MENU_SELECTOR)
+        .filter({ visible: true }).last().locator(CHATGPT_EFFORT_ITEM_SELECTOR)).count().catch(() => 0);
       throw new ChatGptWebAdapterError(
         `ChatGPT effort menu did not expose item index ${uiEffortIndex}`
         + `; item count: ${effortChoiceCount}`,
@@ -1297,7 +1299,7 @@ export class ChatGptBrowserWorker {
         const expanded = await currentEffort.getAttribute("aria-expanded").catch(() => null);
         if (expanded !== "true") {
           await throwIfChatGptRateLimitDialog(page);
-          await currentEffort.press("Enter");
+          await currentEffort.click({ force: true });
         }
         await effortChoice.waitFor({
           state: "visible",
