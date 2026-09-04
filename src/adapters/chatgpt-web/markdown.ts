@@ -88,9 +88,8 @@ function preserveObsidianWikiLinks(markdown: string): string {
 
 function obsidianWikiLink(value: string): string | undefined {
   const separator = value.indexOf("|");
-  if (separator < 0) return undefined;
-  const target = value.slice(0, separator).trim();
-  const label = value.slice(separator + 1).trim();
+  const target = (separator >= 0 ? value.slice(0, separator) : value).trim();
+  const label = (separator >= 0 ? value.slice(separator + 1) : value).trim();
   if (!target || !label || /[<>]/.test(target)) return undefined;
 
   const fragmentAt = target.indexOf("#");

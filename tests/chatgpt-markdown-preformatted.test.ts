@@ -17,10 +17,10 @@ test("preserves semantic preformatted blocks rendered with nested elements", () 
   expect(chatGptHtmlToMarkdown(html)).toBe("```\nalpha\n  beta\n\ngamma\n```");
 });
 
-test("preserves Obsidian wiki links without turning them into LaTeX delimiters", () => {
+test("links Obsidian notes without turning their brackets into LaTeX delimiters", () => {
   expect(chatGptHtmlToMarkdown(
     "<p>Sources: [[Goals/financial goals]] · [[wiki/entities/me]]</p>",
-  )).toBe("Sources: [[Goals/financial goals]] · [[wiki/entities/me]]");
+  )).toBe("Sources: [Goals/financial goals](<Goals/financial goals.md>) · [wiki/entities/me](<wiki/entities/me.md>)");
   expect(chatGptHtmlToMarkdown("<p>Ordinary [brackets] stay escaped</p>"))
     .toBe("Ordinary \\[brackets\\] stay escaped");
 });
