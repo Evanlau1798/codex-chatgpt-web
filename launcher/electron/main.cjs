@@ -639,6 +639,12 @@ function registerIpc({ logger, stateStore }) {
     return state;
   });
   handle("launcher:zero-risk-pro", async (_event, enabled) => {
+    const browserOperation = browserHost.currentOperation();
+    if (browserHost.activeTraceId || browserOperation) {
+      throw new Error(browserHost.activeTraceId
+        ? "Finish or cancel active ChatGPT turns before changing Zero Risk model profiles"
+        : `Finish ${browserOperation} before changing Zero Risk model profiles`);
+    }
     const result = await runtimeHost.setZeroRiskPro(enabled === true);
     const state = stateStore.update({ zeroRiskProEnabled: result.enabled, codexRestartRequired: !IS_DEV_PROFILE });
     send("launcher:state-changed", state);
@@ -650,16 +656,23 @@ function registerIpc({ logger, stateStore }) {
     if (current.browserInteractionMode === mode) {
       return { state: current, credentialsRequired: false, targetMode: mode };
     }
-    if (mode === "manual" && !runtimeHost.mcpCredentialsConfigured("manual")) {
+    const browserOperation = browserHost.currentOperation();
+    if (browserHost.activeTraceId || browserOperation) {
+      throw new Error(browserHost.activeTraceId
+        ? "Finish or cancel active ChatGPT turns before changing browser interaction mode"
+        : `Finish ${browserOperation} before changing browser interaction mode`);
+    }
+    if (!runtimeHost.mcpCredentialsConfigured(mode)) {
       return { state: current, credentialsRequired: true, targetMode: mode };
     }
-    await runtimeHost.setBrowserInteractionMode(mode);
+    await browserHost.withInteractionModeChange(mode, () => runtimeHost.setBrowserInteractionMode(mode));
     const state = stateStore.update({
       browserInteractionMode: mode,
       experimentalBiggerContext: mode === "manual" ? false : current.experimentalBiggerContext,
       codexRestartRequired: !IS_DEV_PROFILE,
     });
     send("launcher:state-changed", state);
+    send("launcher:browser-state", browserHost.snapshot());
     return { state, credentialsRequired: false, targetMode: mode };
   });
   handle("launcher:uninstall-integration", async () => {
@@ -752,19 +765,25 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:setup-codex", () => setupIntegration("codex"));
   handle("launcher:setup-claude", () => setupIntegration("claude"));
   handle("launcher:setup-mcp", async (_event, input) => {
-    await browserHost.reveal();
-    const interactionMode = input?.interactionMode === "manual" ? "manual"
-      : input?.interactionMode === "automatic" ? "automatic"
-        : stateStore.read().browserInteractionMode;
+    const currentMode = stateStore.read().browserInteractionMode;
+    const interactionMode = input?.interactionMode === undefined ? currentMode : input.interactionMode;
+    if (interactionMode !== "automatic" && interactionMode !== "manual") {
+      throw new Error("Browser interaction mode is invalid");
+    }
+    const interactionModeChange = interactionMode !== currentMode;
     const setup = IS_DEV_PROFILE
       ? runtimeHost.setupDevMcp.bind(runtimeHost)
       : runtimeHost.setupMcp.bind(runtimeHost);
-    const result = await setup({
+    const runSetup = () => setup({
       tunnelId: typeof input?.tunnelId === "string" ? input.tunnelId.trim() : "",
       runtimeKey: typeof input?.runtimeKey === "string" ? input.runtimeKey : "",
       replace: input?.replace === true,
       interactionMode,
     });
+    if (!interactionModeChange && interactionMode === "automatic") await browserHost.reveal();
+    const result = interactionModeChange
+      ? await browserHost.withInteractionModeChange(interactionMode, runSetup)
+      : await runSetup();
     stateStore.update({
       mcpRuntimeInstalled: true,
       mcpSetupComplete: false,
@@ -773,6 +792,7 @@ function registerIpc({ logger, stateStore }) {
       browserInteractionMode: interactionMode,
       ...(interactionMode === "manual" ? { experimentalBiggerContext: false } : {}),
     });
+    if (interactionModeChange) send("launcher:browser-state", browserHost.snapshot());
     return { ok: true, stdout: result.stdout };
   });
   handle("launcher:set-mcp-step", (_event, step) => {

@@ -86,6 +86,7 @@ class ManualTurnController {
   }
 
   begin(traceId, helperPid, prompt, conversationKey, resumePrompt) {
+    if (this.host.manualOperation) throw new Error(`ChatGPT browser is busy with ${this.host.manualOperation}`);
     if (typeof prompt !== "string" || prompt.length < 1 || prompt.length > MAX_PROMPT_CHARS) {
       throw new Error("Manual prompt size is invalid");
     }

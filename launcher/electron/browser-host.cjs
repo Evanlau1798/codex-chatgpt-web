@@ -30,6 +30,7 @@ const {
 } = require("./browser-state.cjs");
 
 const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
+const INTERACTION_MODE_CHANGE_OPERATION = "browser interaction mode change";
 function browserInteractionModeFor(host) {
   const mode = host.interactionModeOverride ?? host.getBrowserInteractionMode?.() ?? "automatic";
   if (mode !== "automatic" && mode !== "manual") throw new Error("Launcher browser interaction mode is invalid");
@@ -422,6 +423,38 @@ class BrowserHost {
 
   currentOperation() {
     return this.manualOperation || (this.loginOperation ? "ChatGPT login" : null);
+  }
+
+  assertTurnTabsCanResetForInteractionModeChange() {
+    if ([...this.turnTabs.values()].some(tab => tab.status === "running")) {
+      throw new Error("Finish or cancel active ChatGPT turns before changing browser interaction mode");
+    }
+  }
+
+  async withInteractionModeChange(mode, action) {
+    if (mode !== "automatic" && mode !== "manual") {
+      throw new Error("Browser interaction mode must be automatic or manual");
+    }
+    if (this.manualOperation) throw new Error(`ChatGPT browser is already busy with ${this.manualOperation}`);
+    this.assertTurnTabsCanResetForInteractionModeChange();
+    this.interactionModeOverride = mode;
+    this.manualOperation = INTERACTION_MODE_CHANGE_OPERATION;
+    try {
+      const result = await action();
+      this.resetTurnTabsForInteractionModeChange();
+      return result;
+    } finally {
+      this.manualOperation = null;
+      this.interactionModeOverride = null;
+    }
+  }
+
+  resetTurnTabsForInteractionModeChange() {
+    this.assertTurnTabsCanResetForInteractionModeChange();
+    for (const tab of [...this.turnTabs.values()]) this.removeTurnTab(tab, false);
+    if (this.turnTabs.size !== 0) throw new Error("Browser tabs could not be isolated for the interaction-mode change");
+    this.selectedTabId = "home";
+    return this.snapshot();
   }
 
   get activeTraceId() {
@@ -2039,6 +2072,9 @@ class BrowserHost {
 
   async inspectSession(detectCapabilities = false) {
     requireAutomaticBrowserInspection(this, "ChatGPT session and capability inspection");
+    if (this.manualOperation === INTERACTION_MODE_CHANGE_OPERATION) {
+      return await this.runSessionInspection(detectCapabilities);
+    }
     return await this.withManualOperation("session inspection", () => this.runSessionInspection(detectCapabilities));
   }
 

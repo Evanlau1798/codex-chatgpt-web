@@ -118,6 +118,7 @@ describe("upstream v5.0.0 audit ledger", () => {
       "launcher-interaction-operations",
       "manual-body-limit", "manual-clipboard-transaction", "manual-compaction-canonical", "manual-compaction-reconnect", "manual-duplicate-deadline",
       "manual-mcp-contract",
+      "manual-mode-transaction",
       "manual-native-owner",
       "manual-navigation-superseded",
       "manual-owner-death", "manual-owner-liveness", "manual-primary-surface", "manual-resume-validation",
