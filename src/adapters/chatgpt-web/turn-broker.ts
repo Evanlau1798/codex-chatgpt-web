@@ -446,7 +446,9 @@ export class TurnBroker implements TurnBrokerOwner {
     const now = Date.now();
     this.contexts.prune(now);
     for (const [token, channel] of this.channels) {
-      if (channel.environment.expiresAt === undefined || channel.environment.expiresAt > now) continue;
+      if (channel.environment.expiresAt === undefined
+        || channel.environment.expiresAt > now
+        || channel.invocations.size > 0) continue;
       this.revoke(token);
     }
   }
