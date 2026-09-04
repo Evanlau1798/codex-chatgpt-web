@@ -224,7 +224,11 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
   const events: string[] = [];
   const instance = Object.assign(worker(), {
     activeComposer: async () => ({ locator: () => ({ getByTestId: () => ({
-      waitFor: async () => {}, isEnabled: async () => true, press: async () => { events.push("send"); },
+      waitFor: async () => {}, isEnabled: async () => true, press: async (_key: string, options: { noWaitAfter?: boolean; timeout?: number; signal?: AbortSignal }) => {
+        expect(options).toMatchObject({ noWaitAfter: true, timeout: 0 });
+        expect(options.signal).toBeInstanceOf(AbortSignal);
+        events.push("send");
+      },
     }) }) }),
     attachPrompt: async () => { events.push("attach"); },
     waitForMultipartAcknowledgement: async (page: Page, turn: Locator) => {

@@ -1559,7 +1559,7 @@ export class ChatGptBrowserWorker {
     await captureDiagnostic?.("send-ready");
     const initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0;
     await onSendActivated?.();
-    await activateChatGptSendControl(sendButton);
+    await activateChatGptSendControl(sendButton, abortSignal);
     return this.waitForSubmissionAccepted(
       page,
       baseline.userTurns,
@@ -3288,7 +3288,7 @@ export class ChatGptBrowserWorker {
         await diagnostics.capture(page, "send-ready");
         const initialToolBatchRevision = turn.externalProgress?.snapshot().lastToolBatchRevision ?? 0;
         await turn.onSendActivated?.();
-        await activateChatGptSendControl(sendButton);
+        await activateChatGptSendControl(sendButton, stageSignal);
         const evidence = await this.waitForSubmissionAccepted(
           page,
           userTurns,
