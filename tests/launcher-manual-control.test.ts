@@ -32,7 +32,7 @@ async function withControl(fetch: (request: Request) => Promise<Response>, run: 
 test("manual launcher control separates idempotent start from reconnectable Sent observation", async () => {
   const requests: Array<{ path: string; body: unknown }> = [];
   let sentPolls = 0;
-  const lease = { tabId: "manual-tab", reused: false, deadlineAt: "2026-09-04T00:03:00.000Z", state: "awaiting-user" };
+  const lease = { tabId: "manual-tab", reused: false, deadlineAt: "2026-09-04T00:03:00.000Z", state: "awaiting-user" } as const;
   await withControl(async request => {
     expect(request.method).toBe("POST");
     expect(request.headers.get("authorization")).toBe("Bearer launcher-control-token-0123456789abcdefghijklmnop");
