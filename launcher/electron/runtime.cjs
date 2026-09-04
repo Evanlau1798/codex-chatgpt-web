@@ -1187,8 +1187,23 @@ class RuntimeHost {
     const currentVersion = this.app.getVersion();
     const connectorMigrationRequired = existing.mode === "full"
       && isLegacyConnectorName(validateConnectorName(existing.config?.appName));
+    const interactionMode = existing.config?.browserInteractionMode ?? "automatic";
+    const expectedTunnelProfile = interactionMode === "manual"
+      ? "codex-chatgpt-web-zero-risk" : "codex-chatgpt-web";
+    const expectedKeyFile = interactionMode === "manual"
+      ? "tunnel-runtime-zero-risk.key" : "tunnel-runtime-automatic.key";
+    const explicitTunnel = interactionMode === "manual"
+      ? existing.config?.manualTunnel : existing.config?.automaticTunnel;
+    const activeTunnel = existing.config?.tunnel;
+    const tunnelProfileMigrationRequired = existing.mode === "full" && Boolean(activeTunnel) && Boolean(
+      !explicitTunnel
+      || explicitTunnel.tunnelId !== activeTunnel.tunnelId
+      || activeTunnel.profileName !== expectedTunnelProfile
+      || activeTunnel.alias !== expectedTunnelProfile
+      || path.basename(activeTunnel.runtimeKeyFile) !== expectedKeyFile
+    );
     if (existing.owner !== "launcher"
-      || (existing.config?.releaseVersion === currentVersion && !connectorMigrationRequired)) {
+      || (existing.config?.releaseVersion === currentVersion && !connectorMigrationRequired && !tunnelProfileMigrationRequired)) {
       return { updated: false };
     }
     const route = await this.bridgeStatus("runtime-upgrade-route");
@@ -1197,15 +1212,20 @@ class RuntimeHost {
       existing.mode === "full" ? "--full" : "--browser-only",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
       "--acknowledge-unofficial",
       "--restart-service",
     ];
     if (existing.mode === "full") {
-      args.push("--app-name", connectorNameForSetup(existing.config?.appName));
+      args.push("--app-name", this.setupConnectorName());
     }
     const result = await this.runSetup("runtime-upgrade", args, {
-      message: `Upgrading launcher runtime from ${existing.config.releaseVersion} to ${currentVersion}`,
-      successMessage: `Launcher runtime upgraded to ${currentVersion}`,
+      message: tunnelProfileMigrationRequired
+        ? `Separating ${interactionMode === "manual" ? "Zero Risk" : "Automatic"} MCP credentials`
+        : `Upgrading launcher runtime from ${existing.config.releaseVersion} to ${currentVersion}`,
+      successMessage: tunnelProfileMigrationRequired
+        ? `${interactionMode === "manual" ? "Zero Risk" : "Automatic"} MCP profile migrated`
+        : `Launcher runtime upgraded to ${currentVersion}`,
       timeoutMs: existing.mode === "full" ? MCP_SETUP_TIMEOUT_MS : CORE_SETUP_TIMEOUT_MS,
     });
     if (!route.active) await this.setBridgeEnabled(false);
