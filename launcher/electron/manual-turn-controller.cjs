@@ -63,7 +63,6 @@ class ManualTurnController {
   }
 
   prepare(tab, prompt, reused) {
-    this.clipboard.writeText(prompt);
     Object.assign(tab, {
       interactionMode: "manual",
       interactionLocked: false,
@@ -122,9 +121,11 @@ class ManualTurnController {
       if (typeof resumePrompt !== "string" || !resumePrompt) {
         throw new Error("A retained Zero Risk conversation requires an incremental resume prompt");
       }
+      this.clipboard.writeText(resumePrompt);
       Object.assign(retained[0], { traceId, helperPid, status: "running" });
       return this.prepare(retained[0], resumePrompt, true);
     }
+    this.clipboard.writeText(prompt);
     return this.prepare(this.host.createManualTurnTab(traceId, helperPid, conversationKey, prompt), prompt, false);
   }
 

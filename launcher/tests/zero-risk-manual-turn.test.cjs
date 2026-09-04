@@ -109,3 +109,31 @@ test("retained TTL starts at successful manual completion, including suffix reus
     assert.equal(host.turnTabs.get(first.tabId).status, "ready");
   }
 });
+
+test("clipboard failure preserves retained ownership and permits a later suffix retry", () => {
+  const { controller, host, clipboard } = fixture();
+  const key = "c".repeat(64);
+  const first = controller.begin("trace-original", 10, "full", key);
+  controller.confirmSent(first.tabId);
+  controller.started("trace-original", 10);
+  controller.end("trace-original", 10, "completed", true);
+  const tab = host.turnTabs.get(first.tabId);
+  const before = { ...tab };
+  const writeText = controller.clipboard.writeText;
+  controller.clipboard.writeText = () => { throw new Error("clipboard unavailable"); };
+  assert.throws(() => controller.begin("trace-resume", 11, "full", key, "suffix"), /clipboard unavailable/);
+  assert.deepEqual(tab, before);
+  assert.throws(() => controller.end("trace-resume", 11, "failed"), /ownership mismatch/);
+  assert.equal(host.turnTabs.get(first.tabId), tab);
+  controller.clipboard.writeText = writeText;
+  assert.equal(controller.begin("trace-resume", 11, "full", key, "suffix").reused, true);
+  assert.deepEqual(clipboard, ["full", "suffix"]);
+  controller.cancel("trace-resume", 11);
+});
+
+test("clipboard failure on a fresh start leaves no manual surface or timer", () => {
+  const { controller, host } = fixture();
+  controller.clipboard.writeText = () => { throw new Error("clipboard unavailable"); };
+  assert.throws(() => controller.begin("trace-fresh", 10, "full"), /clipboard unavailable/);
+  assert.equal(host.turnTabs.size, 0);
+});
