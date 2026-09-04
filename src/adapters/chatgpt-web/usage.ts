@@ -9,6 +9,7 @@ import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import {
   CHATGPT_BIGGER_CONTEXT_PARTS,
   compileChatGptWebPrompt,
+  type CompileChatGptWebPromptOptions,
   type ChatGptWebMultipartPartCount,
 } from "./prompt";
 import { extractChatGptTurnIdentity } from "./environment";
@@ -40,6 +41,7 @@ function conservativeTextTokens(text: string, modelId: string): number {
 export function estimateChatGptWebInputTokens(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
+  options: Pick<CompileChatGptWebPromptOptions, "nativeControlConnector"> = {},
 ): number {
   const manual = isChatGptWebZeroRiskBackendModel(parsed.modelId);
   const mode = manual
@@ -52,6 +54,7 @@ export function estimateChatGptWebInputTokens(
     manual || (mode.localTools && effectiveChatGptToolPolicy(parsed).tools.length > 0)
       ? ESTIMATE_TURN_TOKEN : undefined,
     {
+      ...options,
       ...(manual ? { manualControl: true as const } : {}),
       captureLunaCheckpoint: parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID
         && !parsed._compactionRequest

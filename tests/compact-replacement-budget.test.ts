@@ -4,6 +4,8 @@ import { compactRequest, routeChatGptWebRequest } from "../src/server";
 import { parseRequest } from "../src/responses/parser";
 import { estimateChatGptWebInputTokens } from "../src/adapters/chatgpt-web/usage";
 import { resolveChatGptWebContextLimits } from "../src/chatgpt-web-models";
+import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
+import { estimateCompiledChatGptWebInputTokens } from "../src/adapters/chatgpt-web/input-tokens";
 
 const user = (text: string, id = "latest") => ({ type: "message", role: "user", id, content: text });
 const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: false };
@@ -38,6 +40,15 @@ test("usage estimates a full-mode request with no authorized tools", () => {
   const parsed = parseRequest({ model: "chatgpt-web/medium", input: [user("Inspect only.")] });
   routeChatGptWebRequest(parsed, defaultConfig("full"));
   expect(estimateChatGptWebInputTokens(parsed, capabilities)).toBeGreaterThan(8192);
+});
+
+test("Enhanced estimates use the same native-control contract as production compilation", () => {
+  const parsed = parseRequest({ model: "chatgpt-web/medium", input: [user("Inspect only.")] });
+  routeChatGptWebRequest(parsed, defaultConfig("full"));
+  const options = { nativeControlConnector: true };
+  const compiled = compileChatGptWebPrompt(parsed, capabilities, undefined, options);
+  expect(estimateChatGptWebInputTokens(parsed, capabilities, options))
+    .toBe(estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId));
 });
 
 test("irreducible replacement fails once without a partial history", async () => {

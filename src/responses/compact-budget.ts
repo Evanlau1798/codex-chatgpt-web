@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config";
 import { resolveChatGptWebContextLimits, type ChatGptWebModelRoute } from "../chatgpt-web-models";
 import { estimateChatGptWebInputTokens } from "../adapters/chatgpt-web/usage";
+import { effectiveChatGptToolPolicy } from "../adapters/chatgpt-web/tool-policy";
 import { parseRequest } from "./parser";
 import { buildCompactV1Output, extractCompactUserMessages, latestCompactUserMessage } from "./compaction";
 
@@ -23,9 +24,11 @@ export function boundedCompactV1Output(
     parsed.modelId = route.backendModel;
     parsed.options.reasoning = route.interactionMode === "automatic" ? route.adapterEffort : route.codexEffort;
     return estimateChatGptWebInputTokens(parsed, {
-      localToolsEnabled: config.mode === "full",
+      localToolsEnabled: config.mode === "full" && (route.interactionMode === "manual"
+        || effectiveChatGptToolPolicy(parsed).tools.length > 0),
       solAvailable: config.solAvailable, proAvailable: config.proAvailable,
-    });
+    }, { nativeControlConnector: route.interactionMode === "automatic"
+      && config.useEnhancedWebSessionMode && config.mode === "full" });
   };
   const output = buildCompactV1Output(users, summary);
   if (measure(output) < limit) return output;
