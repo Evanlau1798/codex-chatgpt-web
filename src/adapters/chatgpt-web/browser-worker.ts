@@ -130,7 +130,10 @@ import { openChatGptConnectorPlusMenu } from "./connector-plus-menu";
 import {
   ChatGptBrowserObservationTimeoutError,
   MAX_CHATGPT_BROWSER_PAGE_REBINDS,
+  observeChatGptSubmission,
   withChatGptBrowserObservationTimeout,
+  withChatGptPageObservationRecovery,
+  type ChatGptObservationRecovery,
 } from "./browser-observation";
 import {
   chatGptSuspensionClock,
@@ -1427,36 +1430,49 @@ export class ChatGptBrowserWorker {
     signal?: AbortSignal,
     externalProgress?: ChatGptTurnProgressReader,
     initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0,
+    recoverObservation?: ChatGptObservationRecovery,
   ): Promise<ChatGptSubmissionEvidence> {
     if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-    for (;;) {
-      if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-      const progress = externalProgress?.snapshot();
-      if (progress && progress.lastToolBatchRevision > initialToolBatchRevision) return "mcp_tool_call";
-      await throwIfChatGptSessionFailureAlert(page);
-      await throwIfChatGptTerminalErrorAlert(responseTurn);
-      const [userTurnCount, assistantTurn, visibleStopButtonCount] = await Promise.all([
-        userTurns.count(),
-        readChatGptAssistantTurnState(responseTurns),
-        page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count(),
-      ]);
-      const evidence = chatGptSubmissionEvidence({
-        initialUserTurnCount,
-        userTurnCount,
-        initialAssistantTurnCount: initialResponseTurn.count,
-        assistantTurnCount: assistantTurn.count,
-        ...(initialResponseTurn.lastId ? { initialAssistantTurnId: initialResponseTurn.lastId } : {}),
-        ...(assistantTurn.lastId ? { assistantTurnId: assistantTurn.lastId } : {}),
-        generationRunning: visibleStopButtonCount > 0,
-      });
-      if (evidence) return evidence;
-      await this.waitForTurnDomOrExternalProgress(
-        page,
-        progress?.revision ?? 0,
-        externalProgress,
-        signal,
-      );
-    }
+    return withChatGptPageObservationRecovery(page, async observationPage => {
+      if (page !== observationPage) {
+        page = observationPage;
+        userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
+        responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
+        responseTurn = responseTurns.nth(initialResponseTurn.count);
+      }
+      for (;;) {
+        if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+        const progress = externalProgress?.snapshot();
+        if (progress && progress.lastToolBatchRevision > initialToolBatchRevision) return "mcp_tool_call";
+        const observed = await observeChatGptSubmission(async () => {
+          await throwIfChatGptSessionFailureAlert(page);
+          await throwIfChatGptTerminalErrorAlert(responseTurn);
+          return Promise.all([
+            userTurns.count(),
+            readChatGptAssistantTurnState(responseTurns),
+            page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count(),
+          ]);
+        }, signal, externalProgress, progress?.revision ?? 0);
+        if (!observed) continue;
+        const [userTurnCount, assistantTurn, visibleStopButtonCount] = observed.value;
+        const evidence = chatGptSubmissionEvidence({
+          initialUserTurnCount,
+          userTurnCount,
+          initialAssistantTurnCount: initialResponseTurn.count,
+          assistantTurnCount: assistantTurn.count,
+          ...(initialResponseTurn.lastId ? { initialAssistantTurnId: initialResponseTurn.lastId } : {}),
+          ...(assistantTurn.lastId ? { assistantTurnId: assistantTurn.lastId } : {}),
+          generationRunning: visibleStopButtonCount > 0,
+        });
+        if (evidence) return evidence;
+        await observeChatGptSubmission(observationSignal => this.waitForTurnDomOrExternalProgress(
+          page,
+          progress?.revision ?? 0,
+          externalProgress,
+          observationSignal,
+        ), signal);
+      }
+    }, recoverObservation, signal);
   }
 
   private async waitForNewAssistantTurn(
@@ -1467,35 +1483,46 @@ export class ChatGptBrowserWorker {
     signal?: AbortSignal,
     externalProgress?: ChatGptTurnProgressReader,
     responseDomGraceMs = CHATGPT_RESPONSE_DOM_GRACE_MS,
+    recoverObservation?: ChatGptObservationRecovery,
   ): Promise<Locator> {
     let responseDeadline = Math.min(
       deadline ?? Number.POSITIVE_INFINITY,
       Date.now() + responseDomGraceMs,
     );
-    for (;;) {
-      if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-      if (page.isClosed()) throw chatGptBrowserTabClosedError();
-      const progress = externalProgress?.snapshot();
-      if (chatGptExternalProgressSuppressesDomHealth(progress, Date.now())) {
-        responseDeadline = Math.min(
-          deadline ?? Number.POSITIVE_INFINITY,
-          Date.now() + responseDomGraceMs,
-        );
-      } else if (Date.now() >= responseDeadline) {
-        throw new Error("ChatGPT accepted the message but did not expose its assistant turn in the DOM");
+    return withChatGptPageObservationRecovery(page, async observationPage => {
+      if (page !== observationPage) {
+        page = observationPage;
+        responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
       }
-      await throwIfChatGptSessionFailureAlert(page);
-      await throwIfChatGptRateLimitDialog(page);
-      const current = await readChatGptAssistantTurnState(responseTurns);
-      const binding = bindChatGptAssistantTurn(initialResponseTurn, current);
-      if (binding) return locateChatGptAssistantTurn(responseTurns, binding);
-      await this.waitForTurnDomOrExternalProgress(
-        page,
-        progress?.revision ?? 0,
-        externalProgress,
-        signal,
-      );
-    }
+      for (;;) {
+        if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+        if (page.isClosed()) throw chatGptBrowserTabClosedError();
+        const progress = externalProgress?.snapshot();
+        if (chatGptExternalProgressSuppressesDomHealth(progress, Date.now())) {
+          responseDeadline = Math.min(
+            deadline ?? Number.POSITIVE_INFINITY,
+            Date.now() + responseDomGraceMs,
+          );
+        } else if (Date.now() >= responseDeadline) {
+          throw new Error("ChatGPT accepted the message but did not expose its assistant turn in the DOM");
+        }
+        const observed = await observeChatGptSubmission(async () => {
+          await throwIfChatGptSessionFailureAlert(page);
+          await throwIfChatGptRateLimitDialog(page);
+          return readChatGptAssistantTurnState(responseTurns);
+        }, signal, externalProgress, progress?.revision ?? 0);
+        if (!observed) continue;
+        const current = observed.value;
+        const binding = bindChatGptAssistantTurn(initialResponseTurn, current);
+        if (binding) return locateChatGptAssistantTurn(responseTurns, binding);
+        await observeChatGptSubmission(observationSignal => this.waitForTurnDomOrExternalProgress(
+          page,
+          progress?.revision ?? 0,
+          externalProgress,
+          observationSignal,
+        ), signal);
+      }
+    }, recoverObservation, signal);
   }
 
   private async sendAttachedPrompt(
@@ -1506,6 +1533,7 @@ export class ChatGptBrowserWorker {
     abortSignal?: AbortSignal,
     onSendActivated?: () => void | Promise<void>,
     externalProgress?: ChatGptTurnProgressReader,
+    recoverObservation?: ChatGptObservationRecovery,
   ): Promise<ChatGptSubmissionEvidence> {
     const composer = await this.activeComposer(page);
     const sendButton = composer
@@ -1540,6 +1568,7 @@ export class ChatGptBrowserWorker {
       abortSignal,
       externalProgress,
       initialToolBatchRevision,
+      recoverObservation,
     );
   }
 
@@ -2958,14 +2987,18 @@ export class ChatGptBrowserWorker {
           await connection.browser.close().catch(() => {});
           throw new DOMException("ChatGPT browser page acquisition aborted", "AbortError");
         }
-        await waitForOperationalChatGptViewport(connection.page, abortSignal);
         turnConnection = connection.browser;
+        await waitForOperationalChatGptViewport(connection.page, abortSignal);
         return connection.page;
       });
       if (!maintenancePage && !launcherSurfaceId) managedPage = page;
       diagnosticPage = page;
-      const rebindLauncherPage = async (attempt: number, cause: Error): Promise<void> => {
+      const rebindLauncherPage = async (attempt: number, cause: Error, callerSignal?: AbortSignal): Promise<void> => {
         if (!launcherSurfaceId || !this.config.browserHostDescriptorPath) throw cause;
+        const rebindSignal = callerSignal && turn.abortSignal
+          ? AbortSignal.any([callerSignal, turn.abortSignal])
+          : callerSignal ?? turn.abortSignal;
+        if (rebindSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
         console.warn(
           `[chatgpt-web] browser turn ${turn.traceId} is rebinding its launcher page after a stalled DOM probe:`
           + ` ${redactChatGptUiDiagnostic(cause.message)}`,
@@ -2986,8 +3019,8 @@ export class ChatGptBrowserWorker {
               `response_page_rebind_${attempt}`,
               browserStageTimeouts.browserPage,
               async (stageSignal) => {
-                const signal = turn.abortSignal
-                  ? AbortSignal.any([stageSignal, turn.abortSignal])
+                const signal = rebindSignal
+                  ? AbortSignal.any([stageSignal, rebindSignal])
                   : stageSignal;
                 const rebound = await connectLauncherBrowserHost(
                   this.config.browserHostDescriptorPath!,
@@ -2995,10 +3028,12 @@ export class ChatGptBrowserWorker {
                   launcherSurfaceId,
                   signal,
                 );
+                // Own the transport before viewport preparation can fail or be cancelled.
+                turnConnection = rebound.browser;
                 await waitForOperationalChatGptViewport(rebound.page, signal);
                 return rebound;
               },
-              turn.abortSignal,
+              rebindSignal,
             );
           },
         );
@@ -3009,6 +3044,13 @@ export class ChatGptBrowserWorker {
           `[chatgpt-web] browser turn ${turn.traceId} rebound its existing launcher page after a stalled DOM probe`,
         );
       };
+      const toolTurnObservationRecovery = turn.externalProgress
+        ? async (attempt: number, cause: ChatGptBrowserObservationTimeoutError, signal?: AbortSignal) => {
+          await rebindLauncherPage(attempt, cause, signal);
+          await diagnostics.capture(page, "submission-page-rebound");
+          return page;
+        }
+        : undefined;
       await diagnostics.capture(page, "browser-page-acquired");
       console.info(
         `[chatgpt-web] browser turn ${turn.traceId} opened (transport=${multipartTransport
@@ -3086,17 +3128,19 @@ export class ChatGptBrowserWorker {
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
               turn.onSendActivated,
               turn.externalProgress,
+              toolTurnObservationRecovery,
             ),
             turn.abortSignal,
           );
           const responseTurn = await this.waitForNewAssistantTurn(
             page,
-            responseTurns,
+            page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR),
             initialResponseTurn,
             deadline,
             turn.abortSignal,
             undefined,
             CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS,
+            toolTurnObservationRecovery,
           );
           console.info(
             `[chatgpt-web] browser turn ${turn.traceId} multipart part ${index + 1}/${prepared.multipart!.parts.length}`
@@ -3253,7 +3297,10 @@ export class ChatGptBrowserWorker {
           stageSignal,
           turn.externalProgress,
           initialToolBatchRevision,
+          toolTurnObservationRecovery,
         );
+        responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
+        responseTurn = responseTurns.nth(initialResponseTurn.count);
         console.info(`[chatgpt-web] browser turn ${turn.traceId} submission accepted evidence=${evidence}`);
         turn.onSubmitted?.();
         retrySubmitted?.();
