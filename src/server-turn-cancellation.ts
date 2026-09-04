@@ -13,7 +13,8 @@ export async function handleTurnCancellation(
   broker: TurnBroker | undefined,
   activity: () => { active_http_turns: number; active_browser_turns: number },
 ): Promise<Response | undefined> {
-  if (req.method !== "POST" || !["/admin/cancel-turn", "/admin/cancel-turns", "/admin/cancel-browser-turns"].includes(path)) return;
+  const browserIdleOnly = path === "/admin/cancel-turns-if-browser-idle";
+  if (req.method !== "POST" || (!browserIdleOnly && !["/admin/cancel-turn", "/admin/cancel-turns", "/admin/cancel-browser-turns"].includes(path))) return;
   if (!lifecycleControlAuthorized(req, controlToken)) return new Response("Unauthorized", { status: 401 });
   if (path === "/admin/cancel-turn") {
     let traceId: string;
@@ -37,16 +38,21 @@ export async function handleTurnCancellation(
       ...activity(),
     });
   }
+  // No await between this check and cancellation: already-admitted requests may create a browser after drain.
+  if (browserIdleOnly && activity().active_browser_turns !== 0) {
+    return Response.json({ status: "busy", browser_idle: false, ...activity() }, { status: 409 });
+  }
   const reason = new Error("Active turn cancelled by launcher");
   // Revoke compaction ownership first so source retirement cannot launch a new fallback.
   const compaction = cancelAllStructuredCompactions(reason);
   const browserCount = chatGptTurnSessions.clear() + (broker?.revokeExternalOwners() ?? 0);
   const [httpCount, compactionCount] = await Promise.all([
-    path === "/admin/cancel-turns" ? httpTurns.cancelAll(reason) : Promise.resolve(undefined),
+    path === "/admin/cancel-turns" || browserIdleOnly ? httpTurns.cancelAll(reason) : Promise.resolve(undefined),
     compaction,
   ]);
   return Response.json({
     status: "ok",
+    ...(browserIdleOnly ? { browser_idle: true } : {}),
     ...(httpCount !== undefined ? { cancelled_http_turns: httpCount } : {}),
     cancelled_browser_turns: browserCount,
     cancelled_compaction_runs: compactionCount,

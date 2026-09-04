@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const { errorMessage, appendFailure, runtimeOwnershipMayBeLive, performStopForSetup } = require("./runtime-supervisor-stop.cjs");
 const net = require("node:net");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
@@ -65,13 +66,7 @@ function loopbackHealthBaseURL(value) {
   }
 }
 
-function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
-}
 
-function appendFailure(primary, label, failure) {
-  return `${primary}; ${label}: ${errorMessage(failure)}`;
-}
 
 function absolutePath(value, platform = process.platform) {
   return platform === "win32" ? path.win32.isAbsolute(value) : path.isAbsolute(value);
@@ -97,11 +92,7 @@ function tunnelRuntimeStopped(health) {
     || (health?.state === "stopped" && health?.processRunning === false);
 }
 
-function runtimeOwnershipMayBeLive(state) {
-  if (!state || runtimeOwnershipPredatesCurrentBoot(state)) return false;
-  if (processRunning(state.daemonPid) || processRunning(state.tunnelPid)) return true;
-  return ["starting", "ready", "degraded", "stopping"].includes(state.status);
-}
+
 
 function foreignLauncherOwnerMayRecover(state) {
   return state?.ownerPid !== process.pid
@@ -1952,9 +1943,9 @@ class RuntimeSupervisor {
     this[name] = null;
   }
 
-  async stopForSetup() {
+  async stopForSetup(options) {
     if (this.stopPromise) return this.stopPromise;
-    this.stopPromise = this.performStopForSetup();
+    this.stopPromise = this.performStopForSetup(options);
     try {
       return await this.stopPromise;
     } finally {
@@ -1962,110 +1953,8 @@ class RuntimeSupervisor {
     }
   }
 
-  async performStopForSetup() {
-    if (this.startPromise) {
-      try {
-        await this.startPromise;
-      } catch (error) {
-        this.logger.warn("runtime.start_failed_before_stop", { message: errorMessage(error) });
-      }
-    }
-    const config = this.readConfig();
-    this.stopping = true;
-    this.stopTunnelMonitor();
-    for (const name of ["daemon", "tunnel"]) {
-      if (this.restartTimers[name]) {
-        clearTimeout(this.restartTimers[name]);
-        this.restartTimers[name] = null;
-      }
-    }
-    if (this.recoveryTasks.size > 0) {
-      await Promise.allSettled([...this.recoveryTasks]);
-    }
-    let drained = false;
-    let tunnelStopped = false;
-    try {
-      const ownershipState = this.readState();
-      const healthyRuntime = config && this.launcherProfile !== "development"
-        ? await this.proxyHealth(config)
-        : false;
-      const runtimeMayBeLive = healthyRuntime || runtimeOwnershipMayBeLive(ownershipState);
-      if (config?.mode === "full"
-        && !this.tunnel
-        && (runtimeMayBeLive || !ownershipState)) {
-        await this.adoptConfiguredTunnelForStop(config);
-      }
-      if (!this.daemon && !this.tunnel) {
-        if (!config) {
-          if (ownershipState && !runtimeOwnershipPredatesCurrentBoot(ownershipState) && (
-            processRunning(ownershipState.daemonPid)
-            || processRunning(ownershipState.tunnelPid)
-          )) {
-            throw new Error("runtime configuration is missing while launcher ownership processes are still alive");
-          }
-        } else if (runtimeMayBeLive) {
-          const recovered = await this.stopStaleOwnedRuntime(config);
-          if (!recovered) {
-            throw new Error("an existing runtime could not be safely recovered");
-          }
-        }
-        this.clearState();
-        return { status: "stopped" };
-      }
-      if (this.daemon && config) {
-        const daemonPid = this.daemon.pid;
-        if (!Number.isInteger(daemonPid)
-          || !await this.proxyHealth(config, 2_000, daemonPid)) {
-          throw new Error("launcher-owned daemon did not provide matching health evidence");
-        }
-        drained = await this.acquireDrain(config);
-      }
-      if (this.tunnel) {
-        if (!config) throw new Error("launcher-owned tunnel cannot be stopped without a valid configuration");
-        await this.stopTunnelGracefully(config);
-        tunnelStopped = true;
-      }
-      if (this.daemon) {
-        if (!config || !drained) {
-          throw new Error("launcher-owned daemon cannot be stopped without a verified idle drain");
-        }
-        await this.shutdownDaemon(config);
-      }
-      this.clearState();
-      return { status: "stopped" };
-    } catch (error) {
-      const compensationErrors = [];
-      if (tunnelStopped && config?.mode === "full" && !this.tunnel) {
-        try {
-          await this.startTunnel(config);
-        } catch (caught) {
-          compensationErrors.push(["tunnel restart compensation failed", caught]);
-        }
-      }
-      if (drained && config) {
-        try {
-          await this.restoreDrainedDaemon(config);
-        } catch (caught) {
-          compensationErrors.push(["daemon resume compensation failed", caught]);
-        }
-      }
-      const message = compensationErrors.reduce(
-        (current, [label, failure]) => appendFailure(current, label, failure),
-        errorMessage(error),
-      );
-      let restoredReady = false;
-      if (compensationErrors.length === 0 && config) {
-        try {
-          restoredReady = await this.ownedRuntimeReady(config);
-        } catch {
-          restoredReady = false;
-        }
-      }
-      this.tryWriteState(restoredReady ? "ready" : "failed", message);
-      throw new Error(message);
-    } finally {
-      this.stopping = false;
-    }
+  async performStopForSetup(options) {
+    return performStopForSetup.call(this, options);
   }
 
   async restart() {
