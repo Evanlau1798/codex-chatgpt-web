@@ -30,6 +30,20 @@ mkdirSync(scratch, { recursive: true });
 const root = mkdtempSync(join(scratch, "codex-interrupt-"));
 const codexHome = join(root, "codex");
 const appHome = join(root, "app");
+const cliBundle = join(root, "cli.js");
+const cliBuild = await Bun.build({
+  entrypoints: [resolve(import.meta.dir, "../src/cli.ts")],
+  target: "bun",
+  minify: true,
+  external: ["playwright-core"],
+  packages: "external",
+  outdir: root,
+  naming: "cli.js",
+});
+if (!cliBuild.success) {
+  rmSync(root, { recursive: true, force: true });
+  throw new Error(`Interrupt smoke CLI bundle failed: ${cliBuild.logs.map(log => log.message).join("; ")}`);
+}
 mkdirSync(codexHome, { recursive: true });
 const previousCodexHome = process.env.CODEX_HOME;
 const previousAppHome = process.env.CODEX_CHATGPT_WEB_HOME;
@@ -41,7 +55,7 @@ let adapterAborted = false;
 let browserAborted = false;
 chatGptTurnSessions.clear();
 const config = { ...defaultConfig("browser-only"), port: 0, subagentProtocol: "native" as const };
-config.runtimeCommand = [resolve(process.execPath), resolve(import.meta.dir, "../src/cli.ts")];
+config.runtimeCommand = [resolve(process.execPath), cliBundle];
 const server = startServer(config, {
   fetchUpstream: async request => {
     if (new URL(request.url).pathname.endsWith("/models")) return Response.json(nativeCatalog);
