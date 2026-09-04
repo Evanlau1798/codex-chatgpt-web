@@ -1,6 +1,6 @@
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
 import { ChatGptWebAdapterError } from "./adapter-error";
-import { MAX_COMPACTION_HANDOFF_TIMEOUT_MS, runStructuredCompactionOnce, withCompactionAbort } from "./compaction-handoff";
+import { codexToolResultsById, MAX_COMPACTION_HANDOFF_TIMEOUT_MS, runStructuredCompactionOnce, withCompactionAbort } from "./compaction-handoff";
 import type { ChatGptWebCapabilities } from "./model";
 import { chatGptTurnSessions, type ChatGptTurnSession } from "./turn-execution";
 import { emitBrowserCompletion } from "./turn-events";
@@ -29,8 +29,23 @@ export async function runManualCompaction(options: {
     const signal = AbortSignal.any([operatorSignal, deadline.signal]);
     let session: ChatGptTurnSession | undefined;
     try {
+      const source = chatGptTurnSessions.find(options.sourceKey);
+      signal.throwIfAborted();
+      if (source?.isActive() && source.runtime.mode === "tools") {
+        try {
+          const results = codexToolResultsById(options.parsed, source);
+          if (results.size !== source.outstanding().length) {
+            throw new Error(`Codex supplied ${results.size} of ${source.outstanding().length} required tool results for compaction`);
+          }
+        } catch (error) {
+          throw new ChatGptWebAdapterError(error instanceof Error ? error.message : String(error), {
+            status: 409, errorType: "invalid_request_error", code: "compaction_handoff_failed", retryable: false, cause: error,
+          });
+        }
+      }
       // Physical retirement must finish even when the deadline expires during cleanup.
       await chatGptTurnSessions.retireAndWait(options.sourceKey);
+
       signal.throwIfAborted();
       session = await options.start(signal);
       if (session.runtime.mode === "tools") void session.runtime.token.catch(() => {});
