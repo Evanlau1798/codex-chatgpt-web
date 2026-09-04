@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,22 @@ import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapte
 import { chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { defaultConfig, defaultBrokerEndpoint } from "../src/config";
 import { startServer } from "../src/server";
+import { clearResponseStateMemoryForTests } from "../src/responses/state";
+
+let previousHome: string | undefined;
+let testHome: string;
+beforeEach(() => {
+  previousHome = process.env.CODEX_CHATGPT_WEB_HOME;
+  testHome = mkdtempSync(join(tmpdir(), "cgw-manual-http-home-"));
+  process.env.CODEX_CHATGPT_WEB_HOME = testHome;
+  clearResponseStateMemoryForTests();
+});
+afterEach(() => {
+  clearResponseStateMemoryForTests();
+  if (previousHome === undefined) delete process.env.CODEX_CHATGPT_WEB_HOME;
+  else process.env.CODEX_CHATGPT_WEB_HOME = previousHome;
+  rmSync(testHome, { recursive: true, force: true });
+});
 
 type Event = Record<string, any>;
 async function capture(response: Response, lane: string): Promise<Event[]> {
@@ -91,11 +107,14 @@ for (const lane of ["responses", "messages"] as const) test(`Zero Risk ${lane} c
     if (lane === "responses") {
       const calls = first.at(-1)!.response.output.filter((item: Event) => item.type === "function_call");
       expect(calls).toHaveLength(1);
+      expect(calls[0].name).toBe("exec_command");
       expect(JSON.parse(calls[0].arguments)).toEqual({ cmd: "echo manual-http-ok" });
       body.input = [...initial, calls[0], { type: "function_call_output", call_id: calls[0].call_id, output: "manual-http-ok" }];
     } else {
       const calls = first.filter(event => event.type === "content_block_start" && event.content_block.type === "tool_use");
       expect(calls).toHaveLength(1);
+      expect(calls[0]!.content_block.name).toBe("exec_command");
+      expect(first.filter(event => event.type === "message_delta").map(event => event.delta.stop_reason)).toEqual(["tool_use"]);
       const input = JSON.parse(first.filter(event => event.type === "content_block_delta" && event.delta.type === "input_json_delta")
         .map(event => event.delta.partial_json).join(""));
       expect(input).toEqual({ cmd: "echo manual-http-ok" });
@@ -105,7 +124,16 @@ for (const lane of ["responses", "messages"] as const) test(`Zero Risk ${lane} c
     }
     const final = await capture(await post(body), lane);
     await actor;
-    expect(JSON.stringify(final)).toContain("MANUAL_HTTP_OK");
+    if (lane === "responses") {
+      expect(final.at(-1)!.response.output).toMatchObject([
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "MANUAL_HTTP_OK" }] },
+      ]);
+      expect(final.at(-1)!.response.output).toHaveLength(1);
+    } else {
+      expect(final.filter(event => event.type === "content_block_start").map(event => event.content_block.type)).toEqual(["text"]);
+      expect(final.filter(event => event.type === "content_block_delta").map(event => event.delta.text).join("")).toBe("MANUAL_HTTP_OK");
+      expect(final.filter(event => event.type === "message_delta").map(event => event.delta.stop_reason)).toEqual(["end_turn"]);
+    }
     expect(actions).toEqual(["prompt-ready", "sent", "mcp-start", "tool-result", "completed"]);
     const health = await fetch(`${endpoint}/healthz`).then(response => response.json());
     expect(health).toMatchObject({ active_http_turns: 0, active_browser_turns: 0 });
@@ -114,6 +142,7 @@ for (const lane of ["responses", "messages"] as const) test(`Zero Risk ${lane} c
   } finally {
     chatGptTurnSessions.clear();
     await server.stop(true);
+    await broker.close();
     await actor?.catch(() => {});
     rmSync(root, { recursive: true, force: true });
   }
