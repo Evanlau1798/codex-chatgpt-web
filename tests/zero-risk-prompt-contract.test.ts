@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
+import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import {
   activeCompactionToolResultInstruction,
   zeroRiskActiveCompactionToolResultInstruction,
@@ -52,6 +53,19 @@ test("Zero Risk compaction prompt stays task-focused while MCP metadata owns com
   expect(compiled.text).toContain("Produce the requested checkpoint summary now");
   expect(compiled.text).not.toContain("codex_turn_start");
   expect(compiled.text).not.toContain("codex_turn_complete");
+});
+
+test.each([true, false])("reserved Native inventory shortcuts match manualControl=%s", manualControl => {
+  const parsed = request();
+  if (!manualControl) parsed.modelId = CHATGPT_WEB_MODEL_ID;
+  const { text } = compileChatGptWebPrompt(parsed, { ...capabilities, solAvailable: true }, requestId, {
+    manualControl: manualControl ? true : undefined,
+  });
+  for (const query of ["__codex_read_file__:", "__codex_tool_search__:"]) {
+    expect(text.includes(query)).toBe(!manualControl);
+  }
+  expect(text).toContain("use codex_tool_inventory to find the required capability");
+  expect(text).toContain("invoke its returned wire_name through codex_tool_call");
 });
 
 test("Zero Risk prompt fails closed without Full harness or an exact manual binding", () => {
