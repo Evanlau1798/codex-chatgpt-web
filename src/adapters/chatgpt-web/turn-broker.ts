@@ -3,25 +3,29 @@ import type { Server } from "node:net";
 import { isWindowsPipeEndpoint } from "../../config";
 import { CompactionTransactionStore, type CompactionTransactionHandle } from "./compaction-transaction";
 import type { ChatGptTurnEnvironment } from "./environment";
+import { dispatchTurnBrokerRequest } from "./turn-broker-dispatch";
 import { startTurnBrokerServer } from "./turn-broker-server";
-import { dispatchExternalOwnerRequest, type TurnBrokerOwner } from "./turn-broker-owner";
+import type { TurnBrokerOwner } from "./turn-broker-owner";
 import {
   environmentIdentity,
-  retiredTurnLabel,
   steeringResult,
   type ToolWaiter,
   type TurnChannel,
 } from "./turn-broker-state";
-import { opaqueId, type BrokerRequest, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker-protocol";
+import { opaqueId, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker-protocol";
 import { TurnContextStore } from "./turn-context-store";
+import { beginTurnCompletionFence, commitTurnCompletionFence } from "./turn-broker-completion";
+import { rejectTurnChannel, takeQueuedTools } from "./turn-broker-queue";
 import {
-  assertTurnActivityId,
-  beginTurnCompletionFence,
-  claimTurnActivity,
-  commitTurnCompletionFence,
-  completeTurnActivity,
-} from "./turn-broker-completion";
-import { rejectTurnChannel, scheduleToolWaiters, takeQueuedTools } from "./turn-broker-queue";
+  assertSafeHarnessRunning,
+  confirmSafeTurnSent as confirmSafeSent,
+  completeSafeTurn as completeSafe,
+  createSafeTurn,
+  revokeSafeTurn,
+  startSafeTurn as startSafe,
+  waitForSafeCompletion as waitSafeCompletion,
+  waitForSafeStart as waitSafeStart,
+} from "./turn-broker-safe";
 
 export { callTurnBroker, TurnBrokerTimeoutError } from "./turn-broker-client";
 export { RemoteTurnBroker } from "./turn-broker-owner";
@@ -83,6 +87,7 @@ export class TurnBroker implements TurnBrokerOwner {
     traceId = "unknown",
     onProgress?: () => void,
     externalOwner = false,
+    handlePrefix = "turn",
   ): Promise<string> {
     await this.start();
     this.prune();
@@ -92,7 +97,7 @@ export class TurnBroker implements TurnBrokerOwner {
     if (ttlMs !== undefined && (!Number.isFinite(ttlMs) || ttlMs <= 0)) {
       throw new Error("ChatGPT web turn broker TTL must be a positive finite number");
     }
-    const token = opaqueId("turn");
+    const token = opaqueId(handlePrefix);
     const channel: TurnChannel = {
       traceId,
       externalOwner,
@@ -102,6 +107,7 @@ export class TurnBroker implements TurnBrokerOwner {
         ...(ttlMs !== undefined ? { expiresAt: Date.now() + ttlMs } : {}),
       },
       queuedCallIds: [],
+      deliveredCallIds: new Set(),
       invocations: new Map(),
       waiters: new Set(),
       activities: new Set(),
@@ -113,6 +119,18 @@ export class TurnBroker implements TurnBrokerOwner {
     };
     this.channels.set(token, channel);
     this.pending.set(token, channel);
+    return token;
+  }
+
+  async registerSafe(
+    environment: ChatGptTurnEnvironment, surfaceNonce: string, ttlMs?: number,
+    traceId = "unknown", externalOwner = false,
+  ): Promise<string> {
+    const safe = createSafeTurn(surfaceNonce);
+    const token = await this.register(environment, ttlMs, traceId, undefined, externalOwner, "request");
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("Zero Risk turn registration was revoked before initialization");
+    channel.safe = safe;
     return token;
   }
 
@@ -158,6 +176,8 @@ export class TurnBroker implements TurnBrokerOwner {
     if (environmentIdentity(channel.environment) !== environmentIdentity(environment)) {
       throw new Error("Codex turn environment changed during an active ChatGPT tool loop");
     }
+    if (channel.safe?.state === "revoked") throw new Error("Zero Risk turn is already terminal");
+    if (channel.safe?.state === "completed") return;
     channel.environment = {
       ...environment,
       ...(channel.environment.expiresAt !== undefined
@@ -168,8 +188,15 @@ export class TurnBroker implements TurnBrokerOwner {
 
   async nextToolBatch(token: string, signal?: AbortSignal): Promise<BrokerToolRequest[]> {
     this.prune();
-    const channel = this.channels.get(token);
+    let channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
+    if (channel.safe?.state === "awaiting_start") {
+      await waitSafeStart(channel, signal);
+      channel = this.channels.get(token);
+      if (!channel) throw new Error("turn token is invalid or expired");
+    }
+    if (channel.safe?.state === "completed") return [];
+    assertSafeHarnessRunning(channel);
     if (channel.compactionRequested) {
       throw new Error("Codex context compaction superseded ordinary MCP tool delivery");
     }
@@ -193,9 +220,10 @@ export class TurnBroker implements TurnBrokerOwner {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
+    assertSafeHarnessRunning(channel, true);
     const invocation = channel.invocations.get(callId);
     if (!invocation) throw new Error(`tool call is not pending: ${callId}`);
-    if (channel.queuedCallIds.includes(callId)) throw new Error(`tool call was completed before it was delivered: ${callId}`);
+    if (!channel.deliveredCallIds.delete(callId)) throw new Error(`tool call was completed before it was delivered: ${callId}`);
     channel.invocations.delete(callId);
     console.info(`[chatgpt-web] broker trace=${channel.traceId} completed call=${callId.slice(0, 17)} pending=${channel.invocations.size}`);
     invocation.resolve(result);
@@ -205,6 +233,7 @@ export class TurnBroker implements TurnBrokerOwner {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
+    assertSafeHarnessRunning(channel);
     return beginTurnCompletionFence(channel);
   }
 
@@ -223,6 +252,7 @@ export class TurnBroker implements TurnBrokerOwner {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
+    assertSafeHarnessRunning(channel);
     if (channel.compactionRequested) {
       throw new Error("Codex context compaction was already requested for this turn");
     }
@@ -247,6 +277,31 @@ export class TurnBroker implements TurnBrokerOwner {
     const channel = this.channels.get(token);
     if (!channel) throw new Error("Cannot read compaction delivery after the turn capability retired");
     return channel.compactionDeliveryCount;
+  }
+
+  startSafeTurn(requestId: string): { started: true; duplicate: boolean } {
+    this.prune();
+    return startSafe(this.channels.get(requestId));
+  }
+
+  confirmSafeTurnSent(requestId: string, surfaceNonce: string): { confirmed: true; duplicate: boolean } {
+    this.prune();
+    return confirmSafeSent(this.channels.get(requestId), surfaceNonce);
+  }
+
+  completeSafeTurn(requestId: string, finalAnswer: string): { completed: true; duplicate: boolean } {
+    this.prune();
+    return completeSafe(this.channels.get(requestId), finalAnswer);
+  }
+
+  waitForSafeStart(requestId: string, signal?: AbortSignal): Promise<void> {
+    this.prune();
+    return waitSafeStart(this.channels.get(requestId), signal);
+  }
+
+  waitForSafeCompletion(requestId: string, signal?: AbortSignal): Promise<string> {
+    this.prune();
+    return waitSafeCompletion(this.channels.get(requestId), signal);
   }
 
   requestSteering(token: string, instruction: string): "queued" | "delivered" {
@@ -293,6 +348,7 @@ export class TurnBroker implements TurnBrokerOwner {
       this.bindings.delete(channel.bindingId);
       this.retire(this.retiredBindings, channel.bindingId, channel.traceId);
     }
+    revokeSafeTurn(channel, reason);
     this.retire(this.retiredTokens, token, channel.traceId);
     rejectTurnChannel(channel, reason);
   }
@@ -353,134 +409,26 @@ export class TurnBroker implements TurnBrokerOwner {
 
   private start(): Promise<void> {
     if (this.startPromise) return this.startPromise;
-    this.startPromise = startTurnBrokerServer(this.socketPath, (request, signal) => this.dispatch(request, signal))
+    this.startPromise = startTurnBrokerServer(this.socketPath, (request, signal) => {
+      this.prune();
+      return dispatchTurnBrokerRequest(request, signal, {
+        acceptingExternalOwners: () => this.acceptingExternalOwners,
+        bindings: this.bindings,
+        channels: this.channels,
+        compactionTransactions: this.compactionTransactions,
+        contexts: this.contexts,
+        owner: this,
+        pending: this.pending,
+        registerExternal: (environment, ttlMs, traceId) => this.register(environment, ttlMs, traceId, undefined, true),
+        registerExternalSafe: (environment, nonce, ttlMs, traceId) => this.registerSafe(environment, nonce, ttlMs, traceId, true),
+        retiredBindings: this.retiredBindings,
+        retiredTokens: this.retiredTokens,
+        startSafeTurn: requestId => this.startSafeTurn(requestId),
+        completeSafeTurn: (requestId, finalAnswer) => this.completeSafeTurn(requestId, finalAnswer),
+      });
+    })
       .then(server => { this.server = server; });
     return this.startPromise;
-  }
-
-  private dispatch(request: BrokerRequest, signal: AbortSignal): unknown | Promise<unknown> {
-    this.prune();
-    if (request.method.startsWith("owner_")) return dispatchExternalOwnerRequest(request, {
-      accepting: () => this.acceptingExternalOwners,
-      registerExternal: (environment, ttlMs, traceId) => this.register(environment, ttlMs, traceId, undefined, true),
-      register: (environment, ttlMs, traceId) => this.register(environment, ttlMs, traceId),
-      updateEnvironment: (token, environment) => this.updateEnvironment(token, environment),
-      nextToolBatch: (token, signal) => this.nextToolBatch(token, signal),
-      completeTool: (token, callId, result) => this.completeTool(token, callId, result),
-      beginCompletionFence: token => this.beginCompletionFence(token),
-      commitCompletionFence: (token, revision) => this.commitCompletionFence(token, revision),
-      revoke: (token, reason) => this.revoke(token, reason),
-    }, signal);
-    if (request.method === "submit_compaction_handoff") {
-      const token = request.token;
-      const handoffId = request.handoffId;
-      const summary = request.summary;
-      if (typeof token !== "string" || token.length === 0) throw new Error("compaction control token is required");
-      if (typeof handoffId !== "string" || handoffId.length === 0) throw new Error("compaction handoff id is required");
-      if (typeof summary !== "string") throw new Error("compaction handoff summary is required");
-      this.compactionTransactions.submit(token, handoffId, summary);
-      return { submitted: true };
-    }
-    if (request.method === "read_context") {
-      const token = request.token;
-      if (typeof token !== "string" || token.length === 0) throw new Error("context token is required");
-      return this.contexts.read(token, request.index, request.chunkChars, this.channels);
-    }
-    if (request.method === "claim") {
-      const token = request.token;
-      if (typeof token !== "string" || token.length === 0) throw new Error("turn token is required");
-      const channel = this.channels.get(token);
-      const activeChannel = channel && !channel.completionCommitted ? channel : undefined;
-      const retiredTurn = channel?.completionCommitted ? channel.traceId : this.retiredTokens.get(token);
-      console.error(
-        `[chatgpt-web] broker claim received (tokenChars=${token.length}, valid=${Boolean(activeChannel)}`
-        + `${activeChannel ? "" : `, retiredTurn=${retiredTurn ?? "unknown"}`})`,
-      );
-      if (!activeChannel) {
-        throw new Error(retiredTurn !== undefined
-          ? `This turn_token was issued for ${retiredTurnLabel(retiredTurn)}, which has already finished.`
-          + " This Codex Native action can no longer run."
-          : "turn token is invalid, expired, or revoked");
-      }
-      assertTurnActivityId(request.activityId);
-      claimTurnActivity(activeChannel, request.activityId);
-      if (this.contexts.hasIncomplete(token)) {
-        throw new Error("Read and verify the complete Codex context archive before calling work tools");
-      }
-      if (activeChannel.bindingId) {
-        const existing = this.bindings.get(activeChannel.bindingId);
-        if (!existing || existing.token !== token || existing.channel !== activeChannel) {
-          throw new Error("turn token binding state is inconsistent");
-        }
-        return { bindingId: activeChannel.bindingId, activityId: request.activityId, environment: activeChannel.environment };
-      }
-      this.pending.delete(token);
-      const bindingId = opaqueId("binding");
-      activeChannel.bindingId = bindingId;
-      this.bindings.set(bindingId, { token, channel: activeChannel });
-      return { bindingId, activityId: request.activityId, environment: activeChannel.environment };
-    }
-
-    const bindingId = request.bindingId;
-    if (request.method === "activity_complete") {
-      const token = request.token;
-      if (typeof token !== "string" || token.length === 0) throw new Error("turn token is required");
-      assertTurnActivityId(request.activityId);
-      const channel = this.channels.get(token);
-      if (!channel) return { completed: false, retired: this.retiredTokens.has(token) };
-      if (channel.completedActivities.has(request.activityId)) return { completed: false, duplicate: true };
-      const completed = completeTurnActivity(channel, request.activityId);
-      return { completed };
-    }
-    if (typeof bindingId !== "string" || bindingId.length === 0) throw new Error("binding id is required");
-    const binding = this.bindings.get(bindingId);
-    if (!binding) {
-      const retiredTurn = this.retiredBindings.get(bindingId);
-      console.error(
-        `[chatgpt-web] broker rejected ${request.method} (binding=${bindingId.slice(0, 17)},`
-        + ` retiredTurn=${retiredTurn ?? "unknown"})`,
-      );
-      throw new Error(retiredTurn !== undefined
-        ? `${retiredTurnLabel(retiredTurn)} has already finished; this Codex Native action can no longer run.`
-        : "internal Codex turn binding is invalid or expired");
-    }
-    if (request.method === "release") {
-      this.revoke(binding.token);
-      return { released: true };
-    }
-    if (request.method === "resolve") return { environment: binding.channel.environment };
-
-    if (binding.channel.compactionRequested) {
-      const result = binding.channel.compactionResult;
-      if (!result) throw new Error("Codex context compaction control result is unavailable");
-      binding.channel.compactionDeliveryCount += 1;
-      return structuredClone(result);
-    }
-
-    if (binding.channel.steeringInstruction) {
-      const instruction = binding.channel.steeringInstruction;
-      binding.channel.steeringInstruction = undefined;
-      console.info(`[chatgpt-web] broker trace=${binding.channel.traceId} delivered queued native steering through the tool loop`);
-      return steeringResult(instruction);
-    }
-
-    const wireName = request.wireName?.trim();
-    if (!wireName) throw new Error("wire tool name is required");
-    const callId = opaqueId("call");
-    const toolRequest: BrokerToolRequest = {
-      callId,
-      wireName,
-      freeform: request.freeform === true,
-      ...(request.freeform === true ? { input: request.input ?? "" } : { arguments: request.arguments ?? {} }),
-    };
-    return new Promise<BrokerToolResult>((resolveInvoke, rejectInvoke) => {
-      binding.channel.invocations.set(callId, { request: toolRequest, resolve: resolveInvoke, reject: rejectInvoke });
-      binding.channel.queuedCallIds.push(callId);
-      console.info(
-        `[chatgpt-web] broker trace=${binding.channel.traceId} queued call=${callId.slice(0, 17)} tool=${wireName} waiters=${binding.channel.waiters.size}`,
-      );
-      scheduleToolWaiters(binding.channel);
-    });
   }
 
   private prune(): void {

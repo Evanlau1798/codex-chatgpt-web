@@ -64,11 +64,11 @@ test("browser turn orchestration retains owned prompt insertion and semantic sub
   expect(runBrowserTurn).toContain("this.attachPromptWithCompactionRetry(");
   expect(runBrowserTurn).toContain('.locator("xpath=ancestor::form[1]")');
   expect(runBrowserTurn).toContain('.getByTestId("send-button")');
-  expect(runBrowserTurn).toContain("await activateChatGptSendControl(sendButton)");
+  expect(runBrowserTurn).toContain("await activateChatGptSendControl(sendButton, stageSignal)");
   expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
     .toBeGreaterThanOrEqual(0);
   expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
-    .toBeLessThan(runBrowserTurn.indexOf("await activateChatGptSendControl(sendButton)"));
+    .toBeLessThan(runBrowserTurn.indexOf("await activateChatGptSendControl(sendButton, stageSignal)"));
   expect(runBrowserTurn).toContain("await this.waitForSubmissionAccepted(");
   expect(workerSource).not.toMatch(/\bclipboard\b|pbcopy|pbpaste/i);
 });
@@ -1562,19 +1562,19 @@ test("Think mode fails closed when the Luna composer does not expose the control
     .rejects.toThrow("Think control is not available");
 });
 
-test("effort selection handles the known ChatGPT rate-limit dialog before keyboard activation", () => {
+test("effort selection handles the known ChatGPT rate-limit dialog before menu activation", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   const selectionStart = workerSource.indexOf("private async selectModelAndEffort");
   const selectionEnd = workerSource.indexOf("private async activeComposer", selectionStart);
   const selectionSource = workerSource.slice(selectionStart, selectionEnd);
   const guard = selectionSource.indexOf("throwIfChatGptRateLimitDialog(page)");
-  const activation = selectionSource.indexOf('currentEffort.press("Enter")');
+  const activation = selectionSource.indexOf("activateChatGptEffortMenu(page, currentEffort)");
 
   expect(workerSource).toContain("Too many requests");
   expect(workerSource).toContain("making requests too quickly");
   expect(guard).toBeGreaterThan(-1);
   expect(activation).toBeGreaterThan(guard);
-  expect(selectionSource).not.toContain("currentEffort.click(");
+  expect(selectionSource).not.toContain('currentEffort.press("Enter")');
   expect(selectionSource).toContain('effortChoice.press("Enter")');
   expect(selectionSource).not.toContain("effortChoice.click(");
   expect(selectionSource).not.toContain("is unavailable");

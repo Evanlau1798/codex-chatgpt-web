@@ -20,7 +20,8 @@ export interface BrowserLoginResult {
   proAvailable: boolean;
 }
 
-export type BrowserLoginStorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
+import { sanitizeBrowserLoginStorageState, type BrowserLoginStorageState } from "./browser-login-storage";
+export { sanitizeBrowserLoginStorageState, type BrowserLoginStorageState } from "./browser-login-storage";
 
 export interface SystemBrowserLoginCaptureMarker {
   version: 1;
@@ -49,11 +50,18 @@ interface LoginVerificationMarker {
 
 const SYSTEM_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const SYSTEM_LOGIN_STOP_TIMEOUT_MS = 5_000;
-const LOGIN_STORAGE_ROOT_DOMAINS = ["chatgpt.com", "openai.com"] as const;
 const CHATGPT_ORIGIN = new URL(CHATGPT_TEMPORARY_CHAT_URL).origin;
 
 function browserProcessExited(browser: ChildProcess): boolean {
   return browser.exitCode !== null || browser.signalCode !== null;
+}
+
+function removeTemporaryChromeTabSessions(profileDir: string): void {
+  const defaultProfile = join(profileDir, "Default");
+  rmSync(join(defaultProfile, "Sessions"), { recursive: true, force: true });
+  for (const name of ["Current Session", "Current Tabs", "Last Session", "Last Tabs"]) {
+    rmSync(join(defaultProfile, name), { force: true });
+  }
 }
 
 async function waitForBrowserExit(browser: ChildProcess, timeoutMs: number): Promise<boolean> {
@@ -86,44 +94,6 @@ async function stopOwnedLoginBrowser(browser: ChildProcess): Promise<void> {
     throw new Error("The dedicated Chrome login process refused forced termination");
   }
   if (!await forced) throw new Error("The dedicated Chrome login process did not exit");
-}
-
-function allowedLoginStorageHost(rawHostname: string): boolean {
-  const hostname = rawHostname.toLowerCase();
-  if (!/^[a-z0-9.-]+$/.test(hostname)
-    || hostname.startsWith(".")
-    || hostname.endsWith(".")
-    || hostname.includes("..")) return false;
-  try {
-    const parsed = new URL(`https://${hostname}/`);
-    if (parsed.hostname !== hostname
-      || parsed.host !== hostname
-      || parsed.username
-      || parsed.password
-      || parsed.pathname !== "/"
-      || parsed.search
-      || parsed.hash) return false;
-  } catch {
-    return false;
-  }
-  return LOGIN_STORAGE_ROOT_DOMAINS.some(root => hostname === root || hostname.endsWith(`.${root}`));
-}
-
-export function sanitizeBrowserLoginStorageState(
-  storageState: BrowserLoginStorageState,
-): BrowserLoginStorageState {
-  return {
-    cookies: storageState.cookies
-      .filter(cookie => !Object.prototype.hasOwnProperty.call(cookie, "partitionKey")
-        && allowedLoginStorageHost(cookie.domain.replace(/^\.+/, "")))
-      .map(cookie => ({ ...cookie })),
-    origins: storageState.origins
-      .filter(origin => origin.origin === CHATGPT_ORIGIN)
-      .map(origin => ({
-        origin: origin.origin,
-        localStorage: origin.localStorage.map(item => ({ ...item })),
-      })),
-  };
 }
 
 export function loginVerificationMarkerPath(storageStatePath: string): string {
@@ -323,13 +293,16 @@ export async function captureSystemBrowserLogin(
       if (timeout) clearTimeout(timeout);
     }
 
-    // Authentication happens before Playwright ever owns this profile. Capture is then performed
-    // offline over an inherited pipe, so the automated phase cannot reach ChatGPT or the identity
-    // provider and cannot interfere with the platform passkey challenge.
+    // Authentication happens before Playwright ever owns this profile. Chrome does not load
+    // session-only cookies after a normal restart unless session restore is requested. Remove only
+    // the disposable profile's tab-session files first, so restoring cookies cannot reopen the
+    // authenticated or identity-provider pages during the offline capture.
+    removeTemporaryChromeTabSessions(profileDir);
     context = await chromium.launchPersistentContext(profileDir, {
       executablePath: config.chromeExecutablePath,
       headless: true,
       chromiumSandbox: true,
+      offline: true,
       serviceWorkers: "block",
       ignoreDefaultArgs: [
         "--no-sandbox",
@@ -337,7 +310,13 @@ export async function captureSystemBrowserLogin(
         "--password-store=basic",
         "--use-mock-keychain",
       ],
-      args: ["--disable-background-mode", "--no-first-run", "--no-default-browser-check"],
+      args: [
+        "--disable-background-mode",
+        "--disable-background-networking",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--restore-last-session",
+      ],
       timeout: Math.min(30_000, remainingTime()),
     });
     await context.setOffline(true);

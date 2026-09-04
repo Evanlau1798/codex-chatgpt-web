@@ -30,7 +30,19 @@ export function matchesPath(root: string, path: string): boolean {
 export function environmentCwdMatches(text: string, preferredRoots: string[] = []): string[] {
   const sections = [...text.matchAll(/<environments>([\s\S]*?)<\/environments>/gi)];
   if (sections.length === 0) {
-    return [...text.matchAll(/<cwd>([^<]+)<\/cwd>/gi)].map(match => match[1] ?? "");
+    const cwdMatches = [...text.matchAll(/<cwd>([^<]+)<\/cwd>/gi)].map(match => match[1] ?? "");
+    if (cwdMatches.length > 0 || /<\/?cwd\b/i.test(text)) return cwdMatches;
+
+    // Codex 0.150+ orders filesystem-only roots with the working directory first.
+    // Recover only this exact shape; malformed cwd/root markup stays fail closed.
+    const rootSections = [...text.matchAll(/<workspace_roots>[\s\S]*?<\/workspace_roots>/gi)];
+    if (rootSections.length !== 1) return [];
+    const rootSection = rootSections[0]![0];
+    const roots = [...rootSection.matchAll(/<root>([^<]+)<\/root>/gi)].map(match => match[1] ?? "");
+    const rootOpenings = [...rootSection.matchAll(/<root\b[^>]*>/gi)];
+    const rootClosings = [...rootSection.matchAll(/<\/root\s*>/gi)];
+    if (rootOpenings.length !== roots.length || rootClosings.length !== roots.length) return [];
+    return roots.length > 0 ? [roots[0]!] : [];
   }
   if (sections.length !== 1) return [];
 

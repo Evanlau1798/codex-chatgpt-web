@@ -50,6 +50,7 @@ export function estimateCompiledChatGptWebMessageTokens(
 export function estimateCompiledChatGptWebInputTokens(
   compiled: CompiledChatGptWebPrompt,
   modelId: string,
+  variableTokens: readonly string[] = [],
 ): number {
   const imageTokens = compiled.images.reduce(
     (total, image) => total + (image.detail === "original"
@@ -57,8 +58,18 @@ export function estimateCompiledChatGptWebInputTokens(
       : CHATGPT_IMAGE_RESERVE_TOKENS),
     0,
   );
+  const textTokens = (text: string, index = 0): number => {
+    const token = variableTokens[index];
+    if (token === undefined) return estimateTokens(text, modelId);
+    // Real opaque handles are ASCII. Count each variable byte separately and tokenize the
+    // surrounding fragments independently: neither repeated zeroes nor boundary merges earn
+    // a discount that a random broker handle might not receive.
+    const parts = text.split(token);
+    return (parts.length - 1) * Buffer.byteLength(token)
+      + parts.reduce((total, part) => total + textTokens(part, index + 1), 0);
+  };
   const messageTokens = compiledChatGptWebMessages(compiled)
-    .reduce((total, message) => total + estimateTokens(message, modelId), 0);
+    .reduce((total, message) => total + textTokens(message), 0);
   const acknowledgementTokens = compiled.multipart
     ? compiled.multipart.parts.slice(0, -1).reduce((total, payload, index) => total + estimateTokens(
       formatChatGptWebMultipartStage(

@@ -16,7 +16,7 @@ import {
   RetainedCompactionSourceUnavailableError,
 } from "./retained-compaction-handoff";
 import type { TurnBroker } from "./turn-broker";
-import { chatGptTurnExecutionKey, chatGptTurnSessions } from "./turn-execution";
+import { chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, type ChatGptTurnSession } from "./turn-execution";
 import { emitBrowserCompletion } from "./turn-events";
 import { estimateChatGptWebUsage } from "./usage";
 
@@ -58,7 +58,10 @@ export async function runEnhancedCompaction(
     .digest("hex")
     .slice(0, 12);
   let shared = existingStructuredCompactionRun(compactionExecutionKey);
-  if (!shared) shared = runStructuredCompactionOnce(compactionExecutionKey, async () => {
+  if (!shared) shared = runStructuredCompactionOnce(compactionExecutionKey, {
+    ownerKey: responseExecutionKey,
+    traceIds: [traceId, `${traceId}_fallback`],
+  }, async operatorSignal => {
     const handoffTimeoutMs = Math.min(
       timeoutMs ?? MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
       MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
@@ -69,34 +72,41 @@ export async function runEnhancedCompaction(
       handoffTimeoutMs,
     );
     timer.unref?.();
-    const source = chatGptTurnSessions.find(responseExecutionKey);
-    let preserveFinal = !source?.isActive() && source?.settledOutcome()?.type === "final";
+    const operationSignal = AbortSignal.any([deadline.signal, operatorSignal]);
+    let source: ChatGptTurnSession | undefined;
+    let preserveFinal = false;
+    const sourceConversationKey = chatGptConversationKey(parsed, executionNamespace);
     const fallback = async (reason: string): Promise<string> => {
+      operationSignal.throwIfAborted();
       console.warn(`[chatgpt-web] retained compaction fallback=${reason}`);
-      const raw = await startFallback(`${traceId}_fallback`, deadline.signal);
+      const raw = await startFallback(`${traceId}_fallback`, operationSignal);
       const canonical = canonicalizeCompactionHandoff(parsed, raw);
       if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");
       return canonical;
     };
     try {
+      await chatGptTurnSessions.waitForRetirement(responseExecutionKey, operationSignal);
+      if (sourceConversationKey) await chatGptTurnSessions.waitForConversationRetirement(sourceConversationKey, operationSignal);
+      source = chatGptTurnSessions.find(responseExecutionKey);
+      preserveFinal = !source?.isActive() && source?.settledOutcome()?.type === "final";
       const conversationKey = source?.conversationKey();
       if (!source || !conversationKey) {
         if (source) await withCompactionAbort(
-          chatGptTurnSessions.retireAndWait(responseExecutionKey), deadline.signal,
+          chatGptTurnSessions.retireAndWait(responseExecutionKey), operationSignal,
         );
         return await fallback("source_unavailable_before_handoff");
       }
       if (source.isActive() && source.runtime.mode === "tools") {
-        const settled = await settleActiveCompactionSource(parsed, source, broker, deadline.signal);
+        const settled = await settleActiveCompactionSource(parsed, source, broker, operationSignal);
         preserveFinal = !settled.compactionInstructionDelivered;
       } else if (source.isActive()) {
-        const outcome = await withCompactionAbort(source.browserOutcome, deadline.signal);
+        const outcome = await withCompactionAbort(source.browserOutcome, operationSignal);
         if (outcome.type === "error") throw outcome.error;
-        await withCompactionAbort(source.physicalSettlement, deadline.signal);
+        await withCompactionAbort(source.physicalSettlement, operationSignal);
         preserveFinal = true;
       }
       const raw = await requestRetainedCompactionHandoff(
-        worker, parsed, source, broker, capabilities, traceId, deadline.signal, handoffTimeoutMs,
+        worker, parsed, source, broker, capabilities, traceId, operationSignal, handoffTimeoutMs,
       );
       const canonical = canonicalizeCompactionHandoff(parsed, raw);
       if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");
@@ -106,21 +116,26 @@ export async function runEnhancedCompaction(
               conversationKey, source, responseExecutionKey,
             )
           : chatGptTurnSessions.retireConversationAndWait(conversationKey),
-        deadline.signal,
+        operationSignal,
       );
       return canonical;
     } catch (error) {
       const conversationKey = source?.conversationKey();
-      if (source && conversationKey) {
-        await withCompactionAbort(
-          preserveFinal
+      try {
+        if (source && conversationKey) {
+          await (preserveFinal
             ? chatGptTurnSessions.retireConversationPreservingFinalResponse(
                 conversationKey, source, responseExecutionKey,
               )
-            : chatGptTurnSessions.retireConversationAndWait(conversationKey),
-          deadline.signal,
-        );
+            : chatGptTurnSessions.retireConversationAndWait(conversationKey));
+        }
+        // A successful handoff can detach the source before cancellation reaches this catch.
+        await chatGptTurnSessions.waitForRetirement(responseExecutionKey);
+        if (sourceConversationKey) await chatGptTurnSessions.waitForConversationRetirement(sourceConversationKey);
+      } catch (retirementError) {
+        throw new AggregateError([error, retirementError], "Structured compaction failed and its retained conversation could not be retired");
       }
+      operationSignal.throwIfAborted();
       if (error instanceof RetainedCompactionSourceUnavailableError) {
         return await fallback("source_disappeared_before_handoff");
       }
@@ -143,7 +158,7 @@ export async function runEnhancedCompaction(
     if (abortSignal?.aborted) throw error;
     throw new ChatGptWebAdapterError(
       error instanceof Error ? error.message : String(error),
-      { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_failed", retryable: false },
+      { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_failed", retryable: false, cause: error },
     );
   }
 }

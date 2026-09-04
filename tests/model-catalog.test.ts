@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { defaultConfig } from "../src/config";
-import { CHATGPT_WEB_LUNA_MODEL_ROUTE, CHATGPT_WEB_LUNA_MODEL_ROUTES, CHATGPT_WEB_MODEL_ROUTES, resolveChatGptWebContextLimits } from "../src/chatgpt-web-models";
+import {
+  CHATGPT_WEB_LUNA_MODEL_ROUTE,
+  CHATGPT_WEB_LUNA_MODEL_ROUTES,
+  CHATGPT_WEB_ZERO_RISK_CONTEXT_WINDOW,
+  CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE,
+  CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE,
+  CHATGPT_WEB_MODEL_ROUTES,
+  resolveChatGptWebContextLimits,
+} from "../src/chatgpt-web-models";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
 
 function source(): Record<string, unknown> {
@@ -222,6 +230,41 @@ describe("native /models augmentation", () => {
       context_window: 1_050_000,
       effective_context_window_percent: 100,
       auto_compact_token_limit: 1_050_000,
+    });
+  });
+
+  test("Zero Risk publishes exactly one generic model without capability inference", () => {
+    const config = defaultConfig("full");
+    config.browserInteractionMode = "manual";
+    config.solAvailable = false;
+    config.proAvailable = false;
+    const models = augmentNativeModelCatalog(source(), config).models as Array<Record<string, unknown>>;
+    const web = models.filter(model => String(model.slug).startsWith("chatgpt-web/"));
+
+    expect(web).toHaveLength(1);
+    expect(web[0]).toMatchObject({
+      slug: CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.slug,
+      display_name: CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.displayName,
+      description: CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.description,
+      input_modalities: ["text"],
+      default_reasoning_level: "low",
+      supported_reasoning_levels: [{ effort: "low", description: CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE.displayName }],
+      context_window: CHATGPT_WEB_ZERO_RISK_CONTEXT_WINDOW,
+      max_context_window: CHATGPT_WEB_ZERO_RISK_CONTEXT_WINDOW,
+      effective_context_window_percent: 78,
+      auto_compact_token_limit: 96_000,
+    });
+
+    config.zeroRiskProEnabled = true;
+    const proModels = augmentNativeModelCatalog(source(), config).models as Array<Record<string, unknown>>;
+    const proWeb = proModels.filter(model => String(model.slug).startsWith("chatgpt-web/"));
+    expect(proWeb).toHaveLength(2);
+    expect(proWeb[1]).toMatchObject({
+      slug: CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE.slug,
+      display_name: CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE.displayName,
+      input_modalities: ["text"],
+      context_window: 336_579,
+      auto_compact_token_limit: 285_000,
     });
   });
 

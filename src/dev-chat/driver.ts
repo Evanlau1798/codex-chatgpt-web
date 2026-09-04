@@ -72,12 +72,14 @@ export class DevChatDriver {
     requireChatGptWebModelRoute(model, this.config);
     this.assertBiggerContextModel(model);
     const opened = this.store.loadOrCreate(name, model, this.cwd);
+    const modelChanged = requestedModel !== undefined && opened.state.model !== requestedModel;
+    if (modelChanged) opened.state.model = requestedModel;
     if (resolve(opened.state.cwd) !== resolve(this.cwd)) {
       throw new Error(`DEV chat ${JSON.stringify(name)} belongs to ${opened.state.cwd}; use another name for ${this.cwd}`);
     }
     requireChatGptWebModelRoute(opened.state.model, this.config);
     this.assertBiggerContextModel(opened.state.model);
-    if (opened.created) this.store.save(opened.state);
+    if (opened.created || modelChanged) this.store.save(opened.state);
     return opened;
   }
 

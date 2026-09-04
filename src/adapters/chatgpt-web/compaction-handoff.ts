@@ -151,8 +151,22 @@ export async function settleActiveCompactionSource(
   });
 }
 
-interface CachedCompactionRun { createdAt: number; promise: Promise<string> }
+interface CachedCompactionRun {
+  createdAt: number;
+  ownerKey: string;
+  traceIds: ReadonlySet<string>;
+  abort: AbortController;
+  active: boolean;
+  promise: Promise<string>;
+}
+
+export interface StructuredCompactionOwner {
+  ownerKey: string;
+  traceIds: readonly string[];
+}
+
 const structuredCompactionRuns = new Map<string, CachedCompactionRun>();
+const structuredCompactionOwners = new Map<string, Promise<void>>();
 const STRUCTURED_COMPACTION_RUN_TTL_MS = 30 * 60_000;
 
 function pruneStructuredCompactionRuns(): void {
@@ -167,14 +181,70 @@ export function existingStructuredCompactionRun(key: string): Promise<string> | 
   return structuredCompactionRuns.get(key)?.promise;
 }
 
-export function runStructuredCompactionOnce(key: string, start: () => Promise<string>): Promise<string> {
+export function runStructuredCompactionOnce(key: string, start: () => Promise<string>): Promise<string>;
+export function runStructuredCompactionOnce(
+  key: string,
+  owner: StructuredCompactionOwner,
+  start: (operatorSignal: AbortSignal) => Promise<string>,
+): Promise<string>;
+export function runStructuredCompactionOnce(
+  key: string,
+  ownerOrStart: StructuredCompactionOwner | (() => Promise<string>),
+  ownedStart?: (operatorSignal: AbortSignal) => Promise<string>,
+): Promise<string> {
   pruneStructuredCompactionRuns();
   const existing = structuredCompactionRuns.get(key);
   if (existing) return existing.promise;
-  const promise = Promise.resolve().then(start);
-  structuredCompactionRuns.set(key, { createdAt: Date.now(), promise });
+  const owner = typeof ownerOrStart === "function"
+    ? { ownerKey: key, traceIds: [] }
+    : ownerOrStart;
+  const start = typeof ownerOrStart === "function"
+    ? (_signal: AbortSignal) => ownerOrStart()
+    : ownedStart!;
+  const abort = new AbortController();
+  const previousOwner = structuredCompactionOwners.get(owner.ownerKey);
+  const promise = Promise.resolve().then(async () => {
+    if (previousOwner) await withCompactionAbort(previousOwner, abort.signal);
+    if (abort.signal.aborted) throw abortReason(abort.signal);
+    return start(abort.signal);
+  });
+  const run: CachedCompactionRun = {
+    createdAt: Date.now(),
+    ownerKey: owner.ownerKey,
+    traceIds: new Set(owner.traceIds),
+    abort,
+    active: true,
+    promise,
+  };
+  structuredCompactionRuns.set(key, run);
+  const ownerSettlement = promise.then(() => undefined, () => undefined);
+  structuredCompactionOwners.set(owner.ownerKey, ownerSettlement);
+  void ownerSettlement.then(() => {
+    run.active = false;
+    if (structuredCompactionOwners.get(owner.ownerKey) === ownerSettlement) {
+      structuredCompactionOwners.delete(owner.ownerKey);
+    }
+  });
   void promise.catch(() => {
     if (structuredCompactionRuns.get(key)?.promise === promise) structuredCompactionRuns.delete(key);
   });
   return promise;
+}
+
+async function cancelStructuredCompactionRuns(
+  matches: (run: CachedCompactionRun) => boolean,
+  reason: Error,
+): Promise<number> {
+  const runs = [...structuredCompactionRuns.values()].filter(run => run.active && matches(run));
+  for (const run of runs) if (!run.abort.signal.aborted) run.abort.abort(reason);
+  await Promise.allSettled(runs.map(run => run.promise));
+  return runs.length;
+}
+
+export function cancelStructuredCompactionTrace(traceId: string, reason: Error): Promise<number> {
+  return cancelStructuredCompactionRuns(run => run.traceIds.has(traceId), reason);
+}
+
+export function cancelAllStructuredCompactions(reason: Error): Promise<number> {
+  return cancelStructuredCompactionRuns(() => true, reason);
 }

@@ -3,6 +3,7 @@ const { randomBytes, timingSafeEqual } = require("node:crypto");
 const { releaseRetainedConversation } = require("./retained-turn-release.cjs");
 
 const MAX_BODY_BYTES = 16 * 1024;
+const MAX_MANUAL_START_BODY_BYTES = 3 * 1024 * 1024;
 
 function secureTokenMatches(expected, authorization) {
   const prefix = "Bearer ";
@@ -12,12 +13,12 @@ function secureTokenMatches(expected, authorization) {
   return supplied.length === wanted.length && timingSafeEqual(supplied, wanted);
 }
 
-async function readJson(request) {
+async function readJson(request, maxBytes = MAX_BODY_BYTES) {
   const chunks = [];
   let bytes = 0;
   for await (const chunk of request) {
     bytes += chunk.length;
-    if (bytes > MAX_BODY_BYTES) throw new Error("request body is too large");
+    if (bytes > maxBytes) throw new Error("request body is too large");
     chunks.push(chunk);
   }
   const text = Buffer.concat(chunks).toString("utf8");
@@ -98,15 +99,65 @@ class BrowserControlServer {
     const isSessionInspect = request.url === "/v1/session/inspect";
     const isConnectorVerify = request.url === "/v1/session/verify-connector";
     const isDebugCutoff = request.url === "/v1/debug/turn/cutoff";
+    const manualAction = request.url?.match(/^\/v1\/manual\/(start|wait-sent|wait-terminal|started|end|cancel)$/)?.[1];
     if (request.method !== "POST"
-      || (!isTurn && !isTurnRelease && !isSessionInspect && !isConnectorVerify && !isDebugCutoff)) {
+      || (!isTurn && !isTurnRelease && !isSessionInspect && !isConnectorVerify && !isDebugCutoff && !manualAction)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
     try {
-      const body = await readJson(request);
+      const body = await readJson(request, manualAction === "start" ? MAX_MANUAL_START_BODY_BYTES : MAX_BODY_BYTES);
       const host = this.getBrowserHost();
       if (!host) throw new Error("browser host is not ready");
+      const interactionMode = host.browserInteractionMode?.() ?? "automatic";
+      if ((isTurn || isSessionInspect || isConnectorVerify) && interactionMode === "manual") {
+        if (isSessionInspect) {
+          writeJson(response, 409, { error: "Automatic browser inspection is disabled in Zero Risk mode", code: "manual_browser_inspection_disabled" });
+          return;
+        }
+        throw new Error("Automatic browser control is disabled in Zero Risk mode");
+      }
+      if (manualAction) {
+        if (interactionMode !== "manual") throw new Error("Zero Risk is not enabled");
+        if (!body || !/^[A-Za-z0-9_-]{6,128}$/.test(body.traceId || "")) throw new Error("traceId is invalid");
+        if (!Number.isInteger(body.helperPid) || body.helperPid < 1) throw new Error("browser helper pid is invalid");
+        let value;
+        if (manualAction === "start") {
+          if (body.conversationKey !== undefined && !/^[a-f0-9]{64}$/.test(body.conversationKey)) {
+            throw new Error("conversationKey is invalid");
+          }
+          value = host.beginManualTurn(
+            body.traceId, body.helperPid, body.prompt, body.conversationKey, body.resumePrompt,
+          );
+        } else if (manualAction === "wait-sent") {
+          value = await host.waitManualSent(body.traceId, body.helperPid);
+          if (value.status === "pending") { writeJson(response, 202, value); return; }
+          if (value.status === "timeout") {
+            writeJson(response, 408, { error: "Zero Risk turn timed out", code: "manual_turn_timed_out" }); return;
+          }
+          if (value.status === "cancelled") {
+            writeJson(response, 409, { error: "Zero Risk turn was cancelled", code: "turn_cancelled" }); return;
+          }
+          if (value.status === "failed") {
+            writeJson(response, 409, { error: "Zero Risk turn failed", code: "manual_turn_failed" }); return;
+          }
+        } else if (manualAction === "wait-terminal") {
+          value = await host.waitManualTerminal(body.traceId, body.helperPid);
+          if (value.status === "pending") { writeJson(response, 202, value); return; }
+          if (value.status === "timeout") {
+            writeJson(response, 408, { error: "Zero Risk turn timed out", code: "manual_turn_timed_out" }); return;
+          }
+        } else if (manualAction === "started") {
+          value = host.markManualTurnStarted(body.traceId, body.helperPid);
+        } else if (manualAction === "end") {
+          if (!["completed", "failed", "aborted"].includes(body.status)) throw new Error("manual turn status is invalid");
+          value = host.endManualTurn(body.traceId, body.helperPid, body.status, body.retain === true);
+        } else {
+          value = host.cancelManualTurn(body.traceId, body.helperPid);
+        }
+        writeJson(response, 200, { ok: true, ...value });
+        return;
+      }
       if (isSessionInspect) {
         const result = await host.inspectSession(body?.detectCapabilities === true);
         writeJson(response, 200, result);
@@ -177,7 +228,7 @@ class BrowserControlServer {
       }
       const preferences = this.getPreferences();
       if (request.url === "/v1/turn/start") {
-        const lease = host.beginTurn(
+        const lease = await host.beginTurn(
           body.traceId,
           preferences.showBrowserDuringTurns === true,
           body.helperPid,
@@ -213,9 +264,13 @@ class BrowserControlServer {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.warn("browser.control_rejected", { message });
       const cancelled = error?.code === "turn_cancelled";
-      writeJson(response, cancelled ? 409 : 400, {
+      const timedOut = error?.code === "manual_turn_timed_out";
+      const manualFailed = error?.code === "manual_turn_failed";
+      writeJson(response, cancelled || manualFailed ? 409 : timedOut ? 408 : 400, {
         error: message,
         ...(cancelled ? { code: "turn_cancelled" } : {}),
+        ...(timedOut ? { code: "manual_turn_timed_out" } : {}),
+        ...(manualFailed ? { code: "manual_turn_failed" } : {}),
       });
     }
   }

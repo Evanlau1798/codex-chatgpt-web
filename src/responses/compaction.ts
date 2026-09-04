@@ -15,6 +15,9 @@
  * routed models get a short "history was compacted" note instead.
  */
 
+import { estimateTokens } from "../lib/token-estimate";
+import { isContextualCodexUserMessage } from "../adapters/chatgpt-web/contextual-user-message";
+
 export const BRIDGE_COMPACTION_PREFIX = "ocx1:";
 
 /** Mirrors codex-rs core/templates/compact/prompt.md (the local-compaction instruction). */
@@ -29,6 +32,10 @@ Include:
 - Lifecycle evidence needed for verification, including spawn, interaction, interrupt, completion, and retained or TTL resume events
 
 Do not claim that no work remains while a resumable agent or pending collaboration still exists.
+Prioritize the current goal, active constraints, the user's language preference, and the next unfinished action.
+Distinguish completed work from pending work. Mark cancelled or superseded requests as inactive, not as tasks to resume.
+Replace prior summaries with one consolidated current checkpoint; do not append a history of checkpoints.
+Preserve verified file locations, findings, and essential test results so the next model need not repeat completed investigation; re-read when evidence is stale or incomplete.
 Be concise, structured, and focused on helping the next LLM seamlessly continue the work.`;
 
 /** Mirrors codex-rs core/templates/compact/summary_prefix.md (framing for a replayed summary). */
@@ -88,8 +95,8 @@ export function compactionItemToText(encryptedContent: string | undefined): stri
  * contextual wrappers are filtered there, and v2-style `compaction` items are NOT expected here.
  */
 
-/** codex-rs compact.rs COMPACT_USER_MESSAGE_MAX_TOKENS = 20k tokens (~4 chars/token). */
-const COMPACT_V1_RETAINED_CHAR_BUDGET = 20_000 * 4;
+/** Includes retained message envelopes, not just their visible text. */
+const COMPACT_V1_RETAINED_TOKEN_BUDGET = 20_000;
 
 type CompactMessageItem = Record<string, unknown>;
 
@@ -133,6 +140,9 @@ export function extractCompactUserMessages(input: unknown): CompactMessageItem[]
     const rec = item as CompactMessageItem & { type?: string; role?: string; content?: unknown };
     if (rec.type !== undefined && rec.type !== "message") continue;
     if (rec.role !== "user") continue;
+    if (isReadableCompactionSummaryText(
+      compactContentBlocks(rec).filter(textBlock).map(block => block.text).join(""),
+    )) continue;
     out.push(structuredClone(rec));
   }
   return out;
@@ -170,42 +180,53 @@ function imageBlock(block: CompactContentBlock): boolean {
  * immediately refilling Codex's context window after a successful compact while still preserving
  * the visual context the browser model can actually receive.
  */
+export function latestCompactUserMessage(userMessages: CompactMessageItem[]): CompactMessageItem | undefined {
+  return userMessages.findLast(item => compactContentBlocks(item).some(block =>
+    imageBlock(block) || (textBlock(block) && !isContextualCodexUserMessage(block.text))));
+}
+
 export function buildCompactV1Output(
   userMessages: CompactMessageItem[],
   summary: string,
   maxImages = 10,
+  retainedTokenBudget = COMPACT_V1_RETAINED_TOKEN_BUDGET,
 ): CompactMessageItem[] {
   const selected: CompactMessageItem[] = [];
-  let remaining = COMPACT_V1_RETAINED_CHAR_BUDGET;
+  const latest = userMessages.lastIndexOf(latestCompactUserMessage(userMessages)!);
+  // Reserve the latest instruction before considering newer contextual wrappers. Never cut its
+  // text to fit the optional-history allowance; the route-level replacement check owns overflow.
+  let remaining = Math.max(0, retainedTokenBudget - 2
+    - (latest >= 0 ? retainedMessageTokens(userMessages[latest]!) : 0));
   let retainedImages = 0;
-  for (let i = userMessages.length - 1; i >= 0 && (remaining > 0 || retainedImages < maxImages); i--) {
+  for (let i = userMessages.length - 1; i >= 0; i--) {
     const message = structuredClone(userMessages[i]!);
     const blocks = compactContentBlocks(message);
+    const cost = retainedMessageTokens(message);
+    const keepText = i === latest || cost <= remaining;
     const retainedReversed: CompactContentBlock[] = [];
+    let messageImages = 0;
     for (let blockIndex = blocks.length - 1; blockIndex >= 0; blockIndex -= 1) {
       const block = blocks[blockIndex]!;
       if (imageBlock(block)) {
-        if (retainedImages < maxImages) {
-          retainedImages += 1;
+        if (retainedImages + messageImages < maxImages) {
+          messageImages += 1;
           retainedReversed.push(block);
         }
         continue;
       }
-      if (!textBlock(block) || remaining === 0) continue;
-      const text = block.text!;
-      if (text.length <= remaining) {
-        remaining -= text.length;
-        retainedReversed.push({ ...block, type: "input_text", text });
-      } else {
-        retainedReversed.push({ ...block, type: "input_text", text: text.slice(text.length - remaining) });
-        remaining = 0;
-      }
+      if (textBlock(block) && keepText) retainedReversed.push({ ...block, type: "input_text" });
     }
     const content = retainedReversed.reverse();
     if (content.length > 0) {
       message.type = "message";
       message.role = "user";
       message.content = content;
+      const actualCost = retainedMessageTokens(message);
+      if (i !== latest) {
+        if (actualCost > remaining) continue;
+        remaining -= actualCost;
+      }
+      retainedImages += messageImages;
       selected.push(message);
     }
   }
@@ -214,4 +235,12 @@ export function buildCompactV1Output(
   // summaries by that exact prefix — keep the same shape.
   const summaryText = summary.trim().length > 0 ? `${SUMMARY_PREFIX}\n${summary}` : "(no summary available)";
   return [...selected, compactUserMessageItem(summaryText)];
+}
+
+function retainedMessageTokens(item: CompactMessageItem): number {
+  // Image payloads stay attachments; their token reserves are charged by the full prompt check.
+  const content = compactContentBlocks(item).flatMap<CompactContentBlock>(block => textBlock(block)
+    ? [{ ...block, type: "input_text" }]
+    : imageBlock(block) ? [{ ...block, image_url: "" }] : []);
+  return estimateTokens(JSON.stringify({ ...item, type: "message", role: "user", content })) + 2;
 }

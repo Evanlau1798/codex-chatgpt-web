@@ -90,6 +90,17 @@ missing paid selector on those accounts is not itself a sign-in failure.
 
 ## Full harness or MCP verification fails
 
+Zero Risk uses separate tunnel credentials and the exact `Codex Zero Risk` connector. It does not
+inspect the ChatGPT page, verify the automatic connector, or attach images. Confirm **Sent** only
+after manually selecting the intended model, effort, and connector and submitting the copied prompt.
+Switching interaction modes requires restarting Codex or Claude Code; it never falls back to the
+other mode's credentials.
+
+Video walkthroughs:
+
+- [Create an OpenAI tunnel and API key](launcher/src/assets/mcp-create-tunnel.mp4)
+- [Connect the local harness and attach the ChatGPT connector](launcher/src/assets/mcp-connect-connector.mp4)
+
 Browser-only mode needs no connector. Full harness mode requires all of the following:
 
 - a newly created connector named exactly **Codex Native2**;

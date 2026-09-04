@@ -17,3 +17,6 @@ references/
 launcher/build/
 launcher/release/
 launcher/artifacts/
+.playwright-cli/
+output/
+notes.md

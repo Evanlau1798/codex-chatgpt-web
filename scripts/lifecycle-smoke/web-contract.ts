@@ -110,9 +110,9 @@ const request = new Request(`${baseUrl}/v1/responses`, {
   headers: { "content-type": "application/json" },
   signal: AbortSignal.timeout(WEB_CONTRACT_TURN_TIMEOUT_MS),
   body: JSON.stringify({
-    model: "chatgpt-web/high",
+    model: "chatgpt-web/medium",
     stream: false,
-    reasoning: { effort: "high" },
+    reasoning: { effort: "medium" },
     prompt_cache_key: threadId,
     client_metadata: {
       thread_id: threadId,

@@ -24,7 +24,12 @@ function submittedFailure(
 ): ChatGptWebAdapterError | undefined {
   const phase = session.runtime.submission?.phase;
   if (!phase || phase === "prepared") return undefined;
-  const terminal = terminalError(error, phase);
+  const terminal = error instanceof ChatGptWebAdapterError && !error.retryable
+    && (session.runtime.manualControl
+      || error.code === "chatgpt_submission_ambiguous"
+      || error.code === "chatgpt_submitted_turn_failed")
+    ? error
+    : terminalError(error, phase);
   session.setTerminalError(terminal);
   return terminal;
 }

@@ -18,8 +18,9 @@ function effortMenuFixture(itemCount: number) {
     count: async () => itemCount,
   };
   const effortMenu = {
+    filter() { return this; },
     last() { return this; },
-    isVisible: async () => false,
+    isVisible: async () => true,
     locator: (selector: string) => {
       expect(selector).toBe(CHATGPT_EFFORT_ITEM_SELECTOR);
       return effortChoices;
@@ -116,6 +117,7 @@ describe("ChatGPT effort menu failure classification", () => {
       }),
     };
     const effortMenu = {
+      filter() { return this; },
       last() { return this; },
       isVisible: async () => true,
       locator: () => ({ nth: () => modelRow }),
@@ -123,7 +125,7 @@ describe("ChatGPT effort menu failure classification", () => {
     const effortControl = {
       last() { return this; },
       waitFor: async () => {},
-      getAttribute: async () => "true",
+      getAttribute: async (name: string) => name === "aria-expanded" ? "true" : null,
     };
     const hiddenDialog = {
       filter() { return this; },
@@ -163,12 +165,14 @@ describe("ChatGPT effort menu failure classification", () => {
     let sliderValue = 3;
     const pressed: string[] = [];
     const sliderControl = {
+      isVisible: async () => true,
       press: async (key: string) => {
         pressed.push(key);
         sliderValue += key === "ArrowLeft" ? -1 : 1;
       },
     };
     const slider = {
+      isVisible: async () => false,
       waitFor: async ({ state }: { state: string }) => expect(state).toBe("attached"),
       getAttribute: async (name: string) => ({
         "aria-valuemin": "0",
@@ -183,6 +187,7 @@ describe("ChatGPT effort menu failure classification", () => {
     };
     const unavailableChoice = { waitFor: () => new Promise(() => {}) };
     const effortMenu = {
+      filter() { return this; },
       last() { return this; },
       isVisible: async () => false,
       locator: () => ({ nth: () => unavailableChoice }),
@@ -190,7 +195,7 @@ describe("ChatGPT effort menu failure classification", () => {
     const effortControl = {
       last() { return this; },
       waitFor: async () => {},
-      getAttribute: async () => "false",
+      getAttribute: async (name: string) => name === "aria-expanded" ? "false" : null,
       press: async () => {},
     };
     const composer = { locator: () => ({ locator: () => effortControl }) };

@@ -17,6 +17,21 @@ test("send control uses semantic keyboard activation", async () => {
   expect(activations).toEqual(["Enter"]);
 });
 
+test("Send delegates its timeout and cancellation to the outer stage", async () => {
+  const owner = new AbortController();
+  const result = activateChatGptSendControl({
+    press: async (key, options) => {
+      expect(key).toBe("Enter");
+      expect(options).toMatchObject({ noWaitAfter: true, timeout: 0, signal: owner.signal });
+      return new Promise<void>((_resolve, reject) => {
+        options!.signal!.addEventListener("abort", () => reject(options!.signal!.reason), { once: true });
+        owner.abort(new DOMException("outer stage cancelled", "AbortError"));
+      });
+    },
+  }, owner.signal);
+  await expect(result).rejects.toBe(owner.signal.reason);
+});
+
 test("assistant identity detects a virtualized retained response without count growth", () => {
   expect(chatGptAssistantTurnChanged(
     { count: 3, lastId: "conversation-turn-7" },

@@ -17,7 +17,7 @@ interface RetryBudgetEntry {
 
 function exhaustedError(entry: RetryBudgetEntry): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(
-    `${entry.lastError.message} Automatic browser-turn retry limit reached after ${MAX_CHATGPT_WEB_TURN_RETRIES} retries; refusing to send another message.`,
+    `${entry.lastError.message} ChatGPT remained unavailable after several attempts.`,
     {
       status: entry.lastError.status,
       errorType: entry.lastError.errorType,

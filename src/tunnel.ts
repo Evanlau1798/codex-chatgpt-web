@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { unzipSync } from "fflate";
-import type { AppConfig, TunnelConfig } from "./config";
+import type { AppConfig, BrowserInteractionMode, TunnelConfig } from "./config";
 import { atomicWriteFile, getConfigDir, stripUtf8Bom } from "./config";
 import { runCommand, runChecked } from "./process";
 
@@ -157,21 +157,30 @@ export async function installTunnelClient(): Promise<string> {
   return executable;
 }
 
-export function installRuntimeKey(sourcePath: string): string {
+export function installRuntimeKey(
+  sourcePath: string,
+  interactionMode: BrowserInteractionMode = "automatic",
+): string {
   if (!existsSync(sourcePath)) throw new Error(`Tunnel runtime key file does not exist: ${sourcePath}`);
   const key = readFileSync(sourcePath);
   if (key.byteLength === 0 || key.byteLength > 64 * 1024) throw new Error("Tunnel runtime key file is empty or unexpectedly large");
-  return installRuntimeKeyBytes(key);
+  return installRuntimeKeyBytes(key, interactionMode);
 }
 
-export function managedRuntimeKeyPath(): string {
-  return join(getConfigDir(), "secrets", "tunnel-runtime.key");
+export function managedRuntimeKeyPath(interactionMode: BrowserInteractionMode = "automatic"): string {
+  const fileName = interactionMode === "manual"
+    ? "tunnel-runtime-zero-risk.key"
+    : "tunnel-runtime-automatic.key";
+  return join(getConfigDir(), "secrets", fileName);
 }
 
-export function installRuntimeKeyBytes(key: Uint8Array | string): string {
+export function installRuntimeKeyBytes(
+  key: Uint8Array | string,
+  interactionMode: BrowserInteractionMode = "automatic",
+): string {
   const bytes = typeof key === "string" ? new TextEncoder().encode(key.trim()) : key;
   if (bytes.byteLength === 0 || bytes.byteLength > 64 * 1024) throw new Error("Tunnel runtime key is empty or unexpectedly large");
-  const destination = managedRuntimeKeyPath();
+  const destination = managedRuntimeKeyPath(interactionMode);
   atomicWriteFile(destination, bytes);
   return destination;
 }
@@ -211,12 +220,19 @@ function tunnelCommandQuoted(value: string): string {
 }
 
 export function mcpCommand(config: AppConfig, platform = process.platform): string {
+  const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
+  const command = [
+    ...config.runtimeCommand,
+    "mcp",
+    "--contract",
+    contract,
+    "--broker-socket",
+    config.brokerSocketPath,
+  ];
   if (platform === "win32") {
-    return [...config.runtimeCommand, "mcp", "--broker-socket", config.brokerSocketPath]
-      .map(tunnelCommandQuoted)
-      .join(" ");
+    return command.map(tunnelCommandQuoted).join(" ");
   }
-  return [...config.runtimeCommand, "mcp", "--broker-socket", config.brokerSocketPath].map(shellQuote).join(" ");
+  return command.map(shellQuote).join(" ");
 }
 
 function tunnel(config: AppConfig): TunnelConfig {

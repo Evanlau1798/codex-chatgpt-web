@@ -1,6 +1,6 @@
 {
   "name": "codex-web-gpt-launcher",
-  "version": "4.0.8-Enhanced.2",
+  "version": "5.0.0-Enhanced.1",
   "private": true,
   "description": "Desktop control center for Codex ChatGPT Web",
   "author": "miuuyy",
@@ -35,6 +35,10 @@
     "electron-builder": "^26.8.1",
     "typescript": "^5.9.3",
     "vite": "^6.0.0"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "0.8.15",
+    "fast-uri": "3.1.6"
   },
   "build": {
     "appId": "dev.codexwebgpt.launcher",

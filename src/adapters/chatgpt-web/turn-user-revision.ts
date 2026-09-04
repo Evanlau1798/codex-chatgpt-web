@@ -28,6 +28,18 @@ function isTurnAbortedNotice(content: unknown): boolean {
   return /^<turn_aborted>[\s\S]*<\/turn_aborted>$/.test(values.join("\n").trim());
 }
 
+/** Only native metadata can identify a prior turn as aborted; literal current input is not authority. */
+export function priorAbortedTurnIds(rawBody: unknown, currentTurnId: string): string[] {
+  const body = record(rawBody);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  return [...new Set(input.flatMap(value => {
+    const item = record(value);
+    const turnId = itemTurnId(item);
+    return item?.type === "message" && item.role === "user" && isTurnAbortedNotice(item.content)
+      && turnId !== undefined && turnId !== currentTurnId ? [turnId] : [];
+  }))];
+}
+
 /** Select a revision from the current turn without crossing a contextual-only turn boundary. */
 export function currentTurnUserRevision(
   rawBody: unknown,

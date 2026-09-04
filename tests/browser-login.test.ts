@@ -91,6 +91,8 @@ test("passkey login authenticates in normal Chrome before isolated offline pipe 
     expect(launches[0]).not.toContain("--enable-automation");
     expect(launches[1]).toContain("--remote-debugging-pipe");
     expect(launches[1]).toContain("--headless");
+    expect(launches[1]).toContain("--restore-last-session");
+    expect(launches[1]).toContain("--disable-background-networking");
     expect(readdirSync(join(root, "transfer")).filter(name => name.startsWith("login-profile-"))).toEqual([]);
   } finally {
     if (previousArgs === undefined) delete process.env.CODEX_LOGIN_ARG_LOG;

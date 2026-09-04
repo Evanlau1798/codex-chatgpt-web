@@ -9,6 +9,7 @@ export class ChatGptTurnSessions {
   private readonly entries = new Map<string, ChatGptTurnSession>();
   private readonly retirements = new Map<string, Promise<void>>();
   private readonly conversationRetirements = new Map<string, Promise<void>>();
+  private readonly manualOwnerRetirements = new Map<string, Promise<void>>();
   private readonly agentGraph = new ChatGptAgentSessionGraph();
 
   constructor(
@@ -45,29 +46,51 @@ export class ChatGptTurnSessions {
     claudeRootThreadId?: string,
     traceId?: string,
     signal?: AbortSignal,
+    manualOwner?: { key: string; abortedSteeringIds: ReadonlySet<string> },
   ): Promise<ChatGptTurnSession> {
+    if (manualOwner) {
+      for (const [ownedKey, session] of this.entries) {
+        if (ownedKey !== key && session.runtime.manualControl?.ownerKey === manualOwner.key
+          && session.steeringId && manualOwner.abortedSteeringIds.has(session.steeringId) && session.isActive()) {
+          this.retire(ownedKey, session);
+        }
+      }
+    }
     for (;;) {
       if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-      const pending = this.retirements.get(key) ?? (conversationKey ? this.conversationRetirements.get(conversationKey) : undefined);
+      const existing = manualOwner ? this.entries.get(key) : undefined;
+      if (existing) { existing.touch(); return existing; }
+      const pending = this.retirements.get(key)
+        ?? (manualOwner ? this.manualOwnerRetirements.get(manualOwner.key) : undefined)
+        ?? (conversationKey ? this.conversationRetirements.get(conversationKey) : undefined);
       if (pending) {
         await withAbort(pending, signal);
         continue;
       }
-      const activeOwner = conversationKey
+      const activeOwner = (manualOwner || conversationKey)
         ? [...this.entries].find(([ownedKey, session]) => (
             ownedKey !== key
-            && session.conversationKey() === conversationKey
+            && (manualOwner ? session.runtime.manualControl?.ownerKey === manualOwner.key
+              : session.conversationKey() === conversationKey)
             && session.browserTurnPending()
           ))
         : undefined;
       if (activeOwner) {
         const [ownedKey, ownedSession] = activeOwner;
         if (this.entries.get(ownedKey) !== ownedSession) continue;
+        if (manualOwner) {
+          await withAbort(ownedSession.physicalSettlement, signal);
+          continue;
+        }
         this.entries.delete(ownedKey);
         await withAbort(this.beginRetirement(ownedKey, ownedSession), signal);
         continue;
       }
-      return this.getOrCreate(key, start, group, steeringId, claudeRootThreadId, traceId);
+      return this.getOrCreate(key, () => {
+        const runtime = start();
+        if (manualOwner && runtime.manualControl) runtime.manualControl.ownerKey = manualOwner.key;
+        return runtime;
+      }, group, steeringId, claudeRootThreadId, traceId);
     }
   }
 
@@ -78,6 +101,11 @@ export class ChatGptTurnSessions {
 
   async waitForRetirement(key: string, signal?: AbortSignal): Promise<void> {
     const pending = this.retirements.get(key);
+    if (pending) await withAbort(pending, signal);
+  }
+
+  async waitForConversationRetirement(key: string, signal?: AbortSignal): Promise<void> {
+    const pending = this.conversationRetirements.get(key);
     if (pending) await withAbort(pending, signal);
   }
 
@@ -186,12 +214,14 @@ export class ChatGptTurnSessions {
       && session.conversationKey() === preserveConversationKey;
     const release = preserveSurface ? undefined : session.runtime.release;
     const retirement = trackConversationRetirement(
-      this.retirements, key, session.browserOutcome.then(async () => { await release?.(); }),
+      this.retirements, key, session.physicalSettlement.then(async () => { await release?.(); }),
     );
     const conversationKey = session.conversationKey();
     if (conversationKey) {
       trackConversationRetirement(this.conversationRetirements, conversationKey, retirement);
     }
+    const manualOwnerKey = session.runtime.manualControl?.ownerKey;
+    if (manualOwnerKey) trackConversationRetirement(this.manualOwnerRetirements, manualOwnerKey, retirement);
     return retirement;
   }
 

@@ -4,8 +4,6 @@ export interface ChatGptExternalTurnProgressSnapshot {
   activeToolCalls: number;
   lastProgressAt?: number;
 }
-/** Allows one bounded DOM probe plus cross-process delivery before failing the causal barrier. */
-export const CHATGPT_TOOL_BOUNDARY_OBSERVATION_TIMEOUT_MS = 10_000;
 
 interface ProgressWaiter {
   afterRevision: number;

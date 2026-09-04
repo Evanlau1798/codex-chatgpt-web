@@ -6,6 +6,9 @@ import type { AppConfig, SubagentProtocol } from "./config";
 import { atomicWriteFile, expandUserPath, getConfigDir } from "./config";
 
 export const MANAGED_COMMENT = "# Managed by codex-chatgpt-web; `codex-chatgpt-web uninstall` restores prior values.";
+export const MANAGED_ROUTE_COMMENT =
+  "# Managed by codex-chatgpt-web: Responses use the local bridge; Voice stays on ChatGPT.";
+export const CODEX_REALTIME_WEBRTC_CALL_BASE_URL = "https://chatgpt.com/backend-api/codex";
 export const MANAGED_REMOTE_COMPACTION_LINE =
   "remote_compaction_v2 = false # Managed by codex-chatgpt-web: bounds retained Web image history.";
 export const MANAGED_MULTI_AGENT_LINE =
@@ -30,6 +33,7 @@ export type ManagedAssignmentKey = "openai_base_url" | "model_provider" | "model
 export interface PreviousFeatureAssignment extends PreviousAssignment {
   tablePresent: boolean;
   tableName?: "features" | "features.multi_agent_v2";
+  inlineTable?: boolean;
 }
 
 export interface PreviousAgentAssignment extends PreviousAssignment {
@@ -38,6 +42,27 @@ export interface PreviousAgentAssignment extends PreviousAssignment {
 }
 
 export interface CodexIntegrationJournal {
+  version: 9;
+  active: boolean;
+  configPath: string;
+  installed: {
+    openai_base_url: string;
+    experimental_realtime_webrtc_call_base_url: string;
+    subagent_protocol: SubagentProtocol;
+    agent_max_depth?: number;
+  };
+  previous: Record<ManagedAssignmentKey, PreviousAssignment>;
+  previousRealtimeWebrtcCallBaseUrl: PreviousAssignment;
+  previousMultiAgent?: PreviousFeatureAssignment;
+  previousMultiAgentV2?: PreviousFeatureAssignment;
+  previousAgentMaxDepth?: PreviousAgentAssignment;
+  format?: {
+    lineEnding: "\n" | "\r\n" | "\r";
+    trailingNewline: boolean;
+  };
+}
+
+export interface LegacyCodexIntegrationJournalV8 {
   version: 8;
   active: boolean;
   configPath: string;
@@ -153,6 +178,7 @@ export interface LegacyCodexIntegrationJournal {
 
 export type ManagedRouteJournal =
   | CodexIntegrationJournal
+  | LegacyCodexIntegrationJournalV8
   | LegacyCodexIntegrationJournalV7
   | LegacyCodexIntegrationJournalV6
   | LegacyCodexIntegrationJournalV5

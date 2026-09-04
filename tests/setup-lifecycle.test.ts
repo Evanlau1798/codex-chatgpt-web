@@ -30,15 +30,23 @@ test("launcher setup refreshes account capabilities only when missing or explici
     browserHost: "launcher",
     solAvailable: true,
     proAvailable: false,
-  } as never;
+  };
 
   expect(launcherCapabilityProbeRequired(undefined)).toBe(true);
-  expect(launcherCapabilityProbeRequired(verifiedLauncher)).toBe(false);
+  expect(launcherCapabilityProbeRequired(verifiedLauncher as never)).toBe(false);
   expect(launcherCapabilityProbeRequired({
     browserHost: "launcher",
     proAvailable: false,
   } as never)).toBe(true);
-  expect(launcherCapabilityProbeRequired(verifiedLauncher, true)).toBe(true);
+  expect(launcherCapabilityProbeRequired(verifiedLauncher as never, true)).toBe(true);
+  expect(launcherCapabilityProbeRequired({
+    ...verifiedLauncher,
+    browserInteractionMode: "manual",
+  } as never)).toBe(false);
+  expect(launcherCapabilityProbeRequired({
+    ...verifiedLauncher,
+    browserInteractionMode: "manual",
+  } as never, false, "automatic")).toBe(true);
 });
 
 test("setup can install Codex and Claude Code independently without changing the combined default", () => {

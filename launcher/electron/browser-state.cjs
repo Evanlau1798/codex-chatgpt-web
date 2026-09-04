@@ -37,13 +37,13 @@ function constrainBrowserBounds(bounds, contentSize) {
   };
 }
 
-function readBrowserNavigationState(contents, fallback) {
+function readBrowserNavigationState(contents, fallback, { readPageTitle = true } = {}) {
   if (!contents || contents.isDestroyed()) return { ...fallback };
   const history = contents.navigationHistory;
   return {
     ...fallback,
     url: contents.getURL() || fallback.url,
-    title: contents.getTitle() || fallback.title || "ChatGPT",
+    title: readPageTitle ? contents.getTitle() || fallback.title || "ChatGPT" : fallback.title || "ChatGPT",
     loading: contents.isLoading(),
     canGoBack: history.canGoBack(),
     canGoForward: history.canGoForward(),
@@ -63,7 +63,13 @@ function navigateBrowser(contents, action) {
   }
 }
 
+function isAbortedNavigationError(error) {
+  if (error && typeof error === "object" && (error.code === -3 || error.code === "ERR_ABORTED")) return true;
+  return error instanceof Error && /\bERR_ABORTED\b/.test(error.message);
+}
+
 module.exports = {
+  isAbortedNavigationError,
   browserViewVisible,
   constrainBrowserBounds,
   navigateBrowser,

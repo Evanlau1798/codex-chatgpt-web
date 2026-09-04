@@ -13,11 +13,10 @@ import { forwardNativeCodexRequest } from "../native-passthrough";
 import type { CodexProviderConfig } from "../types";
 import { formatErrorResponse } from "../bridge";
 import {
-  buildCompactV1Output,
   decodeCompactionSummary,
-  extractCompactUserMessages,
   isUsableCompactionSummary,
 } from "./compaction";
+import { boundedCompactV1Output, CompactionBudgetExceeded } from "./compact-budget";
 
 type AdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
 type ResponseHandler = (req: Request, config: AppConfig, adapterFactory: AdapterFactory) => Promise<Response>;
@@ -129,5 +128,16 @@ export async function handleCompactRequest(
   if (!isUsableCompactionSummary(summary)) {
     return formatErrorResponse(502, "invalid_response_error", "Compaction turn produced an unusable summary");
   }
-  return Response.json({ output: buildCompactV1Output(extractCompactUserMessages(input), summary) });
+  try {
+    return Response.json({ output: boundedCompactV1Output(raw, summary, config, route) });
+  } catch (error) {
+    if (error instanceof CompactionBudgetExceeded) {
+      // HTTP 400 is terminal to Codex; do not retry the same oversized input automatically.
+      return Response.json({ error: {
+        type: "invalid_request_error", code: "compaction_budget_exceeded", message: error.message,
+        input_tokens: error.inputTokens, token_limit: error.tokenLimit,
+      } }, { status: 400 });
+    }
+    return formatErrorResponse(400, "invalid_request_error", "Unable to validate compaction replacement context");
+  }
 }

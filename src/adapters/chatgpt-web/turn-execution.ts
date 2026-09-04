@@ -18,6 +18,7 @@ export type ChatGptBrowserOutcome =
   | { type: "error"; error: Error };
 interface ChatGptTurnRuntimeBase {
   browser: Promise<string>;
+  physicalSettlement?: Promise<void>;
   trace: ChatGptTraceFeed;
   text: ChatGptTextFeed;
   conversationKey?: string;
@@ -27,6 +28,7 @@ interface ChatGptTurnRuntimeBase {
   onToolResultDelivered?: (result?: CodexToolResultMessage) => void;
   externalProgress?: ChatGptExternalTurnProgress;
   submission?: { phase: "prepared" | "send_activated" | "accepted" };
+  manualControl?: { surfaceNonce: string; ownerKey?: string };
   cancel: (reason?: Error) => void;
   /** Release a completed retained browser surface when this canonical session is superseded. */
   release?: () => Promise<void>;
@@ -77,10 +79,13 @@ export class ChatGptTurnSession {
       .then(outcome => {
       this.steering.settleClaude(outcome.type === "final");
       this.settledBrowserOutcome ??= outcome;
-      this.physicalBrowserSettled = true;
       return this.settledBrowserOutcome;
     });
-    this.physicalSettlement = this.browserOutcome.then(() => undefined);
+    this.physicalSettlement = (runtime.physicalSettlement ?? this.browserOutcome.then(() => undefined))
+      .then(() => { this.physicalBrowserSettled = true; }, error => {
+        this.physicalBrowserSettled = true;
+        throw error;
+      });
   }
 
   runExclusive<T>(task: () => Promise<T>): Promise<T> {
@@ -126,9 +131,13 @@ export class ChatGptTurnSession {
       this.outstandingById.set(request.callId, request);
       this.outstandingGenerationById.set(request.callId, this.canonicalGeneration);
     }
+    this.setOutstandingEvents(reasoning, prelude);
+    return this.runtime.externalProgress?.recordToolBatch(requests.length);
+  }
+
+  setOutstandingEvents(reasoning: string[], prelude: AdapterEvent[]): void {
     this.outstandingReasoning = [...reasoning];
     this.outstandingPrelude = [...prelude];
-    return this.runtime.externalProgress?.recordToolBatch(requests.length);
   }
 
   hasOutstanding(callId: string): boolean {

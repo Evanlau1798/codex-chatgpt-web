@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { ChatGptTurnEnvironment } from "./environment";
+import type { ChatGptMcpContract } from "./mcp-zero-risk";
 import { callTurnBroker } from "./turn-broker";
 
 export interface ClaimedTurn {
@@ -26,11 +27,17 @@ export async function withClaimedTurn<T>(
   token: string,
   signal: AbortSignal | undefined,
   action: (claimed: ClaimedTurn) => Promise<T> | T,
+  contract: ChatGptMcpContract = "native",
 ): Promise<T> {
   const activityId = `activity_${randomBytes(18).toString("base64url")}`;
   let claimed: Omit<ClaimedTurn, "activityId">;
   try {
-    claimed = await callTurnBroker(socketPath, { method: "claim", token, activityId }, 5_000, signal);
+    claimed = await callTurnBroker(
+      socketPath,
+      { method: "claim", token, activityId, contract },
+      contract === "safe" ? null : 5_000,
+      signal,
+    );
   } catch (error) {
     try {
       await settleTurnActivity(socketPath, token, activityId);

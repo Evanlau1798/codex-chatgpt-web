@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { importVerifiedChatGptCookies } = require("./browser-login-state.cjs");
+const { requireAutomaticBrowserInspection } = require("./browser-host.cjs");
 
 const EXTERNAL_LOGIN_TIMEOUT_MS = 15 * 60 * 1000;
 const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
@@ -18,6 +19,7 @@ function isTemporaryChatUrl(value) {
 }
 
 function openExternalLogin(browserHost, { storageStatePath, runLogin }) {
+  requireAutomaticBrowserInspection(browserHost, "Automated ChatGPT external sign-in");
   if (browserHost.state.authenticated) {
     browserHost.activateHomeSurface();
     browserHost.show();
@@ -96,6 +98,7 @@ async function openBrowserLogin({
   isDevProfile,
   chooseLoginMethod,
 }) {
+  requireAutomaticBrowserInspection(browserHost, "Automated ChatGPT sign-in verification");
   if (browserHost.state.authenticated || browserHost.loginOperation) return browserHost.openLogin();
   const config = runtimeHost.runtimeConfigSnapshot().config;
   const chromeExecutablePath = config?.chromeExecutablePath;

@@ -24,9 +24,19 @@ import {
   isGatewayAgentWaitTool,
 } from "./mcp-gateway";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
-import { callTurnBroker, type BrokerToolResult } from "./turn-broker";
+import { callTurnBroker } from "./turn-broker";
 import { invokeChatGptMcpTool } from "./mcp-invocation";
+import { brokerMcpResult as asMcpResult, mcpJsonResult as result } from "./mcp-results";
 import { withClaimedTurn, type ClaimedTurn } from "./mcp-turn-activity";
+import {
+  afterSafeStart,
+  registerZeroRiskLifecycleTools,
+  safeVisibleTools,
+  turnReference,
+  turnReferenceInput,
+  ZERO_RISK_MCP_INSTRUCTIONS,
+  type ChatGptMcpContract,
+} from "./mcp-zero-risk";
 import {
   diagnosticErrorType,
   logMcpToolPhase,
@@ -49,13 +59,6 @@ export { CHATGPT_WEB_AGENT_WAIT_POLL_MS, boundedConnectorToolArguments, matching
 const turnTokenSchema = z.string().min(20).max(256);
 const contextTokenSchema = z.string().min(20).max(256);
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
-function result(value: Record<string, unknown>, isError = false) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(value) }],
-    structuredContent: value,
-    ...(isError ? { isError: true } : {}),
-  };
-}
 
 function wireName(tool: CodexTool): string {
   return namespacedToolName(tool.namespace, tool.name);
@@ -65,26 +68,23 @@ function exactTool(environment: ChatGptTurnEnvironment, name: string): CodexTool
   return environment.tools.find(tool => !tool.namespace && tool.name === name);
 }
 
-function asMcpResult(value: BrokerToolResult) {
-  return {
-    content: value.content as never,
-    ...(value.structuredContent !== undefined && value.structuredContent !== null && typeof value.structuredContent === "object"
-      ? { structuredContent: value.structuredContent as Record<string, unknown> }
-      : {}),
-    ...(value.isError ? { isError: true } : {}),
-    ...(value._meta !== undefined && value._meta !== null && typeof value._meta === "object"
-      ? { _meta: value._meta as Record<string, unknown> }
-      : {}),
-  };
-}
-
 function execGateway(environment: ChatGptTurnEnvironment): CodexTool | undefined {
   const tool = exactTool(environment, "exec");
   return tool?.freeform ? tool : undefined;
 }
 
-export async function runChatGptMcpServer(options: { brokerSocketPath: string }): Promise<void> {
-  const server = new McpServer({ name: "codex-native", version: VERSION });
+export type { ChatGptMcpContract } from "./mcp-zero-risk";
+
+export async function runChatGptMcpServer(options: {
+  brokerSocketPath: string;
+  contract?: ChatGptMcpContract;
+}): Promise<void> {
+  const contract = options.contract ?? "native";
+  const server = new McpServer(
+    { name: contract === "safe" ? "codex-safe" : "codex-native", version: VERSION },
+    contract === "safe" ? { instructions: ZERO_RISK_MCP_INSTRUCTIONS } : undefined,
+  );
+  if (contract === "safe") registerZeroRiskLifecycleTools(server, options.brokerSocketPath);
 
   const withTurn = async <T>(
     toolName: string,
@@ -97,7 +97,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       return await withClaimedTurn(options.brokerSocketPath, turnToken, extra.signal, claimed => {
         logMcpToolPhase(toolName, "claim", "completed", ` binding=${scopeHash(claimed.bindingId)}`);
         return action(claimed);
-      });
+      }, contract);
     } catch (error) {
       logMcpToolPhase(toolName, "claim", "failed", ` errorType=${diagnosticErrorType(error)}`);
       throw error;
@@ -191,7 +191,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     }, signal);
   };
 
-  server.registerTool(
+  if (contract === "native") server.registerTool(
     "codex_read_context",
     {
       title: "Read the current Codex task context",
@@ -214,9 +214,9 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     "codex_exec",
     {
       title: "Run a native Codex command",
-      description: "Invoke the command tool advertised by the current outer Codex harness. A long-running command returns its native session_id.",
+      description: afterSafeStart(contract, "Invoke the command tool advertised by the current outer Codex harness. A long-running command returns its native session_id."),
       inputSchema: {
-        turn_token: turnTokenSchema,
+        ...turnReferenceInput(contract, turnTokenSchema),
         cmd: z.string().min(1).max(100_000),
         workdir: z.string().max(16_384).optional(),
         yield_time_ms: z.number().int().min(250).max(30_000).optional(),
@@ -225,8 +225,9 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
-    async ({ turn_token, cmd, workdir, yield_time_ms, max_output_tokens, tty }, extra) => {
-      return withTurn("codex_exec", turn_token, extra, claimed => invokeNativeCommand(claimed, {
+    async (input, extra) => {
+      const { cmd, workdir, yield_time_ms, max_output_tokens, tty } = input;
+      return withTurn("codex_exec", turnReference(contract, input), extra, claimed => invokeNativeCommand(claimed, {
           cmd,
           ...(workdir ? { workdir } : {}),
           ...(yield_time_ms !== undefined ? { yieldTimeMs: yield_time_ms } : {}),
@@ -240,9 +241,9 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     "codex_write_stdin",
     {
       title: "Continue a native Codex command session",
-      description: "Write characters to, or poll, a numeric session_id or string cell_id returned by codex_exec.",
+      description: afterSafeStart(contract, "Write characters to, or poll, a numeric session_id or string cell_id returned by codex_exec."),
       inputSchema: {
-        turn_token: turnTokenSchema,
+        ...turnReferenceInput(contract, turnTokenSchema),
         session_id: z.union([z.number().int().nonnegative(), z.string().min(1).max(512)]),
         chars: z.string().max(1_000_000).optional(),
         yield_time_ms: z.number().int().min(250).max(300_000).optional(),
@@ -250,8 +251,9 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
-    async ({ turn_token, session_id, chars, yield_time_ms, max_output_tokens }, extra) => {
-      return withTurn("codex_write_stdin", turn_token, extra, claimed => {
+    async (input, extra) => {
+      const { session_id, chars, yield_time_ms, max_output_tokens } = input;
+      return withTurn("codex_write_stdin", turnReference(contract, input), extra, claimed => {
         const bound = claimed.environment;
         const cellId = typeof session_id === "string" ? session_id : undefined;
         const toolName = cellId !== undefined && chars === undefined ? "wait" : "write_stdin";
@@ -273,12 +275,13 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     "codex_apply_patch",
     {
       title: "Apply a native Codex patch",
-      description: "Invoke the outer Codex apply_patch tool, producing a native file-change item in the Codex task.",
-      inputSchema: { turn_token: turnTokenSchema, patch: z.string().min(1).max(5_000_000) },
+      description: afterSafeStart(contract, "Invoke the outer Codex apply_patch tool, producing a native file-change item in the Codex task."),
+      inputSchema: { ...turnReferenceInput(contract, turnTokenSchema), patch: z.string().min(1).max(5_000_000) },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ turn_token, patch }, extra) => {
-      return withTurn("codex_apply_patch", turn_token, extra, claimed => {
+    async (input, extra) => {
+      const { patch } = input;
+      return withTurn("codex_apply_patch", turnReference(contract, input), extra, claimed => {
         const bound = claimed.environment;
         const tool = exactTool(bound, "apply_patch");
         if (!tool) return invokeNestedNative(claimed.bindingId, bound, "apply_patch", true, { input: patch }, extra.signal);
@@ -293,16 +296,17 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     "codex_view_image",
     {
       title: "View an image through native Codex",
-      description: "Invoke the outer Codex view_image tool and return its multimodal result to this same ChatGPT response.",
+      description: afterSafeStart(contract, "Invoke the outer Codex view_image tool and return its multimodal result to this same ChatGPT response."),
       inputSchema: {
-        turn_token: turnTokenSchema,
+        ...turnReferenceInput(contract, turnTokenSchema),
         path: z.string().min(1).max(16_384),
         detail: z.enum(["high", "original"]).optional(),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ turn_token, path, detail }, extra) => {
-      return withTurn("codex_view_image", turn_token, extra, claimed => {
+    async (input, extra) => {
+      const { path, detail } = input;
+      return withTurn("codex_view_image", turnReference(contract, input), extra, claimed => {
         const bound = claimed.environment;
         const tool = exactTool(bound, "view_image");
         const payload = { arguments: { path, ...(detail ? { detail } : {}) } };
@@ -317,9 +321,11 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     "codex_tool_inventory",
     {
       title: "Discover tools from the current Codex harness",
-      description: "Search the exact tool registry supplied to the current outer Codex turn, including configured MCP/app tools.",
+      description: contract === "safe"
+        ? "List tools available to the connected Zero Risk request, including configured MCP and app tools."
+        : "Search the exact tool registry supplied to the current outer Codex turn, including configured MCP/app tools.",
       inputSchema: {
-        turn_token: turnTokenSchema,
+        ...turnReferenceInput(contract, turnTokenSchema),
         query: z.string().max(500).optional(),
         offset: z.number().int().min(0).max(100_000).default(0),
         limit: z.number().int().min(1).max(50).default(20),
@@ -327,11 +333,13 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ turn_token, query, offset, limit, include_schema }, extra) => {
+    async (input, extra) => {
+      const { query, offset, limit, include_schema } = input;
+      const requestId = turnReference(contract, input);
       const deferredSearch = /^__codex_tool_search__:([\s\S]+)$/.exec(query ?? "");
       const readFile = /^__codex_read_file__:([\s\S]+)$/.exec(query ?? "");
-      if (deferredSearch || readFile) {
-        return withTurn("codex_tool_inventory", turn_token, extra, claimed => {
+      if (contract === "native" && (deferredSearch || readFile)) {
+        return withTurn("codex_tool_inventory", requestId, extra, claimed => {
           if (deferredSearch) {
             const searchQuery = deferredSearch[1]!.trim();
             if (!searchQuery) throw new Error("Codex deferred tool search query is empty");
@@ -349,7 +357,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
         });
       }
       const archiveMatch = /^__codex_context__:(\d+)$/.exec(query?.trim() ?? "");
-      if (archiveMatch) {
+      if (contract === "native" && archiveMatch) {
         const requestedIndex = Number(archiveMatch[1]);
         const archive = await callTurnBroker<{
           context: string;
@@ -359,7 +367,7 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
           nextIndex: number | null;
         }>(options.brokerSocketPath, {
           method: "read_context",
-          token: turn_token,
+          token: requestId,
           index: requestedIndex,
           chunkChars: CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS,
         }, 5_000, extra.signal);
@@ -368,9 +376,9 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
           text: formatContextArchiveChunk(archive),
         }] };
       }
-      return withTurn("codex_tool_inventory", turn_token, extra, claimed => {
+      return withTurn("codex_tool_inventory", requestId, extra, claimed => {
         const bound = claimed.environment;
-        const matches = matchingToolInventory(bound.tools, query);
+        const matches = matchingToolInventory(safeVisibleTools(bound, contract), query);
         const directPage = matches.slice(offset, offset + limit).map(tool => ({
           wire_name: wireName(tool),
           name: tool.name,
@@ -408,17 +416,19 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
     "codex_tool_call",
     {
       title: "Call any tool from the current Codex harness",
-      description: "Invoke an exact wire_name returned by codex_tool_inventory. The outer Codex runtime performs the call, approvals, and UI lifecycle.",
+      description: afterSafeStart(contract, "Invoke an exact wire_name returned by codex_tool_inventory. The outer Codex runtime performs the call, approvals, and UI lifecycle."),
       inputSchema: {
-        turn_token: turnTokenSchema,
+        ...turnReferenceInput(contract, turnTokenSchema),
         wire_name: z.string().min(1).max(1_000),
         arguments: jsonArgumentsSchema.optional(),
         input: z.string().max(5_000_000).optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
-    async ({ turn_token, wire_name, arguments: args, input }, extra) => {
-      if (wire_name === CODEX_COMPACTION_CONTROL_WIRE_NAME) {
+    async (toolInput, extra) => {
+      const { wire_name, arguments: args, input } = toolInput;
+      const requestId = turnReference(contract, toolInput);
+      if (contract === "native" && wire_name === CODEX_COMPACTION_CONTROL_WIRE_NAME) {
         if (input !== undefined) throw new Error("Compaction control handoff does not accept freeform input");
         const handoffId = args?.handoff_id;
         const summary = args?.summary;
@@ -428,18 +438,19 @@ export async function runChatGptMcpServer(options: { brokerSocketPath: string })
         if (typeof summary !== "string") throw new Error("Compaction control handoff requires summary");
         await callTurnBroker(options.brokerSocketPath, {
           method: "submit_compaction_handoff",
-          token: turn_token,
+          token: requestId,
           handoffId,
           summary,
         }, 5_000, extra.signal);
         return result({ submitted: true });
       }
-      return withTurn("codex_tool_call", turn_token, extra, claimed => {
+      return withTurn("codex_tool_call", requestId, extra, claimed => {
         const bound = claimed.environment;
-        const tool = bound.tools.find(candidate => wireName(candidate) === wire_name);
+        const tool = safeVisibleTools(bound, contract).find(candidate => wireName(candidate) === wire_name);
         if (!tool) {
           const gateway = execGateway(bound);
-          if (!gateway || !gatewayToolNameIsValid(wire_name)) {
+          const hiddenOuterTool = bound.tools.some(candidate => wireName(candidate) === wire_name);
+          if (!gateway || hiddenOuterTool || !gatewayToolNameIsValid(wire_name)) {
             throw new Error(`Codex tool is not available in this turn: ${wire_name}`);
           }
           if (input !== undefined && args && Object.keys(args).length > 0) {

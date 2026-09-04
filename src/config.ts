@@ -3,93 +3,17 @@ import { chmodSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFil
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import { tmpdir } from "node:os";
-import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
 import { effectiveExperimentalBiggerContext } from "./context-mode";
 
-export type RuntimeMode = "browser-only" | "full";
-export type BrowserHostMode = "managed-chrome" | "launcher";
-export type SubagentProtocol = "compatibility-v1" | "native";
-
-/**
- * ChatGPT caches a connector's public MCP contract by connector identity. The direct turn-token
- * contract therefore has a new identity instead of mutating the retired connector in place.
- */
-export const CHATGPT_CONNECTOR_NAME = "Codex Native2";
-export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
-export const LEGACY_CHATGPT_CONNECTOR_NAMES = ["Codex Native"] as const;
-
-export function isLegacyChatGptConnectorName(value: string): boolean {
-  return (LEGACY_CHATGPT_CONNECTOR_NAMES as readonly string[]).includes(value);
-}
-
-export function legacyChatGptConnectorMigrationMessage(legacyName: string): string {
-  return `Legacy ChatGPT connector ${JSON.stringify(legacyName)} was found, but this release requires`
-    + ` a newly created connector named ${JSON.stringify(CHATGPT_CONNECTOR_NAME)}. Create`
-    + ` ${JSON.stringify(CHATGPT_CONNECTOR_NAME)} against the same tunnel with Authentication set to None;`
-    + ` do not rename or refresh ${JSON.stringify(legacyName)}.`;
-}
-
-export function resolveSetupConnectorName(existingName?: string, requestedName?: string): string {
-  if (requestedName !== undefined) {
-    const requested = requestedName.trim();
-    if (!requested || requested.length > 80) throw new Error("Connector name is invalid");
-    if (isLegacyChatGptConnectorName(requested)) {
-      throw new Error(legacyChatGptConnectorMigrationMessage(requested));
-    }
-    return requested;
-  }
-  const existing = existingName?.trim();
-  if (!existing || isLegacyChatGptConnectorName(existing)) return CHATGPT_CONNECTOR_NAME;
-  return existing;
-}
-
-export function resolveDevSetupConnectorName(existingName?: string, requestedName?: string): string {
-  if (requestedName !== undefined) return resolveSetupConnectorName(existingName, requestedName);
-  const existing = existingName?.trim();
-  if (!existing || existing === CHATGPT_CONNECTOR_NAME || isLegacyChatGptConnectorName(existing)) {
-    return DEV_CHATGPT_CONNECTOR_NAME;
-  }
-  return resolveSetupConnectorName(existing);
-}
-
-export interface TunnelConfig {
-  binaryPath: string;
-  tunnelId: string;
-  runtimeKeyFile: string;
-  profileDir: string;
-  profileName: string;
-  alias: string;
-}
-
-export interface AppConfig {
-  version: 3;
-  purpose?: "dev-harness";
-  releaseVersion: string;
-  mode: RuntimeMode;
-  subagentProtocol: SubagentProtocol;
-  host: "127.0.0.1";
-  port: number;
-  contextWindow: number;
-  useEnhancedWebSessionMode: boolean;
-  appName: string;
-  browserHost: BrowserHostMode;
-  browserHostDescriptorPath?: string;
-  chromeExecutablePath: string;
-  storageStatePath: string;
-  brokerSocketPath: string;
-  headed: boolean;
-  solAvailable: boolean;
-  proAvailable: boolean;
-  experimentalBiggerContext: boolean;
-  /** Optional adapter-silence budget for the Responses watchdog. */
-  stallTimeoutSec?: number;
-  autoApproveToolCalls: boolean;
-  controlToken: string;
-  runtimeCommand: string[];
-  acknowledgedUnofficialAt?: string;
-  tunnel?: TunnelConfig;
-}
+import {
+  CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+  isLegacyChatGptConnectorName, resolveDevSetupConnectorName, resolveInteractionConnectorIdentities,
+  resolveSetupConnectorName, tunnelConfigForInteractionMode,
+  type AppConfig, type RuntimeMode, type TunnelConfig,
+} from "./config-interaction";
+export * from "./config-interaction";
+export { providerConfig } from "./provider-config";
 
 export function expandUserPath(value: string): string {
   if (value === "~") return homedir();
@@ -178,7 +102,10 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     contextWindow: 256_000,
     useEnhancedWebSessionMode: true,
     appName: CHATGPT_CONNECTOR_NAME,
+    automaticAppName: CHATGPT_CONNECTOR_NAME,
+    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
     browserHost: "managed-chrome",
+    browserInteractionMode: "automatic",
     chromeExecutablePath: defaultChromeExecutable(),
     storageStatePath: join(home, "browser", "storage-state.json"),
     brokerSocketPath: defaultBrokerEndpoint(home),
@@ -186,6 +113,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     solAvailable: true,
     proAvailable: false,
     experimentalBiggerContext: false,
+    zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
     runtimeCommand: currentRuntimeCommand(),
@@ -346,6 +274,16 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.browserHost !== "managed-chrome" && parsed.browserHost !== "launcher") {
     throw new Error(`Invalid browserHost in ${path}`);
   }
+  const browserInteractionMode = parsed.browserInteractionMode ?? "automatic";
+  if (browserInteractionMode !== "automatic" && browserInteractionMode !== "manual") {
+    throw new Error(`Invalid browserInteractionMode in ${path}`);
+  }
+  if (browserInteractionMode === "manual" && parsed.mode !== "full") {
+    throw new Error(`Zero Risk requires full mode in ${path}`);
+  }
+  if (browserInteractionMode === "manual" && parsed.browserHost !== "launcher") {
+    throw new Error(`Zero Risk requires the launcher browser host in ${path}`);
+  }
   if (!Number.isInteger(parsed.port) || parsed.port! < 1 || parsed.port! > 65_535) throw new Error(`Invalid port in ${path}`);
   if (!Number.isSafeInteger(parsed.contextWindow) || parsed.contextWindow! <= 0) {
     throw new Error(`Invalid contextWindow in ${path}`);
@@ -372,6 +310,19 @@ function parseConfig(value: unknown, path: string): AppConfig {
     if (typeof parsed[key] !== "string" || !(parsed[key] as string).trim()) throw new Error(`Missing ${key} in ${path}`);
   }
   if (parsed.appName!.length > 80) throw new Error(`appName is too long in ${path}`);
+  const automaticAppName = parsed.automaticAppName
+    ?? (browserInteractionMode === "automatic" ? parsed.appName : CHATGPT_CONNECTOR_NAME);
+  const manualAppName = parsed.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  if (typeof automaticAppName !== "string" || !automaticAppName.trim() || automaticAppName.length > 80) {
+    throw new Error(`Invalid automaticAppName in ${path}`);
+  }
+  if (manualAppName !== ZERO_RISK_CHATGPT_CONNECTOR_NAME) {
+    throw new Error(`manualAppName must be ${JSON.stringify(ZERO_RISK_CHATGPT_CONNECTOR_NAME)} in ${path}`);
+  }
+  const expectedAppName = browserInteractionMode === "manual" ? manualAppName : automaticAppName;
+  if (parsed.appName !== expectedAppName) {
+    throw new Error(`Active appName does not match browserInteractionMode in ${path}; rerun setup`);
+  }
   if (parsed.browserHost === "launcher"
     && (typeof parsed.browserHostDescriptorPath !== "string" || !parsed.browserHostDescriptorPath.trim())) {
     throw new Error(`Launcher browser host requires browserHostDescriptorPath in ${path}`);
@@ -389,25 +340,41 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`brokerSocketPath must be an absolute Unix socket path in ${path}`);
   }
   if (!/^[A-Za-z0-9_-]{40,}$/.test(parsed.controlToken!)) throw new Error(`Invalid controlToken in ${path}`);
-  if (parsed.mode === "full") {
-    if (!parsed.tunnel || typeof parsed.tunnel !== "object") throw new Error("Full mode requires tunnel configuration");
+  const validateTunnel = (tunnel: TunnelConfig | undefined, label: string): void => {
+    if (!tunnel || typeof tunnel !== "object") throw new Error(`${label} is missing in ${path}`);
     for (const key of ["binaryPath", "tunnelId", "runtimeKeyFile", "profileDir", "profileName", "alias"] as const) {
-      if (typeof parsed.tunnel[key] !== "string" || !parsed.tunnel[key].trim()) {
-        throw new Error(`Missing tunnel.${key} in ${path}`);
+      if (typeof tunnel[key] !== "string" || !tunnel[key].trim()) {
+        throw new Error(`Missing ${label}.${key} in ${path}`);
       }
     }
-    if (!/^tunnel_[a-f0-9]{32}$/.test(parsed.tunnel.tunnelId)) {
-      throw new Error(`Invalid tunnel.tunnelId in ${path}`);
+    if (!/^tunnel_[a-f0-9]{32}$/.test(tunnel.tunnelId)) {
+      throw new Error(`Invalid ${label}.tunnelId in ${path}`);
     }
     for (const key of ["profileName", "alias"] as const) {
-      if (!/^[A-Za-z0-9._-]+$/.test(parsed.tunnel[key])) {
-        throw new Error(`Invalid tunnel.${key} in ${path}`);
+      if (!/^[A-Za-z0-9._-]+$/.test(tunnel[key])) {
+        throw new Error(`Invalid ${label}.${key} in ${path}`);
       }
     }
     for (const key of ["binaryPath", "runtimeKeyFile", "profileDir"] as const) {
-      if (!isAbsolute(expandUserPath(parsed.tunnel[key]))) {
-        throw new Error(`tunnel.${key} must be absolute in ${path}`);
+      if (!isAbsolute(expandUserPath(tunnel[key]))) {
+        throw new Error(`${label}.${key} must be absolute in ${path}`);
       }
+    }
+  };
+  if (parsed.mode === "full") {
+    validateTunnel(parsed.tunnel, "tunnel");
+    if (parsed.automaticTunnel !== undefined) validateTunnel(parsed.automaticTunnel, "automaticTunnel");
+    if (parsed.manualTunnel !== undefined) validateTunnel(parsed.manualTunnel, "manualTunnel");
+    if (parsed.automaticTunnel && parsed.manualTunnel
+      && parsed.automaticTunnel.tunnelId === parsed.manualTunnel.tunnelId) {
+      throw new Error(`Automatic and Zero Risk must use different Tunnel IDs in ${path}`);
+    }
+    const activeTunnel = browserInteractionMode === "manual" ? parsed.manualTunnel : parsed.automaticTunnel;
+    if ((parsed.automaticTunnel || parsed.manualTunnel) && !activeTunnel) {
+      throw new Error(`Active browser interaction mode has no tunnel configuration in ${path}`);
+    }
+    if (activeTunnel && JSON.stringify(activeTunnel) !== JSON.stringify(parsed.tunnel)) {
+      throw new Error(`Active tunnel does not match browserInteractionMode in ${path}; rerun MCP setup`);
     }
   }
   if (!Array.isArray(parsed.runtimeCommand) || parsed.runtimeCommand.length === 0
@@ -425,6 +392,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && typeof parsed.experimentalBiggerContext !== "boolean") {
     throw new Error(`Invalid experimentalBiggerContext in ${path}`);
   }
+  if (parsed.zeroRiskProEnabled !== undefined && typeof parsed.zeroRiskProEnabled !== "boolean") {
+    throw new Error(`Invalid zeroRiskProEnabled in ${path}`);
+  }
   if (parsed.stallTimeoutSec !== undefined
     && (!Number.isFinite(parsed.stallTimeoutSec) || parsed.stallTimeoutSec <= 0)) {
     throw new Error(`Invalid stallTimeoutSec in ${path}`);
@@ -432,9 +402,14 @@ function parseConfig(value: unknown, path: string): AppConfig {
   const solAvailable = parsed.solAvailable !== false;
   const proAvailable = parsed.proAvailable === true;
   const useEnhancedWebSessionMode = parsed.useEnhancedWebSessionMode ?? (parsed.useNewCompactMode === true);
+  const requestedBiggerContext = parsed.experimentalBiggerContext === true;
+  const zeroRiskProEnabled = parsed.zeroRiskProEnabled === true;
+  if (browserInteractionMode === "manual" && requestedBiggerContext) {
+    throw new Error(`Zero Risk does not support Bigger Context in ${path}`);
+  }
   const experimentalBiggerContext = effectiveExperimentalBiggerContext(
     useEnhancedWebSessionMode,
-    parsed.experimentalBiggerContext === true,
+    requestedBiggerContext,
   );
   if (proAvailable && !solAvailable) {
     throw new Error(`Invalid ChatGPT account capabilities in ${path}: Pro requires Sol`);
@@ -443,10 +418,15 @@ function parseConfig(value: unknown, path: string): AppConfig {
   return {
     ...canonical,
     useEnhancedWebSessionMode,
+    appName: expectedAppName,
+    automaticAppName,
+    manualAppName,
+    browserInteractionMode,
     subagentProtocol,
     solAvailable,
     proAvailable,
     experimentalBiggerContext,
+    zeroRiskProEnabled,
   } as AppConfig;
 }
 
@@ -457,44 +437,4 @@ export function saveConfig(config: AppConfig): void {
     config.useEnhancedWebSessionMode, config.experimentalBiggerContext,
   ) };
   atomicWriteFile(path, preserveUtf8Bom(`${JSON.stringify(canonical, null, 2)}\n`, original));
-}
-
-export function providerConfig(config: AppConfig): CodexProviderConfig {
-  const model = config.solAvailable ? "gpt-5.6-sol" : "gpt-5.6-luna";
-  const models = [model];
-  const efforts = config.solAvailable
-    ? ["low", "medium", "high", "xhigh", ...(config.proAvailable ? ["max"] : [])]
-    : ["low", "medium"];
-  return {
-    adapter: "chatgpt-web",
-    baseUrl: "https://chatgpt.com",
-    models,
-    liveModels: false,
-    defaultModel: model,
-    contextWindow: config.contextWindow,
-    modelInputModalities: Object.fromEntries(models.map(model => [model, ["text", "image"]])),
-    modelReasoningEfforts: { [model]: efforts },
-    modelDefaultReasoningEfforts: { [model]: config.solAvailable ? "high" : "low" },
-    noReasoningModels: [],
-    chatgptWeb: {
-      appName: config.appName,
-      browserHost: config.browserHost,
-      browserHostDescriptorPath: config.browserHostDescriptorPath,
-      storageStatePath: config.storageStatePath,
-      chromeExecutablePath: config.chromeExecutablePath,
-      brokerSocketPath: config.brokerSocketPath,
-      threadEnvironmentStatePath: join(getConfigDir(), "runtime", "thread-environments.json"),
-      lunaCheckpointStatePath: join(getConfigDir(), "runtime", "luna-checkpoints.json"),
-      headed: config.headed,
-      localToolsEnabled: config.mode === "full",
-      solAvailable: config.solAvailable,
-      proAvailable: config.proAvailable,
-      useEnhancedWebSessionMode: config.useEnhancedWebSessionMode,
-      experimentalBiggerContext: effectiveExperimentalBiggerContext(
-        config.useEnhancedWebSessionMode, config.experimentalBiggerContext,
-      ),
-      ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
-      autoApproveToolCalls: config.autoApproveToolCalls,
-    },
-  };
 }

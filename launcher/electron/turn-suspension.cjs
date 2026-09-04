@@ -2,9 +2,8 @@
 
 /**
  * System sleep freezes both sides of the turn-lease protocol at once: the helper cannot send
- * heartbeats and the launcher cannot observe them. On wake every stalled timer fires together, and
- * without these guards the first sweep after a sleep reaped live turns as orphans — pmset logged
- * 'Idle Sleep' 41 seconds into two running turns, and both died on the next DarkWake to the second.
+ * heartbeats and the launcher cannot observe them. The first sweep after wake must re-baseline
+ * active leases instead of treating the suspended interval as process failure.
  */
 
 /**

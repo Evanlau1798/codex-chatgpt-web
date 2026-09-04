@@ -49,7 +49,7 @@ test("manual browser reveal preserves explicit activation", () => {
   assert.deepEqual(events, ["restore", "show", "visibility", "state", "focus"]);
 });
 
-test("turn acquisition requests non-activating visibility", () => {
+test("turn acquisition requests non-activating visibility", async () => {
   const showOptions = [];
   const tab = { id: "tab-1", surfaceId: "surface-1" };
   const fixture = {
@@ -64,7 +64,7 @@ test("turn acquisition requests non-activating visibility", () => {
     logger: { info() {} },
   };
 
-  const lease = BrowserHost.prototype.beginTurn.call(fixture, "trace-1", true, 1234);
+  const lease = await BrowserHost.prototype.beginTurn.call(fixture, "trace-1", true, 1234);
 
   assert.deepEqual(showOptions, [{ activate: false }]);
   assert.deepEqual(lease, { surfaceId: "surface-1", tabId: "tab-1", reused: false });

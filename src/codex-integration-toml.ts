@@ -104,14 +104,14 @@ export function assignments(lines: string[]): Record<ManagedAssignmentKey, Previ
 
 export function textFormat(text: string): NonNullable<CodexIntegrationJournal["format"]> {
   return {
-    lineEnding: text.includes("\r\n") ? "\r\n" : "\n",
-    trailingNewline: /\r?\n$/.test(text),
+    lineEnding: text.includes("\r\n") ? "\r\n" : text.includes("\r") ? "\r" : "\n",
+    trailingNewline: /(?:\r\n|\n|\r)$/.test(text),
   };
 }
 
 export function splitLines(text: string): string[] {
   const normalized = stripUtf8Bom(text);
-  return normalized.length > 0 ? normalized.replace(/\r?\n$/, "").split(/\r?\n/) : [];
+  return normalized.length > 0 ? normalized.replace(/(?:\r\n|\n|\r)$/, "").split(/\r\n|\n|\r/) : [];
 }
 
 export interface CodexConfigDocument {

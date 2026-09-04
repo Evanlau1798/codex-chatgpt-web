@@ -82,12 +82,71 @@ function inlineFilePath(node: Node): string | undefined {
 
 function preserveObsidianWikiLinks(markdown: string): string {
   // Turndown escapes literal brackets, but Codex interprets the resulting `\[` as LaTeX.
-  // Double-bracket wiki links are already plain GFM text, so preserve only that exact syntax.
+  // Restore the source syntax before converting it into a regular Markdown file link.
   return markdown.replace(/\\\[\\\[([^\r\n]*?)\\\]\\\]/g, "[[$1]]");
 }
 
+function obsidianWikiLink(value: string): string | undefined {
+  const separator = value.indexOf("|");
+  const target = (separator >= 0 ? value.slice(0, separator) : value).trim();
+  const label = (separator >= 0 ? value.slice(separator + 1) : value).trim();
+  if (!target || !label || /[<>]/.test(target)) return undefined;
+
+  const fragmentAt = target.indexOf("#");
+  const note = fragmentAt >= 0 ? target.slice(0, fragmentAt) : target;
+  const fragment = fragmentAt >= 0 ? target.slice(fragmentAt) : "";
+  const extension = note.slice(note.lastIndexOf("/") + 1).includes(".");
+  const path = note && !extension ? `${note}.md` : note;
+  return `[${label}](<${path}${fragment}>)`;
+}
+
+function linkObsidianWikiLinks(markdown: string): string {
+  let fence: { marker: "`" | "~"; length: number } | undefined;
+  return markdown.split("\n").map(line => {
+    const fenceRun = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
+    if (fence) {
+      const closingRun = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/)?.[1];
+      if (closingRun?.[0] === fence.marker && closingRun.length >= fence.length) fence = undefined;
+      return line;
+    }
+    if (fenceRun) {
+      fence = { marker: fenceRun[0] as "`" | "~", length: fenceRun.length };
+      return line;
+    }
+
+    let result = "";
+    let inlineCodeTicks = 0;
+    for (let index = 0; index < line.length;) {
+      if (line[index] === "`") {
+        let end = index + 1;
+        while (line[end] === "`") end += 1;
+        const ticks = end - index;
+        inlineCodeTicks = inlineCodeTicks === 0 ? ticks : ticks === inlineCodeTicks ? 0 : inlineCodeTicks;
+        result += line.slice(index, end);
+        index = end;
+        continue;
+      }
+      if (inlineCodeTicks === 0 && line.startsWith("[[", index) && line[index - 1] !== "!") {
+        const end = line.indexOf("]]", index + 2);
+        if (end >= 0) {
+          const linked = obsidianWikiLink(line.slice(index + 2, end));
+          if (linked) {
+            result += linked;
+            index = end + 2;
+            continue;
+          }
+        }
+      }
+      result += line[index];
+      index += 1;
+    }
+    return result;
+  }).join("\n");
+}
+
 export function chatGptHtmlToMarkdown(html: string): string {
-  return html.trim() ? preserveObsidianWikiLinks(turndown.turndown(html)).trim() : "";
+  if (!html.trim()) return "";
+  return linkObsidianWikiLinks(preserveObsidianWikiLinks(turndown.turndown(html))).trim();
 }
 
 export interface ChatGptMarkdownSegment {

@@ -17,8 +17,14 @@ test("Codex lifecycle smoke forces compaction within bounded read-only review wo
   expect(lifecycleAutoCompactTokenLimit).toBe(70_000);
 });
 
-test("Codex lifecycle smoke keeps the model route aligned with xhigh turns", () => {
-  expect(codexLifecycleModel).toBe("chatgpt-web/extra-high");
+test("Codex live lanes keep Pro selected through hierarchy and resume", () => {
+  expect(codexLifecycleModel).toBe("chatgpt-web/pro");
+  for (const name of ["codex-lane", "codex-v2-scenario"]) {
+    const source = readFileSync(new URL(`../scripts/lifecycle-smoke/${name}.ts`, import.meta.url), "utf8");
+    expect(source).toContain('effort: "ultra"');
+    expect(source).not.toContain('"xhigh"');
+    expect(source).not.toContain('"chatgpt-web/extra-high"');
+  }
 });
 
 test("Codex lifecycle provider reuses the signed-in Codex OAuth token", () => {

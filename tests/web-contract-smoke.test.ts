@@ -13,6 +13,14 @@ import {
 } from "../scripts/lifecycle-smoke/web-contract-core";
 
 describe("lightweight Web contract smoke", () => {
+  test("uses the requested Medium route without model fallback", () => {
+    const script = readFileSync(new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url), "utf8");
+    expect(script).toContain('model: "chatgpt-web/medium"');
+    expect(script).toContain('reasoning: { effort: "medium" }');
+    expect(script).not.toContain("session.proAvailable !== true");
+    expect(script).not.toContain('model: "chatgpt-web/high"');
+    expect(script).not.toContain('model: "chatgpt-web/extra-high"');
+  });
   test("refreshes once for connector verification before inspecting the hydrated surface", () => {
     const script = readFileSync(new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url), "utf8");
     const verifyAt = script.indexOf("const connectorVerified = await verifyLauncherBrowserConnector");

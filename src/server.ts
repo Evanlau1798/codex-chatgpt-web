@@ -3,7 +3,7 @@ import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worke
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import { handleClaudeSteeringHook } from "./messages/steering-hook";
-import { chatGptBrowserTabClosedError } from "./adapters/chatgpt-web/adapter-error";
+import { handleTurnCancellation } from "./server-turn-cancellation";
 import {
   CHATGPT_TURN_REVISION_CONFLICT_MESSAGE,
   extractChatGptTurnUserRevision,
@@ -44,7 +44,11 @@ export type { ResponseRequestOptions } from "./server-dependencies";
 export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppConfig): ChatGptWebModelRoute {
   const route = requireChatGptWebModelRoute(parsed.modelId, config);
   parsed.modelId = route.backendModel;
-  parsed.options.reasoning = route.adapterEffort;
+  // Zero Risk preserves a distinct backend identity. Its immutable Codex effort is only a
+  // protocol/catalog value; the manual adapter must never reinterpret it as a ChatGPT selection.
+  parsed.options.reasoning = route.interactionMode === "automatic"
+    ? route.adapterEffort
+    : route.codexEffort;
   return route;
 }
 
@@ -321,46 +325,8 @@ export function startServer(
         turnBroker?.setExternalOwnersAccepted(false);
         return Response.json({ status: "ok", acquired: true, accepting_turns: false, ...current });
       }
-      if (req.method === "POST" && url.pathname === "/admin/cancel-browser-turns") {
-        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
-        const cancelled = chatGptTurnSessions.clear() + (turnBroker?.revokeExternalOwners() ?? 0);
-        return Response.json({ status: "ok", cancelled_browser_turns: cancelled, ...activity() });
-      }
-      if (req.method === "POST" && url.pathname === "/admin/cancel-turn") {
-        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
-        let traceId: string;
-        try {
-          const body = await req.json() as { traceId?: unknown };
-          traceId = typeof body?.traceId === "string" ? body.traceId : "";
-          if (!/^[A-Za-z0-9_-]{6,128}$/.test(traceId)) throw new Error("traceId is invalid");
-        } catch (error) {
-          return Response.json(
-            { status: "error", error: error instanceof Error ? error.message : String(error) },
-            { status: 400 },
-          );
-        }
-        const reason = chatGptBrowserTabClosedError();
-        const cancelledBrowserTurns = await chatGptTurnSessions.cancelTrace(traceId, reason);
-        const cancelledBrokerTurns = turnBroker?.revokeTrace(traceId, reason) ?? 0;
-        return Response.json({
-          status: "ok",
-          trace_id: traceId,
-          cancelled_browser_turns: cancelledBrowserTurns,
-          cancelled_broker_turns: cancelledBrokerTurns,
-          ...activity(),
-        });
-      }
-      if (req.method === "POST" && url.pathname === "/admin/cancel-turns") {
-        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
-        const cancelledBrowserTurns = chatGptTurnSessions.clear() + (turnBroker?.revokeExternalOwners() ?? 0);
-        const cancelledHttpTurns = await httpTurns.cancelAll(new Error("Active turn cancelled by launcher"));
-        return Response.json({
-          status: "ok",
-          cancelled_http_turns: cancelledHttpTurns,
-          cancelled_browser_turns: cancelledBrowserTurns,
-          ...activity(),
-        });
-      }
+      const cancellation = await handleTurnCancellation(req, url.pathname, config.controlToken, httpTurns, turnBroker, activity);
+      if (cancellation) return cancellation;
       if (req.method === "POST" && url.pathname === "/admin/shutdown") {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
         const current = activity();

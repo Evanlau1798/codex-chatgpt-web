@@ -19,8 +19,10 @@ export type ChatGptSubmissionEvidence =
 
 export async function activateChatGptSendControl(
   sendButton: Pick<Locator, "press">,
+  signal?: AbortSignal,
 ): Promise<void> {
-  await sendButton.press("Enter");
+  // The outer stage owns the budget; submission evidence remains the completion authority.
+  await sendButton.press("Enter", { noWaitAfter: true, timeout: 0, signal });
 }
 
 export async function readChatGptAssistantTurnState(

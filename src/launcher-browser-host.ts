@@ -15,6 +15,15 @@ export class LauncherBrowserTurnCancelledError extends Error {
   }
 }
 
+export class LauncherRetainedConversationUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LauncherRetainedConversationUnavailableError";
+  }
+}
+
+export * from "./launcher-manual-control";
+
 export interface LauncherBrowserHostDescriptor {
   version: 2;
   kind: typeof LAUNCHER_BROWSER_HOST_KIND;
@@ -158,6 +167,23 @@ async function assertCdpReady(descriptor: LauncherBrowserHostDescriptor, timeout
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function inspectLauncherBrowserHostLiveness(
+  descriptorPath: string,
+  options: {
+    expectedProfile?: LauncherBrowserHostProfile;
+    timeoutMs?: number;
+  } = {},
+): Promise<LauncherBrowserHostDescriptor> {
+  const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+  if (options.expectedProfile && descriptor.profile !== options.expectedProfile) {
+    throw new Error(
+      `Launcher browser belongs to ${descriptor.profile}, but ${options.expectedProfile} was required`,
+    );
+  }
+  await assertCdpReady(descriptor, options.timeoutMs ?? 5_000);
+  return descriptor;
 }
 
 export async function selectLauncherPage(

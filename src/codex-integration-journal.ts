@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { atomicWriteFile, stripUtf8Bom } from "./config";
+import type { AppConfig } from "./config";
 import {
+  CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
   getCodexConfigPath,
   getCodexJournalPath,
   getCodexJournalRecoveryPath,
@@ -17,12 +19,38 @@ import type {
   LegacyCodexIntegrationJournalV5,
   LegacyCodexIntegrationJournalV6,
   LegacyCodexIntegrationJournalV7,
+  LegacyCodexIntegrationJournalV8,
 } from "./codex-integration-shared";
 import { verifyManagedJournalState } from "./codex-integration-route";
+
+function isPreviousAssignment(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const assignment = value as Record<string, unknown>;
+  if (typeof assignment.present !== "boolean") return false;
+  return !assignment.present
+    || (typeof assignment.rawLine === "string" && typeof assignment.value === "string");
+}
 
 function parseJournal(path: string): AnyCodexIntegrationJournal {
   const value = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
   const installed = value.installed as Record<string, unknown> | undefined;
+  if (value.version === 9
+    && typeof value.active === "boolean"
+    && installed
+    && typeof installed.openai_base_url === "string"
+    && installed.experimental_realtime_webrtc_call_base_url === CODEX_REALTIME_WEBRTC_CALL_BASE_URL
+    && (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
+    && (installed.subagent_protocol !== "compatibility-v1"
+      || (value.previousMultiAgent && value.previousMultiAgentV2
+        && value.previousAgentMaxDepth
+        && typeof installed.agent_max_depth === "number"
+        && Number.isSafeInteger(installed.agent_max_depth)
+        && installed.agent_max_depth >= 2))
+    && value.previous
+    && isPreviousAssignment(value.previousRealtimeWebrtcCallBaseUrl)
+    && typeof value.configPath === "string") {
+    return value as unknown as CodexIntegrationJournal;
+  }
   if (value.version === 8
     && typeof value.active === "boolean"
     && installed
@@ -35,7 +63,7 @@ function parseJournal(path: string): AnyCodexIntegrationJournal {
         && installed.agent_max_depth >= 2))
     && value.previous
     && typeof value.configPath === "string") {
-    return value as unknown as CodexIntegrationJournal;
+    return value as unknown as LegacyCodexIntegrationJournalV8;
   }
   if (value.version === 7
     && typeof value.active === "boolean"
@@ -91,7 +119,7 @@ function journalMatchesConfig(journal: AnyCodexIntegrationJournal): boolean {
   }
 }
 
-export function readJournal(): AnyCodexIntegrationJournal | undefined {
+export function readJournal({ repair = true } = {}): AnyCodexIntegrationJournal | undefined {
   const primaryPath = getCodexJournalPath();
   const recoveryPath = getCodexJournalRecoveryPath();
   let primary: AnyCodexIntegrationJournal | undefined;
@@ -111,14 +139,14 @@ export function readJournal(): AnyCodexIntegrationJournal | undefined {
   }
   if (primary && recovery && serializeJournal(primary) === serializeJournal(recovery)) return primary;
   if (primary && !recovery && !recoveryError) {
-    atomicWriteFile(recoveryPath, serializeJournal(primary));
+    if (repair) atomicWriteFile(recoveryPath, serializeJournal(primary));
     return primary;
   }
   if (recovery && !primary && !primaryError) {
     if (!journalMatchesConfig(recovery)) {
       throw new Error("Codex integration recovery journal does not match the active config");
     }
-    atomicWriteFile(primaryPath, serializeJournal(recovery));
+    if (repair) atomicWriteFile(primaryPath, serializeJournal(recovery));
     return recovery;
   }
 
@@ -133,11 +161,21 @@ export function readJournal(): AnyCodexIntegrationJournal | undefined {
   }
   const selected = primaryMatches ? primary! : recovery!;
   const data = serializeJournal(selected);
-  writeFilesWithCompensation([
-    { path: recoveryPath, data },
-    { path: primaryPath, data },
-  ]);
+  if (repair) {
+    writeFilesWithCompensation([
+      { path: recoveryPath, data },
+      { path: primaryPath, data },
+    ]);
+  }
   return selected;
+}
+
+export function readCodexSubagentProtocol(
+  fallback: AppConfig["subagentProtocol"] = "compatibility-v1",
+  options: { repair?: boolean } = {},
+): AppConfig["subagentProtocol"] {
+  const journal = readJournal(options);
+  return journal?.version === 8 || journal?.version === 9 ? journal.installed.subagent_protocol : fallback;
 }
 
 export function assertJournalTargetsConfig(

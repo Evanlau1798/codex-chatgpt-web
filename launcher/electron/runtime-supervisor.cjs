@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const { errorMessage, appendFailure, runtimeOwnershipMayBeLive, performStopForSetup } = require("./runtime-supervisor-stop.cjs");
 const net = require("node:net");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
@@ -8,6 +9,7 @@ const { redactText } = require("./logging.cjs");
 const {
   DETACH_OWNED_CHILD,
   processRunning,
+  runtimeOwnershipPredatesCurrentBoot,
   terminateOwnedProcessTree,
 } = require("./process-tree.cjs");
 const { runtimeInvocation } = require("./runtime-command.cjs");
@@ -64,13 +66,7 @@ function loopbackHealthBaseURL(value) {
   }
 }
 
-function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
-}
 
-function appendFailure(primary, label, failure) {
-  return `${primary}; ${label}: ${errorMessage(failure)}`;
-}
 
 function absolutePath(value, platform = process.platform) {
   return platform === "win32" ? path.win32.isAbsolute(value) : path.isAbsolute(value);
@@ -96,11 +92,7 @@ function tunnelRuntimeStopped(health) {
     || (health?.state === "stopped" && health?.processRunning === false);
 }
 
-function runtimeOwnershipMayBeLive(state) {
-  if (!state) return false;
-  if (processRunning(state.daemonPid) || processRunning(state.tunnelPid)) return true;
-  return ["starting", "ready", "degraded", "stopping"].includes(state.status);
-}
+
 
 function foreignLauncherOwnerMayRecover(state) {
   return state?.ownerPid !== process.pid
@@ -192,6 +184,10 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     throw new Error("Production launcher refuses a DEV harness configuration");
   }
   if (config.solAvailable === undefined) config = { ...config, solAvailable: true };
+  if (config.browserInteractionMode === undefined) config.browserInteractionMode = "automatic";
+  if (config.browserInteractionMode !== "automatic" && config.browserInteractionMode !== "manual") {
+    throw new Error("Runtime configuration has an invalid browser interaction mode");
+  }
   if (config.useEnhancedWebSessionMode !== undefined && typeof config.useEnhancedWebSessionMode !== "boolean") {
     throw new Error("Runtime configuration has an invalid useEnhancedWebSessionMode");
   }
@@ -274,27 +270,45 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     || config.runtimeCommand.some(part => typeof part !== "string" || !part.trim())) {
     throw new Error("Runtime configuration has an invalid runtime command");
   }
-  if (config.mode === "full") {
-    if (!config.tunnel || typeof config.tunnel !== "object") {
-      throw new Error("Full mode is missing tunnel configuration");
+  const validateTunnel = (tunnel, label) => {
+    if (!tunnel || typeof tunnel !== "object") {
+      throw new Error(`Full mode is missing ${label}`);
     }
     for (const key of ["binaryPath", "tunnelId", "runtimeKeyFile", "profileDir", "profileName", "alias"]) {
-      if (typeof config.tunnel[key] !== "string" || !config.tunnel[key].trim()) {
-        throw new Error(`Full mode is missing tunnel.${key}`);
+      if (typeof tunnel[key] !== "string" || !tunnel[key].trim()) {
+        throw new Error(`Full mode is missing ${label}.${key}`);
       }
     }
-    if (!/^tunnel_[a-f0-9]{32}$/.test(config.tunnel.tunnelId)) {
-      throw new Error("Full mode has an invalid tunnel id");
+    if (!/^tunnel_[a-f0-9]{32}$/.test(tunnel.tunnelId)) {
+      throw new Error(`Full mode has an invalid ${label} id`);
     }
     for (const key of ["profileName", "alias"]) {
-      if (!/^[A-Za-z0-9._-]+$/.test(config.tunnel[key])) {
-        throw new Error(`Full mode has an invalid tunnel.${key}`);
+      if (!/^[A-Za-z0-9._-]+$/.test(tunnel[key])) {
+        throw new Error(`Full mode has an invalid ${label}.${key}`);
       }
     }
     for (const key of ["binaryPath", "runtimeKeyFile", "profileDir"]) {
-      if (!absolutePath(config.tunnel[key], platform)) {
-        throw new Error(`Full mode requires an absolute tunnel.${key}`);
+      if (!absolutePath(tunnel[key], platform)) {
+        throw new Error(`Full mode requires an absolute ${label}.${key}`);
       }
+    }
+  };
+  if (config.mode === "full") {
+    validateTunnel(config.tunnel, "tunnel");
+    if (config.automaticTunnel !== undefined) validateTunnel(config.automaticTunnel, "automaticTunnel");
+    if (config.manualTunnel !== undefined) validateTunnel(config.manualTunnel, "manualTunnel");
+    if (config.automaticTunnel && config.manualTunnel
+      && config.automaticTunnel.tunnelId === config.manualTunnel.tunnelId) {
+      throw new Error("Automatic and Zero Risk tunnel IDs must differ");
+    }
+    const activeTunnel = config.browserInteractionMode === "manual"
+      ? config.manualTunnel
+      : config.automaticTunnel;
+    if ((config.automaticTunnel || config.manualTunnel) && !activeTunnel) {
+      throw new Error("Active browser interaction mode has no tunnel configuration");
+    }
+    if (activeTunnel && JSON.stringify(activeTunnel) !== JSON.stringify(config.tunnel)) {
+      throw new Error("Active browser interaction mode does not match the active tunnel");
     }
   }
   return config;
@@ -463,7 +477,7 @@ class RuntimeSupervisor {
       throw new Error("Launcher-owned runtime children exist while an external installation is configured");
     }
     const state = this.readState();
-    if (state && (
+    if (state && !runtimeOwnershipPredatesCurrentBoot(state) && (
       processRunning(state.ownerPid)
       || processRunning(state.daemonPid)
       || processRunning(state.tunnelPid)
@@ -475,7 +489,7 @@ class RuntimeSupervisor {
 
   writeExternalState(detail) {
     const existing = this.readState();
-    const preservesLiveOwnership = existing && (
+    const preservesLiveOwnership = existing && !runtimeOwnershipPredatesCurrentBoot(existing) && (
       processRunning(existing.ownerPid)
       || processRunning(existing.daemonPid)
       || processRunning(existing.tunnelPid)
@@ -1020,7 +1034,10 @@ class RuntimeSupervisor {
   }
 
   async runTunnelConnectCommand(config) {
-    const invocation = this.runtimeCommand(["mcp", "--broker-socket", config.brokerSocketPath]);
+    const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
+    const invocation = this.runtimeCommand([
+      "mcp", "--contract", contract, "--broker-socket", config.brokerSocketPath,
+    ]);
     return await this.runTunnelCommand(
       config,
       managedTunnelConnectArgs(config, invocation),
@@ -1162,7 +1179,7 @@ class RuntimeSupervisor {
     }
     if (!config) {
       const ownershipState = this.readState();
-      if (ownershipState && (
+      if (ownershipState && !runtimeOwnershipPredatesCurrentBoot(ownershipState) && (
         processRunning(ownershipState.daemonPid)
         || processRunning(ownershipState.tunnelPid)
         || foreignLauncherOwnerMayRecover(ownershipState)
@@ -1696,6 +1713,10 @@ class RuntimeSupervisor {
   async stopStaleOwnedRuntime(config) {
     const state = this.readState();
     if (!state) return false;
+    if (runtimeOwnershipPredatesCurrentBoot(state)) {
+      this.clearState();
+      return false;
+    }
     const tunnelOnly = this.launcherProfile === "development";
     if (tunnelOnly && processRunning(state.daemonPid)) {
       throw new Error("DEV launcher ownership unexpectedly contains a Responses daemon");
@@ -1922,9 +1943,9 @@ class RuntimeSupervisor {
     this[name] = null;
   }
 
-  async stopForSetup() {
+  async stopForSetup(options) {
     if (this.stopPromise) return this.stopPromise;
-    this.stopPromise = this.performStopForSetup();
+    this.stopPromise = this.performStopForSetup(options);
     try {
       return await this.stopPromise;
     } finally {
@@ -1932,110 +1953,8 @@ class RuntimeSupervisor {
     }
   }
 
-  async performStopForSetup() {
-    if (this.startPromise) {
-      try {
-        await this.startPromise;
-      } catch (error) {
-        this.logger.warn("runtime.start_failed_before_stop", { message: errorMessage(error) });
-      }
-    }
-    const config = this.readConfig();
-    this.stopping = true;
-    this.stopTunnelMonitor();
-    for (const name of ["daemon", "tunnel"]) {
-      if (this.restartTimers[name]) {
-        clearTimeout(this.restartTimers[name]);
-        this.restartTimers[name] = null;
-      }
-    }
-    if (this.recoveryTasks.size > 0) {
-      await Promise.allSettled([...this.recoveryTasks]);
-    }
-    let drained = false;
-    let tunnelStopped = false;
-    try {
-      const ownershipState = this.readState();
-      const healthyRuntime = config && this.launcherProfile !== "development"
-        ? await this.proxyHealth(config)
-        : false;
-      const runtimeMayBeLive = healthyRuntime || runtimeOwnershipMayBeLive(ownershipState);
-      if (config?.mode === "full"
-        && !this.tunnel
-        && (runtimeMayBeLive || !ownershipState)) {
-        await this.adoptConfiguredTunnelForStop(config);
-      }
-      if (!this.daemon && !this.tunnel) {
-        if (!config) {
-          if (ownershipState && (
-            processRunning(ownershipState.daemonPid)
-            || processRunning(ownershipState.tunnelPid)
-          )) {
-            throw new Error("runtime configuration is missing while launcher ownership processes are still alive");
-          }
-        } else if (runtimeMayBeLive) {
-          const recovered = await this.stopStaleOwnedRuntime(config);
-          if (!recovered) {
-            throw new Error("an existing runtime could not be safely recovered");
-          }
-        }
-        this.clearState();
-        return { status: "stopped" };
-      }
-      if (this.daemon && config) {
-        const daemonPid = this.daemon.pid;
-        if (!Number.isInteger(daemonPid)
-          || !await this.proxyHealth(config, 2_000, daemonPid)) {
-          throw new Error("launcher-owned daemon did not provide matching health evidence");
-        }
-        drained = await this.acquireDrain(config);
-      }
-      if (this.tunnel) {
-        if (!config) throw new Error("launcher-owned tunnel cannot be stopped without a valid configuration");
-        await this.stopTunnelGracefully(config);
-        tunnelStopped = true;
-      }
-      if (this.daemon) {
-        if (!config || !drained) {
-          throw new Error("launcher-owned daemon cannot be stopped without a verified idle drain");
-        }
-        await this.shutdownDaemon(config);
-      }
-      this.clearState();
-      return { status: "stopped" };
-    } catch (error) {
-      const compensationErrors = [];
-      if (tunnelStopped && config?.mode === "full" && !this.tunnel) {
-        try {
-          await this.startTunnel(config);
-        } catch (caught) {
-          compensationErrors.push(["tunnel restart compensation failed", caught]);
-        }
-      }
-      if (drained && config) {
-        try {
-          await this.restoreDrainedDaemon(config);
-        } catch (caught) {
-          compensationErrors.push(["daemon resume compensation failed", caught]);
-        }
-      }
-      const message = compensationErrors.reduce(
-        (current, [label, failure]) => appendFailure(current, label, failure),
-        errorMessage(error),
-      );
-      let restoredReady = false;
-      if (compensationErrors.length === 0 && config) {
-        try {
-          restoredReady = await this.ownedRuntimeReady(config);
-        } catch {
-          restoredReady = false;
-        }
-      }
-      this.tryWriteState(restoredReady ? "ready" : "failed", message);
-      throw new Error(message);
-    } finally {
-      this.stopping = false;
-    }
+  async performStopForSetup(options) {
+    return performStopForSetup.call(this, options);
   }
 
   async restart() {

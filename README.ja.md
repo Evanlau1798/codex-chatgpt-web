@@ -25,7 +25,7 @@
 この独立管理の **Enhanced** fork は上流リリースを追跡し、長時間実行する Codex／Claude Code
 タスク向けの Web セッションライフサイクルを追加します。fork のバージョンは
 `<upstream>-Enhanced.<revision>` 形式で、`3.0.1-Enhanced.1` から始まりました。
-現在のバージョンは上流 v4.0.8 ベースの `4.0.8-Enhanced.2` です。
+現在のバージョンは上流 v5.0.0 ベースの `5.0.0-Enhanced.1` です。
 
 Free および Go アカウントでは、Codex のネイティブモデル選択画面に
 **ChatGPT Web — Luna** が追加されます。reasoning セレクターが表示されるアカウントでは、
@@ -122,12 +122,17 @@ bun run app
 | モード | モデル | ローカル Codex ツール | 追加設定 |
 | --- | --- | --- | --- |
 | **Browser-only** | Free/Go: Luna、Plus: Instant～High、Pro: Extra High と Pro を追加 | なし。Codex が警告を表示 | なし |
-| **Full harness** | Free/Go: Luna、Plus: Instant～High、Pro: Extra High と Pro を追加 | Pro を含むすべての表示 effort で使用可能 | OpenAI トンネル + ChatGPT コネクタ |
+| **Full harness（自動操作）** | Free/Go: Luna、Plus: Instant～High、Pro: Extra High と Pro を追加 | Pro を含むすべての表示 effort で使用可能 | OpenAI トンネル + ChatGPT コネクタ |
+| **Zero Risk** | ChatGPT のモデルと effort を手動選択。任意で Pro コンテキスト | 使用可能。ターン紐付き Codex harness を維持 | 個別 OpenAI トンネル + `Codex Zero Risk` コネクタ。貼り付けと送信は手動 |
 
 モデル選択画面の各項目は、1 つの固定 ChatGPT モードに対応します。Codex には内蔵の Effort と Speed 行も表示されますが、
 それらを変更しても、選択済みのブラウザーモデルが黙って切り替わることはありません。
 Full モードでは、利用可能なすべての effort が同じターン紐付き MCP capability を受け取ります。
 Pro 専用の制限や縮小されたツール契約はありません。
+
+Zero Risk はローカル Responses bridge と完全な Codex harness を維持しますが、ChatGPT ページを
+読み書きせず、プロンプトも自動送信しません。ランチャーはプロンプトの準備とコピーだけを行い、
+モデル、effort、`Codex Zero Risk` コネクタ、貼り付け、送信は利用者が手動で行います。
 
 ## Full ハーネス
 

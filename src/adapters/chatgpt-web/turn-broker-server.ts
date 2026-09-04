@@ -30,9 +30,13 @@ function validateRequest(request: BrokerRequest): void {
     && request.method !== "invoke" && request.method !== "read_context"
     && request.method !== "submit_compaction_handoff"
     && request.method !== "owner_status" && request.method !== "owner_register"
-    && request.method !== "owner_update" && request.method !== "owner_next"
+    && request.method !== "owner_register_safe" && request.method !== "owner_update"
+    && request.method !== "owner_safe_sent" && request.method !== "owner_next"
     && request.method !== "owner_complete" && request.method !== "owner_completion_fence_begin"
     && request.method !== "owner_completion_fence_commit" && request.method !== "owner_revoke"
+    && request.method !== "owner_safe_wait_start" && request.method !== "owner_safe_wait_completion"
+    && request.method !== "owner_request_compaction" && request.method !== "owner_compaction_delivery_count"
+    && request.method !== "safe_start" && request.method !== "safe_complete"
     && request.method !== "activity_complete") {
     throw new Error("turn broker method is invalid");
   }

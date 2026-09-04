@@ -63,9 +63,10 @@ test("core setup preserves an existing full-harness installation", async () => {
   assert.deepEqual(fixture.invocation().args, [
     "setup",
     "--full",
-    "--browser-host-descriptor",
-    "/runtime/launcher-browser.json",
-    "--refresh-account-capabilities",
+      "--browser-host-descriptor",
+      "/runtime/launcher-browser.json",
+      "--automatic-browser-interaction",
+      "--refresh-account-capabilities",
     "--replace-codex-route",
     "--acknowledge-unofficial",
     "--restart-service",
@@ -114,9 +115,10 @@ test("DEV core setup configures only the isolated harness contract", async () =>
       "dev",
       "setup",
       "--browser-only",
-      "--browser-host-descriptor",
-      "/dev/runtime/launcher-browser.json",
-      "--refresh-account-capabilities",
+        "--browser-host-descriptor",
+        "/dev/runtime/launcher-browser.json",
+        "--automatic-browser-interaction",
+        "--refresh-account-capabilities",
       "--acknowledge-unofficial",
     ],
   });
@@ -133,9 +135,10 @@ test("Bigger Context uses the setup transaction and refreshes the production Cod
     args: [
       "setup",
       "--full",
-      "--browser-host-descriptor",
-      "/runtime/launcher-browser.json",
-      "--replace-codex-route",
+        "--browser-host-descriptor",
+        "/runtime/launcher-browser.json",
+        "--automatic-browser-interaction",
+        "--replace-codex-route",
       "--acknowledge-unofficial",
       "--restart-service",
       "--bigger-context",
@@ -155,9 +158,10 @@ test("Bigger Context updates the isolated DEV config without installing a Codex 
       "dev",
       "setup",
       "--browser-only",
-      "--browser-host-descriptor",
-      "/dev/runtime/launcher-browser.json",
-      "--acknowledge-unofficial",
+        "--browser-host-descriptor",
+        "/dev/runtime/launcher-browser.json",
+        "--automatic-browser-interaction",
+        "--acknowledge-unofficial",
       "--standard-context",
     ],
   });
@@ -213,6 +217,7 @@ test("DEV MCP setup reuses only DEV-home credentials and targets its distinct co
         "--full",
         "--browser-host-descriptor",
         "/dev/runtime/launcher-browser.json",
+        "--automatic-browser-interaction",
         "--app-name",
         "Codex Native2 DEV",
         "--acknowledge-unofficial",
@@ -296,6 +301,7 @@ test("launcher update transaction upgrades its owned full runtime with saved con
     "--full",
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
+    "--automatic-browser-interaction",
     "--acknowledge-unofficial",
     "--restart-service",
     "--app-name",
@@ -328,6 +334,7 @@ test("launcher migrates the legacy connector identity even when the release vers
     "--full",
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
+    "--automatic-browser-interaction",
     "--acknowledge-unofficial",
     "--restart-service",
     "--app-name",
@@ -395,6 +402,7 @@ test("MCP setup reuses valid private credentials without exposing or rewriting t
       "--full",
       "--browser-host-descriptor",
       "/runtime/launcher-browser.json",
+      "--automatic-browser-interaction",
       "--app-name",
       "Codex Native2",
       "--replace-codex-route",
@@ -416,11 +424,12 @@ test("new MCP setup uses the explicit default connector name", async () => {
     runtimeKey: "new-private-runtime-key",
   });
 
-  assert.deepEqual(fixture.invocation().args.slice(0, 6), [
+  assert.deepEqual(fixture.invocation().args.slice(0, 7), [
     "setup",
     "--full",
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
+    "--automatic-browser-interaction",
     "--app-name",
     "Codex Native2",
   ]);
@@ -764,6 +773,7 @@ test("failed first-time setup removes its route before restoring the unconfigure
   });
   host.run = async (_name, args) => {
     calls.push(args);
+    if (args.includes("--preflight-only")) return { code: 0, stdout: "", stderr: "" };
     fs.mkdirSync(path.dirname(journalPath), { recursive: true });
     fs.writeFileSync(configPath, `${JSON.stringify({ mode: "browser-only", browserHost: "launcher" })}\n`);
     fs.writeFileSync(journalPath, "partial integration journal\n");
@@ -780,7 +790,7 @@ test("failed first-time setup removes its route before restoring the unconfigure
       host.runSetup("core-setup", ["setup", "--browser-only"], {}),
       /synthetic setup failure; incomplete first-time setup was rolled back/,
     );
-    assert.deepEqual(calls.map((args) => args[0]), ["setup"]);
+    assert.deepEqual(calls.map((args) => args.includes("--preflight-only") ? "preflight" : args[0]), ["preflight", "setup"]);
     assert.equal(fs.existsSync(configPath), false);
     assert.equal(fs.existsSync(journalPath), false);
     assert.equal(fs.existsSync(recoveryJournalPath), false);
@@ -821,7 +831,8 @@ test("launcher delegates an existing terminal-managed installation to the migrat
     launchAgentsDir: path.join(coreHome, "LaunchAgents"),
     supervisor,
   });
-  host.run = async () => {
+  host.run = async (_name, args) => {
+    if (args.includes("--preflight-only")) return { code: 0, stdout: "", stderr: "" };
     config = { mode: "full", browserHost: "launcher", releaseVersion: "0.2.0" };
     return { code: 0, stdout: "", stderr: "" };
   };
@@ -851,7 +862,8 @@ test("failed terminal migration verifies the unchanged previous runtime instead 
     },
   });
   host.run = async (_name, args) => {
-    calls.push(args[0]);
+    calls.push(args.includes("--preflight-only") ? "preflight" : args[0]);
+    if (args.includes("--preflight-only")) return { code: 0, stdout: "", stderr: "" };
     if (args[0] === "setup") throw new Error("synthetic migration failure");
     return { code: 0, stdout: '{"ok":true}', stderr: "" };
   };
@@ -860,7 +872,7 @@ test("failed terminal migration verifies the unchanged previous runtime instead 
     host.runSetup("core-setup", ["setup", "--browser-only"], {}),
     /synthetic migration failure$/,
   );
-  assert.deepEqual(calls, ["setup", "doctor"]);
+  assert.deepEqual(calls, ["preflight", "setup", "doctor"]);
 });
 
 test("failed launcher update restores every mutable setup file before restarting the previous runtime", async () => {
@@ -920,7 +932,8 @@ test("failed launcher update restores every mutable setup file before restarting
     codexHome,
     supervisor,
   });
-  host.run = async () => {
+  host.run = async (_name, args) => {
+    if (args.includes("--preflight-only")) return { code: 0, stdout: "", stderr: "" };
     fs.writeFileSync(configPath, `${JSON.stringify({ ...oldConfig, releaseVersion: "0.2.0" })}\n`);
     fs.writeFileSync(journalPath, "new journal\n");
     fs.writeFileSync(recoveryJournalPath, "new recovery journal\n");
@@ -999,6 +1012,7 @@ test("failed terminal migration restores removed launchd ownership before verify
   });
   host.run = async (_name, args) => {
     calls.push(args.join(" "));
+    if (args.includes("--preflight-only")) return { code: 0, stdout: "", stderr: "" };
     if (args[0] === "setup") {
       fs.writeFileSync(configPath, `${JSON.stringify({ ...oldConfig, browserHost: "launcher", releaseVersion: "0.2.0" })}\n`);
       fs.rmSync(daemonPlist);
@@ -1017,6 +1031,7 @@ test("failed terminal migration restores removed launchd ownership before verify
     assert.equal(fs.readFileSync(daemonPlist, "utf8"), "old daemon plist\n");
     assert.equal(fs.readFileSync(tunnelPlist, "utf8"), "old tunnel plist\n");
     assert.deepEqual(calls, [
+      "setup --full --preflight-only",
       "setup --full",
       "service install",
       "tunnel start",

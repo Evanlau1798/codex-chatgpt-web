@@ -1,7 +1,15 @@
 const path = require("node:path");
+const os = require("node:os");
 const { spawnSync } = require("node:child_process");
 
 const DETACH_OWNED_CHILD = process.platform !== "win32";
+const BOOT_TIME_CLOCK_TOLERANCE_MS = 5_000;
+const CURRENT_BOOT_STARTED_AT_MS = Date.now() - (os.uptime() * 1_000);
+
+function runtimeOwnershipPredatesCurrentBoot(state) {
+  return Boolean(state
+    && Date.parse(state.updatedAt) < CURRENT_BOOT_STARTED_AT_MS - BOOT_TIME_CLOCK_TOLERANCE_MS);
+}
 
 function processRunning(pid) {
   if (!Number.isInteger(pid) || pid < 1) return false;
@@ -54,5 +62,6 @@ function terminateOwnedProcessTree(child, signal = "SIGTERM") {
 module.exports = {
   DETACH_OWNED_CHILD,
   processRunning,
+  runtimeOwnershipPredatesCurrentBoot,
   terminateOwnedProcessTree,
 };
