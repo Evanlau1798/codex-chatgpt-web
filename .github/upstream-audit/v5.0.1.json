@@ -118,7 +118,7 @@
         "deltaSha256": "c1e1c34a4e553059cede4c419b60dfb26da2b75857217e7e5bd121f30cd94d30"
       },
       "classification": "adapted",
-      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries. Accepted MCP invocations remain owned through turn expiry until their existing deadline or release path settles them.",
       "assertions": [
         {
           "path": "tests/browser-diagnostics.test.ts",
@@ -615,9 +615,13 @@
         {
           "path": "tests/server-native-interrupt.test.ts",
           "contains": "expect(cancelled).toBeTrue();"
+        },
+        {
+          "path": "tests/turn-broker-expiry.test.ts",
+          "contains": "expect(await outcome).toEqual({ value: result });"
         }
       ],
-      "candidateBlob": "4df112e5f46a58fadae61b2d5756fe97e4f3e2b8"
+      "candidateBlob": "4bf6ccbc1d8767fe7c113289d1ff9620d625e125"
     },
     {
       "id": "v501-029",
