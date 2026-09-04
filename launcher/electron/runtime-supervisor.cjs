@@ -1020,7 +1020,10 @@ class RuntimeSupervisor {
   }
 
   async runTunnelConnectCommand(config) {
-    const invocation = this.runtimeCommand(["mcp", "--broker-socket", config.brokerSocketPath]);
+    const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
+    const invocation = this.runtimeCommand([
+      "mcp", "--contract", contract, "--broker-socket", config.brokerSocketPath,
+    ]);
     return await this.runTunnelCommand(
       config,
       managedTunnelConnectArgs(config, invocation),
