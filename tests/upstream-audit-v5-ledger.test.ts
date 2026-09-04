@@ -115,6 +115,7 @@ describe("upstream v5.0.0 audit ledger", () => {
       "environment-cwdless",
       "manual-body-limit", "manual-clipboard-transaction", "manual-duplicate-deadline",
       "manual-mcp-contract",
+      "manual-native-owner",
       "manual-navigation-superseded",
       "manual-owner-death", "manual-owner-liveness", "manual-resume-validation",
       "manual-retained-ttl", "manual-supervisor-identity", "manual-surface-failure", "manual-terminal-errors", "manual-tool-boundary", "manual-ui-close",
