@@ -1,5 +1,5 @@
 import { chatGptBrowserTabClosedError } from "./adapters/chatgpt-web/adapter-error";
-import { cancelAllStructuredCompactions, cancelStructuredCompactionTrace } from "./adapters/chatgpt-web/compaction-handoff";
+import { cancelAllStructuredCompactions, cancelStructuredCompactionTrace, cancelStructuredCompactionNativeTurn } from "./adapters/chatgpt-web/compaction-handoff";
 import type { TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import type { HttpTurnCounter } from "./http-turn-counter";
@@ -14,8 +14,29 @@ export async function handleTurnCancellation(
   activity: () => { active_http_turns: number; active_browser_turns: number },
 ): Promise<Response | undefined> {
   const browserIdleOnly = path === "/admin/cancel-turns-if-browser-idle";
-  if (req.method !== "POST" || (!browserIdleOnly && !["/admin/cancel-turn", "/admin/cancel-turns", "/admin/cancel-browser-turns"].includes(path))) return;
+  if (req.method !== "POST" || (!browserIdleOnly && !["/admin/interrupt-turn", "/admin/cancel-turn", "/admin/cancel-turns", "/admin/cancel-browser-turns"].includes(path))) return;
   if (!lifecycleControlAuthorized(req, controlToken)) return new Response("Unauthorized", { status: 401 });
+  if (path === "/admin/interrupt-turn") {
+    let threadId: string;
+    let turnId: string;
+    try {
+      const body = await req.json() as { threadId?: unknown; turnId?: unknown };
+      threadId = typeof body?.threadId === "string" ? body.threadId.trim() : "";
+      turnId = typeof body?.turnId === "string" ? body.turnId.trim() : "";
+      if (![threadId, turnId].every(id => /^[A-Za-z0-9_-]{6,128}$/.test(id))) throw new Error("Native turn identity is invalid");
+    } catch (error) {
+      return Response.json({ status: "error", error: error instanceof Error ? error.message : String(error) }, { status: 400 });
+    }
+    const reason = new DOMException("Codex turn interrupted", "AbortError");
+    const compaction = cancelStructuredCompactionNativeTurn(threadId, turnId, reason);
+    const browser = chatGptTurnSessions.cancelNativeTurn(threadId, turnId, reason);
+    const http = httpTurns.beginCancelTurn({ threadId, turnId }, reason);
+    void Promise.allSettled([compaction.settlement, browser.settlement, http.settlement]).then(results => {
+      for (const result of results) if (result.status === "rejected") console.error("[codex-chatgpt-web] interrupted turn cleanup failed");
+    });
+    return Response.json({ status: "ok", cancelled_http_turns: http.cancelled,
+      cancelled_browser_turns: browser.cancelled, cancelled_compaction_runs: compaction.cancelled });
+  }
   if (path === "/admin/cancel-turn") {
     let traceId: string;
     try {

@@ -53,6 +53,7 @@ export interface TurnChannel {
   activityRevision: number;
   completionCommitted: boolean;
   completionRevision?: number;
+  retirementWaiters: Set<SafeWaiter<void>>;
   batchTimer?: ReturnType<typeof setTimeout>;
   compactionRequested: boolean;
   compactionResult?: BrokerToolResult;

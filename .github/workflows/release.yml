@@ -151,7 +151,7 @@ jobs:
             | xargs -0 sha256sum \
             | sed 's#  \./#  #' > "$checksum_file"
           mv "$checksum_file" checksums.txt
-      - name: Verify every published asset is checksummed
+      - name: Verify every built asset is checksummed
         run: |
           cd release-assets
           missing=""
@@ -166,28 +166,46 @@ jobs:
             echo "checksums.txt is missing entries for:$missing" >&2
             exit 1
           fi
-      - name: Publish GitHub release
+      - name: Verify and publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mapfile -d '' release_files < <(find release-assets -type f -print0)
           test "${#release_files[@]}" -gt 0
-          release_flags=(--latest)
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
-            release_flags=(--prerelease --latest=false)
-          fi
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=true --latest=false
             gh release upload "$GITHUB_REF_NAME" "${release_files[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
-            gh release edit "$GITHUB_REF_NAME" \
-              --repo "$GITHUB_REPOSITORY" \
-              --draft=false \
-              "${release_flags[@]}"
           else
             gh release create "$GITHUB_REF_NAME" "${release_files[@]}" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$GITHUB_REF_NAME" \
-              "${release_flags[@]}" \
+              --draft \
               --generate-notes
           fi
+
+          cp release-assets/checksums.txt "$RUNNER_TEMP/built-checksums.txt"
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets' > "$RUNNER_TEMP/published-assets.json"
+          bun run scripts/reconcile-release-checksums.ts \
+            "$RUNNER_TEMP/built-checksums.txt" "$RUNNER_TEMP/published-assets.json" \
+            release-assets/checksums.txt
+          gh release upload "$GITHUB_REF_NAME" release-assets/checksums.txt \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+          local_manifest_digest="$(sha256sum release-assets/checksums.txt | awk '{ print $1 }')"
+          remote_manifest_digest="$(gh release view "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[] | select(.name == "checksums.txt") | .digest')"
+          test "sha256:$local_manifest_digest" = "$remote_manifest_digest"
+
+          release_flags=(--latest)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            release_flags=(--prerelease --latest=false)
+          fi
+          gh release edit "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            "${release_flags[@]}"

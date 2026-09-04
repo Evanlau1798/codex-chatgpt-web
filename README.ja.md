@@ -140,11 +140,13 @@ Full モードは、公式の [OpenAI tunnel-client](https://github.com/openai/t
 ChatGPT のツール呼び出しを現在の Codex タスクへ接続します。トンネルは外向きであり、公開 IP の露出、
 受信ポートの開放、ルーターのポート転送は不要です。
 
-> [!WARNING]
-> **Codex Native2** という名前の**新しい**コネクタを作成し、権限を **Allow all actions** に設定してください。
-> 古い **Codex Native** コネクタの名前変更、更新、再利用は行わないでください。
-> ChatGPT は公開 MCP 契約をコネクタ ID ごとにキャッシュしており、**Allow low-risk actions** では
-> コマンドとパッチが Codex ハーネスへ到達する前にブロックされます。
+> **Limits**
+>
+> **GPT-5.6 Sol Pro** と **GPT-6 Astra** の現在の ChatGPT メッセージ上限については、
+> [Limits](https://github.com/miuuyy/codex-chatgpt-web/discussions/309) を参照してください。
+> Token コンテキスト上限は、アカウント種別と選択した effort によって異なります。Plus の
+> Medium/High は実測 90,000-token ウィンドウを使用し、実験的な **3× context** を有効にすると
+> 最大 270,000 tokens まで拡張されます。いずれの場合もネイティブ Codex compaction に対応します。
 
 1. ランチャーの必須セットアップを完了します。
 2. ランチャーで **MCP** を開きます。ChatGPT コネクタを使用するものと同じ OpenAI アカウントで
@@ -152,12 +154,10 @@ ChatGPT のツール呼び出しを現在の Codex タスクへ接続します�
 3. Tunnel ID と API キーを貼り付け、**ハーネスを接続**を押します。
 4. ChatGPT の設定で **Developer Mode** を有効にします。**Tunnel** を使う**新しい**コネクタを作成し、
    対象の Tunnel を選択して、**Authentication** を **None**、名前を正確に **Codex Native2** に設定します。
-5. 古い **Codex Native** コネクタが存在する場合は、そのまま残してください。名前変更や更新は行わないでください。
-   このリリースでは新しい直接 turn-token 契約を使用します。**Codex Native2** の **Permissions** で
-   **Allow all actions** を選択します。**Allow low-risk actions** では、コマンドとパッチがこのランタイムへ
-   到達する前にブロックされます。外側の Codex ハーネスでは、引き続きサンドボックスと承認が適用されます。
-6. **ランタイムを検証**を実行します。**Codex Native2** が正確に選択されます。
-   **Codex Native** しか見つからない場合、古いコネクタを受け入れず、明示的な移行エラーで失敗します。
+5. **Codex Native2** の **Permissions** で **Allow all actions** を選択します。
+   **Allow low-risk actions** では、コマンドとパッチがこのランタイムへ到達する前にブロックされます。
+   外側の Codex ハーネスでは、引き続きサンドボックスと承認が適用されます。
+6. **ランタイムを検証**を実行し、**Codex Native2** が接続済みで利用可能であることを確認します。
 
 書き込み／変更操作には、ChatGPT ワークスペースと管理者ポリシー側での許可も必要です。
 [Developer Mode と MCP アプリ](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)を参照してください。

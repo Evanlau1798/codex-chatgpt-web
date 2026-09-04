@@ -20,6 +20,7 @@ import type { CodexParsedRequest, CodexProviderConfig } from "../../types";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { retainedConversationRelease } from "./adapter-runtime-config";
 import { canonicalizeCompactionHandoff } from "./compaction-handoff";
+import { observeCapabilityRetirement } from "./capability-retirement";
 import type { ChatGptTurnEnvironment } from "./environment";
 import type { ChatGptWebCapabilities } from "./model";
 import { compileChatGptWebPrompt } from "./prompt";
@@ -151,6 +152,7 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
     let activeToken: string | undefined;
     let launcherStartAttempted = false;
     let launcherEnded = false;
+    let browserOwnerSettled = false;
 
     const finishLauncher = async (status: LauncherManualTurnEnd["status"]): Promise<void> => {
       if (!launcherStartAttempted || launcherEnded) return;
@@ -169,6 +171,7 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
           options.timeoutMs === undefined ? undefined : options.timeoutMs + 60_000,
           traceId,
         );
+        observeCapabilityRetirement(options.broker, activeToken, externalProgress, browserAbort, () => browserOwnerSettled);
         const full = compileChatGptWebPrompt(parsed, options.capabilities, activeToken, { manualControl: true });
         const suffix = resume
           ? compileChatGptWebPrompt(resume, options.capabilities, activeToken, { manualControl: true })
@@ -213,7 +216,12 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
           const answer = parsed._compactionRequest ? canonicalizeCompactionHandoff(parsed, completed) : completed;
           if (answer === undefined) throw new Error("ChatGPT returned an invalid structured compaction handoff");
           text.push(answer);
-          await finishLauncher("completed");
+          try {
+            await finishLauncher("completed");
+          } catch {
+            // The accepted MCP final is authoritative even when local UI cleanup cannot be confirmed.
+            console.error("[chatgpt-web] completed Zero Risk turn but could not confirm launcher cleanup");
+          }
           return answer;
         } finally {
           terminalAbort.abort();
@@ -221,14 +229,15 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
         }
       } catch (error) {
         const normalized = manualError(error);
+        const externallyAborted = browserAbort.signal.aborted;
         if (activeToken) await Promise.resolve(options.broker.revoke(activeToken, normalized)).catch(() => {});
-        await finishLauncher(browserAbort.signal.aborted ? "aborted" : "failed").catch(controlError => {
+        await finishLauncher(externallyAborted ? "aborted" : "failed").catch(controlError => {
           console.error(`[chatgpt-web] failed to release Zero Risk launcher turn: ${controlError instanceof Error ? controlError.message : String(controlError)}`);
         });
         throw normalized;
       }
     };
-    const turn = cancellable(run(), browserAbort);
+    const turn = cancellable(run().finally(() => { browserOwnerSettled = true; }), browserAbort);
     void turn.browser.catch(error => token.reject(error instanceof Error ? error : new Error(String(error))));
     return {
       mode: "tools",

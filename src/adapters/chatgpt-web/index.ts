@@ -298,10 +298,18 @@ export function createChatGptWebAdapter(
             }
             emitNewTrace(session.runtime.trace.drain());
             emitNewText(session.runtime.text.drain());
-            const nextTools = turnToken
-              ? brokerOwner.nextToolBatch(turnToken, toolWaitAbort.signal).then(requests => ({ type: "tools" as const, requests }))
-              : undefined;
             const browserOutcome = session.browserOutcome.then(outcome => ({ type: "browser" as const, outcome }));
+            const nextTools = turnToken
+              ? brokerOwner.nextToolBatch(turnToken, toolWaitAbort.signal).then(async requests => (
+                session.runtime.manualControl && requests.length === 0
+                  ? browserOutcome
+                  : { type: "tools" as const, requests }
+              )).catch(error => {
+                // Manual completion/failure owns the final outcome; broker retirement is cleanup.
+                if (session.runtime.manualControl) return browserOutcome;
+                throw error;
+              })
+              : undefined;
             let nextTrace = session.runtime.trace.wait(toolWaitAbort.signal).then(() => ({ type: "trace" as const }));
             let nextText = session.runtime.text.wait(toolWaitAbort.signal).then(() => ({ type: "text" as const }));
             for (;;) {
@@ -338,7 +346,12 @@ export function createChatGptWebAdapter(
                     session.runtime.externalProgress.waitForToolBatchObservation(revision, toolWaitAbort.signal)
                       .then(() => batch),
                     browserOutcome,
-                  ]), incoming.abortSignal);
+                  ]).then(outcome => {
+                    if (outcome.type === "tools") session.runtime.externalProgress!.assertToolBatchActive(revision);
+                    return outcome;
+                  }), incoming.abortSignal).catch(error => {
+                    throw submittedBrowserFailure(session, incoming.abortSignal?.aborted === true, error) ?? error;
+                  });
                 }
               }
               emitNewTrace(session.runtime.trace.drain());

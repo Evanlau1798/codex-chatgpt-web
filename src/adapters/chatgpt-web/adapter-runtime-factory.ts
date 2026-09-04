@@ -2,6 +2,7 @@ import type { CodexParsedRequest, CodexProviderConfig } from "../../types";
 import { retainedConversationRelease } from "./adapter-runtime-config";
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { claudeBrowserTurnOptions, isClaudeClientSession } from "./claude-subagent";
+import { observeCapabilityRetirement } from "./capability-retirement";
 import { prepareChatGptWebContext } from "./context-bootstrap";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
@@ -98,6 +99,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     const externalProgress = new ChatGptExternalTurnProgress();
     const steering = captureLunaCheckpoint || !useEnhancedWebSessionMode ? undefined : new ChatGptSteeringFeed();
     let activeToken: string | undefined;
+    let browserOwnerSettled = false;
     let toolResultDelivered = false;
     const toolEvidence = mode.localTools && !parsed._compactionRequest ? new ChatGptToolEvidenceGuard() : undefined;
     const submission: NonNullable<ChatGptTurnRuntime["submission"]> = { phase: "prepared" };
@@ -180,7 +182,10 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         traceId,
         () => trace.signalProgress(),
       );
-      activeToken = turnToken;
+      if (activeToken !== turnToken) {
+        activeToken = turnToken;
+        observeCapabilityRetirement(brokerOwner, turnToken, externalProgress, browserAbort, () => browserOwnerSettled);
+      }
       if (!tokenSettled) {
         tokenSettled = true;
         token.resolve(turnToken);
@@ -220,9 +225,10 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       ...(retryPromptForError ? { retryPromptForError } : {}),
       ...(captureLunaCheckpoint ? { captureLunaCheckpoint: true, onLunaCheckpoint: captureCheckpoint } : {}),
     });
-    const browser = finalizeCheckpoint(toolPolicy.requireTool ? browserRun.then(answer => {
+    const trackedRun = browserRun.finally(() => { browserOwnerSettled = true; });
+    const browser = finalizeCheckpoint(toolPolicy.requireTool ? trackedRun.then(answer => {
       assertChatGptToolRequirementSatisfied(toolPolicy, toolResultDelivered); return answer;
-    }) : browserRun);
+    }) : trackedRun);
     void browser.catch(() => setTimeout(() => activeToken && void Promise.resolve(brokerOwner.revoke(activeToken)).catch(() => {}), 0));
     void browser.catch(error => {
       if (!tokenSettled) {

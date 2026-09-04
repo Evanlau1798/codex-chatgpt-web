@@ -7,6 +7,8 @@ import { handleTurnCancellation } from "./server-turn-cancellation";
 import {
   CHATGPT_TURN_REVISION_CONFLICT_MESSAGE,
   extractChatGptTurnUserRevision,
+  extractChatGptTurnIdentity,
+  extractCodexTurnIdentityFromBody,
 } from "./adapters/chatgpt-web/environment";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
@@ -92,6 +94,14 @@ export async function responseRequest(
   const requestedModel = raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as { model?: unknown }).model
     : undefined;
+  try {
+    const identity = extractCodexTurnIdentityFromBody(raw);
+    if (identity.threadId && identity.turnId) {
+      options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
+    }
+  } catch (error) {
+    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
+  }
   if (typeof requestedModel === "string" && !isChatGptWebModelSlug(requestedModel)) {
     try {
       return await forwardNativeCodexRequest(nativeRequest, "responses", undefined, raw);
@@ -111,6 +121,10 @@ export async function responseRequest(
       || expanded !== raw
       || parsed._contextCompactionBoundary === true;
     route = routeChatGptWebRequest(parsed, config);
+    const identity = extractChatGptTurnIdentity(parsed);
+    if (identity.threadId && identity.turnId) {
+      options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
+    }
   } catch (error) {
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
@@ -259,8 +273,8 @@ export async function responseRequest(
   return Response.json(json);
 }
 
-export async function compactRequest(req: Request, config: AppConfig, adapterFactory: ChatGptWebAdapterFactory = createChatGptWebAdapter): Promise<Response> {
-  return handleCompactRequest(req, config, responseRequest, adapterFactory);
+export async function compactRequest(req: Request, config: AppConfig, adapterFactory: ChatGptWebAdapterFactory = createChatGptWebAdapter, options: Pick<ResponseRequestOptions, "onTurnIdentity"> = {}): Promise<Response> {
+  return handleCompactRequest(req, config, responseRequest, adapterFactory, options);
 }
 
 export function startServer(
@@ -388,7 +402,12 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/v1/responses") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
-          signal => responseRequest(new Request(req, { signal }), config, dependencies.adapterFactory),
+          (signal, bindIdentity) => responseRequest(
+            new Request(req, { signal }),
+            config,
+            dependencies.adapterFactory,
+            { onTurnIdentity: bindIdentity },
+          ),
           req.signal,
           undefined,
           url.pathname,
@@ -410,7 +429,12 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
-          signal => compactRequest(new Request(req, { signal }), config, dependencies.adapterFactory),
+          (signal, bindIdentity) => compactRequest(
+            new Request(req, { signal }),
+            config,
+            dependencies.adapterFactory,
+            { onTurnIdentity: bindIdentity },
+          ),
           req.signal,
           undefined,
           url.pathname,

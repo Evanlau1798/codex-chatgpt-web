@@ -17,6 +17,7 @@ export type ChatGptBrowserOutcome =
   | { type: "final"; answer: string }
   | { type: "error"; error: Error };
 interface ChatGptTurnRuntimeBase {
+  nativeIdentity?: { threadId: string; turnId: string };
   browser: Promise<string>;
   physicalSettlement?: Promise<void>;
   trace: ChatGptTraceFeed;

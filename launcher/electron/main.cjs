@@ -679,7 +679,7 @@ function registerIpc({ logger, stateStore }) {
     if (!runtimeHost.mcpCredentialsConfigured(mode)) {
       return { state: current, credentialsRequired: true, targetMode: mode };
     }
-    await browserHost.withInteractionModeChange(mode, () => runtimeHost.setBrowserInteractionMode(mode));
+    await browserHost.withInteractionModeChange(mode, afterRuntimeReady => runtimeHost.setBrowserInteractionMode(mode, afterRuntimeReady));
     const state = stateStore.update({
       browserInteractionMode: mode,
       experimentalBiggerContext: mode === "manual" ? false : current.experimentalBiggerContext,
@@ -788,13 +788,13 @@ function registerIpc({ logger, stateStore }) {
     const setup = IS_DEV_PROFILE
       ? runtimeHost.setupDevMcp.bind(runtimeHost)
       : runtimeHost.setupMcp.bind(runtimeHost);
-    const runSetup = async () => {
+    const runSetup = async afterRuntimeReady => {
       const result = await setup({
         tunnelId: typeof input?.tunnelId === "string" ? input.tunnelId.trim() : "",
         runtimeKey: typeof input?.runtimeKey === "string" ? input.runtimeKey : "",
         replace: input?.replace === true,
         interactionMode,
-      });
+      }, afterRuntimeReady);
       return { ...result, setupState: interactionMode === "manual"
         ? await manualMcpSetupState(runtimeHost, IS_DEV_PROFILE) : {} };
     };

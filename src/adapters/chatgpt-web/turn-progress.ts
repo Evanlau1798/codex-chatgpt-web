@@ -88,6 +88,7 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
   private observedToolBatchRevision = 0;
   private activeToolCalls = 0;
   private lastProgressAt?: number;
+  private retirementError?: Error;
   private readonly toolBatchObservationWaiters = new Set<ToolBatchObservationWaiter>();
 
   snapshot(): ChatGptExternalTurnProgressSnapshot {
@@ -100,6 +101,7 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
   }
 
   recordToolBatch(count: number, now = Date.now()): number {
+    this.assertNotRetired();
     if (!Number.isSafeInteger(count) || count <= 0) {
       throw new Error("ChatGPT external progress requires a non-empty tool batch");
     }
@@ -110,6 +112,7 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
 
   async acknowledgeToolBatch(revision: number): Promise<void> {
     this.assertToolBatchRevision(revision);
+    this.assertNotRetired();
     if (revision <= this.observedToolBatchRevision) return;
     this.observedToolBatchRevision = revision;
     for (const waiter of [...this.toolBatchObservationWaiters]) {
@@ -122,6 +125,7 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
 
   waitForToolBatchObservation(revision: number, signal?: AbortSignal): Promise<void> {
     this.assertToolBatchRevision(revision);
+    if (this.retirementError) return Promise.reject(this.retirementError);
     if (this.observedToolBatchRevision >= revision) return Promise.resolve();
     if (signal?.aborted) {
       return Promise.reject(new DOMException("ChatGPT tool-boundary observation aborted", "AbortError"));
@@ -140,11 +144,36 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
   }
 
   recordToolResult(now = Date.now()): void {
+    this.assertNotRetired();
     if (this.activeToolCalls <= 0) {
       throw new Error("ChatGPT external progress received a tool result without an active call");
     }
     this.activeToolCalls -= 1;
     this.advance(now, "tool_result");
+  }
+
+  /** Retire every unresolved batch when the broker capability can no longer accept its result. */
+  retire(error: Error): boolean {
+    if (!(error instanceof Error)) throw new Error("ChatGPT external progress retirement requires an error");
+    if (this.retirementError) return false;
+    this.retirementError = error;
+    for (const waiter of this.toolBatchObservationWaiters) {
+      if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
+      waiter.reject(error);
+    }
+    this.toolBatchObservationWaiters.clear();
+    if (this.activeToolCalls === 0) return true;
+    this.activeToolCalls = 0;
+    // Retirement is not fresh model progress. Advance the transport revision so the browser mirror
+    // drops its completion veto, while preserving the timestamp of the last proven MCP activity.
+    this.revision += 1;
+    this.notify(this.snapshot());
+    return true;
+  }
+
+  assertToolBatchActive(revision: number): void {
+    this.assertToolBatchRevision(revision);
+    this.assertNotRetired();
   }
 
   private advance(now: number, event: "tool_batch" | "tool_result"): void {
@@ -161,6 +190,10 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
       || revision > this.lastToolBatchRevision) {
       throw new Error("ChatGPT tool-boundary acknowledgement has an invalid batch revision");
     }
+  }
+
+  private assertNotRetired(): void {
+    if (this.retirementError) throw this.retirementError;
   }
 }
 

@@ -1,16 +1,19 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { atomicWriteFile, stripUtf8Bom } from "../../config";
+import { getCodexHome } from "../../codex-integration-shared";
 import type { CodexParsedRequest } from "../../types";
 import {
   extractChatGptTurnEnvironment,
   extractChatGptTurnIdentity,
   extractChatGptThreadSpawnLineage,
+  hasRawChatGptEnvironmentContext,
   MissingTrustedCodexEnvironmentError,
   type ChatGptSandboxPolicy,
   type ChatGptTurnEnvironment,
 } from "./environment";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
+import { resolveCurrentCodexChildRolloutEnvironment } from "./codex-rollout-environment";
 
 interface StoredThreadEnvironment {
   cwd: string;
@@ -121,6 +124,8 @@ export class ChatGptThreadEnvironmentStore {
   constructor(
     private readonly path?: string,
     private readonly now: () => number = Date.now,
+    private readonly codexHome: string = getCodexHome(),
+    private readonly sqliteHome?: string,
   ) {}
 
   resolve(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
@@ -131,16 +136,30 @@ export class ChatGptThreadEnvironmentStore {
       return environment;
     } catch (error) {
       if (!(error instanceof MissingTrustedCodexEnvironmentError) || !identity.threadId) throw error;
-      const stored = this.get(identity.threadId);
-      if (stored) return {
-        cwd: stored.cwd,
-        roots: stored.roots,
-        writableRoots: stored.writableRoots,
-        sandboxPolicy: stored.sandboxPolicy,
+      if (hasRawChatGptEnvironmentContext(parsed)) throw error;
+      const lineage = extractChatGptThreadSpawnLineage(parsed);
+      if (lineage && identity.turnId) {
+        const rolloutEnvironment = resolveCurrentCodexChildRolloutEnvironment({
+          codexHome: this.codexHome,
+          ...(this.sqliteHome ? { sqliteHome: this.sqliteHome } : {}),
+          lineage,
+          turnId: identity.turnId,
+          tools: effectiveChatGptToolPolicy(parsed).tools,
+        });
+        if (rolloutEnvironment) {
+          this.set(lineage.threadId, rolloutEnvironment);
+          return rolloutEnvironment;
+        }
+      }
+      const sameThread = this.get(identity.threadId);
+      if (sameThread) return {
+        cwd: sameThread.cwd,
+        roots: sameThread.roots,
+        writableRoots: sameThread.writableRoots,
+        sandboxPolicy: sameThread.sandboxPolicy,
         tools: effectiveChatGptToolPolicy(parsed).tools,
       };
 
-      const lineage = extractChatGptThreadSpawnLineage(parsed);
       if (!lineage && identity.parentThreadId && identity.parentThreadId !== identity.threadId
         && !identity.agentName && !identity.subagentKind
         && this.inherit(identity.parentThreadId, identity.threadId)) {

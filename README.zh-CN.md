@@ -179,10 +179,12 @@ recap、resume 与 subagent 生命周期仍由客户端管理；Enhanced 模式�
 将 ChatGPT 的工具调用连接回当前 Codex 任务。该隧道为出站连接：不会暴露公网 IP、开放入站端口，
 也不需要配置路由器端口转发。
 
-> [!WARNING]
-> 请创建名为 **Codex Native2** 的**新**连接器，并将权限设置为 **允许所有操作**。不要重命名、
-> 刷新或复用旧的 **Codex Native** 连接器：ChatGPT 会按连接器身份缓存公开 MCP 合约，而
-> **允许低风险操作** 会在命令和补丁到达 Codex harness 前将其拦截。
+> **限制**
+>
+> 有关 **GPT-5.6 Sol Pro** 和 **GPT-6 Astra** 当前的 ChatGPT 消息额度，请参阅
+> [Limits](https://github.com/miuuyy/codex-chatgpt-web/discussions/309)。Token 上下文上限取决于
+> 账户类型和所选 effort。Plus 的 Medium/High 使用实测的 90,000-token 窗口；启用实验性的
+> **3× context** 后最高为 270,000 tokens，并且全程支持原生 Codex compaction。
 
 1. 完成启动器中的必需设置。
 2. 在启动器中打开 **MCP**。请在将使用 ChatGPT 连接器的同一个 OpenAI 账户中创建 Tunnel
@@ -190,12 +192,9 @@ recap、resume 与 subagent 生命周期仍由客户端管理；Enhanced 模式�
 3. 粘贴 Tunnel ID 和 API 密钥，然后点击 **连接 Harness**。
 4. 在 ChatGPT 设置中启用 **开发者模式**。新建连接器时选择 **Tunnel**，选择刚创建的
    Tunnel，将 **身份验证** 设为 **无**，并将名称准确设置为 **Codex Native2**。
-5. 如果已有旧的 **Codex Native** 连接器，请保持其不变。不要重命名或刷新它：ChatGPT 会按
-   连接器身份缓存公开 MCP 合约，而此版本使用新的直接 turn-token 合约。在 **Codex Native2**
-   的 **权限** 中选择 **允许所有操作**；**允许低风险操作** 会在命令和补丁到达本地运行时前将其
-   拦截。外层 Codex harness 仍会执行沙箱和审批规则。
-6. 运行 **验证运行时**。它只会准确选择 **Codex Native2**。如果只找到 **Codex Native**，
-   验证会返回明确的迁移错误，而不会接受旧连接器。
+5. 在 **Codex Native2** 的 **权限** 中选择 **允许所有操作**；**允许低风险操作** 会在命令和
+   补丁到达本地运行时前将其拦截。外层 Codex harness 仍会执行沙箱和审批规则。
+6. 运行 **验证运行时**，确认 **Codex Native2** 已连接并可用。
 
 写入/修改操作还需要 ChatGPT 工作区及其管理员政策允许。请参阅
 [开发者模式和 MCP 应用](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)。

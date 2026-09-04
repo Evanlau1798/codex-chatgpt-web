@@ -1,6 +1,4 @@
 import {
-  MANAGED_COMMENT,
-  MANAGED_ROUTE_COMMENT,
   MANAGED_MULTI_AGENT_LINE,
   MANAGED_MULTI_AGENT_V2_LINE,
   MANAGED_MULTI_AGENT_V2_TABLE_LINE,
@@ -20,6 +18,7 @@ import {
   assignmentRegex,
   insertDocumentLine,
   parseDocument,
+  removeManagedComment,
   removeDocumentLine,
   renderDocument,
   splitLines,
@@ -38,19 +37,12 @@ export {
   insertDocumentLine,
   parseDocument,
   readCodexModelContextOverride,
+  removeManagedComment,
   removeDocumentLine,
   renderDocument,
   splitLines,
   textFormat,
 } from "./codex-integration-toml";
-
-export function removeManagedComment(document: CodexConfigDocument): void {
-  for (let index = document.lines.length - 1; index >= 0; index -= 1) {
-    if (document.lines[index] === MANAGED_COMMENT || document.lines[index] === MANAGED_ROUTE_COMMENT) {
-      removeDocumentLine(document, index);
-    }
-  }
-}
 
 interface TomlTableRange {
   headerIndex: number;
@@ -167,7 +159,11 @@ function setAgentMaxDepth(document: CodexConfigDocument, value: number): void {
     insertDocumentLine(document, document.lines.length, "[agents]");
     table = findTomlTable(document.lines, "agents")!;
   }
-  insertDocumentLine(document, table.endIndex, managedLine);
+  let insertionIndex = table.endIndex;
+  while (insertionIndex > table.headerIndex + 1 && document.lines[insertionIndex - 1]?.trim() === "") {
+    insertionIndex -= 1;
+  }
+  insertDocumentLine(document, insertionIndex, managedLine);
 }
 
 export function findFeatureAssignment(lines: string[], key: string): PreviousFeatureAssignment {
@@ -199,7 +195,13 @@ export function installCompatibilityV1Features(text: string): {
   installedAgentMaxDepth: number;
 } {
   const document = parseDocument(text);
-  const previousMultiAgent = findFeatureAssignment(document.lines, "multi_agent");
+  const foundMultiAgent = findFeatureAssignment(document.lines, "multi_agent");
+  const featureSeparatorInserted = !foundMultiAgent.tablePresent
+    && document.lines.length > 0
+    && Boolean(document.lines.at(-1)?.trim());
+  const previousMultiAgent: PreviousFeatureAssignment = featureSeparatorInserted
+    ? { ...foundMultiAgent, separatorInserted: true }
+    : foundMultiAgent;
   const previousMultiAgentV2 = findMultiAgentV2Assignment(document.lines);
   const foundAgentMaxDepth = findAgentMaxDepthAssignment(document.lines);
   const previousAgentMaxDepth: PreviousAgentAssignment = !foundAgentMaxDepth.tablePresent
@@ -324,10 +326,7 @@ export function restoreBooleanFeature(
       if (remaining.length === 0) {
         const headerIndex = table.headerIndex;
         removeDocumentLine(document, headerIndex);
-        // insertFeatureTable() adds exactly one separator before a newly-created table
-        // when the user's prior document ended in content. Remove only that owned
-        // separator so uninstall/deactivation restores the original bytes.
-        if (headerIndex > 0 && document.lines[headerIndex - 1] === "") {
+        if (previous.separatorInserted && document.lines[headerIndex - 1] === "") {
           removeDocumentLine(document, headerIndex - 1);
         }
       }

@@ -72,7 +72,14 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, oper
   let timer;
   const output = createInterface({ input: child.stdout });
   const errors = createInterface({ input: child.stderr });
-  errors.on("line", (line) => logger?.info("browser.connector_helper", { message: line.slice(0, 2_000) }));
+  errors.on("line", (line) => {
+    if (operation !== "verify") {
+      logger?.info("browser.connector_helper", { message: line.slice(0, 2_000) });
+      return;
+    }
+    const checkpoint = /^\[chatgpt-web\] browser diagnostic trace=([A-Za-z0-9_-]{6,128}) checkpoint=([0-9]+-[A-Za-z0-9_-]{1,80})$/.exec(line);
+    if (checkpoint?.[1] === id) logger?.info("browser.connector_helper", { operationId: id, checkpoint: checkpoint[2] });
+  });
 
   const result = new Promise((resolve, reject) => {
     const finish = (error, value) => {
@@ -124,7 +131,11 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, oper
         return;
       }
       if (message.type === "error" && typeof message.message === "string") {
-        finish(new Error(message.message));
+        const helperError = new Error(message.message);
+        if (typeof message.name === "string" && /^[A-Za-z][A-Za-z0-9]{0,79}$/.test(message.name)) {
+          helperError.name = message.name;
+        }
+        finish(helperError);
         return;
       }
       finish(new Error("Browser helper verification emitted an unexpected message"));
@@ -156,7 +167,10 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, oper
     output.close();
     errors.close();
   }
-  if (primaryError) throw primaryError;
+  if (primaryError) {
+    primaryError.operationId = id;
+    throw primaryError;
+  }
   return value;
 }
 

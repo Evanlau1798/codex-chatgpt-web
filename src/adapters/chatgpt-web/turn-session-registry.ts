@@ -10,6 +10,7 @@ export class ChatGptTurnSessions {
   private readonly retirements = new Map<string, Promise<void>>();
   private readonly conversationRetirements = new Map<string, Promise<void>>();
   private readonly manualOwnerRetirements = new Map<string, Promise<void>>();
+  private readonly nativeOwnerRetirements = new Map<string, Promise<void>>();
   private readonly agentGraph = new ChatGptAgentSessionGraph();
 
   constructor(
@@ -47,6 +48,7 @@ export class ChatGptTurnSessions {
     traceId?: string,
     signal?: AbortSignal,
     manualOwner?: { key: string; abortedSteeringIds: ReadonlySet<string> },
+    nativeThreadId?: string,
   ): Promise<ChatGptTurnSession> {
     if (manualOwner) {
       for (const [ownedKey, session] of this.entries) {
@@ -61,6 +63,7 @@ export class ChatGptTurnSessions {
       const existing = manualOwner ? this.entries.get(key) : undefined;
       if (existing) { existing.touch(); return existing; }
       const pending = this.retirements.get(key)
+        ?? (nativeThreadId ? this.nativeOwnerRetirements.get(nativeThreadId) : undefined)
         ?? (manualOwner ? this.manualOwnerRetirements.get(manualOwner.key) : undefined)
         ?? (conversationKey ? this.conversationRetirements.get(conversationKey) : undefined);
       if (pending) {
@@ -208,8 +211,17 @@ export class ChatGptTurnSessions {
     return true;
   }
 
-  private beginRetirement(key: string, session: ChatGptTurnSession, preserveConversationKey?: string): Promise<void> {
-    session.cancel();
+  cancelNativeTurn(threadId: string, turnId: string, reason: Error): { cancelled: number; settlement: Promise<void> } {
+    const matches = [...this.entries].filter(([, session]) => (
+      session.runtime.nativeIdentity?.threadId === threadId && session.runtime.nativeIdentity.turnId === turnId
+    ));
+    for (const [key] of matches) this.entries.delete(key);
+    const settlement = Promise.all(matches.map(([key, session]) => this.beginRetirement(key, session, undefined, reason))).then(() => undefined);
+    return { cancelled: matches.length, settlement };
+  }
+
+  private beginRetirement(key: string, session: ChatGptTurnSession, preserveConversationKey?: string, reason?: Error): Promise<void> {
+    session.cancel(reason);
     const preserveSurface = preserveConversationKey !== undefined
       && session.conversationKey() === preserveConversationKey;
     const release = preserveSurface ? undefined : session.runtime.release;
@@ -222,6 +234,8 @@ export class ChatGptTurnSessions {
     }
     const manualOwnerKey = session.runtime.manualControl?.ownerKey;
     if (manualOwnerKey) trackConversationRetirement(this.manualOwnerRetirements, manualOwnerKey, retirement);
+    const nativeThreadId = session.runtime.nativeIdentity?.threadId;
+    if (nativeThreadId) trackConversationRetirement(this.nativeOwnerRetirements, nativeThreadId, retirement);
     return retirement;
   }
 

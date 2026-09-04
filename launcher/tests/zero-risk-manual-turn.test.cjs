@@ -214,3 +214,23 @@ test("clipboard failure on a fresh start leaves no manual surface or timer", () 
   assert.throws(() => controller.begin("trace-fresh", 10, "full"), /clipboard unavailable/);
   assert.equal(host.turnTabs.size, 0);
 });
+
+test("manual completion is idempotent and cannot be downgraded after a lost acknowledgement", () => {
+  for (const retain of [true, false]) {
+    const { controller, host, clipboard } = fixture();
+    const trace = `completion-${retain}`;
+    const lease = controller.begin(trace, 10, "private prompt", retain ? "a".repeat(64) : undefined);
+    controller.confirmSent(lease.tabId);
+    controller.started(trace, 10);
+    controller.end(trace, 10, "completed", retain);
+    for (const status of ["completed", "failed", "aborted"]) {
+      assert.deepEqual(controller.end(trace, 10, status, false), { cancelledByUser: false });
+    }
+    assert.throws(() => controller.end(trace, 11, "failed"), /ownership mismatch/);
+    assert.throws(() => controller.begin(trace, 10, "private prompt"), /already completed/);
+    assert.throws(() => controller.begin(trace, 11, "private prompt"), /owned by another process/);
+    assert.deepEqual(clipboard, ["private prompt"]);
+    assert.equal(host.turnTabs.size, retain ? 1 : 0);
+    if (retain) assert.equal(host.turnTabs.get(lease.tabId).manualState, "completed");
+  }
+});

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatGptWebTraceId } from "../src/adapters/chatgpt-web";
@@ -8,7 +9,7 @@ import { ChatGptTextFeed, ChatGptTraceFeed, chatGptTurnSessions } from "../src/a
 import { callTurnBroker, closeTurnBrokers, RemoteTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint, defaultConfig, providerConfig } from "../src/config";
 import { parseRequest } from "../src/responses/parser";
-import { HttpTurnCounter, responseRequest, routeChatGptWebRequest, startServer } from "../src/server";
+import { compactRequest, HttpTurnCounter, responseRequest, routeChatGptWebRequest, startServer } from "../src/server";
 
 test("DEV harness configuration cannot bind a Responses listener", () => {
   const config = { ...defaultConfig("browser-only"), purpose: "dev-harness" as const, port: 0 };
@@ -173,6 +174,69 @@ test("HTTP turn tracking releases a stream requested by an already disconnected 
   expect(turns.count()).toBe(0);
   expect(response.status).toBe(499);
   expect(response.body).toBeNull();
+});
+
+test("a real HTTP peer disconnect releases a streaming turn", async () => {
+  const config = { ...defaultConfig("browser-only"), port: 0 };
+  let source!: ReadableStreamDefaultController<Uint8Array>;
+  let sourceCancelled = false;
+  let markSourceReady!: () => void;
+  const sourceReady = new Promise<void>(resolve => { markSourceReady = resolve; });
+  const server = startServer(config, {
+    fetchUpstream: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        source = controller;
+        markSourceReady();
+      },
+      cancel() {
+        sourceCancelled = true;
+      },
+    })),
+  });
+  const port = server.port;
+  if (port === undefined) throw new Error("test server did not bind a TCP port");
+  const endpoint = `http://127.0.0.1:${port}`;
+  const socket = createConnection({ host: "127.0.0.1", port });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", reject);
+    });
+    const body = JSON.stringify({ query: "disconnect lifecycle proof" });
+    socket.write([
+      "POST /v1/alpha/search HTTP/1.1",
+      "Host: 127.0.0.1",
+      "Authorization: Bearer test-codex-session",
+      "Content-Type: application/json",
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      "Connection: keep-alive",
+      "",
+      body,
+    ].join("\r\n"));
+    await sourceReady;
+    source.enqueue(new TextEncoder().encode("stream-open"));
+    await new Promise<void>((resolve, reject) => {
+      socket.once("data", () => resolve());
+      socket.once("error", reject);
+    });
+
+    expect(await (await fetch(`${endpoint}/healthz`)).json()).toMatchObject({ active_http_turns: 1 });
+    socket.destroy();
+
+    const deadline = Date.now() + 1_000;
+    let activeHttpTurns = 1;
+    while (Date.now() < deadline && activeHttpTurns !== 0) {
+      const health = await (await fetch(`${endpoint}/healthz`)).json() as { active_http_turns: number };
+      activeHttpTurns = health.active_http_turns;
+      if (activeHttpTurns !== 0) await Bun.sleep(10);
+    }
+    expect(activeHttpTurns).toBe(0);
+    expect(sourceCancelled).toBe(true);
+  } finally {
+    socket.destroy();
+    await server.stop(true);
+  }
 });
 
 test("HTTP turn cancellation aborts the tracked request and waits for lifecycle release", async () => {

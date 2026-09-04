@@ -17,6 +17,7 @@ export interface TurnBrokerOwner {
   compactionDeliveryCount(token: string): number | Promise<number>;
   beginCompletionFence(token: string): number | undefined | Promise<number | undefined>;
   commitCompletionFence(token: string, revision: number): boolean | Promise<boolean>;
+  waitForRetirement(token: string, signal?: AbortSignal): Promise<void>;
   revoke(token: string, reason?: Error): void | Promise<void>;
 }
 
@@ -32,7 +33,7 @@ export function dispatchExternalOwnerRequest(
   signal?: AbortSignal,
 ): unknown | Promise<unknown> {
   if (request.method === "owner_status") {
-    return { protocolVersion: 4, acceptingExternalOwners: target.accepting() };
+    return { protocolVersion: 5, acceptingExternalOwners: target.accepting() };
   }
   if (request.method === "owner_register") {
     const environment = ownerEnvironment(request.environment);
@@ -96,6 +97,9 @@ export function dispatchExternalOwnerRequest(
     return Promise.resolve(target.commitCompletionFence(request.token, request.revision!))
       .then(committed => ({ committed }));
   }
+  if (request.method === "owner_wait_retirement") {
+    return target.waitForRetirement(request.token, signal).then(() => ({ retired: true }));
+  }
   if (request.method === "owner_revoke") {
     target.revoke(request.token);
     return { revoked: true };
@@ -133,6 +137,11 @@ export function ownerEnvironment(value: unknown): ChatGptTurnEnvironment {
 export class RemoteTurnBroker implements TurnBrokerOwner {
   constructor(readonly socketPath: string) {}
 
+  async waitForRetirement(token: string, signal?: AbortSignal): Promise<void> {
+    const result = await callTurnBroker<{ retired?: unknown }>(this.socketPath, { method: "owner_wait_retirement", token }, null, signal);
+    if (result.retired !== true) throw new Error("DEV turn owner received an invalid retirement result");
+  }
+
   async assertCompatible(): Promise<void> {
     let status: { protocolVersion?: unknown; acceptingExternalOwners?: unknown };
     try {
@@ -143,7 +152,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
         + ` (${error instanceof Error ? error.message : String(error)})`,
       );
     }
-    if (status.protocolVersion !== 4) {
+    if (status.protocolVersion !== 5) {
       throw new Error(`Unsupported DEV turn-owner protocol version: ${String(status.protocolVersion)}`);
     }
     if (status.acceptingExternalOwners !== true) {

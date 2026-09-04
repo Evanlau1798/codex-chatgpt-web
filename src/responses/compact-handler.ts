@@ -17,15 +17,18 @@ import {
   isUsableCompactionSummary,
 } from "./compaction";
 import { boundedCompactV1Output, CompactionBudgetExceeded } from "./compact-budget";
+import { extractCodexTurnIdentityFromBody } from "../adapters/chatgpt-web/environment";
+import type { ResponseRequestOptions } from "../server-dependencies";
 
 type AdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
-type ResponseHandler = (req: Request, config: AppConfig, adapterFactory: AdapterFactory) => Promise<Response>;
+type ResponseHandler = (req: Request, config: AppConfig, adapterFactory: AdapterFactory, options?: ResponseRequestOptions) => Promise<Response>;
 
 export async function handleCompactRequest(
   req: Request,
   config: AppConfig,
   responseRequest: ResponseHandler,
   adapterFactory: AdapterFactory = createChatGptWebAdapter,
+  options: Pick<ResponseRequestOptions, "onTurnIdentity"> = {},
 ): Promise<Response> {
   const nativeRequest = req.clone();
   let raw: Record<string, unknown>;
@@ -53,6 +56,12 @@ export async function handleCompactRequest(
         "x-codex-turn-metadata": headerTurnMetadata,
       },
     };
+  }
+  try {
+    const identity = extractCodexTurnIdentityFromBody(raw);
+    if (identity.threadId && identity.turnId) options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
+  } catch (error) {
+    return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
   if (typeof raw.model !== "string" || !raw.model) {
     return formatErrorResponse(400, "invalid_request_error", "Compaction request requires a model");
@@ -89,7 +98,7 @@ export async function handleCompactRequest(
     body: JSON.stringify({ ...raw, stream: false, input: [...input, { type: "compaction_trigger" }] }),
     signal: req.signal,
   });
-  const response = await responseRequest(internal, config, adapterFactory);
+  const response = await responseRequest(internal, config, adapterFactory, options);
   if (!response.ok) return response;
   let body: {
     output?: unknown[];

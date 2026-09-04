@@ -1290,12 +1290,44 @@ test("connector verification is effort-independent and works while the browser s
   );
 });
 
+test("connector verification records the helper failure in launcher diagnostics", async () => {
+  const calls = [];
+  const failure = new Error("private-account private-composer https://chatgpt.com/?secret=value");
+  failure.name = "ChatGptPersistentBrowserStateError";
+  failure.operationId = "verify-contract-trace";
+  const fixture = {
+    helper: { executable: "/runtime/electron", script: "/runtime/browser-helper.cjs" },
+    descriptorPath: "/runtime/launcher-browser.json",
+    logger: {
+      info: (event, detail) => calls.push(["info", event, detail]),
+      error: (event, detail) => calls.push(["error", event, detail]),
+    },
+    setState: (patch) => calls.push(["state", patch]),
+    refreshChatGptHomeDocument: async () => calls.push(["refresh"]),
+    verifyConnectorWithBrowserHelper: async () => { throw failure; },
+  };
+
+  await assert.rejects(
+    BrowserHost.prototype.runConnectorVerification.call(fixture, "Codex Native2"),
+    failure,
+  );
+  assert.deepEqual(calls.find(call => call[1] === "connector.verification_failed"), [
+    "error",
+    "connector.verification_failed",
+    {
+      traceId: "verify-contract-trace",
+      classification: "cleanup_failed",
+    },
+  ]);
+});
+
 test("a live helper retains exclusive ownership of its running turn", async () => {
   const tab = {
     id: "tab-live-owner",
     traceId: "trace_live_owner",
     helperPid: process.pid,
     status: "running",
+    interactionMode: "automatic",
   };
   await assert.rejects(
     () => BrowserHost.prototype.beginTurn.call({
@@ -1315,6 +1347,7 @@ test("a replacement helper takes over only after the previous owner exited", asy
     traceId: "trace_dead_owner",
     helperPid: deadPid,
     status: "running",
+    interactionMode: "automatic",
     loading: true,
     message: "ChatGPT is working",
     view: {
@@ -1761,6 +1794,7 @@ test("a later provider round reuses the connector-bound conversation with a new 
     conversationKey: "conversation-a",
     connectorIdentity: "Codex Native2",
     connectorBound: true,
+    interactionMode: "automatic",
     helperPid: 111,
     status: "ready",
     loading: false,
@@ -1831,6 +1865,7 @@ test("a retained conversation is not reused for a different connector identity",
     conversationKey: "conversation-a",
     connectorIdentity: "Codex Native2",
     connectorBound: true,
+    interactionMode: "automatic",
   };
   const created = { id: "fresh", surfaceId: "surface-fresh" };
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
@@ -1868,6 +1903,7 @@ test("a required retained conversation fails before creating a browser tab", asy
     conversationKey: "conversation-a",
     connectorIdentity: "Codex Native2",
     connectorBound: true,
+    interactionMode: "automatic",
   };
   let created = false;
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
@@ -1955,6 +1991,8 @@ test("completed Claude conversations retain and reuse their browser tab", async 
   const throttling = [];
   const tab = {
     id: "tab-claude",
+    interactionMode: "automatic",
+    conversationKey: "claude-retained-thread",
     surfaceId: "surface-claude",
     traceId: "trace_claude",
     helperPid: 555,
@@ -1981,7 +2019,7 @@ test("completed Claude conversations retain and reuse their browser tab", async 
   assert.equal(fixture.turnTabs.get(tab.id), tab);
   assert.equal(tab.status, "ready");
 
-  const lease = await BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, 777);
+  const lease = await BrowserHost.prototype.beginTurn.call(fixture, tab.traceId, false, 777, true, tab.conversationKey);
   assert.deepEqual(lease, { surfaceId: tab.surfaceId, tabId: tab.id, reused: true });
   assert.equal(tab.status, "running");
   assert.equal(tab.helperPid, 777);

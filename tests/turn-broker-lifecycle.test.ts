@@ -112,6 +112,56 @@ test("targeted tab cancellation settles one trace and keeps a terminal replay to
   sessions.clear();
 });
 
+test("native interruption retires only the exact browser turn identity", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const cancelled: string[] = [];
+  const runtime = (name: string) => {
+    let rejectBrowser!: (error: Error) => void;
+    const browser = new Promise<string>((_resolve, reject) => { rejectBrowser = reject; });
+    return {
+      mode: "read-only" as const,
+      nativeIdentity: { threadId: name === "target" ? "thread_target" : "thread_other", turnId: "turn_shared" },
+      browser,
+      physicalSettlement: browser.then(() => undefined, () => undefined),
+      trace: new ChatGptTraceFeed(),
+      text: new ChatGptTextFeed(),
+      cancel: (reason?: Error) => {
+        cancelled.push(name);
+        rejectBrowser(reason ?? new Error("cancelled"));
+      },
+    };
+  };
+  sessions.getOrCreate(
+    "target",
+    () => runtime("target"),
+    undefined,
+    undefined,
+    undefined,
+    "thread_target",
+  );
+  sessions.getOrCreate(
+    "other-thread",
+    () => runtime("other-thread"),
+    undefined,
+    undefined,
+    undefined,
+    "thread_other",
+  );
+
+  const cancellation = sessions.cancelNativeTurn(
+    "thread_target",
+    "turn_shared",
+    new DOMException("Codex turn interrupted", "AbortError"),
+  );
+  expect(cancellation.cancelled).toBe(1);
+  await cancellation.settlement;
+  expect(cancelled).toEqual(["target"]);
+  expect(sessions.find("target")).toBeUndefined();
+  expect(sessions.find("other-thread")?.runtime.nativeIdentity?.threadId).toBe("thread_other");
+  expect(sessions.activeCount()).toBe(1);
+  sessions.clear();
+});
+
 test("session cache expiry never cancels a still-active long browser turn", async () => {
   const sessions = new ChatGptTurnSessions(1);
   let cancelled = 0;

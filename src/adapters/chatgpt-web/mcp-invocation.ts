@@ -33,12 +33,11 @@ export async function invokeChatGptMcpTool(
       ...request,
     }, timeoutMs, signal);
   } catch (error) {
-    await callTurnBroker(socketPath, { method: "release", bindingId }).catch(releaseError => {
-      console.error(
-        `[chatgpt-web-mcp] failed to retire abandoned binding:`
-        + ` ${releaseError instanceof Error ? releaseError.message : String(releaseError)}`,
-      );
-    });
+    try {
+      await callTurnBroker(socketPath, { method: "release", bindingId });
+    } catch (releaseError) {
+      throw new AggregateError([error, releaseError], "Codex Native invocation failed and its abandoned broker binding could not be retired");
+    }
     if (error instanceof TurnBrokerTimeoutError) {
       const detail = {
         code: "codex_tool_timeout",

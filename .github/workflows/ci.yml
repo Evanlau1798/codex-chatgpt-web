@@ -42,6 +42,7 @@ jobs:
           bun -e 'console.log(JSON.stringify({ platform: process.platform, arch: process.arch, bun: Bun.version }))'
       - run: codex --version
       - run: bun run scripts/smoke-codex-cancel.ts
+      - run: bun run scripts/smoke-codex-interrupt.ts
       - name: Probe the Windows named-pipe broker
         if: runner.os == 'Windows'
         working-directory: tests
@@ -127,7 +128,7 @@ jobs:
       - name: Preserve the pinned upstream v5 ancestry
         env:
           CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: git merge-base --is-ancestor b2793cfd22342b0c6409df5eb855c163cefc16ea "$CANDIDATE_HEAD"
+        run: git merge-base --is-ancestor 9a7428a9d1fced9baaa85112994c02c011a3b7c9 "$CANDIDATE_HEAD"
       - name: Require every CI dependency to succeed
         env:
           LIFECYCLE_SIM_RESULT: ${{ needs['lifecycle-sim'].result }}

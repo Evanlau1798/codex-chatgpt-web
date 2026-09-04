@@ -5,6 +5,11 @@ import { effectiveChatGptToolPolicy } from "./tool-policy";
 import { currentTurnUserRevision } from "./turn-user-revision";
 import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import {
+  codexTurnMetadataFromBody,
+  extractChatGptTurnIdentity,
+  type ChatGptThreadSpawnLineage,
+} from "./environment-identity";
+import {
   decodeXmlText,
   environmentCwdMatches,
   isCurrentThreadVisualizationRoot,
@@ -14,6 +19,12 @@ import {
   uniqueAbsolutePaths,
 } from "./environment-paths";
 export { MissingTrustedCodexEnvironmentError } from "./environment-paths";
+export {
+  extractChatGptTurnIdentity,
+  extractCodexTurnIdentityFromBody,
+  type ChatGptTurnIdentity,
+  type ChatGptThreadSpawnLineage,
+} from "./environment-identity";
 export type ChatGptSandboxPolicy =
   | { type: "dangerFullAccess" }
   | { type: "readOnly"; networkAccess: boolean }
@@ -24,21 +35,6 @@ export interface ChatGptTurnEnvironment {
   writableRoots: string[];
   sandboxPolicy: ChatGptSandboxPolicy;
   tools: CodexTool[];
-}
-export interface ChatGptTurnIdentity {
-  threadId?: string;
-  turnId?: string;
-  parentThreadId?: string;
-  agentName?: string;
-  subagentKind?: string;
-  promptCacheKey?: string;
-}
-export interface ChatGptThreadSpawnLineage {
-  threadId: string;
-  parentThreadId: string;
-  agentName: string;
-  sandboxType: ChatGptSandboxPolicy["type"];
-  workspaceRoots: string[];
 }
 export interface ChatGptTurnUserRevision {
   content: unknown;
@@ -59,14 +55,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 function clientTurnMetadata(parsed: CodexParsedRequest): Record<string, unknown> | undefined {
-  const body = record(parsed._rawBody);
-  const metadata = record(body?.client_metadata);
-  const raw = metadata?.["x-codex-turn-metadata"];
-  if (typeof raw === "string") {
-    try { return record(JSON.parse(raw)); }
-    catch { return undefined; }
-  }
-  return record(raw);
+  return codexTurnMetadataFromBody(parsed._rawBody);
 }
 
 function itemTurnId(value: unknown): string | undefined {
@@ -81,6 +70,16 @@ function rawMessageText(value: Record<string, unknown>): string {
     .map(part => record(part)?.text)
     .filter((text): text is string => typeof text === "string")
     .join("\n");
+}
+
+/** True when the raw Responses input attempted to carry an environment envelope, valid or not. */
+export function hasRawChatGptEnvironmentContext(parsed: CodexParsedRequest): boolean {
+  const body = record(parsed._rawBody);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  return input.some(value => {
+    const item = record(value);
+    return item?.type === "message" && /<\/?environment_context\b/i.test(rawMessageText(item));
+  });
 }
 
 function contextualUserMessage(value: Record<string, unknown>): boolean {
@@ -335,7 +334,8 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
   const input = Array.isArray(body?.input) ? body.input : [];
   let activeUserIndex = -1;
   for (let index = input.length - 1; index >= 0; index -= 1) {
-    if (record(input[index])?.role === "user") {
+    const item = record(input[index]);
+    if (item?.role === "user" && !contextualUserMessage(item)) {
       activeUserIndex = index;
       break;
     }
@@ -350,6 +350,19 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
 
   const current = canonicalMetadataEnvironmentBeforeUser(input, activeUserIndex, clientTurnMetadata(parsed));
   if (current) return current;
+
+  // Native steering appends same-turn user items without repeating the trusted envelope. Reuse
+  // only an explicitly turn-owned pair, and never skip a newer environment attempt or provenance gap.
+  if (typeof turnId === "string") {
+    for (let index = activeUserIndex - 1; index > 0; index -= 1) {
+      const following = record(input[index + 1]);
+      if (following?.type !== "message" || following.role !== "user" || itemTurnId(following) !== turnId
+        || /<\/?environment_context\b/i.test(rawMessageText(following))) break;
+      const earlier = environmentBeforeUser(input, index, turnId);
+      const metadata = clientTurnMetadata(parsed);
+      if (earlier && (metadata?.workspaces === undefined || environmentMatchesCanonicalMetadata(earlier, metadata, true))) return earlier;
+    }
+  }
 
   // A skill invocation appends another server-owned user item after the real instruction. Recover
   // the earlier current-turn environment/prompt pair only through canonical metadata, and bind all
@@ -414,6 +427,10 @@ function clientMetadataWorkspaceRoots(parsed: CodexParsedRequest): string[] {
 function trustedEnvironmentText(parsed: CodexParsedRequest): string {
   const raw = rawEnvironmentText(parsed);
   if (raw) return raw;
+  // A real Responses request always has `_rawBody`. Parsed system/developer text has already lost
+  // the wire provenance needed to distinguish Codex context from user-authored XML, so it must
+  // never become filesystem authority for a raw request.
+  if (parsed._rawBody !== undefined) return "";
   const system = parsed.context.systemPrompt ?? [];
   const developer = parsed.context.messages
     .filter(message => message.role === "developer")
@@ -455,19 +472,6 @@ export function extractChatGptTurnEnvironment(parsed: CodexParsedRequest): ChatG
     };
   }
   return { cwd, roots, writableRoots: [], sandboxPolicy: { type: "readOnly", networkAccess }, tools };
-}
-
-export function extractChatGptTurnIdentity(parsed: CodexParsedRequest): ChatGptTurnIdentity {
-  const body = record(parsed._rawBody);
-  const metadata = clientTurnMetadata(parsed);
-  return {
-    ...(typeof metadata?.thread_id === "string" ? { threadId: metadata.thread_id } : {}),
-    ...(typeof metadata?.turn_id === "string" ? { turnId: metadata.turn_id } : {}),
-    ...(typeof metadata?.parent_thread_id === "string" ? { parentThreadId: metadata.parent_thread_id } : {}),
-    ...(typeof metadata?.agent_name === "string" ? { agentName: metadata.agent_name } : {}),
-    ...(typeof metadata?.subagent_kind === "string" ? { subagentKind: metadata.subagent_kind } : {}),
-    ...(typeof body?.prompt_cache_key === "string" ? { promptCacheKey: body.prompt_cache_key } : {}),
-  };
 }
 
 /**

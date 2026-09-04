@@ -1651,7 +1651,7 @@ function SettingsSurface({
         >
           <Switch
             checked={snapshot.state.browserInteractionMode === "manual"}
-            disabled={busy || snapshot.state.coreSetupComplete !== true}
+            disabled={busy}
             onChange={(enabled) => void setManualInteraction(enabled)}
           />
         </SettingRow>

@@ -29,6 +29,7 @@ async function codexLane(): Promise<void> {
   await run([process.execPath, "run", "scripts/smoke-codex-subagents.ts", "--v1", codex]);
   await run([process.execPath, "run", "scripts/smoke-codex-subagents.ts", "--v2", codex]);
   await run([process.execPath, "run", "scripts/smoke-codex-cancel.ts", codex]);
+  await run([process.execPath, "run", "scripts/smoke-codex-interrupt.ts", codex]);
   await run([process.execPath, "run", "scripts/lifecycle-sim/compact-client.ts", codex]);
   await runTests(codexLifecycleTests);
   process.stdout.write("CODEX_DETERMINISTIC_LIFECYCLE_LANE_OK\n");

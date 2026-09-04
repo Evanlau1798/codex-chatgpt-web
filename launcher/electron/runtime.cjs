@@ -1241,7 +1241,7 @@ class RuntimeHost {
     };
   }
 
-  setupMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode } = {}) {
+  setupMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode } = {}, afterRuntimeReady) {
     this.assertProductionProfile("Native Codex MCP setup");
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
     const targetMode = interactionMode ?? this.browserInteractionMode();
@@ -1268,6 +1268,7 @@ class RuntimeHost {
         message: "Reconnecting the native Codex harness with saved tunnel credentials",
         successMessage: "Local MCP tools are ready",
         timeoutMs: MCP_SETUP_TIMEOUT_MS,
+        afterRuntimeReady,
       });
     }
     const secretsDir = path.join(this.app.getPath("userData"), "secrets");
@@ -1287,10 +1288,11 @@ class RuntimeHost {
       message: "Connecting the native Codex harness",
       successMessage: "Local MCP tools are ready",
       timeoutMs: MCP_SETUP_TIMEOUT_MS,
+      afterRuntimeReady,
     }).finally(() => fs.rmSync(keyPath, { force: true }));
   }
 
-  setupDevMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode } = {}) {
+  setupDevMcp({ tunnelId = "", runtimeKey = "", replace = false, interactionMode } = {}, afterRuntimeReady) {
     if (this.launcherProfile !== "development") {
       throw new Error("DEV MCP setup requires the isolated DEV launcher");
     }
@@ -1319,6 +1321,7 @@ class RuntimeHost {
         message: "Validating saved DEV tunnel credentials",
         successMessage: "DEV Full harness is configured",
         timeoutMs: MCP_SETUP_TIMEOUT_MS,
+        afterRuntimeReady,
       });
     }
     const secretsDir = path.join(this.app.getPath("userData"), "secrets");
@@ -1331,6 +1334,7 @@ class RuntimeHost {
       message: "Configuring the isolated DEV Full harness",
       successMessage: "DEV Full harness is configured",
       timeoutMs: MCP_SETUP_TIMEOUT_MS,
+      afterRuntimeReady,
     }).finally(() => fs.rmSync(keyPath, { force: true }));
   }
 
@@ -1360,7 +1364,7 @@ class RuntimeHost {
     return { ...result, mode: current.mode, enabled: enabled === true };
   }
 
-  async setBrowserInteractionMode(mode) {
+  async setBrowserInteractionMode(mode, afterRuntimeReady) {
     if (mode !== "automatic" && mode !== "manual") throw new Error("Browser interaction mode is invalid");
     const current = this.runtimeConfigSnapshot();
     if (!current.configured) throw new Error("Install the Codex integration before changing browser interaction mode");
@@ -1381,6 +1385,7 @@ class RuntimeHost {
       message: mode === "manual" ? "Enabling Zero Risk" : "Enabling automatic browser interaction",
       successMessage: `${mode === "manual" ? "Zero Risk" : "Automatic browser interaction"} enabled; restart Codex`,
       timeoutMs: current.mode === "full" ? MCP_SETUP_TIMEOUT_MS : CORE_SETUP_TIMEOUT_MS,
+      afterRuntimeReady,
     };
     const result = this.launcherProfile === "development"
       ? await this.runDevSetup("browser-interaction-mode", args, options)

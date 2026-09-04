@@ -38,6 +38,7 @@
     "smoke": "bun run scripts/smoke-release.ts dist/runtime",
     "smoke:codex": "bun run scripts/smoke-codex-catalog.ts",
     "smoke:cancel": "bun run scripts/smoke-codex-cancel.ts",
+    "smoke:interrupt": "bun run scripts/smoke-codex-interrupt.ts",
     "smoke:subagents": "bun run scripts/smoke-codex-subagents.ts --v1 && bun run scripts/smoke-codex-subagents.ts --v2",
     "smoke:subagents:live": "bun run scripts/smoke-codex-web-subagents.ts",
     "lifecycle:sim": "bun run scripts/lifecycle-sim/run.ts",

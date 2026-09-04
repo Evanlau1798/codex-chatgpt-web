@@ -1,0 +1,310 @@
+import { Database } from "bun:sqlite";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  realpathSync,
+} from "node:fs";
+import { basename, isAbsolute, join, resolve } from "node:path";
+import { matchesPath as contains } from "./environment-paths";
+import { environmentFromTurnContext } from "./codex-rollout-permissions";
+import { expandUserPath } from "../../config";
+import { findTopLevelAssignment } from "../../codex-integration-document";
+import type { CodexTool } from "../../types";
+import type {
+  ChatGptThreadSpawnLineage,
+  ChatGptTurnEnvironment,
+} from "./environment";
+
+const CODEX_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
+const CODEX_ID = new RegExp(`^${CODEX_ID_SOURCE}$`, "i");
+const ROLLOUT_READ_CHUNK_BYTES = 64 * 1024;
+const MAX_ROLLOUT_JSON_LINE_BYTES = 16 * 1024 * 1024;
+const MAX_ROLLOUT_DIRECTORY_ENTRIES = 100_000;
+
+type IndexedRollout =
+  | { kind: "unavailable" }
+  | { kind: "absent" }
+  | { kind: "found"; path: string };
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function canonicalRolloutName(name: string, threadId: string): boolean {
+  const escapedThreadId = threadId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `^rollout-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-${escapedThreadId}(?:_${CODEX_ID_SOURCE})?\\.jsonl$`,
+    "i",
+  ).test(name);
+}
+
+function configuredSqliteHome(codexHome: string, explicit?: string): string {
+  if (explicit) return resolve(explicit);
+
+  const configPath = join(codexHome, "config.toml");
+  if (existsSync(configPath)) {
+    const configured = findTopLevelAssignment(
+      readFileSync(configPath, "utf8").split(/\r\n|\n|\r/),
+      "sqlite_home",
+    );
+    if (configured.present) {
+      const value = configured.value?.trim();
+      if (!value) throw new Error("sqlite_home in Codex config must not be empty");
+      return resolve(codexHome, expandUserPath(value));
+    }
+  }
+
+  const environmentValue = process.env.CODEX_SQLITE_HOME?.trim();
+  return resolve(environmentValue ? expandUserPath(environmentValue) : codexHome);
+}
+
+function indexedRollout(
+  sqliteHome: string,
+  lineage: ChatGptThreadSpawnLineage,
+): IndexedRollout {
+  const databasePath = join(sqliteHome, "state_5.sqlite");
+  if (!existsSync(databasePath)) return { kind: "unavailable" };
+  let database: Database | undefined;
+  try {
+    database = new Database(databasePath, { readonly: true, strict: true });
+    const row = database.query(`
+      SELECT t.rollout_path, t.agent_path, e.parent_thread_id, e.status
+      FROM threads AS t
+      JOIN thread_spawn_edges AS e ON e.child_thread_id = t.id
+      WHERE t.id = ?
+      LIMIT 1
+    `).get(lineage.threadId) as {
+      rollout_path?: unknown;
+      agent_path?: unknown;
+      parent_thread_id?: unknown;
+      status?: unknown;
+    } | null;
+    if (!row) return { kind: "absent" };
+    if (typeof row.rollout_path !== "string"
+      || row.agent_path !== lineage.agentName
+      || row.parent_thread_id !== lineage.parentThreadId
+      || row.status !== "open") {
+      throw new Error("Codex state does not authenticate the requested subagent rollout");
+    }
+    return { kind: "found", path: row.rollout_path };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Codex state does not authenticate the requested subagent rollout") {
+      throw error;
+    }
+    // State storage is optional in Codex. A missing/older schema does not create authority; the
+    // canonical rollout itself can still prove the exact child, parent, agent path, and turn.
+    return { kind: "unavailable" };
+  } finally {
+    database?.close();
+  }
+}
+
+function validateRolloutPath(codexHome: string, candidate: string, threadId: string): string {
+  if (!isAbsolute(candidate)) throw new Error("Codex state returned a non-absolute rollout path");
+  const sessionsRoot = realpathSync(join(codexHome, "sessions"));
+  if (lstatSync(candidate).isSymbolicLink()) throw new Error("Codex rollout path is a symbolic link");
+  const rolloutPath = realpathSync(candidate);
+  if (!lstatSync(rolloutPath).isFile()) throw new Error("Codex rollout path is not a regular file");
+  if (!contains(sessionsRoot, rolloutPath)) throw new Error("Codex rollout path escapes the sessions directory");
+  if (!canonicalRolloutName(basename(rolloutPath), threadId)) {
+    throw new Error("Codex rollout filename does not belong to the requested thread");
+  }
+  return rolloutPath;
+}
+
+function scanCanonicalRollouts(codexHome: string, threadId: string): string[] {
+  const sessionsRoot = join(codexHome, "sessions");
+  if (!existsSync(sessionsRoot)) return [];
+  const matches: string[] = [];
+  let visited = 0;
+  const visitLevel = (path: string, depth: number): void => {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      visited += 1;
+      if (visited > MAX_ROLLOUT_DIRECTORY_ENTRIES) {
+        throw new Error("Codex sessions directory is too large for an unindexed rollout lookup");
+      }
+      if (entry.isSymbolicLink()) continue;
+      const child = join(path, entry.name);
+      if (depth < 3) {
+        if (entry.isDirectory() && /^\d+$/.test(entry.name)) visitLevel(child, depth + 1);
+        continue;
+      }
+      if (entry.isFile() && canonicalRolloutName(entry.name, threadId)) matches.push(child);
+    }
+  };
+  visitLevel(sessionsRoot, 0);
+  return matches;
+}
+
+function parseJsonLine(line: Buffer): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(line.toString("utf8").replace(/^\uFEFF/, ""));
+    const item = record(parsed);
+    if (!item) throw new Error("not an object");
+    return item;
+  } catch (error) {
+    throw new Error("Codex rollout contains an invalid complete JSONL record", { cause: error });
+  }
+}
+
+function firstRolloutRecord(fd: number, size: number): Record<string, unknown> {
+  let position = 0;
+  let buffered = Buffer.alloc(0);
+  while (position < size) {
+    const length = Math.min(ROLLOUT_READ_CHUNK_BYTES, size - position);
+    const chunk = Buffer.alloc(length);
+    const count = readSync(fd, chunk, 0, length, position);
+    if (count <= 0) break;
+    position += count;
+    buffered = Buffer.concat([buffered, chunk.subarray(0, count)]);
+    const newline = buffered.indexOf(0x0a);
+    if (newline >= 0) return parseJsonLine(buffered.subarray(0, newline));
+    if (buffered.length > MAX_ROLLOUT_JSON_LINE_BYTES) {
+      throw new Error("Codex rollout session metadata exceeds the bounded JSONL record size");
+    }
+  }
+  throw new Error("Codex rollout has no complete session metadata record");
+}
+
+function latestTurnContext(fd: number, size: number): Record<string, unknown> | undefined {
+  let position = size;
+  let carry = Buffer.alloc(0);
+  let firstSegmentAtEof = true;
+  const fileEndsWithNewline = (() => {
+    if (size === 0) return false;
+    const byte = Buffer.alloc(1);
+    return readSync(fd, byte, 0, 1, size - 1) === 1 && byte[0] === 0x0a;
+  })();
+
+  while (position > 0) {
+    const length = Math.min(ROLLOUT_READ_CHUNK_BYTES, position);
+    position -= length;
+    const chunk = Buffer.alloc(length);
+    const count = readSync(fd, chunk, 0, length, position);
+    if (count !== length) throw new Error("Codex rollout changed during authority lookup");
+    const data = Buffer.concat([chunk, carry]);
+    let lineEnd = data.length;
+    for (let index = data.length - 1; index >= 0; index -= 1) {
+      if (data[index] !== 0x0a) continue;
+      const line = data.subarray(index + 1, lineEnd);
+      const trailingPartial = firstSegmentAtEof && !fileEndsWithNewline;
+      firstSegmentAtEof = false;
+      lineEnd = index;
+      if (trailingPartial || line.length === 0) continue;
+      if (line.length > MAX_ROLLOUT_JSON_LINE_BYTES) {
+        throw new Error("Codex rollout JSONL record exceeds the bounded record size");
+      }
+      const item = parseJsonLine(line);
+      if (item.type === "turn_context") return record(item.payload);
+    }
+    carry = Buffer.from(data.subarray(0, lineEnd));
+    if (carry.length > MAX_ROLLOUT_JSON_LINE_BYTES) {
+      throw new Error("Codex rollout JSONL record exceeds the bounded record size");
+    }
+  }
+  if (carry.length === 0) return undefined;
+  const item = parseJsonLine(carry);
+  return item.type === "turn_context" ? record(item.payload) : undefined;
+}
+
+function validateSessionMeta(
+  item: Record<string, unknown>,
+  lineage: ChatGptThreadSpawnLineage,
+): void {
+  const payload = record(item.payload);
+  const source = record(payload?.source);
+  const subagent = record(source?.subagent);
+  const spawn = record(subagent?.thread_spawn);
+  if (item.type !== "session_meta"
+    || payload?.id !== lineage.threadId
+    || payload.parent_thread_id !== lineage.parentThreadId
+    || payload.agent_path !== lineage.agentName
+    || payload.thread_source !== "subagent"
+    || spawn?.parent_thread_id !== lineage.parentThreadId
+    || spawn.agent_path !== lineage.agentName) {
+    throw new Error("Codex rollout session metadata does not authenticate the requested subagent");
+  }
+}
+
+function validateMetadataConsistency(
+  lineage: ChatGptThreadSpawnLineage,
+  environment: ChatGptTurnEnvironment,
+): void {
+  // Request sandbox/workspace fields are diagnostic only. They narrow a rollout-derived authority
+  // here and never create or expand it.
+  if (environment.sandboxPolicy.type !== lineage.sandboxType) {
+    throw new Error("ChatGPT Web subagent sandbox metadata conflicts with its Codex rollout");
+  }
+  if (lineage.workspaceRoots.length > 0
+    && !lineage.workspaceRoots.some(root => contains(root, environment.cwd))) {
+    throw new Error("ChatGPT Web subagent workspace metadata does not contain its Codex rollout cwd");
+  }
+  if (lineage.workspaceRoots.some(root => !environment.roots.some(rolloutRoot => (
+    contains(rolloutRoot, root) || contains(root, rolloutRoot)
+  )))) {
+    throw new Error("ChatGPT Web subagent workspace metadata conflicts with its Codex rollout roots");
+  }
+}
+
+export function resolveCurrentCodexChildRolloutEnvironment(options: {
+  codexHome: string;
+  sqliteHome?: string;
+  lineage: ChatGptThreadSpawnLineage;
+  turnId: string;
+  tools?: readonly CodexTool[];
+}): ChatGptTurnEnvironment | undefined {
+  const { codexHome, lineage, turnId, tools } = options;
+  const nativeThreadId = CODEX_ID.test(lineage.threadId);
+  const nativeTurnId = CODEX_ID.test(turnId);
+  if (!nativeThreadId && !nativeTurnId) return undefined;
+  if (!nativeThreadId || !nativeTurnId || !CODEX_ID.test(lineage.parentThreadId)) {
+    throw new Error("Codex subagent lineage contains an invalid native identifier");
+  }
+
+  const indexed = indexedRollout(configuredSqliteHome(codexHome, options.sqliteHome), lineage);
+  const candidates = indexed.kind === "found"
+    ? [indexed.path]
+    : scanCanonicalRollouts(codexHome, lineage.threadId);
+  if (candidates.length === 0) {
+    throw new Error("Codex has no canonical rollout for the requested subagent thread");
+  }
+
+  const matching: ChatGptTurnEnvironment[] = [];
+  for (const candidate of candidates) {
+    const rolloutPath = validateRolloutPath(codexHome, candidate, lineage.threadId);
+    const fd = openSync(rolloutPath, "r");
+    try {
+      const size = fstatSync(fd).size;
+      if (!Number.isSafeInteger(size) || size <= 0) throw new Error("Codex rollout is empty");
+      validateSessionMeta(firstRolloutRecord(fd, size), lineage);
+      const latest = latestTurnContext(fd, size);
+      if (!latest) throw new Error("Codex rollout has no complete turn context");
+      if (latest.turn_id !== turnId) {
+        if (indexed.kind === "found") {
+          throw new Error("Latest Codex rollout turn context does not belong to the requested turn");
+        }
+        continue;
+      }
+      const environment = environmentFromTurnContext(latest, turnId, tools);
+      validateMetadataConsistency(lineage, environment);
+      matching.push(environment);
+    } finally {
+      closeSync(fd);
+    }
+  }
+  if (matching.length === 0) {
+    throw new Error("Codex has no canonical rollout for the requested current turn");
+  }
+  if (matching.length > 1) {
+    throw new Error("Codex has multiple canonical rollouts for the requested current turn");
+  }
+  return matching[0]!;
+}

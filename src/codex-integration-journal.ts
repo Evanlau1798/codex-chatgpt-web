@@ -14,6 +14,7 @@ import type {
   AnyCodexIntegrationJournal,
   CodexIntegrationJournal,
   LegacyCodexIntegrationJournal,
+  LegacyCodexIntegrationJournalV9,
   LegacyCodexIntegrationJournalV3,
   LegacyCodexIntegrationJournalV4,
   LegacyCodexIntegrationJournalV5,
@@ -31,9 +32,37 @@ function isPreviousAssignment(value: unknown): boolean {
     || (typeof assignment.rawLine === "string" && typeof assignment.value === "string");
 }
 
+function isInstalledInterruptHook(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const hook = value as Record<string, unknown>;
+  return typeof hook.command === "string" && hook.command.length > 0
+    && Number.isSafeInteger(hook.groupIndex) && (hook.groupIndex as number) >= 0
+    && typeof hook.stateKey === "string" && hook.stateKey.length > 0
+    && typeof hook.trustedHash === "string" && /^sha256:[a-f0-9]{64}$/.test(hook.trustedHash)
+    && typeof hook.fragment === "string" && hook.fragment.length > 0;
+}
+
 function parseJournal(path: string): AnyCodexIntegrationJournal {
   const value = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
   const installed = value.installed as Record<string, unknown> | undefined;
+  if (value.version === 10
+    && typeof value.active === "boolean"
+    && installed
+    && typeof installed.openai_base_url === "string"
+    && installed.experimental_realtime_webrtc_call_base_url === CODEX_REALTIME_WEBRTC_CALL_BASE_URL
+    && (installed.subagent_protocol === "compatibility-v1" || installed.subagent_protocol === "native")
+    && (installed.subagent_protocol !== "compatibility-v1"
+      || (value.previousMultiAgent && value.previousMultiAgentV2
+        && value.previousAgentMaxDepth
+        && typeof installed.agent_max_depth === "number"
+        && Number.isSafeInteger(installed.agent_max_depth)
+        && installed.agent_max_depth >= 2))
+    && value.previous
+    && isPreviousAssignment(value.previousRealtimeWebrtcCallBaseUrl)
+    && isInstalledInterruptHook(value.interruptHook)
+    && typeof value.configPath === "string") {
+    return value as unknown as CodexIntegrationJournal;
+  }
   if (value.version === 9
     && typeof value.active === "boolean"
     && installed
@@ -49,7 +78,7 @@ function parseJournal(path: string): AnyCodexIntegrationJournal {
     && value.previous
     && isPreviousAssignment(value.previousRealtimeWebrtcCallBaseUrl)
     && typeof value.configPath === "string") {
-    return value as unknown as CodexIntegrationJournal;
+    return value as unknown as LegacyCodexIntegrationJournalV9;
   }
   if (value.version === 8
     && typeof value.active === "boolean"
@@ -175,7 +204,8 @@ export function readCodexSubagentProtocol(
   options: { repair?: boolean } = {},
 ): AppConfig["subagentProtocol"] {
   const journal = readJournal(options);
-  return journal?.version === 8 || journal?.version === 9 ? journal.installed.subagent_protocol : fallback;
+  return journal?.version === 8 || journal?.version === 9 || journal?.version === 10
+    ? journal.installed.subagent_protocol : fallback;
 }
 
 export function assertJournalTargetsConfig(

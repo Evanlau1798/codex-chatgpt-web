@@ -34,6 +34,7 @@ export interface PreviousFeatureAssignment extends PreviousAssignment {
   tablePresent: boolean;
   tableName?: "features" | "features.multi_agent_v2";
   inlineTable?: boolean;
+  separatorInserted?: boolean;
 }
 
 export interface PreviousAgentAssignment extends PreviousAssignment {
@@ -41,7 +42,37 @@ export interface PreviousAgentAssignment extends PreviousAssignment {
   separatorInserted?: boolean;
 }
 
+export interface InstalledCodexInterruptHook {
+  command: string;
+  groupIndex: number;
+  stateKey: string;
+  trustedHash: string;
+  fragment: string;
+}
+
 export interface CodexIntegrationJournal {
+  version: 10;
+  active: boolean;
+  configPath: string;
+  installed: {
+    openai_base_url: string;
+    experimental_realtime_webrtc_call_base_url: string;
+    subagent_protocol: SubagentProtocol;
+    agent_max_depth?: number;
+  };
+  previous: Record<ManagedAssignmentKey, PreviousAssignment>;
+  previousRealtimeWebrtcCallBaseUrl: PreviousAssignment;
+  interruptHook: InstalledCodexInterruptHook;
+  previousMultiAgent?: PreviousFeatureAssignment;
+  previousMultiAgentV2?: PreviousFeatureAssignment;
+  previousAgentMaxDepth?: PreviousAgentAssignment;
+  format?: {
+    lineEnding: "\n" | "\r\n" | "\r";
+    trailingNewline: boolean;
+  };
+}
+
+export interface LegacyCodexIntegrationJournalV9 {
   version: 9;
   active: boolean;
   configPath: string;
@@ -178,6 +209,7 @@ export interface LegacyCodexIntegrationJournal {
 
 export type ManagedRouteJournal =
   | CodexIntegrationJournal
+  | LegacyCodexIntegrationJournalV9
   | LegacyCodexIntegrationJournalV8
   | LegacyCodexIntegrationJournalV7
   | LegacyCodexIntegrationJournalV6

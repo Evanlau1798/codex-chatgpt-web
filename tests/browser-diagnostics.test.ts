@@ -27,6 +27,49 @@ const diagnosticState = {
   },
 };
 
+test("connector verification records only capabilities even when screenshots are enabled", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-verification-private-"));
+  const previous = process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS;
+  let screenshots = 0;
+  let verificationEvaluator = "";
+  try {
+    process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS = "1";
+    const page = {
+      evaluate: async (evaluator: Function) => {
+        verificationEvaluator = evaluator.toString();
+        return {
+          composerVisible: true, connectorSelected: false, mentionMenuVisible: false,
+          effortControlVisible: false, effortItemsVisible: false, menuVisible: false,
+          connectorRowsVisible: false, overlayVisible: false,
+        };
+      },
+      locator: () => ({}),
+      screenshot: async () => { screenshots++; return Buffer.from("private-image"); },
+    } as unknown as Page;
+    const capture = new ChatGptBrowserDiagnostics("verify_private_trace", root, true);
+    await capture.capture(page, "connector-verification-started");
+    await capture.capture(page, "connector-verification-failed", new Error("private-error"));
+    const directory = join(root, readdirSync(root)[0]!);
+    const files = readdirSync(directory).sort();
+    expect(files.length).toBe(2);
+    expect(screenshots).toBe(0);
+    expect(verificationEvaluator).not.toMatch(/location\.href|document\.title|innerText|textContent/);
+    for (const file of files) {
+      const content = readFileSync(join(directory, file), "utf8");
+      expect(content).not.toContain("private-");
+      const entry = JSON.parse(content);
+      expect(entry.traceId).toBe("verify_private_trace");
+      expect(entry.state.composerVisible).toBe(true);
+      expect(Object.values(entry.state).every(value => typeof value === "boolean")).toBe(true);
+    }
+    expect(JSON.parse(readFileSync(join(directory, files[1]!), "utf8")).error).toBe("verification_failed");
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS;
+    else process.env.CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 function artifact(root: string, extension: string): string {
   const directory = join(root, readdirSync(root)[0]!);
   const name = readdirSync(directory).find(value => value.endsWith(extension));

@@ -129,7 +129,7 @@ function activateSafeTurn(channel: TurnChannel, safe: SafeTurnControl): void {
   resolveSafeWaiters(safe.startWaiters, undefined);
 }
 
-function waitForSafeState<T>(
+export function waitForSafeState<T>(
   waiters: Set<SafeWaiter<T>>,
   signal: AbortSignal | undefined,
   abortMessage: string,
@@ -148,7 +148,7 @@ function waitForSafeState<T>(
   });
 }
 
-function resolveSafeWaiters<T>(waiters: Set<SafeWaiter<T>>, value: T): void {
+export function resolveSafeWaiters<T>(waiters: Set<SafeWaiter<T>>, value: T): void {
   for (const waiter of waiters) {
     if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
     waiter.resolve(value);

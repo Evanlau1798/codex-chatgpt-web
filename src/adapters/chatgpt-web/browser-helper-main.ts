@@ -291,7 +291,7 @@ async function run(message: RunMessage): Promise<void> {
 
 async function verify(message: VerifyMessage): Promise<void> {
   try {
-    const selected = await maintenanceWorker(message).verifyConnector();
+    const selected = await maintenanceWorker(message).verifyConnector(message.id);
     writeProtocol({ type: "result", id: message.id, text: selected });
   } catch (error) {
     writeProtocol({
