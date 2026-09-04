@@ -128,6 +128,7 @@ describe("upstream v5.0.0 audit ledger", () => {
       "manual-owner-death", "manual-owner-liveness", "manual-primary-surface", "manual-provider-catalog", "manual-resume-validation",
       "manual-retained-ttl", "manual-supervisor-identity", "manual-surface-failure", "manual-terminal-errors", "manual-tool-boundary", "manual-ui-close",
       "markdown-wiki-links",
+      "renderer-manual-guidance", "renderer-manual-settings", "renderer-mode-provisioning", "renderer-onboarding-validation",
       "setup-preflight", "setup-profile-checkpoint", "setup-profile-migration", "setup-runtime-change", "supervisor-boot-ownership", "tunnel-command-contract", "tunnel-key-isolation",
     ]);
     const sources = new Map<string, string>();
