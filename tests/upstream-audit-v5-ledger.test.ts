@@ -120,7 +120,7 @@ describe("upstream v5.0.0 audit ledger", () => {
       "environment-cwdless",
       "interaction-mode-http-drain",
       "launcher-foreground-request", "launcher-interaction-operations",
-      "manual-body-limit", "manual-clipboard-transaction", "manual-compaction-canonical", "manual-compaction-reconnect", "manual-duplicate-deadline",
+      "manual-body-limit", "manual-client-polling", "manual-clipboard-transaction", "manual-compaction-canonical", "manual-compaction-reconnect", "manual-duplicate-deadline",
       "manual-mcp-contract",
       "manual-mode-transaction",
       "manual-native-owner",
