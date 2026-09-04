@@ -51,8 +51,14 @@ test("v5.0.1 ledger pins the exact release and contemporaneous merge evidence", 
     tagObject: "4473f90a1f09348eb52d0db36d283550653ea62a",
     commit: "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
   });
-  expect(git(["cat-file", "-t", ledger.upstream.tagObject])).toBe("tag");
-  expect(git(["rev-parse", `${ledger.upstream.tagObject}^{}`])).toBe(ledger.upstream.commit);
+  const archivedTag = spawnSync("tar", [
+    "-xOzf",
+    resolve(root, ledger.mergeEvidence.archive),
+    "upstream-tag.txt",
+  ], { encoding: "utf8" });
+  expect(archivedTag.status, archivedTag.stderr).toBe(0);
+  expect(git(["hash-object", "-t", "tag", "--stdin"], archivedTag.stdout)).toBe(ledger.upstream.tagObject);
+  expect(archivedTag.stdout).toStartWith(`object ${ledger.upstream.commit}\ntype commit\ntag ${ledger.release}\n`);
   expect(ledger.mergeEvidence.kind).toBe("contemporaneous-default-ort");
   expect(ledger.mergeEvidence.inheritedLimitation).toContain("v5.0.0");
 });

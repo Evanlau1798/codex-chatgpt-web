@@ -38,14 +38,14 @@
         "deltaSha256": "018ac88b3a0be2644c69248c366528bcbe5c1e7ae5dcc7a2d5dfd9ce19175ba4"
       },
       "classification": "adapted",
-      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "reason": "Adapts the upstream release gate to the fork's deterministic lifecycle gate, current Codex and Claude compatibility baselines, checksum reconciliation, and Enhanced release assets.",
       "assertions": [
         {
           "path": "tests/release-checksums.test.ts",
           "contains": "expect(publish).toBeGreaterThan(reconcile);"
         }
       ],
-      "candidateBlob": "14848ca24bbfff935020f7622b671b900ab0e548"
+      "candidateBlob": "6137a15287f1d1613c148ed3d6aaca5c35eb0efc"
     },
     {
       "id": "v501-002",
