@@ -112,6 +112,7 @@ describe("upstream v5.0.0 audit ledger", () => {
     }
     expect(review.obligations.map(item => item.id).sort()).toEqual([
       "automatic-effort-activation", "automatic-submission-recovery", "automatic-tool-observation",
+      "broker-frame-settlement", "codex-inline-table", "codex-voice-route",
       "cumulative-recompaction",
       "dev-chat-readiness", "dev-chat-saved-model",
       "dev-setup-interaction",
@@ -147,7 +148,8 @@ describe("upstream v5.0.0 audit ledger", () => {
       expect(item.tests.length).toBeGreaterThan(0);
       for (const mapped of item.tests) {
         expect(mapped.assertion).toMatch(/assert\.|expect\(/);
-        expect(readFileSync(resolve(repositoryRoot, mapped.path), "utf8")).toContain(mapped.assertion);
+        expect(readFileSync(resolve(repositoryRoot, mapped.path), "utf8").replace(/\r\n/g, "\n"))
+          .toContain(mapped.assertion);
       }
     }
   });
