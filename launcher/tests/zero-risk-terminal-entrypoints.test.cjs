@@ -85,11 +85,16 @@ for (const [name, event] of [
   assert.equal(contents.isDestroyed(), true);
 });
 
-test("manual initial navigation rejection fails and releases the new surface", async () => {
+for (const [name, error, superseded] of [
+  ["real failure", new Error("initial navigation failed"), false],
+  ["aborted code", Object.assign(new Error("navigation replaced"), { code: "ERR_ABORTED" }), true],
+  ["aborted numeric code", { code: -3 }, true],
+  ["aborted message", new Error("ERR_ABORTED (-3) loading ChatGPT"), true],
+]) test(`manual initial navigation handles ${name} without losing terminal semantics`, async () => {
   const { host, contents } = fixture();
   host.turnTabs.clear();
   Object.assign(contents, {
-    setZoomFactor() {}, loadURL: async () => { throw new Error("initial navigation failed"); },
+    setZoomFactor() {}, loadURL: async () => { throw error; },
   });
   const path = require.resolve("../electron/browser-host.cjs");
   const localRequire = createRequire(path);
@@ -112,6 +117,15 @@ test("manual initial navigation rejection fails and releases the new surface", a
   const sent = host.manualTurns.waitSent(tab.traceId, tab.helperPid);
   const terminal = host.manualTurns.waitTerminal(tab.traceId, tab.helperPid);
   await new Promise(resolve => setImmediate(resolve));
+  if (superseded) {
+    assert.equal(host.turnTabs.get(tab.id), tab);
+    assert.equal(host.manualTurns.terminals.has(tab.traceId), false);
+    assert.equal(tab.manualState, "awaiting-user");
+    host.manualTurns.cancel(tab.traceId, tab.helperPid);
+    assert.deepEqual(await sent, { status: "cancelled" });
+    assert.deepEqual(await terminal, { status: "cancelled" });
+    return;
+  }
   assert.deepEqual(await sent, { status: "failed" });
   assert.deepEqual(await terminal, { status: "failed" });
   assert.equal(host.turnTabs.size, 0);

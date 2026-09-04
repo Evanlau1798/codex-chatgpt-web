@@ -21,6 +21,7 @@ const {
 } = require("./turn-suspension.cjs");
 const {
   browserViewVisible,
+  isAbortedNavigationError,
   constrainBrowserBounds,
   navigateBrowser,
   readBrowserNavigationState,
@@ -510,6 +511,7 @@ class BrowserHost {
       this.removeTurnTab(tab, true);
     });
     void view.webContents.loadURL(manual ? TEMPORARY_CHAT_URL : IDLE_BROWSER_URL).catch((error) => {
+      if (manual && isAbortedNavigationError(error)) return;
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error("browser.tab_initialization_failed", {
         tabId: tab.id,

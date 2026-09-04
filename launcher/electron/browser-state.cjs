@@ -63,7 +63,13 @@ function navigateBrowser(contents, action) {
   }
 }
 
+function isAbortedNavigationError(error) {
+  if (error && typeof error === "object" && (error.code === -3 || error.code === "ERR_ABORTED")) return true;
+  return error instanceof Error && /\bERR_ABORTED\b/.test(error.message);
+}
+
 module.exports = {
+  isAbortedNavigationError,
   browserViewVisible,
   constrainBrowserBounds,
   navigateBrowser,
