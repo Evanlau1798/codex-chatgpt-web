@@ -1194,8 +1194,8 @@ function McpSurface({
   const steps = useMemo(() => [
     { title: copy.mcpStepOne, body: copy.mcpStepOneBody },
     { title: copy.mcpStepTwo, body: copy.mcpStepTwoBody },
-    { title: copy.mcpStepThree, body: copy.mcpStepThreeBody },
-  ], [copy]);
+    { title: copy.mcpStepThree, body: manualInteraction ? copy.manualMcpStepThreeBody : copy.mcpStepThreeBody },
+  ], [copy, manualInteraction]);
 
   const move = async (next: number) => {
     setStep(next);
@@ -1378,7 +1378,7 @@ function McpSurface({
             {step === 2 ? (
               <div className="connector-actions">
                 <NoticeRow icon="alert" tone="warning">
-                  {devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
+                  {manualInteraction ? copy.manualConnectorNotice : devProfile ? copy.devConnectorIsolationNotice : copy.connectorMigrationNotice}
                 </NoticeRow>
                 <div className="connector-name">
                   <span>{copy.connectorName}</span>

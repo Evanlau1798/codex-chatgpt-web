@@ -1,5 +1,7 @@
 export const zeroRiskCopy = {
   en: {
+    manualMcpStepThreeBody: "Create the connector using the exact name below, then select it yourself in ChatGPT for every turn before sending the copied prompt.",
+    manualConnectorNotice: "Use a separate Zero Risk tunnel and credentials; do not reuse Automatic credentials. Verify checks only the local runtime, not the ChatGPT connector or your selection. Keep the normal and DEV profiles separate.",
     manualBiggerContextBody: "Unavailable in Zero Risk. Manual turns use the selected route's standard compaction threshold, without multipart staging.",
     interactionMode: "Zero Risk",
     interactionModeOnboardingBody: "Choose how the launcher works with ChatGPT. Automation is the default and can be changed later in Settings.",
@@ -15,6 +17,8 @@ export const zeroRiskCopy = {
     manualPromptSent: "Sent",
   },
   "zh-CN": {
+    manualMcpStepThreeBody: "依下方顯示的完整名稱建立連接器；每一回合都需自行在 ChatGPT 選取它，再送出已複製的提示。",
+    manualConnectorNotice: "請使用獨立的 Zero Risk Tunnel 與憑據，不可重用 Automatic 憑據。「驗證」只檢查本機 runtime，不檢查 ChatGPT 連接器或你的選取狀態。一般與 DEV 設定也需保持分離。",
     manualBiggerContextBody: "Zero Risk 不支援 Bigger Context；手動回合使用所選路由的標準壓縮門檻，不使用分段傳送。",
     interactionMode: "Zero Risk",
     interactionModeOnboardingBody: "選擇啟動器與 ChatGPT 的互動方式。預設使用自動化，之後可在設定中變更。",
@@ -30,6 +34,8 @@ export const zeroRiskCopy = {
     manualPromptSent: "已送出",
   },
   ja: {
+    manualMcpStepThreeBody: "下に表示された正確な名前でコネクタを作成してください。各ターンで ChatGPT 上のコネクタを自分で選び、コピーしたプロンプトを送信します。",
+    manualConnectorNotice: "Zero Risk 専用のトンネルと認証情報を使い、Automatic の認証情報を再利用しないでください。「検証」はローカル runtime のみを確認し、ChatGPT のコネクタや選択状態は確認しません。通常と DEV のプロファイルも分離してください。",
     manualBiggerContextBody: "Zero Risk では使用できません。手動ターンは選択したルートの標準圧縮しきい値を使い、分割送信しません。",
     interactionMode: "Zero Risk",
     interactionModeOnboardingBody: "ランチャーが ChatGPT を操作する方法を選びます。既定は自動操作で、後から設定で変更できます。",
