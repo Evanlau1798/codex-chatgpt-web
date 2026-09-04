@@ -10,11 +10,21 @@
   "upstream": {
     "tagObject": "4473f90a1f09348eb52d0db36d283550653ea62a",
     "commit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
-    "signed": false
+    "signed": false,
+    "sourceRange": "b2793cfd22342b0c6409df5eb855c163cefc16ea..9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+    "ciRun": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/33895268331",
+    "releaseRun": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/33895900129"
   },
   "closure": {
     "expectedPaths": 55,
-    "status": "in-progress"
+    "status": "candidate-complete",
+    "classifications": {
+      "exact": 3,
+      "adapted": 51,
+      "superseded": 1,
+      "rejected": 0,
+      "missing": 0
+    }
   },
   "entries": [
     {
@@ -27,9 +37,15 @@
         "targetBlob": "46f260d5a2291bd3983eda822600d21cf17d6e1e",
         "deltaSha256": "018ac88b3a0be2644c69248c366528bcbe5c1e7ae5dcc7a2d5dfd9ce19175ba4"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/release-checksums.test.ts",
+          "contains": "expect(publish).toBeGreaterThan(reconcile);"
+        }
+      ],
+      "candidateBlob": "14848ca24bbfff935020f7622b671b900ab0e548"
     },
     {
       "id": "v501-002",
@@ -41,9 +57,10 @@
         "targetBlob": "dde6af5ce6cb0aeba29e6c1734d25b1b10854b9f",
         "deltaSha256": "d90f17bbd69169579bff8fa2184bbff1f3435786deeb4c6d753b24dce9fd9527"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports upstream v5.0.1 model-limit and troubleshooting guidance while retaining Enhanced, Zero Risk, Passkey, Claude, and fork URL documentation.",
+      "assertions": [],
+      "candidateBlob": "317dd4c06fff01a933bd4e95de29e65f3abf8b4f"
     },
     {
       "id": "v501-003",
@@ -55,9 +72,10 @@
         "targetBlob": "0fcb85d950cb97c506c14dcfd3dbc1ff62ab63ea",
         "deltaSha256": "517002478e2f4d07a3cd33db374ffd4e9890b63a1f944940dceba54d16379eef"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports upstream v5.0.1 model-limit and troubleshooting guidance while retaining Enhanced, Zero Risk, Passkey, Claude, and fork URL documentation.",
+      "assertions": [],
+      "candidateBlob": "8e838acf5dfc808f7580ec54182343b82347c81c"
     },
     {
       "id": "v501-004",
@@ -69,9 +87,10 @@
         "targetBlob": "e5324952638656ded78f2fc5bbb07fe6f5978573",
         "deltaSha256": "65a90556380af367af5290450c6f0cb144ce7aafdae498b994f5fe7c00e5fab0"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports upstream v5.0.1 model-limit and troubleshooting guidance while retaining Enhanced, Zero Risk, Passkey, Claude, and fork URL documentation.",
+      "assertions": [],
+      "candidateBlob": "92378d3c6ebbf62e7a67415053d05889f55f16b1"
     },
     {
       "id": "v501-005",
@@ -83,9 +102,10 @@
         "targetBlob": "69e3e832f16b3650d14ce6d4561fb3f212053b52",
         "deltaSha256": "8f33c846160d181853ddbe69dfe6a4f03169504d3c5db6c6a15bf93592d768be"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports upstream v5.0.1 model-limit and troubleshooting guidance while retaining Enhanced, Zero Risk, Passkey, Claude, and fork URL documentation.",
+      "assertions": [],
+      "candidateBlob": "a478ff3b771f9e0a9a8a90800f4f8aa2f57908e5"
     },
     {
       "id": "v501-006",
@@ -97,9 +117,15 @@
         "targetBlob": "f13998ebf44dc7439637113f8969033b02240816",
         "deltaSha256": "c1e1c34a4e553059cede4c419b60dfb26da2b75857217e7e5bd121f30cd94d30"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/browser-diagnostics.test.ts",
+          "contains": "expect(verificationEvaluator).not.toMatch(/location\\.href|document\\.title|innerText|textContent/);"
+        }
+      ],
+      "candidateBlob": "20cbdec1b52e75d6feb25f4a236093af85a86263"
     },
     {
       "id": "v501-007",
@@ -111,9 +137,19 @@
         "targetBlob": "ad7f39b69ea4a42e1f9be4e0aa3f7e4a014ee499",
         "deltaSha256": "e4493392dab545fa50f20caeaff10f03dbdc096158902e832e3b021de744d420"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "launcher/tests/browser-mode-ownership.test.cjs",
+          "contains": "assert.deepEqual([...fixture.turnTabs.keys()], [retained.id]);"
+        },
+        {
+          "path": "tests/zero-risk-adapter-outcomes.test.ts",
+          "contains": "expect(endStatuses).toEqual([\"completed\"]);"
+        }
+      ],
+      "candidateBlob": "be3347a06c545dd2d9d18ce38135a476e90f7d03"
     },
     {
       "id": "v501-008",
@@ -125,9 +161,19 @@
         "targetBlob": "492b950873502be461c9563dad4d639485976ea5",
         "deltaSha256": "a3a2f726ce4860304e662ba7133958374af88f0f8ccfb91638b1fc9e822cf075"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "launcher/tests/browser-mode-ownership.test.cjs",
+          "contains": "assert.deepEqual([...fixture.turnTabs.keys()], [retained.id]);"
+        },
+        {
+          "path": "tests/zero-risk-adapter-outcomes.test.ts",
+          "contains": "expect(endStatuses).toEqual([\"completed\"]);"
+        }
+      ],
+      "candidateBlob": "8e0f2ed150fecfc4ff2563701b1dc03b3ef081bf"
     },
     {
       "id": "v501-009",
@@ -139,9 +185,15 @@
         "targetBlob": "bbcd398f1c86606633664a869109893fe059a027",
         "deltaSha256": "c3f7c9299d67d449837871487532e549b8c7512ee2ef50a420224c4fcd78851a"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "launcher/tests/runtime-mode-commit.test.cjs",
+          "contains": "assert.equal(runtimeRestores, 1);"
+        }
+      ],
+      "candidateBlob": "395fc2d6673646d5d28a2ef99e8fd11355ea1a31"
     },
     {
       "id": "v501-010",
@@ -153,9 +205,15 @@
         "targetBlob": "f00ab1900652ff41b8cfe97adbb01fe942860f75",
         "deltaSha256": "a4d79749c12494b060fe305f5b2b54dfc6ca19e98e7d49624878fcc0087daad5"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Retains the upstream behavior while publishing the fork-specific 5.0.1-Enhanced.1 version and repository identity.",
+      "assertions": [
+        {
+          "path": "scripts/check-version.ts",
+          "contains": "if (launcherVersion !== packageVersion) throw new Error"
+        }
+      ],
+      "candidateBlob": "c5defae9ac77002a6f5d2607b332427679e598a8"
     },
     {
       "id": "v501-011",
@@ -167,9 +225,19 @@
         "targetBlob": "ab5713e9294eaab12d20b98cdf8d29d89008657e",
         "deltaSha256": "08776c29244b37d68ddfcff76c5e1f5fc9f07d81dd3aa711e6291b66db037493"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "launcher/tests/browser-mode-ownership.test.cjs",
+          "contains": "assert.deepEqual([...fixture.turnTabs.keys()], [retained.id]);"
+        },
+        {
+          "path": "tests/zero-risk-adapter-outcomes.test.ts",
+          "contains": "expect(endStatuses).toEqual([\"completed\"]);"
+        }
+      ],
+      "candidateBlob": "085db98a51d5791faf4718a057ba7e6bb2f172af"
     },
     {
       "id": "v501-012",
@@ -181,9 +249,15 @@
         "targetBlob": "355b4ca1689ba06e3846f93ea40537850b10c54a",
         "deltaSha256": "467ff1d81374f0cba396aa1774f069607797dfe8425cd89c934a56b8f83d2125"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/browser-diagnostics.test.ts",
+          "contains": "expect(verificationEvaluator).not.toMatch(/location\\.href|document\\.title|innerText|textContent/);"
+        }
+      ],
+      "candidateBlob": "7ab091abc6d8da9a1c3c872d07bcbbe1bcffb9dc"
     },
     {
       "id": "v501-013",
@@ -195,9 +269,19 @@
         "targetBlob": "485e707df7687ecc28167aa619ffcb2fd6e4d9de",
         "deltaSha256": "f6c88c1b280935ed3cc34472d823e80a50568df964e8c577743f3aa75a376719"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "launcher/tests/browser-mode-ownership.test.cjs",
+          "contains": "assert.deepEqual([...fixture.turnTabs.keys()], [retained.id]);"
+        },
+        {
+          "path": "tests/zero-risk-adapter-outcomes.test.ts",
+          "contains": "expect(endStatuses).toEqual([\"completed\"]);"
+        }
+      ],
+      "candidateBlob": "f905f949241bf291a98ee85850e4d42844b87b26"
     },
     {
       "id": "v501-014",
@@ -209,9 +293,15 @@
         "targetBlob": "14624064853e53016a39a2367399d2c141e0bd27",
         "deltaSha256": "15b88abb2fcd0ed3c2c2a55fc4e33ab91752e84e1b7aa93b75b3aa8b6260361f"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/browser-diagnostics.test.ts",
+          "contains": "expect(verificationEvaluator).not.toMatch(/location\\.href|document\\.title|innerText|textContent/);"
+        }
+      ],
+      "candidateBlob": "e9ecc47901d3ea00efb7b3a4b01965a723372ddf"
     },
     {
       "id": "v501-015",
@@ -223,9 +313,19 @@
         "targetBlob": "1ac91c031c288a4c5b159100836458fe177ed643",
         "deltaSha256": "60d4e46ad7f905283339858c2d740ea40033df7d15a3fb3c326e671b8f3ab43b"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "launcher/tests/browser-mode-ownership.test.cjs",
+          "contains": "assert.deepEqual([...fixture.turnTabs.keys()], [retained.id]);"
+        },
+        {
+          "path": "tests/zero-risk-adapter-outcomes.test.ts",
+          "contains": "expect(endStatuses).toEqual([\"completed\"]);"
+        }
+      ],
+      "candidateBlob": "1686545cf00b9a585d53d5c28bf1199e6ae6fbc5"
     },
     {
       "id": "v501-016",
@@ -237,9 +337,15 @@
         "targetBlob": "69f37fee4e3c9b84adad740b4403cabd3ccd1d0b",
         "deltaSha256": "475857d0c0cc0e41c4c9a2d8b2835b1c889b2749760af5fbd15cf980c02d8a3f"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "launcher/tests/runtime-mode-commit.test.cjs",
+          "contains": "assert.equal(runtimeRestores, 1);"
+        }
+      ],
+      "candidateBlob": "f8fae69fe2208e491c8fb6826d0604b5748d1d75"
     },
     {
       "id": "v501-017",
@@ -251,9 +357,15 @@
         "targetBlob": "545cac63881a6be0a1bc9283960022bf8814ddaa",
         "deltaSha256": "4651003ff5754ab9b1d633f5beaeb11e4e6b865477eeabe0c08df3577acb47d6"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Retains the upstream behavior while publishing the fork-specific 5.0.1-Enhanced.1 version and repository identity.",
+      "assertions": [
+        {
+          "path": "scripts/check-version.ts",
+          "contains": "if (launcherVersion !== packageVersion) throw new Error"
+        }
+      ],
+      "candidateBlob": "202bde4e8ebadd835619c43732ef1f8938970acd"
     },
     {
       "id": "v501-018",
@@ -265,9 +377,15 @@
         "targetBlob": "30849f6f984df8680b5bd629ab38bfd0256dfca1",
         "deltaSha256": "525a1d082484e5f84c4e67d5f6e0c49913d49022c2b2710e84c8976d97631bcf"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Retains the upstream behavior while publishing the fork-specific 5.0.1-Enhanced.1 version and repository identity.",
+      "assertions": [
+        {
+          "path": "scripts/check-version.ts",
+          "contains": "if (launcherVersion !== packageVersion) throw new Error"
+        }
+      ],
+      "candidateBlob": "e505156b532f6038521423e187b79b8040793f18"
     },
     {
       "id": "v501-019",
@@ -279,9 +397,19 @@
         "targetBlob": "1cc29f1b2970d0b018e9d02853da0822a89618ca",
         "deltaSha256": "239e97b4cdb400d3e85331e3a41cffad95b647af30e68dfa313bec4486be9d0b"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/codex-interrupt-shell.test.ts",
+          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "0de41ab528e5e200470db2c36b060e63d2c75a7e"
     },
     {
       "id": "v501-020",
@@ -293,9 +421,19 @@
         "targetBlob": "ff4caec7d5be45da6af87f252c988d66ceceec66",
         "deltaSha256": "077f71fb69664397b8cdcf96696a7071f218c4b2c07088fbe2c579c075ed9c3f"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/browser-diagnostics.test.ts",
+          "contains": "expect(verificationEvaluator).not.toMatch(/location\\.href|document\\.title|innerText|textContent/);"
+        },
+        {
+          "path": "tests/browser-submission-limit.test.ts",
+          "contains": "expect(fixture.pressed).toEqual([\"Enter\"]);"
+        }
+      ],
+      "candidateBlob": "0bf17fdf8bf131b09079c67c8833f45fd2425875"
     },
     {
       "id": "v501-021",
@@ -307,9 +445,19 @@
         "targetBlob": "c11612a8b31acae8548640493bc61bc197c98519",
         "deltaSha256": "3ba970d2837da58572cf271d36edb0b5fddd6df22ff113276a76f290a63c71ef"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/browser-diagnostics.test.ts",
+          "contains": "expect(verificationEvaluator).not.toMatch(/location\\.href|document\\.title|innerText|textContent/);"
+        },
+        {
+          "path": "tests/browser-submission-limit.test.ts",
+          "contains": "expect(fixture.pressed).toEqual([\"Enter\"]);"
+        }
+      ],
+      "candidateBlob": "47ba76dbae29c384cb1bba8cb952ec7abb831225"
     },
     {
       "id": "v501-022",
@@ -321,9 +469,15 @@
         "targetBlob": "fbd3fda90cbd6ef971bd386e2128b2c3919c7ab8",
         "deltaSha256": "55e10514dc9dbc6476f52c9f916f3d31c57b49166184acded30bd62b333609a0"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/environment-rollout.test.ts",
+          "contains": ".toThrow(\"multiple canonical rollouts for the requested current turn\");"
+        }
+      ],
+      "candidateBlob": "7483e5dfb94882d18a51a00b548002a148b35fca"
     },
     {
       "id": "v501-023",
@@ -335,9 +489,19 @@
         "targetBlob": "25df8baa92e02099db7ef197b4595d9614fb6c56",
         "deltaSha256": "66dcf252d655d5abaff24b44f47bd7e29bd861f520e7b6ccfbb518c66c36cede"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/structured-compaction-interrupt.test.ts",
+          "contains": "expect(cancellation.cancelled).toBe(0);"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "b1442eca365371aa1f814eee40f6837f9fc98ca7"
     },
     {
       "id": "v501-024",
@@ -349,9 +513,15 @@
         "targetBlob": "7307792cc2f016640a2d556973c96bab901878d5",
         "deltaSha256": "4c6bdfddfeb58a9890ab813214d57b20f96a1e91d43a63bf871fd9bc488b8188"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/environment-rollout.test.ts",
+          "contains": ".toThrow(\"multiple canonical rollouts for the requested current turn\");"
+        }
+      ],
+      "candidateBlob": "7799fd9ef13f0167e6300814aecfb3939604c129"
     },
     {
       "id": "v501-025",
@@ -363,9 +533,19 @@
         "targetBlob": "22445135c07f47a62f549524430d7113a8598f09",
         "deltaSha256": "5c0aec1071baeb04eaaf59f063f4a19e6d5ebd0c2abb7a77bf846627b410e5fc"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/zero-risk-adapter-outcomes.test.ts",
+          "contains": "expect(endStatuses).toEqual([\"completed\"]);"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "93427a5650bf5860d85f8c1efb95dee666674de7"
     },
     {
       "id": "v501-026",
@@ -377,9 +557,19 @@
         "targetBlob": "3dd15c9457dbf8273076a2eae919247221de287b",
         "deltaSha256": "3dcb89f0f7a90ba7f2e504eb97c38d830a5604806b7918054df559038f52dae5"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/broker-retirement-boundary.test.ts",
+          "contains": "expect(firstPhysicallySettled).toBeTrue();"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "54648a63a7737e3d3f288f10c060c1c4d48cc6ae"
     },
     {
       "id": "v501-027",
@@ -391,9 +581,15 @@
         "targetBlob": "d2c2049582dae5e4a01799fb1210f915f75e907d",
         "deltaSha256": "2aad14de2b1a7ed8d214e2388ea33bccc6ed93a6c2109ad628f7342b3827cad8"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/environment-rollout.test.ts",
+          "contains": ".toThrow(\"multiple canonical rollouts for the requested current turn\");"
+        }
+      ],
+      "candidateBlob": "e860a44a4ffdfcd3941bf05646de333ffd7fd86f"
     },
     {
       "id": "v501-028",
@@ -405,9 +601,19 @@
         "targetBlob": "f7151b0b101318d209e5a4312f3c00119d566a5b",
         "deltaSha256": "268ab5dffbbb9101f9c08c5bce4b9254c7ca1180a26b7ae2ce393d7f6f0860ad"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/broker-retirement-boundary.test.ts",
+          "contains": "expect(firstPhysicallySettled).toBeTrue();"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "4df112e5f46a58fadae61b2d5756fe97e4f3e2b8"
     },
     {
       "id": "v501-029",
@@ -419,9 +625,19 @@
         "targetBlob": "09b64d00a59665a781d85255545bd8f39d331671",
         "deltaSha256": "88e2b64fdf946f17bf820c3767583406d17aaa9d4bb996d378b7045317e073af"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/broker-retirement-boundary.test.ts",
+          "contains": "expect(firstPhysicallySettled).toBeTrue();"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "a794a123f1d80d6672480a75b370545bd1e656e1"
     },
     {
       "id": "v501-030",
@@ -433,9 +649,19 @@
         "targetBlob": "72201fef83f2e7d529b183ef5095ec07f480c4d2",
         "deltaSha256": "72337a80f0a677528d66396e93a484306db4052ba09a1d7bc6f8c127255a32d7"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "exact",
+      "reason": "Integrated byte-for-byte from the pinned v5.0.1 release.",
+      "assertions": [
+        {
+          "path": "tests/broker-retirement-boundary.test.ts",
+          "contains": "expect(firstPhysicallySettled).toBeTrue();"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "72201fef83f2e7d529b183ef5095ec07f480c4d2"
     },
     {
       "id": "v501-031",
@@ -447,9 +673,19 @@
         "targetBlob": "7cd1f4f55c750c8c993342fd7e91541c13997bcd",
         "deltaSha256": "99ce2064751905df8f6c7e4bd92f0c81b520226240b2d6cd3989673fe363bcec"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/codex-interrupt-shell.test.ts",
+          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "cca5d49940f0d9b704ea4494e3c1e30510798978"
     },
     {
       "id": "v501-032",
@@ -461,9 +697,19 @@
         "targetBlob": "41bd99d5d9916f2da745a6c9fbeb20d91140a055",
         "deltaSha256": "578394982e09e68d4929500081691f4079052437ea420c6a2a4da261193c655f"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/codex-interrupt-shell.test.ts",
+          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "beb74e777162d8a7a3e56e590900b95e60646763"
     },
     {
       "id": "v501-033",
@@ -475,9 +721,19 @@
         "targetBlob": "45004b6727193c60b53af77eee303a89cdb345a8",
         "deltaSha256": "cc4413c8982cd32321117d848ffd2fe1039cb671c080e689534e4d6feb2a0627"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/codex-interrupt-shell.test.ts",
+          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "ef2f89983f48958918098d1169b97d670ffc02f3"
     },
     {
       "id": "v501-034",
@@ -489,9 +745,19 @@
         "targetBlob": "768535650449ed3ead3abbfff54bb75def668f28",
         "deltaSha256": "59068939b0aaee767a5a777b56d94bf200c2929eb8fa8ef96964fad617b6df0e"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/codex-interrupt-shell.test.ts",
+          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "d8012f0385b4245bdf18dcf47e70dffebdd53e96"
     },
     {
       "id": "v501-035",
@@ -503,9 +769,19 @@
         "targetBlob": "2b038c4846379480a2a0441f1b81945eb9070183",
         "deltaSha256": "e1b14119b5112da5e1ef3dddb2f91de3c729e4a3ed5caa6b4976a86f2918c362"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "exact",
+      "reason": "Integrated byte-for-byte from the pinned v5.0.1 release.",
+      "assertions": [
+        {
+          "path": "tests/codex-interrupt-shell.test.ts",
+          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "2b038c4846379480a2a0441f1b81945eb9070183"
     },
     {
       "id": "v501-036",
@@ -517,9 +793,19 @@
         "targetBlob": "3d1376ca427907686ab948d8ea4f7ac2d435944b",
         "deltaSha256": "c1db8694cf3b97cb7fadfb8b35aa8589202aa3470c373ebb5c0d7e0994e71aea"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/codex-interrupt-shell.test.ts",
+          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "823e5bde3d10912194b7195d22f22dbf9080eeba"
     },
     {
       "id": "v501-037",
@@ -531,9 +817,19 @@
         "targetBlob": "9fc246529fb28c0fc3d721dbddfe63c23c01e1eb",
         "deltaSha256": "15ab9f2ceac0dd0bb5f59dffcb55a6d5f24d2cfc30c33e796074f732005db2e9"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/codex-interrupt-shell.test.ts",
+          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "db7a6357e1c15e03e8c41b216c219a509c1f6cdf"
     },
     {
       "id": "v501-038",
@@ -545,9 +841,19 @@
         "targetBlob": "e2b7c4e64fb5a4ff5a944df4d8152e3d3d2c2d5f",
         "deltaSha256": "e07ff91621c13b26fd80847102962e3825ae95be333629ce70d83c707a3a1931"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/zero-risk-adapter-outcomes.test.ts",
+          "contains": "expect(endStatuses).toEqual([\"completed\"]);"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "826433459704be4cc07e8e4de0b11e000a879016"
     },
     {
       "id": "v501-039",
@@ -559,9 +865,19 @@
         "targetBlob": "10d56e1585f90e7d7c0cfe2939cbae954b568380",
         "deltaSha256": "1e9836415284fdce053183536950c9bdb5fb1374063a607795a93d51bb81694d"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/launcher-manual-reconciliation.test.ts",
+          "contains": "\"/v1/manual/end\": 2,"
+        },
+        {
+          "path": "tests/zero-risk-adapter-outcomes.test.ts",
+          "contains": "expect(endStatuses).toEqual([\"completed\"]);"
+        }
+      ],
+      "candidateBlob": "35b235ea38f9d86e0ae893519e0170094da5e730"
     },
     {
       "id": "v501-040",
@@ -573,9 +889,15 @@
         "targetBlob": "a0f15b92e034bfd0ce500b9cee975be04519a5ef",
         "deltaSha256": "45cc34bc6a9a627197adceda78c5cf5451bae17572615382698d94533b56a578"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "assertions": [
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "6d79283191ae327d0c0fde170a3408365bc8fc08"
     },
     {
       "id": "v501-041",
@@ -587,9 +909,15 @@
         "targetBlob": "93289a9c52b51c22c3ac05fae1f7e26e30632ff2",
         "deltaSha256": "2c9927a6e5ce20fa7513710adaa5622a80734ea32024580150644de1c34db237"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "exact",
+      "reason": "Integrated byte-for-byte from the pinned v5.0.1 release.",
+      "assertions": [
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "93289a9c52b51c22c3ac05fae1f7e26e30632ff2"
     },
     {
       "id": "v501-042",
@@ -601,9 +929,15 @@
         "targetBlob": "be03919d49910b1b37a2aaca3a7033158b1e494c",
         "deltaSha256": "a5ffa89d2480560b091e6e9f30bc2c94274d951c40aee4ec2d0a902e5f331db3"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Retains the upstream behavior while publishing the fork-specific 5.0.1-Enhanced.1 version and repository identity.",
+      "assertions": [
+        {
+          "path": "scripts/check-version.ts",
+          "contains": "if (launcherVersion !== packageVersion) throw new Error"
+        }
+      ],
+      "candidateBlob": "0db4fb6042e1225121e19fe7e12380e75d12655b"
     },
     {
       "id": "v501-043",
@@ -615,9 +949,19 @@
         "targetBlob": "7747ce4b46f53d676dd31321f3f391de49daa666",
         "deltaSha256": "ceba6978149cca5f6010cf251228545ed1704651c5176c359f7c78cb2eacb246"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/browser-diagnostics.test.ts",
+          "contains": "expect(verificationEvaluator).not.toMatch(/location\\.href|document\\.title|innerText|textContent/);"
+        },
+        {
+          "path": "tests/browser-submission-limit.test.ts",
+          "contains": "expect(fixture.pressed).toEqual([\"Enter\"]);"
+        }
+      ],
+      "candidateBlob": "f2b8e2ad78e9afe0bf98435c664491b4cd8a71d5"
     },
     {
       "id": "v501-044",
@@ -629,9 +973,19 @@
         "targetBlob": "7578ac2453cc1f64feb1ddd13a0c81f12d5df668",
         "deltaSha256": "48789aebf222d7287197567f00445cdc961c4cf4ef95fdc78aa53885f7e5c66e"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/broker-retirement-boundary.test.ts",
+          "contains": "expect(firstPhysicallySettled).toBeTrue();"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "e5719f4b6668d24defe39384214b68dbb790360e"
     },
     {
       "id": "v501-045",
@@ -643,9 +997,19 @@
         "targetBlob": "622ac888ddcaf830e3c858e70ae2e3252f6fdf3f",
         "deltaSha256": "f36d56a3a740e0b191ad5c4770af897bf9a35144d1866c5f7ab6d4295e987fe0"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/codex-interrupt-shell.test.ts",
+          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "503be0c1a7cd7302ba9e343b28b9ac8ac2294930"
     },
     {
       "id": "v501-046",
@@ -657,9 +1021,19 @@
         "targetBlob": "0feca81d686de8640a17fabd410a36cdb8b87392",
         "deltaSha256": "73fe663f4f5601ed6be0ef844dec61cd20a0f3cf5e23abd2cbb5109ea631a2a7"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/codex-interrupt-shell.test.ts",
+          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "9ff227efbd19effddac0120de98bea7266ea0f82"
     },
     {
       "id": "v501-047",
@@ -671,9 +1045,15 @@
         "targetBlob": "5f42b4ca7345e5ab68dcbcd6767d97112ca51820",
         "deltaSha256": "e1ec1e7f773f08de04cdc6eea7fe581b8c06d405c49ecaf400e95abbe44b0c17"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/dev-chat.test.ts",
+          "contains": "expect(compactRuns).toBe(1);"
+        }
+      ],
+      "candidateBlob": "80e4ed9f5788540e1d444c892f0535a32ba420cb"
     },
     {
       "id": "v501-048",
@@ -685,9 +1065,15 @@
         "targetBlob": "9cdbda9750d2c729c1cf0cd1f836c1b9f96a86c7",
         "deltaSha256": "935e5239f4fa472690f61c00441fc5bb593ed547d29ed4c69193557cc2d34297"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/environment-rollout.test.ts",
+          "contains": ".toThrow(\"multiple canonical rollouts for the requested current turn\");"
+        }
+      ],
+      "candidateBlob": "7a6c2f9bbe289f0737e269c9ae37a4eba6c80ad7"
     },
     {
       "id": "v501-049",
@@ -699,9 +1085,19 @@
         "targetBlob": "2730fda50fe1e56e9c45c35359af3ebf6a2201ea",
         "deltaSha256": "105f53c644c82d3400ae211d1f4a8b338ffc1d6d243b9ef8fa0363fcff033ce5"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "launcher/tests/browser-mode-ownership.test.cjs",
+          "contains": "assert.deepEqual([...fixture.turnTabs.keys()], [retained.id]);"
+        },
+        {
+          "path": "tests/zero-risk-adapter-outcomes.test.ts",
+          "contains": "expect(endStatuses).toEqual([\"completed\"]);"
+        }
+      ],
+      "candidateBlob": "c3d5fea61c77c1094c12fb96c7dc482f3b0002f5"
     },
     {
       "id": "v501-050",
@@ -713,9 +1109,19 @@
         "targetBlob": "af0f7f8a6b1935377006e4cd0f1392a60de73773",
         "deltaSha256": "2c062d2dfa90afeda38f3cfe844ad979dbf4f60662f67bf3e8daa4752fab49b6"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "superseded",
+      "reason": "The upstream assertions are retained in focused compaction interrupt and retained-final tests; the oversized legacy test file stays deleted.",
+      "assertions": [
+        {
+          "path": "tests/structured-compaction-interrupt.test.ts",
+          "contains": "expect(cancellation.cancelled).toBe(0);"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": null
     },
     {
       "id": "v501-051",
@@ -727,9 +1133,19 @@
         "targetBlob": "5379346f759e11b43a31f6a28a5e86988a6bde2b",
         "deltaSha256": "9b315f3ce4a6e17c3a8024b4aaa5bb86ae1b78e965201003b34bddb42fb4e90d"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "launcher/tests/browser-mode-ownership.test.cjs",
+          "contains": "assert.deepEqual([...fixture.turnTabs.keys()], [retained.id]);"
+        },
+        {
+          "path": "scripts/check-version.ts",
+          "contains": "if (launcherVersion !== packageVersion) throw new Error"
+        }
+      ],
+      "candidateBlob": "0165288c2cbbe929433d07949a4ba37075031044"
     },
     {
       "id": "v501-052",
@@ -741,9 +1157,15 @@
         "targetBlob": "4565891ac5bc6684257fb5afec961c2aa52a5e4e",
         "deltaSha256": "eb4c65408b9c7ccf234291575516198d0a51d7a2b84594a678fcf959fea7fb58"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "a880ff672822ff53be382a46397df05f21914293"
     },
     {
       "id": "v501-053",
@@ -755,9 +1177,19 @@
         "targetBlob": "f51d376b80bb13fb8911dc99e8876fea88b19205",
         "deltaSha256": "03efb6a93ca8565c48d5a878215ba6304a5400f1bcbedf3edf5f25229b0e7deb"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/broker-retirement-boundary.test.ts",
+          "contains": "expect(firstPhysicallySettled).toBeTrue();"
+        },
+        {
+          "path": "tests/server-native-interrupt.test.ts",
+          "contains": "expect(cancelled).toBeTrue();"
+        }
+      ],
+      "candidateBlob": "40727f0071a9065fcbaf8f64b1fd993ad7561a42"
     },
     {
       "id": "v501-054",
@@ -769,9 +1201,19 @@
         "targetBlob": "e59831074b26d495c931959fb1b596e51f776ed8",
         "deltaSha256": "e1c06553a6cdeb61d086605a2db3f95006f62ec01a78a3e7790a6afc9eb8e3e4"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/zero-risk-adapter-outcomes.test.ts",
+          "contains": "expect(endStatuses).toEqual([\"completed\"]);"
+        },
+        {
+          "path": "tests/zero-risk-mcp-lifecycle.test.ts",
+          "contains": "await expect(broker.waitForSafeCompletion(requestId)).resolves.toBe(\"done\");"
+        }
+      ],
+      "candidateBlob": "c0d8763a0493239da6f53a05297501c30bf5440a"
     },
     {
       "id": "v501-055",
@@ -783,9 +1225,37 @@
         "targetBlob": "6cdc8a884955f67b8cae27ce2d68e08c3d8ea7d5",
         "deltaSha256": "9fa188c0a646d68f666e0a11d7bbdb46a845849ebec27ba3b2731211deabd6dc"
       },
-      "classification": "missing",
-      "reason": "Awaiting semantic integration and assertion mapping",
-      "assertions": []
+      "classification": "adapted",
+      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "assertions": [
+        {
+          "path": "tests/zero-risk-adapter-outcomes.test.ts",
+          "contains": "expect(endStatuses).toEqual([\"completed\"]);"
+        },
+        {
+          "path": "tests/zero-risk-mcp-lifecycle.test.ts",
+          "contains": "await expect(broker.waitForSafeCompletion(requestId)).resolves.toBe(\"done\");"
+        }
+      ],
+      "candidateBlob": "13f3fc79a641c47ed03affc5f68a027849ec140d"
     }
-  ]
+  ],
+  "repository": {
+    "upstream": "miuuyy/codex-chatgpt-web",
+    "fork": "Evanlau1798/codex-chatgpt-web"
+  },
+  "mergeEvidence": {
+    "kind": "contemporaneous-default-ort",
+    "archive": ".github/upstream-audit/v5.0.1-evidence.tar.gz",
+    "includes": [
+      "AUTO_MERGE tree",
+      "index stages",
+      "binary-capable diffs",
+      "tag and commit evidence",
+      "resolution mapping"
+    ],
+    "inheritedLimitation": "v5.0.0 contemporaneous snapshot unavailable; accepted limitation remains in its published receipt",
+    "sha256": "ad82576fd6b4f223a767e01e26b00b3831be693e5cbc004c358fb1903ca66c2c",
+    "bytes": 53178071
+  }
 }

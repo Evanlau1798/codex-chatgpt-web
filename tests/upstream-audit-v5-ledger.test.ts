@@ -89,14 +89,20 @@ describe("upstream v5.0.0 audit ledger", () => {
   });
 
   test("candidate blob claims match the current audited implementation", () => {
-    for (const entry of ledger.entries) {
+    const claimed = ledger.entries.filter(entry =>
+      entry.classification === "exact" || entry.evidence.some(value => value.startsWith("candidate-blob:"))
+    );
+    const hashed = spawnSync("git", ["hash-object", "--stdin-paths"], {
+      cwd: repositoryRoot,
+      encoding: "utf8",
+      input: `${claimed.map(entry => entry.path).join("\n")}\n`,
+    });
+    expect(hashed.status).toBe(0);
+    const hashes = hashed.stdout.trim().split(/\r?\n/);
+    expect(hashes).toHaveLength(claimed.length);
+    for (const [index, entry] of claimed.entries()) {
       const claim = entry.evidence.find(value => value.startsWith("candidate-blob:"));
-      if (!claim && entry.classification !== "exact") continue;
-      const hashed = spawnSync("git", ["hash-object", entry.path], {
-        cwd: repositoryRoot, encoding: "utf8",
-      });
-      expect(hashed.status, entry.path).toBe(0);
-      expect(hashed.stdout.trim(), entry.path).toBe(
+      expect(hashes[index], entry.path).toBe(
         entry.classification === "exact" ? entry.source.targetBlob : claim!.slice("candidate-blob:".length),
       );
     }
