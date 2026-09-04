@@ -1369,7 +1369,7 @@ function McpSurface({
             ) : null}
             {step === 1 ? (
               <p className="mcp-step-two-hint">
-                {manualInteraction || snapshot.state.codexCatalogVerified
+                {manualInteraction || configuringInactiveMode || snapshot.state.codexCatalogVerified
                   ? copy.mcpStepTwoHint : copy.mcpCatalogRequired}
               </p>
             ) : null}
@@ -1413,8 +1413,8 @@ function McpSurface({
           <PrimaryButton
             disabled={
               busy
-              || (!manualInteraction && !clientIntegrationInstalled)
-              || (!manualInteraction && !snapshot.state.codexCatalogVerified)
+              || (!manualInteraction && !configuringInactiveMode && !clientIntegrationInstalled)
+              || (!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified)
               || ((!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey))
             }
             onClick={() => void install()}

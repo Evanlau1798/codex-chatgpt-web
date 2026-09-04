@@ -110,9 +110,9 @@ test("macOS passkey sign-in is additive to the unchanged embedded login action",
 test("MCP connection remains unavailable until the model catalog is verified", () => {
   assert.match(
     appSource,
-    /manualInteraction \|\| snapshot\.state\.codexCatalogVerified\s+\? copy\.mcpStepTwoHint : copy\.mcpCatalogRequired/,
+    /manualInteraction \|\| configuringInactiveMode \|\| snapshot\.state\.codexCatalogVerified\s+\? copy\.mcpStepTwoHint : copy\.mcpCatalogRequired/,
   );
-  assert.match(appSource, /\|\| \(!manualInteraction && !snapshot\.state\.codexCatalogVerified\)/);
+  assert.match(appSource, /\|\| \(!manualInteraction && !configuringInactiveMode && !snapshot\.state\.codexCatalogVerified\)/);
 });
 
 test("MCP navigation remains locked while an operation is active", () => {
