@@ -11,6 +11,20 @@ type Ledger = {
   baseline: { forkCommit: string; mergeBase: string };
   upstream: { tagObject: string; commit: string; sourceRange: string };
   closure: { status: "obligations-recorded" | "candidate-complete"; expectedPathCount: number };
+  semanticReview: {
+    scope: string;
+    remainingScope: string;
+    completeRelease: boolean;
+    obligations: Array<{
+      id: string;
+      classification: Classification;
+      behavior: string;
+      interface: string;
+      source: { path: string; anchor: string };
+      implementation: string;
+      tests: Array<{ path: string; assertion: string }>;
+    }>;
+  };
   entries: Array<{
     id: string;
     path: string;
@@ -85,6 +99,43 @@ describe("upstream v5.0.0 audit ledger", () => {
       expect(hashed.stdout.trim(), entry.path).toBe(
         entry.classification === "exact" ? entry.source.targetBlob : claim!.slice("candidate-blob:".length),
       );
+    }
+  });
+
+  test("reopened manual obligations have specific source and assertion links, not just path coverage", () => {
+    const review = ledger.semanticReview;
+    expect(review).toBeDefined();
+    expect(review.scope.length).toBeGreaterThan(0);
+    if (!review.completeRelease) {
+      expect(review.remainingScope.length).toBeGreaterThan(0);
+      expect(ledger.closure.status).toBe("obligations-recorded");
+    }
+    expect(review.obligations.map(item => item.id).sort()).toEqual([
+      "manual-body-limit", "manual-clipboard-transaction", "manual-duplicate-deadline",
+      "manual-owner-death", "manual-owner-liveness", "manual-resume-validation",
+      "manual-retained-ttl", "manual-terminal-errors",
+    ]);
+    const sources = new Map<string, string>();
+    for (const item of review.obligations) {
+      expect(item.classification).toBe("adapted");
+      expect(item.behavior.length).toBeGreaterThan(0);
+      expect(item.interface.length).toBeGreaterThan(0);
+      expect(ledger.entries.some(entry => entry.path === item.source.path)).toBeTrue();
+      if (!sources.has(item.source.path)) {
+        const source = spawnSync("git", ["show", `${ledger.upstream.commit}:${item.source.path}`], {
+          cwd: repositoryRoot, encoding: "utf8",
+        });
+        expect(source.status).toBe(0);
+        sources.set(item.source.path, source.stdout);
+      }
+      expect(item.source.anchor.length).toBeGreaterThan(0);
+      expect(sources.get(item.source.path)).toContain(item.source.anchor);
+      expect(readFileSync(resolve(repositoryRoot, item.implementation), "utf8").length).toBeGreaterThan(0);
+      expect(item.tests.length).toBeGreaterThan(0);
+      for (const mapped of item.tests) {
+        expect(mapped.assertion).toMatch(/assert\.|expect\(/);
+        expect(readFileSync(resolve(repositoryRoot, mapped.path), "utf8")).toContain(mapped.assertion);
+      }
     }
   });
 });
