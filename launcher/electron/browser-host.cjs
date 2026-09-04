@@ -30,6 +30,20 @@ const {
 } = require("./browser-state.cjs");
 
 const TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
+function browserInteractionModeFor(host) {
+  const mode = host.interactionModeOverride ?? host.getBrowserInteractionMode?.() ?? "automatic";
+  if (mode !== "automatic" && mode !== "manual") throw new Error("Launcher browser interaction mode is invalid");
+  return mode;
+}
+
+function requireAutomaticBrowserInspection(host, operation) {
+  if (browserInteractionModeFor(host) === "manual") {
+    const error = new Error(`${operation} is disabled in Zero Risk mode`);
+    error.code = "manual_browser_inspection_disabled";
+    throw error;
+  }
+}
+
 const CHATGPT_ORIGIN = "https://chatgpt.com";
 const IDLE_BROWSER_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
 const PRIMARY_VIEW_BOOTSTRAP_TIMEOUT_MS = 10_000;
@@ -398,7 +412,7 @@ class BrowserHost {
     this.view.setVisible(true);
     try {
       await loadCommittedBrowserSurface(this.view.webContents, IDLE_BROWSER_URL);
-      await this.markOwnedSurface();
+      if (browserInteractionModeFor(this) === "automatic") await this.markOwnedSurface();
     } finally {
       this.syncViewVisibility();
     }
@@ -434,9 +448,11 @@ class BrowserHost {
   }
 
   browserInteractionMode() {
-    const mode = this.getBrowserInteractionMode();
-    if (mode !== "automatic" && mode !== "manual") throw new Error("Launcher browser interaction mode is invalid");
-    return mode;
+    return browserInteractionModeFor(this);
+  }
+
+  requireAutomaticBrowserInspection(operation) {
+    requireAutomaticBrowserInspection(this, operation);
   }
 
   selectedTurnTab() {
@@ -722,7 +738,12 @@ class BrowserHost {
     });
     contents.on("did-finish-load", () => {
       this.clearHomeNavigationTimeout();
-      this.setState({ url: contents.getURL(), loading: false });
+      const url = contents.getURL();
+      if (browserInteractionModeFor(this) === "manual") {
+        this.setState({ status: "idle", message: "No active task", url, loading: false });
+        return;
+      }
+      this.setState({ url, loading: false });
       void this.applyViewportCss();
       void this.markOwnedSurface()
         .then(() => this.probeAuthentication())
@@ -736,9 +757,15 @@ class BrowserHost {
     contents.on("did-start-loading", () => this.setState({ loading: true }));
     contents.on("did-stop-loading", () => {
       this.clearHomeNavigationTimeout();
+      if (browserInteractionModeFor(this) === "manual" && this.state.status === "loading"
+        && !this.activeTraceId && !this.manualOperation) {
+        this.setState({ status: "idle", message: "No active task", url: contents.getURL(), loading: false });
+        return;
+      }
       this.setState({ loading: false });
     });
     contents.on("page-title-updated", (_event, title) => {
+      if (browserInteractionModeFor(this) === "manual") return;
       this.setState({ title: typeof title === "string" && title.trim() ? title.trim() : "ChatGPT" });
     });
     contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
@@ -850,7 +877,7 @@ class BrowserHost {
   bindChatGptBackendRecovery() {
     this.view.webContents.session.webRequest.onCompleted(
       CHATGPT_BACKEND_REQUEST_FILTER,
-      details => this.handleChatGptBackendResponse(details),
+      details => browserInteractionModeFor(this) === "automatic" ? this.handleChatGptBackendResponse(details) : undefined,
     );
   }
 
@@ -923,10 +950,11 @@ class BrowserHost {
   snapshot() {
     const contents = this.activeView()?.webContents;
     const selected = this.selectedTurnTab();
+    const manualInteraction = browserInteractionModeFor(this) === "manual";
     const homeTab = {
       id: "home",
       traceId: null,
-      title: this.state.title || "ChatGPT",
+      title: manualInteraction ? "ChatGPT" : this.state.title || "ChatGPT",
       status: this.state.status,
       loading: this.state.loading === true,
       active: this.selectedTabId === "home",
@@ -938,16 +966,16 @@ class BrowserHost {
           status: selected.status,
           message: selected.message,
           url: selected.url,
-          title: selected.pageTitle,
+          title: selected.interactionMode === "manual" ? selected.label : selected.pageTitle,
           loading: selected.loading,
         }
-      : this.state;
+      : manualInteraction ? { ...this.state, title: "ChatGPT" } : this.state;
     return {
       ...readBrowserNavigationState(contents, {
       ...state,
       visible: this.visible,
       surfaceActive: this.surfaceActive,
-      }),
+      }, { readPageTitle: !manualInteraction }),
       activeTabId: this.selectedTabId,
       tabs: this.turnTabs.size > 0
         ? [
@@ -1066,9 +1094,11 @@ class BrowserHost {
     }
     this.authView?.setBounds(this.bounds);
     this.syncViewVisibility();
-    void this.view.webContents.executeJavaScript("window.dispatchEvent(new Event('resize'))", true).catch(() => {});
-    if (this.authView && !this.authView.webContents.isDestroyed()) {
-      void this.authView.webContents.executeJavaScript("window.dispatchEvent(new Event('resize'))", true).catch(() => {});
+    if (browserInteractionModeFor(this) === "automatic") {
+      void this.view.webContents.executeJavaScript("window.dispatchEvent(new Event('resize'))", true).catch(() => {});
+      if (this.authView && !this.authView.webContents.isDestroyed()) {
+        void this.authView.webContents.executeJavaScript("window.dispatchEvent(new Event('resize'))", true).catch(() => {});
+      }
     }
   }
 
@@ -1289,9 +1319,10 @@ class BrowserHost {
     contents.on("did-finish-load", () => {
       clearNavigationTimeout();
       this.setState({ url: contents.getURL(), loading: false });
-      void this.probeAuthentication();
+      if (browserInteractionModeFor(this) === "automatic") void this.probeAuthentication();
     });
     contents.on("page-title-updated", (_event, title) => {
+      if (browserInteractionModeFor(this) === "manual") return;
       this.setState({ title: typeof title === "string" && title.trim() ? title.trim() : "ChatGPT" });
     });
     contents.on("close", () => this.closeAuthView(authView, true));
@@ -1365,6 +1396,7 @@ class BrowserHost {
   }
 
   async applyViewportCss() {
+    requireAutomaticBrowserInspection(this, "ChatGPT viewport CSS injection");
     const contents = this.view?.webContents;
     if (!contents || contents.isDestroyed()) return;
     if (this.viewportCssKey) {
@@ -1375,6 +1407,7 @@ class BrowserHost {
   }
 
   async markOwnedSurface() {
+    requireAutomaticBrowserInspection(this, "ChatGPT DOM surface ownership marking");
     const surfaceId = JSON.stringify(this.surfaceId);
     await this.view.webContents.executeJavaScript(`(() => {
       Object.defineProperty(globalThis, "__CODEX_WEB_GPT_SURFACE_ID__", {
@@ -1395,11 +1428,12 @@ class BrowserHost {
     if (activate && this.surfaceActive && this.boundsReady) BrowserHost.prototype.focusActiveSurface.call(this);
   }
 
-  async reveal() {
+  async reveal(inspectSession = true) {
+    if (inspectSession) requireAutomaticBrowserInspection(this, "ChatGPT session inspection");
     this.show();
     if (!this.selectedTurnTab() && this.view.webContents.getURL() === IDLE_BROWSER_URL) {
       await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
-      await this.probeAuthentication();
+      if (inspectSession) await this.probeAuthentication();
     }
     return this.snapshot();
   }
@@ -1599,6 +1633,7 @@ class BrowserHost {
   }
 
   openLogin() {
+    requireAutomaticBrowserInspection(this, "Automated ChatGPT sign-in verification");
     if (this.state.authenticated) {
       this.activateHomeSurface();
       this.show();
@@ -1640,6 +1675,7 @@ class BrowserHost {
   }
 
   openPasskeyLogin() {
+    requireAutomaticBrowserInspection(this, "Automated ChatGPT passkey import");
     if (this.state.authenticated) {
       this.activateHomeSurface();
       this.show();
@@ -1704,6 +1740,7 @@ class BrowserHost {
   }
 
   async installPasskeyLogin(transfer) {
+    requireAutomaticBrowserInspection(this, "Automated ChatGPT session import");
     if (!transfer || typeof transfer !== "object" || typeof transfer.cleanup !== "function") {
       throw new Error("Passkey sign-in returned an invalid transfer handle");
     }
@@ -1770,6 +1807,7 @@ class BrowserHost {
   }
 
   async logout() {
+    requireAutomaticBrowserInspection(this, "Automated ChatGPT logout verification");
     return await this.withManualOperation("ChatGPT logout", async () => {
       if (this.authView) this.closeAuthView(this.authView, true, false);
       const contents = this.view.webContents;
@@ -1793,6 +1831,7 @@ class BrowserHost {
   }
 
   async refreshAuthentication() {
+    requireAutomaticBrowserInspection(this, "ChatGPT authentication refresh");
     return await this.withManualOperation("session refresh", async () => {
       this.setState({ status: "loading", message: "Checking saved ChatGPT session" });
       if (!isTemporaryChatUrl(this.view.webContents.getURL())) {
@@ -1807,6 +1846,7 @@ class BrowserHost {
   }
 
   async probeAuthentication() {
+    requireAutomaticBrowserInspection(this, "ChatGPT authentication probe");
     if (!this.view || this.view.webContents.isDestroyed()) return this.snapshot();
     let url = this.view.webContents.getURL();
     if (url === IDLE_BROWSER_URL) {
@@ -1939,6 +1979,7 @@ class BrowserHost {
   }
 
   async smokeTest() {
+    requireAutomaticBrowserInspection(this, "ChatGPT browser smoke test");
     return await this.withManualOperation("browser smoke test", () => this.runSmokeTest());
   }
 
@@ -1950,6 +1991,7 @@ class BrowserHost {
   }
 
   async runSmokeTest() {
+    requireAutomaticBrowserInspection(this, "ChatGPT browser smoke test");
     const connectorName = this.connectorName();
     this.show();
     await this.waitForSurfaceReady();
@@ -1975,10 +2017,12 @@ class BrowserHost {
   }
 
   async verifyConnector(appName) {
+    requireAutomaticBrowserInspection(this, "ChatGPT connector verification");
     return await this.withManualOperation("connector verification", () => this.runConnectorVerification(appName));
   }
 
   async runConnectorVerification(appName) {
+    requireAutomaticBrowserInspection(this, "ChatGPT connector verification");
     const connectorName = validateConnectorName(appName);
     this.setState({ status: "testing", message: "Checking ChatGPT connector" });
     await this.refreshChatGptHomeDocument();
@@ -1994,10 +2038,12 @@ class BrowserHost {
   }
 
   async inspectSession(detectCapabilities = false) {
+    requireAutomaticBrowserInspection(this, "ChatGPT session and capability inspection");
     return await this.withManualOperation("session inspection", () => this.runSessionInspection(detectCapabilities));
   }
 
   async runSessionInspection(detectCapabilities = false) {
+    requireAutomaticBrowserInspection(this, "ChatGPT session and capability inspection");
     const connectorName = this.connectorName();
     const initialUrl = this.view.webContents.getURL();
     const startedIdle = initialUrl === IDLE_BROWSER_URL;
@@ -2111,6 +2157,7 @@ class BrowserHost {
 }
 
 module.exports = {
+  requireAutomaticBrowserInspection,
   allowedAuthUrl,
   BrowserHost,
   BrowserTurnCancelledError,
