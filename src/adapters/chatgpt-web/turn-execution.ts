@@ -128,9 +128,13 @@ export class ChatGptTurnSession {
       this.outstandingById.set(request.callId, request);
       this.outstandingGenerationById.set(request.callId, this.canonicalGeneration);
     }
+    this.setOutstandingEvents(reasoning, prelude);
+    return this.runtime.externalProgress?.recordToolBatch(requests.length);
+  }
+
+  setOutstandingEvents(reasoning: string[], prelude: AdapterEvent[]): void {
     this.outstandingReasoning = [...reasoning];
     this.outstandingPrelude = [...prelude];
-    return this.runtime.externalProgress?.recordToolBatch(requests.length);
   }
 
   hasOutstanding(callId: string): boolean {
