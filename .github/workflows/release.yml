@@ -16,8 +16,8 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
-      - name: Install pinned lifecycle clients
-        run: npm install --global @openai/codex@0.153.3 @anthropic-ai/claude-code@2.1.260
+      - name: Install latest lifecycle clients
+        run: npm install --global @openai/codex@latest @anthropic-ai/claude-code@latest
       - run: bun run lifecycle:sim --lane=all
 
   build:

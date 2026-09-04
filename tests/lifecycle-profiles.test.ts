@@ -46,6 +46,7 @@ test("CI runs deterministic lifecycle simulation and never calls a live profile"
   expect(workflow).toContain("os: [macos-15, windows-latest]");
   expect(workflow).toContain("bun run scripts/smoke-codex-cancel.ts");
   expect(workflow).toContain("bun run scripts/smoke-codex-interrupt.ts");
+  expect(workflow).toContain("@openai/codex@latest");
   expect(workflow).toContain("@openai/codex@0.153.3");
   expect(workflow).toContain("@anthropic-ai/claude-code@2.1.260");
   expect(workflow).toContain("turn-broker-lifecycle.test.ts");
@@ -115,8 +116,8 @@ test("release builds rerun the deterministic lifecycle gate at the tag SHA", () 
   const build = workflow.match(/\r?\n  build:\r?\n([\s\S]*?)\r?\n  publish:/)?.[1];
   expect(workflow).toContain("lifecycle-gate:");
   expect(workflow).toContain("bun run lifecycle:sim --lane=all");
-  expect(workflow).toContain("@openai/codex@0.153.3");
-  expect(workflow).toContain("@anthropic-ai/claude-code@2.1.260");
+  expect(workflow).toContain("@openai/codex@latest");
+  expect(workflow).toContain("@anthropic-ai/claude-code@latest");
   expect(workflow).toMatch(/build:\s+needs: lifecycle-gate/);
   expect(build).toContain("fetch-depth: 0");
 });
