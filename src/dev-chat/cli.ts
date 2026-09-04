@@ -2,12 +2,13 @@ import { createInterface } from "node:readline/promises";
 import { existsSync } from "node:fs";
 import { stdin, stdout } from "node:process";
 import { loadConfig, resolveDevSetupConnectorName } from "../config";
-import { inspectLauncherBrowserHost, readLauncherBrowserHostDescriptor } from "../launcher-browser-host";
+import {
+  inspectLauncherBrowserHost, inspectLauncherBrowserHostLiveness, readLauncherBrowserHostDescriptor,
+} from "../launcher-browser-host";
 import { setupDevProfile } from "../setup";
 import { tunnelStatus } from "../tunnel";
 import {
   createLauncherDevAdapter,
-  defaultDevChatModel,
   DevChatDriver,
   type DevChatEvent,
   type DevContextStatus,
@@ -33,8 +34,8 @@ const DEV_HELP = `Codex Web GPT DEV chat
 Usage:
   codex-chatgpt-web dev launcher
   codex-chatgpt-web dev status [--json]
-  codex-chatgpt-web dev setup --browser-only
-  codex-chatgpt-web dev setup --full --tunnel-id ID --runtime-key-file PATH
+  codex-chatgpt-web dev setup --browser-only [--automatic-browser-interaction]
+  codex-chatgpt-web dev setup --full --tunnel-id ID --runtime-key-file PATH [--automatic-browser-interaction|--zero-risk-browser-interaction]
   codex-chatgpt-web dev chat NAME [--model MODEL] [MESSAGE]
   codex-chatgpt-web dev list
 
@@ -48,7 +49,7 @@ Interactive commands:
   /fill TOKENS         Append deterministic inert context without opening ChatGPT
   /send-fill TOKENS    Send deterministic inert text through the live browser now
   /compact             Run the real browser compaction path now
-  /model MODEL         Select luna, think, light, medium, high, extra-high, or pro
+  /model MODEL         Select zero-risk, luna, think, light, medium, high, extra-high, or pro
   /reset yes           Clear this named DEV chat and create a new thread identity
   /help                Show this command list
   /exit                Exit
@@ -93,7 +94,7 @@ function modelFromCli(value: string | undefined): DevChatModel | undefined {
   const normalized = value.trim().toLowerCase();
   const slug = normalized.startsWith("chatgpt-web/") ? normalized : `chatgpt-web/${normalized}`;
   if (!(DEV_CHAT_MODELS as readonly string[]).includes(slug)) {
-    throw new Error(`Unknown DEV model ${JSON.stringify(value)}; choose luna, think, light, medium, high, extra-high, or pro`);
+    throw new Error(`Unknown DEV model ${JSON.stringify(value)}; choose zero-risk, luna, think, light, medium, high, extra-high, or pro`);
   }
   return slug as DevChatModel;
 }
@@ -166,9 +167,15 @@ async function assertLauncherReady(config: ReturnType<typeof loadConfig>): Promi
   if (config.browserHost !== "launcher" || !config.browserHostDescriptorPath) {
     throw new Error("DEV chat requires the isolated desktop launcher; run bun run dev:launcher first");
   }
-  await inspectLauncherBrowserHost(config.browserHostDescriptorPath, {
-    expectedProfile: DEV_LAUNCHER_PROFILE,
-  });
+  if (config.browserInteractionMode === "manual") {
+    await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath, {
+      expectedProfile: DEV_LAUNCHER_PROFILE,
+    });
+  } else {
+    await inspectLauncherBrowserHost(config.browserHostDescriptorPath, {
+      expectedProfile: DEV_LAUNCHER_PROFILE,
+    });
+  }
 }
 
 async function executeMessage(driver: DevChatDriver, state: DevChatState, message: string): Promise<void> {
@@ -419,7 +426,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
       },
     );
     driver = new DevChatDriver(runtimeConfig, store, runtime.adapterFactory, process.cwd(), features);
-    const opened = driver.open(name, requestedModel ?? defaultDevChatModel(runtimeConfig));
+    const opened = driver.open(name, requestedModel);
     if (requestedModel && opened.state.model !== requestedModel) {
       driver.setModel(opened.state, requestedModel);
     }
