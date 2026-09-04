@@ -1,0 +1,137 @@
+{
+  "schemaVersion": 1,
+  "release": "v5.0.1",
+  "targetVersion": "5.0.1-Enhanced.1",
+  "recordedAt": "2026-09-04T22:21:14.2835202Z",
+  "repository": "https://github.com/Evanlau1798/codex-chatgpt-web",
+  "tagIdentity": {
+    "ref": "refs/tags/v5.0.1",
+    "tagObject": "4473f90a1f09348eb52d0db36d283550653ea62a",
+    "peeledCommit": "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
+    "signature": "unsigned",
+    "unchanged": true,
+    "claim": "Bounded observations before integration and publication; upstream refs are not assumed permanently immutable."
+  },
+  "integration": {
+    "method": "merge",
+    "baseline": "eef6d28680a88eea48864a4391921137dbeb554c",
+    "upstreamMerge": "9824097d07831a68df2aa0703f5917c8c571435d",
+    "candidate": "3e404378edc6123312d58547a545b19eb7ec788c",
+    "githubMerge": "4ad40ab48d8ccdbd5569463841e5f4d4c415ddc5",
+    "tree": "ea65a4afb575bf29e091d1d1ba8c8208d5471679",
+    "pullRequest": {
+      "number": 16,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/16"
+    }
+  },
+  "postIntegrationFix": {
+    "reason": "The general CLI could exceed Codex's immutable three-second Interrupt hook deadline on Windows. A dedicated lightweight entry now preserves the authenticated exact-turn interrupt contract.",
+    "candidate": "d0ff5772d867fd67341b164de33cee2bba0b4da3",
+    "githubMerge": "5ba3ba578e0cc4f1a971ecf3a543e64044052556",
+    "tree": "a1c80163814b4df8fec4dde4acbde188720319ef",
+    "pullRequest": {
+      "number": 17,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/17"
+    }
+  },
+  "ledger": {
+    "path": ".github/upstream-audit/v5.0.1.json",
+    "commit": "5ba3ba578e0cc4f1a971ecf3a543e64044052556",
+    "blob": "b70c0e41a34eba1062f0d06f1583ac9313f33ffa",
+    "bytes": 53400,
+    "sha256": "2a0d5932e915b5b3040448cd5229854e5ca014b52737bb3993c83e2a54421545"
+  },
+  "archive": {
+    "path": ".github/upstream-audit/v5.0.1-evidence.tar.gz",
+    "commit": "5ba3ba578e0cc4f1a971ecf3a543e64044052556",
+    "blob": "39e818d333b4073dec29374117a11ff5a094806e",
+    "bytes": 53178071,
+    "sha256": "ad82576fd6b4f223a767e01e26b00b3831be693e5cbc004c358fb1903ca66c2c",
+    "containsContemporaneousMergeEvidence": true
+  },
+  "ci": {
+    "upstream": {
+      "verify": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/33895268331",
+      "release": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/33895900129"
+    },
+    "fork": {
+      "integrationPullRequest": {
+        "id": 33917624933,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33917624933",
+        "head": "3e404378edc6123312d58547a545b19eb7ec788c",
+        "conclusion": "success"
+      },
+      "initialMain": {
+        "id": 33918439889,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33918439889",
+        "head": "4ad40ab48d8ccdbd5569463841e5f4d4c415ddc5",
+        "conclusion": "failure",
+        "disposition": "Superseded by the focused Windows Interrupt hook fix and a fully successful replacement main run."
+      },
+      "fixPullRequest": {
+        "id": 33923431062,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33923431062",
+        "head": "d0ff5772d867fd67341b164de33cee2bba0b4da3",
+        "conclusion": "success"
+      },
+      "main": {
+        "id": 33924156254,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33924156254",
+        "head": "5ba3ba578e0cc4f1a971ecf3a543e64044052556",
+        "conclusion": "success"
+      },
+      "latestClientCanary": {
+        "id": 33924953324,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33924953324",
+        "head": "5ba3ba578e0cc4f1a971ecf3a543e64044052556",
+        "conclusion": "success"
+      }
+    }
+  },
+  "localValidation": {
+    "pinnedBun": "1.4.0+34cbb9a40",
+    "boundedRootSuite": "passed",
+    "launcherSuite": "passed",
+    "typechecks": "passed",
+    "deterministicCodexClaudeAll": "passed",
+    "latestClientInterruptSmoke": "passed-five-consecutive-runs",
+    "runtimeBundleAndSmoke": "passed",
+    "windowsPackageAndPackagedAppSmoke": "passed",
+    "automaticLiveWeb": {
+      "modelClass": "Medium",
+      "authenticated": true,
+      "temporaryChat": true,
+      "semanticControls": true,
+      "submitted": true,
+      "finalProjection": true,
+      "browserIdle": true,
+      "rateLimited": false
+    },
+    "zeroRiskLive": {
+      "userOperated": true,
+      "normalTurn": "passed",
+      "steering": "passed",
+      "interrupt": "passed",
+      "nextTurnContextRecovery": "passed"
+    },
+    "privacy": "No prompt, response, account, credential, URL query, screenshot, session identifier, or raw runtime log is recorded."
+  },
+  "validation": {
+    "integrationMergeTreeMatchesCandidate": true,
+    "fixMergeTreeMatchesCandidate": true,
+    "upstreamIsMainAncestor": true,
+    "auditArchiveHashesVerified": true,
+    "integrationPullRequestCiPassed": true,
+    "fixPullRequestCiPassed": true,
+    "replacementMainCiPassed": true,
+    "latestClientCanaryPassed": true,
+    "localAutomaticAndUserOperatedZeroRiskPassed": true
+  },
+  "inheritedLimitation": {
+    "source": ".github/upstream-audit/v5.0.0-publication.json",
+    "kind": "missing-contemporaneous-v5.0.0-merge-snapshot",
+    "acceptedByReleaseOwner": true,
+    "statement": "The v5.0.0 archive contains an explicitly labeled exact-parent post-hoc ort reproduction rather than original execution evidence. The v5.0.1 merge preserved contemporaneous evidence, but does not erase or overstate the older limitation."
+  },
+  "publicationBoundary": "This receipt records integration, remediation, local gates, PR/main CI and latest-client canary. Its own PR and post-merge main CI must pass before tagging. Release workflow, package, signing and published-asset checksum results will be linked in GitHub release metadata after they complete."
+}
