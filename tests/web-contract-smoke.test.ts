@@ -13,11 +13,11 @@ import {
 } from "../scripts/lifecycle-smoke/web-contract-core";
 
 describe("lightweight Web contract smoke", () => {
-  test("uses the requested Pro route without falling back to a lower effort", () => {
+  test("uses the requested Medium route without model fallback", () => {
     const script = readFileSync(new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url), "utf8");
-    expect(script).toContain('model: "chatgpt-web/pro"');
-    expect(script).toContain('reasoning: { effort: "ultra" }');
-    expect(script).toContain("session.proAvailable !== true");
+    expect(script).toContain('model: "chatgpt-web/medium"');
+    expect(script).toContain('reasoning: { effort: "medium" }');
+    expect(script).not.toContain("session.proAvailable !== true");
     expect(script).not.toContain('model: "chatgpt-web/high"');
     expect(script).not.toContain('model: "chatgpt-web/extra-high"');
   });

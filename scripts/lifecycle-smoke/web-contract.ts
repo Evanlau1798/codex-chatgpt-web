@@ -86,7 +86,6 @@ try {
 }
 const session = { ...inspected, ...account };
 if (session.solAvailable !== true) throw new Error("Web contract smoke requires the ChatGPT effort control");
-if (session.proAvailable !== true) throw new Error("Web contract smoke requires ChatGPT Pro; no lower-model fallback is allowed");
 if (!isTemporaryChatGptUrl(session.url)) throw new Error("Web contract smoke requires Temporary Chat");
 
 const threadId = `thread_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -111,9 +110,9 @@ const request = new Request(`${baseUrl}/v1/responses`, {
   headers: { "content-type": "application/json" },
   signal: AbortSignal.timeout(WEB_CONTRACT_TURN_TIMEOUT_MS),
   body: JSON.stringify({
-    model: "chatgpt-web/pro",
+    model: "chatgpt-web/medium",
     stream: false,
-    reasoning: { effort: "ultra" },
+    reasoning: { effort: "medium" },
     prompt_cache_key: threadId,
     client_metadata: {
       thread_id: threadId,
