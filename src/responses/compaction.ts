@@ -15,6 +15,9 @@
  * routed models get a short "history was compacted" note instead.
  */
 
+import { estimateTokens } from "../lib/token-estimate";
+import { isContextualCodexUserMessage } from "../adapters/chatgpt-web/contextual-user-message";
+
 export const BRIDGE_COMPACTION_PREFIX = "ocx1:";
 
 /** Mirrors codex-rs core/templates/compact/prompt.md (the local-compaction instruction). */
@@ -88,8 +91,8 @@ export function compactionItemToText(encryptedContent: string | undefined): stri
  * contextual wrappers are filtered there, and v2-style `compaction` items are NOT expected here.
  */
 
-/** codex-rs compact.rs COMPACT_USER_MESSAGE_MAX_TOKENS = 20k tokens (~4 chars/token). */
-const COMPACT_V1_RETAINED_CHAR_BUDGET = 20_000 * 4;
+/** Includes retained message envelopes, not just their visible text. */
+const COMPACT_V1_RETAINED_TOKEN_BUDGET = 20_000;
 
 type CompactMessageItem = Record<string, unknown>;
 
@@ -177,13 +180,21 @@ export function buildCompactV1Output(
   userMessages: CompactMessageItem[],
   summary: string,
   maxImages = 10,
+  retainedTokenBudget = COMPACT_V1_RETAINED_TOKEN_BUDGET,
 ): CompactMessageItem[] {
   const selected: CompactMessageItem[] = [];
-  let remaining = COMPACT_V1_RETAINED_CHAR_BUDGET;
+  const latest = userMessages.findLastIndex(item => !isContextualCodexUserMessage(item.content));
+  // Reserve the latest instruction before considering newer contextual wrappers. Never cut its
+  // text to fit the optional-history allowance; the route-level replacement check owns overflow.
+  let remaining = Math.max(0, retainedTokenBudget - 2
+    - (latest >= 0 ? retainedMessageTokens(userMessages[latest]!) : 0));
   let retainedImages = 0;
-  for (let i = userMessages.length - 1; i >= 0 && (remaining > 0 || retainedImages < maxImages); i--) {
+  for (let i = userMessages.length - 1; i >= 0; i--) {
     const message = structuredClone(userMessages[i]!);
     const blocks = compactContentBlocks(message);
+    const cost = retainedMessageTokens(message);
+    const keepText = i === latest || cost <= remaining;
+    if (keepText && i !== latest) remaining -= cost;
     const retainedReversed: CompactContentBlock[] = [];
     for (let blockIndex = blocks.length - 1; blockIndex >= 0; blockIndex -= 1) {
       const block = blocks[blockIndex]!;
@@ -194,15 +205,7 @@ export function buildCompactV1Output(
         }
         continue;
       }
-      if (!textBlock(block) || remaining === 0) continue;
-      const text = block.text!;
-      if (text.length <= remaining) {
-        remaining -= text.length;
-        retainedReversed.push({ ...block, type: "input_text", text });
-      } else {
-        retainedReversed.push({ ...block, type: "input_text", text: text.slice(text.length - remaining) });
-        remaining = 0;
-      }
+      if (textBlock(block) && keepText) retainedReversed.push({ ...block, type: "input_text" });
     }
     const content = retainedReversed.reverse();
     if (content.length > 0) {
@@ -217,4 +220,12 @@ export function buildCompactV1Output(
   // summaries by that exact prefix — keep the same shape.
   const summaryText = summary.trim().length > 0 ? `${SUMMARY_PREFIX}\n${summary}` : "(no summary available)";
   return [...selected, compactUserMessageItem(summaryText)];
+}
+
+function retainedMessageTokens(item: CompactMessageItem): number {
+  // Image payloads stay attachments; their token reserves are charged by the full prompt check.
+  const content = compactContentBlocks(item).flatMap(block => textBlock(block)
+    ? [{ ...block, type: "input_text" }]
+    : imageBlock(block) ? [{ ...block, image_url: "" }] : []);
+  return estimateTokens(JSON.stringify({ ...item, type: "message", role: "user", content })) + 2;
 }
