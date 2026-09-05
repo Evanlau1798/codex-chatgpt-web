@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "release": "v5.0.3",
   "targetVersion": "5.0.3-Enhanced.1",
-  "recordedAt": "2026-09-05T12:16:48.3670448Z",
+  "recordedAt": "2026-09-05T16:43:00Z",
   "repository": "https://github.com/Evanlau1798/codex-chatgpt-web",
   "tagIdentity": {
     "ref": "refs/tags/v5.0.3",
@@ -23,6 +23,40 @@
       "number": 23,
       "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/23"
     }
+  },
+  "releaseCandidate": {
+    "head": "f8cb569b9ffc3650b53d52a94ac01e52f5416616",
+    "tree": "edfb476f73c9df05ae3a263ecef2cbffb52ce88b",
+    "pullRequests": [
+      {
+        "number": 25,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/25",
+        "head": "776e8553f84f26dfef51fb268908e00708ba3ab9",
+        "merge": "ecc69ae366f63ede682dcdffc357f87529787ca8",
+        "purpose": "large Lexical Markdown restoration and live release gate"
+      },
+      {
+        "number": 26,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/26",
+        "head": "c5666beb305c3a24dee06312109814eac8dd5814",
+        "merge": "1443cc9ba59f4ec59343c46b6ad55a8df2857d09",
+        "purpose": "observe the synthetic browser rejection before triggering it"
+      },
+      {
+        "number": 27,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/27",
+        "head": "b2a833c9562e6f4066d6a20f6c9bbc3c1a996192",
+        "merge": "fe9cb69f2eabbd610138f066419b34f11aa43ed0",
+        "purpose": "bound the archived upstream-tag audit on hosted Windows"
+      },
+      {
+        "number": 28,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/28",
+        "head": "ea1ebb3f0ed587a54671123503f8d03b896353a4",
+        "merge": "f8cb569b9ffc3650b53d52a94ac01e52f5416616",
+        "purpose": "fence deterministic child follow-up observation before root completion"
+      }
+    ]
   },
   "ledger": {
     "path": ".github/upstream-audit/v5.0.3.json",
@@ -58,10 +92,39 @@
         "conclusion": "success"
       },
       "latestClientCanary": {
-        "id": 33965520914,
-        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33965520914",
-        "head": "44a10cb6af4e1f7f7065c183971d416a384b98d1",
+        "id": 33978662938,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33978662938",
+        "head": "f8cb569b9ffc3650b53d52a94ac01e52f5416616",
         "conclusion": "success"
+      },
+      "releaseCandidatePullRequests": [
+        {
+          "number": 25,
+          "id": 33972556092,
+          "conclusion": "success"
+        },
+        {
+          "number": 26,
+          "id": 33974753013,
+          "conclusion": "success"
+        },
+        {
+          "number": 27,
+          "id": 33976015612,
+          "conclusion": "success"
+        },
+        {
+          "number": 28,
+          "id": 33977687137,
+          "conclusion": "success"
+        }
+      ],
+      "releaseCandidateMain": {
+        "id": 33978156541,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33978156541",
+        "head": "f8cb569b9ffc3650b53d52a94ac01e52f5416616",
+        "conclusion": "success",
+        "precedingDistinctRaceEvidence": [33973024185, 33975241246, 33976432573]
       }
     }
   },
@@ -88,6 +151,9 @@
       "temporaryChat": true,
       "semanticControls": true,
       "connector": true,
+      "markdownRestoration": true,
+      "markdownProbeCharacters": 17587,
+      "markdownProbeSubmitted": false,
       "submitted": true,
       "finalProjection": true,
       "browserIdle": true,
@@ -108,6 +174,8 @@
     "integrationPullRequestCiPassed": true,
     "mainCiPassed": true,
     "latestClientCanaryPassed": true,
+    "releaseCandidateMainCiPassed": true,
+    "largeMarkdownRestorationPassed": true,
     "localAutomaticAndUserOperatedZeroRiskPassed": true
   },
   "inheritedLimitation": {
