@@ -41,10 +41,9 @@ test("the interrupt probe exercises the production-shaped bundled CLI hook", () 
   expect(source).toContain('resolve(import.meta.dir, "../src/codex-interrupt-cli.ts")');
   expect(source).toContain('copyFileSync(resolve(import.meta.dir, "../src/codex-interrupt-hook-windows.js")');
   expect(source).toContain("config.runtimeCommand = [resolve(process.execPath), cliBundle]");
-  const execLine = windowsHook.split(/\r?\n/).find(line => line.includes("shell.Exec"));
-  expect(execLine).toContain("-q --config -");
-  expect(execLine).not.toMatch(/token|threadId|turnId/);
-  expect(windowsHook).not.toContain("ServerXMLHTTP");
+  expect(windowsHook).toContain('new ActiveXObject("MSXML2.ServerXMLHTTP.6.0")');
+  expect(windowsHook).toContain("request.setProxy(1)");
+  expect(windowsHook).toContain("request.setTimeouts(250, 250, 250, 250)");
   expect(windowsHook).not.toContain("WinHttp.WinHttpRequest");
 });
 
