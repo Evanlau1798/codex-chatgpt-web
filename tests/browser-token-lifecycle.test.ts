@@ -120,9 +120,15 @@ test("a browser failure remains the authoritative turn error while its token is 
 
   try {
     const running = createChatGptWebAdapter(provider).runTurn!(request(), { headers: new Headers() }, () => {});
+    const outcome = running.then(
+      () => ({ error: undefined }),
+      error => ({ error }),
+    );
     await Bun.sleep(10);
     failSurface(new Error("browser surface closed"));
-    await expect(running).rejects.toThrow("browser surface closed");
+    const { error } = await outcome;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("browser surface closed");
   } finally {
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
     await broker.close();
