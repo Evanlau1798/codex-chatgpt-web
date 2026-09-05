@@ -110,3 +110,67 @@ test("restores a short multi-block prompt in one editor mutation", async () => {
     });
   }
 });
+
+test("restores an incident-sized Markdown prompt without bulk Lexical replacement", async () => {
+  const { createDocument } = require("@mixmark-io/domino") as {
+    createDocument: (html: string) => Document;
+  };
+  const pattern = "field_name=value) [literal](target) `code` *bold* ~=~ payload ";
+  const prompt = pattern.repeat(Math.ceil(17_587 / pattern.length)).slice(0, 17_587);
+  const guarded = guardChatGptPromptMarkdown(prompt)!;
+  const document = createDocument(
+    '<div id="composer"><span data-id="plugin:test" data-keyword="Codex Native2">Codex Native2</span></div>',
+  ) as Document & {
+    createRange: () => Range;
+    execCommand: (command: string, showUi: boolean, value: string) => boolean;
+  };
+  const composerElement = document.getElementById("composer")!;
+  composerElement.appendChild(document.createTextNode(guarded.text));
+  let selected: { node?: Text; start?: number; end?: number } = {};
+  document.createRange = () => ({
+    setStart: (node: Text, offset: number) => { selected = { node, start: offset }; },
+    setEnd: (node: Text, offset: number) => { selected.end = offset; },
+  } as unknown as Range);
+  let maxReplacementChars = 0;
+  document.execCommand = (_command, _showUi, value) => {
+    maxReplacementChars = Math.max(maxReplacementChars, value.length);
+    if (value.length !== 1 || !selected.node) return false;
+    selected.node.data = `${selected.node.data.slice(0, selected.start)}${value}${selected.node.data.slice(selected.end)}`;
+    return true;
+  };
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousNodeFilter = globalThis.NodeFilter;
+  Object.assign(globalThis, {
+    document,
+    NodeFilter: { SHOW_TEXT: 4 },
+    window: { getSelection: () => ({ removeAllRanges: () => {}, addRange: () => {} }) },
+  });
+  let evaluateCalls = 0;
+  const composer = {
+    focus: async () => {},
+    evaluate: async (callback: (element: HTMLElement, input: unknown) => unknown, input: unknown) => {
+      evaluateCalls += 1;
+      return await callback(composerElement, input);
+    },
+  };
+
+  try {
+    expect(guarded.count).toBeGreaterThan(3_000);
+    await expect(restoreChatGptPromptMarkdown(
+      composer as never,
+      guarded.replacements,
+      guarded.count,
+      16_000,
+    )).resolves.toBeTrue();
+    expect(composerElement.lastChild?.textContent).toBe(prompt);
+    expect(maxReplacementChars).toBe(1);
+    expect(evaluateCalls).toBeGreaterThan(2);
+  } finally {
+    Object.assign(globalThis, {
+      window: previousWindow,
+      document: previousDocument,
+      NodeFilter: previousNodeFilter,
+    });
+  }
+});
