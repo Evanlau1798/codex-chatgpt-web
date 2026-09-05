@@ -7,7 +7,7 @@ import {
   type LauncherHelperMessage,
 } from "./launcher-helper-protocol";
 import { forwardLauncherHelperProgress } from "./launcher-helper-progress";
-import { assertLauncherHelperFenceFeatures, handleLauncherHelperFenceEvent } from "./launcher-helper-fence";
+import { acknowledgeLauncherMultipartStage, assertLauncherHelperFenceFeatures, handleLauncherHelperFenceEvent } from "./launcher-helper-fence";
 import {
   resolveLauncherHelperScript,
   terminateLauncherHelperProcess,
@@ -15,8 +15,8 @@ import {
 } from "./launcher-helper-process";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { BrowserTurn, ResolvedBrowserConfig } from "./browser-worker";
-
 interface PendingTurn {
+  acknowledgedMultipartStage?: number;
   turn: BrowserTurn;
   resolve: (value: string) => void;
   reject: (error: Error) => void;
@@ -28,7 +28,6 @@ interface PendingTurn {
   preemptiveRetryRequested?: boolean;
   progressForwarding?: AbortController;
 }
-
 export class LauncherBrowserHelperClient {
   private child?: ChildProcessWithoutNullStreams;
   private ready?: Promise<void>;
@@ -36,7 +35,6 @@ export class LauncherBrowserHelperClient {
   private readyReject?: (error: Error) => void;
   private readonly pending = new Map<string, PendingTurn>();
   private helperFeatures = new Set<string>();
-
   constructor(private readonly config: ResolvedBrowserConfig) {}
 
   async run(turn: BrowserTurn): Promise<string> {
@@ -269,6 +267,9 @@ export class LauncherBrowserHelperClient {
       else if (message.event === "submitted") {
         this.invokeEventCallback(message.id, pending, () => pending.turn.onSubmitted?.());
       }
+      else if (message.event === "multipart_stage_acknowledged") {
+        this.invokeEventCallback(message.id, pending, () => acknowledgeLauncherMultipartStage(pending, message.stageIndex));
+      }
       else if (message.event === "retry_submitted") {
         const acknowledge = pending.acknowledgeRetry;
         pending.acknowledgeRetry = undefined;
@@ -414,17 +415,14 @@ export class LauncherBrowserHelperClient {
     }
   }
 
-  private invokeEventCallback(id: string, pending: PendingTurn, callback: () => void): void {
+  private invokeEventCallback(id: string, pending: PendingTurn, callback: () => void | Promise<void>): void {
+    const fail = (error: unknown) => this.abortWithLocalFailure(
+      id, error instanceof Error ? error : new Error(String(error)), pending,
+    );
     try {
-      callback();
+      void Promise.resolve(callback()).catch(fail);
     } catch (error) {
-      if (this.pending.get(id) === pending) {
-        this.abortWithLocalFailure(
-          id,
-          error instanceof Error ? error : new Error(String(error)),
-          pending,
-        );
-      }
+      fail(error);
     }
   }
 

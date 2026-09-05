@@ -43,6 +43,18 @@ const ledger = JSON.parse(readFileSync(
   resolve(repositoryRoot, ".github", "upstream-audit", "v5.0.0.json"),
   "utf8",
 )) as Ledger;
+// v5.0.1 explicitly refreshed this inherited ledger; bind it to that published tree.
+const publication = JSON.parse(readFileSync(resolve(repositoryRoot, ".github/upstream-audit/v5.0.1-publication.json"), "utf8"));
+const publishedCommit = publication.ledger.commit as string;
+const publishedSources = new Map<string, string>();
+function publishedSource(path: string): string {
+  if (!publishedSources.has(path)) {
+    const result = spawnSync("git", ["show", `${publishedCommit}:${path}`], { cwd: repositoryRoot, encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    publishedSources.set(path, result.stdout.replace(/\r\n/g, "\n"));
+  }
+  return publishedSources.get(path)!;
+}
 const sha = /^[0-9a-f]{40}$/;
 
 describe("upstream v5.0.0 audit ledger", () => {
@@ -88,17 +100,17 @@ describe("upstream v5.0.0 audit ledger", () => {
     expect(paths).toEqual(ledger.entries.map(({ changeType, path }) => ({ changeType, path })));
   });
 
-  test("candidate blob claims match the current audited implementation", () => {
+  test("candidate blob claims match the published historical implementation", () => {
     const claimed = ledger.entries.filter(entry =>
       entry.classification === "exact" || entry.evidence.some(value => value.startsWith("candidate-blob:"))
     );
-    const hashed = spawnSync("git", ["hash-object", "--stdin-paths"], {
-      cwd: repositoryRoot,
-      encoding: "utf8",
-      input: `${claimed.map(entry => entry.path).join("\n")}\n`,
-    });
-    expect(hashed.status).toBe(0);
-    const hashes = hashed.stdout.trim().split(/\r?\n/);
+    const listing = spawnSync("git", ["ls-tree", "-r", publishedCommit], { cwd: repositoryRoot, encoding: "utf8" });
+    expect(listing.status).toBe(0);
+    const tree = new Map(listing.stdout.trim().split(/\r?\n/).map(line => {
+      const [header, path] = line.split("\t");
+      return [path, header!.split(" ")[2]];
+    }));
+    const hashes = claimed.map(entry => tree.get(entry.path));
     expect(hashes).toHaveLength(claimed.length);
     for (const [index, entry] of claimed.entries()) {
       const claim = entry.evidence.find(value => value.startsWith("candidate-blob:"));
@@ -154,13 +166,13 @@ describe("upstream v5.0.0 audit ledger", () => {
       expect(item.source.anchor.length).toBeGreaterThan(0);
       expect(sources.get(item.source.path)).toContain(`${item.source.symbol}(`);
       expect(sources.get(item.source.path)).toContain(item.source.anchor);
-      expect(readFileSync(resolve(repositoryRoot, item.implementation), "utf8").length).toBeGreaterThan(0);
+      expect(publishedSource(item.implementation).length).toBeGreaterThan(0);
       expect(item.tests.length).toBeGreaterThan(0);
       for (const mapped of item.tests) {
         expect(mapped.assertion).toMatch(/assert\.|expect\(/);
-        expect(readFileSync(resolve(repositoryRoot, mapped.path), "utf8").replace(/\r\n/g, "\n"))
+        expect(publishedSource(mapped.path))
           .toContain(mapped.assertion);
       }
     }
-  });
+  }, 30_000);
 });

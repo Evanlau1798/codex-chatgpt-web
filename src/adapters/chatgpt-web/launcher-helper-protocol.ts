@@ -4,6 +4,7 @@ import {
 } from "./rolling-checkpoint";
 
 export type LauncherHelperMessage =
+  | { type: "event"; id: string; event: "multipart_stage_acknowledged"; stageIndex: number }
   | { type: "ready"; features?: string[] }
   | { type: "event"; id: string; event: "heartbeat" | "send_activated" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
   | { type: "event"; id: string; event: "tool_batch_observed"; revision: number }
@@ -69,6 +70,12 @@ export function parseLauncherHelperMessage(line: string): LauncherHelperMessage 
 
 function parseEvent(message: Record<string, unknown> & { id: string }): LauncherHelperMessage {
   const event = message.event;
+  if (event === "multipart_stage_acknowledged") {
+    if (!Number.isSafeInteger(message.stageIndex) || Number(message.stageIndex) <= 0) {
+      throw new Error("Launcher browser helper multipart stage index is invalid");
+    }
+    return { type: "event", id: message.id, event, stageIndex: Number(message.stageIndex) };
+  }
   if (event === "tool_batch_observed") {
     if (!Number.isSafeInteger(message.revision) || Number(message.revision) <= 0) {
       throw new Error("Launcher browser helper tool-boundary revision is invalid");

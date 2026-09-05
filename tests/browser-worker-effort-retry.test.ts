@@ -4,6 +4,7 @@ import {
   CHATGPT_EFFORT_ITEM_SELECTOR,
   CHATGPT_EFFORT_MENU_SELECTOR,
   CHATGPT_EFFORT_SLIDER_SELECTOR,
+  CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
 } from "../src/chatgpt-session";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
@@ -136,7 +137,11 @@ describe("ChatGPT effort menu failure classification", () => {
     const page = {
       locator: (selector: string) => {
         if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return effortMenu;
-        if (selector === CHATGPT_EFFORT_SLIDER_SELECTOR) return { last: () => slider };
+        if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
+          filter() { return this; }, last() { return this; },
+          isVisible: async () => true, waitFor: async () => {},
+          locator: () => slider,
+        };
         if (selector.includes('[role="alert"]') || selector.includes('[role="dialog"]')) return hiddenDialog;
         throw new Error(`Unexpected selector: ${selector}`);
       },
@@ -208,7 +213,11 @@ describe("ChatGPT effort menu failure classification", () => {
     const page = {
       locator: (selector: string) => {
         if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return effortMenu;
-        if (selector === CHATGPT_EFFORT_SLIDER_SELECTOR) return hiddenSliderCollection;
+        if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
+          filter() { return this; }, last() { return this; },
+          isVisible: async () => true, waitFor: async () => {},
+          locator: () => hiddenSliderCollection.last(),
+        };
         if (selector.includes('[role="alert"]') || selector.includes('[role="dialog"]')) return hiddenDialog;
         throw new Error(`Unexpected selector: ${selector}`);
       },

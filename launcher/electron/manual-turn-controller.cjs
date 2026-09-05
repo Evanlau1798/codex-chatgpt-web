@@ -69,7 +69,7 @@ class ManualTurnController {
     tab.manualTimer.unref?.();
   }
 
-  prepare(tab, prompt, reused) {
+  prepare(tab, prompt, reused, compaction) {
     Object.assign(tab, {
       interactionMode: "manual",
       interactionLocked: false,
@@ -77,6 +77,7 @@ class ManualTurnController {
       manualWaiters: new Set(),
       manualTerminalWaiters: new Set(),
       manualConversationReused: reused,
+      manualCompaction: compaction,
       prompt,
       promptDigest: digest(prompt),
       sentAt: null,
@@ -92,7 +93,8 @@ class ManualTurnController {
     };
   }
 
-  begin(traceId, helperPid, prompt, conversationKey, resumePrompt) {
+  begin(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false) {
+    if (typeof compaction !== "boolean") throw new Error("Manual compaction flag must be boolean");
     if (this.host.manualOperation) throw new Error(`ChatGPT browser is busy with ${this.host.manualOperation}`);
     if (typeof prompt !== "string" || prompt.length < 1 || prompt.length > MAX_PROMPT_CHARS) {
       throw new Error("Manual prompt size is invalid");
@@ -119,6 +121,9 @@ class ManualTurnController {
         throw new Error(`Zero Risk turn ${traceId} is owned by another process`);
       }
       const retry = existing.manualConversationReused ? resumePrompt : prompt;
+      if (existing.manualCompaction !== compaction) {
+        throw new Error(`Zero Risk turn ${traceId} was retried with a different compaction mode`);
+      }
       if (typeof retry !== "string" || digest(retry) !== existing.promptDigest) {
         throw new Error(`Zero Risk turn ${traceId} was retried with a different prompt`);
       }
@@ -137,10 +142,10 @@ class ManualTurnController {
       }
       this.clipboard.writeText(resumePrompt);
       Object.assign(retained[0], { traceId, helperPid, status: "running" });
-      return this.prepare(retained[0], resumePrompt, true);
+      return this.prepare(retained[0], resumePrompt, true, compaction);
     }
     this.clipboard.writeText(prompt);
-    return this.prepare(this.host.createManualTurnTab(traceId, helperPid, conversationKey, prompt), prompt, false);
+    return this.prepare(this.host.createManualTurnTab(traceId, helperPid, conversationKey, prompt), prompt, false, compaction);
   }
 
   async wait(tab, setName, timeoutMs) {

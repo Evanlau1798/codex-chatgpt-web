@@ -13,6 +13,18 @@ import {
 import type { ChatGptAssistantTurnBinding } from "./response-turn-boundary";
 import { withChatGptBrowserObservationTimeout } from "./browser-observation";
 
+const SAFE_STRING_KEYS = new Set(["tag", "role", "ariaExpanded", "ariaChecked", "dataState", "dataHighlighted", "origin"]);
+export function sanitizeChatGptBrowserDiagnosticState(value: unknown): unknown {
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.map(sanitizeChatGptBrowserDiagnosticState);
+  if (!value || typeof value !== "object") return undefined;
+  return Object.fromEntries(Object.entries(value).flatMap(([key, candidate]) => {
+    if (typeof candidate === "string") return SAFE_STRING_KEYS.has(key) && candidate.length <= 200 ? [[key, candidate]] : [];
+    const sanitized = sanitizeChatGptBrowserDiagnosticState(candidate);
+    return sanitized === undefined ? [] : [[key, sanitized]];
+  }));
+}
+
 const CHATGPT_BROWSER_DIAGNOSTIC_TRACE_LIMIT = 10;
 
 export function redactChatGptUiDiagnostic(value: string): string {
@@ -110,12 +122,12 @@ export class ChatGptBrowserDiagnostics {
       }
 
       const envelope: Record<string, unknown> = {
-        version: 1,
+        version: 2,
         capturedAt,
         traceId: this.traceId,
         checkpoint,
         ...(error !== undefined ? { error: this.contentFree ? verificationFailure(error) : diagnosticError(error) } : {}),
-        state,
+        state: sanitizeChatGptBrowserDiagnosticState(state),
         ...(stateError ? { stateError } : {}),
       };
       const jsonPath = join(this.directory, `${stem}.json`);
@@ -198,9 +210,7 @@ async function captureBrowserDiagnosticState(
       return candidate.isConnected && style.display !== "none"
         && style.visibility !== "hidden" && style.opacity !== "0";
     };
-    const boundedText = (element: Element): string => (
-      ((element as HTMLElement).innerText || element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 1_000)
-    );
+
     const rows = (selector: string, limit = 40) => [...document.querySelectorAll(selector)]
       .filter(rendered).slice(-limit).map(element => ({
         tag: element.tagName.toLowerCase(),
@@ -209,13 +219,13 @@ async function captureBrowserDiagnosticState(
         ariaExpanded: element.getAttribute("aria-expanded"),
         ariaChecked: element.getAttribute("aria-checked"),
         dataState: element.getAttribute("data-state"),
-        text: boundedText(element),
+        textChars: (element.textContent ?? "").length,
       }));
     const scopedRows = (root: Element | null, selector: string, limit = 40) => root
       ? [...root.querySelectorAll(selector)].filter(rendered).slice(-limit).map(element => ({
           tag: element.tagName.toLowerCase(),
           dataKeyword: element.getAttribute("data-keyword"),
-          text: boundedText(element),
+          textChars: (element.textContent ?? "").length,
         }))
       : [];
     const composers = [...document.querySelectorAll(selectors.composer)].filter(rendered);
@@ -251,10 +261,11 @@ async function captureBrowserDiagnosticState(
       return !infinite && (animation.playState === "running" || animation.pending);
     }).length;
     return {
-      url: location.href,
-      title: document.title,
+      location: { origin: location.origin, pathSegments: location.pathname.split("/").filter(Boolean).length,
+        temporaryChat: new URL(location.href).searchParams.has("temporary-chat") },
+      titleChars: document.title.length,
       surfaceId: (globalThis as typeof globalThis & { __CODEX_WEB_GPT_SURFACE_ID__?: unknown }).__CODEX_WEB_GPT_SURFACE_ID__ ?? null,
-      bodyTextChars: document.body?.innerText.length ?? 0,
+      bodyTextChars: document.body?.textContent?.length ?? 0,
       composer: {
         visibleCount: composers.length,
         textChars: composers.map(element => (element.textContent ?? "").length),

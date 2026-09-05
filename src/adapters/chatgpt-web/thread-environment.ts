@@ -5,15 +5,20 @@ import { getCodexHome } from "../../codex-integration-shared";
 import type { CodexParsedRequest } from "../../types";
 import {
   extractChatGptTurnEnvironment,
+  extractChatGptCompactionSourceRevision,
+  extractChatGptContinuationEnvironmentClaim,
   extractChatGptTurnIdentity,
   extractChatGptThreadSpawnLineage,
+  extractChatGptRootThreadMetadata,
+  hasCurrentChatGptEnvironmentContext,
   hasRawChatGptEnvironmentContext,
+  isChatGptCompactionContinuation,
   MissingTrustedCodexEnvironmentError,
   type ChatGptSandboxPolicy,
   type ChatGptTurnEnvironment,
 } from "./environment";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
-import { resolveCurrentCodexChildRolloutEnvironment } from "./codex-rollout-environment";
+import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 
 interface StoredThreadEnvironment {
   cwd: string;
@@ -112,6 +117,19 @@ function authority(environment: ChatGptTurnEnvironment, updatedAt: number): Stor
   };
 }
 
+function sameAuthority(left: ChatGptTurnEnvironment, right: ChatGptTurnEnvironment): boolean {
+  const samePaths = (a: string[], b: string[]): boolean => {
+    const expected = new Set(b.map(pathIdentity));
+    return a.length === expected.size && a.every(path => expected.has(pathIdentity(path)));
+  };
+  return pathIdentity(left.cwd) === pathIdentity(right.cwd)
+    && samePaths(left.roots, right.roots)
+    && samePaths(left.writableRoots, right.writableRoots)
+    && left.sandboxPolicy.type === right.sandboxPolicy.type
+    && (left.sandboxPolicy.type === "dangerFullAccess" || (right.sandboxPolicy.type !== "dangerFullAccess"
+      && left.sandboxPolicy.networkAccess === right.sandboxPolicy.networkAccess));
+}
+
 /**
  * Codex emits its trusted environment envelope when a task starts or its environment changes,
  * not on every follow-up. This store carries only that trusted authority across turns. Tool
@@ -136,21 +154,35 @@ export class ChatGptThreadEnvironmentStore {
       return environment;
     } catch (error) {
       if (!(error instanceof MissingTrustedCodexEnvironmentError) || !identity.threadId) throw error;
-      if (hasRawChatGptEnvironmentContext(parsed)) throw error;
+      const hasCurrentContext = hasCurrentChatGptEnvironmentContext(parsed);
+      if (hasCurrentContext && !isChatGptCompactionContinuation(parsed)) throw error;
+      const currentClaim = hasCurrentContext ? extractChatGptContinuationEnvironmentClaim(parsed) : undefined;
       const lineage = extractChatGptThreadSpawnLineage(parsed);
-      if (lineage && identity.turnId) {
-        const rolloutEnvironment = resolveCurrentCodexChildRolloutEnvironment({
+      const rolloutIdentity = lineage ?? extractChatGptRootThreadMetadata(parsed);
+      // Automatic compaction has a current turn_context; standalone compaction has only its
+      // source turn_context. Either must be the latest native record, never an arbitrary ancestor.
+      const compactionSourceTurnId = parsed._compactionRequest
+        ? extractChatGptCompactionSourceRevision(parsed).turnId : undefined;
+      if (rolloutIdentity && identity.turnId) {
+        const rolloutEnvironment = resolveCurrentCodexRolloutEnvironment({
           codexHome: this.codexHome,
           ...(this.sqliteHome ? { sqliteHome: this.sqliteHome } : {}),
-          lineage,
+          lineage: rolloutIdentity,
           turnId: identity.turnId,
+          ...(compactionSourceTurnId ? { compactionSourceTurnId } : {}),
           tools: effectiveChatGptToolPolicy(parsed).tools,
         });
         if (rolloutEnvironment) {
-          this.set(lineage.threadId, rolloutEnvironment);
+          if (currentClaim && !sameAuthority(currentClaim, rolloutEnvironment)) {
+            throw new Error("Compaction continuation environment conflicts with its current Codex rollout");
+          }
+          this.set(rolloutIdentity.threadId, rolloutEnvironment);
           return rolloutEnvironment;
         }
       }
+      // Only a current native rollout can supersede an unrecognized historical envelope. Without
+      // that proof, do not turn arbitrary history or an invalid update into cached authority.
+      if (hasRawChatGptEnvironmentContext(parsed)) throw error;
       const sameThread = this.get(identity.threadId);
       if (sameThread) return {
         cwd: sameThread.cwd,

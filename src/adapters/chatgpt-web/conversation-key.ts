@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { CodexParsedRequest } from "../../types";
 import { SUMMARY_PREFIX } from "../../responses/compaction";
 import { extractChatGptTurnIdentity } from "./environment";
+import { chatGptTurnExecutionKey } from "./turn-execution-key";
 
 function messageText(item: Record<string, unknown>): string | undefined {
   const content = item.content;
@@ -55,6 +56,7 @@ export function chatGptTurnTraceId(parsed: CodexParsedRequest, namespace: string
     namespace,
     threadId: identity.threadId,
     turnId: identity.turnId,
-    conversationKey: chatGptConversationKey(parsed, namespace),
+    ...(parsed._compactionRequest ? { compactionExecutionKey: chatGptTurnExecutionKey(parsed) } : {}),
+    conversationKey: parsed._compactionRequest ? undefined : chatGptConversationKey(parsed, namespace),
   })).digest("hex").slice(0, 12);
 }

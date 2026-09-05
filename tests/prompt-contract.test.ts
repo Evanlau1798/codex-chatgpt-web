@@ -333,6 +333,31 @@ test("Bigger Context compaction preserves history above the retired inline byte 
   }
 });
 
+test("Bigger Context minimizes the largest ordered stage instead of overfilling a middle part", () => {
+  const compact = request("high");
+  compact._compactionRequest = true;
+  compact.context.systemPrompt = ["system".repeat(1_000)];
+  compact.context.messages = [
+    ...Array.from({ length: 3 }, (_unused, index) => ({
+      role: "user" as const,
+      content: `history-${index}-${"x".repeat(100_000)}`,
+      timestamp: index + 1,
+    })),
+    { role: "user", content: "compact now", timestamp: 4 },
+  ];
+
+  const multipart = compileChatGptWebPrompt(
+    compact,
+    { localToolsEnabled: false, solAvailable: true, proAvailable: false },
+    undefined,
+    { experimentalMultipartParts: CHATGPT_BIGGER_CONTEXT_PARTS },
+  );
+  const parts = multipart.multipart!.parts.map(part => JSON.parse(part) as { records: unknown[] });
+
+  expect(parts.map(part => part.records.length)).toEqual([2, 1, 2]);
+  expect(Math.max(...multipart.multipart!.parts.map(part => part.length))).toBeLessThan(120_000);
+});
+
 test("Web compaction rebuilds attachments after trimming an oversized oldest image message", () => {
   const compact = request("high");
   compact._compactionRequest = true;

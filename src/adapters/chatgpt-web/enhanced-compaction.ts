@@ -31,7 +31,7 @@ interface EnhancedCompactionOptions {
   nativeConnectorAvailable: boolean;
   abortSignal?: AbortSignal;
   timeoutMs?: number;
-  startFallback: (traceId: string, signal: AbortSignal) => Promise<string>;
+  startFallback: (traceId: string, signal: AbortSignal, onProgress: () => void, retainOwnershipUntil: (settlement: Promise<void>) => void) => Promise<string>;
   emit: (event: AdapterEvent) => void;
 }
 
@@ -64,17 +64,23 @@ export async function runEnhancedCompaction(
     ownerKey: responseExecutionKey,
     traceIds: [traceId, `${traceId}_fallback`],
     nativeThreadId: identity.threadId, nativeTurnId: identity.turnId,
-  }, async operatorSignal => {
+  }, async (operatorSignal, retainOwnershipUntil) => {
     const handoffTimeoutMs = Math.min(
       timeoutMs ?? MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
       MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
     );
     const deadline = new AbortController();
-    const timer = setTimeout(
-      () => deadline.abort(new Error(`ChatGPT compaction did not fully settle within ${handoffTimeoutMs}ms`)),
-      handoffTimeoutMs,
-    );
-    timer.unref?.();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const armDeadline = (): void => {
+      if (deadline.signal.aborted) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(
+        () => deadline.abort(new Error(`ChatGPT compaction did not fully settle within ${handoffTimeoutMs}ms`)),
+        handoffTimeoutMs,
+      );
+      timer.unref?.();
+    };
+    armDeadline();
     const operationSignal = AbortSignal.any([deadline.signal, operatorSignal]);
     let source: ChatGptTurnSession | undefined;
     let preserveFinal = false;
@@ -82,7 +88,8 @@ export async function runEnhancedCompaction(
     const fallback = async (reason: string): Promise<string> => {
       operationSignal.throwIfAborted();
       console.warn(`[chatgpt-web] retained compaction fallback=${reason}`);
-      const raw = await startFallback(`${traceId}_fallback`, operationSignal);
+      armDeadline();
+      const raw = await startFallback(`${traceId}_fallback`, operationSignal, armDeadline, retainOwnershipUntil);
       const canonical = canonicalizeCompactionHandoff(parsed, raw);
       if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");
       return canonical;

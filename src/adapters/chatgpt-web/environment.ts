@@ -2,12 +2,14 @@ import { isAbsolute, resolve } from "node:path";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
 import { isContextualCodexUserMessage } from "./contextual-user-message";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
-import { currentTurnUserRevision } from "./turn-user-revision";
+import { currentTurnUserRevision, priorAbortedTurnIds } from "./turn-user-revision";
+import { isAcceptedCompactionContinuation } from "./compaction-continuation";
 import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import {
   codexTurnMetadataFromBody,
   extractChatGptTurnIdentity,
-  type ChatGptThreadSpawnLineage,
+  canonicalSandboxMetadata,
+  sandboxTypeFromMetadata,
 } from "./environment-identity";
 import {
   decodeXmlText,
@@ -24,6 +26,9 @@ export {
   extractCodexTurnIdentityFromBody,
   type ChatGptTurnIdentity,
   type ChatGptThreadSpawnLineage,
+  type ChatGptRootThreadMetadata,
+  extractChatGptThreadSpawnLineage,
+  extractChatGptRootThreadMetadata,
 } from "./environment-identity";
 export type ChatGptSandboxPolicy =
   | { type: "dangerFullAccess" }
@@ -82,6 +87,27 @@ export function hasRawChatGptEnvironmentContext(parsed: CodexParsedRequest): boo
   });
 }
 
+/** Historical XML is not a current environment update, including in old untagged rollouts. */
+export function hasCurrentChatGptEnvironmentContext(parsed: CodexParsedRequest): boolean {
+  const turnId = extractChatGptTurnIdentity(parsed).turnId;
+  if (!turnId) return hasRawChatGptEnvironmentContext(parsed);
+  const body = record(parsed._rawBody);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  let laterAssistantOutput = false;
+  for (let index = input.length - 1; index >= 0; index -= 1) {
+    const item = record(input[index]);
+    if (!item) continue;
+    if ((item.type === "message" && item.role === "assistant")
+      || item.type === "function_call" || item.type === "reasoning" || item.type === "compaction") {
+      laterAssistantOutput = true;
+    }
+    if (item.type !== "message" || !/<\/?environment_context\b/i.test(rawMessageText(item))) continue;
+    const owner = itemTurnId(item);
+    if (owner === turnId || (owner === undefined && !laterAssistantOutput)) return true;
+  }
+  return false;
+}
+
 function contextualUserMessage(value: Record<string, unknown>): boolean {
   const text = rawMessageText(value).trim();
   return /^<environment_context>[\s\S]*<\/environment_context>$/.test(text)
@@ -89,20 +115,17 @@ function contextualUserMessage(value: Record<string, unknown>): boolean {
     || isReadableCompactionSummaryText(text)
     || text === OPAQUE_COMPACTION_NOTE;
 }
-/**
- * Return the latest real user instruction owned by the current native Codex turn.
- *
- * Provider rounds replay the same instruction and steering appends a newer one. Remote
- * compaction uses this revision to identify and stop the superseded browser response; once Codex
- * installs the replacement history, the immediate continuation starts a fresh browser response
- * under the same logical task revision.
- */
+/** Current native instruction, or an exact daemon-proven checkpoint continuation. */
 export function extractChatGptTurnUserRevision(parsed: CodexParsedRequest): unknown {
-  const turnId = extractChatGptTurnIdentity(parsed).turnId;
+  const identity = extractChatGptTurnIdentity(parsed);
+  const turnId = identity.turnId;
   if (!turnId) throw new Error("ChatGPT web requires native Codex turn_id metadata for browser-session replay");
-  const revision = currentTurnUserRevision(parsed._rawBody, turnId);
+  const revision = isChatGptCompactionContinuation(parsed)
+    ? latestChatGptTurnUserRevision(parsed) : currentTurnUserRevision(parsed._rawBody, turnId);
   if (!revision) throw new Error("ChatGPT web requires a current-turn user message for browser-session replay");
-  if (revision.turnId !== undefined && revision.turnId !== turnId) {
+  if (revision.turnId !== undefined && revision.turnId !== turnId
+    && (priorAbortedTurnIds(parsed._rawBody, turnId).includes(revision.turnId)
+      || !isAcceptedCompactionContinuation(parsed, identity, revision))) {
     throw new Error(CHATGPT_TURN_REVISION_CONFLICT_MESSAGE);
   }
   return revision.content;
@@ -143,6 +166,31 @@ export function extractChatGptCompactionSourceRevision(parsed: CodexParsedReques
   const revision = latestChatGptTurnUserRevision(parsed);
   if (!revision) throw new Error("ChatGPT web compaction requires a source user message");
   return revision;
+}
+
+/** A completed checkpoint binds an older instruction to this exact continuing native turn. */
+export function isChatGptCompactionContinuation(parsed: CodexParsedRequest): boolean {
+  const identity = extractChatGptTurnIdentity(parsed);
+  const revision = latestChatGptTurnUserRevision(parsed);
+  return revision?.turnId !== undefined && identity.turnId !== undefined
+    && revision.turnId !== identity.turnId
+    && !priorAbortedTurnIds(parsed._rawBody, identity.turnId ?? "").includes(revision.turnId)
+    && isAcceptedCompactionContinuation(parsed, identity, revision);
+}
+
+/** Parse a claim only: the caller must compare it with this turn's native rollout authority. */
+export function extractChatGptContinuationEnvironmentClaim(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
+  const turnId = extractChatGptTurnIdentity(parsed).turnId;
+  const body = record(parsed._rawBody);
+  const updates = (Array.isArray(body?.input) ? body.input : []).flatMap(value => {
+    const item = record(value);
+    if (item?.type !== "message" || item.role !== "user" || itemTurnId(item) !== turnId
+      || typeof item.id !== "string" || !item.id) return [];
+    const text = rawMessageText(item).trim();
+    return /^<environment_context>[\s\S]*<\/environment_context>$/.test(text) ? [text] : [];
+  });
+  if (updates.length !== 1) throw new Error("Compaction continuation requires one current native environment claim");
+  return parseChatGptEnvironmentText(parsed, updates[0]!);
 }
 
 function environmentBeforeUser(input: unknown[], userIndex: number, expectedTurnId?: string): string | undefined {
@@ -188,36 +236,6 @@ function sandboxTypeFromEnvironment(text: string): ChatGptSandboxPolicy["type"] 
     || (restrictedFileSystem !== null && !restrictedHasWriteEntry);
   if (Number(unrestricted) + Number(workspaceWrite) + Number(readOnly) !== 1) return undefined;
   return unrestricted ? "dangerFullAccess" : workspaceWrite ? "workspaceWrite" : "readOnly";
-}
-
-type ChatGptMetadataSandbox = ChatGptSandboxPolicy["type"] | "platform";
-
-function canonicalSandboxMetadata(metadata: Record<string, unknown>): unknown {
-  return metadata.sandbox_mode ?? metadata.sandbox;
-}
-
-function sandboxTypeFromMetadata(value: unknown): ChatGptMetadataSandbox | undefined {
-  if (typeof value !== "string") return undefined;
-  switch (value.trim().toLowerCase().replaceAll("_", "-")) {
-    case "none":
-    case "unrestricted":
-    case "danger-full-access":
-      return "dangerFullAccess";
-    case "workspace-write":
-      return "workspaceWrite";
-    case "read-only":
-      return "readOnly";
-    // Codex CLI reports the host sandbox mechanism here, while the XML envelope carries the
-    // effective filesystem policy. Keep the platform tag as a separate class and validate the
-    // actual policy below instead of guessing write access from the platform name.
-    case "windows-sandbox":
-    case "windows-elevated":
-    case "seatbelt":
-    case "seccomp":
-      return "platform";
-    default:
-      return undefined;
-  }
 }
 
 function sandboxMetadataMatchesEnvironment(
@@ -368,10 +386,15 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
   // the earlier current-turn environment/prompt pair only through canonical metadata, and bind all
   // declared roots to metadata workspaces so user-authored XML cannot widen filesystem authority.
   const metadata = clientTurnMetadata(parsed);
+  let crossedAssistantOutput = false;
   for (let index = activeUserIndex - 1; index > 0; index -= 1) {
+    crossedAssistantOutput ||= hasAssistantOutputBetween(input, index, index + 1);
+    if (crossedAssistantOutput && itemTurnId(input[index]) !== turnId) continue;
     const sameTurn = canonicalMetadataEnvironmentBeforeUser(input, index, metadata, true);
     if (sameTurn) return sameTurn;
   }
+
+  if (hasCurrentChatGptEnvironmentContext(parsed)) return undefined;
 
   const replayPrefixLen = Math.min(parsed._replayPrefixLen ?? 0, input.length);
   for (let index = replayPrefixLen - 1; index > 0; index -= 1) {
@@ -379,12 +402,8 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
     if (replayed) return replayed;
   }
 
-  // Codex can resume a local task by explicitly replaying its native transcript instead of
-  // sending previous_response_id. In that shape, accept a historical environment/user pair only
-  // when both items carry the same native turn_id and either completed assistant output separates
-  // that turn from the active user or the complete historical pair is server-owned and its
-  // filesystem authority still matches the current thread's canonical workspace/sandbox metadata.
-  // A user-authored <environment_context> inside one chat message cannot satisfy this structure.
+  // Native transcript replay needs a matching historical pair and assistant boundary, or
+  // server-owned provenance whose authority still matches current workspace/sandbox metadata.
   const currentTurnId = typeof turnId === "string" ? turnId : undefined;
   const currentThreadId = typeof metadata?.thread_id === "string" && metadata.thread_id.trim()
     ? metadata.thread_id
@@ -439,7 +458,10 @@ function trustedEnvironmentText(parsed: CodexParsedRequest): string {
 }
 
 export function extractChatGptTurnEnvironment(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
-  const text = trustedEnvironmentText(parsed);
+  return parseChatGptEnvironmentText(parsed, trustedEnvironmentText(parsed));
+}
+
+function parseChatGptEnvironmentText(parsed: CodexParsedRequest, text: string): ChatGptTurnEnvironment {
   const cwdMatches = environmentCwdMatches(text, clientMetadataWorkspaceRoots(parsed));
   const cwdCandidates = uniqueAbsolutePaths(cwdMatches, "cwd");
   if (cwdCandidates.length !== 1) throw new Error("ChatGPT web turn has conflicting trusted Codex cwd values");
@@ -472,29 +494,4 @@ export function extractChatGptTurnEnvironment(parsed: CodexParsedRequest): ChatG
     };
   }
   return { cwd, roots, writableRoots: [], sandboxPolicy: { type: "readOnly", networkAccess }, tools };
-}
-
-/**
- * Return the canonical parent link carried by a native Codex thread-spawn request.
- * This is deliberately stricter than generic metadata parsing: only a real child turn with an
- * agent path, explicit turn purpose, sandbox policy, and absolute workspace evidence can inherit
- * filesystem authority from a previously verified parent thread.
- */
-export function extractChatGptThreadSpawnLineage(
-  parsed: CodexParsedRequest,
-): ChatGptThreadSpawnLineage | undefined {
-  const metadata = clientTurnMetadata(parsed);
-  if (!metadata || metadata.request_kind !== "turn" || metadata.subagent_kind !== "thread_spawn") return undefined;
-  const threadId = typeof metadata.thread_id === "string" ? metadata.thread_id.trim() : "";
-  const parentThreadId = typeof metadata.parent_thread_id === "string" ? metadata.parent_thread_id.trim() : "";
-  const agentName = typeof metadata.agent_name === "string" ? metadata.agent_name.trim() : "";
-  if (!threadId || !parentThreadId || threadId === parentThreadId || !/^\/root\/.+/.test(agentName)) return undefined;
-
-  const sandboxType = sandboxTypeFromMetadata(canonicalSandboxMetadata(metadata));
-  if (!sandboxType || sandboxType === "platform") return undefined;
-  const workspaces = record(metadata.workspaces);
-  const workspacePaths = workspaces ? Object.keys(workspaces) : [];
-  if (workspacePaths.some(path => !isAbsolute(path))) return undefined;
-  const workspaceRoots = [...new Set(workspacePaths.map(path => resolve(path)))];
-  return { threadId, parentThreadId, agentName, sandboxType, workspaceRoots };
 }

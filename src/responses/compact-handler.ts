@@ -19,6 +19,8 @@ import {
 import { boundedCompactV1Output, CompactionBudgetExceeded } from "./compact-budget";
 import { extractCodexTurnIdentityFromBody } from "../adapters/chatgpt-web/environment";
 import type { ResponseRequestOptions } from "../server-dependencies";
+import { parseRequest } from "./parser";
+import { rememberCompletedCompaction } from "./compaction-continuation";
 
 type AdapterFactory = (provider: CodexProviderConfig) => ProviderAdapter;
 type ResponseHandler = (req: Request, config: AppConfig, adapterFactory: AdapterFactory, options?: ResponseRequestOptions) => Promise<Response>;
@@ -98,7 +100,7 @@ export async function handleCompactRequest(
     body: JSON.stringify({ ...raw, stream: false, input: [...input, { type: "compaction_trigger" }] }),
     signal: req.signal,
   });
-  const response = await responseRequest(internal, config, adapterFactory, options);
+  const response = await responseRequest(internal, config, adapterFactory, { ...options, rememberState: false });
   if (!response.ok) return response;
   let body: {
     output?: unknown[];
@@ -138,7 +140,12 @@ export async function handleCompactRequest(
     return formatErrorResponse(502, "invalid_response_error", "Compaction turn produced an unusable summary");
   }
   try {
-    return Response.json({ output: boundedCompactV1Output(raw, summary, config, route) });
+    const output = boundedCompactV1Output(raw, summary, config, route);
+    const parsed = parseRequest({ ...raw, input: [...input, { type: "compaction_trigger" }] });
+    parsed.modelId = route.backendModel;
+    parsed.options.reasoning = route.interactionMode === "automatic" ? route.adapterEffort : route.codexEffort;
+    rememberCompletedCompaction(parsed, body, output);
+    return Response.json({ output });
   } catch (error) {
     if (error instanceof CompactionBudgetExceeded) {
       // HTTP 400 is terminal to Codex; do not retry the same oversized input automatically.

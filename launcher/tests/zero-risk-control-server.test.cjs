@@ -48,7 +48,8 @@ test("manual control endpoints require the token and preserve lifecycle order", 
   });
   try {
     assert.equal((await post("start", { traceId: "trace-z1", helperPid: 7, prompt: "p" }, "wrong")).status, 401);
-    assert.equal((await post("start", { traceId: "trace-z1", helperPid: 7, prompt: "p" })).status, 200);
+    assert.equal((await post("start", { traceId: "trace-z1", helperPid: 7, prompt: "p", compaction: true })).status, 200);
+    assert.equal(calls[0][6], true);
     assert.equal((await post("started", { traceId: "trace-z1", helperPid: 7 })).status, 200);
     assert.equal((await post("end", { traceId: "trace-z1", helperPid: 7, status: "completed" })).status, 200);
     assert.deepEqual(calls.map(call => call[0]), ["start", "started", "end"]);

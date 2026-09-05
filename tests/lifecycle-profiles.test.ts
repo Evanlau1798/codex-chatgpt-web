@@ -73,7 +73,7 @@ test("the aggregate gate checks the actual PR head preserves the pinned v5 ances
   const gate = workflow.slice(workflow.indexOf("  ci-gate:"));
   expect(gate).toContain("fetch-depth: 0");
   expect(gate).toContain("github.event.pull_request.head.sha || github.sha");
-  expect(gate).toContain('git merge-base --is-ancestor 9a7428a9d1fced9baaa85112994c02c011a3b7c9 "$CANDIDATE_HEAD"');
+  expect(gate).toContain('git merge-base --is-ancestor 74aed4025937eadca13b363cdcbc87963cd4dff3 "$CANDIDATE_HEAD"');
 });
 
 test("the executable manifest owns every deterministic lifecycle test", () => {

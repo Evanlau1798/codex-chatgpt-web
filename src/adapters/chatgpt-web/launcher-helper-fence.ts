@@ -7,6 +7,9 @@ type FenceEvent = Extract<LauncherHelperMessage, {
 }>;
 
 export function assertLauncherHelperFenceFeatures(turn: BrowserTurn, features: Set<string>): void {
+  if (turn.onMultipartStageAcknowledged && !features.has("multipart-stage-ack")) {
+    throw new Error("Launcher browser helper does not support multipart acknowledgement forwarding; update or restart the launcher");
+  }
   if (!turn.externalProgress) return;
   if (!features.has("tool-boundary-ack")) {
     throw new Error("Launcher browser helper does not support causal Codex tool-boundary acknowledgement");
@@ -42,4 +45,18 @@ export function handleLauncherHelperFenceEvent(
 
 function errorOf(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+export function acknowledgeLauncherMultipartStage(pending: {
+  turn: BrowserTurn;
+  prepared?: { multipart?: { parts: readonly string[] } };
+  acknowledgedMultipartStage?: number;
+}, stageIndex: number): void | Promise<void> {
+  const multipart = pending.prepared?.multipart;
+  if (!multipart || stageIndex >= multipart.parts.length
+    || stageIndex !== (pending.acknowledgedMultipartStage ?? 0) + 1) {
+    throw new Error("Launcher browser helper acknowledged an unexpected multipart stage");
+  }
+  pending.acknowledgedMultipartStage = stageIndex;
+  return pending.turn.onMultipartStageAcknowledged?.(stageIndex);
 }

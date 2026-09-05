@@ -41,7 +41,7 @@ test("manual start transports a large UTF-8 prompt and resume suffix without rew
       body: JSON.stringify({ ...owner, prompt, resumePrompt, conversationKey: "a".repeat(64) }),
     });
     assert.equal(response.status, 200, await response.text());
-    assert.deepEqual(calls, [[owner.traceId, owner.helperPid, prompt, "a".repeat(64), resumePrompt]]);
+    assert.deepEqual(calls, [[owner.traceId, owner.helperPid, prompt, "a".repeat(64), resumePrompt, false]]);
     assert.equal(JSON.stringify(logs).includes(prompt), false);
   } finally { server.server.closeAllConnections(); await server.close(); }
 });
