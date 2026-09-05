@@ -38,6 +38,6 @@ test("candidate Web smoke drains before shutdown and bounds the live subprocess"
   const shutdownAt = script.indexOf('control(baseUrl, "shutdown"');
   expect(drainAt).toBeGreaterThan(-1);
   expect(shutdownAt).toBeGreaterThan(drainAt);
-  expect(script).toContain("WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000");
+  expect(script).toContain("WEB_CONTRACT_PROBE_TIMEOUT_MS + WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000");
   expect(script).toContain("Candidate Web smoke timed out");
 });

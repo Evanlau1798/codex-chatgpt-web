@@ -1,11 +1,17 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { detectChatGptAccountCapabilities, isTemporaryChatGptUrl } from "../../src/chatgpt-session";
+import {
+  CHATGPT_TEMPORARY_CHAT_URL,
+  detectChatGptAccountCapabilities,
+  isTemporaryChatGptUrl,
+} from "../../src/chatgpt-session";
 import { loadConfig } from "../../src/config";
 import { VERSION } from "../../src/version";
 import {
   connectLauncherBrowserHost,
   inspectLauncherBrowserHost,
+  LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS,
+  notifyLauncherTurn,
   verifyLauncherBrowserConnector,
 } from "../../src/launcher-browser-host";
 import {
@@ -14,9 +20,11 @@ import {
   deriveWebContractCapabilities,
   requestWebContractTurn,
   responseHasFinalProjection,
+  WEB_CONTRACT_PROBE_TIMEOUT_MS,
   WEB_CONTRACT_TURN_TIMEOUT_MS,
   webContractBrowserIsIdle,
 } from "./web-contract-core";
+import { runMarkdownRestorationProbe } from "./markdown-restoration-probe";
 
 const repo = resolve(import.meta.dir, "..", "..");
 const artifactDir = join(repo, "tmp", "lifecycle-smoke", "web-contract");
@@ -57,6 +65,9 @@ const config = loadConfig();
 if (config.browserHost !== "launcher" || !config.browserHostDescriptorPath) {
   throw new Error("Web contract smoke requires the launcher-owned browser host");
 }
+if (config.browserInteractionMode !== "automatic") {
+  throw new Error("Web contract smoke requires Automatic interaction mode");
+}
 if (!config.useEnhancedWebSessionMode) {
   throw new Error("Web contract smoke requires Enhanced Web Session so connector selection is exercised");
 }
@@ -77,12 +88,52 @@ const inspected = await inspectLauncherBrowserHost(config.browserHostDescriptorP
   detectCapabilities: false,
   expectedProfile: "production",
 });
-const connection = await connectLauncherBrowserHost(config.browserHostDescriptorPath);
+const probeTraceId = `web_contract_probe_${crypto.randomUUID().replaceAll("-", "")}`;
+const lease = await notifyLauncherTurn(config.browserHostDescriptorPath, {
+  phase: "start",
+  traceId: probeTraceId,
+  helperPid: process.pid,
+  connectorIdentity: config.appName,
+});
+if (!lease.surfaceId) throw new Error("Web contract smoke did not receive an Automatic turn surface");
+const connection = await connectLauncherBrowserHost(
+  config.browserHostDescriptorPath,
+  20_000,
+  lease.surfaceId,
+);
 let account;
+let markdownRestoration = false;
+let probeStatus: "completed" | "failed" = "completed";
+const heartbeat = setInterval(() => {
+  void notifyLauncherTurn(config.browserHostDescriptorPath!, {
+    phase: "heartbeat",
+    traceId: probeTraceId,
+    helperPid: process.pid,
+  }).catch(() => {});
+}, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
+heartbeat.unref?.();
 try {
+  await connection.page.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
   account = await detectChatGptAccountCapabilities(connection.page);
+  process.stdout.write("WEB_CONTRACT_MARKDOWN_PROBE_STARTED\n");
+  markdownRestoration = await runMarkdownRestorationProbe(
+    connection.page,
+    config.appName,
+    AbortSignal.timeout(WEB_CONTRACT_PROBE_TIMEOUT_MS),
+  );
+  process.stdout.write("WEB_CONTRACT_MARKDOWN_PROBE_OK\n");
+} catch (error) {
+  probeStatus = "failed";
+  throw error;
 } finally {
-  await connection.browser.close();
+  clearInterval(heartbeat);
+  await connection.browser.close().catch(() => {});
+  await notifyLauncherTurn(config.browserHostDescriptorPath, {
+    phase: "end",
+    traceId: probeTraceId,
+    helperPid: process.pid,
+    status: probeStatus,
+  });
 }
 const session = { ...inspected, ...account };
 if (session.solAvailable !== true) throw new Error("Web contract smoke requires the ChatGPT effort control");
@@ -139,6 +190,7 @@ assertWebContractRuntimeVersion(await health(baseUrl), VERSION, runtimePid);
 const capture = deriveWebContractCapabilities({
   session,
   connectorVerified,
+  markdownRestoration,
   responseAccepted: result.response.ok,
   finalProjection,
   browserIdle,
