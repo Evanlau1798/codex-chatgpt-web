@@ -129,14 +129,14 @@
       throw new Error("invalid endpoint");
     }
 
-    var request = new ActiveXObject("WinHttp.WinHttpRequest.5.1");
-    request.SetTimeouts(2000, 2000, 2000, 2000);
-    request.Open("POST", "http://127.0.0.1:" + port + "/admin/interrupt-turn", false);
-    request.SetRequestHeader("authorization", "Bearer " + token);
-    request.SetRequestHeader("content-type", "application/json");
-    request.Send('{"threadId":"' + threadId + '","turnId":"' + turnId + '"}');
-    if (request.Status < 200 || request.Status >= 300) throw new Error("request failed");
-    var result = parseJson(request.ResponseText);
+    var request = new ActiveXObject("MSXML2.ServerXMLHTTP.6.0");
+    request.setTimeouts(2000, 2000, 2000, 2000);
+    request.open("POST", "http://127.0.0.1:" + port + "/admin/interrupt-turn", false);
+    request.setRequestHeader("authorization", "Bearer " + token);
+    request.setRequestHeader("content-type", "application/json");
+    request.send('{"threadId":"' + threadId + '","turnId":"' + turnId + '"}');
+    if (request.status < 200 || request.status >= 300) throw new Error("request failed");
+    var result = parseJson(request.responseText);
     if (result.status !== "ok"
         || !nonnegativeInteger(result.cancelled_http_turns)
         || !nonnegativeInteger(result.cancelled_browser_turns)) {
