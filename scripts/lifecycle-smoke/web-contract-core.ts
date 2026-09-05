@@ -1,4 +1,5 @@
 export const WEB_CONTRACT_COOLDOWN_MS = 2 * 60_000;
+export const WEB_CONTRACT_PROBE_TIMEOUT_MS = 5 * 60_000;
 export const WEB_CONTRACT_TURN_TIMEOUT_MS = 3 * 60_000;
 
 const capabilityKeys = [
@@ -7,6 +8,7 @@ const capabilityKeys = [
   "composer",
   "effort",
   "connector",
+  "markdownRestoration",
   "submitted",
   "finalProjection",
   "browserIdle",
@@ -37,6 +39,7 @@ export function captureWebContract(source: Record<string, unknown>): WebContract
 export function deriveWebContractCapabilities(evidence: {
   session: { authenticated: boolean; temporary: boolean; composer: boolean; solAvailable?: boolean };
   connectorVerified: boolean;
+  markdownRestoration: boolean;
   responseAccepted: boolean;
   finalProjection: boolean;
   browserIdle: boolean;
@@ -47,6 +50,7 @@ export function deriveWebContractCapabilities(evidence: {
     composer: evidence.session.composer,
     effort: evidence.session.solAvailable === true,
     connector: evidence.connectorVerified,
+    markdownRestoration: evidence.markdownRestoration,
     submitted: evidence.responseAccepted,
     finalProjection: evidence.finalProjection,
     browserIdle: evidence.browserIdle,

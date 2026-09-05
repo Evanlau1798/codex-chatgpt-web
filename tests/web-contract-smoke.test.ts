@@ -8,13 +8,22 @@ import {
   requestWebContractTurn,
   responseHasFinalProjection,
   WEB_CONTRACT_COOLDOWN_MS,
+  WEB_CONTRACT_PROBE_TIMEOUT_MS,
   WEB_CONTRACT_TURN_TIMEOUT_MS,
   webContractBrowserIsIdle,
 } from "../scripts/lifecycle-smoke/web-contract-core";
+import {
+  markdownRestorationProbeText,
+  MARKDOWN_RESTORATION_PROBE_CHARS,
+} from "../scripts/lifecycle-smoke/markdown-restoration-probe";
+import { guardChatGptPromptMarkdown } from "../src/adapters/chatgpt-web/prompt-caret";
 
 describe("lightweight Web contract smoke", () => {
   test("uses the requested Medium route without model fallback", () => {
-    const script = readFileSync(new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url), "utf8");
+    const script = readFileSync(
+      new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url),
+      "utf8",
+    ).replaceAll("\r\n", "\n");
     expect(script).toContain('model: "chatgpt-web/medium"');
     expect(script).toContain('reasoning: { effort: "medium" }');
     expect(script).not.toContain("session.proAvailable !== true");
@@ -22,7 +31,10 @@ describe("lightweight Web contract smoke", () => {
     expect(script).not.toContain('model: "chatgpt-web/extra-high"');
   });
   test("refreshes once for connector verification before inspecting the hydrated surface", () => {
-    const script = readFileSync(new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url), "utf8");
+    const script = readFileSync(
+      new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url),
+      "utf8",
+    ).replaceAll("\r\n", "\n");
     const verifyAt = script.indexOf("const connectorVerified = await verifyLauncherBrowserConnector");
     const inspectAt = script.indexOf("const inspected = await inspectLauncherBrowserHost");
     const cooldownAt = script.indexOf("writeFileSync(lastRunPath");
@@ -32,6 +44,36 @@ describe("lightweight Web contract smoke", () => {
     expect(inspectAt).toBeGreaterThan(verifyAt);
     expect(script).toContain("detectCapabilities: false");
     expect(script).toContain("detectChatGptAccountCapabilities(connection.page)");
+    expect(script).toContain("runMarkdownRestorationProbe(");
+    expect(script).toContain("connection.page,\n    config.appName,");
+    expect(script).toContain('config.browserInteractionMode !== "automatic"');
+    expect(script).toContain('phase: "start"');
+    expect(script).toContain("lease.surfaceId");
+    expect(script).toContain('phase: "end"');
+  });
+
+  test("uses the incident-sized Markdown probe without sending its contents", () => {
+    const prompt = markdownRestorationProbeText();
+    const guarded = guardChatGptPromptMarkdown(prompt)!;
+    const probe = readFileSync(
+      new URL("../scripts/lifecycle-smoke/markdown-restoration-probe.ts", import.meta.url),
+      "utf8",
+    );
+    expect(prompt).toHaveLength(MARKDOWN_RESTORATION_PROBE_CHARS);
+    expect(prompt[16_000]).toBe(" ");
+    expect(guarded.count).toBe(3_402);
+    expect(probe).toContain("finally {");
+    expect(probe).toContain("clearChatGptComposerInput(composer)");
+    expect(probe.indexOf("await clearChatGptComposerInput(composer)"))
+      .toBeLessThan(probe.indexOf("composer = await selectConnector(page, appName)"));
+    expect(probe.indexOf("await composer.focus()"))
+      .toBeLessThan(probe.indexOf("await page.keyboard.insertText(chunk)"));
+    expect(probe).toContain("CHATGPT_USER_TURN_SELECTOR");
+    expect(probe).toContain('pressSequentially("@codex"');
+    expect(probe).toContain("MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS");
+    expect(probe).toContain("unexpectedly submitted a turn");
+    expect(probe).toContain("could not clear connector state");
+    expect(probe).toContain("cleanup left submittable content");
   });
 
   test("captures only allowlisted semantic capabilities", () => {
@@ -41,6 +83,7 @@ describe("lightweight Web contract smoke", () => {
       composer: true,
       effort: true,
       connector: true,
+      markdownRestoration: true,
       submitted: true,
       finalProjection: true,
       browserIdle: true,
@@ -55,6 +98,7 @@ describe("lightweight Web contract smoke", () => {
       composer: true,
       effort: true,
       connector: true,
+      markdownRestoration: true,
       submitted: true,
       finalProjection: true,
       browserIdle: true,
@@ -67,6 +111,7 @@ describe("lightweight Web contract smoke", () => {
     expect(deriveWebContractCapabilities({
       session: { authenticated: true, temporary: true, composer: true, solAvailable: true },
       connectorVerified: false,
+      markdownRestoration: true,
       responseAccepted: true,
       finalProjection: false,
       browserIdle: true,
@@ -76,6 +121,7 @@ describe("lightweight Web contract smoke", () => {
       composer: true,
       effort: true,
       connector: false,
+      markdownRestoration: true,
       submitted: true,
       finalProjection: false,
       browserIdle: true,
@@ -142,10 +188,15 @@ describe("lightweight Web contract smoke", () => {
   });
 
   test("checks the same live runtime process before and after the account-bound turn", () => {
-    const script = readFileSync(new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url), "utf8");
+    const script = readFileSync(
+      new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url),
+      "utf8",
+    ).replaceAll("\r\n", "\n");
     expect(script.match(/assertWebContractRuntimeVersion\(/g)).toHaveLength(2);
     expect(script).toContain("runtimePid");
     expect(WEB_CONTRACT_TURN_TIMEOUT_MS).toBe(180_000);
+    expect(WEB_CONTRACT_PROBE_TIMEOUT_MS).toBe(300_000);
+    expect(script).toContain("AbortSignal.timeout(WEB_CONTRACT_PROBE_TIMEOUT_MS)");
     expect(script).toContain("AbortSignal.timeout(WEB_CONTRACT_TURN_TIMEOUT_MS)");
     expect(script).toContain("**bold**, `code`, and _emphasis_");
   });

@@ -3,7 +3,11 @@ import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { type AppConfig, defaultBrokerEndpoint, loadConfig } from "../src/config";
 import { VERSION } from "../src/version";
-import { WEB_CONTRACT_TURN_TIMEOUT_MS, webContractBrowserIsIdle } from "./lifecycle-smoke/web-contract-core";
+import {
+  WEB_CONTRACT_PROBE_TIMEOUT_MS,
+  WEB_CONTRACT_TURN_TIMEOUT_MS,
+  webContractBrowserIsIdle,
+} from "./lifecycle-smoke/web-contract-core";
 
 const CONTROL_TIMEOUT_MS = 5_000;
 
@@ -99,7 +103,8 @@ async function runWebContract(env: Record<string, string | undefined>): Promise<
   });
   const exitCode = await Promise.race([
     smoke.exited,
-    Bun.sleep(WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000).then(() => undefined),
+    Bun.sleep(WEB_CONTRACT_PROBE_TIMEOUT_MS + WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000)
+      .then(() => undefined),
   ]);
   if (exitCode === undefined) {
     await terminate(smoke);
