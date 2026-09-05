@@ -129,14 +129,33 @@
       throw new Error("invalid endpoint");
     }
 
-    var request = new ActiveXObject("MSXML2.ServerXMLHTTP.6.0");
-    request.setTimeouts(2000, 2000, 2000, 2000);
-    request.open("POST", "http://127.0.0.1:" + port + "/admin/interrupt-turn", false);
-    request.setRequestHeader("authorization", "Bearer " + token);
-    request.setRequestHeader("content-type", "application/json");
-    request.send('{"threadId":"' + threadId + '","turnId":"' + turnId + '"}');
-    if (request.status < 200 || request.status >= 300) throw new Error("request failed");
-    var result = parseJson(request.responseText);
+    var shell = new ActiveXObject("WScript.Shell");
+    var windowsRoot = shell.ExpandEnvironmentStrings("%SystemRoot%");
+    if (!/^[A-Za-z]:\\/.test(windowsRoot) || /["\r\n&|<>^%!]/.test(windowsRoot)) {
+      throw new Error("invalid system root");
+    }
+    var curlPath = windowsRoot + "\\System32\\curl.exe";
+    var request = shell.Exec('"' + curlPath + '" -q --config -');
+    request.StdIn.Write([
+      'url = "http://127.0.0.1:' + port + '/admin/interrupt-turn"',
+      'request = "POST"',
+      'header = "authorization: Bearer ' + token + '"',
+      'header = "content-type: application/json"',
+      'data = "{\\"threadId\\":\\"' + threadId + '\\",\\"turnId\\":\\"' + turnId + '\\"}"',
+      'connect-timeout = 1',
+      'max-time = 2',
+      'noproxy = "*"',
+      'fail',
+      'silent',
+      'show-error',
+      ''
+    ].join("\n"));
+    request.StdIn.Close();
+    while (request.Status === 0) WScript.Sleep(10);
+    var responseText = request.StdOut.ReadAll();
+    request.StdErr.ReadAll();
+    if (request.ExitCode !== 0) throw new Error("request failed");
+    var result = parseJson(responseText);
     if (result.status !== "ok"
         || !nonnegativeInteger(result.cancelled_http_turns)
         || !nonnegativeInteger(result.cancelled_browser_turns)) {
