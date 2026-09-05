@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "release": "v5.0.3",
   "targetVersion": "5.0.3-Enhanced.1",
-  "recordedAt": "2026-09-05T16:43:00Z",
+  "recordedAt": "2026-09-05T17:49:44Z",
   "repository": "https://github.com/Evanlau1798/codex-chatgpt-web",
   "tagIdentity": {
     "ref": "refs/tags/v5.0.3",
@@ -25,8 +25,8 @@
     }
   },
   "releaseCandidate": {
-    "head": "f8cb569b9ffc3650b53d52a94ac01e52f5416616",
-    "tree": "edfb476f73c9df05ae3a263ecef2cbffb52ce88b",
+    "head": "d2d58c9f413dc4e7529b9c694574ebe5805578bb",
+    "tree": "c033abd28d8cd21861ce2275554424eb2c246835",
     "pullRequests": [
       {
         "number": 25,
@@ -55,6 +55,13 @@
         "head": "ea1ebb3f0ed587a54671123503f8d03b896353a4",
         "merge": "f8cb569b9ffc3650b53d52a94ac01e52f5416616",
         "purpose": "fence deterministic child follow-up observation before root completion"
+      },
+      {
+        "number": 30,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/30",
+        "head": "4826d2f5bb96d8e449163cc6e74fbc5c4742490a",
+        "merge": "d2d58c9f413dc4e7529b9c694574ebe5805578bb",
+        "purpose": "start the MCP timeout test deadline after transport setup"
       }
     ]
   },
@@ -92,9 +99,9 @@
         "conclusion": "success"
       },
       "latestClientCanary": {
-        "id": 33978662938,
-        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33978662938",
-        "head": "f8cb569b9ffc3650b53d52a94ac01e52f5416616",
+        "id": 33982103318,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33982103318",
+        "head": "d2d58c9f413dc4e7529b9c694574ebe5805578bb",
         "conclusion": "success"
       },
       "releaseCandidatePullRequests": [
@@ -117,14 +124,28 @@
           "number": 28,
           "id": 33977687137,
           "conclusion": "success"
+        },
+        {
+          "number": 30,
+          "id": 33981071623,
+          "conclusion": "success"
         }
       ],
       "releaseCandidateMain": {
-        "id": 33978156541,
-        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33978156541",
-        "head": "f8cb569b9ffc3650b53d52a94ac01e52f5416616",
+        "id": 33981590687,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33981590687",
+        "head": "d2d58c9f413dc4e7529b9c694574ebe5805578bb",
         "conclusion": "success",
         "precedingDistinctRaceEvidence": [33973024185, 33975241246, 33976432573]
+      },
+      "failedReleaseAttempt": {
+        "id": 33979700914,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33979700914",
+        "head": "84a390f403480fe1c627f256552b359b1d76fcb1",
+        "conclusion": "failure",
+        "published": false,
+        "classification": "test-harness-startup-race",
+        "statement": "The focused MCP timeout test started its deadline before spawning and connecting the stdio client. A loaded macOS Intel runner consumed that test-only deadline during startup; production timeout behavior was unchanged. PR #30 starts the deadline after transport setup."
       }
     }
   },
