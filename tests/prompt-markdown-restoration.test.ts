@@ -1,45 +1,21 @@
 import { expect, test } from "bun:test";
 import {
+  CHATGPT_PROMPT_MARKDOWN_RESTORATION_BATCH_SIZE,
   guardChatGptPromptMarkdown,
-  planChatGptPromptMarkdownRestoration,
   restoreChatGptPromptMarkdown,
 } from "../src/adapters/chatgpt-web/prompt-caret";
 
-test("plans incident-sized Markdown restoration in bounded text ranges", () => {
-  const pattern = "field_name=value) [literal](target) `code` *bold* ~=~ ";
-  const prompt = pattern.repeat(Math.ceil(93_255 / pattern.length)).slice(0, 93_255);
-  const guarded = guardChatGptPromptMarkdown(prompt);
-
-  expect(guarded).toBeDefined();
-  expect(guarded!.count).toBeGreaterThan(2_484);
-  const ranges = planChatGptPromptMarkdownRestoration(
-    guarded!.text,
-    guarded!.replacements,
-    16_000,
-  );
-
-  expect(ranges.length).toBeLessThanOrEqual(Math.ceil(prompt.length / 16_000) + 1);
-  expect(ranges.every(range => range.end - range.start <= 16_000)).toBeTrue();
-  expect(ranges.reduce((count, range) => count + range.count, 0)).toBe(guarded!.count);
-  expect(ranges.every((range, index) => index === 0 || range.end <= ranges[index - 1]!.start)).toBeTrue();
+test("guards every literal Markdown delimiter without changing prompt length", () => {
+  const prompt = "field_name=value) [literal](target) `code` *bold* ~=~";
+  const guarded = guardChatGptPromptMarkdown(prompt)!;
+  expect(guarded.text).toHaveLength(prompt.length);
+  expect(guarded.count).toBe(12);
+  expect(guarded.replacements.map(replacement => replacement.value)).toEqual([
+    "`", "*", "_", "~", "=", "[", ")",
+  ]);
 });
 
-test("restoration planning ignores unguarded text and rejects invalid bounds", () => {
-  expect(planChatGptPromptMarkdownRestoration("plain text", [], 16_000)).toEqual([]);
-  expect(() => planChatGptPromptMarkdownRestoration("\uE000", [
-    { marker: "\uE000", value: "*", count: 1 },
-  ], 0)).toThrow("positive");
-});
-
-test("restoration ranges carry trailing whitespace with one following code unit", () => {
-  expect(planChatGptPromptMarkdownRestoration(
-    "a\uE000 word",
-    [{ marker: "\uE000", value: "*", count: 1 }],
-    8,
-  )).toEqual([{ start: 1, end: 4, count: 1 }]);
-});
-
-test("restores a short multi-block prompt in one editor mutation", async () => {
+test("restores a short multi-block prompt without selecting its connector", async () => {
   const { createDocument } = require("@mixmark-io/domino") as {
     createDocument: (html: string) => Document;
   };
@@ -101,7 +77,10 @@ test("restores a short multi-block prompt in one editor mutation", async () => {
     expect(connector).not.toBeNull();
     expect(connector.contains(selected.startNode ?? null)).toBeFalse();
     expect(connector.contains(selected.endNode ?? null)).toBeFalse();
-    expect(composerElement.lastChild?.textContent).toBe("A`one`\nB*two*\nC_three_");
+    expect(Array.from(composerElement.children)
+      .filter(child => !child.matches('[data-id^="plugin:"][data-keyword]'))
+      .map(child => child.textContent ?? "")
+      .join("\n")).toBe("A`one`\nB*two*\nC_three_");
   } finally {
     Object.assign(globalThis, {
       window: previousWindow,
@@ -127,15 +106,19 @@ test("restores an incident-sized Markdown prompt without bulk Lexical replacemen
   const composerElement = document.getElementById("composer")!;
   composerElement.appendChild(document.createTextNode(guarded.text));
   let selected: { node?: Text; start?: number; end?: number } = {};
+  let currentBatchOperations = 0;
+  const batchOperations: number[] = [];
   document.createRange = () => ({
     setStart: (node: Text, offset: number) => { selected = { node, start: offset }; },
     setEnd: (node: Text, offset: number) => { selected.end = offset; },
   } as unknown as Range);
   let maxReplacementChars = 0;
   document.execCommand = (_command, _showUi, value) => {
-    maxReplacementChars = Math.max(maxReplacementChars, value.length);
-    if (value.length !== 1 || !selected.node) return false;
-    selected.node.data = `${selected.node.data.slice(0, selected.start)}${value}${selected.node.data.slice(selected.end)}`;
+    const replacement = value ?? "";
+    currentBatchOperations += 1;
+    maxReplacementChars = Math.max(maxReplacementChars, replacement.length);
+    if (replacement.length !== 1 || !selected.node) return false;
+    selected.node.data = `${selected.node.data.slice(0, selected.start)}${replacement}${selected.node.data.slice(selected.end)}`;
     return true;
   };
   const previousWindow = globalThis.window;
@@ -147,11 +130,20 @@ test("restores an incident-sized Markdown prompt without bulk Lexical replacemen
     window: { getSelection: () => ({ removeAllRanges: () => {}, addRange: () => {} }) },
   });
   let evaluateCalls = 0;
+  let remounted = false;
   const composer = {
     focus: async () => {},
     evaluate: async (callback: (element: HTMLElement, input: unknown) => unknown, input: unknown) => {
       evaluateCalls += 1;
-      return await callback(composerElement, input);
+      currentBatchOperations = 0;
+      const result = await callback(composerElement, input);
+      batchOperations.push(currentBatchOperations);
+      if (!remounted && currentBatchOperations === CHATGPT_PROMPT_MARKDOWN_RESTORATION_BATCH_SIZE) {
+        const current = composerElement.lastChild!;
+        composerElement.replaceChild(current.cloneNode(true), current);
+        remounted = true;
+      }
+      return result;
     },
   };
 
@@ -165,7 +157,9 @@ test("restores an incident-sized Markdown prompt without bulk Lexical replacemen
     )).resolves.toBeTrue();
     expect(composerElement.lastChild?.textContent).toBe(prompt);
     expect(maxReplacementChars).toBe(1);
-    expect(evaluateCalls).toBeGreaterThan(2);
+    expect(remounted).toBeTrue();
+    expect(evaluateCalls).toBe(Math.ceil(guarded.count / CHATGPT_PROMPT_MARKDOWN_RESTORATION_BATCH_SIZE) + 1);
+    expect(Math.max(...batchOperations)).toBe(CHATGPT_PROMPT_MARKDOWN_RESTORATION_BATCH_SIZE);
   } finally {
     Object.assign(globalThis, {
       window: previousWindow,
@@ -173,4 +167,35 @@ test("restores an incident-sized Markdown prompt without bulk Lexical replacemen
       NodeFilter: previousNodeFilter,
     });
   }
+});
+
+test("fails closed for invalid restoration progress and stops after abort", async () => {
+  const replacement = [{ marker: "\u2060", value: "`", count: 1 }];
+  for (const progress of [[0], [-1], [2], [1, false]] as const) {
+    let call = 0;
+    const composer = {
+      focus: async () => {},
+      evaluate: async () => progress[call++],
+    };
+    await expect(restoreChatGptPromptMarkdown(composer as never, replacement, 1)).resolves.toBeFalse();
+  }
+
+  const controller = new AbortController();
+  let calls = 0;
+  const composer = {
+    focus: async () => {},
+    evaluate: async () => {
+      calls += 1;
+      controller.abort(new Error("cancelled"));
+      return CHATGPT_PROMPT_MARKDOWN_RESTORATION_BATCH_SIZE;
+    },
+  };
+  await expect(restoreChatGptPromptMarkdown(
+    composer as never,
+    replacement,
+    CHATGPT_PROMPT_MARKDOWN_RESTORATION_BATCH_SIZE + 1,
+    16_000,
+    controller.signal,
+  )).rejects.toThrow("cancelled");
+  expect(calls).toBe(1);
 });
