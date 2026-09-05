@@ -46,7 +46,7 @@ test("v5.0.4 preserves the original merge evidence and upstream object closure",
     expect(listing.stdout).toContain(name);
   }
   expect(listing.stdout).not.toMatch(/storage-state|user-gitignore|\.log/);
-  const snapshot = spawnSync("tar", ["-xOzf", resolve(root, ledger.mergeEvidence.archive), "snapshot.json"], { encoding: "utf8" });
+  const snapshot = spawnSync("tar", ["-xOzf", resolve(root, ledger.mergeEvidence.archive), "./snapshot.json"], { encoding: "utf8" });
   expect(snapshot.status, snapshot.stderr).toBe(0);
   const evidence = JSON.parse(snapshot.stdout);
   expect(evidence).toMatchObject({
