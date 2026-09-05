@@ -39,11 +39,11 @@ function posixShellArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function powershellArgument(value: string): string {
-  if (value.includes('"') || /[\r\n]/.test(value)) {
+function windowsShellArgument(value: string): string {
+  if (/["\r\n$`!]/.test(value) || /%[^%]+%/.test(value)) {
     throw new Error("Codex interrupt hook command contains an invalid Windows path character");
   }
-  return `'${value.replaceAll("'", "''")}'`;
+  return `"${value}"`;
 }
 
 export function codexInterruptHookCommand(
@@ -53,33 +53,8 @@ export function codexInterruptHookCommand(
   windowsRoot = process.env.SystemRoot ?? process.env.WINDIR,
 ): string {
   const absoluteHome = platform === "win32" ? win32.resolve(home) : posix.resolve(home);
-  if (platform === "win32") {
-    if (!windowsRoot || !win32.isAbsolute(windowsRoot)) {
-      throw new Error("Windows system root is unavailable for the Codex interrupt hook");
-    }
-    const powershell = win32.join(win32.resolve(windowsRoot), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-    if (/[\s&|<>^()%!"']/.test(powershell)) {
-      throw new Error("Windows PowerShell path cannot be represented safely in the Codex interrupt hook");
-    }
-    const configPath = powershellArgument(win32.join(absoluteHome, "config.json"));
-    const script = [
-      "$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'",
-      "$raw=[Console]::In.ReadToEnd()",
-      "if([Text.Encoding]::UTF8.GetByteCount($raw)-gt 32768){throw 'Codex Interrupt hook payload is too large'}",
-      "$payload=$raw|ConvertFrom-Json",
-      "$thread=[string]$payload.session_id;$turn=[string]$payload.turn_id",
-      "if($payload.hook_event_name-ne'Interrupt'-or$thread-notmatch'^[A-Za-z0-9_-]{6,128}$'-or$turn-notmatch'^[A-Za-z0-9_-]{6,128}$'){throw 'Codex Interrupt hook payload has no valid session_id or turn_id'}",
-      `$config=Get-Content -LiteralPath ${configPath} -Raw|ConvertFrom-Json`,
-      "$port=0;if($config.host-ne'127.0.0.1'-or-not[int]::TryParse([string]$config.port,[ref]$port)-or$port-lt 1-or$port-gt 65535){throw 'Invalid interrupt control endpoint'}",
-      "$token=[string]$config.controlToken;if($token-notmatch'^[A-Za-z0-9_-]{40,}$'){throw 'Invalid interrupt control token'}",
-      "$body=@{threadId=$thread;turnId=$turn}|ConvertTo-Json -Compress",
-      "$result=Invoke-RestMethod -Uri \"http://127.0.0.1:$port/admin/interrupt-turn\" -Method Post -Headers @{authorization=\"Bearer $token\"} -ContentType 'application/json' -Body $body -TimeoutSec 2",
-      "if($result.status-ne'ok'-or$null-eq$result.cancelled_http_turns-or[long]$result.cancelled_http_turns-lt 0-or$null-eq$result.cancelled_browser_turns-or[long]$result.cancelled_browser_turns-lt 0){throw 'Daemon returned an invalid interrupt acknowledgement'}",
-    ].join(";");
-    return `${powershell} -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script, "utf16le").toString("base64")}`;
-  }
   const runtimeCommand = [...config.runtimeCommand];
-  const path = posix;
+  const path = platform === "win32" ? win32 : posix;
   const entry = runtimeCommand[1];
   const wrapper = path.basename(runtimeCommand[0] ?? "").toLowerCase();
   if (runtimeCommand.length === 1
@@ -87,10 +62,24 @@ export function codexInterruptHookCommand(
     && (wrapper === "codex-chatgpt-web" || wrapper === "codex-chatgpt-web.cmd")) {
     const root = path.dirname(path.dirname(runtimeCommand[0]));
     runtimeCommand.splice(0, 1,
-      path.join(root, "runtime", "bun"),
+      path.join(root, "runtime", platform === "win32" ? "bun.exe" : "bun"),
       path.join(root, "app", "codex-interrupt-cli.js"));
   } else if (entry && (path.basename(entry) === "cli.js" || path.basename(entry) === "cli.ts")) {
     runtimeCommand[1] = path.join(path.dirname(entry), `codex-interrupt-cli.${path.extname(entry).slice(1)}`);
+  }
+  if (platform === "win32") {
+    if (!windowsRoot || !win32.isAbsolute(windowsRoot)) {
+      throw new Error("Windows system root is unavailable for the Codex interrupt hook");
+    }
+    const cscript = win32.join(win32.resolve(windowsRoot), "System32", "cscript.exe");
+    if (/[\s&|<>^()%!"']/.test(cscript)) {
+      throw new Error("Windows Script Host path cannot be represented safely in the Codex interrupt hook");
+    }
+    const interruptEntry = runtimeCommand[1];
+    if (!interruptEntry) throw new Error("Codex interrupt hook runtime entrypoint is unavailable");
+    const script = win32.join(win32.dirname(interruptEntry), "codex-interrupt-hook-windows.js");
+    const configPath = Buffer.from(win32.join(absoluteHome, "config.json"), "utf16le").swap16().toString("hex");
+    return `${cscript} //E:JScript //nologo ${windowsShellArgument(script)} ${configPath}`;
   }
   const args = [...runtimeCommand, "--home", absoluteHome, "hook", "interrupt"];
   return args.map(posixShellArgument).join(" ");

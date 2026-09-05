@@ -39,7 +39,7 @@ test("trusts the canonical Codex config path before a new config file exists", (
   const directory = mkdtempSync(join(tmpdir(), "codex-interrupt-hook-"));
   try {
     const configPath = join(directory, "config.toml");
-    const installed = installCodexInterruptHook("", configPath, { runtimeCommand: ["/opt/runtime"] });
+    const installed = installCodexInterruptHook("", configPath, { runtimeCommand: ["/opt/runtime", "/opt/cli.ts"] });
     expect(installed.installed.stateKey).toBe(
       `${join(realpathSync.native(directory), "config.toml")}:interrupt:0:0`,
     );
@@ -63,11 +63,11 @@ test("Interrupt hook command is absolute, quoted, and bound to the exact applica
     "win32",
     "C:\\Windows",
   );
-  expect(windowsCommand).toStartWith("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ");
-  const script = Buffer.from(windowsCommand.split(" ").at(-1)!, "base64").toString("utf16le");
-  expect(script).toContain("Get-Content -LiteralPath 'C:\\Users\\test\\Codex Web GPT\\config.json'");
-  expect(script).toContain("Invoke-RestMethod");
-  expect(script).not.toContain("bun.exe");
+  expect(windowsCommand).toBe(
+    `C:\\Windows\\System32\\cscript.exe //E:JScript //nologo `
+      + `"C:\\Program Files\\Codex Web GPT\\codex-interrupt-hook-windows.js" `
+      + Buffer.from("C:\\Users\\test\\Codex Web GPT\\config.json", "utf16le").swap16().toString("hex"),
+  );
 });
 
 test("source-mode Interrupt hooks select the lightweight TypeScript entrypoint", () => {
@@ -100,7 +100,7 @@ test("refuses to remove a modified or duplicated managed hook", () => {
   const installed = installCodexInterruptHook(
     original,
     "/Users/test/.codex/config.toml",
-    { runtimeCommand: ["/opt/runtime"] },
+    { runtimeCommand: ["/opt/runtime", "/opt/cli.ts"] },
   );
   const modified = installed.text.replace("timeout = 3", "timeout = 2");
   expect(() => restoreCodexInterruptHook(modified, installed.installed)).toThrow("changed after setup");
@@ -113,6 +113,6 @@ test("refuses to remove a modified or duplicated managed hook", () => {
     installed.text,
   ].join("\n");
   expect(() => restoreCodexInterruptHook(reordered, installed.installed)).toThrow("order changed after setup");
-  expect(() => installCodexInterruptHook(installed.text, "/Users/test/.codex/config.toml", { runtimeCommand: ["/opt/runtime"] }))
+  expect(() => installCodexInterruptHook(installed.text, "/Users/test/.codex/config.toml", { runtimeCommand: ["/opt/runtime", "/opt/cli.ts"] }))
     .toThrow("already contains");
 });

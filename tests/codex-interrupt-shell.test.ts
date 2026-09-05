@@ -15,7 +15,10 @@ test.skipIf(process.platform !== "win32")("Interrupt hook reaches the exact auth
     return Response.json({ status: "ok", cancelled_http_turns: 1, cancelled_browser_turns: 1 });
   } });
   writeFileSync(join(root, "config.json"), JSON.stringify({ host: "127.0.0.1", port: server.port, controlToken: token }));
-  const command = codexInterruptHookCommand({ runtimeCommand: [process.execPath] }, root);
+  const command = codexInterruptHookCommand(
+    { runtimeCommand: [process.execPath, join(import.meta.dir, "../src/cli.ts")] },
+    root,
+  );
   try {
     for (const shell of ["cmd", "powershell"]) {
       const child = spawn(shell === "cmd" ? process.env.COMSPEC || "C:\\Windows\\System32\\cmd.exe"

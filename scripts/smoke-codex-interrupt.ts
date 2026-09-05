@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
 import {
@@ -47,6 +47,7 @@ if (!cliBuild.success) {
   rmSync(root, { recursive: true, force: true });
   throw new Error(`Interrupt smoke CLI bundle failed: ${cliBuild.logs.map(log => log.message).join("; ")}`);
 }
+copyFileSync(resolve(import.meta.dir, "../src/codex-interrupt-hook-windows.js"), join(root, "codex-interrupt-hook-windows.js"));
 mkdirSync(codexHome, { recursive: true });
 const previousCodexHome = process.env.CODEX_HOME;
 const previousAppHome = process.env.CODEX_CHATGPT_WEB_HOME;
