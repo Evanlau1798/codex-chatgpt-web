@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "release": "v5.0.3",
   "targetVersion": "5.0.3-Enhanced.1",
-  "recordedAt": "2026-09-05T17:49:44Z",
+  "recordedAt": "2026-09-05T19:32:33Z",
   "repository": "https://github.com/Evanlau1798/codex-chatgpt-web",
   "tagIdentity": {
     "ref": "refs/tags/v5.0.3",
@@ -25,8 +25,8 @@
     }
   },
   "releaseCandidate": {
-    "head": "d2d58c9f413dc4e7529b9c694574ebe5805578bb",
-    "tree": "c033abd28d8cd21861ce2275554424eb2c246835",
+    "head": "d6c900215604a7b073ff22c002546dcfce51931e",
+    "tree": "6521e43790e0bfb592899002eb1d311851156d46",
     "pullRequests": [
       {
         "number": 25,
@@ -62,6 +62,28 @@
         "head": "4826d2f5bb96d8e449163cc6e74fbc5c4742490a",
         "merge": "d2d58c9f413dc4e7529b9c694574ebe5805578bb",
         "purpose": "start the MCP timeout test deadline after transport setup"
+      }
+    ],
+    "publicationReceipts": [
+      {
+        "number": 29,
+        "merge": "84a390f403480fe1c627f256552b359b1d76fcb1",
+        "purpose": "record the initial release candidate evidence"
+      },
+      {
+        "number": 31,
+        "merge": "d2687f41d07ea557fe6f2145ebfe216dadbdd62b",
+        "purpose": "record the corrected MCP deadline and canary evidence"
+      }
+    ],
+    "directOwnerFollowUps": [
+      {
+        "commit": "87c13467a7e5d3b1435d783d47f49f132f9e5817",
+        "purpose": "replace the cold Windows COM request with a bounded curl experiment"
+      },
+      {
+        "commit": "d6c900215604a7b073ff22c002546dcfce51931e",
+        "purpose": "keep the shell-neutral WSH hook while forcing direct proxy mode and bounded loopback phases"
       }
     ]
   },
@@ -99,9 +121,9 @@
         "conclusion": "success"
       },
       "latestClientCanary": {
-        "id": 33982103318,
-        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33982103318",
-        "head": "d2d58c9f413dc4e7529b9c694574ebe5805578bb",
+        "id": 33987359200,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33987359200",
+        "head": "d6c900215604a7b073ff22c002546dcfce51931e",
         "conclusion": "success"
       },
       "releaseCandidatePullRequests": [
@@ -132,11 +154,17 @@
         }
       ],
       "releaseCandidateMain": {
-        "id": 33981590687,
-        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33981590687",
-        "head": "d2d58c9f413dc4e7529b9c694574ebe5805578bb",
+        "id": 33986917550,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33986917550",
+        "head": "d6c900215604a7b073ff22c002546dcfce51931e",
         "conclusion": "success",
-        "precedingDistinctRaceEvidence": [33973024185, 33975241246, 33976432573]
+        "precedingDistinctRaceEvidence": [33973024185, 33975241246, 33976432573],
+        "precedingWindowsInterruptFailures": [33982660036, 33984890426]
+      },
+      "windowsInterruptTransportCorrection": {
+        "failedRuns": [33982660036, 33984890426],
+        "classification": "fixed-three-second-hook-deadline",
+        "statement": "Cold Windows loopback transports consumed Codex's fixed three-second Interrupt hook budget before reaching the daemon. The final implementation keeps the shell-neutral WSH entrypoint, forces ServerXMLHTTP direct-proxy mode, and bounds each transport phase to 250 milliseconds. The current Codex app-server probe passed twenty consecutive local runs and the final hosted Windows client probe."
       },
       "failedReleaseAttempt": {
         "id": 33979700914,
@@ -166,6 +194,10 @@
     "runtimeBundleAndSmoke": "passed",
     "rendererBuild": "passed",
     "windowsPackageAndIsolatedPayloadSmoke": "passed",
+    "windowsInterruptProbe": {
+      "latestCodexAppServerConsecutiveRuns": 20,
+      "result": "passed"
+    },
     "automaticLiveWeb": {
       "modelClass": "Medium",
       "authenticated": true,
@@ -205,5 +237,5 @@
     "acceptedByReleaseOwner": true,
     "statement": "The v5.0.0 archive contains an explicitly labeled exact-parent post-hoc ort reproduction rather than original execution evidence. The v5.0.3 merge preserved contemporaneous evidence, but does not erase or overstate the older limitation."
   },
-  "publicationBoundary": "This receipt records integration, local gates, PR/main CI and latest-client canary. Its own PR and post-merge main CI must pass before tagging. Release workflow, package, signing and published-asset checksum results will be linked in GitHub release metadata after they complete."
+  "publicationBoundary": "This receipt records integration, local gates, PR/main CI, owner-authorized direct follow-ups and latest-client canary. Its own direct fast-forward commit and post-commit main CI must pass before tagging. Release workflow, package, signing and published-asset checksum results will be linked in GitHub release metadata after they complete."
 }
