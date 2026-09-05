@@ -41,6 +41,25 @@ test("effort selection handles the known ChatGPT rate-limit dialog before menu a
   expect(selectionSource).not.toContain("is unavailable");
 });
 
+test("retained turns recheck effort and failed rebound pages remain diagnosable", () => {
+  const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const selection = source.slice(
+    source.indexOf('"temporary_chat_preparation"'),
+    source.indexOf('await diagnostics.capture(page, "effort-selection-complete")'),
+  );
+  expect(selection).toContain("let mode = await this.runStage");
+  expect(selection).not.toContain("let mode = reuseConversation");
+
+  const rebind = source.slice(
+    source.indexOf("const rebindLauncherPage"),
+    source.indexOf("const toolTurnObservationRecovery"),
+  );
+  expect(rebind.indexOf("diagnosticPage = rebound.page")).toBeGreaterThan(-1);
+  expect(rebind.indexOf("diagnosticPage = rebound.page")).toBeLessThan(
+    rebind.indexOf("waitForOperationalChatGptViewport(rebound.page"),
+  );
+});
+
 
 test("the daemon prefers the browser helper that shipped beside its own entrypoint", () => {
   const client = readFileSync("src/adapters/chatgpt-web/launcher-helper-client.ts", "utf8");

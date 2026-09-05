@@ -80,3 +80,15 @@ test("v1 compaction drops persisted one-pixel image sentinels", () => {
   expect(JSON.stringify(output)).not.toContain(placeholder);
   expect(JSON.stringify(output)).toContain("data:image/png;base64,real-image");
 });
+
+test("v1 compaction excludes native goal context that Codex will discard", () => {
+  const human = {
+    type: "message", role: "user", id: "msg-human",
+    content: [{ type: "input_text", text: "Finish the requested work" }],
+  };
+  const goal = {
+    type: "message", role: "user", id: "msg-goal",
+    content: [{ type: "input_text", text: '<codex_internal_context source="goal">Continue.</codex_internal_context>' }],
+  };
+  expect(extractCompactUserMessages([human, goal])).toEqual([human]);
+});

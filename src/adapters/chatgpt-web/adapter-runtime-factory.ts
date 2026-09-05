@@ -184,19 +184,26 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         traceId,
         () => trace.signalProgress(),
       );
-      if (activeToken !== turnToken) {
-        activeToken = turnToken;
-        observeCapabilityRetirement(brokerOwner, turnToken, externalProgress, browserAbort, () => browserOwnerSettled);
-      }
-      if (!tokenSettled) {
-        tokenSettled = true;
-        token.resolve(turnToken);
-      }
       try {
-        return await prepareChatGptWebContext(broker,
+        const prepared = await prepareChatGptWebContext(broker,
           compileChatGptWebPrompt(input, turnCapabilities, turnToken, compileOptions),
           useEnhancedWebSessionMode, contextTtlMs, traceId);
+        if (activeToken !== turnToken) {
+          activeToken = turnToken;
+          observeCapabilityRetirement(brokerOwner, turnToken, externalProgress, browserAbort, () => browserOwnerSettled);
+        }
+        if (!tokenSettled) {
+          tokenSettled = true;
+          token.resolve(turnToken);
+        }
+        return prepared;
       } catch (error) {
+        try {
+          await brokerOwner.revoke(turnToken, error instanceof Error ? error : undefined);
+        } catch (revokeError) {
+          console.error(`[chatgpt-web] failed to revoke unprepared turn token: ${revokeError instanceof Error ? revokeError.message : String(revokeError)}`);
+        }
+        if (activeToken === turnToken) activeToken = undefined;
         const failure = reportChatGptPreparationFailure(traceId, source, input, error);
         throw failure;
       }

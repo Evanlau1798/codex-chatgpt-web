@@ -9,6 +9,17 @@ import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 import type { CodexParsedRequest, CodexProviderConfig } from "../src/types";
 
+test("tool capability is published only after prompt preparation succeeds", () => {
+  const source = Bun.file(new URL("../src/adapters/chatgpt-web/adapter-runtime-factory.ts", import.meta.url));
+  return source.text().then(text => {
+    const start = text.indexOf("const prepareWith = async");
+    const end = text.indexOf("const browserRun = worker.run", start);
+    const prepare = text.slice(start, end);
+    expect(prepare.indexOf("prepareChatGptWebContext(")).toBeGreaterThan(-1);
+    expect(prepare.indexOf("prepareChatGptWebContext(")).toBeLessThan(prepare.indexOf("token.resolve(turnToken)"));
+  });
+});
+
 const brokers = new Set<TurnBroker>();
 
 afterEach(async () => {

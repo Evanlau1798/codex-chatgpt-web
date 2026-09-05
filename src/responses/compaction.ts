@@ -140,6 +140,14 @@ export function extractCompactUserMessages(input: unknown): CompactMessageItem[]
     const rec = item as CompactMessageItem & { type?: string; role?: string; content?: unknown };
     if (rec.type !== undefined && rec.type !== "message") continue;
     if (rec.role !== "user") continue;
+    // Codex removes InternalModelContextFragment during process_annotated_compacted_history.
+    // In particular, a goal continuation is runtime steering, not a retained human message.
+    // Exclude it before computing the v1 checkpoint source, or the next request authenticates
+    // against a message that native Codex has already discarded.
+    if (compactContentBlocks(rec).some(block => textBlock(block) && (
+      /^<codex_internal_context source="[a-z][a-z0-9_]*">[\s\S]*<\/codex_internal_context>$/.test(block.text!.trim())
+      || /^<goal_context>[\s\S]*<\/goal_context>$/.test(block.text!.trim())
+    ))) continue;
     if (isReadableCompactionSummaryText(
       compactContentBlocks(rec).filter(textBlock).map(block => block.text).join(""),
     )) continue;

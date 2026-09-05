@@ -86,7 +86,7 @@ test("selected Copy and Sent affect only their manual turn", async () => {
   controller.cancel("trace-second", 11);
 });
 
-test("manual deadline expires both observers while started disarms the deadline", async () => {
+test("manual deadline ends at Sent while unconfirmed handoff still expires", async () => {
   const fs = require("node:fs");
   const vm = require("node:vm");
   const { createRequire } = require("node:module");
@@ -115,7 +115,9 @@ test("manual deadline expires both observers while started disarms the deadline"
   assert.throws(() => controller.begin("trace-timeout", 10, "prompt"), { code: "manual_turn_timed_out" });
   const next = controller.begin("trace-started", 10, "prompt");
   controller.confirmSent(next.tabId);
-  assert.equal(timers.size, 1);
+  assert.equal(timers.size, 0);
+  assert.equal(host.turnTabs.get(next.tabId).manualDeadlineAt, null);
+  assert.equal(host.turnTabs.get(next.tabId).manualState, "sent");
   controller.started("trace-started", 10);
   assert.equal(timers.size, 0);
   assert.equal(host.turnTabs.get(next.tabId).manualDeadlineAt, null);

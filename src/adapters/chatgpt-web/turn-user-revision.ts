@@ -3,6 +3,7 @@ import { isContextualCodexUserMessage } from "./contextual-user-message";
 export interface CurrentTurnUserRevision {
   content: unknown;
   turnId?: string;
+  itemId?: string;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -55,7 +56,9 @@ export function currentTurnUserRevision(
     const messageTurnId = itemTurnId(item);
     const serverOwnedId = typeof item.id === "string" && item.id.length > 0;
     if (messageTurnId === undefined && !serverOwnedId) continue;
-    const revision = { content: item.content, ...(messageTurnId ? { turnId: messageTurnId } : {}) };
+    const itemId = typeof item.id === "string" && item.id.length > 0 ? item.id : undefined;
+    const revision = { content: item.content, ...(messageTurnId ? { turnId: messageTurnId } : {}),
+      ...(itemId ? { itemId } : {}) };
     const currentTurnAbortText = messageTurnId === expectedTurnId && isTurnAbortedNotice(item.content);
     if (isTurnAbortedNotice(item.content) && messageTurnId && messageTurnId !== expectedTurnId) continue;
     if (messageTurnId !== undefined && messageTurnId !== expectedTurnId) {

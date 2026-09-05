@@ -13,11 +13,11 @@ export function ManualTurnGuide({ copy, tab, onCopy, onSent }: {
   const pending = waiting || tab.manualState === "sent";
   const deadline = tab.manualDeadlineAt ? Date.parse(tab.manualDeadlineAt) : Number.NaN;
   useEffect(() => {
-    if (!pending || !Number.isFinite(deadline)) return;
+    if (!waiting || !Number.isFinite(deadline)) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(timer);
-  }, [tab.id, pending, deadline]);
+  }, [tab.id, waiting, deadline]);
   if (!pending) return null;
   const seconds = Number.isFinite(deadline) ? Math.max(0, Math.ceil((deadline - now) / 1_000)) : null;
   return (
@@ -26,7 +26,9 @@ export function ManualTurnGuide({ copy, tab, onCopy, onSent }: {
         <strong>{waiting ? copy.manualPromptTitle : copy.manualPromptWaiting}</strong>
         {waiting ? <p>{copy.manualPromptInstruction}</p> : null}
       </div>
-      <span className="manual-turn-status">{seconds === null ? "" : `${seconds} ${copy.manualPromptSeconds}`}</span>
+      <span className="manual-turn-status">{waiting
+        ? (seconds === null ? "" : `${seconds} ${copy.manualPromptSeconds}`)
+        : copy.manualPromptSent}</span>
       <div className="manual-turn-actions">
         <button className="button-secondary" disabled={!waiting || !tab.canCopyPrompt} onClick={onCopy} type="button">
           <span>{copy.manualPromptCopy}</span>

@@ -7,6 +7,7 @@ import {
   ChatGptTurnSessions,
 } from "../src/adapters/chatgpt-web/turn-execution";
 import type { CodexParsedRequest } from "../src/types";
+import { sessionForChatGptRequest } from "../src/adapters/chatgpt-web/steering";
 
 function contextualGoalTurn(currentTurnId: string, goalTurnId = currentTurnId): CodexParsedRequest {
   const goal = '<codex_internal_context source="goal">\nContinue the active goal.\n</codex_internal_context>';
@@ -165,4 +166,33 @@ test("does not redeliver a native revision after a transient transcript rollback
   expect(session.updateUserRevision("revision-a", "Initial prompt")).toBeUndefined();
   expect(session.updateUserRevision("revision-b", "Steering prompt")).toBeUndefined();
   expect(steering.take()).toBeUndefined();
+});
+
+test("identical steering text with a new native item id is delivered once", async () => {
+  const parsed = contextualGoalTurn("turn-same-text");
+  const input = (parsed._rawBody as { input: Array<Record<string, unknown>> }).input;
+  input.splice(1);
+  input[0]!.id = "msg-original";
+  input[0]!.content = [{ type: "input_text", text: "Repeat this exact instruction" }];
+  input[0]!.internal_chat_message_metadata_passthrough = { turn_id: "turn-same-text" };
+  const sessions = new ChatGptTurnSessions();
+  const runtime = () => ({
+    mode: "tools" as const,
+    token: new Promise<string>(() => {}),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  const first = await sessionForChatGptRequest(sessions, "same-turn", parsed, runtime);
+  const steered = structuredClone(parsed);
+  ((steered._rawBody as { input: Array<Record<string, unknown>> }).input).push({
+    ...structuredClone(input[0]!),
+    id: "msg-steered",
+  });
+  const second = await sessionForChatGptRequest(sessions, "same-turn", steered, runtime);
+  expect(second).toBe(first);
+  expect(second.takePendingSteering()).toBe("Repeat this exact instruction");
+  expect(second.takePendingSteering()).toBeUndefined();
+  sessions.clear();
 });

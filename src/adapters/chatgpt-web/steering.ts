@@ -1,6 +1,6 @@
 import type { CodexParsedRequest } from "../../types";
 import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
-import { priorAbortedTurnIds } from "./turn-user-revision";
+import { currentTurnUserRevision, priorAbortedTurnIds } from "./turn-user-revision";
 import { historicalClaudeGuidance } from "../../messages/claude-steering-history";
 import { extractChatGptTurnIdentity, extractChatGptTurnUserRevision, extractChatGptTurnUserText } from "./environment";
 import type { BrokerToolRequest, TurnBroker } from "./turn-broker";
@@ -99,7 +99,11 @@ export async function sessionForChatGptRequest(
   if (parsed._compactionRequest) {
     return sessions.getOrCreateAfterConversationRetirement(key, replacementConversationKey, start, undefined, undefined, undefined, traceId, signal, undefined, nativeIdentity.threadId);
   }
-  const revision = JSON.stringify(extractChatGptTurnUserRevision(parsed));
+  const content = extractChatGptTurnUserRevision(parsed);
+  const currentRevision = nativeIdentity.turnId
+    ? currentTurnUserRevision(parsed._rawBody, nativeIdentity.turnId)
+    : undefined;
+  const revision = JSON.stringify({ content, ...(currentRevision?.itemId ? { itemId: currentRevision.itemId } : {}) });
   const text = extractChatGptTurnUserText(parsed) ?? "The user added a new instruction.";
   const identity = extractChatGptTurnIdentity(parsed);
   const rawGroup = claudeBrowserSessionGroup(parsed) ?? identity.threadId;

@@ -1262,7 +1262,7 @@ function McpSurface({
       <div className="wizard-stepper" aria-label={`${step + 1} / 3`}>
         {steps.map((item, index) => (
           <button
-            className={`${index === step ? "is-active" : ""}${index < step ? " is-complete" : ""}`}
+            className={`${index === step ? "is-active" : ""}${index < step || (index === 2 && verified) ? " is-complete" : ""}`}
             disabled={busy || index > step}
             key={item.title}
             onClick={() => void safeMove(index)}

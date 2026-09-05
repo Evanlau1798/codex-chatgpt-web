@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import type { Locator, Page } from "playwright-core";
 import {
   ChatGptBrowserWorker, browserStageTimeouts, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS,
+  CHATGPT_RESPONSE_DOM_GRACE_MS,
   throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
 } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptBrowserObservationTimeoutError } from "../src/adapters/chatgpt-web/browser-observation";
@@ -157,6 +158,42 @@ test("assistant recovery binds the new stable identity on the rebound page", asy
   expect(await worker().waitForNewAssistantTurn(first.page, first.responses, initial, undefined,
     undefined, undefined, 180_000, async () => next.page)).toBe(next.assistant);
   expect(next.selected).toEqual(["conversation-turn-new"]);
+});
+
+test("assistant grace checks a fresh DOM after a delayed progress wake", async () => {
+  const realNow = Date.now;
+  let now = 1_000;
+  let reads = 0;
+  let revision = 0;
+  let progressWaits = 0;
+  const fixture = surface(async () => {
+    if (reads++ === 0) return new Promise<State>(() => {});
+    return { count: 1, lastId: "conversation-turn-new" };
+  });
+  const progress = {
+    snapshot: () => ({ revision }),
+    waitForChange: async () => {
+      if (progressWaits++ > 0) return new Promise<never>(() => {});
+      now += CHATGPT_RESPONSE_DOM_GRACE_MS + 1;
+      revision += 1;
+      return { revision };
+    },
+  } as unknown as ChatGptExternalTurnProgress;
+  Date.now = () => now;
+  try {
+    await expect(worker().waitForNewAssistantTurn(
+      fixture.page,
+      fixture.responses,
+      initial,
+      undefined,
+      undefined,
+      progress,
+      CHATGPT_RESPONSE_DOM_GRACE_MS,
+    )).resolves.toBe(fixture.assistant);
+    expect(reads).toBe(2);
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test("cancel while a DOM probe is pending does not wait for the probe or start recovery", async () => {

@@ -1450,15 +1450,8 @@ export class ChatGptBrowserWorker {
       for (;;) {
         if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
         if (page.isClosed()) throw chatGptBrowserTabClosedError();
+        if (deadline !== undefined && Date.now() >= deadline) throw new Error("ChatGPT web turn timed out");
         const progress = externalProgress?.snapshot();
-        if (chatGptExternalProgressSuppressesDomHealth(progress, Date.now())) {
-          responseDeadline = Math.min(
-            deadline ?? Number.POSITIVE_INFINITY,
-            Date.now() + responseDomGraceMs,
-          );
-        } else if (Date.now() >= responseDeadline) {
-          throw new Error("ChatGPT accepted the message but did not expose its assistant turn in the DOM");
-        }
         const observed = await observeChatGptSubmission(async () => {
           await throwIfChatGptSessionFailureAlert(page);
           await throwIfChatGptRateLimitDialog(page);
@@ -1468,9 +1461,18 @@ export class ChatGptBrowserWorker {
         const current = observed.value;
         const binding = bindChatGptAssistantTurn(initialResponseTurn, current);
         if (binding) return locateChatGptAssistantTurn(responseTurns, binding);
+        const latestProgress = externalProgress?.snapshot();
+        if (chatGptExternalProgressSuppressesDomHealth(latestProgress, Date.now())) {
+          responseDeadline = Math.min(
+            deadline ?? Number.POSITIVE_INFINITY,
+            Date.now() + responseDomGraceMs,
+          );
+        } else if (Date.now() >= responseDeadline) {
+          throw new Error("ChatGPT accepted the message but did not expose its assistant turn in the DOM");
+        }
         await observeChatGptSubmission(observationSignal => this.waitForTurnDomOrExternalProgress(
           page,
-          progress?.revision ?? 0,
+          latestProgress?.revision ?? 0,
           externalProgress,
           observationSignal,
         ), signal);
@@ -3000,6 +3002,7 @@ export class ChatGptBrowserWorker {
                 );
                 // Own the transport before viewport preparation can fail or be cancelled.
                 turnConnection = rebound.browser;
+                diagnosticPage = rebound.page;
                 await waitForOperationalChatGptViewport(rebound.page, signal);
                 return rebound;
               },
@@ -3043,17 +3046,15 @@ export class ChatGptBrowserWorker {
           ),
         );
       }
-      let mode = reuseConversation
-        ? (multipartTransport?.stagingMode ?? requestedMode)
-        : await this.runStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, () => (
-          this.selectModelAndEffort(
-            page,
-            turn.modelId,
-            multipartTransport?.stagingMode.effort ?? turn.reasoning,
-            turn.capabilities,
-            checkpoint => diagnostics.capture(page, checkpoint),
-          )
-        ));
+      let mode = await this.runStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, () => (
+        this.selectModelAndEffort(
+          page,
+          turn.modelId,
+          multipartTransport?.stagingMode.effort ?? turn.reasoning,
+          turn.capabilities,
+          checkpoint => diagnostics.capture(page, checkpoint),
+        )
+      ));
       let catalogRefreshAvailable = !reuseConversation && (turn.nativeConnector === true || mode.localTools);
       const connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 };
       await diagnostics.capture(page, "effort-selection-complete");

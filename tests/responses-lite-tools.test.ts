@@ -86,7 +86,7 @@ test("Responses Lite native exec survives a complete server request as one custo
       emit({ type: "tool_call_end" });
       emit({ type: "done", endTurn: false });
     },
-  }));
+  }), { rememberState: false });
 
   expect(response.status).toBe(200);
   const body = await response.json() as { output: Array<Record<string, unknown>> };

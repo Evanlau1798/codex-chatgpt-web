@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
+import { ChatGptMarkdownBuffer, chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
 
 test("turns observed inline file path formats into Markdown links", () => {
   const cases = [
@@ -34,4 +34,25 @@ test("does not nest a generated file link inside an existing link", () => {
   expect(chatGptHtmlToMarkdown(
     '<p>Open <a href="https://example.com/source"><code>src/example.ts</code></a>.</p>',
   )).toBe("Open [`src/example.ts`](https://example.com/source).");
+});
+
+test("Markdown conflicts expose only bounded structural diagnostics", () => {
+  const buffer = new ChatGptMarkdownBuffer(value => value, 0);
+  const segment = (text: string) => ({
+    key: "0:p", tag: "p", html: `<p>${text}</p>`, text,
+    sourceStart: 0, sourceEnd: 6, streamable: true,
+  });
+  buffer.observe([segment("Stable")], 0);
+  buffer.observe([segment("Changed")], 1);
+  try {
+    buffer.finish();
+    throw new Error("Expected a Markdown consistency error");
+  } catch (error) {
+    const diagnostic = (error as { diagnostic?: unknown }).diagnostic;
+    expect(diagnostic).toEqual({
+      reason: "text_changed", observedStart: 0, observedEnd: 6,
+      committedStart: 0, committedEnd: 6, observedTextChars: 7, committedTextChars: 6,
+    });
+    expect(JSON.stringify(diagnostic)).not.toMatch(/Stable|Changed|<p/);
+  }
 });

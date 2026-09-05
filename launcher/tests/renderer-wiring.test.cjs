@@ -162,6 +162,7 @@ test("MCP verification proves runtime health before checking the connector", () 
   assert.match(appSource, /const verified = !configuringInactiveMode && snapshot\.state\.mcpSetupComplete === true/);
   assert.match(appSource, /onClick=\{\(\) => void \(verified \? onDone\(\) : verify\(\)\)\}/);
   assert.match(appSource, /operation\?\.name === "mcp-verification"/);
+  assert.match(appSource, /index < step \|\| \(index === 2 && verified\) \? " is-complete"/);
 });
 
 test("saved ChatGPT authentication is refreshed before setup is presented", () => {

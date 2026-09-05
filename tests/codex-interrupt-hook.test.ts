@@ -3,9 +3,11 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  MANAGED_INTERRUPT_HOOK_END,
   codexInterruptHookCommand,
   codexInterruptHookHash,
   installCodexInterruptHook,
+  installCodexInterruptHookCommand,
   restoreCodexInterruptHook,
   verifyCodexInterruptHook,
   verifyCodexInterruptHookRestored,
@@ -104,6 +106,19 @@ test("refuses to remove a modified or duplicated managed hook", () => {
   );
   const modified = installed.text.replace("timeout = 3", "timeout = 2");
   expect(() => restoreCodexInterruptHook(modified, installed.installed)).toThrow("changed after setup");
+  expect(() => restoreCodexInterruptHook(
+    installed.text.replace(MANAGED_INTERRUPT_HOOK_END, `approved = false\n${MANAGED_INTERRUPT_HOOK_END}`),
+    installed.installed,
+  )).toThrow("changed after setup");
+  for (const extension of [
+    '\n[[hooks.Interrupt.hooks]]\ntype = "command"\ncommand = "unexpected-command"\n',
+    `\n[hooks.state.${JSON.stringify(installed.installed.stateKey)}.unexpected]\nvalue = true\n`,
+  ]) {
+    expect(() => restoreCodexInterruptHook(
+      installed.text.replace(MANAGED_INTERRUPT_HOOK_END, extension + MANAGED_INTERRUPT_HOOK_END),
+      installed.installed,
+    )).toThrow("changed after setup");
+  }
   const reordered = [
     "[[hooks.Interrupt]]",
     "[[hooks.Interrupt.hooks]]",
@@ -115,4 +130,26 @@ test("refuses to remove a modified or duplicated managed hook", () => {
   expect(() => restoreCodexInterruptHook(reordered, installed.installed)).toThrow("order changed after setup");
   expect(() => installCodexInterruptHook(installed.text, "/Users/test/.codex/config.toml", { runtimeCommand: ["/opt/runtime", "/opt/cli.ts"] }))
     .toThrow("already contains");
+});
+
+test("preserves native TOML editor tables inserted before the trailing hook comment", () => {
+  for (const ending of ["\n", "\r\n"]) {
+    const original = 'model = "gpt-5.6-sol"\n';
+    const installed = installCodexInterruptHookCommand(
+      original.replaceAll("\n", ending),
+      "/Users/test/.codex/config.toml",
+      "/opt/runtime --home /Users/test hook interrupt",
+    );
+    // Native config writes normalize line endings and insert tables before the trailing comment.
+    const appended = "\n[features]\ngoals = true\n";
+    const edited = installed.text.replaceAll("\r\n", "\n")
+      .replace(MANAGED_INTERRUPT_HOOK_END, appended + MANAGED_INTERRUPT_HOOK_END);
+    verifyCodexInterruptHook(edited, installed.installed);
+    const restored = restoreCodexInterruptHook(edited, installed.installed);
+    expect(restored).toBe(original + appended);
+    verifyCodexInterruptHookRestored(restored);
+    expect(() => restoreCodexInterruptHook(
+      edited.replace("timeout = 3", "timeout = 2"), installed.installed,
+    )).toThrow("changed after setup");
+  }
 });

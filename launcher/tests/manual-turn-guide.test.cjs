@@ -55,17 +55,18 @@ test("manual guide follows server deadlines, Sent state and timer cleanup", () =
   buttons[0].props.onClick(); buttons[1].props.onClick();
   assert.deepEqual([copies, confirmations], [1, 1]);
   tab.manualState = "sent";
-  now += 1_001; tick(); tree = render();
+  tab.manualDeadlineAt = null;
+  tree = render();
   assert.equal(tree.props.children[0].props.children[0].props.children, "manualPromptWaiting");
   assert.equal(tree.props.children[0].props.children[1], null);
-  assert.equal(tree.props.children[1].props.children, "179 manualPromptSeconds");
+  assert.equal(tree.props.children[1].props.children, "manualPromptSent");
   assert.ok(tree.props.children[2].props.children.every(button => button.props.disabled));
-  now = 200_000; tick(); tree = render();
-  assert.equal(tree.props.children[1].props.children, "0 manualPromptSeconds");
+  assert.equal(tick, null);
   tab.manualState = "running";
   assert.equal(render(), null);
   assert.equal(timerStarts, timerStops);
   tab.manualState = "awaiting-user";
+  tab.manualDeadlineAt = new Date(190_000).toISOString();
   render(); cleanup(); // Unmount also releases the pending deadline timer.
   assert.equal(timerStarts, timerStops);
   tab.manualDeadlineAt = "invalid"; previousDeps = undefined; cleanup = undefined;

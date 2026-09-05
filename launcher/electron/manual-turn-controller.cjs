@@ -192,11 +192,13 @@ class ManualTurnController {
       if (["sent", "running", "completed"].includes(tab.manualState)) return this.host.snapshot();
       throw new Error("Zero Risk turn can no longer be marked as sent");
     }
+    clearTimeout(tab.manualTimer);
+    tab.manualTimer = null;
+    tab.manualDeadlineAt = null;
     tab.manualState = "sent";
     tab.sentAt = new Date().toISOString();
     tab.prompt = null;
     tab.message = "Prompt sent; waiting for the Codex harness";
-    this.arm(tab);
     this.notify(tab.manualWaiters, { status: "sent", sentAt: tab.sentAt });
     this.host.publishState?.(this.host.snapshot());
     return this.host.snapshot();
