@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "release": "v5.0.1",
   "targetVersion": "5.0.1-Enhanced.1",
-  "recordedAt": "2026-09-04T22:21:14.2835202Z",
+  "recordedAt": "2026-09-05T01:20:00.4193074Z",
   "repository": "https://github.com/Evanlau1798/codex-chatgpt-web",
   "tagIdentity": {
     "ref": "refs/tags/v5.0.1",
@@ -34,12 +34,22 @@
       "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/17"
     }
   },
+  "releaseCandidateFix": {
+    "reason": "Accepted MCP invocations now outlive broker admission expiry, and the Windows Interrupt hook uses the built-in Script Host so current Codex clients can complete the exact authenticated cancellation within their fixed three-second deadline.",
+    "candidate": "ba5331b2a6aeb34120ab5cd607f1cb19b432f2d2",
+    "githubMerge": "3c4b86709caeef78fceebe15678b601b3d250553",
+    "tree": "1039e6756af43e07f34879bde2f77ed83143883d",
+    "pullRequest": {
+      "number": 19,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/19"
+    }
+  },
   "ledger": {
     "path": ".github/upstream-audit/v5.0.1.json",
-    "commit": "5ba3ba578e0cc4f1a971ecf3a543e64044052556",
-    "blob": "b70c0e41a34eba1062f0d06f1583ac9313f33ffa",
-    "bytes": 53400,
-    "sha256": "2a0d5932e915b5b3040448cd5229854e5ca014b52737bb3993c83e2a54421545"
+    "commit": "3c4b86709caeef78fceebe15678b601b3d250553",
+    "blob": "c7ae7f89f51fce2f28d82ae539380b434c79b200",
+    "bytes": 54340,
+    "sha256": "08a10c04237ef386b6e3b73159c6e357e5d304ace512090b3308737dbcece7c8"
   },
   "archive": {
     "path": ".github/upstream-audit/v5.0.1-evidence.tar.gz",
@@ -80,10 +90,22 @@
         "head": "5ba3ba578e0cc4f1a971ecf3a543e64044052556",
         "conclusion": "success"
       },
+      "releaseCandidatePullRequest": {
+        "id": 33934742111,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33934742111",
+        "head": "ba5331b2a6aeb34120ab5cd607f1cb19b432f2d2",
+        "conclusion": "success"
+      },
+      "releaseCandidateMain": {
+        "id": 33935296210,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33935296210",
+        "head": "3c4b86709caeef78fceebe15678b601b3d250553",
+        "conclusion": "success"
+      },
       "latestClientCanary": {
-        "id": 33924953324,
-        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33924953324",
-        "head": "5ba3ba578e0cc4f1a971ecf3a543e64044052556",
+        "id": 33935771983,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33935771983",
+        "head": "3c4b86709caeef78fceebe15678b601b3d250553",
         "conclusion": "success"
       }
     }
@@ -94,7 +116,7 @@
     "launcherSuite": "passed",
     "typechecks": "passed",
     "deterministicCodexClaudeAll": "passed",
-    "latestClientInterruptSmoke": "passed-five-consecutive-runs",
+    "latestClientInterruptSmoke": "passed-with-current-clients-on-Windows-and-macOS",
     "runtimeBundleAndSmoke": "passed",
     "windowsPackageAndPackagedAppSmoke": "passed",
     "automaticLiveWeb": {
@@ -119,11 +141,14 @@
   "validation": {
     "integrationMergeTreeMatchesCandidate": true,
     "fixMergeTreeMatchesCandidate": true,
+    "releaseCandidateMergeTreeMatchesCandidate": true,
     "upstreamIsMainAncestor": true,
     "auditArchiveHashesVerified": true,
     "integrationPullRequestCiPassed": true,
     "fixPullRequestCiPassed": true,
     "replacementMainCiPassed": true,
+    "releaseCandidatePullRequestCiPassed": true,
+    "releaseCandidateMainCiPassed": true,
     "latestClientCanaryPassed": true,
     "localAutomaticAndUserOperatedZeroRiskPassed": true
   },
