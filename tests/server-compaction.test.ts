@@ -4,7 +4,7 @@ import { defaultConfig } from "../src/config";
 import { COMPACT_PROMPT, SUMMARY_PREFIX, decodeCompactionSummary, encodeCompactionSummary } from "../src/responses/compaction";
 import { compactRequest, responseRequest } from "../src/server";
 import type { CodexProviderConfig } from "../src/types";
-import { extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
+import { extractChatGptTurnIdentity, extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
 import { chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey } from "../src/adapters/chatgpt-web/turn-execution";
 
 const model = "chatgpt-web/high";

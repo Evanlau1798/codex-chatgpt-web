@@ -15,6 +15,10 @@ type Entry = {
 };
 
 const root = resolve(import.meta.dir, "..");
+// Historical receipts prove their published candidate, not every future working tree.
+const publishedLedgerCommit = JSON.parse(readFileSync(
+  resolve(root, ".github/upstream-audit/v5.0.1-publication.json"), "utf8",
+)).ledger.commit as string;
 const ledger = JSON.parse(readFileSync(
   resolve(root, ".github/upstream-audit/v5.0.1.json"),
   "utf8",
@@ -99,10 +103,11 @@ test("v5.0.1 ledger closes every binary-capable path obligation", () => {
 
 test("v5.0.1 candidate blobs and upstream test mappings remain executable", () => {
   const present = ledger.entries.filter(entry => entry.candidateBlob !== null);
-  const hashes = git(
-    ["hash-object", "--stdin-paths"],
-    `${present.map(entry => entry.path).join("\n")}\n`,
-  ).split(/\r?\n/);
+  const tree = new Map(git(["ls-tree", "-r", publishedLedgerCommit]).split(/\r?\n/).map(line => {
+    const [header, path] = line.split("\t");
+    return [path, header!.split(" ")[2]];
+  }));
+  const hashes = present.map(entry => tree.get(entry.path));
   expect(hashes).toHaveLength(present.length);
   for (const [index, entry] of present.entries()) {
     const candidateBlob = entry.candidateBlob;
@@ -119,9 +124,11 @@ test("v5.0.1 candidate blobs and upstream test mappings remain executable", () =
     /(?:^|\/)tests\/.*\.test\./.test(entry.path) || entry.path === "scripts/smoke-codex-interrupt.ts"
   );
   for (const entry of upstreamTests) expect(entry.assertions.length, entry.path).toBeGreaterThan(0);
+  const sources = new Map<string, string>();
   for (const entry of ledger.entries) {
     for (const assertion of entry.assertions) {
-      const source = readFileSync(resolve(root, assertion.path), "utf8").replace(/\r\n/g, "\n");
+      if (!sources.has(assertion.path)) sources.set(assertion.path, git(["show", `${publishedLedgerCommit}:${assertion.path}`]).replace(/\r\n/g, "\n"));
+      const source = sources.get(assertion.path)!;
       expect(source, `${entry.path} -> ${assertion.path}`).toContain(assertion.contains);
     }
   }

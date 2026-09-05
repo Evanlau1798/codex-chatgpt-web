@@ -49,11 +49,11 @@ test("Bigger Context expands only the total ceiling and preserves per-message bo
 
 test("Bigger Context selects the cheapest account mode that can carry every stage", () => {
   const plus = { localToolsEnabled: false, solAvailable: true, proAvailable: false };
-  expect(resolveChatGptWebMultipartStagingMode(CHATGPT_WEB_MODEL_ID, plus, "medium", 30_000, 200_000).effort)
-    .toBe("medium");
-  expect(resolveChatGptWebMultipartStagingMode(CHATGPT_WEB_MODEL_ID, pro, "medium", 100_000, 500_000).effort)
+  expect(resolveChatGptWebMultipartStagingMode(CHATGPT_WEB_MODEL_ID, plus, 30_000, 200_000).effort)
     .toBe("low");
-  expect(resolveChatGptWebMultipartStagingMode(CHATGPT_WEB_MODEL_ID, pro, "max", 104_000, 1_200_000).effort)
+  expect(resolveChatGptWebMultipartStagingMode(CHATGPT_WEB_MODEL_ID, pro, 100_000, 500_000).effort)
+    .toBe("low");
+  expect(resolveChatGptWebMultipartStagingMode(CHATGPT_WEB_MODEL_ID, pro, 104_000, 1_200_000).effort)
     .toBe("max");
 });
 

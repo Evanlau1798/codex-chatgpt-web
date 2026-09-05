@@ -47,7 +47,12 @@ export async function runManualCompaction(options: {
         }
       }
       // Physical retirement must finish even when the deadline expires during cleanup.
-      await chatGptTurnSessions.retireAndWait(options.sourceKey);
+      const conversationKey = source?.conversationKey();
+      if (source?.settledOutcome()?.type === "final" && conversationKey) {
+        await chatGptTurnSessions.retireConversationPreservingFinalResponse(conversationKey, source, options.sourceKey);
+      } else {
+        await chatGptTurnSessions.retireAndWait(options.sourceKey);
+      }
 
       signal.throwIfAborted();
       session = await options.start(signal);

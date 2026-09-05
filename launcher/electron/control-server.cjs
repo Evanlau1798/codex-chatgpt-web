@@ -126,8 +126,9 @@ class BrowserControlServer {
           if (body.conversationKey !== undefined && !/^[a-f0-9]{64}$/.test(body.conversationKey)) {
             throw new Error("conversationKey is invalid");
           }
+          if (body.compaction !== undefined && body.compaction !== true) throw new Error("manual compaction flag is invalid");
           value = host.beginManualTurn(
-            body.traceId, body.helperPid, body.prompt, body.conversationKey, body.resumePrompt,
+            body.traceId, body.helperPid, body.prompt, body.conversationKey, body.resumePrompt, body.compaction === true,
           );
         } else if (manualAction === "wait-sent") {
           value = await host.waitManualSent(body.traceId, body.helperPid);

@@ -189,6 +189,7 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
         await options.control.start(descriptorPath, {
           ...owner,
           prompt: full.text,
+          ...(parsed._compactionRequest ? { compaction: true as const } : {}),
           ...(suffix ? { resumePrompt: suffix.text } : {}),
           ...(conversationKey ? { conversationKey } : {}),
         });

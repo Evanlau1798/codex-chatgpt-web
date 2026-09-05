@@ -10,6 +10,7 @@ import {
   extractChatGptTurnIdentity,
   extractCodexTurnIdentityFromBody,
 } from "./adapters/chatgpt-web/environment";
+import { rememberCompletedCompaction } from "./responses/compaction-continuation";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
@@ -150,6 +151,13 @@ export async function responseRequest(
   }
 
   const compaction = parsed._compactionRequest === true;
+  const rememberCompletedResponse = (response: Record<string, unknown>): void => {
+    if (!compaction) {
+      if (options.rememberState !== false) rememberResponseState(parsed._rawBody, response, { force: true });
+      return;
+    }
+    if (options.rememberState !== false) rememberCompletedCompaction(parsed, response);
+  };
   if (compaction && route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
     return formatErrorResponse(
       409,
@@ -241,11 +249,8 @@ export async function responseRequest(
         ...(provider.chatgptWeb?.stallTimeoutSec !== undefined
           ? { stallTimeoutSec: provider.chatgptWeb.stallTimeoutSec }
           : {}),
-        ...(compaction ? { compaction: true } : {
-          ...(options.rememberState === false ? {} : {
-            onCompletedResponse: (response: Record<string, unknown>) => rememberResponseState(parsed._rawBody, response, { force: true }),
-          }),
-        }),
+        ...(compaction ? { compaction: true } : {}),
+        onCompletedResponse: rememberCompletedResponse,
       },
     );
     return new Response(stream, {
@@ -267,9 +272,7 @@ export async function responseRequest(
     toolSearchToolNames: maps.toolSearchToolNames,
     ...(compaction ? { compaction: true } : {}),
   });
-  if (!compaction && options.rememberState !== false) {
-    rememberResponseState(parsed._rawBody, json, { force: true });
-  }
+  rememberCompletedResponse(json);
   return Response.json(json);
 }
 

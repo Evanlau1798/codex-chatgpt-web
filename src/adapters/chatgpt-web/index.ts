@@ -161,13 +161,16 @@ export function createChatGptWebAdapter(
             worker, parsed, broker, executionNamespace, capabilities: turnCapabilities,
             responseExecutionKey, nativeConnectorAvailable: configuredCapabilities.localToolsEnabled,
             abortSignal: incoming.abortSignal, timeoutMs, emit,
-            startFallback: async (fallbackTraceId, signal) => {
-              const runtime = startRuntime(parsed, undefined, fallbackTraceId, turnCapabilities);
+            startFallback: async (fallbackTraceId, signal, onCompactionProgress, retainOwnershipUntil) => {
+              const runtime = startRuntime(parsed, undefined, fallbackTraceId, turnCapabilities, { onCompactionProgress });
+              const settlement = runtime.physicalSettlement ?? runtime.browser.then(() => undefined, () => undefined);
+              retainOwnershipUntil(settlement);
               try {
-                return await withAbort(runtime.browser, signal);
+                const summary = await withAbort(runtime.browser, signal);
+                await withAbort(settlement, signal);
+                return summary;
               } catch (error) {
                 runtime.cancel(error instanceof Error ? error : new Error(String(error)));
-                await runtime.browser.catch(() => {});
                 throw error;
               }
             },

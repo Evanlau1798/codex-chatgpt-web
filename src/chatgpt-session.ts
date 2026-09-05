@@ -17,6 +17,7 @@ export const CHATGPT_EFFORT_MENU_SELECTOR = [
   '[role="group"]:has([role="menuitemradio"], [data-model-reasoning-effort-slider])',
 ].join(", ");
 export const CHATGPT_EFFORT_ITEM_SELECTOR = '[role="menuitemradio"]';
+export const CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR = '[data-model-reasoning-effort-slider]';
 export const CHATGPT_EFFORT_SLIDER_SELECTOR = [
   '[data-testid="composer-intelligence-picker-content"] [role="slider"]',
   '[data-model-reasoning-effort-slider] [role="slider"]',
@@ -61,7 +62,13 @@ export interface ChatGptEffortSliderState {
 export interface ChatGptEffortActivation {
   method: "already-open" | "click" | "pointerdown";
   menu: Locator;
+  sliderContainer: Locator;
   slider: Locator;
+}
+
+export function chatGptEffortSlider(page: Page): { sliderContainer: Locator; slider: Locator } {
+  const sliderContainer = page.locator(CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR).filter({ visible: true }).last();
+  return { sliderContainer, slider: sliderContainer.locator('[role="slider"]') };
 }
 
 function effortMenuSelectorForId(menuId: string): string {
@@ -77,14 +84,11 @@ export async function chatGptEffortMenuForControl(page: Page, control: Locator):
 async function visibleEffortSurface(
   page: Page,
   control: Locator,
-): Promise<{ menu: Locator; slider: Locator } | undefined> {
+): Promise<Omit<ChatGptEffortActivation, "method"> | undefined> {
   const menu = await chatGptEffortMenuForControl(page, control);
-  const slider = page.locator(CHATGPT_EFFORT_SLIDER_SELECTOR).last();
-  // The ARIA slider may have no box; its keyboard-owning menuitem must still be visible.
-  if (await menu.isVisible().catch(() => false)
-    || await slider.isVisible().catch(() => false)
-    || await slider.locator("xpath=ancestor::*[@role='menuitem'][1]").isVisible().catch(() => false)) {
-    return { menu, slider };
+  const surface = chatGptEffortSlider(page);
+  if (await menu.isVisible().catch(() => false) || await surface.sliderContainer.isVisible().catch(() => false)) {
+    return { menu, ...surface };
   }
   return undefined;
 }
@@ -93,7 +97,7 @@ async function waitForEffortSurface(
   page: Page,
   control: Locator,
   timeoutMs: number,
-): Promise<{ menu: Locator; slider: Locator } | undefined> {
+): Promise<Omit<ChatGptEffortActivation, "method"> | undefined> {
   const deadline = Date.now() + timeoutMs;
   do {
     const surface = await visibleEffortSurface(page, control);
@@ -287,9 +291,7 @@ export async function detectChatGptAccountCapabilities(
   }
   const menu = page.locator(CHATGPT_EFFORT_MENU_SELECTOR).filter({ visible: true }).last();
   try {
-    const efforts = menu.locator(CHATGPT_EFFORT_ITEM_SELECTOR);
-    const slider = page.locator(CHATGPT_EFFORT_SLIDER_SELECTOR).last();
-    let ready: "items" | "slider" | undefined;
+    const { sliderContainer, slider } = chatGptEffortSlider(page);
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const menuVisible = await menu.isVisible().catch(() => false);
       const menuExpanded = await effortButton.getAttribute("aria-expanded").catch(() => null);
@@ -297,25 +299,15 @@ export async function detectChatGptAccountCapabilities(
         if (menuExpanded === "true") await page.keyboard.press("Escape").catch(() => {});
         await effortButton.press("Enter");
       }
-      const waitAbort = new AbortController();
       try {
-        ready = await Promise.race([
-          efforts.first().waitFor({ state: "visible", timeout: 10_000, signal: waitAbort.signal })
-            .then(() => "items" as const),
-          slider.waitFor({ state: "attached", timeout: 10_000, signal: waitAbort.signal })
-            .then(() => "slider" as const),
-        ]);
+        const timeout = options.selectorTimeoutMs ?? 10_000;
+        await sliderContainer.waitFor({ state: "visible", timeout });
+        await slider.waitFor({ state: "attached", timeout });
         break;
       } catch (error) {
         if (attempt === 1) throw error;
         await page.keyboard.press("Escape").catch(() => {});
-      } finally {
-        waitAbort.abort();
       }
-    }
-    const sliderAttached = await slider.count().then(count => count === 1).catch(() => false);
-    if (ready === "items" && !sliderAttached) {
-      return { solAvailable: true, proAvailable: await efforts.count() >= 5 };
     }
     const state = parseChatGptEffortSliderState(
       await slider.getAttribute("aria-valuemin"),

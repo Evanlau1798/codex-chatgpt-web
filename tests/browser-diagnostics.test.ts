@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
-import { ChatGptBrowserDiagnostics } from "../src/adapters/chatgpt-web/browser-diagnostics";
+import { ChatGptBrowserDiagnostics, sanitizeChatGptBrowserDiagnosticState } from "../src/adapters/chatgpt-web/browser-diagnostics";
 
 const diagnosticState = {
   url: "https://chatgpt.com/",
@@ -88,7 +88,8 @@ test("preserves DOM diagnostic JSON when screenshot capture times out", async ()
     await new ChatGptBrowserDiagnostics("trace_json_survives", root).capture(page, "turn-failed");
 
     const json = JSON.parse(readFileSync(artifact(root, ".json"), "utf8"));
-    expect(json.state).toEqual(diagnosticState);
+    expect(json.state).toEqual(sanitizeChatGptBrowserDiagnosticState(diagnosticState));
+    expect(JSON.stringify(json.state)).not.toMatch(/https:|Temporary Chat|surface-test/);
     expect(json.screenshotError).toBeUndefined();
     expect(screenshotCalls).toBe(0);
     expect(() => artifact(root, ".png")).toThrow("missing diagnostic .png");

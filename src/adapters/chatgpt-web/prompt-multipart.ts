@@ -111,26 +111,57 @@ function recordWeight(record: MultipartContextRecord): number {
   return Buffer.byteLength(JSON.stringify(record), "utf8");
 }
 
+function minimumMultipartGroupCapacity(
+  weights: readonly number[],
+  totalParts: ChatGptWebMultipartPartCount,
+): number {
+  if (weights.length === 0) return 0;
+  let lower = 0;
+  let upper = 0;
+  for (const weight of weights) {
+    lower = Math.max(lower, weight);
+    upper += weight;
+  }
+  const requiredGroups = (capacity: number): number => {
+    let groups = 1;
+    let groupWeight = 0;
+    for (const weight of weights) {
+      if (groupWeight > 0 && groupWeight + weight > capacity) {
+        groups += 1;
+        groupWeight = weight;
+      } else {
+        groupWeight += weight;
+      }
+    }
+    return groups;
+  };
+  while (lower < upper) {
+    const candidate = Math.floor((lower + upper) / 2);
+    if (requiredGroups(candidate) <= totalParts) upper = candidate;
+    else lower = candidate + 1;
+  }
+  return lower;
+}
+
 export function partitionMultipartContext(
   records: readonly MultipartContextRecord[],
   totalParts: ChatGptWebMultipartPartCount,
 ): ChatGptWebMultipartParts {
   const groups: MultipartContextRecord[][] = Array.from({ length: totalParts }, () => []);
   let offset = 0;
-  let remainingWeight = records.reduce((total, record) => total + recordWeight(record), 0);
+  const weights = records.map(recordWeight);
+  const capacity = minimumMultipartGroupCapacity(weights, totalParts);
   for (let part = 0; part < totalParts; part += 1) {
     const remainingParts = totalParts - part;
     const remainingRecords = records.length - offset;
     if (remainingRecords <= 0) break;
     const maximumEnd = records.length - Math.min(remainingRecords, remainingParts - 1);
-    const target = Math.ceil(remainingWeight / remainingParts);
     let groupWeight = 0;
-    while (offset < maximumEnd && (groups[part]!.length === 0 || groupWeight < target)) {
-      const record = records[offset++]!;
-      groups[part]!.push(record);
-      const weight = recordWeight(record);
+    while (offset < maximumEnd) {
+      const weight = weights[offset]!;
+      if (groups[part]!.length > 0 && groupWeight + weight > capacity) break;
+      groups[part]!.push(records[offset++]!);
       groupWeight += weight;
-      remainingWeight -= weight;
     }
   }
   if (offset !== records.length) throw new Error("ChatGPT multipart context partition lost records");

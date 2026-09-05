@@ -23,6 +23,7 @@ export interface LauncherManualTurnStart extends LauncherManualTurnOwner {
   /** Used only when the exact retained ChatGPT conversation already owns the accumulated history. */
   resumePrompt?: string;
   conversationKey?: string;
+  compaction?: true;
 }
 
 export interface LauncherManualTurnLease {

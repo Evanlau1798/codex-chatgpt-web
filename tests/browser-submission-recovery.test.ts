@@ -205,9 +205,9 @@ test("MCP batch arrival wakes a pending submission probe without requiring rebin
   finally { clearTimeout(timer); }
 });
 
-test("production send and multipart observation wire same-page recovery only for tool turns", () => {
+test("production send and multipart observation wire same-page recovery for launcher-owned turns", () => {
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  expect(source.includes("const toolTurnObservationRecovery = turn.externalProgress")).toBeTrue();
+  expect(source.includes("const toolTurnObservationRecovery = launcherSurfaceId !== undefined")).toBeTrue();
   expect(source.includes("callerSignal")).toBeTrue();
   expect((source.match(/toolTurnObservationRecovery,/g) ?? []).length).toBe(3);
   expect(source.includes("responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR)")).toBeTrue();
@@ -290,7 +290,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
     expect(result.responseTurn).toBe(next.assistant);
     expect(events).toEqual(["activated", "send", "rebind", "submitted", "retry-submitted"]);
   } else {
-    expect(events).toEqual(["attach", "activated", "send", "rebind", "ack"]);
+    expect(events).toEqual(["attach", "send", "rebind", "ack"]);
     expect(next.selected).toEqual(["conversation-turn-new"]);
   }
 });

@@ -59,6 +59,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined,
     traceId: string,
     turnCapabilities: ChatGptWebCapabilities,
+    hooks: { onCompactionProgress?: () => void } = {},
   ): ChatGptTurnRuntime => {
     const toolPolicy = effectiveChatGptToolPolicy(parsed);
     const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
@@ -154,7 +155,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         onCommentary: emitCommentary,
         onProgress: () => trace.signalProgress(),
         onSendActivated: () => { submission.phase = "send_activated"; },
-        onSubmitted: () => { submission.phase = "accepted"; },
+        onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
+        ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),
         onTextDelta: delta => text.push(delta),
         ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
         ...(retryPromptForError ? { retryPromptForError } : {}),
@@ -219,7 +221,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       onCommentary: emitCommentary,
       onProgress: () => trace.signalProgress(),
       onSendActivated: () => { submission.phase = "send_activated"; },
-      onSubmitted: () => { submission.phase = "accepted"; },
+      onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
+        ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),
       onTextDelta: delta => text.push(delta),
       ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
       ...(retryPromptForError ? { retryPromptForError } : {}),

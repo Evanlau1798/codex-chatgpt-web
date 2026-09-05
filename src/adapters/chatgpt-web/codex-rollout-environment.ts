@@ -17,9 +17,12 @@ import { expandUserPath } from "../../config";
 import { findTopLevelAssignment } from "../../codex-integration-document";
 import type { CodexTool } from "../../types";
 import type {
+  ChatGptRootThreadMetadata,
   ChatGptThreadSpawnLineage,
   ChatGptTurnEnvironment,
 } from "./environment";
+
+type RolloutIdentity = ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
 
 const CODEX_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const CODEX_ID = new RegExp(`^${CODEX_ID_SOURCE}$`, "i");
@@ -68,7 +71,7 @@ function configuredSqliteHome(codexHome: string, explicit?: string): string {
 
 function indexedRollout(
   sqliteHome: string,
-  lineage: ChatGptThreadSpawnLineage,
+  identity: RolloutIdentity,
 ): IndexedRollout {
   const databasePath = join(sqliteHome, "state_5.sqlite");
   if (!existsSync(databasePath)) return { kind: "unavailable" };
@@ -78,29 +81,30 @@ function indexedRollout(
     const row = database.query(`
       SELECT t.rollout_path, t.agent_path, e.parent_thread_id, e.status
       FROM threads AS t
-      JOIN thread_spawn_edges AS e ON e.child_thread_id = t.id
+      LEFT JOIN thread_spawn_edges AS e ON e.child_thread_id = t.id
       WHERE t.id = ?
       LIMIT 1
-    `).get(lineage.threadId) as {
+    `).get(identity.threadId) as {
       rollout_path?: unknown;
       agent_path?: unknown;
       parent_thread_id?: unknown;
       status?: unknown;
     } | null;
     if (!row) return { kind: "absent" };
-    if (typeof row.rollout_path !== "string"
-      || row.agent_path !== lineage.agentName
-      || row.parent_thread_id !== lineage.parentThreadId
-      || row.status !== "open") {
-      throw new Error("Codex state does not authenticate the requested subagent rollout");
+    const child = "parentThreadId" in identity;
+    const matchesOwner = child
+      ? row.agent_path === identity.agentName && row.parent_thread_id === identity.parentThreadId && row.status === "open"
+      : row.parent_thread_id == null && (row.agent_path == null || row.agent_path === "/root");
+    if (typeof row.rollout_path !== "string" || !matchesOwner) {
+      throw new Error(`Codex state does not authenticate the requested ${child ? "subagent" : "root thread"} rollout`);
     }
     return { kind: "found", path: row.rollout_path };
   } catch (error) {
-    if (error instanceof Error && error.message === "Codex state does not authenticate the requested subagent rollout") {
+    if (error instanceof Error && error.message.startsWith("Codex state does not authenticate the requested ")) {
       throw error;
     }
     // State storage is optional in Codex. A missing/older schema does not create authority; the
-    // canonical rollout itself can still prove the exact child, parent, agent path, and turn.
+    // canonical rollout itself can still prove the exact thread, its lineage, and current turn.
     return { kind: "unavailable" };
   } finally {
     database?.close();
@@ -217,9 +221,19 @@ function latestTurnContext(fd: number, size: number): Record<string, unknown> | 
 
 function validateSessionMeta(
   item: Record<string, unknown>,
-  lineage: ChatGptThreadSpawnLineage,
+  identity: RolloutIdentity,
 ): void {
   const payload = record(item.payload);
+  if (!("parentThreadId" in identity)) {
+    if (item.type !== "session_meta" || payload?.id !== identity.threadId
+      || typeof payload.source !== "string" || payload.source === "subagent"
+      || payload.parent_thread_id != null || payload.thread_source === "subagent"
+      || (payload.agent_path != null && payload.agent_path !== "/root")) {
+      throw new Error("Codex rollout session metadata does not authenticate the requested root thread");
+    }
+    return;
+  }
+  const lineage = identity;
   const source = record(payload?.source);
   const subagent = record(source?.subagent);
   const spawn = record(subagent?.thread_spawn);
@@ -235,38 +249,43 @@ function validateSessionMeta(
 }
 
 function validateMetadataConsistency(
-  lineage: ChatGptThreadSpawnLineage,
+  lineage: RolloutIdentity,
   environment: ChatGptTurnEnvironment,
 ): void {
   // Request sandbox/workspace fields are diagnostic only. They narrow a rollout-derived authority
   // here and never create or expand it.
-  if (environment.sandboxPolicy.type !== lineage.sandboxType) {
-    throw new Error("ChatGPT Web subagent sandbox metadata conflicts with its Codex rollout");
+  const owner = "parentThreadId" in lineage ? "subagent" : "thread";
+  if (lineage.sandboxType === "platform"
+    ? environment.sandboxPolicy.type === "dangerFullAccess"
+    : environment.sandboxPolicy.type !== lineage.sandboxType) {
+    throw new Error(`ChatGPT Web ${owner} sandbox metadata conflicts with its Codex rollout`);
   }
   if (lineage.workspaceRoots.length > 0
     && !lineage.workspaceRoots.some(root => contains(root, environment.cwd))) {
-    throw new Error("ChatGPT Web subagent workspace metadata does not contain its Codex rollout cwd");
+    throw new Error(`ChatGPT Web ${owner} workspace metadata does not contain its Codex rollout cwd`);
   }
   if (lineage.workspaceRoots.some(root => !environment.roots.some(rolloutRoot => (
     contains(rolloutRoot, root) || contains(root, rolloutRoot)
   )))) {
-    throw new Error("ChatGPT Web subagent workspace metadata conflicts with its Codex rollout roots");
+    throw new Error(`ChatGPT Web ${owner} workspace metadata conflicts with its Codex rollout roots`);
   }
 }
 
-export function resolveCurrentCodexChildRolloutEnvironment(options: {
+export function resolveCurrentCodexRolloutEnvironment(options: {
   codexHome: string;
   sqliteHome?: string;
-  lineage: ChatGptThreadSpawnLineage;
+  lineage: RolloutIdentity;
   turnId: string;
+  compactionSourceTurnId?: string;
   tools?: readonly CodexTool[];
 }): ChatGptTurnEnvironment | undefined {
-  const { codexHome, lineage, turnId, tools } = options;
+  const { codexHome, lineage, turnId, tools, compactionSourceTurnId } = options;
   const nativeThreadId = CODEX_ID.test(lineage.threadId);
   const nativeTurnId = CODEX_ID.test(turnId);
   if (!nativeThreadId && !nativeTurnId) return undefined;
-  if (!nativeThreadId || !nativeTurnId || !CODEX_ID.test(lineage.parentThreadId)) {
-    throw new Error("Codex subagent lineage contains an invalid native identifier");
+  if (!nativeThreadId || !nativeTurnId || (compactionSourceTurnId !== undefined && !CODEX_ID.test(compactionSourceTurnId))
+    || ("parentThreadId" in lineage && !CODEX_ID.test(lineage.parentThreadId))) {
+    throw new Error("Codex thread metadata contains an invalid native identifier");
   }
 
   const indexed = indexedRollout(configuredSqliteHome(codexHome, options.sqliteHome), lineage);
@@ -274,6 +293,7 @@ export function resolveCurrentCodexChildRolloutEnvironment(options: {
     ? [indexed.path]
     : scanCanonicalRollouts(codexHome, lineage.threadId);
   if (candidates.length === 0) {
+    if (!("parentThreadId" in lineage)) return undefined;
     throw new Error("Codex has no canonical rollout for the requested subagent thread");
   }
 
@@ -287,13 +307,13 @@ export function resolveCurrentCodexChildRolloutEnvironment(options: {
       validateSessionMeta(firstRolloutRecord(fd, size), lineage);
       const latest = latestTurnContext(fd, size);
       if (!latest) throw new Error("Codex rollout has no complete turn context");
-      if (latest.turn_id !== turnId) {
+      if (latest.turn_id !== turnId && (compactionSourceTurnId === undefined || latest.turn_id !== compactionSourceTurnId)) {
         if (indexed.kind === "found") {
           throw new Error("Latest Codex rollout turn context does not belong to the requested turn");
         }
         continue;
       }
-      const environment = environmentFromTurnContext(latest, turnId, tools);
+      const environment = environmentFromTurnContext(latest, latest.turn_id as string, tools);
       validateMetadataConsistency(lineage, environment);
       matching.push(environment);
     } finally {

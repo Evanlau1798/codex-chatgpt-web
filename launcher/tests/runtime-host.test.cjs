@@ -293,6 +293,8 @@ test("launcher update transaction upgrades its owned full runtime with saved con
     browserHost: "launcher",
     appName: "Codex Native2",
     releaseVersion: "1.1.1",
+    solAvailable: true,
+    proAvailable: false,
   });
   fixture.host.bridgeStatus = async () => ({ installed: true, active: true, errors: [] });
 
@@ -304,6 +306,7 @@ test("launcher update transaction upgrades its owned full runtime with saved con
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
     "--automatic-browser-interaction",
+    "--refresh-account-capabilities",
     "--acknowledge-unofficial",
     "--restart-service",
     "--app-name",
@@ -337,6 +340,7 @@ test("launcher migrates the legacy connector identity even when the release vers
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
     "--automatic-browser-interaction",
+    "--refresh-account-capabilities",
     "--acknowledge-unofficial",
     "--restart-service",
     "--app-name",
@@ -364,6 +368,23 @@ test("launcher update transaction preserves a deliberately disconnected Codex ro
 
   assert.equal(result.bridgeEnabled, false);
   assert.equal(disabled, 1);
+  assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), true);
+});
+
+test("launcher update preserves Zero Risk and never probes its account capabilities", async () => {
+  const fixture = hostFor({
+    mode: "full",
+    browserHost: "launcher",
+    browserInteractionMode: "manual",
+    appName: "Codex Zero Risk",
+    releaseVersion: "1.1.1",
+  });
+  fixture.host.bridgeStatus = async () => ({ installed: true, active: true, errors: [] });
+
+  assert.equal((await fixture.host.upgradeManagedRuntime()).updated, true);
+  assert.equal(fixture.invocation().args.includes("--zero-risk-browser-interaction"), true);
+  assert.equal(fixture.invocation().args.includes("--automatic-browser-interaction"), false);
+  assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), false);
 });
 
 test("launcher update transaction leaves current and externally owned runtimes unchanged", async () => {

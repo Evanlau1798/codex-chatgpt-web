@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import {
-  activateChatGptEffortMenu, CHATGPT_EFFORT_MENU_SELECTOR, CHATGPT_EFFORT_SLIDER_SELECTOR,
+  activateChatGptEffortMenu, CHATGPT_EFFORT_MENU_SELECTOR, CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
 } from "../src/chatgpt-session";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
@@ -27,6 +27,7 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
   };
   const slider = {
     ...hidden,
+    waitFor: async () => { if (!opened && openWith !== "hidden-slider") throw new Error("slider missing"); },
     locator: () => ({ isVisible: async () => openWith === "hidden-slider" }),
     getAttribute: async (name: string) => ({ "aria-valuemin": "0", "aria-valuemax": "4", "aria-valuenow": "1" })[name],
   };
@@ -53,7 +54,12 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
     locator: (selector: string) => {
       if (selector === '[id="owned-effort"]') return owned;
       if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return stale;
-      if (selector === CHATGPT_EFFORT_SLIDER_SELECTOR) return { filter: () => hidden, last: () => slider };
+      if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
+        ...hidden,
+        isVisible: async () => opened || openWith === "hidden-slider",
+        waitFor: async () => { if (!opened && openWith !== "hidden-slider") throw new Error("container missing"); },
+        locator: () => slider,
+      };
       return hiddenAlert;
     },
     keyboard: { press: async (key: string) => { events.push(key); expanded = false; } },
@@ -92,7 +98,7 @@ test("an invisible semantic slider remains usable through its visible menuitem c
   expect(f.events).toEqual([]);
 });
 
-test("production model selection uses activation-owned menu instead of a stale global menu", async () => {
+test("production model selection uses the opened slider instead of stale global model rows", async () => {
   const f = fixture("click");
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     activeComposer: async () => ({ locator: () => ({ locator: () => f.control }) }),

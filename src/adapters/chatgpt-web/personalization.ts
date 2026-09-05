@@ -13,6 +13,7 @@ import { ChatGptWebAdapterError } from "./adapter-error";
 const CONTROL_SELECTOR = [
   '[data-testid="thread-header-right-actions"] [aria-haspopup="menu"]',
   '#conversation-header-actions [aria-haspopup="menu"]',
+  '[data-content-sheet-root] > button[aria-expanded][aria-controls]',
 ].join(", ");
 const CHOICE_SELECTOR = '[role="menuitemradio"], [role="radio"]';
 const PREFLIGHT_TIMEOUT_MS = 30_000;
@@ -168,8 +169,8 @@ async function ensureWithinDeadline(
   const prove = async () => proveConnectorAccess
     ? runChatGptOwnedMutationStep(() => proveConnectorAccess(signal), deadline, signal)
     : false;
-  const personalized = page.getByRole("button", { name: "Personalized", exact: true }).filter({ visible: true });
-  const unpersonalized = page.getByRole("button", { name: "Unpersonalized", exact: true }).filter({ visible: true });
+  const personalized = page.getByRole("button", { name: "Personalized", exact: true, includeHidden: true }).filter({ visible: true });
+  const unpersonalized = page.getByRole("button", { name: "Unpersonalized", exact: true, includeHidden: true }).filter({ visible: true });
   let personalizedCount = await runChatGptMutationStep(() => personalized.count(), deadline, signal);
   let unpersonalizedCount = await runChatGptMutationStep(() => unpersonalized.count(), deadline, signal);
   if (personalizedCount === 0 && unpersonalizedCount === 0) {

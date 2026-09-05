@@ -113,7 +113,6 @@ export function assertChatGptWebMultipartInputWithinLimits(
 export function resolveChatGptWebMultipartStagingMode(
   modelId: string,
   capabilities: ChatGptWebCapabilities,
-  requestedEffort: ChatGptWebModelMode["effort"],
   maxStageMessageTokens: number,
   maxStageChars: number,
 ): ChatGptWebModelMode {
@@ -129,18 +128,12 @@ export function resolveChatGptWebMultipartStagingMode(
   const efforts: readonly ChatGptWebModelMode["effort"][] = capabilities.proAvailable
     ? ["low", "medium", "max"]
     : ["low", "medium"];
-  const requestedContextWindow = resolveChatGptWebContextLimits(
-    modelId,
-    requestedEffort,
-    capabilities,
-  ).contextWindow;
   for (const effort of efforts) {
     const mode = resolveChatGptWebModelMode(modelId, effort, capabilities);
-    const contextWindow = resolveChatGptWebContextLimits(modelId, effort, capabilities).contextWindow;
-    if (contextWindow < requestedContextWindow) continue;
+    const contextLimits = resolveChatGptWebContextLimits(modelId, effort, { ...capabilities, experimentalBiggerContext: false });
     const limits = resolveChatGptWebTransportLimits(modelId, effort, capabilities);
-    const tokenFits = limits.browserMessageTokenLimit === undefined
-      || maxStageMessageTokens <= limits.browserMessageTokenLimit;
+    const messageTokenLimit = limits.browserMessageTokenLimit ?? contextLimits.autoCompactTokenLimit;
+    const tokenFits = maxStageMessageTokens <= messageTokenLimit;
     const charsFit = limits.browserComposerCharLimit === undefined
       || maxStageChars <= limits.browserComposerCharLimit;
     if (tokenFits && charsFit) return mode;
@@ -173,7 +166,6 @@ export function prepareChatGptWebMultipartTransport(
   const stagingMode = resolveChatGptWebMultipartStagingMode(
     modelId,
     capabilities,
-    requestedEffort,
     maxStageMessageTokens,
     maxStageChars,
   );

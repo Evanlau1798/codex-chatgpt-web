@@ -193,6 +193,7 @@ export { dismissChatGptTemporaryChatOnboarding } from "./temporary-chat-onboardi
 export {
   browserDiagnosticCheckpoint,
   browserDiagnosticIncludesScreenshot,
+  sanitizeChatGptBrowserDiagnosticState,
   redactChatGptUiDiagnostic,
 } from "./browser-diagnostics";
 
@@ -463,6 +464,7 @@ export const browserStageTimeouts = {
   fileAttachment: 120_000,
   send: 60_000,
   multipartStageSend: 180_000,
+  multipartStageAcknowledgement: CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS,
 } as const;
 
 /**
@@ -533,6 +535,7 @@ export interface BrowserTurn {
   onSendActivated?: () => void | Promise<void>;
   /** The current prompt is visible to ChatGPT and must never be replayed on another surface. */
   onSubmitted?: () => void;
+  onMultipartStageAcknowledged?: (stageIndex: number) => void | Promise<void>;
   /** Release the unselected full/resume transport after the launcher resolves the retained lease. */
   onPreparedSelected?: (reused: boolean) => void | Promise<void>;
   /** Visible ChatGPT reasoning-summary step titles only; never hidden chain-of-thought. */
@@ -1183,43 +1186,29 @@ export class ChatGptBrowserWorker {
     await settleChatGptUi();
     await throwIfChatGptRateLimitDialog(page);
     await captureDiagnostic?.("effort-control-ready");
-    let effortMenu: Locator;
-    let effortChoices: Locator | undefined;
-    let effortChoice: Locator;
     let effortSlider: Locator;
     const waitAbort = new AbortController();
-    let ready: "effort" | "slider" | "rate-limit" | "session-expired";
     try {
       const activation = await activateChatGptEffortMenu(page, currentEffort);
       if (activation.method === "pointerdown") await captureDiagnostic?.("effort-menu-pointerdown-fallback");
       await captureDiagnostic?.("effort-menu-open-requested");
-      effortMenu = activation.menu;
-      effortChoices = effortMenu.locator(CHATGPT_EFFORT_ITEM_SELECTOR);
-      effortChoice = effortChoices.nth(uiEffortIndex);
       effortSlider = activation.slider;
-      ready = await Promise.race([
-        effortChoice.waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal }).then(() => "effort" as const),
-        effortSlider.waitFor({ state: "attached", timeout: 70_000, signal: waitAbort.signal }).then(() => "slider" as const),
+      const ready = await Promise.race([
+        activation.sliderContainer.waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal })
+          .then(() => effortSlider.waitFor({ state: "attached", timeout: 70_000, signal: waitAbort.signal }))
+          .then(() => "slider" as const),
         chatGptRateLimitDialog(page).waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal }).then(() => "rate-limit" as const),
         chatGptExpiredSessionAlert(page).waitFor({ state: "visible", timeout: 70_000, signal: waitAbort.signal }).then(() => "session-expired" as const),
       ]);
       if (ready === "rate-limit") await throwIfChatGptRateLimitDialog(page);
       if (ready === "session-expired") await throwIfChatGptSessionFailureAlert(page);
-      if (ready !== "slider" && (await effortSlider.count().catch(() => 0)) > 0) {
-        const attachedSliderState = parseChatGptEffortSliderState(
-          await effortSlider.getAttribute("aria-valuemin"),
-          await effortSlider.getAttribute("aria-valuemax"),
-          await effortSlider.getAttribute("aria-valuenow"),
-        );
-        if (attachedSliderState) ready = "slider";
-      }
-      await captureDiagnostic?.(ready === "slider" ? "effort-slider-visible" : "effort-choice-visible");
+      await captureDiagnostic?.("effort-slider-visible");
     } catch (error) {
       if (error instanceof ChatGptWebAdapterError) throw error;
       await throwIfChatGptRateLimitDialog(page);
       await throwIfChatGptSessionFailureAlert(page);
-      const effortChoiceCount = await (effortChoices ?? page.locator(CHATGPT_EFFORT_MENU_SELECTOR)
-        .filter({ visible: true }).last().locator(CHATGPT_EFFORT_ITEM_SELECTOR)).count().catch(() => 0);
+      const effortChoiceCount = await page.locator(CHATGPT_EFFORT_MENU_SELECTOR)
+        .filter({ visible: true }).last().locator(CHATGPT_EFFORT_ITEM_SELECTOR).count().catch(() => 0);
       throw new ChatGptWebAdapterError(
         `ChatGPT effort menu did not expose item index ${uiEffortIndex}`
         + `; item count: ${effortChoiceCount}`,
@@ -1233,7 +1222,7 @@ export class ChatGptBrowserWorker {
     } finally {
       waitAbort.abort();
     }
-    if (ready === "slider") {
+    {
       let sliderState = parseChatGptEffortSliderState(
         await effortSlider.getAttribute("aria-valuemin"),
         await effortSlider.getAttribute("aria-valuemax"),
@@ -1282,48 +1271,6 @@ export class ChatGptBrowserWorker {
       await page.keyboard.press("Escape");
       return mode;
     }
-    const selected = await effortChoice.getAttribute("aria-checked");
-    if (selected !== "true" && selected !== "false") {
-      throw new Error(`ChatGPT effort item index ${uiEffortIndex} has no semantic checked state`);
-    }
-    if (selected === "true") {
-      await captureDiagnostic?.("effort-selected");
-      await page.keyboard.press("Escape");
-      return mode;
-    }
-    await throwIfChatGptRateLimitDialog(page);
-    await effortChoice.press("Enter");
-    await captureDiagnostic?.("effort-choice-activated");
-
-    const deadline = Date.now() + 40_000;
-    let confirmed: string | null = null;
-    while (Date.now() < deadline) {
-      if (!await effortMenu.isVisible().catch(() => false)) {
-        const expanded = await currentEffort.getAttribute("aria-expanded").catch(() => null);
-        if (expanded !== "true") {
-          await throwIfChatGptRateLimitDialog(page);
-          await currentEffort.click({ force: true });
-        }
-        await effortChoice.waitFor({
-          state: "visible",
-          timeout: Math.max(1, Math.min(5_000, deadline - Date.now())),
-        });
-      }
-      confirmed = await effortChoice.getAttribute("aria-checked");
-      if (confirmed === "true") {
-        await captureDiagnostic?.("effort-selected");
-        await page.keyboard.press("Escape");
-        return mode;
-      }
-      if (confirmed !== "false") {
-        throw new Error(`ChatGPT effort item index ${uiEffortIndex} lost its semantic checked state`);
-      }
-      await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
-    }
-    throw new Error(
-      `ChatGPT did not confirm effort item index ${uiEffortIndex}`
-      + ` (aria-checked=${JSON.stringify(confirmed)})`,
-    );
   }
 
   private async activeComposer(page: Page, timeoutMs = 30_000, signal?: AbortSignal): Promise<Locator> {
@@ -1587,7 +1534,7 @@ export class ChatGptBrowserWorker {
     externalProgress?: ChatGptTurnProgressReader,
   ): Promise<void> {
     const completionTracker = new ChatGptCompletionTracker();
-    const domHealthTracker = new ChatGptTurnDomHealthTracker();
+    const domHealthTracker = new ChatGptTurnDomHealthTracker(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS);
     const stoppedThinkingTracker = new ChatGptStoppedThinkingTracker();
     for (;;) {
       if (page.isClosed()) throw chatGptBrowserTabClosedError();
@@ -2237,6 +2184,8 @@ export class ChatGptBrowserWorker {
       // reload here can discard the first catalog's exact mismatch evidence and report a generic
       // menu failure instead of identifying the connector the account actually exposes.
       await this.selectConnector(page, captureDiagnostic);
+      await this.clearChatGptComposerState(page);
+      await captureDiagnostic("connector-verification-cleared");
       await captureDiagnostic("connector-verification-succeeded");
       return this.config.appName;
     } catch (error) {
@@ -3065,7 +3014,7 @@ export class ChatGptBrowserWorker {
           `[chatgpt-web] browser turn ${turn.traceId} rebound its existing launcher page after a stalled DOM probe`,
         );
       };
-      const toolTurnObservationRecovery = turn.externalProgress
+      const toolTurnObservationRecovery = launcherSurfaceId !== undefined && this.config.browserHostDescriptorPath !== undefined
         ? async (attempt: number, cause: ChatGptBrowserObservationTimeoutError, signal?: AbortSignal) => {
           await rebindLauncherPage(attempt, cause, signal);
           await diagnostics.capture(page, "submission-page-rebound");
@@ -3147,8 +3096,8 @@ export class ChatGptBrowserWorker {
               initialResponseTurn,
               checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
-              turn.onSendActivated,
-              turn.externalProgress,
+              undefined,
+              undefined,
               toolTurnObservationRecovery,
             ),
             turn.abortSignal,
@@ -3156,12 +3105,18 @@ export class ChatGptBrowserWorker {
           console.info(
             `[chatgpt-web] browser turn ${turn.traceId} multipart part ${index + 1}/${prepared.multipart!.parts.length} submission accepted evidence=${evidence}`,
           );
+          await this.runStage(
+            turn.traceId,
+            `multipart_stage_${index + 1}_acknowledgement`,
+            browserStageTimeouts.multipartStageAcknowledgement,
+            async stageSignal => {
+              const acknowledgementSignal = turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal;
           const responseTurn = await this.waitForNewAssistantTurn(
             page,
             page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR),
             initialResponseTurn,
             deadline,
-            turn.abortSignal,
+            acknowledgementSignal,
             undefined,
             CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS,
             toolTurnObservationRecovery,
@@ -3171,9 +3126,14 @@ export class ChatGptBrowserWorker {
             responseTurn,
             stage,
             deadline,
-            turn.abortSignal,
-            turn.externalProgress,
+            acknowledgementSignal,
+            undefined,
           );
+            },
+            turn.abortSignal,
+            chatGptSuspensionClock,
+          );
+          await turn.onMultipartStageAcknowledged?.(index + 1);
           await diagnostics.capture(page, `multipart-stage-${index + 1}-acknowledged`);
         }
         if (mode.effort !== requestedMode.effort) {

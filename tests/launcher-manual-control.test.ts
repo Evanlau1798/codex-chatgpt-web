@@ -47,14 +47,14 @@ test("manual launcher control separates idempotent start from reconnectable Sent
     return Response.json({ ok: true, cancelledByUser: false });
   }, async path => {
     const owner = { traceId: "manual123456", helperPid: process.pid };
-    await expect(startLauncherManualTurn(path, { ...owner, prompt: "private fixture prompt" })).resolves.toEqual(lease);
+    await expect(startLauncherManualTurn(path, { ...owner, prompt: "private fixture prompt", compaction: true })).resolves.toEqual(lease);
     await expect(waitForLauncherManualSent(path, owner)).resolves.toEqual({ sentAt: "2026-09-04T00:00:30.000Z" });
     await expect(markLauncherManualTurnStarted(path, owner)).resolves.toBeUndefined();
     await expect(waitForLauncherManualTerminal(path, owner)).resolves.toEqual({ status: "cancelled" });
     await expect(endLauncherManualTurn(path, { ...owner, status: "completed", retain: true }))
       .resolves.toEqual({ cancelledByUser: false });
     expect(requests).toEqual([
-      { path: "/v1/manual/start", body: { ...owner, prompt: "private fixture prompt" } },
+      { path: "/v1/manual/start", body: { ...owner, prompt: "private fixture prompt", compaction: true } },
       { path: "/v1/manual/wait-sent", body: owner },
       { path: "/v1/manual/wait-sent", body: owner },
       { path: "/v1/manual/started", body: owner },
