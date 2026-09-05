@@ -417,7 +417,7 @@
       "contains": "Codex process probes use Bun's native spawn path consistently"
     }
   ],
-  "candidateBlob": "7daad52d1ea26c3f9b8fbde13c5daae2fda88f34"
+  "candidateBlob": "5dc43dcf6b6fdf0393d152f54af2e19b98fe290a"
     },
     {
       "id": "v501-020",
@@ -830,7 +830,7 @@
         "deltaSha256": "15ab9f2ceac0dd0bb5f59dffcb55a6d5f24d2cfc30c33e796074f732005db2e9"
       },
       "classification": "adapted",
-      "reason": "Preserves the exact v5.0.1 thread-and-turn Interrupt contract while keeping Codex's normalized three-second timeout. Windows validates the bounded payload and protected loopback control config inside the existing encoded PowerShell process, avoiding a second Bun startup; POSIX retains the dedicated lightweight CLI.",
+      "reason": "Preserves the exact v5.0.1 thread-and-turn Interrupt contract while keeping Codex's normalized three-second timeout. Windows validates the bounded payload and protected loopback control config through the built-in Script Host, avoiding cold PowerShell or Bun startup; POSIX retains the dedicated lightweight CLI.",
       "assertions": [
         {
           "path": "tests/codex-interrupt-shell.test.ts",
@@ -841,7 +841,7 @@
           "contains": "expect(cancelled).toBeTrue();"
         }
       ],
-  "candidateBlob": "08b9ea7fccd7e30a1c0704d3979d1d3d0161c554"
+  "candidateBlob": "6ed59116b52f1a3e52960bd6463f2ae6264b9175"
     },
     {
       "id": "v501-038",
@@ -1045,7 +1045,7 @@
           "contains": "expect(cancelled).toBeTrue();"
         }
       ],
-  "candidateBlob": "5843aff2cf60d738b2ef84777965bce7a5ceaac4"
+  "candidateBlob": "9343a9285bcc0d90960f4e277b2ad18d86c16b5b"
     },
     {
       "id": "v501-047",
