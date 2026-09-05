@@ -36,10 +36,13 @@ test("Codex process probes use Bun's native spawn path consistently", () => {
 
 test("the interrupt probe exercises the production-shaped bundled CLI hook", () => {
   const source = readFileSync(join(import.meta.dir, "..", "scripts", "smoke-codex-interrupt.ts"), "utf8");
+  const windowsHook = readFileSync(join(import.meta.dir, "..", "src", "codex-interrupt-hook-windows.js"), "utf8");
   expect(source).toContain("await Bun.build");
   expect(source).toContain('resolve(import.meta.dir, "../src/codex-interrupt-cli.ts")');
   expect(source).toContain('copyFileSync(resolve(import.meta.dir, "../src/codex-interrupt-hook-windows.js")');
   expect(source).toContain("config.runtimeCommand = [resolve(process.execPath), cliBundle]");
+  expect(windowsHook).toContain('new ActiveXObject("MSXML2.ServerXMLHTTP.6.0")');
+  expect(windowsHook).not.toContain("WinHttp.WinHttpRequest");
 });
 
 test("the POSIX runtime wrapper preserves its resolved bundle path for hook setup", () => {
