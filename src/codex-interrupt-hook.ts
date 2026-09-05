@@ -9,6 +9,7 @@ export const MANAGED_INTERRUPT_HOOK_START =
   "# Managed by codex-chatgpt-web: release the exact Responses request when its Codex turn is interrupted.";
 export const MANAGED_INTERRUPT_HOOK_END =
   "# End codex-chatgpt-web interrupt lifecycle hook.";
+const INTERRUPT_HOOK_TIMEOUT_SECONDS = 3;
 
 function canonicalJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalJson);
@@ -27,7 +28,7 @@ export function codexInterruptHookHash(command: string): string {
     hooks: [{
       type: "command",
       command,
-      timeout: 3,
+      timeout: INTERRUPT_HOOK_TIMEOUT_SECONDS,
       async: false,
     }],
   });
@@ -38,11 +39,11 @@ function posixShellArgument(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-function powershellArgument(value: string): string {
-  if (value.includes('"') || /[\r\n]/.test(value)) {
+function windowsShellArgument(value: string): string {
+  if (/["\r\n$`!]/.test(value) || /%[^%]+%/.test(value)) {
     throw new Error("Codex interrupt hook command contains an invalid Windows path character");
   }
-  return `'${value.replaceAll("'", "''")}'`;
+  return `"${value}"`;
 }
 
 export function codexInterruptHookCommand(
@@ -66,19 +67,22 @@ export function codexInterruptHookCommand(
   } else if (entry && (path.basename(entry) === "cli.js" || path.basename(entry) === "cli.ts")) {
     runtimeCommand[1] = path.join(path.dirname(entry), `codex-interrupt-cli.${path.extname(entry).slice(1)}`);
   }
+  if (platform === "win32") {
+    if (!windowsRoot || !win32.isAbsolute(windowsRoot)) {
+      throw new Error("Windows system root is unavailable for the Codex interrupt hook");
+    }
+    const cscript = win32.join(win32.resolve(windowsRoot), "System32", "cscript.exe");
+    if (/[\s&|<>^()%!"']/.test(cscript)) {
+      throw new Error("Windows Script Host path cannot be represented safely in the Codex interrupt hook");
+    }
+    const interruptEntry = runtimeCommand[1];
+    if (!interruptEntry) throw new Error("Codex interrupt hook runtime entrypoint is unavailable");
+    const script = win32.join(win32.dirname(interruptEntry), "codex-interrupt-hook-windows.js");
+    const configPath = Buffer.from(win32.join(absoluteHome, "config.json"), "utf16le").swap16().toString("hex");
+    return `${cscript} //E:JScript //nologo ${windowsShellArgument(script)} ${configPath}`;
+  }
   const args = [...runtimeCommand, "--home", absoluteHome, "hook", "interrupt"];
-  if (platform !== "win32") return args.map(posixShellArgument).join(" ");
-  // Codex runs hooks through the turn's shell, which may be cmd or PowerShell. An encoded native
-  // PowerShell invocation survives either parser without expanding path metacharacters.
-  if (!windowsRoot || !win32.isAbsolute(windowsRoot)) {
-    throw new Error("Windows system root is unavailable for the Codex interrupt hook");
-  }
-  const powershell = win32.join(win32.resolve(windowsRoot), "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  if (/[\s&|<>^()%!"']/.test(powershell)) {
-    throw new Error("Windows PowerShell path cannot be represented safely in the Codex interrupt hook");
-  }
-  const script = `& ${args.map(powershellArgument).join(" ")}; exit $LASTEXITCODE`;
-  return `${powershell} -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script, "utf16le").toString("base64")}`;
+  return args.map(posixShellArgument).join(" ");
 }
 
 function lineEnding(text: string): "\n" | "\r\n" | "\r" {
@@ -133,7 +137,7 @@ export function installCodexInterruptHookCommand(
     "[[hooks.Interrupt.hooks]]",
     'type = "command"',
     `command = ${JSON.stringify(command)}`,
-    "timeout = 3",
+    `timeout = ${INTERRUPT_HOOK_TIMEOUT_SECONDS}`,
     "",
     `[hooks.state.${JSON.stringify(stateKey)}]`,
     `trusted_hash = ${JSON.stringify(trustedHash)}`,

@@ -27,6 +27,7 @@ test("installs one narrowly trusted Interrupt hook and restores the exact Codex 
   expect(installed.installed.groupIndex).toBe(1);
   expect(installed.installed.stateKey).toBe(`${resolve("/Users/test/.codex/config.toml")}:interrupt:1:0`);
   expect(installed.text).toContain('[[hooks.Interrupt]]');
+  expect(installed.text).toContain("timeout = 3");
   expect(installed.text).toContain(`[hooks.state.${JSON.stringify(installed.installed.stateKey)}]`);
   expect(installed.text).toContain(`trusted_hash = ${JSON.stringify(installed.installed.trustedHash)}`);
   verifyCodexInterruptHook(installed.text, installed.installed);
@@ -38,7 +39,7 @@ test("trusts the canonical Codex config path before a new config file exists", (
   const directory = mkdtempSync(join(tmpdir(), "codex-interrupt-hook-"));
   try {
     const configPath = join(directory, "config.toml");
-    const installed = installCodexInterruptHook("", configPath, { runtimeCommand: ["/opt/runtime"] });
+    const installed = installCodexInterruptHook("", configPath, { runtimeCommand: ["/opt/runtime", "/opt/cli.ts"] });
     expect(installed.installed.stateKey).toBe(
       `${join(realpathSync.native(directory), "config.toml")}:interrupt:0:0`,
     );
@@ -62,10 +63,10 @@ test("Interrupt hook command is absolute, quoted, and bound to the exact applica
     "win32",
     "C:\\Windows",
   );
-  expect(windowsCommand).toStartWith("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ");
-  expect(Buffer.from(windowsCommand.split(" ").at(-1)!, "base64").toString("utf16le")).toBe(
-    "& 'C:\\Program Files\\Codex Web GPT\\bun.exe' 'C:\\Program Files\\Codex Web GPT\\codex-interrupt-cli.js'"
-      + " '--home' 'C:\\Users\\test\\Codex Web GPT' 'hook' 'interrupt'; exit $LASTEXITCODE",
+  expect(windowsCommand).toBe(
+    `C:\\Windows\\System32\\cscript.exe //E:JScript //nologo `
+      + `"C:\\Program Files\\Codex Web GPT\\codex-interrupt-hook-windows.js" `
+      + Buffer.from("C:\\Users\\test\\Codex Web GPT\\config.json", "utf16le").swap16().toString("hex"),
   );
 });
 
@@ -77,22 +78,14 @@ test("source-mode Interrupt hooks select the lightweight TypeScript entrypoint",
   )).toStartWith("'/opt/bun' '/workspace/src/codex-interrupt-cli.ts'");
 });
 
-test("packaged wrapper Interrupt hooks bypass the general CLI", () => {
-  const windowsCommand = codexInterruptHookCommand(
-    { runtimeCommand: ["C:\\Program Files\\Codex Web GPT\\bin\\codex-chatgpt-web.cmd"] },
-    "C:\\Users\\test\\Codex Web GPT",
-    "win32",
-    "C:\\Windows",
-  );
-  expect(Buffer.from(windowsCommand.split(" ").at(-1)!, "base64").toString("utf16le")).toStartWith(
-    "& 'C:\\Program Files\\Codex Web GPT\\runtime\\bun.exe'"
-      + " 'C:\\Program Files\\Codex Web GPT\\app\\codex-interrupt-cli.js'",
-  );
+test("packaged wrapper Interrupt hooks bypass the general CLI on POSIX", () => {
   expect(codexInterruptHookCommand(
-    { runtimeCommand: ["/opt/custom-runner"] },
+    { runtimeCommand: ["/opt/Codex Web GPT/bin/codex-chatgpt-web"] },
     "/tmp/app",
     "linux",
-  )).toStartWith("'/opt/custom-runner' '--home'");
+  )).toStartWith(
+    "'/opt/Codex Web GPT/runtime/bun' '/opt/Codex Web GPT/app/codex-interrupt-cli.js'",
+  );
 });
 
 test("Interrupt hook trust hash is deterministic and changes with its exact command", () => {
@@ -107,7 +100,7 @@ test("refuses to remove a modified or duplicated managed hook", () => {
   const installed = installCodexInterruptHook(
     original,
     "/Users/test/.codex/config.toml",
-    { runtimeCommand: ["/opt/runtime"] },
+    { runtimeCommand: ["/opt/runtime", "/opt/cli.ts"] },
   );
   const modified = installed.text.replace("timeout = 3", "timeout = 2");
   expect(() => restoreCodexInterruptHook(modified, installed.installed)).toThrow("changed after setup");
@@ -120,6 +113,6 @@ test("refuses to remove a modified or duplicated managed hook", () => {
     installed.text,
   ].join("\n");
   expect(() => restoreCodexInterruptHook(reordered, installed.installed)).toThrow("order changed after setup");
-  expect(() => installCodexInterruptHook(installed.text, "/Users/test/.codex/config.toml", { runtimeCommand: ["/opt/runtime"] }))
+  expect(() => installCodexInterruptHook(installed.text, "/Users/test/.codex/config.toml", { runtimeCommand: ["/opt/runtime", "/opt/cli.ts"] }))
     .toThrow("already contains");
 });

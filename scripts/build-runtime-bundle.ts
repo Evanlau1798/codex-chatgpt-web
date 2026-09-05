@@ -96,6 +96,7 @@ if (!browserHelperBuild.success) {
 
 copyFileSync(join(root, "package.json"), join(appDir, "package.json"));
 copyFileSync(join(root, "bun.lock"), join(appDir, "bun.lock"));
+copyFileSync(join(root, "src", "codex-interrupt-hook-windows.js"), join(appDir, "codex-interrupt-hook-windows.js"));
 const install = Bun.spawnSync([process.execPath, "install", "--production", "--frozen-lockfile", "--ignore-scripts"], {
   cwd: appDir,
   stdout: "pipe",

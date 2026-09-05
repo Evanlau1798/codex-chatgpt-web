@@ -38,14 +38,18 @@
         "deltaSha256": "018ac88b3a0be2644c69248c366528bcbe5c1e7ae5dcc7a2d5dfd9ce19175ba4"
       },
       "classification": "adapted",
-      "reason": "Adapts the upstream release gate to the fork's deterministic lifecycle gate, current Codex and Claude compatibility baselines, checksum reconciliation, and Enhanced release assets.",
+      "reason": "Adapts the upstream release gate to the fork's deterministic lifecycle gate, latest published Codex and Claude compatibility check, checksum reconciliation, and Enhanced release assets.",
       "assertions": [
         {
           "path": "tests/release-checksums.test.ts",
           "contains": "expect(publish).toBeGreaterThan(reconcile);"
+        },
+        {
+          "path": "tests/lifecycle-profiles.test.ts",
+          "contains": "expect(workflow).toContain(\"@openai/codex@latest\");"
         }
       ],
-      "candidateBlob": "6137a15287f1d1613c148ed3d6aaca5c35eb0efc"
+      "candidateBlob": "2bff619b1d23c92a512442d8099183eeb867798c"
     },
     {
       "id": "v501-002",
@@ -118,7 +122,7 @@
         "deltaSha256": "c1e1c34a4e553059cede4c419b60dfb26da2b75857217e7e5bd121f30cd94d30"
       },
       "classification": "adapted",
-      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries. Accepted MCP invocations remain owned through turn expiry until their existing deadline or release path settles them.",
       "assertions": [
         {
           "path": "tests/browser-diagnostics.test.ts",
@@ -402,7 +406,7 @@
       "assertions": [
         {
           "path": "tests/codex-interrupt-shell.test.ts",
-          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+          "contains": "expect(requests).toEqual(["
         },
     {
       "path": "tests/server-native-interrupt.test.ts",
@@ -413,7 +417,7 @@
       "contains": "Codex process probes use Bun's native spawn path consistently"
     }
   ],
-  "candidateBlob": "7daad52d1ea26c3f9b8fbde13c5daae2fda88f34"
+  "candidateBlob": "5dc43dcf6b6fdf0393d152f54af2e19b98fe290a"
     },
     {
       "id": "v501-020",
@@ -615,9 +619,13 @@
         {
           "path": "tests/server-native-interrupt.test.ts",
           "contains": "expect(cancelled).toBeTrue();"
+        },
+        {
+          "path": "tests/turn-broker-expiry.test.ts",
+          "contains": "expect(await outcome).toEqual({ value: result });"
         }
       ],
-      "candidateBlob": "4df112e5f46a58fadae61b2d5756fe97e4f3e2b8"
+      "candidateBlob": "4bf6ccbc1d8767fe7c113289d1ff9620d625e125"
     },
     {
       "id": "v501-029",
@@ -682,7 +690,7 @@
       "assertions": [
         {
           "path": "tests/codex-interrupt-shell.test.ts",
-          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+          "contains": "expect({ shell, status, output, error }).toEqual({ shell, status: 0, output: \"\", error: \"\" });"
         },
         {
           "path": "tests/server-native-interrupt.test.ts",
@@ -706,7 +714,7 @@
       "assertions": [
         {
           "path": "tests/codex-interrupt-shell.test.ts",
-          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+          "contains": "expect({ shell, status, output, error }).toEqual({ shell, status: 0, output: \"\", error: \"\" });"
         },
         {
           "path": "tests/server-native-interrupt.test.ts",
@@ -730,7 +738,7 @@
       "assertions": [
         {
           "path": "tests/codex-interrupt-shell.test.ts",
-          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+          "contains": "expect({ shell, status, output, error }).toEqual({ shell, status: 0, output: \"\", error: \"\" });"
         },
         {
           "path": "tests/server-native-interrupt.test.ts",
@@ -754,7 +762,7 @@
       "assertions": [
         {
           "path": "tests/codex-interrupt-shell.test.ts",
-          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+          "contains": "expect({ shell, status, output, error }).toEqual({ shell, status: 0, output: \"\", error: \"\" });"
         },
         {
           "path": "tests/server-native-interrupt.test.ts",
@@ -778,7 +786,7 @@
       "assertions": [
         {
           "path": "tests/codex-interrupt-shell.test.ts",
-          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+          "contains": "expect({ shell, status, output, error }).toEqual({ shell, status: 0, output: \"\", error: \"\" });"
         },
         {
           "path": "tests/server-native-interrupt.test.ts",
@@ -802,7 +810,7 @@
       "assertions": [
         {
           "path": "tests/codex-interrupt-shell.test.ts",
-          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+          "contains": "expect({ shell, status, output, error }).toEqual({ shell, status: 0, output: \"\", error: \"\" });"
         },
         {
           "path": "tests/server-native-interrupt.test.ts",
@@ -822,18 +830,18 @@
         "deltaSha256": "15ab9f2ceac0dd0bb5f59dffcb55a6d5f24d2cfc30c33e796074f732005db2e9"
       },
       "classification": "adapted",
-      "reason": "Adapts the pinned upstream v5.0.1 behavior to the fork's split modules while preserving Enhanced, Zero Risk, Claude, Passkey, and Passthrough boundaries.",
+      "reason": "Preserves the exact v5.0.1 thread-and-turn Interrupt contract while keeping Codex's normalized three-second timeout. Windows validates the bounded payload and protected loopback control config through the built-in Script Host, avoiding cold PowerShell or Bun startup; POSIX retains the dedicated lightweight CLI.",
       "assertions": [
         {
           "path": "tests/codex-interrupt-shell.test.ts",
-          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+          "contains": "expect({ shell, status, output, error }).toEqual({ shell, status: 0, output: \"\", error: \"\" });"
         },
         {
           "path": "tests/server-native-interrupt.test.ts",
           "contains": "expect(cancelled).toBeTrue();"
         }
       ],
-  "candidateBlob": "bc92704b04c8b3f67c4861affcafb0887a08456e"
+  "candidateBlob": "6ed59116b52f1a3e52960bd6463f2ae6264b9175"
     },
     {
       "id": "v501-038",
@@ -1006,7 +1014,7 @@
       "assertions": [
         {
           "path": "tests/codex-interrupt-shell.test.ts",
-          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+          "contains": "expect(requests).toEqual(["
         },
         {
           "path": "tests/server-native-interrupt.test.ts",
@@ -1026,18 +1034,18 @@
         "deltaSha256": "73fe663f4f5601ed6be0ef844dec61cd20a0f3cf5e23abd2cbb5109ea631a2a7"
       },
       "classification": "adapted",
-      "reason": "Ports the upstream assertion into the fork test layout and preserves additional Enhanced and Zero Risk regression coverage.",
+      "reason": "Ports the upstream trusted-hook assertions and adds cross-shell verification that Windows delivers the exact authenticated thread and turn identity without exposing the control token in the hook command.",
       "assertions": [
         {
           "path": "tests/codex-interrupt-shell.test.ts",
-          "contains": "expect({ shell, status }).toEqual({ shell, status: 0 });"
+          "contains": "expect({ shell, status, output, error }).toEqual({ shell, status: 0, output: \"\", error: \"\" });"
         },
         {
           "path": "tests/server-native-interrupt.test.ts",
           "contains": "expect(cancelled).toBeTrue();"
         }
       ],
-  "candidateBlob": "e881579ffad8daa83eb5bdc5a3d87a6f7b95996d"
+  "candidateBlob": "9343a9285bcc0d90960f4e277b2ad18d86c16b5b"
     },
     {
       "id": "v501-047",

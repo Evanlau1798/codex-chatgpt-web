@@ -35,8 +35,8 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
-      - name: Install pinned Codex client
-        run: npm install --global @openai/codex@0.153.3
+      - name: Install latest Codex client
+        run: npm install --global @openai/codex@latest
       - name: Print safe client environment
         run: >-
           bun -e 'console.log(JSON.stringify({ platform: process.platform, arch: process.arch, bun: Bun.version }))'
