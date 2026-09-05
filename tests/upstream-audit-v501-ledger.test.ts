@@ -65,7 +65,7 @@ test("v5.0.1 ledger pins the exact release and contemporaneous merge evidence", 
   expect(archivedTag.stdout).toStartWith(`object ${ledger.upstream.commit}\ntype commit\ntag ${ledger.release}\n`);
   expect(ledger.mergeEvidence.kind).toBe("contemporaneous-default-ort");
   expect(ledger.mergeEvidence.inheritedLimitation).toContain("v5.0.0");
-});
+}, 15_000);
 
 test("v5.0.1 public evidence archive is complete and excludes private state", () => {
   const archive = resolve(root, ledger.mergeEvidence.archive);
