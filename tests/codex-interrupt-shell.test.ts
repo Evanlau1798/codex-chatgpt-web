@@ -19,23 +19,38 @@ test.skipIf(process.platform !== "win32")("Interrupt hook reaches the exact auth
     { runtimeCommand: [process.execPath, join(import.meta.dir, "../src/cli.ts")] },
     root,
   );
+  const run = async (shell: "cmd" | "powershell", payload: string) => {
+    const child = spawn(shell === "cmd" ? process.env.COMSPEC || "C:\\Windows\\System32\\cmd.exe"
+      : join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+      shell === "cmd" ? ["/d", "/s", "/c", `"${command}"`] : ["-NoProfile", "-NonInteractive", "-Command", command],
+      { cwd: root, windowsHide: true, windowsVerbatimArguments: shell === "cmd", stdio: ["pipe", "pipe", "pipe"] });
+    let output = "";
+    let error = "";
+    child.stdout.on("data", chunk => { output += chunk; });
+    child.stderr.on("data", chunk => { error += chunk; });
+    child.stdin.end(payload);
+    const timer = setTimeout(() => child.kill(), 10_000);
+    const status = await new Promise<number | null>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", resolve);
+    }).finally(() => clearTimeout(timer));
+    return { shell, status, output, error };
+  };
   try {
-    for (const shell of ["cmd", "powershell"]) {
-      const child = spawn(shell === "cmd" ? process.env.COMSPEC || "C:\\Windows\\System32\\cmd.exe"
-        : join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
-        shell === "cmd" ? ["/d", "/s", "/c", `"${command}"`] : ["-NoProfile", "-NonInteractive", "-Command", command],
-        { cwd: root, windowsHide: true, windowsVerbatimArguments: shell === "cmd", stdio: ["pipe", "pipe", "pipe"] });
-      let output = "";
-      let error = "";
-      child.stdout.on("data", chunk => { output += chunk; });
-      child.stderr.on("data", chunk => { error += chunk; });
-      child.stdin.end(input);
-      const timer = setTimeout(() => child.kill(), 10_000);
-      const status = await new Promise<number | null>((resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", resolve);
-      }).finally(() => clearTimeout(timer));
+    for (const shell of ["cmd", "powershell"] as const) {
+      const { status, output, error } = await run(shell, input);
       expect({ shell, status, output, error }).toEqual({ shell, status: 0, output: "", error: "" });
+    }
+    for (const payload of [
+      { hook_event_name: "Interrupt", session_id: 123456, turn_id: "turn_test" },
+      { hook_event_name: "Interrupt", session_id: "thread_test", turn_id: ["turn_test"] },
+    ]) {
+      expect(await run("cmd", JSON.stringify(payload))).toEqual({
+        shell: "cmd",
+        status: 1,
+        output: "",
+        error: "codex-chatgpt-web: Interrupt hook failed\r\n",
+      });
     }
     expect(requests).toEqual([
       { authorization: `Bearer ${token}`, body: { threadId: "thread_test", turnId: "turn_test" } },

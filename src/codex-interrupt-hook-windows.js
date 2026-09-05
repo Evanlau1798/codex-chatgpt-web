@@ -110,8 +110,11 @@
     var raw = WScript.StdIn.ReadAll();
     if (unescape(encodeURIComponent(raw)).length > 32768) throw new Error("payload too large");
     var payload = parseJson(raw);
-    var threadId = String(payload.session_id || "");
-    var turnId = String(payload.turn_id || "");
+    if (typeof payload.session_id !== "string" || typeof payload.turn_id !== "string") {
+      throw new Error("invalid identity");
+    }
+    var threadId = payload.session_id.replace(/^\s+|\s+$/g, "");
+    var turnId = payload.turn_id.replace(/^\s+|\s+$/g, "");
     if (payload.hook_event_name !== "Interrupt"
         || !/^[A-Za-z0-9_-]{6,128}$/.test(threadId)
         || !/^[A-Za-z0-9_-]{6,128}$/.test(turnId)) {
