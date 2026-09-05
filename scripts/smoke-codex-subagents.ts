@@ -53,6 +53,10 @@ const requestLog: Array<{
   functionOutputs: Array<{ callId: string; outputDigest: string; index: number }>;
   encryptedContent: boolean;
 }> = [];
+let resolveChildFollowupObserved!: () => void;
+const childFollowupObserved = new Promise<void>(resolve => {
+  resolveChildFollowupObserved = resolve;
+});
 
 const toolNamespace = protocol === "v1" ? "multi_agent_v1" : "collaboration";
 const collaborationMap = new Map([
@@ -172,6 +176,21 @@ async function* finalAnswer(text: string): AsyncGenerator<AdapterEvent> {
   yield { type: "done", stopReason: "stop", endTurn: true };
 }
 
+async function* rootFinalAnswer(): AsyncGenerator<AdapterEvent> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      childFollowupObserved,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error("Child follow-up did not reach the lifecycle server")), 5_000);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+  yield* finalAnswer("ROOT_LIFECYCLE_OK");
+}
+
 function responseFor(role: Role, step: number, body: Record<string, unknown>): AsyncIterable<AdapterEvent> {
   if (role === "root") {
     if (step === 0) return toolCall("spawn_agent", protocol === "v1" ? {
@@ -200,7 +219,7 @@ function responseFor(role: Role, step: number, body: Record<string, unknown>): A
     if (step === 3) return toolCall("wait_agent", protocol === "v1"
       ? { targets: [spawnedAgentId(body)], timeout_ms: 500 }
       : { timeout_ms: 500 });
-    if (step === 4) return finalAnswer("ROOT_LIFECYCLE_OK");
+    if (step === 4) return rootFinalAnswer();
     throw new Error(`Unexpected root lifecycle step ${step}`);
   }
   if (role === "child") {
@@ -295,6 +314,7 @@ const server = Bun.serve({
           : [],
         encryptedContent: hasEncryptedContent(body.input),
       });
+      if (role === "child" && step === 3) resolveChildFollowupObserved();
       if ((role === "child" && step === 0) || (role === "grandchild" && step === 0)) {
         if (hasEncryptedContent(body.input)) {
           failures.push(`${role} received encrypted_content instead of plaintext agent_message input`);
