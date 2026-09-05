@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "release": "v5.0.3",
+  "targetVersion": "5.0.3-Enhanced.1",
+  "recordedAt": "2026-09-05T12:16:48.3670448Z",
+  "repository": "https://github.com/Evanlau1798/codex-chatgpt-web",
+  "tagIdentity": {
+    "ref": "refs/tags/v5.0.3",
+    "tagObject": "5d1eec188a6a009ef1f86ee508f4b48069903560",
+    "peeledCommit": "74aed4025937eadca13b363cdcbc87963cd4dff3",
+    "signature": "unsigned",
+    "unchanged": true,
+    "claim": "Bounded observations before integration and publication; upstream refs are not assumed permanently immutable."
+  },
+  "integration": {
+    "method": "merge",
+    "baseline": "4f42c4b8fdbcfac630185da73b68c716411d7ce5",
+    "upstreamMerge": "ae3c92eee8804cdb38c02a53e369ec96b6516463",
+    "candidate": "ae3c92eee8804cdb38c02a53e369ec96b6516463",
+    "githubMerge": "44a10cb6af4e1f7f7065c183971d416a384b98d1",
+    "tree": "6a57b605bdebc56f8e57f1c47421a854aa71b710",
+    "pullRequest": {
+      "number": 23,
+      "url": "https://github.com/Evanlau1798/codex-chatgpt-web/pull/23"
+    }
+  },
+  "ledger": {
+    "path": ".github/upstream-audit/v5.0.3.json",
+    "commit": "44a10cb6af4e1f7f7065c183971d416a384b98d1",
+    "blob": "c3eda04315db4f581003a331f57e992e4bd63b2a",
+    "bytes": 98602,
+    "sha256": "7bf8c65ecda7f9fbadd7bc53e69958a167e79f77d58c3531d85a1ca4ea6eadbe"
+  },
+  "archive": {
+    "path": ".github/upstream-audit/v5.0.3-evidence.tar.gz",
+    "commit": "44a10cb6af4e1f7f7065c183971d416a384b98d1",
+    "blob": "562bfea5b7f865ef9b6f0eb560298f5c56f3fb65",
+    "bytes": 606315,
+    "sha256": "757243a22611cc22e589e632c62fd8d6237fb40deabf1b550393590247e7d385",
+    "containsContemporaneousMergeEvidence": true
+  },
+  "ci": {
+    "upstream": {
+      "verify": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/33954089731",
+      "release": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/33954089590"
+    },
+    "fork": {
+      "integrationPullRequest": {
+        "id": 33964661417,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33964661417",
+        "head": "ae3c92eee8804cdb38c02a53e369ec96b6516463",
+        "conclusion": "success"
+      },
+      "main": {
+        "id": 33965094953,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33965094953",
+        "head": "44a10cb6af4e1f7f7065c183971d416a384b98d1",
+        "conclusion": "success"
+      },
+      "latestClientCanary": {
+        "id": 33965520914,
+        "url": "https://github.com/Evanlau1798/codex-chatgpt-web/actions/runs/33965520914",
+        "head": "44a10cb6af4e1f7f7065c183971d416a384b98d1",
+        "conclusion": "success"
+      }
+    }
+  },
+  "localValidation": {
+    "pinnedBun": "1.4.0+34cbb9a40",
+    "boundedRootTestFiles": 213,
+    "launcherSuite": {
+      "passed": 452,
+      "platformSkipped": 1
+    },
+    "typechecks": "passed",
+    "dependencyAudits": "passed",
+    "latestClients": {
+      "codex": "0.153.4",
+      "claude": "2.1.261",
+      "deterministicAll": "passed"
+    },
+    "runtimeBundleAndSmoke": "passed",
+    "rendererBuild": "passed",
+    "windowsPackageAndIsolatedPayloadSmoke": "passed",
+    "automaticLiveWeb": {
+      "modelClass": "Medium",
+      "authenticated": true,
+      "temporaryChat": true,
+      "semanticControls": true,
+      "connector": true,
+      "submitted": true,
+      "finalProjection": true,
+      "browserIdle": true,
+      "rateLimited": false
+    },
+    "zeroRiskLive": {
+      "userOperated": true,
+      "normalToolFinal": "passed",
+      "compactionContinuation": "passed",
+      "interruptAndNextTurn": "passed"
+    },
+    "privacy": "No prompt, response, account, credential, URL query, screenshot, session identifier, or raw runtime log is recorded."
+  },
+  "validation": {
+    "integrationMergeTreeMatchesCandidate": true,
+    "upstreamIsMainAncestor": true,
+    "auditArchiveHashesVerified": true,
+    "integrationPullRequestCiPassed": true,
+    "mainCiPassed": true,
+    "latestClientCanaryPassed": true,
+    "localAutomaticAndUserOperatedZeroRiskPassed": true
+  },
+  "inheritedLimitation": {
+    "source": ".github/upstream-audit/v5.0.0-publication.json",
+    "kind": "missing-contemporaneous-v5.0.0-merge-snapshot",
+    "acceptedByReleaseOwner": true,
+    "statement": "The v5.0.0 archive contains an explicitly labeled exact-parent post-hoc ort reproduction rather than original execution evidence. The v5.0.3 merge preserved contemporaneous evidence, but does not erase or overstate the older limitation."
+  },
+  "publicationBoundary": "This receipt records integration, local gates, PR/main CI and latest-client canary. Its own PR and post-merge main CI must pass before tagging. Release workflow, package, signing and published-asset checksum results will be linked in GitHub release metadata after they complete."
+}
