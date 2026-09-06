@@ -154,6 +154,10 @@ test("launcher runtime ownership cannot cross production and DEV profiles", () =
     () => validateConfig({ ...production, stallTimeoutSec: 0 }, descriptorPath),
     /invalid stallTimeoutSec/,
   );
+  assert.throws(
+    () => validateConfig({ ...production, experimentalNoAutoCompact: "yes" }, descriptorPath),
+    /invalid experimentalNoAutoCompact/,
+  );
   assert.equal(
     validateConfig({ ...production, stallTimeoutSec: 900 }, descriptorPath).stallTimeoutSec,
     900,

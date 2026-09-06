@@ -16,6 +16,7 @@ for (const [label, change] of Object.entries({
   "legacy manual connector migration": { manualAppName: undefined },
   "interaction mode": { browserInteractionMode: "manual" },
   "Zero Risk Pro": { zeroRiskProEnabled: true },
+  "experimental no-auto-compact": { experimentalNoAutoCompact: true },
   "inactive manual profile": { manualTunnel: { ...tunnel, tunnelId: "tunnel_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } },
   "Automatic profile": { automaticTunnel: { ...tunnel, profileName: "replacement" } },
 })) {

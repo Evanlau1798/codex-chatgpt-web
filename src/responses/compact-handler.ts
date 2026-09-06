@@ -81,6 +81,13 @@ export async function handleCompactRequest(
   } catch (error) {
     return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
   }
+  if (config.experimentalNoAutoCompact) {
+    return formatErrorResponse(
+      409,
+      "invalid_request_error",
+      "Compaction is disabled for routed ChatGPT Web models by the experimental no-auto-compact setting.",
+    );
+  }
   if (route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
     return formatErrorResponse(
       409,

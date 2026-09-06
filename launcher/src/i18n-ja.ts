@@ -19,6 +19,8 @@ export const ja: Record<keyof Copy, string> = {
   devKeepRunningBody: "ウィンドウを閉じても、隔離されたブラウザーセッションと DEV MCP トンネルを使用可能な状態に保ちます。",
   biggerContext: "Bigger Context（試験的）",
   biggerContextBody: "警告：小さなターンは 1 件のメッセージとして維持し、大きなコンテキストは 2～3 件のメッセージに分割します。最後の部分から追加リクエストなしでタスクを開始します。モデルのコンテキスト上限とコンパクションしきい値が 3 倍になります。変更後は Codex を再起動してください。追加リクエストにより、レート制限や一時的なクールダウンが発生しやすくなる場合があります。初期設定では無効です。",
+  noAutoCompact: "Codex の自動コンパクションを無効化（試験的）",
+  noAutoCompactBody: "Codex からルーティングモデルのコンテキスト上限を隠し、コンパクションの引き継ぎを拒否します。Token 使用量は正しく記録され、大きすぎるブラウザープロンプトは安全に失敗し、Claude Code は変更されません。変更後は Codex を再起動してください。初期設定では無効です。",
   tagline: "ネイティブ Codex ハーネス内で動作する ChatGPT Web",
   chooseLanguage: "言語を選択",
   chooseLanguageHint: "後から設定で変更できます。",

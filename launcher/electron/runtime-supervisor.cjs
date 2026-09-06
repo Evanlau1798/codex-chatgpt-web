@@ -257,6 +257,10 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     && typeof config.experimentalBiggerContext !== "boolean") {
     throw new Error("Runtime configuration has an invalid experimentalBiggerContext");
   }
+  if (config.experimentalNoAutoCompact !== undefined
+    && typeof config.experimentalNoAutoCompact !== "boolean") {
+    throw new Error("Runtime configuration has an invalid experimentalNoAutoCompact");
+  }
   config = normalizeContextModes(config);
   if (config.stallTimeoutSec !== undefined
     && (!Number.isFinite(config.stallTimeoutSec) || config.stallTimeoutSec <= 0)) {

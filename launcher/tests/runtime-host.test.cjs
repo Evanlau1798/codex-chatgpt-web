@@ -169,6 +169,28 @@ test("Bigger Context updates the isolated DEV config without installing a Codex 
   });
 });
 
+test("experimental no-auto-compact uses setup and requires a Codex restart", async () => {
+  const fixture = hostFor({ mode: "full", appName: "Codex Native2" });
+  const result = await fixture.host.setExperimentalNoAutoCompact(true);
+  assert.equal(result.enabled, true);
+  assert.deepEqual(fixture.invocation(), {
+    name: "no-auto-compact",
+    args: [
+      "setup",
+      "--full",
+      "--browser-host-descriptor",
+      "/runtime/launcher-browser.json",
+      "--automatic-browser-interaction",
+      "--replace-codex-route",
+      "--acknowledge-unofficial",
+      "--restart-service",
+      "--no-auto-compact",
+      "--app-name",
+      "Codex Native2",
+    ],
+  });
+});
+
 test("DEV setup child environment removes launcher-rebound production aliases", async () => {
   const fixture = devHostFor(null);
   assert.deepEqual(fixture.host.devSetupEnvironment({

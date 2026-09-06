@@ -110,6 +110,25 @@ describe("native /models augmentation", () => {
     expect(betaPro?.effective_context_window_percent).toBe(90);
   });
 
+  test("omits Codex context accounting for the experimental no-auto-compact mode", () => {
+    const config = Object.assign(defaultConfig("full"), { experimentalNoAutoCompact: true });
+    const models = augmentNativeModelCatalog(source(), config).models as Array<Record<string, unknown>>;
+    const native = models.find(model => model.slug === "gpt-5.6-sol")!;
+    const routed = models.filter(model => String(model.slug).startsWith("chatgpt-web/"));
+
+    expect(native).toMatchObject({
+      context_window: 300_000,
+      max_context_window: 320_000,
+      auto_compact_token_limit: 270_000,
+    });
+    expect(routed.length).toBeGreaterThan(0);
+    for (const model of routed) {
+      expect(model.context_window).toBeNull();
+      expect(model.max_context_window).toBeNull();
+      expect(model.auto_compact_token_limit).toBeNull();
+    }
+  });
+
   test("keeps native Sol selectable in the bounded Compatibility V1 registry", () => {
     const config = defaultConfig("full");
     config.subagentProtocol = "compatibility-v1";

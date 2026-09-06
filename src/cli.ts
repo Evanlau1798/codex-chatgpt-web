@@ -184,6 +184,12 @@ async function setupCommand(args: string[]): Promise<void> {
     throw new Error("Choose at most one context mode: --bigger-context or --standard-context");
   }
   if (biggerContext || standardContext) options.experimentalBiggerContext = biggerContext;
+  const noAutoCompact = takeFlag(args, "--no-auto-compact");
+  const autoCompact = takeFlag(args, "--auto-compact");
+  if (noAutoCompact && autoCompact) {
+    throw new Error("Choose at most one compaction mode: --no-auto-compact or --auto-compact");
+  }
+  if (noAutoCompact || autoCompact) options.experimentalNoAutoCompact = noAutoCompact;
   const zeroRiskPro = takeFlag(args, "--zero-risk-pro");
   const zeroRiskDefault = takeFlag(args, "--zero-risk-default");
   if (zeroRiskPro && zeroRiskDefault) {

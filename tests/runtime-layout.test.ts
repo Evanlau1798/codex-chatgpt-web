@@ -97,6 +97,7 @@ test("the direct-turn connector identity migrates known legacy setup without ove
     browserInteractionMode: "automatic", zeroRiskProEnabled: false,
   });
   expect(defaultConfig("full").useEnhancedWebSessionMode).toBe(true);
+  expect(defaultConfig("full").experimentalNoAutoCompact).toBe(false);
   expect(defaultConfig("full").subagentProtocol).toBe("compatibility-v1");
   expect(resolveSetupConnectorName("Codex Native")).toBe("Codex Native2");
   expect(resolveSetupConnectorName(ZERO_RISK_CHATGPT_CONNECTOR_NAME)).toBe(CHATGPT_CONNECTOR_NAME);
@@ -106,6 +107,18 @@ test("the direct-turn connector identity migrates known legacy setup without ove
     .toThrow(/requires a newly created connector named "Codex Native2"/);
   expect(() => resolveSetupConnectorName(undefined, ZERO_RISK_CHATGPT_CONNECTOR_NAME))
     .toThrow(/reserved for Zero Risk/);
+});
+
+test("runtime config validates the experimental no-auto-compact flag", () => {
+  const root = join(tmpdir(), `codex-chatgpt-web-no-auto-compact-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, "config.json"), `${JSON.stringify({
+    ...defaultConfig("browser-only"),
+    experimentalNoAutoCompact: "yes",
+  })}\n`);
+  expect(() => loadConfig()).toThrow("Invalid experimentalNoAutoCompact");
 });
 
 test("enhanced Web session mode migrates the legacy key and rejects conflicting values", () => {

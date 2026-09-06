@@ -296,6 +296,7 @@ test("DEV browser-only setup persists only the isolated harness profile", async 
       descriptorPath,
       "--standard-session",
       "--bigger-context",
+      "--no-auto-compact",
       "--acknowledge-unofficial",
     ], {
       ...process.env,
@@ -318,6 +319,7 @@ test("DEV browser-only setup persists only the isolated harness profile", async 
       proAvailable: false,
       useEnhancedWebSessionMode: false,
       experimentalBiggerContext: true,
+      experimentalNoAutoCompact: true,
     });
     expect(existsSync(join(root, "production-codex", "config.toml"))).toBe(false);
     expect(existsSync(join(devHome, "codex-home", "config.toml"))).toBe(false);

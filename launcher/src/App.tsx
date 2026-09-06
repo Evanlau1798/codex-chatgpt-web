@@ -1569,6 +1569,17 @@ function SettingsSurface({
       setBusy(false);
     }
   };
+  const setExperimentalNoAutoCompact = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      updateState(await api!.setExperimentalNoAutoCompact(enabled));
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const setManualInteraction = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
@@ -1650,6 +1661,13 @@ function SettingsSurface({
             checked={biggerContextState.checked}
             disabled={biggerContextState.disabled}
             onChange={(enabled) => void setBiggerContext(enabled)}
+          />
+        </SettingRow>
+        <SettingRow body={copy.noAutoCompactBody} label={copy.noAutoCompact}>
+          <Switch
+            checked={snapshot.state.experimentalNoAutoCompact}
+            disabled={busy || snapshot.state.coreSetupComplete !== true}
+            onChange={(enabled) => void setExperimentalNoAutoCompact(enabled)}
           />
         </SettingRow>
         <SettingRow

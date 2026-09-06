@@ -652,6 +652,17 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return state;
   });
+  handle("launcher:no-auto-compact", async (_event, enabled) => {
+    const result = await runtimeHost.setExperimentalNoAutoCompact(enabled === true);
+    const state = stateStore.update({
+      experimentalNoAutoCompact: result.enabled,
+      codexCatalogVerified: IS_DEV_PROFILE ? true : false,
+      codexRestartRequired: IS_DEV_PROFILE ? false : true,
+    });
+    send("launcher:state-changed", state);
+    if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
+    return state;
+  });
   handle("launcher:zero-risk-pro", async (_event, enabled) => {
     const browserOperation = browserHost.currentOperation();
     if (browserHost.activeTraceId || browserOperation) {
@@ -1113,6 +1124,7 @@ async function start() {
       codexRestartRequired: false,
       autoStart: false,
       experimentalBiggerContext: config?.experimentalBiggerContext === true,
+      experimentalNoAutoCompact: config?.experimentalNoAutoCompact === true,
     });
     send("launcher:state-changed", state);
     logger.info("dev_profile.ready", {
@@ -1139,6 +1151,7 @@ async function start() {
         codexCatalogVerified: false,
         codexRestartRequired: true,
         experimentalBiggerContext: runtimeHost.runtimeConfigSnapshot().config?.experimentalBiggerContext === true,
+        experimentalNoAutoCompact: runtimeHost.runtimeConfigSnapshot().config?.experimentalNoAutoCompact === true,
         ...(upgrade.mode === "full" ? {
           mcpRuntimeInstalled: true,
           mcpSetupComplete: false,

@@ -84,6 +84,8 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
   assert.match(appSource, /<SettingRow body=\{snapshot\.state\.browserInteractionMode === "manual" \? copy\.manualBiggerContextBody : copy\.biggerContextBody\} label=\{copy\.biggerContext\}>/);
   assert.match(appSource, /api!\.setBiggerContext\(enabled\)/);
   assert.match(electronMain, /runtimeHost\.setBiggerContext\(enabled === true\)/);
+  assert.match(appSource, /api!\.setExperimentalNoAutoCompact\(enabled\)/);
+  assert.match(electronMain, /runtimeHost\.setExperimentalNoAutoCompact\(enabled === true\)/);
   assert.doesNotMatch(electronMain, /IS_DEV_PROFILE && key === "experimentalBiggerContext"/);
 });
 

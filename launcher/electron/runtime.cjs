@@ -1181,6 +1181,40 @@ class RuntimeHost {
     return { ...result, mode, enabled: enabled === true };
   }
 
+  async setExperimentalNoAutoCompact(enabled) {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) {
+      throw new Error("Initialize the runtime before changing automatic compaction");
+    }
+    const mode = current.mode;
+    const compactFlag = enabled === true ? "--no-auto-compact" : "--auto-compact";
+    const args = [
+      ...(this.launcherProfile === "development" ? ["dev"] : []),
+      "setup",
+      mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor",
+      this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      ...(this.launcherProfile === "development" ? [] : ["--replace-codex-route"]),
+      "--acknowledge-unofficial",
+      ...(this.launcherProfile === "development" ? [] : ["--restart-service"]),
+      compactFlag,
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    if (mode === "full") args.push("--app-name", this.browserConnectorName());
+    const run = this.launcherProfile === "development"
+      ? this.runDevSetup.bind(this)
+      : this.runSetup.bind(this);
+    const result = await run("no-auto-compact", args, {
+      message: enabled ? "Disabling Codex automatic compaction" : "Restoring Codex automatic compaction",
+      successMessage: enabled
+        ? "Codex automatic compaction disabled; restart Codex"
+        : "Codex automatic compaction restored; restart Codex",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    });
+    return { ...result, mode, enabled: enabled === true };
+  }
+
   async upgradeManagedRuntime() {
     this.assertProductionProfile("Managed Codex runtime upgrade");
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);

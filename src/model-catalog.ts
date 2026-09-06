@@ -142,10 +142,10 @@ export function buildChatGptWebModel(
     upgrade: null,
     default_reasoning_level: route.codexEffort,
     supported_reasoning_levels: [reasoningLevel(template, route.codexEffort, route.displayName)],
-    context_window: limits.contextWindow,
-    max_context_window: limits.contextWindow,
+    context_window: config.experimentalNoAutoCompact ? null : limits.contextWindow,
+    max_context_window: config.experimentalNoAutoCompact ? null : limits.contextWindow,
     effective_context_window_percent: limits.effectiveContextWindowPercent,
-    auto_compact_token_limit: limits.autoCompactTokenLimit,
+    auto_compact_token_limit: config.experimentalNoAutoCompact ? null : limits.autoCompactTokenLimit,
     // ChatGPT Web has no Codex service tier. Never inherit the native template's Fast tiers.
     additional_speed_tiers: [],
     service_tiers: [],
