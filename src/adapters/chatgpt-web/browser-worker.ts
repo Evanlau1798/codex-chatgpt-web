@@ -3080,7 +3080,7 @@ export class ChatGptBrowserWorker {
           await this.runStage(
             turn.traceId,
             `multipart_stage_${index + 1}_attachment`,
-            chatGptPromptAttachmentTimeoutMs(stage.text.length, this.config.experimentalNoAutoCompact),
+            chatGptPromptAttachmentTimeoutMs(stage.text.length, this.config.experimentalNoAutoCompact, turn.compaction),
             stageSignal => this.attachPrompt(
               page,
               stage.text,
@@ -3189,7 +3189,7 @@ export class ChatGptBrowserWorker {
             await this.runStage(
               turn.traceId,
               "prompt_attachment",
-              chatGptPromptAttachmentTimeoutMs(responsePrompt.length, this.config.experimentalNoAutoCompact),
+              chatGptPromptAttachmentTimeoutMs(responsePrompt.length, this.config.experimentalNoAutoCompact, turn.compaction),
               stageSignal => this.attachPromptWithCompactionRetry(
                 page,
                 responsePrompt,
