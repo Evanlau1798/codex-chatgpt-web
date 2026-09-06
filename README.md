@@ -79,6 +79,10 @@ connects ChatGPT back to the tools of that same Codex task.
 - **No Pro exception.** Pro follows exactly the same MCP, context, image, tracing, tool-round,
   browser-ceiling, and compaction contracts as every other effort. There are no effort-specific MCP
   exclusions. Browser-only mode remains read-only for every route.
+- **Explicit web search.** `codex --search` declares the hosted Responses `web_search` tool. On a
+  browser-only turn the bridge selects ChatGPT's own **Web search** composer hint before attaching
+  the prompt, so the turn searches instead of relying on the model's discretion. Turns that attach
+  the Codex connector reject the flag with an explicit error rather than dropping it.
 - **Fail-closed with an explicit release gate.** UI drift and missing capabilities produce explicit
   errors rather than silent fallbacks. Account-bound model selection, long context, images,
   streaming, compaction, native tool rounds, cancellation, and Pro are covered by a separate
@@ -258,6 +262,9 @@ codex-chatgpt-web subagents native
 
 - This is unofficial browser automation, not an OpenAI API. ChatGPT UI changes can break selectors;
   drift fails explicitly instead of silently switching model or transport.
+- ChatGPT does not offer Deep research inside Temporary Chat, which is the only surface the bridge
+  drives, so Deep research is not routed. Web search is the only ChatGPT tool hint the bridge
+  selects on request.
 - Browser state is a sensitive login artifact, and the loopback listener is reachable by processes
   running as the same local user. Never share the launcher profile; use a trusted workstation.
 - Release packages currently target macOS 13+ (arm64/x64), Windows x64, and Linux x64. Runtime,

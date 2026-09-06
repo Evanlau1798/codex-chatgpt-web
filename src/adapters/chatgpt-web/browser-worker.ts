@@ -128,6 +128,7 @@ import { ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptStoppedThi
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { openChatGptConnectorPlusMenu } from "./connector-plus-menu";
+import { selectChatGptWebSearchHint } from "./web-search-hint";
 import {
   ChatGptBrowserObservationTimeoutError,
   MAX_CHATGPT_BROWSER_PAGE_REBINDS,
@@ -521,6 +522,8 @@ export interface BrowserTurn {
   capabilities: ChatGptWebCapabilities;
   /** Attach the Native2 connector for bridge control without granting outer Codex work capability. */
   nativeConnector?: boolean;
+  /** Select ChatGPT's own Web search composer hint before the prompt because Codex enabled `web_search`. */
+  webSearch?: boolean;
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   retainConversation?: boolean;
@@ -1648,7 +1651,7 @@ export class ChatGptBrowserWorker {
     return composer.evaluate(element => {
       const clone = element.cloneNode(true) as HTMLElement;
       clone.querySelectorAll(
-        '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]',
+        '[data-id^="plugin:"][data-keyword], [data-system-hint-type][data-keyword], [data-inline-selection-pill-cursor-target]',
       )
         .forEach(part => part.remove());
       return [...clone.childNodes]
@@ -1754,6 +1757,15 @@ export class ChatGptBrowserWorker {
         throw new Error("ChatGPT connector cleanup did not produce an empty composer");
       }
     });
+  }
+
+  private async selectWebSearchHint(
+    page: Page,
+    composer: Locator,
+    captureDiagnostic?: (checkpoint: string) => Promise<void>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await selectChatGptWebSearchHint(page, composer, captureDiagnostic, signal);
   }
 
   private async ensureConnectorSurface(
@@ -1949,8 +1961,12 @@ export class ChatGptBrowserWorker {
     abortSignal?: AbortSignal,
     catalogRefreshAvailable = false,
     connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 },
+    webSearch = false,
   ): Promise<void> {
     throwIfPromptAttachmentAborted(abortSignal);
+    if (webSearch && localTools) {
+      throw new Error("ChatGPT Web search hint cannot be combined with the Codex connector in one turn");
+    }
     let mutationStarted = false;
     try {
       if (!localTools || reuseConnector) {
@@ -1961,7 +1977,16 @@ export class ChatGptBrowserWorker {
         mutationStarted = true;
         await composer.fill("", { signal: abortSignal, timeout: 10_000 });
         await composer.focus();
-        await this.insertPromptText(page, prompt, abortSignal);
+        if (webSearch) {
+          // The hint is an inline pill at the start of the message; append the prompt after it the
+          // same way the connector mention path does, so verification strips the pill text.
+          await this.selectWebSearchHint(page, composer, captureDiagnostic, abortSignal);
+          await composer.focus();
+          await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
+          await this.insertPromptText(page, ` ${prompt}`, abortSignal);
+        } else {
+          await this.insertPromptText(page, prompt, abortSignal);
+        }
         await this.assertPromptAttached(page, prompt, abortSignal);
         return;
       }
@@ -2046,6 +2071,7 @@ export class ChatGptBrowserWorker {
     abortSignal?: AbortSignal,
     catalogRefreshAvailable = false,
     connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 },
+    webSearch = false,
   ): Promise<void> {
     let retryAvailable = compaction;
     for (;;) {
@@ -2059,6 +2085,7 @@ export class ChatGptBrowserWorker {
           abortSignal,
           catalogRefreshAvailable,
           connectorAttemptBudget,
+          webSearch,
         );
         return;
       } catch (error) {
@@ -3194,6 +3221,7 @@ export class ChatGptBrowserWorker {
                 stageSignal,
                 catalogRefreshAvailable,
                 connectorAttemptBudget,
+                turn.webSearch === true,
               ),
               turn.abortSignal,
               chatGptSuspensionClock,

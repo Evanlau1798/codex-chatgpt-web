@@ -26,6 +26,12 @@ launcher-owned codex-chatgpt-web daemon
 - Sends the complete Codex context and image attachments to a fresh ChatGPT Temporary Chat.
 - Never starts the broker, tunnel, or MCP server.
 - Emits a nonfatal Codex commentary warning that local tools are unavailable for the selected model.
+- Honors `codex --search`: the hosted Responses `web_search` tool is recorded as a request option,
+  never exposed to the routed model as a function, and the browser worker selects ChatGPT's own
+  **Web search** composer hint (the inline `data-system-hint-type="search"` pill) before attaching
+  the prompt. A missing menu row or pill fails the turn. Turns that attach the Codex connector
+  (full mode, the enhanced control connector, or manual Zero Risk) reject the flag explicitly.
+  Deep research is not offered in Temporary Chat and is not routed.
 
 ### `full`
 

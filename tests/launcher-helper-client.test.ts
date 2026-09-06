@@ -54,6 +54,7 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
       if (message.turn.prepared !== undefined
         || message.turn.resumePrepared !== undefined
         || message.turn.nativeConnector !== true
+        || message.turn.webSearch !== true
         || message.turn.retainConversation !== true
         || message.turn.requireRetainedConversation !== true
         || message.turn.conversationKey !== "a".repeat(64)) {
@@ -112,6 +113,7 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
       reasoning: "high",
       capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
       nativeConnector: true,
+      webSearch: true,
       prepare: async () => {
         fullPrepareCount += 1;
         return { text: "inspect", images: [], release: () => { released = true; } };

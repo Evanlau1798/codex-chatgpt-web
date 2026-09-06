@@ -23,6 +23,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
       await turn.onPreparedSelected(false);
       const prepared = await turn.prepare();
       if (prepared.multipart.parts.length !== 3) throw new Error("Multipart context was lost");
+      if (turn.webSearch !== true) throw new Error("Web search flag was lost");
       await turn.onMultipartStageAcknowledged?.(1);
       await turn.onMultipartStageAcknowledged?.(2);
       await turn.onSendActivated();
@@ -89,6 +90,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
       modelId: "gpt-5.6-sol",
       reasoning: "high",
       capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
+      webSearch: true,
       prepare: async () => ({
         text: "inspect", images: [],
         multipart: { parts: ["part one", "part two", "part three"], commit: "inspect" },

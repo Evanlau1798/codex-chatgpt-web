@@ -150,6 +150,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         ...base,
         traceId,
         ...(nativeControlConnector ? { nativeConnector: true } : {}),
+        ...(parsed.options.webSearch ? { webSearch: true } : {}),
         ...(parsed._compactionRequest ? { compaction: true } : {}),
         onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
         onCommentary: emitCommentary,

@@ -27,6 +27,7 @@ interface RunMessage {
     reasoning?: string;
     capabilities: ChatGptWebCapabilities;
     nativeConnector?: boolean;
+    webSearch?: boolean;
     resumeAvailable?: boolean;
     retainConversation?: boolean;
     requireRetainedConversation?: boolean;
@@ -149,6 +150,9 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.nativeConnector !== undefined && typeof message.turn.nativeConnector !== "boolean") {
     throw new Error("Browser helper Native2 connector flag is invalid");
   }
+  if (message.turn.webSearch !== undefined && typeof message.turn.webSearch !== "boolean") {
+    throw new Error("Browser helper web search flag is invalid");
+  }
   if (message.turn.retainConversation !== undefined && typeof message.turn.retainConversation !== "boolean") {
     throw new Error("Browser helper conversation retention flag is invalid");
   }
@@ -200,6 +204,7 @@ async function run(message: RunMessage): Promise<void> {
     reasoning: message.turn.reasoning,
     capabilities: message.turn.capabilities,
     ...(message.turn.nativeConnector ? { nativeConnector: true } : {}),
+    ...(message.turn.webSearch ? { webSearch: true } : {}),
     prepare: prepareSelected,
     ...(message.turn.resumeAvailable ? { prepareResume: prepareSelected } : {}),
     ...(message.turn.retainConversation ? { retainConversation: true } : {}),

@@ -121,6 +121,18 @@ export function createChatGptWebAdapter(
         ? { localTools: true }
         : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
       if (toolPolicy.requireTool && !mode.localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
+      // The Web search hint is a composer pill inserted before the prompt. It is proven only on the
+      // browser-only attachment path; turns that attach the Codex connector, and manual Zero Risk
+      // turns, reject the flag explicitly rather than dropping the requested search.
+      const connectorTurn = manualRequest
+        || mode.localTools
+        || (useEnhancedWebSessionMode && configuredCapabilities.localToolsEnabled);
+      if (parsed.options.webSearch && connectorTurn) {
+        throw new ChatGptWebAdapterError(
+          "Codex web search (--search) is applied only on browser-only ChatGPT Web turns without the Codex connector; disable --search for this route.",
+          { status: 400, errorType: "invalid_request_error", code: "web_search_requires_browser_only_turn", retryable: false },
+        );
+      }
       const structuredOutputValidator = parsed._compactionRequest
         ? undefined
         : createChatGptStructuredOutputValidator(parsed.options.outputFormat);

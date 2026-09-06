@@ -99,6 +99,16 @@ function mapToolChoice(value: unknown): CodexRequestOptions["toolChoice"] {
   return undefined;
 }
 
+/**
+ * Codex `--search` declares the OpenAI-hosted Responses `web_search` tool. A routed chat model cannot
+ * execute it, so it never becomes a function tool; the ChatGPT Web adapter instead selects ChatGPT's
+ * own Web search hint for the browser turn or rejects the request explicitly.
+ */
+function requestsHostedWebSearch(tools: unknown[] | undefined): boolean {
+  return Array.isArray(tools) && tools.some(tool => isObj(tool)
+    && (tool.type === "web_search" || tool.type === "web_search_preview"));
+}
+
 function allowedToolName(tool: unknown): string | undefined {
   if (!isObj(tool)) return undefined;
   if (typeof tool.name === "string" && tool.name.length > 0) return tool.name;
@@ -216,7 +226,8 @@ function buildTools(tools: unknown[] | undefined): CodexTool[] | undefined {
       pushFn(t);
     }
     // Only the OpenAI-hosted server-side tools (web_search, image_generation) are intentionally
-    // dropped — they're executed by OpenAI and can't be relayed to a routed chat model.
+    // dropped — they're executed by OpenAI and can't be relayed to a routed chat model. A hosted
+    // web_search request is still recorded as `options.webSearch` (see requestsHostedWebSearch).
   }
   return out.length > 0 ? out : undefined;
 }
@@ -607,6 +618,9 @@ export function parseRequest(body: unknown): CodexParsedRequest {
   const tc = mapToolChoice(data.tool_choice);
   if (tc !== undefined) options.toolChoice = tc;
   if (data.parallel_tool_calls !== undefined) options.parallelToolCalls = data.parallel_tool_calls;
+  if (requestsHostedWebSearch(data.tools as unknown[] | undefined) || requestsHostedWebSearch(loadedToolSpecs)) {
+    options.webSearch = true;
+  }
   // Upstream codex-rs converts "ultra" to "max" at the inference boundary (core/src/client.rs
   // `reasoning_effort_for_request`), so current clients never send it — but a catalog that
   // advertises ultra plus an older/direct caller can. Degrade it to max like upstream instead of

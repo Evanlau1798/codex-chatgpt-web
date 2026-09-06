@@ -170,6 +170,8 @@ export interface CodexRequestOptions {
   stopSequences?: string[];
   toolChoice?: CodexToolChoice;
   parallelToolCalls?: boolean;
+  /** Codex enabled the hosted Responses `web_search` tool (`codex --search`). Routed adapters map it to their own search affordance or reject it explicitly. */
+  webSearch?: boolean;
   reasoning?: string;
   hideThinkingSummary?: boolean;
   serviceTier?: string;
