@@ -112,6 +112,7 @@ test("refuses to remove a modified or duplicated managed hook", () => {
   )).toThrow("changed after setup");
   for (const extension of [
     '\n[[hooks.Interrupt.hooks]]\ntype = "command"\ncommand = "unexpected-command"\n',
+    '\n[[hooks.Interrupt]]\n',
     `\n[hooks.state.${JSON.stringify(installed.installed.stateKey)}.unexpected]\nvalue = true\n`,
   ]) {
     expect(() => restoreCodexInterruptHook(
@@ -151,5 +152,31 @@ test("preserves native TOML editor tables inserted before the trailing hook comm
     expect(() => restoreCodexInterruptHook(
       edited.replace("timeout = 3", "timeout = 2"), installed.installed,
     )).toThrow("changed after setup");
+  }
+});
+
+test("preserves native model availability state inserted before the hook trust table", () => {
+  const configPath = "C:\\Users\\test\\.codex\\config.toml";
+  for (const ending of ["\n", "\r\n"]) {
+    const original = `model = "gpt-5.6-sol"${ending}`;
+    const installed = installCodexInterruptHookCommand(
+      original,
+      configPath,
+      "C:\\runtime\\codex-interrupt-hook.exe",
+    );
+    const stateTable = `[hooks.state.${JSON.stringify(installed.installed.stateKey)}]`;
+    const inserted = `[tui.model_availability_nux]${ending}gpt-6-astra = 4${ending}${ending}`;
+    const edited = installed.text.replace(stateTable, inserted + stateTable);
+
+    verifyCodexInterruptHook(edited, installed.installed);
+    const restored = restoreCodexInterruptHook(edited, installed.installed);
+    expect(restored).toBe(original + inserted);
+    const upgraded = installCodexInterruptHookCommand(
+      restored,
+      configPath,
+      "C:\\packaged\\codex-interrupt-hook.exe",
+    );
+    verifyCodexInterruptHook(upgraded.text, upgraded.installed);
+    expect(upgraded.text).toContain(inserted);
   }
 });

@@ -170,14 +170,24 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   const marker = installed.fragment.indexOf(MANAGED_INTERRUPT_HOOK_END);
   if (marker < 0) throw new Error("Codex interrupt lifecycle hook journal fragment is invalid");
   const ownedPrefix = installed.fragment.slice(0, marker);
-  // Native config writes normalize CRLF to LF; commands and owned fields must still match exactly.
-  const pattern = new RegExp(hookTextPattern(ownedPrefix), "g");
+  const stateTable = `[hooks.state.${JSON.stringify(installed.stateKey)}]`;
+  const stateOffset = ownedPrefix.indexOf(stateTable);
+  if (stateOffset < 0) throw new Error("Codex interrupt lifecycle hook journal fragment is invalid");
+  const hookPrefix = ownedPrefix.slice(0, stateOffset);
+  const stateSuffix = ownedPrefix.slice(stateOffset);
+  // Native config may insert unrelated tables before the hook trust table and normalizes CRLF to LF.
+  // The executable hook and trust state are compared semantically below and must still match exactly.
+  const pattern = new RegExp(
+    `${hookTextPattern(hookPrefix)}([\\s\\S]*?)${hookTextPattern(stateSuffix)}`,
+    "g",
+  );
   const match = pattern.exec(text);
   if (!match || pattern.exec(text)) {
     throw new Error("Codex interrupt lifecycle hook changed after setup; refusing to overwrite it");
   }
   const first = match.index;
   const ownedEnd = first + match[0].length;
+  const interstitialConfig = match[1] ?? "";
   if (interruptGroupCount(text.slice(0, first)) !== installed.groupIndex) {
     throw new Error("Codex interrupt lifecycle hook order changed after setup; refusing to overwrite it");
   }
@@ -189,25 +199,27 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   if (codexInterruptHookHash(installed.command) !== installed.trustedHash) {
     throw new Error("Codex interrupt lifecycle hook journal hash is invalid");
   }
-  // Codex's TOML editor inserts new tables before trailing comments. The end marker can therefore
-  // move past unrelated config even though the owned hook fields remain unchanged.
-  const appendedConfig = text.slice(ownedEnd, endMarker);
-  const firstAssignment = appendedConfig.split(/\r\n|\n|\r/)
-    .map(line => line.trim()).find(line => line && !line.startsWith("#"));
-  if (firstAssignment && !/^\[\[?.+\]\]?(?:\s*#.*)?$/.test(firstAssignment)) {
-    throw new Error("Codex interrupt lifecycle hook changed after setup; refusing to overwrite it");
+  const trailingConfig = text.slice(ownedEnd, endMarker);
+  const insertedConfig = [interstitialConfig, trailingConfig];
+  for (const fragment of insertedConfig) {
+    const firstAssignment = fragment.split(/\r\n|\n|\r/)
+      .map(line => line.trim()).find(line => line && !line.startsWith("#"));
+    if (firstAssignment && !/^\[\[?.+\]\]?(?:\s*#.*)?$/.test(firstAssignment)) {
+      throw new Error("Codex interrupt lifecycle hook changed after setup; refusing to overwrite it");
+    }
   }
-  if (firstAssignment) {
-    // A later table can also extend the owned hook or trust state. Compare those exact
-    // definitions with Bun's TOML parser before treating the inserted tables as unrelated.
+  if (insertedConfig.some(fragment => fragment.trim())) {
+    // Inserted tables can also extend the owned hook or trust state. Compare those exact
+    // definitions with Bun's TOML parser before treating the tables as unrelated.
     const ownedDefinitions = (fragment: string): string => {
       const { hooks } = Bun.TOML.parse(fragment) as {
         hooks: { Interrupt: unknown[]; state: Record<string, unknown> };
       };
-      return JSON.stringify(canonicalJson([hooks.Interrupt[0], hooks.state[installed.stateKey]]));
+      return JSON.stringify(canonicalJson([hooks.Interrupt, hooks.state[installed.stateKey]]));
     };
     try {
-      if (ownedDefinitions(ownedPrefix) !== ownedDefinitions(ownedPrefix + appendedConfig)) {
+      const actualPrefix = hookPrefix + interstitialConfig + stateSuffix + trailingConfig;
+      if (ownedDefinitions(ownedPrefix) !== ownedDefinitions(actualPrefix)) {
         throw new Error("Modified owned definitions");
       }
     } catch {
@@ -217,7 +229,7 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   const end = endMarker + MANAGED_INTERRUPT_HOOK_END.length;
   const trailing = installed.fragment.slice(marker + MANAGED_INTERRUPT_HOOK_END.length);
   const trailingLength = new RegExp("^" + hookTextPattern(trailing)).exec(text.slice(end))?.[0].length ?? 0;
-  return { start: first, end: end + trailingLength, appendedConfig };
+  return { start: first, end: end + trailingLength, appendedConfig: insertedConfig.join("") };
 }
 
 export function verifyCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): void {
