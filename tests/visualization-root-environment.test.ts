@@ -6,7 +6,7 @@ import type { CodexParsedRequest } from "../src/types";
 
 const workspace = resolve(process.cwd());
 
-function requestWithVisualizationRoot(root: string): CodexParsedRequest {
+function requestWithVisualizationRoot(root: string, parentThreadId?: string): CodexParsedRequest {
   const environment = `<environment_context>
   <cwd>${workspace}</cwd>
   <filesystem><workspace_roots><root>${workspace}</root><root>${root}</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
@@ -14,6 +14,7 @@ function requestWithVisualizationRoot(root: string): CodexParsedRequest {
   const metadata = {
     thread_id: "thread_current",
     turn_id: "turn_current",
+    ...(parentThreadId ? { parent_thread_id: parentThreadId } : {}),
     sandbox: "none",
     workspaces: { [workspace]: { has_changes: true } },
   };
@@ -41,10 +42,15 @@ function requestWithVisualizationRoot(root: string): CodexParsedRequest {
           ...owned,
         },
         {
+          type: "message", id: "msg_assistant", role: "assistant",
+          content: [{ type: "output_text", text: "Working." }],
+          ...owned,
+        },
+        {
           type: "message",
-          id: "msg_skill",
+          id: "msg_steering",
           role: "user",
-          content: [{ type: "input_text", text: "<skill name=\"autopilot\">Use this skill.</skill>" }],
+          content: [{ type: "input_text", text: "Stop and review first." }],
           ...owned,
         },
       ],
@@ -52,13 +58,16 @@ function requestWithVisualizationRoot(root: string): CodexParsedRequest {
   };
 }
 
-test("skill recovery trusts only the current thread visualization root", () => {
+test("steering trusts only the current or parent thread visualization root", () => {
   const codexHome = resolve(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"));
   const current = join(codexHome, "visualizations", "2026", "08", "28", "thread_current");
+  const parent = join(codexHome, "visualizations", "2026", "08", "28", "thread_parent");
   const other = join(codexHome, "visualizations", "2026", "08", "28", "thread_other");
 
   expect(extractChatGptTurnEnvironment(requestWithVisualizationRoot(current)).roots)
     .toEqual([workspace, current]);
+  expect(extractChatGptTurnEnvironment(requestWithVisualizationRoot(parent, "thread_parent")).roots)
+    .toEqual([workspace, parent]);
   expect(() => extractChatGptTurnEnvironment(requestWithVisualizationRoot(other)))
     .toThrow("missing cwd");
 });
