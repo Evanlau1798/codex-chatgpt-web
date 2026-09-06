@@ -318,9 +318,11 @@ export function createChatGptWebAdapter(
             for (;;) {
               let next: Awaited<typeof browserOutcome | NonNullable<typeof nextTools> | typeof nextTrace | typeof nextText>;
               try {
-                next = await withAbort(withStallTimeout(Promise.race([
-                  ...(nextTools ? [nextTools] : []), browserOutcome, nextTrace, nextText,
-                ])), incoming.abortSignal);
+                next = await withAbort(withStallTimeout(
+                  Promise.race([...(nextTools ? [nextTools] : []), browserOutcome, nextTrace, nextText]),
+                  undefined,
+                  provider.chatgptWeb?.disableSurfaceStallRecovery,
+                ), incoming.abortSignal);
               } catch (error) {
                 recoveredResultCount = surfaceRecovery.recoverableResultCount(error, session, parsed, surfaceRecoveries, incoming.abortSignal);
                 if (recoveredResultCount !== undefined) return;

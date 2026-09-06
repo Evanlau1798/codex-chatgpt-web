@@ -293,6 +293,12 @@ test("launcher browser ownership is explicit in provider configuration", () => {
   });
 });
 
+test("experimental no-auto-compact disables browser surface stall recovery", () => {
+  const config = defaultConfig("full");
+  config.experimentalNoAutoCompact = true;
+  expect(providerConfig(config).chatgptWeb?.disableSurfaceStallRecovery).toBe(true);
+});
+
 test("Luna-only provider configuration exposes only the Luna backend", () => {
   const config = defaultConfig("browser-only");
   config.solAvailable = false;

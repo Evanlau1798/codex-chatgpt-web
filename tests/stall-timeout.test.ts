@@ -14,6 +14,14 @@ describe("withStallTimeout", () => {
   test("returns work completed before the deadline", async () => {
     await expect(withStallTimeout(Promise.resolve("done"), 10)).resolves.toBe("done");
   });
+
+  test("can leave an experimental wait unbounded", async () => {
+    await expect(withStallTimeout(
+      new Promise<string>(resolve => setTimeout(() => resolve("done"), 20)),
+      10,
+      true,
+    )).resolves.toBe("done");
+  });
 });
 
 test("a DOM progress signal wakes the trace wait without emitting synthetic text", async () => {
