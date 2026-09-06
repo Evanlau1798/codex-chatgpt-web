@@ -158,8 +158,71 @@ test("restores an incident-sized Markdown prompt without bulk Lexical replacemen
     expect(composerElement.lastChild?.textContent).toBe(prompt);
     expect(maxReplacementChars).toBe(1);
     expect(remounted).toBeTrue();
-    expect(evaluateCalls).toBe(Math.ceil(guarded.count / CHATGPT_PROMPT_MARKDOWN_RESTORATION_BATCH_SIZE) + 1);
+    expect(evaluateCalls).toBe(Math.ceil(guarded.count / CHATGPT_PROMPT_MARKDOWN_RESTORATION_BATCH_SIZE) * 2);
     expect(Math.max(...batchOperations)).toBe(CHATGPT_PROMPT_MARKDOWN_RESTORATION_BATCH_SIZE);
+  } finally {
+    Object.assign(globalThis, {
+      window: previousWindow,
+      document: previousDocument,
+      NodeFilter: previousNodeFilter,
+    });
+  }
+});
+
+test("restores exact markers after Lexical asynchronously remounts an edited node", async () => {
+  const { createDocument } = require("@mixmark-io/domino") as {
+    createDocument: (html: string) => Document;
+  };
+  const prompt = "`".repeat(CHATGPT_PROMPT_MARKDOWN_RESTORATION_BATCH_SIZE + 2);
+  const guarded = guardChatGptPromptMarkdown(prompt)!;
+  const document = createDocument('<div id="composer"></div>') as Document & {
+    createRange: () => Range;
+    execCommand: (command: string, showUi: boolean, value: string) => boolean;
+  };
+  const composerElement = document.getElementById("composer")!;
+  composerElement.appendChild(document.createTextNode(guarded.text));
+  let selected: { node?: Text; start?: number; end?: number } = {};
+  let remountScheduled = false;
+  document.createRange = () => ({
+    setStart: (node: Text, offset: number) => { selected = { node, start: offset }; },
+    setEnd: (node: Text, offset: number) => { selected.end = offset; },
+  } as unknown as Range);
+  document.execCommand = (_command, _showUi, value) => {
+    const node = selected.node;
+    if (!node || value?.length !== 1) return false;
+    node.data = `${node.data.slice(0, selected.start)}${value}${node.data.slice(selected.end)}`;
+    if (!remountScheduled) {
+      remountScheduled = true;
+      const snapshot = node.cloneNode(true);
+      setTimeout(() => {
+        if (node.parentNode === composerElement) composerElement.replaceChild(snapshot, node);
+      }, 0);
+    }
+    return true;
+  };
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousNodeFilter = globalThis.NodeFilter;
+  Object.assign(globalThis, {
+    document,
+    NodeFilter: { SHOW_TEXT: 4 },
+    window: { getSelection: () => ({ removeAllRanges: () => {}, addRange: () => {} }) },
+  });
+  const composer = {
+    focus: async () => {},
+    evaluate: async (callback: (element: HTMLElement, input: unknown) => unknown, input: unknown) => (
+      await callback(composerElement, input)
+    ),
+  };
+
+  try {
+    await expect(restoreChatGptPromptMarkdown(
+      composer as never,
+      guarded.replacements,
+      guarded.count,
+    )).resolves.toBeTrue();
+    expect(remountScheduled).toBeTrue();
+    expect(composerElement.textContent).toBe(prompt);
   } finally {
     Object.assign(globalThis, {
       window: previousWindow,

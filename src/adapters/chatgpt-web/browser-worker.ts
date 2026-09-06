@@ -1496,6 +1496,7 @@ export class ChatGptBrowserWorker {
     onSendActivated?: () => void | Promise<void>,
     externalProgress?: ChatGptTurnProgressReader,
     recoverObservation?: ChatGptObservationRecovery,
+    expectedPrompt?: string,
   ): Promise<ChatGptSubmissionEvidence> {
     const composer = await this.activeComposer(page);
     const sendButton = composer
@@ -1515,6 +1516,9 @@ export class ChatGptBrowserWorker {
         throw new Error("ChatGPT send button remained disabled after the complete prompt was attached");
       }
       await settleChatGptUi();
+    }
+    if (expectedPrompt !== undefined) {
+      await this.assertPromptAttached(page, expectedPrompt, abortSignal);
     }
     await captureDiagnostic?.("send-ready");
     const initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0;
@@ -3107,6 +3111,7 @@ export class ChatGptBrowserWorker {
               undefined,
               undefined,
               toolTurnObservationRecovery,
+              stage.text,
             ),
             turn.abortSignal,
           );
@@ -3271,6 +3276,7 @@ export class ChatGptBrowserWorker {
           }
           await settleChatGptUi();
         }
+        await this.assertPromptAttached(page, responsePrompt, stageSignal);
         await diagnostics.capture(page, "send-ready");
         const initialToolBatchRevision = turn.externalProgress?.snapshot().lastToolBatchRevision ?? 0;
         await turn.onSendActivated?.();

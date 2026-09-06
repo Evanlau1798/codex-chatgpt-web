@@ -595,7 +595,7 @@ test("Markdown shortcut delimiters are restored right-to-left after all bounded 
     focus: async () => {},
     evaluate: async (_callback: unknown, value: unknown) => {
       restorations.push(value);
-      return restorations.length === 1 ? 4 : true;
+      return restorations.length === 1 ? 4 : 0;
     },
   };
   const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
@@ -641,7 +641,10 @@ test("prompt insertion avoids a native edit boundary inside a text token", async
   const composer = {
     focus: async () => {},
     evaluate: async (_callback: unknown, input: unknown) => {
-      if (Array.isArray(input)) return input.every(marker => !attached.includes(String(marker)));
+      if (Array.isArray(input)) return input.reduce(
+        (count, marker) => count + [...attached].filter(value => value === marker).length,
+        0,
+      );
       const replacements = (input as { replacements: Array<{ marker: string; value: string }> }).replacements;
       for (const replacement of replacements) attached = attached.replace(replacement.marker, replacement.value);
       return replacements.length;
@@ -789,7 +792,7 @@ test("the real compaction envelope survives simulated caret drift at every bound
   const composer = {
     focus: async () => {},
     evaluate: async (_callback: unknown, value: unknown) => {
-      if (Array.isArray(value)) return true;
+      if (Array.isArray(value)) return 0;
       attached = compiled.text;
       return (value as { replacements: Array<{ count: number }> }).replacements
         .reduce((sum, replacement) => sum + replacement.count, 0);

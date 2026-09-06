@@ -49,6 +49,11 @@ test.each([[true, false, true], [false, false, true], [true, true, true], [true,
       expect(localTools).toBe(tools);
       actions.push(localTools ? "attach:tools" : "attach:plain");
     },
+    assertPromptAttached: async (_page: unknown, text: string) => {
+      if (multipart) expect(text.endsWith("Summarize")).toBeTrue();
+      else expect(text).toBe("Summarize the context");
+      actions.push("verify");
+    },
     attachFiles: async () => { actions.push("files"); },
     sendAttachedPrompt: async (...args: unknown[]) => {
       // Context ingestion cannot mistake tool activity for acknowledgement of a part.
@@ -91,7 +96,7 @@ test.each([[true, false, true], [false, false, true], [true, true, true], [true,
         "attach:plain", "send", "observe", "ack",
       ] : []),
       "effort:high",
-      tools ? "attach:tools" : "attach:plain", "files", "send", "observe",
+      tools ? "attach:tools" : "attach:plain", "files", "verify", "send", "observe",
     ]);
     expect(sendBudgets).toEqual(multipart ? [180_000, 180_000, 180_000] : [60_000]);
     expect(released).toBe(true);

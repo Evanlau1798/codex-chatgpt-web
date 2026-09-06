@@ -18,7 +18,10 @@ test("native prompt chunks keep boundary whitespace in the preceding edit", asyn
   const composer = {
     focus: async () => {},
     evaluate: async (_callback: unknown, input: unknown) => {
-      if (Array.isArray(input)) return input.every(marker => !attached.includes(String(marker)));
+      if (Array.isArray(input)) return input.reduce(
+        (count, marker) => count + [...attached].filter(value => value === marker).length,
+        0,
+      );
       const replacements = (input as { replacements: Array<{ marker: string; value: string }> }).replacements;
       for (const replacement of replacements) {
         attached = attached.replace(replacement.marker, replacement.value);
