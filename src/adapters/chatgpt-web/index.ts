@@ -321,7 +321,7 @@ export function createChatGptWebAdapter(
                 next = await withAbort(withStallTimeout(
                   Promise.race([...(nextTools ? [nextTools] : []), browserOutcome, nextTrace, nextText]),
                   undefined,
-                  provider.chatgptWeb?.disableSurfaceStallRecovery,
+                  provider.chatgptWeb?.experimentalNoAutoCompact,
                 ), incoming.abortSignal);
               } catch (error) {
                 recoveredResultCount = surfaceRecovery.recoverableResultCount(error, session, parsed, surfaceRecoveries, incoming.abortSignal);

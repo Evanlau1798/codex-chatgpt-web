@@ -52,7 +52,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
         config.useEnhancedWebSessionMode, config.experimentalBiggerContext,
       ),
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
-      ...(config.experimentalNoAutoCompact ? { disableSurfaceStallRecovery: true } : {}),
+      ...(config.experimentalNoAutoCompact ? { experimentalNoAutoCompact: true } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,
     },
   };

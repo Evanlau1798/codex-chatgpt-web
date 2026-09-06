@@ -7,6 +7,7 @@ import {
   throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
 } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptBrowserObservationTimeoutError } from "../src/adapters/chatgpt-web/browser-observation";
+import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
 import { activateChatGptSendControl, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
@@ -260,6 +261,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
   const next = surface(async () => ({ count: 1, lastId: "conversation-turn-new" }));
   const events: string[] = [];
   const instance = Object.assign(worker(), {
+    config: { experimentalNoAutoCompact: false },
     activeComposer: async () => ({ locator: () => ({ getByTestId: () => ({
       waitFor: async () => {}, isEnabled: async () => true, press: async (_key: string, options: { noWaitAfter?: boolean; timeout?: number; signal?: AbortSignal }) => {
         expect(options).toMatchObject({ noWaitAfter: true, timeout: 0 });
@@ -299,6 +301,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
     CHATGPT_SEND_ENABLE_GRACE_MS: 5_000,
     CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR,
     CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, chatGptSuspensionClock,
+    chatGptPromptAttachmentTimeoutMs,
     throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
     activateChatGptSendControl, readChatGptAssistantTurnState,
   };

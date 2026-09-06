@@ -301,8 +301,8 @@ export interface CodexProviderConfig {
      * genuinely unresponsive upstream for longer. Defaults to DEFAULT_STALL_TIMEOUT_SEC.
      */
     stallTimeoutSec?: number;
-    /** Experimental no-context mode keeps waiting while the owned browser surface remains alive. */
-    disableSurfaceStallRecovery?: boolean;
+    /** Experimental no-context mode disables compaction and scales browser waits for its full prompt. */
+    experimentalNoAutoCompact?: boolean;
     /** Keep the single controlled browser visible. */
     headed?: boolean;
     /** Attach the turn-bound Codex MCP capability for every connector-capable Web model. */
