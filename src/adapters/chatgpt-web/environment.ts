@@ -376,20 +376,23 @@ function environmentMatchesCanonicalMetadata(
     normalizedMetadataRoots.length === 0
     || declaredRoots.some(root => (
       !normalizedMetadataRoots.some(metadataRoot => matchesPath(metadataRoot, root))
-      && !isCurrentThreadVisualizationRoot(root, metadata)
+      && !isCurrentOrParentThreadVisualizationRoot(root, metadata)
     ))
   )) return false;
   if (!declaredRoots.some(root => matchesPath(root, cwd))) return false;
   return sandboxMetadataMatchesEnvironment(metadataSandboxValue, environmentText);
 }
 
-function isCurrentThreadVisualizationRoot(path: string, metadata: Record<string, unknown>): boolean {
-  const threadId = typeof metadata.thread_id === "string" ? metadata.thread_id.trim() : "";
-  if (!threadId) return false;
+function isCurrentOrParentThreadVisualizationRoot(path: string, metadata: Record<string, unknown>): boolean {
+  const threadIds = [metadata.thread_id, metadata.parent_thread_id]
+    .filter((value): value is string => typeof value === "string")
+    .map(value => process.platform === "win32" ? value.trim().toLowerCase() : value.trim())
+    .filter(Boolean);
+  if (threadIds.length === 0) return false;
 
   // Codex advertises its task-scoped visualization output directory in workspace_roots but omits
   // it from Git-oriented turn metadata. Authenticate that one auxiliary shape by both its private
-  // Codex home and current thread id; arbitrary roots and another task's output remain untrusted.
+  // Codex home and current or parent thread id; arbitrary roots and unrelated output remain untrusted.
   const configuredCodexHome = process.env.CODEX_HOME?.trim();
   const codexHome = resolve(configuredCodexHome || join(homedir(), ".codex"));
   const visualizationBase = pathIdentity(join(codexHome, "visualizations"));
@@ -397,12 +400,11 @@ function isCurrentThreadVisualizationRoot(path: string, metadata: Record<string,
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return false;
 
   const parts = rel.split(sep);
-  const expectedThreadId = process.platform === "win32" ? threadId.toLowerCase() : threadId;
   return parts.length === 4
     && /^\d{4}$/.test(parts[0]!)
     && /^(?:0[1-9]|1[0-2])$/.test(parts[1]!)
     && /^(?:0[1-9]|[12]\d|3[01])$/.test(parts[2]!)
-    && parts[3] === expectedThreadId;
+    && threadIds.includes(parts[3]!);
 }
 
 function canonicalMetadataEnvironmentBeforeUser(

@@ -33,14 +33,18 @@ const readOnlyProfileXml = `<permission_profile type="managed"><file_system type
 const externalProfileXml = `<permission_profile type="external"><file_system type="external" /></permission_profile>`;
 
 function currentWire(
-  options: { workspace?: string; sandbox?: string; includeIds?: boolean; environmentXml?: string } = {},
+  options: {
+    workspace?: string; sandbox?: string; includeIds?: boolean; environmentXml?: string;
+    threadId?: string; parentThreadId?: string;
+  } = {},
 ): CodexParsedRequest {
   const workspace = options.workspace ?? root;
   const sandbox = options.sandbox ?? "none";
   const includeIds = options.includeIds ?? true;
   const envXml = options.environmentXml ?? environmentXml;
   const turnMetadata = {
-    thread_id: "thread_current",
+    thread_id: options.threadId ?? "thread_current",
+    ...(options.parentThreadId ? { parent_thread_id: options.parentThreadId } : {}),
     turn_id: "turn_current",
     sandbox,
     workspaces: { [workspace]: { has_changes: true } },
@@ -319,6 +323,38 @@ describe("trusted current Codex environment envelope", () => {
     });
   });
 
+  test("steering accepts a spawned task's parent visualization root", () => {
+    const codexHome = resolve(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"));
+    const visualizationRoot = join(codexHome, "visualizations", "2026", "08", "25", "thread_parent");
+    const projectEnvironment = `<environment_context>
+  <cwd>${root}</cwd>
+  <filesystem><workspace_roots><root>${root}</root><root>${visualizationRoot}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem>
+</environment_context>`;
+    const request = currentWire({
+      environmentXml: projectEnvironment,
+      threadId: "thread_child",
+      parentThreadId: "thread_parent",
+    });
+    const body = request._rawBody as { input: Array<Record<string, unknown>> };
+    for (const item of body.input) {
+      item.internal_chat_message_metadata_passthrough = { turn_id: "turn_current" };
+    }
+    body.input.push(
+      {
+        type: "message", id: "msg_assistant", role: "assistant",
+        content: [{ type: "output_text", text: "Working." }],
+        internal_chat_message_metadata_passthrough: { turn_id: "turn_current" },
+      },
+      {
+        type: "message", id: "msg_steering", role: "user",
+        content: [{ type: "input_text", text: "Stop and review first." }],
+        internal_chat_message_metadata_passthrough: { turn_id: "turn_current" },
+      },
+    );
+
+    expect(extractChatGptTurnEnvironment(request).roots).toEqual([root, visualizationRoot]);
+  });
+
   test("skill recovery rejects another task's Codex visualization root", () => {
     const codexHome = resolve(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"));
     const visualizationRoot = join(codexHome, "visualizations", "2026", "08", "25", "thread_other");
@@ -326,7 +362,7 @@ describe("trusted current Codex environment envelope", () => {
   <cwd>${root}</cwd>
   <filesystem><workspace_roots><root>${root}</root><root>${visualizationRoot}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem>
 </environment_context>`;
-    const request = currentWire({ environmentXml: injectedEnvironment });
+    const request = currentWire({ environmentXml: injectedEnvironment, parentThreadId: "thread_parent" });
     const body = request._rawBody as { input: Array<Record<string, unknown>> };
     for (const item of body.input) {
       item.internal_chat_message_metadata_passthrough = { turn_id: "turn_current" };
