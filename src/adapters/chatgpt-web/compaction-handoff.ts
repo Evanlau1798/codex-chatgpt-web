@@ -7,7 +7,7 @@ import type { ChatGptTurnSession } from "./turn-execution";
 import { activeCompactionToolResultInstruction } from "./native-compaction-control";
 
 export const LATEST_USER_PROMPT_MARKER = "CODEX_LATEST_USER_PROMPT_JSON";
-export const MAX_COMPACTION_HANDOFF_TIMEOUT_MS = 5 * 60_000;
+export const MAX_COMPACTION_HANDOFF_TIMEOUT_MS = 15 * 60_000;
 
 function brokerContent(content: string | CodexContentPart[]): unknown[] {
   if (typeof content === "string") return [{ type: "text", text: content }];

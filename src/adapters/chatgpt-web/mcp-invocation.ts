@@ -1,7 +1,8 @@
 import type { ChatGptTurnEnvironment } from "./environment";
 import { callTurnBroker, TurnBrokerTimeoutError, type BrokerToolResult } from "./turn-broker";
 
-export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
+// Connector long-polls may legitimately wait five minutes; keep one minute for transport cleanup.
+export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 6 * 60_000;
 
 export function chatGptMcpInvocationTimeout(
   environment: ChatGptTurnEnvironment & { expiresAt?: number },
