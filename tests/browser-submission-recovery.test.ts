@@ -7,6 +7,7 @@ import {
   throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
 } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptBrowserObservationTimeoutError } from "../src/adapters/chatgpt-web/browser-observation";
+import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
 import { activateChatGptSendControl, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
@@ -17,9 +18,11 @@ type State = { count: number; lastId?: string };
 type Baseline = { userTurns: Locator; responseTurns: Locator; initialUserTurnCount: number; initialResponseTurnCount: number };
 interface Worker {
   activeComposer(page: Page): Promise<unknown>;
+  assertPromptAttached(page: Page, prompt: string, signal?: AbortSignal): Promise<void>;
   waitForTurnDomMutation(page: Page): Promise<void>;
   sendAttachedPrompt(page: Page, baseline: Baseline, initial: State, capture?: unknown,
-    signal?: AbortSignal, activated?: () => void, progress?: ChatGptExternalTurnProgress, recover?: Recovery): Promise<string>;
+    signal?: AbortSignal, activated?: () => void, progress?: ChatGptExternalTurnProgress, recover?: Recovery,
+    expectedPrompt?: string): Promise<string>;
   waitForSubmissionAccepted(page: Page, users: Locator, responses: Locator, response: Locator,
     userCount: number, initial: State, signal?: AbortSignal, progress?: ChatGptExternalTurnProgress,
     initialRevision?: number, recover?: Recovery): Promise<string>;
@@ -88,6 +91,33 @@ test("accepted send rebinds observation once without sending the prompt twice", 
     });
   expect(evidence).toBe("assistant_turn");
   expect([presses, activated, recoveries]).toEqual([1, 1, 1]);
+});
+
+test("send revalidates the exact prompt before activation", async () => {
+  const fixture = surface(async () => ({ count: 2, lastId: "conversation-turn-new" }));
+  const instance = worker();
+  let presses = 0;
+  let activated = 0;
+  instance.activeComposer = async () => ({ locator: () => ({ getByTestId: () => ({
+    waitFor: async () => {}, isEnabled: async () => true, press: async () => { presses++; },
+  }) }) });
+  instance.assertPromptAttached = async (_page, prompt) => {
+    expect(prompt).toBe("literal prompt");
+    throw new Error("composer changed after attachment");
+  };
+
+  await expect(instance.sendAttachedPrompt(
+    fixture.page,
+    fixture.baseline,
+    initial,
+    undefined,
+    undefined,
+    () => { activated++; },
+    undefined,
+    undefined,
+    "literal prompt",
+  )).rejects.toThrow("composer changed after attachment");
+  expect([presses, activated]).toEqual([0, 0]);
 });
 
 test("submission recovery is bounded and propagates ordinary failures without retry", async () => {
@@ -260,6 +290,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
   const next = surface(async () => ({ count: 1, lastId: "conversation-turn-new" }));
   const events: string[] = [];
   const instance = Object.assign(worker(), {
+    config: { experimentalNoAutoCompact: false },
     activeComposer: async () => ({ locator: () => ({ getByTestId: () => ({
       waitFor: async () => {}, isEnabled: async () => true, press: async (_key: string, options: { noWaitAfter?: boolean; timeout?: number; signal?: AbortSignal }) => {
         expect(options).toMatchObject({ noWaitAfter: true, timeout: 0 });
@@ -268,6 +299,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
       },
     }) }) }),
     attachPrompt: async () => { events.push("attach"); },
+    assertPromptAttached: async (_page: Page, prompt: string) => { events.push(`verify:${prompt}`); },
     waitForMultipartAcknowledgement: async (page: Page, turn: Locator) => {
       expect(page).toBe(next.page);
       expect(turn).toBe(next.assistant);
@@ -292,6 +324,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
       onSubmitted: () => { events.push("submitted"); },
     },
     prepared: { multipart: lane === "multipart" ? { parts: ["part"] } : undefined },
+    responsePrompt: "final prompt",
     multipartTransport: { stages: [{ text: "stage" }] },
     deadline: undefined,
     diagnostics: { capture: async () => {} },
@@ -299,6 +332,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
     CHATGPT_SEND_ENABLE_GRACE_MS: 5_000,
     CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR,
     CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, chatGptSuspensionClock,
+    chatGptPromptAttachmentTimeoutMs,
     throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
     activateChatGptSendControl, readChatGptAssistantTurnState,
   };
@@ -325,9 +359,9 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
   if (lane === "final") {
     expect(result.responseTurns).toBe(next.responses);
     expect(result.responseTurn).toBe(next.assistant);
-    expect(events).toEqual(["activated", "send", "rebind", "submitted", "retry-submitted"]);
+    expect(events).toEqual(["verify:final prompt", "activated", "send", "rebind", "submitted", "retry-submitted"]);
   } else {
-    expect(events).toEqual(["attach", "send", "rebind", "ack"]);
+    expect(events).toEqual(["attach", "verify:stage", "send", "rebind", "ack"]);
     expect(next.selected).toEqual(["conversation-turn-new"]);
   }
 });

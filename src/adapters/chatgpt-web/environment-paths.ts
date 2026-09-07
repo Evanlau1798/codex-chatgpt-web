@@ -84,9 +84,12 @@ export function uniqueAbsolutePaths(values: string[], field: string): string[] {
   return [...unique.values()];
 }
 
-export function isCurrentThreadVisualizationRoot(path: string, metadata: Record<string, unknown>): boolean {
-  const threadId = typeof metadata.thread_id === "string" ? metadata.thread_id.trim() : "";
-  if (!threadId) return false;
+export function isCurrentOrParentThreadVisualizationRoot(path: string, metadata: Record<string, unknown>): boolean {
+  const threadIds = [metadata.thread_id, metadata.parent_thread_id]
+    .filter((value): value is string => typeof value === "string")
+    .map(value => process.platform === "win32" ? value.trim().toLowerCase() : value.trim())
+    .filter(Boolean);
+  if (threadIds.length === 0) return false;
 
   const configuredCodexHome = process.env.CODEX_HOME?.trim();
   const base = pathIdentity(join(resolve(configuredCodexHome || join(homedir(), ".codex")), "visualizations"));
@@ -94,10 +97,9 @@ export function isCurrentThreadVisualizationRoot(path: string, metadata: Record<
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return false;
 
   const parts = rel.split(sep);
-  const expectedThreadId = process.platform === "win32" ? threadId.toLowerCase() : threadId;
   return parts.length === 4
     && /^\d{4}$/.test(parts[0]!)
     && /^(?:0[1-9]|1[0-2])$/.test(parts[1]!)
     && /^(?:0[1-9]|[12]\d|3[01])$/.test(parts[2]!)
-    && parts[3] === expectedThreadId;
+    && threadIds.includes(parts[3]!);
 }

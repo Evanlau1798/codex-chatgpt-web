@@ -10,6 +10,47 @@ import { chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey } from "..
 const model = "chatgpt-web/high";
 const summary = "The repository was inspected. Continue by implementing the bounded Web context contract.";
 
+test("rejects routed compaction without starting a handoff when the experiment disables it", async () => {
+  const config = Object.assign(defaultConfig("full"), { experimentalNoAutoCompact: true });
+  let adapterCreated = false;
+  const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model,
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Keep working" }] }],
+    }),
+  }), config, () => {
+    adapterCreated = true;
+    throw new Error("disabled compaction must not create an adapter");
+  });
+
+  expect(response.status).toBe(409);
+  expect(adapterCreated).toBeFalse();
+  expect(await response.json()).toMatchObject({
+    error: { type: "invalid_request_error", message: expect.stringContaining("disabled") },
+  });
+});
+
+test("rejects remote-v2 routed compaction when the experiment disables it", async () => {
+  const config = Object.assign(defaultConfig("full"), { experimentalNoAutoCompact: true });
+  let adapterCreated = false;
+  const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model, stream: false, input: [{ type: "compaction_trigger" }] }),
+  }), config, () => {
+    adapterCreated = true;
+    throw new Error("disabled remote-v2 compaction must not create an adapter");
+  });
+
+  expect(response.status).toBe(409);
+  expect(adapterCreated).toBeFalse();
+  expect(await response.json()).toMatchObject({
+    error: { type: "invalid_request_error", message: expect.stringContaining("disabled") },
+  });
+});
+
 function compactionAdapterFactory(
   seenProviders: CodexProviderConfig[] = [],
   emittedSummary = summary,

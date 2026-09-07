@@ -5,6 +5,8 @@ const path = require("node:path");
 
 const launcherRoot = path.resolve(__dirname, "..");
 const appSource = fs.readFileSync(path.join(launcherRoot, "src", "App.tsx"), "utf8");
+const settingsSource = fs.readFileSync(path.join(launcherRoot, "src", "settings-surface.tsx"), "utf8");
+const sharedSource = fs.readFileSync(path.join(launcherRoot, "src", "app-shared.tsx"), "utf8");
 const stylesSource = fs.readFileSync(path.join(launcherRoot, "src", "styles.css"), "utf8");
 const electronMain = fs.readFileSync(path.join(launcherRoot, "electron", "main.cjs"), "utf8");
 const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
@@ -39,7 +41,7 @@ test("closing the launcher follows the persisted background-runtime preference",
     electronMain,
     /if \(stateStore\.read\(\)\.keepRunningOnClose && tray\) window\.hide\(\);\s*else void requestQuit\(\);/,
   );
-  assert.match(appSource, /setPreference\("keepRunningOnClose", checked\)/);
+  assert.match(settingsSource, /setPreference\("keepRunningOnClose", checked\)/);
 });
 
 test("normal shutdown persists the ChatGPT session before closing browser views", () => {
@@ -81,14 +83,16 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
   assert.match(electronMain, /onboardingComplete:\s*true,[\s\S]*?autoStart:\s*false/);
   assert.match(appSource, /snapshot\.profile === "development"/);
   assert.match(appSource, /data-profile=\{snapshot\.profile\}/);
-  assert.match(appSource, /<SettingRow body=\{snapshot\.state\.browserInteractionMode === "manual" \? copy\.manualBiggerContextBody : copy\.biggerContextBody\} label=\{copy\.biggerContext\}>/);
-  assert.match(appSource, /api!\.setBiggerContext\(enabled\)/);
+  assert.match(settingsSource, /<SettingRow body=\{snapshot\.state\.browserInteractionMode === "manual" \? copy\.manualBiggerContextBody : copy\.biggerContextBody\} label=\{copy\.biggerContext\}>/);
+  assert.match(settingsSource, /api!\.setBiggerContext\(enabled\)/);
   assert.match(electronMain, /runtimeHost\.setBiggerContext\(enabled === true\)/);
+  assert.match(settingsSource, /api!\.setExperimentalNoAutoCompact\(enabled\)/);
+  assert.match(electronMain, /runtimeHost\.setExperimentalNoAutoCompact\(enabled === true\)/);
   assert.doesNotMatch(electronMain, /IS_DEV_PROFILE && key === "experimentalBiggerContext"/);
 });
 
 test("the renderer bridge switch reaches the fail-closed runtime route", () => {
-  assert.match(appSource, /api!\.setBridgeEnabled\(enabled\)/);
+  assert.match(settingsSource, /api!\.setBridgeEnabled\(enabled\)/);
   assert.match(electronMain, /runtimeHost\.setBridgeEnabled\(enabled === true\)/);
   assert.match(electronMain, /codexRestartRequired:\s*true/);
 });
@@ -124,10 +128,10 @@ test("MCP navigation remains locked while an operation is active", () => {
 
 test("failed doctor reports retain every failed check", () => {
   assert.match(
-    appSource,
+    sharedSource,
     /report\.ok\s*\?\s*report\.checks\.slice\(-6\)\s*:\s*report\.checks\.filter\(\(check\) => check\.status !== "ok"\)/,
   );
-  assert.match(appSource, /visibleChecks\.map\(\(check\) =>/);
+  assert.match(sharedSource, /visibleChecks\.map\(\(check\) =>/);
 });
 
 test("launcher shares only privacy-safe exported diagnostics", () => {

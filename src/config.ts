@@ -113,6 +113,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     solAvailable: true,
     proAvailable: false,
     experimentalBiggerContext: false,
+    experimentalNoAutoCompact: false,
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
@@ -402,6 +403,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && typeof parsed.experimentalBiggerContext !== "boolean") {
     throw new Error(`Invalid experimentalBiggerContext in ${path}`);
   }
+  if (parsed.experimentalNoAutoCompact !== undefined
+    && typeof parsed.experimentalNoAutoCompact !== "boolean") {
+    throw new Error(`Invalid experimentalNoAutoCompact in ${path}`);
+  }
   if (parsed.zeroRiskProEnabled !== undefined && typeof parsed.zeroRiskProEnabled !== "boolean") {
     throw new Error(`Invalid zeroRiskProEnabled in ${path}`);
   }
@@ -436,6 +441,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     solAvailable,
     proAvailable,
     experimentalBiggerContext,
+    experimentalNoAutoCompact: parsed.experimentalNoAutoCompact === true,
     zeroRiskProEnabled,
   } as AppConfig;
 }

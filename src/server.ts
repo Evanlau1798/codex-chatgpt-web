@@ -158,6 +158,13 @@ export async function responseRequest(
     }
     if (options.rememberState !== false) rememberCompletedCompaction(parsed, response);
   };
+  if (compaction && config.experimentalNoAutoCompact) {
+    return formatErrorResponse(
+      409,
+      "invalid_request_error",
+      "Compaction is disabled for routed ChatGPT Web models by the experimental no-auto-compact setting.",
+    );
+  }
   if (compaction && route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
     return formatErrorResponse(
       409,

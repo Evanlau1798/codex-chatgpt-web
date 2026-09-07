@@ -10,6 +10,7 @@ new Function("exports", ts.transpileModule(read("zero-risk-copy.ts"), {
 }).outputText)(exportsObject);
 const dictionaries = exportsObject.zeroRiskCopy;
 const app = read("App.tsx");
+const settings = read("settings-surface.tsx");
 
 test("manual MCP setup explains separate credentials and local-only verification in every locale", () => {
   for (const copy of Object.values(dictionaries)) {
@@ -35,6 +36,6 @@ test("all locales disclose Pro selection prerequisites and automation policy ris
     for (const term of terms.slice(0, -1)) assert.match(copy.zeroRiskModelSettingsBody, term);
     assert.match(copy.automaticInteractionBody, terms.at(-1));
   }
-  assert.match(app, /SettingRow body=\{copy\.zeroRiskModelSettingsBody\}/);
+  assert.match(settings, /SettingRow body=\{copy\.zeroRiskModelSettingsBody\}/);
   assert.match(read("interaction-mode-picker.tsx"), /<small>\{value === "automatic" \? copy\.automaticInteractionBody : copy\.manualInteractionBody\}/);
 });

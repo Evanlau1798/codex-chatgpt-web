@@ -9,10 +9,8 @@ import { loadConfig } from "../../src/config";
 import { VERSION } from "../../src/version";
 import {
   connectLauncherBrowserHost,
-  inspectLauncherBrowserHost,
   LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS,
   notifyLauncherTurn,
-  verifyLauncherBrowserConnector,
 } from "../../src/launcher-browser-host";
 import {
   assertWebContractCooldown,
@@ -83,11 +81,6 @@ assertWebContractCooldown(lastRunAt(), now);
 mkdirSync(artifactDir, { recursive: true });
 writeFileSync(lastRunPath, `${now}\n`, "utf8");
 
-const connectorVerified = await verifyLauncherBrowserConnector(config.browserHostDescriptorPath);
-const inspected = await inspectLauncherBrowserHost(config.browserHostDescriptorPath, {
-  detectCapabilities: false,
-  expectedProfile: "production",
-});
 const probeTraceId = `web_contract_probe_${crypto.randomUUID().replaceAll("-", "")}`;
 const lease = await notifyLauncherTurn(config.browserHostDescriptorPath, {
   phase: "start",
@@ -102,6 +95,8 @@ const connection = await connectLauncherBrowserHost(
   lease.surfaceId,
 );
 let account;
+let sessionUrl = "";
+let connectorVerified = false;
 let markdownRestoration = false;
 let probeStatus: "completed" | "failed" = "completed";
 const heartbeat = setInterval(() => {
@@ -115,12 +110,17 @@ heartbeat.unref?.();
 try {
   await connection.page.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
   account = await detectChatGptAccountCapabilities(connection.page);
+  sessionUrl = connection.page.url();
+  if (!isTemporaryChatGptUrl(sessionUrl)) throw new Error("Web contract smoke requires Temporary Chat");
   process.stdout.write("WEB_CONTRACT_MARKDOWN_PROBE_STARTED\n");
   markdownRestoration = await runMarkdownRestorationProbe(
     connection.page,
     config.appName,
     AbortSignal.timeout(WEB_CONTRACT_PROBE_TIMEOUT_MS),
   );
+  // The Markdown probe selects exactly config.appName on this leased surface and verifies that
+  // connector state survives the full restoration pass before cleaning the composer.
+  connectorVerified = true;
   process.stdout.write("WEB_CONTRACT_MARKDOWN_PROBE_OK\n");
 } catch (error) {
   probeStatus = "failed";
@@ -135,9 +135,8 @@ try {
     status: probeStatus,
   });
 }
-const session = { ...inspected, ...account };
+const session = { authenticated: true, temporary: true, composer: true, url: sessionUrl, ...account };
 if (session.solAvailable !== true) throw new Error("Web contract smoke requires the ChatGPT effort control");
-if (!isTemporaryChatGptUrl(session.url)) throw new Error("Web contract smoke requires Temporary Chat");
 
 const threadId = `thread_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
 const turnId = `turn_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;

@@ -9,6 +9,7 @@ function runtimePreferenceState(config) {
     useEnhancedWebSessionMode: config.useEnhancedWebSessionMode === true,
     experimentalBiggerContext: config.browserInteractionMode !== "manual"
       && config.experimentalBiggerContext === true,
+    experimentalNoAutoCompact: config.experimentalNoAutoCompact === true,
   };
 }
 

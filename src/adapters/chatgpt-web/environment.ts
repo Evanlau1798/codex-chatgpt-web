@@ -14,7 +14,7 @@ import {
 import {
   decodeXmlText,
   environmentCwdMatches,
-  isCurrentThreadVisualizationRoot,
+  isCurrentOrParentThreadVisualizationRoot,
   matchesPath,
   MissingTrustedCodexEnvironmentError,
   pathIdentity,
@@ -284,7 +284,7 @@ function environmentMatchesCanonicalMetadata(
     normalizedMetadataRoots.length === 0
     || declaredRoots.some(root => (
       !normalizedMetadataRoots.some(metadataRoot => matchesPath(metadataRoot, root))
-      && !isCurrentThreadVisualizationRoot(root, metadata)
+      && !isCurrentOrParentThreadVisualizationRoot(root, metadata)
     ))
   )) return false;
   if (!declaredRoots.some(root => matchesPath(root, cwd))) return false;

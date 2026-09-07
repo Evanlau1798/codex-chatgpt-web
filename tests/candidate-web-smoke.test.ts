@@ -27,6 +27,7 @@ test("candidate Web smoke isolates the built daemon while preserving the launche
     browserHost: "launcher",
     browserHostDescriptorPath: "C:\\runtime\\launcher-browser.json",
     useEnhancedWebSessionMode: true,
+    experimentalNoAutoCompact: true,
     runtimeCommand: ["old-runtime"],
   });
   expect(config.brokerSocketPath).not.toBe("old-broker");

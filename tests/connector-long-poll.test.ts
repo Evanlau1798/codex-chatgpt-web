@@ -20,4 +20,14 @@ describe("connector long-poll slicing", () => {
     });
     expect(boundedConnectorToolArguments(tool("collaboration", "send_message"), args)).toBe(args);
   });
+
+  test("slices native command-session polls by wire name", () => {
+    expect(boundedConnectorToolArguments("write_stdin", {
+      yield_time_ms: 300_000,
+      marker: "keep",
+    })).toEqual({
+      yield_time_ms: 30_000,
+      marker: "keep",
+    });
+  });
 });

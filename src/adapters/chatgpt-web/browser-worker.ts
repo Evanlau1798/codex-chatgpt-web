@@ -152,6 +152,11 @@ import {
   reanchorChatGptComposerCaret,
   restoreChatGptPromptMarkdown,
 } from "./prompt-caret";
+import {
+  CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS,
+  CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
+  chatGptPromptAttachmentTimeoutMs,
+} from "./prompt-attachment-budget";
 import { chatGptCompletionEvidenceFailure } from "./same-surface-readiness";
 import {
   ChatGptLunaCheckpointStream,
@@ -168,6 +173,7 @@ export {
   assertChatGptWebMultipartInputWithinLimits,
   resolveChatGptWebMultipartStagingMode,
 } from "./multipart-browser-transport";
+export { CHATGPT_PROMPT_INSERT_CHUNK_CHARS } from "./prompt-attachment-budget";
 import {
   chatGptExternalProgressIsLive,
   chatGptExternalToolCallsAreInFlight,
@@ -460,7 +466,7 @@ export const browserStageTimeouts = {
   browserPage: 60_000,
   temporaryChatPreparation: 150_000,
   effortSelection: 120_000,
-  promptAttachment: 60_000,
+  promptAttachment: CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS,
   fileAttachment: 120_000,
   send: 60_000,
   multipartStageSend: 180_000,
@@ -473,7 +479,6 @@ export const browserStageTimeouts = {
  * the resulting user message remains one exact prompt, and every prefix is still verified before
  * another irreversible edit. This is independent of model context and compaction limits.
  */
-export const CHATGPT_PROMPT_INSERT_CHUNK_CHARS = 16_000;
 const CHATGPT_PROMPT_INSERT_BOUNDARY_LOOKBACK_CHARS = 4_096;
 const CHATGPT_PROMPT_WHITESPACE = /\s/u;
 export const CHATGPT_COMPOSER_DOCUMENT_END_KEY = process.platform === "darwin"
@@ -580,6 +585,7 @@ export interface ResolvedBrowserConfig {
   turnTimeoutMs?: number;
   headed: boolean;
   autoApproveToolCalls: boolean;
+  experimentalNoAutoCompact?: boolean;
   maxBrowserTabs?: number;
 }
 
@@ -775,6 +781,7 @@ export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBro
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
     headed: configured.headed !== false,
     autoApproveToolCalls: configured.autoApproveToolCalls === true,
+    experimentalNoAutoCompact: configured.experimentalNoAutoCompact === true,
     maxBrowserTabs: configured.useEnhancedWebSessionMode === true
       ? MAX_CHATGPT_BROWSER_TABS
       : ORIGINAL_CHATGPT_BROWSER_TABS,
@@ -1489,6 +1496,7 @@ export class ChatGptBrowserWorker {
     onSendActivated?: () => void | Promise<void>,
     externalProgress?: ChatGptTurnProgressReader,
     recoverObservation?: ChatGptObservationRecovery,
+    expectedPrompt?: string,
   ): Promise<ChatGptSubmissionEvidence> {
     const composer = await this.activeComposer(page);
     const sendButton = composer
@@ -1508,6 +1516,9 @@ export class ChatGptBrowserWorker {
         throw new Error("ChatGPT send button remained disabled after the complete prompt was attached");
       }
       await settleChatGptUi();
+    }
+    if (expectedPrompt !== undefined) {
+      await this.assertPromptAttached(page, expectedPrompt, abortSignal);
     }
     await captureDiagnostic?.("send-ready");
     const initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0;
@@ -3073,7 +3084,7 @@ export class ChatGptBrowserWorker {
           await this.runStage(
             turn.traceId,
             `multipart_stage_${index + 1}_attachment`,
-            browserStageTimeouts.promptAttachment,
+            chatGptPromptAttachmentTimeoutMs(stage.text.length, this.config.experimentalNoAutoCompact),
             stageSignal => this.attachPrompt(
               page,
               stage.text,
@@ -3100,6 +3111,7 @@ export class ChatGptBrowserWorker {
               undefined,
               undefined,
               toolTurnObservationRecovery,
+              stage.text,
             ),
             turn.abortSignal,
           );
@@ -3182,7 +3194,7 @@ export class ChatGptBrowserWorker {
             await this.runStage(
               turn.traceId,
               "prompt_attachment",
-              browserStageTimeouts.promptAttachment,
+              chatGptPromptAttachmentTimeoutMs(responsePrompt.length, this.config.experimentalNoAutoCompact),
               stageSignal => this.attachPromptWithCompactionRetry(
                 page,
                 responsePrompt,
@@ -3264,6 +3276,7 @@ export class ChatGptBrowserWorker {
           }
           await settleChatGptUi();
         }
+        await this.assertPromptAttached(page, responsePrompt, stageSignal);
         await diagnostics.capture(page, "send-ready");
         const initialToolBatchRevision = turn.externalProgress?.snapshot().lastToolBatchRevision ?? 0;
         await turn.onSendActivated?.();

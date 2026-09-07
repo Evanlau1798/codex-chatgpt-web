@@ -19,7 +19,10 @@ test("daemon streams browser lifecycle through the real helper process", async (
   writeFileSync(helper, `
     import { ChatGptBrowserWorker } from ${JSON.stringify(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url).href)};
     // Substitute only the browser. Both sides of the production IPC protocol run unchanged.
-    ChatGptBrowserWorker.prototype.run = async turn => {
+    ChatGptBrowserWorker.prototype.run = async function(turn) {
+      if ((this as any).config.experimentalNoAutoCompact !== true) {
+        throw new Error("Experimental no-auto-compact setting was lost across helper IPC");
+      }
       await turn.onPreparedSelected(false);
       const prepared = await turn.prepare();
       if (prepared.multipart.parts.length !== 3) throw new Error("Multipart context was lost");
@@ -74,6 +77,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    experimentalNoAutoCompact: true,
   };
   const reasoning: Array<{ text: string; continuation: boolean }> = [];
   const deltas: string[] = [];

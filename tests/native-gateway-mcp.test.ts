@@ -79,6 +79,24 @@ test("MCP gateway discovers and invokes nested tools while rejecting unsafe wait
       content: [{ type: "text", text: "Nested raw exec is unavailable" }], isError: true,
     } satisfies BrokerToolResult);
     expect((await recursive).isError).toBeTrue();
+
+    const rawPollCalls: Array<{ name: string; input: unknown }> = [];
+    const rawPoll = call("codex_tool_call", {
+      turn_token: token,
+      wire_name: "exec",
+      input: [
+        "await tools.write_stdin({ session_id: 42, yield_time_ms: 300000 });",
+        "await tools.wait({ cell_id: 'cell_test', yield_time_ms: 180000 });",
+      ].join("\n"),
+    });
+    const [rawPollRequest] = await broker.nextToolBatch(token);
+    const rawPollContent = await execute(rawPollRequest!.input!, ["exec", "write_stdin", "wait"], rawPollCalls);
+    broker.completeTool(token, rawPollRequest!.callId, { content: rawPollContent });
+    expect(rawPollCalls).toEqual([
+      { name: "write_stdin", input: { session_id: 42, yield_time_ms: 30_000 } },
+      { name: "wait", input: { cell_id: "cell_test", yield_time_ms: 30_000 } },
+    ]);
+    expect((await rawPoll).isError).not.toBeTrue();
   } finally {
     await client.close().catch(() => {});
     broker.revoke(token);

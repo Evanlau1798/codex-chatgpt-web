@@ -66,3 +66,21 @@ test("raw exec proxy blocks recursion and enforces wait_agent polling without hi
   ), ["exec", "vendor__exec"], calls);
   expect(calls).toEqual([{ name: "vendor__exec", input: { task: "safe" } }]);
 });
+
+test("raw exec proxy slices command-session polls", async () => {
+  const calls: Array<{ name: string; input: unknown }> = [];
+  await execute(transportBoundRawExecProgram([
+    "await tools.write_stdin({ session_id: 42, yield_time_ms: 300000, max_output_tokens: 2000 });",
+    "await tools.wait({ cell_id: 'cell_test', yield_time_ms: 180000, max_tokens: 1000 });",
+  ].join("\n"), "exec"), ["write_stdin", "wait"], calls);
+  expect(calls).toEqual([
+    {
+      name: "write_stdin",
+      input: { session_id: 42, yield_time_ms: 30_000, max_output_tokens: 2_000 },
+    },
+    {
+      name: "wait",
+      input: { cell_id: "cell_test", yield_time_ms: 30_000, max_tokens: 1_000 },
+    },
+  ]);
+});

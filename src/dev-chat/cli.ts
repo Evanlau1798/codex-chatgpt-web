@@ -361,6 +361,11 @@ export async function runDevCommand(args: string[]): Promise<void> {
     if (biggerContext && standardContext) {
       throw new Error("Choose at most one context mode: --bigger-context or --standard-context");
     }
+    const noAutoCompact = takeFlag(args, "--no-auto-compact");
+    const autoCompact = takeFlag(args, "--auto-compact");
+    if (noAutoCompact && autoCompact) {
+      throw new Error("Choose at most one compaction mode: --no-auto-compact or --auto-compact");
+    }
     const autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
     const zeroRiskPro = takeFlag(args, "--zero-risk-pro");
     const zeroRiskDefault = takeFlag(args, "--zero-risk-default");
@@ -380,6 +385,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
         : {}),
       ...(enhancedSession || standardSession ? { useEnhancedWebSessionMode: enhancedSession } : {}),
       ...(biggerContext || standardContext ? { experimentalBiggerContext: biggerContext } : {}),
+      ...(noAutoCompact || autoCompact ? { experimentalNoAutoCompact: noAutoCompact } : {}),
       ...(tunnelId ? { tunnelId } : {}),
       ...(runtimeKeyFile ? { runtimeKeyFile } : {}),
       ...(appName ? { appName } : {}),

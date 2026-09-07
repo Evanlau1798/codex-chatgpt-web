@@ -31,6 +31,7 @@ export interface SetupOptions {
   autoApproveToolCalls?: boolean;
   useEnhancedWebSessionMode?: boolean;
   experimentalBiggerContext?: boolean;
+  experimentalNoAutoCompact?: boolean;
   zeroRiskProEnabled?: boolean;
   replaceCodexRoute?: boolean;
   restartService?: boolean;
@@ -98,6 +99,9 @@ export function buildSetupConfig(existing: AppConfig | undefined, options: Setup
       throw new Error("Bigger Context is unavailable while Enhanced Web session mode is enabled");
     }
     config.experimentalBiggerContext = options.experimentalBiggerContext;
+  }
+  if (options.experimentalNoAutoCompact !== undefined) {
+    config.experimentalNoAutoCompact = options.experimentalNoAutoCompact;
   }
   if (options.zeroRiskProEnabled !== undefined) {
     if (config.browserInteractionMode !== "manual") {

@@ -30,22 +30,25 @@ describe("lightweight Web contract smoke", () => {
     expect(script).not.toContain('model: "chatgpt-web/high"');
     expect(script).not.toContain('model: "chatgpt-web/extra-high"');
   });
-  test("refreshes once for connector verification before inspecting the hydrated surface", () => {
+  test("keeps account-bound probes on its leased turn surface", () => {
     const script = readFileSync(
       new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url),
       "utf8",
     ).replaceAll("\r\n", "\n");
-    const verifyAt = script.indexOf("const connectorVerified = await verifyLauncherBrowserConnector");
-    const inspectAt = script.indexOf("const inspected = await inspectLauncherBrowserHost");
     const cooldownAt = script.indexOf("writeFileSync(lastRunPath");
-    expect(verifyAt).toBeGreaterThan(-1);
+    const leaseAt = script.indexOf('phase: "start"');
+    const probeAt = script.indexOf("runMarkdownRestorationProbe(");
     expect(cooldownAt).toBeGreaterThan(-1);
-    expect(verifyAt).toBeGreaterThan(cooldownAt);
-    expect(inspectAt).toBeGreaterThan(verifyAt);
-    expect(script).toContain("detectCapabilities: false");
+    expect(leaseAt).toBeGreaterThan(cooldownAt);
+    expect(probeAt).toBeGreaterThan(leaseAt);
+    expect(script).not.toContain("verifyLauncherBrowserConnector");
+    expect(script).not.toContain("inspectLauncherBrowserHost");
     expect(script).toContain("detectChatGptAccountCapabilities(connection.page)");
     expect(script).toContain("runMarkdownRestorationProbe(");
     expect(script).toContain("connection.page,\n    config.appName,");
+    expect(script).toContain("connectorVerified = true");
+    expect(script).toContain("authenticated: true");
+    expect(script).toContain("composer: true");
     expect(script).toContain('config.browserInteractionMode !== "automatic"');
     expect(script).toContain('phase: "start"');
     expect(script).toContain("lease.surfaceId");

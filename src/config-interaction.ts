@@ -104,6 +104,8 @@ export interface AppConfig {
   solAvailable: boolean;
   proAvailable: boolean;
   experimentalBiggerContext: boolean;
+  /** Hide routed context limits from Codex and reject routed compact requests. */
+  experimentalNoAutoCompact: boolean;
   /** Explicitly install the additional Pro-sized model row while Zero Risk is active. */
   zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */

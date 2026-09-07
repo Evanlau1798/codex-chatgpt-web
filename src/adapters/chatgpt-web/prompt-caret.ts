@@ -106,6 +106,19 @@ export async function restoreChatGptPromptMarkdown(
   }
   await composer.focus();
   let remaining = count;
+  const markers = replacements.map(replacement => replacement.marker);
+  const countRemainingMarkers = () => composer.evaluate((element, values) => {
+    const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
+    const markerSet = new Set(values);
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let found = 0;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node as Text;
+      if (text.parentElement?.closest(ignoredSelector)) continue;
+      for (const value of text.data) if (markerSet.has(value)) found += 1;
+    }
+    return found;
+  }, markers, { timeout: 20_000 });
   while (remaining > 0) {
     if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
     const restored = await composer.evaluate(async (element, input) => {
@@ -165,21 +178,17 @@ export async function restoreChatGptPromptMarkdown(
     }, { replacements, maxChars }, { timeout: 20_000 });
     if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
     if (!Number.isSafeInteger(restored) || restored <= 0 || restored > remaining) return false;
-    remaining -= restored;
-    if (remaining > 0) await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
+    const observedRemaining = await countRemainingMarkers();
+    if (!Number.isSafeInteger(observedRemaining)
+      || observedRemaining < 0
+      || observedRemaining >= remaining
+      || remaining - observedRemaining > restored) return false;
+    remaining = observedRemaining;
   }
   if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
-  return composer.evaluate((element, markers) => {
-    const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      const text = node as Text;
-      if (!text.parentElement?.closest(ignoredSelector) && markers.some(marker => text.data.includes(marker))) {
-        return false;
-      }
-    }
-    return true;
-  }, replacements.map(replacement => replacement.marker), { timeout: 20_000 });
+  return true;
 }
 
 export function chatGptPromptAttachmentMismatch(

@@ -2,7 +2,7 @@ import { namespacedToolName, type CodexTool } from "../../types";
 
 export const CHATGPT_WEB_AGENT_WAIT_POLL_MS = 10_000;
 export const CHATGPT_WEB_AGENT_WAIT_RULE = "ChatGPT Web transport rule: wait for exactly 10 seconds per call, then release the MCP channel so spawned Web agents can use their own tools. Repeat with the same target ids until a terminal status is returned.";
-const CONNECTOR_LONG_POLL_SLICE_MS = 30_000;
+export const CONNECTOR_LONG_POLL_SLICE_MS = 30_000;
 
 const wireName = (tool: CodexTool): string => namespacedToolName(tool.namespace, tool.name);
 const isAgentWaitTool = (tool: CodexTool): boolean => tool.name === "wait_agent"
@@ -61,8 +61,9 @@ export function assertBrowserToolArguments(tool: CodexTool, args: Record<string,
   }
 }
 
-export function boundedConnectorToolArguments(tool: CodexTool, args: Record<string, unknown>): Record<string, unknown> {
-  if (!["wait", "multi_agent_v1__wait_agent", "collaboration__wait_agent"].includes(wireName(tool))) return args;
+export function boundedConnectorToolArguments(tool: CodexTool | string, args: Record<string, unknown>): Record<string, unknown> {
+  const name = typeof tool === "string" ? tool : wireName(tool);
+  if (!["wait", "write_stdin", "multi_agent_v1__wait_agent", "collaboration__wait_agent"].includes(name)) return args;
   const key = typeof args.timeout_ms === "number" ? "timeout_ms"
     : typeof args.yield_time_ms === "number" ? "yield_time_ms" : undefined;
   return !key || (args[key] as number) <= CONNECTOR_LONG_POLL_SLICE_MS

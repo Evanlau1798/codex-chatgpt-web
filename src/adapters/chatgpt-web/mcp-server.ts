@@ -258,12 +258,12 @@ export async function runChatGptMcpServer(options: {
         const cellId = typeof session_id === "string" ? session_id : undefined;
         const toolName = cellId !== undefined && chars === undefined ? "wait" : "write_stdin";
         const tool = exactTool(bound, toolName);
-        const payload = { arguments: {
+        const payload = { arguments: boundedConnectorToolArguments(toolName, {
           ...(toolName === "wait" ? { cell_id: cellId } : { session_id }),
           ...(chars !== undefined ? { chars } : {}),
           ...(yield_time_ms !== undefined ? { yield_time_ms } : {}),
           ...(max_output_tokens !== undefined ? { [toolName === "wait" ? "max_tokens" : "max_output_tokens"]: max_output_tokens } : {}),
-        } };
+        }) };
         return tool
           ? invoke(claimed.bindingId, bound, tool, payload, extra.signal)
           : invokeNestedNative(claimed.bindingId, bound, toolName, false, payload, extra.signal);
@@ -459,7 +459,7 @@ export async function runChatGptMcpServer(options: {
           if (isGatewayAgentWaitTool(wire_name) && input !== undefined) {
             throw new Error(`ChatGPT Web wait_agent requires structured arguments and timeout_ms=${CHATGPT_WEB_AGENT_WAIT_POLL_MS}`);
           }
-          const toolArguments = args ?? {};
+          const toolArguments = boundedConnectorToolArguments(wire_name, args ?? {});
           assertGatewayToolArguments(wire_name, toolArguments);
           return invoke(claimed.bindingId, bound, gateway, {
             input: execGatewayProgram(wire_name, input !== undefined, {

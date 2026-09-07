@@ -10,8 +10,17 @@ import {
 } from "react";
 import { copyFor, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
-import { biggerContextSwitchState } from "./context-mode";
+import {
+  BrandMark,
+  ContentSurface,
+  DoctorSummary,
+  messageOf,
+  NoticeRow,
+  SectionHeading,
+  StateDot,
+} from "./app-shared";
 import { InteractionModePicker } from "./interaction-mode-picker";
+import { SettingsSurface } from "./settings-surface";
 import { TutorialVideo } from "./tutorial-video";
 import { ManualTurnGuide } from "./manual-turn-guide";
 import type {
@@ -1485,299 +1494,6 @@ function ActivitySurface({
   );
 }
 
-function SettingsSurface({
-  configureInteractionMode,
-  copy,
-  devProfile,
-  language,
-  setError,
-  snapshot,
-  updateState,
-}: {
-  configureInteractionMode: (mode: BrowserInteractionMode) => void;
-  copy: Copy;
-  devProfile: boolean;
-  language: Language;
-  setError: (error: string | null) => void;
-  snapshot: LauncherSnapshot;
-  updateState: (state: LauncherState) => void;
-}) {
-  const [doctor, setDoctor] = useState<DoctorReport | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [turnsCancelled, setTurnsCancelled] = useState(false);
-  const [integrationRemoved, setIntegrationRemoved] = useState(false);
-
-  const updateLanguage = async (next: Language) => {
-    try {
-      updateState(await api!.setLanguage(next));
-    } catch (cause) {
-      setError(messageOf(cause));
-    }
-  };
-  const runDoctor = async () => {
-    setBusy(true);
-    try {
-      setDoctor(await api!.doctor());
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const cancelTurns = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      await api!.cancelTurns();
-      setTurnsCancelled(true);
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const setBridgeEnabled = async (enabled: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.setBridgeEnabled(enabled));
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const setUseEnhancedWebSessionMode = async (enabled: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.setUseEnhancedWebSessionMode(enabled));
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const setBiggerContext = async (enabled: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.setBiggerContext(enabled));
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const setManualInteraction = async (enabled: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await api!.setBrowserInteractionMode(enabled ? "manual" : "automatic");
-      if (result.credentialsRequired) {
-        configureInteractionMode(result.targetMode);
-        return;
-      }
-      updateState(result.state);
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const setZeroRiskPro = async (enabled: boolean) => {
-    setBusy(true);
-    setError(null);
-    try {
-      updateState(await api!.setZeroRiskPro(enabled));
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const biggerContextState = biggerContextSwitchState({
-    browserInteractionMode: snapshot.state.browserInteractionMode,
-    busy,
-    coreSetupComplete: snapshot.state.coreSetupComplete === true,
-    useEnhancedWebSessionMode: snapshot.state.useEnhancedWebSessionMode,
-    experimentalBiggerContext: snapshot.state.experimentalBiggerContext,
-  });
-  const uninstallIntegration = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await api!.uninstallIntegration();
-      if (!result.cancelled) {
-        updateState(result.state);
-        setIntegrationRemoved(true);
-      }
-    } catch (cause) {
-      setError(messageOf(cause));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <ContentSurface narrow title={devProfile ? copy.devSettingsTitle : copy.settingsTitle}>
-      <SectionHeading label={copy.general} />
-      <div className="settings-list">
-        {!devProfile ? <SettingRow body={copy.launchAtLoginBody} label={copy.launchAtLogin}>
-          <Switch
-            checked={snapshot.state.autoStart}
-            onChange={(checked) => void api!.setAutostart(checked)
-              .then((result) => updateState(result.state))
-              .catch((cause) => setError(messageOf(cause)))}
-          />
-        </SettingRow> : null}
-        {!devProfile ? <SettingRow body={copy.bridgeRouteBody} label={copy.bridgeRoute}>
-          <Switch
-            checked={snapshot.state.bridgeEnabled}
-            disabled={busy || snapshot.state.codexSetupComplete !== true}
-            onChange={(checked) => void setBridgeEnabled(checked)}
-          />
-        </SettingRow> : null}
-        <SettingRow body={copy.enhancedWebSessionModeBody} label={copy.enhancedWebSessionMode}>
-          <Switch
-            checked={snapshot.state.useEnhancedWebSessionMode}
-            disabled={busy || snapshot.state.coreSetupComplete !== true}
-            onChange={(enabled) => void setUseEnhancedWebSessionMode(enabled)}
-          />
-        </SettingRow>
-        <SettingRow body={snapshot.state.browserInteractionMode === "manual" ? copy.manualBiggerContextBody : copy.biggerContextBody} label={copy.biggerContext}>
-          <Switch
-            checked={biggerContextState.checked}
-            disabled={biggerContextState.disabled}
-            onChange={(enabled) => void setBiggerContext(enabled)}
-          />
-        </SettingRow>
-        <SettingRow
-          body={snapshot.state.browserInteractionMode === "manual"
-            ? copy.manualInteractionBody : copy.automaticInteractionBody}
-          label={copy.interactionMode}
-        >
-          <Switch
-            checked={snapshot.state.browserInteractionMode === "manual"}
-            disabled={busy}
-            onChange={(enabled) => void setManualInteraction(enabled)}
-          />
-        </SettingRow>
-        {snapshot.state.browserInteractionMode === "manual" ? (
-          <SettingRow body={copy.zeroRiskModelSettingsBody} label={copy.zeroRiskModelSettings}>
-            <Switch
-              checked={snapshot.state.zeroRiskProEnabled}
-              disabled={busy || snapshot.state.coreSetupComplete !== true}
-              onChange={(enabled) => void setZeroRiskPro(enabled)}
-            />
-          </SettingRow>
-        ) : null}
-        <SettingRow body={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>
-          <Switch
-            checked={snapshot.state.keepRunningOnClose}
-            onChange={(checked) => void api!.setPreference("keepRunningOnClose", checked)
-              .then(updateState)
-              .catch((cause) => setError(messageOf(cause)))}
-          />
-        </SettingRow>
-        <SettingRow body={copy.showDuringTurnsBody} label={copy.showDuringTurns}>
-          <Switch
-            checked={snapshot.state.showBrowserDuringTurns}
-            disabled={snapshot.state.browserInteractionMode === "manual"}
-            onChange={(checked) => void api!.setPreference("showBrowserDuringTurns", checked)
-              .then(updateState)
-              .catch((cause) => setError(messageOf(cause)))}
-          />
-        </SettingRow>
-        <SettingRow body={copy.lockBrowserDuringTurnsBody} label={copy.lockBrowserDuringTurns}>
-          <Switch
-            checked={snapshot.state.lockBrowserDuringTurns}
-            onChange={(checked) => void api!.setPreference("lockBrowserDuringTurns", checked)
-              .then(updateState)
-              .catch((cause) => setError(messageOf(cause)))}
-          />
-        </SettingRow>
-        <SettingRow body={copy.chooseLanguageHint} label={copy.language}>
-          <LanguageMenu copy={copy} language={language} onChange={(next) => void updateLanguage(next)} />
-        </SettingRow>
-      </div>
-
-      {!devProfile && snapshot.state.codexRestartRequired ? (
-        <NoticeRow icon="alert" tone="warning">
-          {copy.restartCodex}
-        </NoticeRow>
-      ) : null}
-
-      <SectionHeading label={copy.diagnostics} spaced />
-      <button className="diagnostic-row" disabled={busy} onClick={() => void runDoctor()} type="button">
-        <Icon name="activity" />
-        <span>
-          <strong>{copy.runDoctor}</strong>
-          <small>{doctor ? (doctor.ok ? copy.healthy : copy.needsAttention) : copy.status}</small>
-        </span>
-        <Icon name="chevron" />
-      </button>
-      {!devProfile ? <button className="diagnostic-row" disabled={busy} onClick={() => void cancelTurns()} type="button">
-        <Icon name="close" />
-        <span>
-          <strong>{copy.cancelTurns}</strong>
-          <small>{turnsCancelled ? copy.turnsCancelled : copy.cancelTurnsBody}</small>
-        </span>
-        <Icon name="chevron" />
-      </button> : null}
-      {!devProfile ? <button className="diagnostic-row" disabled={busy} onClick={() => void uninstallIntegration()} type="button">
-        <Icon name="close" />
-        <span>
-          <strong>{copy.uninstallIntegration}</strong>
-          <small>{integrationRemoved ? copy.integrationRemoved : copy.uninstallIntegrationBody}</small>
-        </span>
-        <Icon name="chevron" />
-      </button> : null}
-      {doctor ? <DoctorSummary copy={copy} report={doctor} /> : null}
-
-      <div className="about-row">
-        <BrandMark small />
-        <span>
-          <strong>{copy.product}</strong>
-          <small>
-            {devProfile ? `${copy.devBadge} · ${snapshot.profilePaths.coreHome} · ` : ""}
-            {platformLabel(snapshot.platform)} · v{snapshot.version}
-          </small>
-        </span>
-      </div>
-    </ContentSurface>
-  );
-}
-
-function ContentSurface({
-  children,
-  eyebrow,
-  fit = false,
-  narrow = false,
-  subtitle,
-  title,
-}: {
-  children: ReactNode;
-  eyebrow?: string;
-  fit?: boolean;
-  narrow?: boolean;
-  subtitle?: string;
-  title: string;
-}) {
-  return (
-    <section className="content-surface">
-      <div className={`content-scroll${narrow ? " is-narrow" : ""}${fit ? " is-fit" : ""}`}>
-        <header className="surface-header">
-          {eyebrow ? <span>{eyebrow}</span> : null}
-          <h1>{title}</h1>
-          {subtitle ? <p>{subtitle}</p> : null}
-        </header>
-        {children}
-      </div>
-    </section>
-  );
-}
-
 function SetupRow({
   action,
   complete,
@@ -1831,72 +1547,12 @@ function hasClientIntegration(state: LauncherState): boolean {
   return state.codexSetupComplete || state.claudeSetupComplete;
 }
 
-function SectionHeading({ label, meta, spaced = false }: { label: string; meta?: string; spaced?: boolean }) {
-  return (
-    <div className={`section-heading${spaced ? " is-spaced" : ""}`}>
-      <span>{label}</span>
-      {meta ? <small>{meta}</small> : null}
-    </div>
-  );
-}
-
-function NoticeRow({
-  children,
-  icon,
-  tone,
-}: {
-  children: ReactNode;
-  icon: IconName;
-  tone: "warning" | "success";
-}) {
-  return (
-    <div className={`notice-row tone-${tone}`}>
-      <Icon name={icon} />
-      <span>{children}</span>
-    </div>
-  );
-}
-
-function SettingRow({ body, children, label }: { body: string; children: ReactNode; label: string }) {
-  return (
-    <div className="setting-row">
-      <div>
-        <strong>{label}</strong>
-        <p>{body}</p>
-      </div>
-      {children}
-    </div>
-  );
-}
-
 function FieldRow({ children, label }: { children: ReactNode; label: string }) {
   return (
     <label className="field-row">
       <span>{label}</span>
       {children}
     </label>
-  );
-}
-
-function DoctorSummary({ copy, report }: { copy: Copy; report: DoctorReport }) {
-  const visibleChecks = report.ok
-    ? report.checks.slice(-6)
-    : report.checks.filter((check) => check.status !== "ok");
-  return (
-    <div className={`doctor-summary${report.ok ? " is-healthy" : ""}`}>
-      <header>
-        <Icon name={report.ok ? "check" : "activity"} />
-        <strong>{report.ok ? copy.healthy : copy.needsAttention}</strong>
-      </header>
-      <div>
-        {visibleChecks.map((check) => (
-          <p key={check.id}>
-            <StateDot state={check.status === "ok" ? "ready" : check.status === "warning" ? "busy" : "error"} />
-            <span>{check.message}</span>
-          </p>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -2016,106 +1672,8 @@ function IconButton({
   );
 }
 
-function Switch({
-  checked,
-  disabled = false,
-  onChange,
-}: {
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <button
-      aria-checked={checked}
-      className={`switch${checked ? " is-on" : ""}`}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      role="switch"
-      type="button"
-    >
-      <span />
-    </button>
-  );
-}
-
-function LanguageMenu({ copy, language, onChange }: { copy: Copy; language: Language; onChange: (language: Language) => void }) {
-  const [open, setOpen] = useState(false);
-  const options: Array<{ label: string; value: Language }> = [
-    { label: copy.english, value: "en" },
-    { label: copy.chinese, value: "zh-CN" },
-    { label: copy.japanese, value: "ja" },
-  ];
-  const selected = options.find((option) => option.value === language) ?? options[0];
-
-  return (
-    <div
-      className={`language-menu${open ? " is-open" : ""}`}
-      onKeyDown={(event) => {
-        if (event.key === "Escape") setOpen(false);
-      }}
-    >
-      <button
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        className="language-menu-trigger"
-        onClick={() => setOpen((current) => !current)}
-        type="button"
-      >
-        <span>{selected.label}</span>
-        <Icon name="chevron" />
-      </button>
-      {open ? (
-        <>
-          <button
-            aria-label={`${copy.close}: ${copy.language}`}
-            className="language-menu-scrim"
-            onClick={() => setOpen(false)}
-            type="button"
-          />
-          <div aria-label={copy.language} className="language-menu-panel" role="listbox">
-            {options.map((option) => (
-              <button
-                aria-selected={option.value === language}
-                className={option.value === language ? "is-selected" : ""}
-                key={option.value}
-                onClick={() => {
-                  setOpen(false);
-                  if (option.value !== language) onChange(option.value);
-                }}
-                role="option"
-                type="button"
-              >
-                <span>{option.label}</span>
-                {option.value === language ? <Icon name="check" /> : null}
-              </button>
-            ))}
-          </div>
-        </>
-      ) : null}
-    </div>
-  );
-}
-
-function StateDot({ state }: { state: "idle" | "ready" | "busy" | "error" }) {
-  return <i aria-hidden="true" className={`state-dot is-${state}`} />;
-}
-
 function ActionDot({ pulse = false, tone }: { pulse?: boolean; tone: "required" | "optional" | "success" | "error" }) {
   return <i aria-hidden="true" className={`action-dot is-${tone}${pulse ? " is-pulse" : ""}`} />;
-}
-
-function BrandMark({ small = false }: { small?: boolean }) {
-  return (
-    <span className={`brand-mark${small ? " is-small" : ""}`}>
-      <svg aria-hidden="true" viewBox="0 0 24 24">
-        <path
-          d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"
-          fill="currentColor"
-        />
-      </svg>
-    </span>
-  );
 }
 
 function ErrorToast({ copy, message, onDismiss }: { copy: Copy; message: string; onDismiss: () => void }) {
@@ -2217,14 +1775,6 @@ function formatBrowserAddress(url: string | undefined, copy: Copy): string {
   } catch {
     return copy.browserAddress;
   }
-}
-
-function messageOf(value: unknown): string {
-  return value instanceof Error ? value.message : String(value);
-}
-
-function platformLabel(value: string): string {
-  return value === "darwin" ? "macOS" : value === "win32" ? "Windows" : value === "linux" ? "Linux" : value;
 }
 
 function humanEvent(value: string): string {

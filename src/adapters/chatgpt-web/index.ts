@@ -14,6 +14,7 @@ import { runManualCompaction } from "./manual-compaction";
 import { extractChatGptTurnEnvironment } from "./environment";
 import { resolveChatGptWebModelMode } from "./model";
 import { createChatGptStructuredOutputValidator } from "./output-validation";
+import { chatGptNoContextStallTimeoutMs } from "./prompt-attachment-budget";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { brokerSocketPath, ChatGptSurfaceRecoveryTracker, withAbort } from "./runtime-lifecycle";
 import { TurnBroker, type TurnBrokerOwner } from "./turn-broker";
@@ -91,6 +92,13 @@ export function createChatGptWebAdapter(
   return {
     name: "chatgpt-web",
     async runTurn(parsed, incoming, emit) {
+      const stallTimeoutMs = provider.chatgptWeb?.experimentalNoAutoCompact === true
+        ? chatGptNoContextStallTimeoutMs(
+            JSON.stringify(parsed.context).length,
+            provider.chatgptWeb?.stallTimeoutSec,
+            timeoutMs,
+          )
+        : undefined;
       const heartbeat = setInterval(
         () => emit({ type: "heartbeat" }),
         CHATGPT_WEB_ADAPTER_HEARTBEAT_MS,
@@ -318,9 +326,10 @@ export function createChatGptWebAdapter(
             for (;;) {
               let next: Awaited<typeof browserOutcome | NonNullable<typeof nextTools> | typeof nextTrace | typeof nextText>;
               try {
-                next = await withAbort(withStallTimeout(Promise.race([
-                  ...(nextTools ? [nextTools] : []), browserOutcome, nextTrace, nextText,
-                ])), incoming.abortSignal);
+                next = await withAbort(withStallTimeout(
+                  Promise.race([...(nextTools ? [nextTools] : []), browserOutcome, nextTrace, nextText]),
+                  stallTimeoutMs,
+                ), incoming.abortSignal);
               } catch (error) {
                 recoveredResultCount = surfaceRecovery.recoverableResultCount(error, session, parsed, surfaceRecoveries, incoming.abortSignal);
                 if (recoveredResultCount !== undefined) return;
