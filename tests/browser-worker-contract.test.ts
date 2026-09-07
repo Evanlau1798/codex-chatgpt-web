@@ -503,10 +503,13 @@ test("large read-only context is inserted as contiguous bounded edits before exa
   const composer = {
     fill: async (value: string) => { calls.push(["fill", value]); },
     focus: async () => { calls.push(["focus"]); },
+    evaluate: async (_callback: unknown, value: string) => {
+      calls.push(["insertText", value]);
+      return true;
+    },
   };
   const page = {
     keyboard: {
-      insertText: async (value: string) => { calls.push(["insertText", value]); },
       press: async (value: string) => { calls.push(["press", value]); },
     },
   };
@@ -551,12 +554,15 @@ test("multi-chunk prompt insertion repairs a drifted Lexical caret after each ex
   let attached = "";
   let caret = 0;
   const page = {
-    keyboard: {
-      insertText: async (value: string) => {
-        attached = `${attached.slice(0, caret)}${value}${attached.slice(caret)}`;
-        caret += value.length;
-        calls.push(["insertText", String(value.length)]);
-      },
+    keyboard: {},
+  };
+  const composer = {
+    focus: async () => {},
+    evaluate: async (_callback: unknown, value: string) => {
+      attached = `${attached.slice(0, caret)}${value}${attached.slice(caret)}`;
+      caret += value.length;
+      calls.push(["insertText", String(value.length)]);
+      return true;
     },
   };
   const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
@@ -564,6 +570,7 @@ test("multi-chunk prompt insertion repairs a drifted Lexical caret after each ex
   }).insertPromptText;
 
   await insertPromptText.call({
+    activeComposer: async () => composer,
     waitForPromptChunkAttached: async (_page: unknown, expected: string) => {
       expect(attached).toBe(expected);
       caret = Math.max(0, attached.length - 16);
@@ -584,18 +591,15 @@ test("multi-chunk prompt insertion repairs a drifted Lexical caret after each ex
   ]);
 });
 
-test("Markdown shortcut delimiters are restored right-to-left after all bounded prompt edits", async () => {
+test("Markdown shortcut delimiters stay literal in the bounded plain-text edit", async () => {
   const prompt = "Preserve *literal* and `.gitignore`.";
-  const restorations: unknown[] = [];
-  const nativeEdits: string[] = [];
-  const page = {
-    keyboard: { insertText: async (value: string) => { nativeEdits.push(value); } },
-  };
+  const edits: string[] = [];
+  const page = { keyboard: {} };
   const composer = {
     focus: async () => {},
-    evaluate: async (_callback: unknown, value: unknown) => {
-      restorations.push(value);
-      return restorations.length === 1 ? 4 : 0;
+    evaluate: async (_callback: unknown, value: string) => {
+      edits.push(value);
+      return true;
     },
   };
   const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
@@ -608,17 +612,7 @@ test("Markdown shortcut delimiters are restored right-to-left after all bounded 
     reanchorPromptCaret: async () => {},
   }, page, prompt);
 
-  expect(nativeEdits).toEqual(["Preserve \uE000literal\uE000 and \u2060.gitignore\u2060."]);
-  expect(restorations).toEqual([
-    {
-      replacements: [
-        { marker: "\u2060", value: "`", count: 2 },
-        { marker: "\uE000", value: "*", count: 2 },
-      ],
-      maxChars: CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
-    },
-    ["\u2060", "\uE000"],
-  ]);
+  expect(edits).toEqual([prompt]);
 });
 
 test("prompt insertion avoids a native edit boundary inside a text token", async () => {
@@ -626,28 +620,26 @@ test("prompt insertion avoids a native edit boundary inside a text token", async
   const inserted: string[] = [];
   let attached = "";
   let sourceOffset = 0;
-  const page = {
-    keyboard: {
-      insertText: async (value: string) => {
+  const page = { keyboard: {} };
+  const composer = {
+    focus: async () => {},
+    evaluate: async (_callback: unknown, input: unknown) => {
+      if (typeof input === "string") {
+        if (input.length === 1 && input.charCodeAt(0) >= 0xE000 && input.charCodeAt(0) <= 0xF8FF) {
+          return !attached.includes(input);
+        }
+        const value = input;
         inserted.push(value);
         const nextUnit = prompt[sourceOffset + value.length];
         const splitToken = /[\p{L}\p{N}_]/u.test(value.at(-1) ?? "")
           && /[\p{L}\p{N}_]/u.test(nextUnit ?? "");
         attached += splitToken ? `${value.slice(0, -1)}!` : value;
         sourceOffset += value.length;
-      },
-    },
-  };
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, input: unknown) => {
-      if (Array.isArray(input)) return input.reduce(
-        (count, marker) => count + [...attached].filter(value => value === marker).length,
-        0,
-      );
-      const replacements = (input as { replacements: Array<{ marker: string; value: string }> }).replacements;
-      for (const replacement of replacements) attached = attached.replace(replacement.marker, replacement.value);
-      return replacements.length;
+        return true;
+      }
+      const replacement = input as { marker: string; value: string };
+      attached = attached.replace(replacement.marker, replacement.value);
+      return true;
     },
   };
   const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
@@ -733,9 +725,10 @@ test("prompt insertion never sends the six-figure native edit that rewrites the 
   let attached = "";
   let caret = 0;
   const nativeEditSizes: number[] = [];
-  const page = {
-    keyboard: {
-      insertText: async (value: string) => {
+  const page = { keyboard: {} };
+  const composer = {
+    focus: async () => {},
+    evaluate: async (_callback: unknown, value: string) => {
         nativeEditSizes.push(value.length);
         // Model the exact v2.1.8 failure boundary: one six-figure native edit preserves length but
         // rewrites content twelve units before its end. The bounded transport must never invoke it.
@@ -744,7 +737,7 @@ test("prompt insertion never sends the six-figure native edit that rewrites the 
           : value;
         attached = `${attached.slice(0, caret)}${committed}${attached.slice(caret)}`;
         caret += committed.length;
-      },
+        return true;
     },
   };
   const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
@@ -752,6 +745,7 @@ test("prompt insertion never sends the six-figure native edit that rewrites the 
   }).insertPromptText;
 
   await insertPromptText.call({
+    activeComposer: async () => composer,
     waitForPromptChunkAttached: async (_page: unknown, expected: string) => {
       expect(attached).toBe(expected);
     },
@@ -792,20 +786,20 @@ test("the real compaction envelope survives simulated caret drift at every bound
   const composer = {
     focus: async () => {},
     evaluate: async (_callback: unknown, value: unknown) => {
-      if (Array.isArray(value)) return 0;
-      attached = compiled.text;
-      return (value as { replacements: Array<{ count: number }> }).replacements
-        .reduce((sum, replacement) => sum + replacement.count, 0);
-    },
-  };
-  const page = {
-    keyboard: {
-      insertText: async (value: string) => {
+      if (typeof value === "string") {
+        if (value.length === 1 && value.charCodeAt(0) >= 0xE000 && value.charCodeAt(0) <= 0xF8FF) {
+          return !attached.includes(value);
+        }
         attached = `${attached.slice(0, caret)}${value}${attached.slice(caret)}`;
         caret += value.length;
-      },
+        return true;
+      }
+      const replacement = value as { marker: string; value: string };
+      attached = attached.replace(replacement.marker, replacement.value);
+      return true;
     },
   };
+  const page = { keyboard: {} };
   const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
     insertPromptText(page: unknown, text: string): Promise<void>;
   }).insertPromptText;
@@ -827,9 +821,12 @@ test("the real compaction envelope survives simulated caret drift at every bound
 test("prompt chunks never split a UTF-16 surrogate pair", async () => {
   const prompt = `${"x".repeat(CHATGPT_PROMPT_INSERT_CHUNK_CHARS - 1)}😀tail`;
   const inserted: string[] = [];
-  const page = {
-    keyboard: {
-      insertText: async (value: string) => { inserted.push(value); },
+  const page = { keyboard: {} };
+  const composer = {
+    focus: async () => {},
+    evaluate: async (_callback: unknown, value: string) => {
+      inserted.push(value);
+      return true;
     },
   };
   const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
@@ -837,6 +834,7 @@ test("prompt chunks never split a UTF-16 surrogate pair", async () => {
   }).insertPromptText;
 
   await insertPromptText.call({
+    activeComposer: async () => composer,
     waitForPromptChunkAttached: async () => {},
     reanchorPromptCaret: async () => {},
   }, page, prompt);
@@ -849,12 +847,13 @@ test("prompt chunks never split a UTF-16 surrogate pair", async () => {
 test("prompt insertion stops after its stage is aborted before another native edit", async () => {
   const controller = new AbortController();
   const inserted: string[] = [];
-  const page = {
-    keyboard: {
-      insertText: async (value: string) => {
+  const page = { keyboard: {} };
+  const composer = {
+    focus: async () => {},
+    evaluate: async (_callback: unknown, value: string) => {
         inserted.push(value);
         controller.abort();
-      },
+        return true;
     },
   };
   const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
@@ -862,6 +861,7 @@ test("prompt insertion stops after its stage is aborted before another native ed
   }).insertPromptText;
 
   await expect(insertPromptText.call({
+    activeComposer: async () => composer,
     waitForPromptChunkAttached: async () => {},
     reanchorPromptCaret: async () => {},
   }, page, "x".repeat(CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 2 + 1), controller.signal))
@@ -1399,6 +1399,10 @@ test("tool-capable prompts use the shared Playwright connector selection before 
   const selectedComposer = {
     focus: async () => { calls.push(["selectedFocus"]); },
     locator: () => ({ filter: () => selectedConnector }),
+    evaluate: async (_callback: unknown, value: string) => {
+      calls.push(["insertText", value]);
+      return true;
+    },
   };
   const initialComposer = {
     fill: async (value: string) => { calls.push(["fill", value]); },
@@ -1416,7 +1420,6 @@ test("tool-capable prompts use the shared Playwright connector selection before 
       ? { filter: () => appResult, evaluateAll: async () => [] }
       : (() => { throw new Error(`Unexpected locator: ${selector}`); })(),
     keyboard: {
-      insertText: async (value: string) => { calls.push(["insertText", value]); },
       press: async (value: string) => { calls.push(["press", value]); },
     },
   };
@@ -1456,6 +1459,7 @@ test("tool-capable prompts use the shared Playwright connector selection before 
     ["selectedConnector"],
     ["selectedFocus"],
     ["press", CHATGPT_COMPOSER_DOCUMENT_END_KEY],
+    ["selectedFocus"],
     ["insertText", " context"],
     ["assertPrompt"],
   ]);

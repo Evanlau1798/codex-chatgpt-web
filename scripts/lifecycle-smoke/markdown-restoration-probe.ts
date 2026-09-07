@@ -7,9 +7,9 @@ import {
 import {
   clearChatGptComposerInput,
   guardChatGptPromptChunkBoundary,
-  guardChatGptPromptMarkdown,
+  insertChatGptComposerPlainText,
   reanchorChatGptComposerCaret,
-  restoreChatGptPromptMarkdown,
+  restoreChatGptPromptChunkBoundary,
 } from "../../src/adapters/chatgpt-web/prompt-caret";
 import {
   CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
@@ -18,11 +18,11 @@ import {
 } from "../../src/adapters/chatgpt-web/browser-worker";
 import { openChatGptConnectorPlusMenu } from "../../src/adapters/chatgpt-web/connector-plus-menu";
 
-export const MARKDOWN_RESTORATION_PROBE_CHARS = 17_587;
+export const MARKDOWN_RESTORATION_PROBE_CHARS = 96_000;
 const CONNECTOR_SELECTOR = '[data-id^="plugin:"][data-keyword]';
 
 export function markdownRestorationProbeText(): string {
-  const pattern = "field_name=value) [literal](target) `code` *bold* ~=~ payload ";
+  const pattern = 'field_name=value) [literal](target) `code` *bold* ~=~ {"key":[1,2,3]} payload ';
   const text = pattern.repeat(Math.ceil(MARKDOWN_RESTORATION_PROBE_CHARS / pattern.length))
     .slice(0, MARKDOWN_RESTORATION_PROBE_CHARS);
   return `${text.slice(0, CHATGPT_PROMPT_INSERT_CHUNK_CHARS)} ${text.slice(CHATGPT_PROMPT_INSERT_CHUNK_CHARS + 1)}`;
@@ -129,53 +129,63 @@ export async function runMarkdownRestorationProbe(
   abortSignal?: AbortSignal,
 ): Promise<true> {
   const prompt = markdownRestorationProbeText();
-  const guarded = guardChatGptPromptMarkdown(prompt);
-  if (!guarded) throw new Error("Markdown restoration probe did not produce guard markers");
   const initialUserTurns = await page.locator(CHATGPT_USER_TURN_SELECTOR).count();
   let composer = await activeComposer(page);
   await clearChatGptComposerInput(composer);
-  composer = await selectConnector(page, appName);
-  const connectors = await connectorState(composer);
-  if (connectors.length !== 1 || connectors[0] !== appName) {
-    throw new Error("Markdown restoration probe requires one selected connector");
-  }
+  const timings: number[] = [];
   try {
-    await composer.focus();
-    for (let offset = 0; offset < guarded.text.length; offset += CHATGPT_PROMPT_INSERT_CHUNK_CHARS) {
-      if (abortSignal?.aborted) throw abortSignal.reason;
-      const original = guarded.text.slice(offset, offset + CHATGPT_PROMPT_INSERT_CHUNK_CHARS);
-      const boundary = guardChatGptPromptChunkBoundary(guarded.text, original, offset);
-      const chunk = boundary?.text ?? original;
-      await page.keyboard.insertText(chunk);
+    for (let run = 0; run < 3; run += 1) {
+      composer = await selectConnector(page, appName);
+      const connectors = await connectorState(composer);
+      if (connectors.length !== 1 || connectors[0] !== appName) {
+        throw new Error("Markdown restoration probe requires one selected connector");
+      }
+      const startedAt = performance.now();
+      await composer.focus();
+      for (let offset = 0; offset < prompt.length; offset += CHATGPT_PROMPT_INSERT_CHUNK_CHARS) {
+        if (abortSignal?.aborted) throw abortSignal.reason;
+        const original = prompt.slice(offset, offset + CHATGPT_PROMPT_INSERT_CHUNK_CHARS);
+        const boundary = guardChatGptPromptChunkBoundary(prompt, original, offset);
+        const chunk = boundary?.text ?? original;
+        await insertChatGptComposerPlainText(composer, chunk, abortSignal);
+        composer = await activeComposer(page);
+        await waitForText(composer, `${prompt.slice(0, offset)}${chunk}`, abortSignal);
+        if (boundary && !await restoreChatGptPromptChunkBoundary(
+          composer,
+          boundary.replacement,
+          abortSignal,
+        )) throw new Error("Markdown restoration probe could not restore a chunk boundary");
+        if (!await reanchorChatGptComposerCaret(composer)) {
+          throw new Error("Markdown restoration probe could not re-anchor the composer");
+        }
+      }
       composer = await activeComposer(page);
-      await waitForText(composer, `${guarded.text.slice(0, offset)}${chunk}`, abortSignal);
-      if (boundary && !await restoreChatGptPromptMarkdown(
-        composer,
-        [boundary.replacement],
-        1,
-        CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
-        abortSignal,
-      )) throw new Error("Markdown restoration probe could not restore a chunk boundary");
-      if (!await reanchorChatGptComposerCaret(composer)) {
-        throw new Error("Markdown restoration probe could not re-anchor the composer");
+      await waitForText(composer, prompt, abortSignal);
+      const durationMs = performance.now() - startedAt;
+      timings.push(durationMs);
+      if (durationMs >= 10_000) {
+        throw new Error(`Markdown restoration probe attachment exceeded 10 seconds (durationMs=${Math.round(durationMs)})`);
+      }
+      if (JSON.stringify(await connectorState(composer)) !== JSON.stringify(connectors)) {
+        throw new Error("Markdown restoration probe changed connector state");
+      }
+      if (await page.locator(CHATGPT_USER_TURN_SELECTOR).count() !== initialUserTurns
+        || await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count() !== 0) {
+        throw new Error("Markdown restoration probe unexpectedly submitted a turn");
+      }
+      if (run < 2) {
+        await clearChatGptComposerInput(composer);
+        composer = await activeComposer(page);
+        if (await editableText(composer) !== "") {
+          throw new Error("Markdown restoration probe could not reset the composer between runs");
+        }
       }
     }
-    composer = await activeComposer(page);
-    if (!await restoreChatGptPromptMarkdown(
-      composer,
-      guarded.replacements,
-      guarded.count,
-      CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
-      abortSignal,
-    )) throw new Error("Markdown restoration probe could not restore literal delimiters");
-    await waitForText(composer, prompt, abortSignal);
-    if (JSON.stringify(await connectorState(composer)) !== JSON.stringify(connectors)) {
-      throw new Error("Markdown restoration probe changed connector state");
+    const medianMs = [...timings].sort((left, right) => left - right)[1]!;
+    if (medianMs >= 5_000) {
+      throw new Error(`Markdown restoration probe median attachment exceeded 5 seconds (medianMs=${Math.round(medianMs)})`);
     }
-    if (await page.locator(CHATGPT_USER_TURN_SELECTOR).count() !== initialUserTurns
-      || await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count() !== 0) {
-      throw new Error("Markdown restoration probe unexpectedly submitted a turn");
-    }
+    process.stdout.write(`WEB_CONTRACT_MARKDOWN_PROBE_TIMINGS ${JSON.stringify(timings.map(Math.round))}\n`);
     return true;
   } finally {
     composer = await activeComposer(page);

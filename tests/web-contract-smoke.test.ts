@@ -16,7 +16,6 @@ import {
   markdownRestorationProbeText,
   MARKDOWN_RESTORATION_PROBE_CHARS,
 } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
-import { guardChatGptPromptMarkdown } from "../src/adapters/chatgpt-web/prompt-caret";
 
 describe("lightweight Web contract smoke", () => {
   test("uses the requested Medium route without model fallback", () => {
@@ -55,22 +54,27 @@ describe("lightweight Web contract smoke", () => {
     expect(script).toContain('phase: "end"');
   });
 
-  test("uses the incident-sized Markdown probe without sending its contents", () => {
+  test("uses the incident-sized Markdown insertion probe without sending its contents", () => {
     const prompt = markdownRestorationProbeText();
-    const guarded = guardChatGptPromptMarkdown(prompt)!;
     const probe = readFileSync(
       new URL("../scripts/lifecycle-smoke/markdown-restoration-probe.ts", import.meta.url),
       "utf8",
     );
+    expect(MARKDOWN_RESTORATION_PROBE_CHARS).toBe(96_000);
     expect(prompt).toHaveLength(MARKDOWN_RESTORATION_PROBE_CHARS);
     expect(prompt[16_000]).toBe(" ");
-    expect(guarded.count).toBe(3_402);
+    expect(prompt).toContain('{"key":[1,2,3]}');
     expect(probe).toContain("finally {");
+    expect(probe).toContain("for (let run = 0; run < 3; run += 1)");
+    expect(probe).toContain("durationMs >= 10_000");
+    expect(probe).toContain("medianMs >= 5_000");
+    expect(probe).toContain("WEB_CONTRACT_MARKDOWN_PROBE_TIMINGS");
     expect(probe).toContain("clearChatGptComposerInput(composer)");
     expect(probe.indexOf("await clearChatGptComposerInput(composer)"))
       .toBeLessThan(probe.indexOf("composer = await selectConnector(page, appName)"));
     expect(probe.indexOf("await composer.focus()"))
-      .toBeLessThan(probe.indexOf("await page.keyboard.insertText(chunk)"));
+      .toBeLessThan(probe.indexOf("await insertChatGptComposerPlainText(composer, chunk, abortSignal)"));
+    expect(probe).not.toContain("page.keyboard.insertText(chunk)");
     expect(probe).toContain("CHATGPT_USER_TURN_SELECTOR");
     expect(probe).toContain('pressSequentially("@codex"');
     expect(probe).toContain("MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS");

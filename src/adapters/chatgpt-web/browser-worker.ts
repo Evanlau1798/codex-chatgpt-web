@@ -148,9 +148,9 @@ import {
   chatGptPromptAttachmentMismatch,
   clearChatGptComposerInput,
   guardChatGptPromptChunkBoundary,
-  guardChatGptPromptMarkdown,
+  insertChatGptComposerPlainText,
   reanchorChatGptComposerCaret,
-  restoreChatGptPromptMarkdown,
+  restoreChatGptPromptChunkBoundary,
 } from "./prompt-caret";
 import {
   CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS,
@@ -2114,26 +2114,23 @@ export class ChatGptBrowserWorker {
   }
 
   private async insertPromptText(page: Page, text: string, abortSignal?: AbortSignal): Promise<void> {
-    const guarded = guardChatGptPromptMarkdown(text);
-    const insertionText = guarded?.text ?? text;
+    const insertionText = text;
     for (let offset = 0; offset < insertionText.length;) {
       throwIfPromptAttachmentAborted(abortSignal);
       const end = promptInsertChunkEnd(insertionText, offset);
       const originalChunk = insertionText.slice(offset, end);
       const guardedBoundary = guardChatGptPromptChunkBoundary(insertionText, originalChunk, offset);
       const chunk = guardedBoundary?.text ?? originalChunk;
-      await page.keyboard.insertText(chunk);
+      await insertChatGptComposerPlainText(await this.activeComposer(page), chunk, abortSignal);
       throwIfPromptAttachmentAborted(abortSignal);
       if (end < insertionText.length || guardedBoundary) {
         // Lexical can rebuild the active block after an exact commit and move its native selection.
         // Re-anchor only after the verified prefix is stable, before the next irreversible edit.
         const expectedPrefix = `${insertionText.slice(0, offset)}${chunk}`.trimStart();
         await this.waitForPromptChunkAttached(page, expectedPrefix, abortSignal);
-        if (guardedBoundary && !await restoreChatGptPromptMarkdown(
+        if (guardedBoundary && !await restoreChatGptPromptChunkBoundary(
           await this.activeComposer(page),
-          [guardedBoundary.replacement],
-          1,
-          CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
+          guardedBoundary.replacement,
           abortSignal,
         )) {
           throw chatGptWebSurfaceError("ChatGPT composer could not restore a prompt chunk boundary", false);
@@ -2141,19 +2138,6 @@ export class ChatGptBrowserWorker {
         await this.reanchorPromptCaret(page, abortSignal);
       }
       offset = end;
-    }
-    if (guarded) {
-      throwIfPromptAttachmentAborted(abortSignal);
-      if (!await restoreChatGptPromptMarkdown(
-        await this.activeComposer(page),
-        guarded.replacements,
-        guarded.count,
-        CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
-        abortSignal,
-      )) {
-        throw chatGptWebSurfaceError("ChatGPT composer could not restore literal Markdown delimiters", false);
-      }
-      await this.reanchorPromptCaret(page, abortSignal);
     }
   }
 
