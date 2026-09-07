@@ -17,6 +17,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ExpectedVersion = '1.4.0'
 $ExpectedRevision = '1.4.0+34cbb9a40'
+$ExpectedBunSha256 = '627D2E4775C24BDEDEE2CD7CCC18DCADAE061E5345274AB6E3C4C797927BFB8F'
 $SourceRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $GitCommonDir = (& git -C $SourceRoot rev-parse --path-format=absolute --git-common-dir 2>$null).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $GitCommonDir) {
@@ -40,38 +41,147 @@ if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
         }
     }
 }
-$BunCandidates = @(
-    (Join-Path $CanonicalRoot 'dist\runtime\runtime\bun.exe')
-    (Join-Path $CanonicalRoot 'launcher\build\runtime\runtime\bun.exe')
-    $env:CODEX_CHATGPT_WEB_BUN
-    $env:CODEX_WEB_GPT_BUN
-    (Join-Path $RepoRoot 'dist\runtime\runtime\bun.exe')
-    (Join-Path $RepoRoot 'launcher\build\runtime\runtime\bun.exe')
-)
-$InstalledVersionsRoot = Join-Path $env:USERPROFILE '.codex-chatgpt-web\versions'
-if (Test-Path -LiteralPath $InstalledVersionsRoot -PathType Container) {
-    $BunCandidates += Get-ChildItem -LiteralPath $InstalledVersionsRoot -Directory |
-        Sort-Object LastWriteTime -Descending |
-        ForEach-Object { Join-Path $_.FullName 'runtime\bun.exe' }
-}
-$BunCanary = $null
-foreach ($Candidate in @($BunCandidates | Where-Object { $_ } | Select-Object -Unique)) {
-    if (-not (Test-Path -LiteralPath $Candidate -PathType Leaf)) { continue }
-    try {
-        $CandidateVersion = (& $Candidate --version).Trim()
-        $CandidateRevision = (& $Candidate --revision).Trim()
-        if ($CandidateVersion -eq $ExpectedVersion -and $CandidateRevision -eq $ExpectedRevision) {
-            $BunCanary = (Resolve-Path -LiteralPath $Candidate).Path
-            break
-        }
-    } catch {}
+$LauncherRoot = Join-Path $RepoRoot 'launcher'
+$RuntimeCacheRoot = Join-Path $CanonicalRoot 'tmp\runtime-cache'
+
+function Test-ExecutableRunning([string]$ExecutablePath) {
+    $FullPath = [System.IO.Path]::GetFullPath($ExecutablePath)
+    $Running = Get-CimInstance Win32_Process | Where-Object {
+        $_.ExecutablePath -and [string]::Equals(
+            [System.IO.Path]::GetFullPath([string]$_.ExecutablePath),
+            $FullPath,
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    } | Select-Object -First 1
+    return $null -ne $Running
 }
 
-if (-not $BunCanary) {
-    throw "Required Bun stable runtime $ExpectedRevision was not found in the environment, repository runtime, or installed versions"
+function Test-BunCache([string]$BunPath) {
+    if (-not (Test-Path -LiteralPath $BunPath -PathType Leaf)) { return $false }
+    try {
+        if ((Get-FileHash -Algorithm SHA256 -LiteralPath $BunPath).Hash -ne $ExpectedBunSha256) { return $false }
+        return ((& $BunPath --version).Trim() -eq $ExpectedVersion) -and
+            ((& $BunPath --revision).Trim() -eq $ExpectedRevision)
+    } catch { return $false }
 }
-$LauncherRoot = Join-Path $RepoRoot 'launcher'
-$ElectronPath = Join-Path $CanonicalRoot 'launcher\node_modules\electron\dist\electron.exe'
+
+function Repair-BunCache([string]$BunPath) {
+    if (Test-ExecutableRunning $BunPath) {
+        throw "Pinned Bun cache is invalid but currently running and cannot be replaced safely: $BunPath"
+    }
+    $CacheDirectory = Split-Path -Parent $BunPath
+    [System.IO.Directory]::CreateDirectory($CacheDirectory) | Out-Null
+    $ArchivePath = Join-Path $CacheDirectory 'bun-windows-x64.zip'
+    $DownloadPath = Join-Path $CacheDirectory "bun-windows-x64.$PID.zip"
+    $ExtractRoot = Join-Path $CacheDirectory "extract-$PID"
+    try {
+        Invoke-WebRequest `
+            -Uri "https://github.com/oven-sh/bun/releases/download/bun-v$ExpectedVersion/bun-windows-x64.zip" `
+            -OutFile $DownloadPath | Out-Null
+        if (Test-Path -LiteralPath $ExtractRoot) { Remove-Item -LiteralPath $ExtractRoot -Recurse -Force }
+        Expand-Archive -LiteralPath $DownloadPath -DestinationPath $ExtractRoot
+        $DownloadedBun = Get-ChildItem -LiteralPath $ExtractRoot -Filter 'bun.exe' -File -Recurse |
+            Select-Object -First 1
+        if ($null -eq $DownloadedBun -or
+            (Get-FileHash -Algorithm SHA256 -LiteralPath $DownloadedBun.FullName).Hash -ne $ExpectedBunSha256 -or
+            ((& $DownloadedBun.FullName --version).Trim() -ne $ExpectedVersion) -or
+            ((& $DownloadedBun.FullName --revision).Trim() -ne $ExpectedRevision)) {
+            throw "Downloaded Bun artifact did not match pinned runtime $ExpectedRevision"
+        }
+        Copy-Item -LiteralPath $DownloadedBun.FullName -Destination $BunPath -Force
+        Move-Item -LiteralPath $DownloadPath -Destination $ArchivePath -Force
+    } finally {
+        if (Test-Path -LiteralPath $DownloadPath) { Remove-Item -LiteralPath $DownloadPath -Force }
+        if (Test-Path -LiteralPath $ExtractRoot) { Remove-Item -LiteralPath $ExtractRoot -Recurse -Force }
+    }
+}
+
+$BunCanary = Join-Path $RuntimeCacheRoot "bun\$ExpectedRevision\win32-x64\bun.exe"
+if (-not (Test-BunCache $BunCanary)) { Repair-BunCache $BunCanary }
+if (-not (Test-BunCache $BunCanary)) {
+    throw "Pinned Bun cache verification failed after repair: $BunCanary"
+}
+$BunCanary = (Resolve-Path -LiteralPath $BunCanary).Path
+
+$LauncherManifest = Get-Content -LiteralPath (Join-Path $LauncherRoot 'package.json') -Raw | ConvertFrom-Json
+$ElectronVersion = [string]$LauncherManifest.devDependencies.electron
+if ($ElectronVersion -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Launcher must declare an exact Electron version, received: $ElectronVersion"
+}
+$ElectronVersionRoot = Join-Path $RuntimeCacheRoot "electron\$ElectronVersion"
+$ElectronDist = Join-Path $ElectronVersionRoot 'win32-x64'
+$ElectronPath = Join-Path $ElectronDist 'electron.exe'
+$ElectronRequiredFiles = @(
+    'electron.exe',
+    'version',
+    'chrome_100_percent.pak',
+    'chrome_200_percent.pak',
+    'resources.pak',
+    'icudtl.dat'
+)
+
+function Test-ElectronCache([string]$DistPath) {
+    foreach ($RelativePath in $ElectronRequiredFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $DistPath $RelativePath) -PathType Leaf)) { return $false }
+    }
+    try {
+        return (Get-Content -LiteralPath (Join-Path $DistPath 'version') -Raw).Trim() -eq $ElectronVersion
+    } catch { return $false }
+}
+
+function Repair-ElectronCache([string]$DistPath) {
+    if (Test-ExecutableRunning (Join-Path $DistPath 'electron.exe')) {
+        throw "Electron cache is invalid but currently running and cannot be replaced safely: $DistPath"
+    }
+    [System.IO.Directory]::CreateDirectory($ElectronVersionRoot) | Out-Null
+    $ArchiveName = "electron-v$ElectronVersion-win32-x64.zip"
+    $ArchivePath = Join-Path $ElectronVersionRoot $ArchiveName
+    $ChecksumsPath = Join-Path $ElectronVersionRoot 'SHASUMS256.txt'
+    $DownloadArchive = Join-Path $ElectronVersionRoot "electron-v$ElectronVersion-win32-x64.$PID.zip"
+    $DownloadChecksums = Join-Path $ElectronVersionRoot "SHASUMS256.$PID.txt"
+    $ExtractRoot = Join-Path $ElectronVersionRoot "extract-$PID"
+    try {
+        Invoke-WebRequest `
+            -Uri "https://github.com/electron/electron/releases/download/v$ElectronVersion/SHASUMS256.txt" `
+            -OutFile $DownloadChecksums | Out-Null
+        Invoke-WebRequest `
+            -Uri "https://github.com/electron/electron/releases/download/v$ElectronVersion/$ArchiveName" `
+            -OutFile $DownloadArchive | Out-Null
+        $ChecksumPattern = '^\s*([0-9a-fA-F]{64})\s+\*?' + [regex]::Escape($ArchiveName) + '\s*$'
+        $ChecksumMatch = Get-Content -LiteralPath $DownloadChecksums |
+            ForEach-Object { [regex]::Match($_, $ChecksumPattern) } |
+            Where-Object Success |
+            Select-Object -First 1
+        if ($null -eq $ChecksumMatch) {
+            throw "Official Electron checksums did not contain $ArchiveName"
+        }
+        $ExpectedArchiveHash = $ChecksumMatch.Groups[1].Value.ToUpperInvariant()
+        $ActualArchiveHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $DownloadArchive).Hash
+        if ($ActualArchiveHash -ne $ExpectedArchiveHash) {
+            throw "Electron archive checksum mismatch for $ArchiveName"
+        }
+        if (Test-Path -LiteralPath $ExtractRoot) { Remove-Item -LiteralPath $ExtractRoot -Recurse -Force }
+        Expand-Archive -LiteralPath $DownloadArchive -DestinationPath $ExtractRoot
+        if (-not (Test-ElectronCache $ExtractRoot)) {
+            throw "Downloaded Electron payload did not match launcher version $ElectronVersion"
+        }
+        Move-Item -LiteralPath $DownloadArchive -Destination $ArchivePath -Force
+        Move-Item -LiteralPath $DownloadChecksums -Destination $ChecksumsPath -Force
+        if (Test-Path -LiteralPath $DistPath) { Remove-Item -LiteralPath $DistPath -Recurse -Force }
+        Move-Item -LiteralPath $ExtractRoot -Destination $DistPath
+    } finally {
+        if (Test-Path -LiteralPath $DownloadArchive) { Remove-Item -LiteralPath $DownloadArchive -Force }
+        if (Test-Path -LiteralPath $DownloadChecksums) { Remove-Item -LiteralPath $DownloadChecksums -Force }
+        if (Test-Path -LiteralPath $ExtractRoot) { Remove-Item -LiteralPath $ExtractRoot -Recurse -Force }
+    }
+}
+
+if (-not (Test-ElectronCache $ElectronDist)) { Repair-ElectronCache $ElectronDist }
+if (-not (Test-ElectronCache $ElectronDist)) {
+    throw "Electron cache verification failed after repair: $ElectronDist"
+}
+$ElectronPath = (Resolve-Path -LiteralPath $ElectronPath).Path
+$InstalledVersionsRoot = Join-Path $env:USERPROFILE '.codex-chatgpt-web\versions'
 $ExpectedEntrypoint = Join-Path $RepoRoot 'src\cli.ts'
 $HelperOutput = Join-Path $RepoRoot '.launcher-runtime\browser-helper.cjs'
 $HelperStaging = Join-Path $RepoRoot '.launcher-runtime\browser-helper.next.cjs'
