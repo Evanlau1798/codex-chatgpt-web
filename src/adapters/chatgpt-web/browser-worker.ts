@@ -183,8 +183,10 @@ import type {
   ChatGptTurnProgressReader,
 } from "./turn-progress";
 import {
+  CHATGPT_BROWSER_MUTATION_CLEANUP_MS,
   ChatGptPersistentBrowserStateError,
   runChatGptMutationCleanup,
+  runChatGptMutationStep,
 } from "../../browser-mutation";
 import { ensureChatGptPersonalizedConnectorAccess } from "./personalization";
 
@@ -1075,8 +1077,13 @@ export class ChatGptBrowserWorker {
     } catch (error) {
       let surfacedError = error;
       if (controller.signal.aborted && awaitAbortedActionSettlement && actionPromise) {
-        try { await actionPromise; }
-        catch (settlementError) {
+        const pendingAction = actionPromise;
+        try {
+          await runChatGptMutationStep(
+            () => pendingAction,
+            Date.now() + CHATGPT_BROWSER_MUTATION_CLEANUP_MS,
+          );
+        } catch (settlementError) {
           if (settlementError instanceof ChatGptPersistentBrowserStateError) surfacedError = settlementError;
         }
       }

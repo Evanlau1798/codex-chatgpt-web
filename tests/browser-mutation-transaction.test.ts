@@ -1,7 +1,10 @@
 import { expect, test } from "bun:test";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/personalization";
-import { ChatGptPersistentBrowserStateError } from "../src/browser-mutation";
+import {
+  CHATGPT_BROWSER_MUTATION_CLEANUP_MS,
+  ChatGptPersistentBrowserStateError,
+} from "../src/browser-mutation";
 
 test("a cancelled mutating stage settles its owned cleanup before returning", async () => {
   const owner = new AbortController();
@@ -56,6 +59,28 @@ test("cleanup integrity failures supersede the original cancellation", async () 
     message: "persistent browser cleanup failed",
   });
 });
+
+test("a cancelled mutating stage bounds cleanup that never settles", async () => {
+  const owner = new AbortController();
+  const runStage = (ChatGptBrowserWorker.prototype as unknown as {
+    runStage<T>(
+      traceId: string, stage: string, timeoutMs: number,
+      action: (signal: AbortSignal) => Promise<T>, ownerSignal?: AbortSignal,
+      suspensionClock?: { suspendedMs(): number }, awaitAbortedActionSettlement?: boolean,
+    ): Promise<T>;
+  }).runStage;
+  const result = runStage.call({}, "mutation_never_settles", "prompt_attachment", 60_000, () => (
+    new Promise<string>(() => {})
+  ), owner.signal, undefined, true);
+  owner.abort();
+
+  const outcome = await Promise.race([
+    result.then(() => "resolved" as const, error => error),
+    Bun.sleep(CHATGPT_BROWSER_MUTATION_CLEANUP_MS + 1_000).then(() => "cleanup-timeout" as const),
+  ]);
+  expect(outcome).not.toBe("cleanup-timeout");
+  expect(outcome).toMatchObject({ name: "AbortError" });
+}, 7_000);
 
 test("aborted personalization restores the original semantic mode", async () => {
   const owner = new AbortController();
