@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { notifyLauncherTurn, readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
-import { ChatGptWebAdapterError } from "./adapter-error";
+import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { BrowserTurn, ResolvedBrowserConfig } from "./browser-worker";
 import {
@@ -243,7 +243,13 @@ export class LauncherBrowserHelperClient {
               );
               return;
             }
-            void this.send({ type: "abort", id: turn.traceId }).catch(error => {
+            void this.send({
+              type: "abort",
+              id: turn.traceId,
+              ...(turn.abortSignal?.reason instanceof ChatGptCompactionHandoffAccepted
+                ? { reason: "compaction_handoff_accepted" }
+                : {}),
+            }).catch(error => {
               this.finishWithError(
                 turn.traceId,
                 error instanceof Error ? error : new Error(String(error)),

@@ -7,6 +7,7 @@ Codex app / CLI
 launcher-owned codex-chatgpt-web daemon
   ├─ official /models passthrough + fixed ChatGPT Web models
   ├─ native Responses passthrough or ChatGPT Responses/SSE bridge
+  ├─ authenticated native Search and Image Gen request forwarding
   ├─ ChatGPT browser worker (up to five task-bound Electron tabs)
   ├─ capability broker (full mode only)
   └─ stdio MCP server
@@ -91,6 +92,12 @@ partition and keep independent documents and lifecycles. Closing a running tab d
 and terminates that browser turn. A sixth concurrent turn fails explicitly; the cap avoids excessive
 parallel traffic that could trigger account abuse controls.
 
+Browser submission and response binding use ChatGPT's logical `data-turn-id`, not the
+`conversation-turn-N` display index, which can change during rendering. The submission baseline
+includes the persistent `data-turn-id-container` wrappers of virtualized history. Remounting old
+messages therefore cannot count as a new submission or another user's turn. Missing or duplicate
+logical identities fail explicitly; accepted messages are never resent to repair their DOM.
+
 Sign-in uses that same persistent Electron partition. ChatGPT login pages and allowed identity-
 provider popups are adopted into a temporary `WebContentsView` inside the launcher instead of being
 redirected to another browser. After the provider returns to ChatGPT, the launcher requires both a
@@ -125,6 +132,12 @@ that still exceeds the proven hard ceiling fails explicitly before any browser t
 Top-level `model_context_window` raises only the proxied native rows' advertised maximum, allowing
 Codex to apply its own configured context override without clamping. Routed ChatGPT Web models
 retain their measured adapter-owned limits.
+
+Bigger Context partitions complete ordered records against each message's available token and
+composer budgets. Inert stages carry text; the final message also carries all retained attachments,
+the execution contract and any output schema. Their reserves are deducted before partitioning,
+then preflight checks the actual compiled messages and total transaction. The selected execution
+effort, attachment references and three-part maximum remain unchanged.
 
 In Full mode, routed compaction v1/v2 uses the exact retained source agent and a one-shot MCP control
 capability that accepts only the bound checkpoint; it cannot claim or invoke the ordinary Codex tool
@@ -202,7 +215,7 @@ Setup never restarts an already loaded daemon implicitly. A requested stop, rest
 or uninstall first calls a private authenticated drain endpoint. The daemon rejects new turns and
 reports two independent counters:
 
-- active Responses HTTP requests, including native compaction passthrough;
+- active HTTP requests, including native compaction, Search, and Image Gen forwarding;
 - active ChatGPT browser sessions, including time spent waiting for local Codex tool results.
 
 The lifecycle operation proceeds only when both counters are zero. The launcher then stops the

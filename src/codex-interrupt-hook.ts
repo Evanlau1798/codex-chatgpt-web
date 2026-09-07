@@ -136,9 +136,9 @@ function hookTextPattern(text: string): string {
     .join("(?:\\r\\n|\\n|\\r)");
 }
 
-function locateCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): {
-  start: number; end: number; appendedConfig: string;
-} {
+function locateCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): Array<{
+  start: number; end: number;
+}> {
   const marker = installed.fragment.indexOf(MANAGED_INTERRUPT_HOOK_END);
   if (marker < 0) throw new Error("Codex interrupt lifecycle hook journal fragment is invalid");
   const ownedPrefix = installed.fragment.slice(0, marker);
@@ -153,17 +153,33 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   if (interruptGroupCount(text.slice(0, first)) !== installed.groupIndex) {
     throw new Error("Codex interrupt lifecycle hook order changed after setup; refusing to overwrite it");
   }
-  const endMarker = text.indexOf(MANAGED_INTERRUPT_HOOK_END, ownedEnd);
+  const endMarker = text.indexOf(MANAGED_INTERRUPT_HOOK_END);
   if (managedMarkerCount(text) !== 1 || endMarker < 0
+    || (endMarker >= first && endMarker < ownedEnd)
     || text.split(MANAGED_INTERRUPT_HOOK_END).length !== 2) {
     throw new Error("Codex interrupt lifecycle hook markers changed after setup; refusing to overwrite them");
+  }
+  if (endMarker < first) {
+    // A moved comment is independent of the owned definitions. Prove it is still a comment,
+    // rather than matching text inside an unrelated TOML value, before removing it separately.
+    const precedingConfig = text.slice(0, first);
+    const withoutMarker = precedingConfig.slice(0, endMarker)
+      + precedingConfig.slice(endMarker + MANAGED_INTERRUPT_HOOK_END.length);
+    try {
+      if (JSON.stringify(canonicalJson(Bun.TOML.parse(precedingConfig)))
+        !== JSON.stringify(canonicalJson(Bun.TOML.parse(withoutMarker)))) {
+        throw new Error("Marker removal changes TOML values");
+      }
+    } catch {
+      throw new Error("Codex interrupt lifecycle hook markers changed after setup; refusing to overwrite them");
+    }
   }
   if (codexInterruptHookHash(installed.command) !== installed.trustedHash) {
     throw new Error("Codex interrupt lifecycle hook journal hash is invalid");
   }
   // Codex's TOML editor inserts new tables before trailing comments. The end marker can therefore
   // move past unrelated config even though the owned hook fields remain unchanged.
-  const appendedConfig = text.slice(ownedEnd, endMarker);
+  const appendedConfig = text.slice(ownedEnd, endMarker < first ? undefined : endMarker);
   const firstAssignment = appendedConfig.split(/\r\n|\n|\r/)
     .map(line => line.trim()).find(line => line && !line.startsWith("#"));
   if (firstAssignment && !/^\[\[?.+\]\]?(?:\s*#.*)?$/.test(firstAssignment)) {
@@ -189,7 +205,7 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   const end = endMarker + MANAGED_INTERRUPT_HOOK_END.length;
   const trailing = installed.fragment.slice(marker + MANAGED_INTERRUPT_HOOK_END.length);
   const trailingLength = new RegExp("^" + hookTextPattern(trailing)).exec(text.slice(end))?.[0].length ?? 0;
-  return { start: first, end: end + trailingLength, appendedConfig };
+  return [{ start: first, end: ownedEnd }, { start: endMarker, end: end + trailingLength }];
 }
 
 export function verifyCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): void {
@@ -197,8 +213,9 @@ export function verifyCodexInterruptHook(text: string, installed: InstalledCodex
 }
 
 export function restoreCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): string {
-  const owned = locateCodexInterruptHook(text, installed);
-  return text.slice(0, owned.start) + owned.appendedConfig + text.slice(owned.end);
+  const owned = locateCodexInterruptHook(text, installed).sort((left, right) => right.start - left.start);
+  for (const range of owned) text = text.slice(0, range.start) + text.slice(range.end);
+  return text;
 }
 
 export function verifyCodexInterruptHookRestored(text: string): void {

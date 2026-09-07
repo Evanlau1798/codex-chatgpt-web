@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
-import { chatGptRetainedConversationUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
+import { ChatGptCompactionHandoffAccepted, chatGptRetainedConversationUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
 import {
   MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
   cancelAllStructuredCompactions,
@@ -349,6 +349,7 @@ test("a completed retained agent returns an exact checkpoint and its browser is 
   expect(captured?.nativeConnector).toBeTrue();
   expect(captured?.capabilities.localToolsEnabled).toBeFalse();
   expect(browserRetired).toBeTrue();
+  expect(captured?.abortSignal?.reason).toBeInstanceOf(ChatGptCompactionHandoffAccepted);
   expect(transactionAborted).toBeTrue();
   expect(transactionTtl).toBe(MAX_COMPACTION_HANDOFF_TIMEOUT_MS);
 });
@@ -1205,12 +1206,13 @@ test("a compact HTTP observer can reconnect without sending a second retained-ch
   }
 });
 
-test("structured compact rebuilds canonical context when its retained source is absent", async () => {
+test.each([false, true])("structured compact rebuilds canonical context when its retained source is absent (Bigger Context=%s)", async experimentalBiggerContext => {
   const root = mkdtempSync(join(shortSocketTempRoot(), "cgw-missing-retained-compact-"));
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: `browser://missing-retained-${Date.now()}`,
     chatgptWeb: {
+      experimentalBiggerContext,
       browserHost: "launcher",
       browserHostDescriptorPath: join(root, "launcher.json"),
       brokerSocketPath: defaultBrokerEndpoint(root),
@@ -1228,13 +1230,21 @@ test("structured compact rebuilds canonical context when its retained source is 
     expect(turn.conversationKey).toBeUndefined();
     expect(turn.compaction).toBeTrue();
     const prepared = await turn.prepare();
-    expect(prepared.text).toContain("Original task");
-    expect(prepared.text).toContain("Continue with the next step");
+    const contextText = prepared.multipart?.parts.join("\n") ?? prepared.text;
+    expect(contextText).toContain("Original task");
+    expect(contextText).toContain("Continue with the next step");
+    if (experimentalBiggerContext) {
+      expect(prepared.multipart!.parts).toHaveLength(3);
+      expect(prepared.trimmedCompactionMessages).toBeUndefined();
+      const lastRecord = prepared.multipart!.parts.flatMap(part => JSON.parse(part).records).at(-1);
+      expect(lastRecord.message.content).toBe(compact.context.messages.at(-1)!.content);
+    }
     prepared.release();
     return "Fallback checkpoint from canonical Codex context";
   };
   const compact = request(true);
   const events: AdapterEvent[] = [];
+  if (experimentalBiggerContext) compact.context.messages.at(-1)!.content += "x".repeat(160_000);
   try {
     await createChatGptWebAdapter(provider).runTurn!(
       compact,

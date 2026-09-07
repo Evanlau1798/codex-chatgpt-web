@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -25,6 +25,9 @@ import {
   MANAGED_MULTI_AGENT_V2_LINE,
   MANAGED_ROUTE_COMMENT,
   managedAgentMaxDepthLine,
+  restoreFileSnapshot,
+  snapshotFile,
+  writeFilesWithCompensation,
 } from "../src/codex-integration-shared";
 
 const roots: string[] = [];
@@ -59,6 +62,73 @@ afterEach(() => {
 });
 
 describe("reversible native Codex route integration", () => {
+  test("route install, update, switching and removal preserve a symlinked shared Codex config", () => {
+    const { root, codexHome } = fixture();
+    const shared = join(root, "shared");
+    mkdirSync(shared, { mode: 0o750 });
+    const target = join(shared, "config.toml");
+    const alias = join(codexHome, "config.toml");
+    const original = 'model = "gpt-5.6-sol"\n\n[features]\ngoals = true\n';
+    writeFileSync(target, original, { mode: 0o640 });
+    symlinkSync(join("..", "shared", "config.toml"), alias);
+    const link = readlinkSync(alias);
+    const linkInode = lstatSync(alias).ino;
+    const directoryMode = statSync(shared).mode & 0o777;
+    const fileMode = statSync(target).mode & 0o777;
+    const config = nativeConfig("browser-only");
+    for (const action of [
+      () => installCodexIntegration(config),
+      () => installCodexIntegration({ ...config, port: config.port + 1 }),
+      () => deactivateCodexIntegration(),
+      () => activateCodexIntegration(),
+      () => setCodexSubagentProtocol(config, "compatibility-v1"),
+      () => setCodexSubagentProtocol(config, "native"),
+      () => uninstallCodexIntegration(),
+    ]) {
+      action();
+      expect(lstatSync(alias).isSymbolicLink()).toBe(true);
+      expect(lstatSync(alias).ino).toBe(linkInode);
+      expect(readlinkSync(alias)).toBe(link);
+      expect(statSync(shared).mode & 0o777).toBe(directoryMode);
+      expect(statSync(target).mode & 0o777).toBe(fileMode);
+      expect(inspectCodexIntegration().errors).toEqual([]);
+    }
+    expect(readFileSync(target, "utf8")).toBe(original);
+  });
+
+  test("config compensation preserves the link and refuses redirected or invalid targets", () => {
+    const { root, codexHome } = fixture();
+    const alias = join(codexHome, "config.toml");
+    const target = join(root, "shared.toml");
+    const other = join(root, "other.toml");
+    const directory = join(root, "directory");
+    writeFileSync(target, "original\n", { mode: 0o640 });
+    writeFileSync(other, "other\n");
+    mkdirSync(directory);
+    symlinkSync(target, alias);
+    const inode = lstatSync(alias).ino;
+    const mode = statSync(target).mode & 0o777;
+    expect(() => writeFilesWithCompensation(
+      [{ path: alias, data: "changed\n", followSymlink: true }], [directory],
+    )).toThrow();
+    expect(readFileSync(target, "utf8")).toBe("original\n");
+    expect(lstatSync(alias).ino).toBe(inode);
+    expect(statSync(target).mode & 0o777).toBe(mode);
+
+    const snapshot = snapshotFile(alias, { followSymlink: true });
+    rmSync(alias);
+    symlinkSync(other, alias);
+    expect(() => restoreFileSnapshot(snapshot)).toThrow("symlink changed");
+    expect(readFileSync(target, "utf8")).toBe("original\n");
+    expect(readFileSync(other, "utf8")).toBe("other\n");
+    for (const invalidTarget of [directory, join(root, "missing.toml"), alias]) {
+      rmSync(alias);
+      symlinkSync(invalidTarget, alias);
+      expect(() => preflightCodexIntegration(nativeConfig("browser-only"))).toThrow();
+      expect(lstatSync(alias).isSymbolicLink()).toBe(true);
+    }
+  });
+
   test("expands a configured tilde Codex home consistently with launcher paths", () => {
     process.env.CODEX_HOME = "~/custom-codex-home";
     expect(getCodexHome()).toBe(join(homedir(), "custom-codex-home"));

@@ -1,15 +1,10 @@
-import { CHATGPT_WEB_PLATFORM_RESERVE_TOKENS } from "../../chatgpt-web-models";
+import { CHATGPT_WEB_PLATFORM_RESERVE_TOKENS, chatGptWebImageTokenReserve } from "../../chatgpt-web-models";
 import { estimateTokens } from "../../lib/token-estimate";
 import {
   formatChatGptWebMultipartCommit,
   formatChatGptWebMultipartStage,
   type CompiledChatGptWebPrompt,
 } from "./prompt";
-
-// ChatGPT's product system prompt and the fixed Codex Native MCP schemas are not present in the
-// visible composer text. Reserve them explicitly; over-counting fails safe by compacting earlier.
-const CHATGPT_IMAGE_RESERVE_TOKENS = 4_096;
-const CHATGPT_ORIGINAL_IMAGE_RESERVE_TOKENS = 8_192;
 
 /**
  * The Free/Luna product accepted measured browser inputs at 25,400 and 28,547 estimated tokens,
@@ -51,12 +46,7 @@ export function estimateCompiledChatGptWebInputTokens(
   compiled: CompiledChatGptWebPrompt,
   modelId: string,
 ): number {
-  const imageTokens = compiled.images.reduce(
-    (total, image) => total + (image.detail === "original"
-      ? CHATGPT_ORIGINAL_IMAGE_RESERVE_TOKENS
-      : CHATGPT_IMAGE_RESERVE_TOKENS),
-    0,
-  );
+  const imageTokens = estimateChatGptWebImageTokens(compiled);
   const messageTokens = compiledChatGptWebMessages(compiled)
     .reduce((total, message) => total + estimateTokens(message, modelId), 0);
   const acknowledgementTokens = compiled.multipart
@@ -71,4 +61,11 @@ export function estimateCompiledChatGptWebInputTokens(
     ), 0)
     : 0;
   return CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + messageTokens + acknowledgementTokens + imageTokens;
+}
+
+export function estimateChatGptWebImageTokens(compiled: CompiledChatGptWebPrompt): number {
+  return compiled.images.reduce(
+    (total, image) => total + chatGptWebImageTokenReserve(image.detail),
+    0,
+  );
 }

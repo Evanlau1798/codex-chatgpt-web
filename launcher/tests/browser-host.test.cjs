@@ -2698,6 +2698,89 @@ test("a retained manual chat copies only its incremental resume prompt", () => {
   clearTimeout(fixture.turnTabs.get(second.tabId).manualDeadlineTimer);
 });
 
+test("manual navigation preserves initial setup but retires a completed page's continuation", () => {
+  for (const inPlace of [false, true]) {
+    const { fixture, clipboardWrites } = manualTurnFixture();
+    const key = "a".repeat(64);
+    const first = fixture.beginManualTurn("manual_initial", process.pid, "original context", key);
+    const tab = fixture.turnTabs.get(first.tabId);
+    const contents = new EventEmitter();
+    contents.setWindowOpenHandler = () => {};
+    tab.view = { webContents: contents };
+    fixture.bindManualTurnContents(tab);
+    const navigate = (url, mainFrame = true) => inPlace
+      ? contents.emit("did-navigate-in-page", {}, url, mainFrame)
+      : contents.emit("did-start-navigation", {}, url, false, mainFrame);
+    navigate("https://chatgpt.com/?temporary-chat=true");
+    assert.equal(tab.conversationKey, key);
+    fixture.confirmManualSent(tab.id);
+    fixture.markManualTurnStarted("manual_initial", process.pid);
+    fixture.endManualTurn("manual_initial", process.pid, "completed", true);
+    navigate("https://example.com/frame", false);
+    assert.equal(tab.conversationKey, key);
+    navigate("https://chatgpt.com/c/another-conversation");
+    const next = fixture.beginManualTurn("manual_next", process.pid, "full history plus request", key, "delta only");
+    assert.equal(next.reused, false);
+    assert.notEqual(next.tabId, first.tabId);
+    assert.deepEqual(clipboardWrites, ["original context", "full history plus request"]);
+    fixture.cancelManualTurn("manual_next", process.pid);
+  }
+});
+
+test("navigation cannot silently continue a resumed manual turn with only its delta", async () => {
+  for (const state of ["awaiting-user", "sent", "running"]) {
+    const { fixture } = manualTurnFixture();
+    const key = "a".repeat(64);
+    const first = fixture.beginManualTurn("manual_initial", process.pid, "original context", key);
+    fixture.confirmManualSent(first.tabId);
+    fixture.endManualTurn("manual_initial", process.pid, "completed", true);
+    const next = fixture.beginManualTurn("manual_next", process.pid, "full history plus request", key, "delta only");
+    const tab = fixture.turnTabs.get(next.tabId);
+    const contents = new EventEmitter();
+    contents.setWindowOpenHandler = () => {};
+    tab.view = { webContents: contents };
+    fixture.bindManualTurnContents(tab);
+    if (state !== "awaiting-user") fixture.confirmManualSent(tab.id);
+    if (state === "running") fixture.markManualTurnStarted("manual_next", process.pid);
+    tab.url = "https://chatgpt.com/c/retained";
+    for (const url of [tab.url, `${tab.url}#answer`]) {
+      contents.emit("did-start-navigation", {}, url, true, true);
+      contents.emit("did-navigate-in-page", {}, url, true);
+      assert.equal(tab.status, "running");
+      assert.equal(tab.manualState, state);
+      assert.equal(tab.conversationKey, key);
+    }
+    const terminal = fixture.waitManualTerminal("manual_next", process.pid, 1_000);
+    // Even reloading the same URL replaces the document; it is not a history-state update.
+    contents.emit("did-start-navigation", {}, tab.url, false, true);
+    assert.equal(tab.status, "error");
+    assert.equal((await terminal).status, "failed");
+    assert.match(tab.message, /full context/);
+    assert.throws(() => fixture.confirmManualSent(tab.id), /no longer/);
+    assert.throws(() => fixture.endManualTurn("manual_next", process.pid, "completed", true), /cannot complete/);
+    fixture.endManualTurn("manual_next", process.pid, "failed");
+    const fresh = fixture.beginManualTurn("manual_recovery", process.pid, "full history plus request", key, "delta only");
+    assert.equal(fresh.reused, false);
+    fixture.cancelManualTurn("manual_recovery", process.pid);
+  }
+});
+
+test("navigation after the first manual submission prevents retaining the changed page", () => {
+  const { fixture } = manualTurnFixture();
+  const first = fixture.beginManualTurn("manual_initial", process.pid, "original context", "a".repeat(64));
+  const tab = fixture.turnTabs.get(first.tabId);
+  const contents = new EventEmitter();
+  contents.setWindowOpenHandler = () => {};
+  tab.view = { webContents: contents };
+  fixture.bindManualTurnContents(tab);
+  fixture.confirmManualSent(tab.id);
+  contents.emit("did-navigate-in-page", {}, "https://chatgpt.com/c/created-chat", true);
+  fixture.markManualTurnStarted("manual_initial", process.pid);
+  fixture.endManualTurn("manual_initial", process.pid, "completed", true);
+  assert.equal(fixture.turnTabs.has(tab.id), false);
+  assert.equal(fixture.manualCompletionSignals.has("manual_initial"), true);
+});
+
 test("manual start rejects a different prompt after Sent instead of replaying a trace", () => {
   const { fixture, clipboardWrites } = manualTurnFixture();
   const lease = fixture.beginManualTurn("manual_trace_mismatch", process.pid, "original prompt");

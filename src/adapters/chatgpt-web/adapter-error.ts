@@ -22,6 +22,14 @@ export class ChatGptWebAdapterError extends Error {
   }
 }
 
+// Only the compaction owner may signal this after the broker accepts its one-shot handoff.
+// It cancels browser observation, while the accepted summary remains the native result.
+export class ChatGptCompactionHandoffAccepted extends DOMException {
+  constructor() {
+    super("Structured compaction handoff accepted", "AbortError");
+  }
+}
+
 export function chatGptBrowserTabClosedError(): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(
     "The ChatGPT browser tab was closed, so the Codex turn was cancelled.",

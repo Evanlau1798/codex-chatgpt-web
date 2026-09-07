@@ -27,7 +27,8 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 export type NativeFetch = (request: Request) => Promise<Response>;
-export type NativeCodexEndpoint = "models" | "responses" | "responses/compact" | "alpha/search";
+export type NativeImageEndpoint = "images/generations" | "images/edits";
+export type NativeCodexEndpoint = "models" | "responses" | "responses/compact" | "alpha/search" | NativeImageEndpoint;
 
 type JsonObject = Record<string, unknown>;
 type BridgeCompactionItem = JsonObject & { type: "compaction"; encrypted_content: string };
@@ -56,6 +57,10 @@ export function codexClientVersionFromUserAgent(userAgent: string | null): strin
 
 function isObject(value: unknown): value is JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function nativeDiagnosticId(value: string | null): string | undefined {
+  return value && /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : undefined;
 }
 
 function isBridgeReasoningItem(value: unknown): value is JsonObject {
@@ -218,13 +223,25 @@ export async function forwardNativeCodexRequest(
   const headers = endToEndHeaders(request.headers);
   if (endpoint === "models") headers.delete("if-none-match");
   const method = endpoint === "models" ? "GET" : "POST";
+  const imageRequest = endpoint === "images/generations" || endpoint === "images/edits";
+  let compactionRequest = endpoint === "responses/compact";
+  let model: string | undefined;
   let body: BodyInit | undefined;
-  if (method === "POST") {
+  if (imageRequest) {
+    // Standalone image requests use their own schema; never interpret them as Responses history.
+    body = await request.arrayBuffer();
+  } else if (method === "POST") {
     const parseRequest = decodedBody === undefined ? request.clone() : undefined;
     const originalBody = await request.arrayBuffer();
-    const scrubbed = scrubBridgeArtifactsForNative(
-      decodedBody === undefined ? await readJsonRequestBody(parseRequest!) : decodedBody,
-    );
+    const parsedBody = decodedBody === undefined ? await readJsonRequestBody(parseRequest!) : decodedBody;
+    if (isObject(parsedBody)) {
+      if (typeof parsedBody.model === "string" && /^[A-Za-z0-9_./:-]{1,128}$/.test(parsedBody.model)) {
+        model = parsedBody.model;
+      }
+      const tail = Array.isArray(parsedBody.input) ? parsedBody.input.at(-1) : undefined;
+      compactionRequest ||= endpoint === "responses" && isObject(tail) && tail.type === "compaction_trigger";
+    }
+    const scrubbed = scrubBridgeArtifactsForNative(parsedBody);
     if (scrubbed.changed) {
       headers.delete("content-encoding");
       body = JSON.stringify(scrubbed.value);
@@ -237,9 +254,21 @@ export async function forwardNativeCodexRequest(
     headers,
     ...(body ? { body } : {}),
     signal: request.signal,
+    // Images create work: preserve redirects as responses instead of replaying a POST or
+    // forwarding account headers to a redirect destination.
+    redirect: imageRequest ? "manual" : "follow",
   });
   const upstream = await fetchUpstream(upstreamRequest);
+  if (compactionRequest && !upstream.ok) {
+    console.warn(`[codex-chatgpt-web] native_compaction_upstream_failed ${JSON.stringify({
+      endpoint, model, status: upstream.status,
+      requestId: nativeDiagnosticId(upstream.headers.get("x-request-id")),
+      cfRay: nativeDiagnosticId(upstream.headers.get("cf-ray")),
+    })}`);
+  }
   const responseHeaders = endToEndHeaders(upstream.headers);
+  // fetch exposes decompressed image JSON; retaining gzip/br would make Codex decode it twice.
+  if (imageRequest) responseHeaders.delete("content-encoding");
   const isEventStream = (upstream.headers.get("content-type") ?? "")
     .toLowerCase()
     .includes("text/event-stream");

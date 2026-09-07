@@ -194,12 +194,18 @@ function renameAtomicFile(source: string, destination: string): void {
   }
 }
 
-export function atomicWriteFile(path: string, data: string | Uint8Array): void {
+export function atomicWriteFile(
+  path: string,
+  data: string | Uint8Array,
+  { mode = 0o600, protectDirectory = true }: { mode?: number; protectDirectory?: boolean } = {},
+): void {
   const directory = dirname(path);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
-  try { chmodSync(directory, 0o700); } catch { /* Windows ACLs are managed by the installer. */ }
+  if (protectDirectory) {
+    try { chmodSync(directory, 0o700); } catch { /* Windows ACLs are managed by the installer. */ }
+  }
   const temp = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
-  const fd = openSync(temp, "wx", 0o600);
+  const fd = openSync(temp, "wx", mode);
   try {
     writeFileSync(fd, data);
     closeSync(fd);
@@ -209,7 +215,7 @@ export function atomicWriteFile(path: string, data: string | Uint8Array): void {
     rmSync(temp, { force: true });
     throw error;
   }
-  try { chmodSync(path, 0o600); } catch { /* Windows ACLs are managed by the installer. */ }
+  try { chmodSync(path, mode); } catch { /* Windows ACLs are managed by the installer. */ }
 }
 
 export function stripUtf8Bom(text: string): string {

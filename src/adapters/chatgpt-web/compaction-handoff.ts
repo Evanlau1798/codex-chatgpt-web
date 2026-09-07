@@ -6,6 +6,7 @@ import type {
 } from "../../types";
 import { extractChatGptCompactionSourceRevision } from "./environment";
 import type { ChatGptBrowserWorker } from "./browser-worker";
+import { ChatGptCompactionHandoffAccepted } from "./adapter-error";
 import type { CompactionTransactionHandle } from "./compaction-transaction";
 import type { ChatGptWebCapabilities } from "./model";
 import {
@@ -340,7 +341,7 @@ export async function requestRetainedCompactionHandoff(
     // The one-shot control submission is the terminal event for this purpose-built response.
     // ChatGPT may render no assistant text after a tool-only response, and therefore no Copy
     // action. End our owned turn explicitly and wait for the launcher/helper cleanup handshake.
-    browserAbort.abort(new DOMException("Structured compaction handoff accepted", "AbortError"));
+    browserAbort.abort(new ChatGptCompactionHandoffAccepted());
     await withCompactionAbort(
       browser.then(() => undefined, () => undefined),
       operationSignal,

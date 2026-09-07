@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, toNamespacedPath } from "node:path";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
 import { rememberCompactionContinuation } from "../src/adapters/chatgpt-web/compaction-continuation";
 import { encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
@@ -33,14 +33,18 @@ const readOnlyProfileXml = `<permission_profile type="managed"><file_system type
 const externalProfileXml = `<permission_profile type="external"><file_system type="external" /></permission_profile>`;
 
 function currentWire(
-  options: { workspace?: string; sandbox?: string; includeIds?: boolean; environmentXml?: string } = {},
+  options: {
+    workspace?: string; sandbox?: string; includeIds?: boolean; environmentXml?: string;
+    threadId?: string; parentThreadId?: string;
+  } = {},
 ): CodexParsedRequest {
   const workspace = options.workspace ?? root;
   const sandbox = options.sandbox ?? "none";
   const includeIds = options.includeIds ?? true;
   const envXml = options.environmentXml ?? environmentXml;
   const turnMetadata = {
-    thread_id: "thread_current",
+    thread_id: options.threadId ?? "thread_current",
+    ...(options.parentThreadId ? { parent_thread_id: options.parentThreadId } : {}),
     turn_id: "turn_current",
     sandbox,
     workspaces: { [workspace]: { has_changes: true } },
@@ -319,6 +323,38 @@ describe("trusted current Codex environment envelope", () => {
     });
   });
 
+  test("steering accepts a spawned task's parent visualization root", () => {
+    const codexHome = resolve(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"));
+    const visualizationRoot = join(codexHome, "visualizations", "2026", "08", "25", "thread_parent");
+    const projectEnvironment = `<environment_context>
+  <cwd>${root}</cwd>
+  <filesystem><workspace_roots><root>${root}</root><root>${visualizationRoot}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem>
+</environment_context>`;
+    const request = currentWire({
+      environmentXml: projectEnvironment,
+      threadId: "thread_child",
+      parentThreadId: "thread_parent",
+    });
+    const body = request._rawBody as { input: Array<Record<string, unknown>> };
+    for (const item of body.input) {
+      item.internal_chat_message_metadata_passthrough = { turn_id: "turn_current" };
+    }
+    body.input.push(
+      {
+        type: "message", id: "msg_assistant", role: "assistant",
+        content: [{ type: "output_text", text: "Working." }],
+        internal_chat_message_metadata_passthrough: { turn_id: "turn_current" },
+      },
+      {
+        type: "message", id: "msg_steering", role: "user",
+        content: [{ type: "input_text", text: "Stop and review first." }],
+        internal_chat_message_metadata_passthrough: { turn_id: "turn_current" },
+      },
+    );
+
+    expect(extractChatGptTurnEnvironment(request).roots).toEqual([root, visualizationRoot]);
+  });
+
   test("skill recovery rejects another task's Codex visualization root", () => {
     const codexHome = resolve(process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"));
     const visualizationRoot = join(codexHome, "visualizations", "2026", "08", "25", "thread_other");
@@ -326,7 +362,7 @@ describe("trusted current Codex environment envelope", () => {
   <cwd>${root}</cwd>
   <filesystem><workspace_roots><root>${root}</root><root>${visualizationRoot}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem>
 </environment_context>`;
-    const request = currentWire({ environmentXml: injectedEnvironment });
+    const request = currentWire({ environmentXml: injectedEnvironment, parentThreadId: "thread_parent" });
     const body = request._rawBody as { input: Array<Record<string, unknown>> };
     for (const item of body.input) {
       item.internal_chat_message_metadata_passthrough = { turn_id: "turn_current" };
@@ -659,6 +695,13 @@ describe("trusted Codex task environment continuity", () => {
     metadata.subagent_kind = "other";
     (child._rawBody as { client_metadata: Record<string, string> }).client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
     expect(() => store.resolve(child)).toThrow("missing cwd");
+
+    for (const agent_name of [null, undefined]) {
+      (child._rawBody as { client_metadata: Record<string, string> }).client_metadata["x-codex-turn-metadata"] = JSON.stringify({
+        ...metadata, subagent_kind: "thread_spawn", agent_name,
+      });
+      expect(() => store.resolve(child)).toThrow("missing cwd");
+    }
   });
 
   const rolloutThreadId = "01a06c66-4232-7ae1-9108-69b5f70e0671";
@@ -778,7 +821,22 @@ describe("trusted Codex task environment continuity", () => {
     });
   });
 
-  for (const format of ["v1", "v2"]) test(`${format} context-only continuation requires a matching current rollout, not just a checkpoint`, () => {
+  test.skipIf(process.platform !== "win32")("resumed Windows tasks accept the same indexed rollout with either path namespace", () => {
+    for (const namespaceHome of [false, true]) for (const namespaceRollout of [false, true]) {
+      const { codexHome, request, rolloutPath } = resumedRootFixture();
+      const databasePath = join(codexHome, "state_5.sqlite");
+      createRolloutState(databasePath, namespaceRollout ? toNamespacedPath(rolloutPath) : rolloutPath);
+      const database = new Database(databasePath);
+      database.exec("DELETE FROM thread_spawn_edges; UPDATE threads SET agent_path = NULL");
+      database.close();
+      const store = new ChatGptThreadEnvironmentStore(
+        undefined, Date.now, namespaceHome ? toNamespacedPath(codexHome) : codexHome,
+      );
+      expect(store.resolve(request).cwd).toBe(root);
+    }
+  });
+
+  for (const format of ["v1", "v2"]) for (const groupedPreamble of [false, true]) test(`${format} ${groupedPreamble ? "grouped preamble" : "context-only"} continuation requires a matching current rollout, not just a checkpoint`, () => {
     const { codexHome, request, rolloutPath } = resumedRootFixture();
     const body = request._rawBody as { input: Array<Record<string, unknown>> };
     const oldTurnId = "01a06c66-0000-75c6-a0df-318f890ef6de";
@@ -787,15 +845,22 @@ describe("trusted Codex task environment continuity", () => {
     rememberCompactionContinuation({ ...request, _compactionRequest: true }, extractChatGptTurnIdentity(request), [
       { turnId: oldTurnId, content: body.input[0]!.content },
     ], summary);
+    const environmentPart = { type: "input_text", text: environmentXml };
     const current = {
       type: "message", role: "user", id: "msg_current_environment",
-      content: [{ type: "input_text", text: environmentXml }],
+      content: groupedPreamble ? [
+        { type: "input_text", text: "<recommended_plugins>Example plugin</recommended_plugins>" },
+        { type: "input_text", text: "# AGENTS.md instructions\n<INSTRUCTIONS>Keep existing changes.</INSTRUCTIONS>" },
+        environmentPart,
+      ] : [environmentPart],
       internal_chat_message_metadata_passthrough: { turn_id: rolloutTurnId },
     };
     const checkpoint = format === "v2"
       ? { type: "compaction", encrypted_content: encodeCompactionSummary(summary) }
       : { type: "message", role: "user", content: [{ type: "input_text", text: `${SUMMARY_PREFIX}\n${summary}` }] };
-    body.input.push(current, checkpoint);
+    // Native compaction rebuilds the current preamble before the earlier user instruction.
+    body.input.unshift(current);
+    body.input.push(checkpoint);
     const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
     expect(store.resolve(request).cwd).toBe(root);
     for (const text of [
@@ -804,10 +869,10 @@ describe("trusted Codex task environment continuity", () => {
         '<sandbox_mode>read-only</sandbox_mode>'),
       "<environment_context><cwd/></environment_context>",
     ]) {
-      current.content[0]!.text = text;
+      environmentPart.text = text;
       expect(() => store.resolve(request)).toThrow();
     }
-    current.content[0]!.text = environmentXml;
+    environmentPart.text = environmentXml;
     body.input.pop();
     expect(() => store.resolve(request)).toThrow("missing cwd");
     body.input.push(checkpoint);
@@ -881,6 +946,87 @@ describe("trusted Codex task environment continuity", () => {
     database.close();
     expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request))
       .toThrow("does not authenticate");
+  });
+
+  test.each([null, undefined])("recovers a V1 native child with session agent_path=%s and agent name /root", agentPath => {
+    const codexHome = mkdtempSync(join(tmpdir(), "codex-chatgpt-null-agent-path-"));
+    temporaryRoots.push(codexHome);
+    const rolloutPath = join(codexHome, "sessions", "2026", "09", "06",
+      `rollout-2026-09-06T13-55-13-${rolloutThreadId}.jsonl`);
+    mkdirSync(dirname(rolloutPath), { recursive: true });
+    const session = childSessionMeta();
+    const payload = session.payload as Record<string, unknown>;
+    payload.agent_path = agentPath;
+    const spawn = ((payload.source as Record<string, unknown>).subagent as Record<string, unknown>)
+      .thread_spawn as Record<string, unknown>;
+    spawn.agent_path = null;
+    writeFileSync(rolloutPath, [JSON.stringify(session), JSON.stringify(childTurnContext())].join("\n") + "\n");
+    createRolloutState(join(codexHome, "state_5.sqlite"), rolloutPath);
+    const database = new Database(join(codexHome, "state_5.sqlite"));
+    database.query("UPDATE threads SET agent_path = NULL WHERE id = ?").run(rolloutThreadId);
+    database.close();
+
+    const request = environmentlessChild();
+    const body = request._rawBody as { client_metadata: Record<string, string> };
+    const metadata = JSON.parse(body.client_metadata["x-codex-turn-metadata"]!);
+    metadata.agent_name = "/root";
+    body.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
+
+    expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
+
+    const databaseWithWrongOwner = new Database(join(codexHome, "state_5.sqlite"));
+    databaseWithWrongOwner.query("UPDATE threads SET agent_path = ? WHERE id = ?")
+      .run(rolloutAgent, rolloutThreadId);
+    databaseWithWrongOwner.close();
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request))
+      .toThrow("does not authenticate");
+
+    const databaseWithNullOwner = new Database(join(codexHome, "state_5.sqlite"));
+    databaseWithNullOwner.query("UPDATE threads SET agent_path = NULL WHERE id = ?").run(rolloutThreadId);
+    databaseWithNullOwner.close();
+    spawn.agent_path = rolloutAgent;
+    writeFileSync(rolloutPath, [JSON.stringify(session), JSON.stringify(childTurnContext())].join("\n") + "\n");
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request))
+      .toThrow("session metadata");
+  });
+
+  test("a child's untagged environment must match native history before its current task boundary", () => {
+    const codexHome = mkdtempSync(join(tmpdir(), "codex-child-history-"));
+    temporaryRoots.push(codexHome);
+    const rolloutPath = join(codexHome, "sessions", "2026", "09", "06",
+      `rollout-2026-09-06T13-55-13-${rolloutThreadId}.jsonl`);
+    mkdirSync(dirname(rolloutPath), { recursive: true });
+    const inherited = {
+      type: "message", role: "user", id: "msg_inherited_environment",
+      content: [{ type: "input_text", text: environmentXml.replaceAll(root, resolve(root, "old-parent")) }],
+    };
+    const boundary = { type: "event_msg", payload: { type: "task_started", turn_id: rolloutTurnId } };
+    const history = { type: "response_item", payload: inherited };
+    const writeRollout = (records: unknown[]) => writeFileSync(rolloutPath,
+      records.map(record => JSON.stringify(record)).join("\n") + "\n");
+    writeRollout([childSessionMeta(), history, boundary, childTurnContext()]);
+    createRolloutState(join(codexHome, "state_5.sqlite"), rolloutPath);
+    const request = environmentlessChild(rolloutTurnId, "danger-full-access", []);
+    const body = request._rawBody as { input: Array<Record<string, unknown>> };
+    body.input.unshift(structuredClone(inherited), {
+      type: "message", role: "user", id: "msg_parent_prompt",
+      content: [{ type: "input_text", text: "Original parent instruction" }],
+    });
+    const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+    // Git enrichment is absent on the first real child request; historical XML never supplies
+    // the authority. Use the child's current native cwd even when the inherited cwd differs.
+    expect(store.resolve(request).cwd).toBe(root);
+    body.input[0] = { ...inherited, content: [{ type: "input_text", text: "<environment_context>changed</environment_context>" }] };
+    expect(() => store.resolve(request)).toThrow("differs from its native Codex record");
+    body.input[0] = { ...inherited, id: "msg_unrecorded_environment" };
+    expect(() => store.resolve(request)).toThrow("does not authenticate");
+    body.input[0] = { ...inherited, internal_chat_message_metadata_passthrough: { turn_id: rolloutTurnId } };
+    expect(() => store.resolve(request)).toThrow("missing cwd");
+    body.input[0] = structuredClone(inherited);
+    writeRollout([childSessionMeta(), boundary, history, childTurnContext()]);
+    expect(() => store.resolve(request)).toThrow("does not authenticate");
+    writeRollout([childSessionMeta(), history, childTurnContext()]);
+    expect(() => store.resolve(request)).toThrow("no current task boundary");
   });
 
   test("compaction authenticates the latest native turn as current or source, never an arbitrary ancestor", () => {

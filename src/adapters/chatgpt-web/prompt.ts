@@ -1,8 +1,15 @@
 import { createHash } from "node:crypto";
-import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
+import {
+  chatGptWebImageTokenReserve,
+  isChatGptWebZeroRiskBackendModel,
+  resolveChatGptWebMessageTokenBudget,
+  resolveChatGptWebTransportLimits,
+} from "../../chatgpt-web-models";
+import { ChatGptWebAdapterError } from "./adapter-error";
+import { estimateTokens } from "../../lib/token-estimate";
 import type { CodexAssistantContentPart, CodexContentPart, CodexMessage, CodexParsedRequest } from "../../types";
 import { isOnePixelPngDataUrl, isReadableCompactionSummaryText } from "../../responses/compaction";
-import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
+import { CHATGPT_WEB_LUNA_MODEL_ID, CHATGPT_WEB_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import {
   CHATGPT_LUNA_CHECKPOINT_MARKER,
   CHATGPT_LUNA_CHECKPOINT_MAX_TOKENS,
@@ -306,79 +313,80 @@ type MultipartContextRecord =
   | { kind: "system"; system_index: number; content: string }
   | { kind: "message"; message_index: number; message: Record<string, unknown> };
 
-function multipartRecordWeight(record: MultipartContextRecord): number {
-  return Buffer.byteLength(JSON.stringify(record), "utf8");
+interface MultipartRecordWeight {
+  tokens: number;
+  chars: number;
 }
 
-function minimumMultipartGroupCapacity(
-  weights: readonly number[],
-  totalParts: ChatGptWebMultipartPartCount,
-): number {
-  if (weights.length === 0) return 0;
+function multipartRecordWeight(record: MultipartContextRecord): MultipartRecordWeight {
+  const text = withoutRetiredTurnHandles(JSON.stringify(record));
+  return { tokens: estimateTokens(text) + 1, chars: text.length + 1 };
+}
+
+function partitionMultipartRecordWeights(
+  weights: readonly MultipartRecordWeight[],
+  budgets: readonly MultipartRecordWeight[],
+): number[] {
+  // A fixed-point fraction of each part's own remaining budget. One step is less than one token.
+  const scale = 1_000_000;
+  const load = (part: number, tokens: number, chars: number): number => Math.max(
+    Math.ceil(tokens * scale / budgets[part]!.tokens),
+    Math.ceil(chars * scale / budgets[part]!.chars),
+  );
   let lower = 0;
-  let upper = 0;
+  let totalTokens = 0;
+  let totalChars = 0;
   for (const weight of weights) {
-    lower = Math.max(lower, weight);
-    upper += weight;
+    totalTokens += weight.tokens;
+    totalChars += weight.chars;
   }
-  const requiredGroups = (capacity: number): number => {
-    let groups = 1;
-    let groupWeight = 0;
-    for (const weight of weights) {
-      if (groupWeight > 0 && groupWeight + weight > capacity) {
-        groups += 1;
-        groupWeight = weight;
-      } else {
-        groupWeight += weight;
+  let upper = load(0, totalTokens, totalChars);
+  const boundaries = (capacity: number): number[] => {
+    let offset = 0;
+    return budgets.map((_budget, part) => {
+      let tokens = 0;
+      let chars = 0;
+      while (offset < weights.length) {
+        const weight = weights[offset]!;
+        if (load(part, tokens + weight.tokens, chars + weight.chars) > capacity) break;
+        tokens += weight.tokens;
+        chars += weight.chars;
+        offset += 1;
       }
-    }
-    return groups;
+      return offset;
+    });
   };
   while (lower < upper) {
     const candidate = Math.floor((lower + upper) / 2);
-    if (requiredGroups(candidate) <= totalParts) upper = candidate;
+    if (boundaries(candidate).at(-1) === weights.length) upper = candidate;
     else lower = candidate + 1;
   }
-  return lower;
+  return boundaries(lower);
 }
 
 /**
  * Partition complete semantic records without cutting a JSON string or an individual message.
  *
- * A target-average greedy split can put two near-target records into the same part merely because
- * the first is a few bytes below the average. The following part is then almost empty, while the
- * oversized middle part is accepted by the composer but cannot be ingested by the model. Find the
- * minimum possible maximum weight for ordered contiguous groups instead.
+ * Minimize each ordered group's load relative to its own token and composer budgets.
+ * Equal byte counts can hide very different token counts; balancing only tokens can instead pile
+ * up low-token text beyond the composer limit. The final part also owns attachments and execution
+ * instructions. Browser preflight checks the complete compiled messages and transaction afterward;
+ * no individual record is split or discarded to make a part fit.
  */
 function partitionMultipartContext(
   records: readonly MultipartContextRecord[],
   totalParts: ChatGptWebMultipartPartCount,
+  budgets: readonly MultipartRecordWeight[],
 ): ChatGptWebMultipartParts {
-  const groups: MultipartContextRecord[][] = Array.from(
-    { length: totalParts },
-    () => [],
-  );
+  if (budgets.length !== totalParts) throw new Error("ChatGPT multipart budget count does not match parts");
   const weights = records.map(multipartRecordWeight);
-  const capacity = minimumMultipartGroupCapacity(weights, totalParts);
+  const boundaries = partitionMultipartRecordWeights(weights, budgets);
   let offset = 0;
-
-  for (let part = 0; part < totalParts; part += 1) {
-    const remainingParts = totalParts - part;
-    const remainingRecords = records.length - offset;
-    if (remainingRecords <= 0) break;
-    const reserveForLater = Math.min(remainingRecords, remainingParts - 1);
-    const maximumEnd = records.length - reserveForLater;
-    let groupWeight = 0;
-    while (offset < maximumEnd) {
-      const record = records[offset]!;
-      const weight = weights[offset]!;
-      if (groups[part]!.length > 0 && groupWeight + weight > capacity) break;
-      groups[part]!.push(record);
-      groupWeight += weight;
-      offset += 1;
-    }
-  }
-
+  const groups = boundaries.map(end => {
+    const group = records.slice(offset, end);
+    offset = end;
+    return group;
+  });
   if (offset !== records.length) throw new Error("ChatGPT multipart context partition lost records");
   const payloads = groups.map((group, index) => withoutRetiredTurnHandles(JSON.stringify({
     version: 1,
@@ -589,8 +597,13 @@ export function compileChatGptWebPrompt(
           message,
         })),
       ];
+      const emptyPart = (index: number): string => JSON.stringify({
+        version: 1, part_index: index + 1, total_parts: multipartParts, records: [],
+      });
       const multipart: ChatGptWebMultipartPrompt = {
-        parts: partitionMultipartContext(records, multipartParts!),
+        parts: multipartParts === 2
+          ? [emptyPart(0), emptyPart(1)]
+          : [emptyPart(0), emptyPart(1), emptyPart(2)],
         commit: [
           ...sharedContract,
           ...transportContract,
@@ -601,6 +614,29 @@ export function compileChatGptWebPrompt(
           ...transportResume,
         ].join("\n"),
       };
+      const imageTokens = images.reduce((sum, image) => sum + chatGptWebImageTokenReserve(image.detail), 0);
+      const transactionId = `ctx_${"0".repeat(32)}`;
+      const budgets = multipart.parts.map((payload, index) => {
+        const final = index === multipart.parts.length - 1;
+        const effort = final ? mode.effort : capabilities.proAvailable ? "max" : "medium";
+        const limits = resolveChatGptWebTransportLimits(CHATGPT_WEB_MODEL_ID, effort, capabilities);
+        const tokenLimit = resolveChatGptWebMessageTokenBudget(
+          CHATGPT_WEB_MODEL_ID, effort, capabilities, final ? imageTokens : 0,
+        );
+        const fixedMessage = final
+          ? formatChatGptWebMultipartCommit(multipart, transactionId)
+          : formatChatGptWebMultipartStage(payload, transactionId, index + 1, multipartParts!).text;
+        const tokens = tokenLimit - estimateTokens(fixedMessage);
+        const chars = (limits.browserComposerCharLimit ?? Infinity) - fixedMessage.length;
+        if (tokens <= 0 || chars <= 0) {
+          throw new ChatGptWebAdapterError(
+            `The Bigger Context ${final ? "final part's instructions and attachments" : "stage wrapper"} exceed the available message budget before any task history is added. Reduce those inputs before retrying.`,
+            { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+          );
+        }
+        return { tokens, chars };
+      });
+      multipart.parts = partitionMultipartContext(records, multipartParts!, budgets);
       return { text: multipart.commit, images, multipart };
     }
     const envelopeJson = withoutRetiredTurnHandles(JSON.stringify({ version: 3, system, messages }));

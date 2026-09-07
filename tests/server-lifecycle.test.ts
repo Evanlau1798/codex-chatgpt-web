@@ -963,7 +963,7 @@ test("a restart recovery turn without a new user instruction fails terminally in
   expect(adapterConstructions).toBe(0);
 });
 
-test("authenticated lifecycle control aborts active HTTP work before acknowledging cancellation", async () => {
+test.each(["alpha/search", "images/generations"])("authenticated lifecycle control aborts active %s before acknowledging cancellation", async path => {
   const config = { ...defaultConfig("browser-only"), port: 0 };
   let upstreamAbortObserved = false;
   const server = startServer(config, {
@@ -975,13 +975,15 @@ test("authenticated lifecycle control aborts active HTTP work before acknowledgi
     }),
   });
   const endpoint = `http://127.0.0.1:${server.port}`;
-  const activeRequest = fetch(`${endpoint}/v1/alpha/search`, {
+  const activeRequest = fetch(`${endpoint}/v1/${path}`, {
     method: "POST",
     headers: {
       authorization: "Bearer test-codex-session",
       "content-type": "application/json",
     },
-    body: JSON.stringify({ query: "retained turn" }),
+    body: JSON.stringify(path === "alpha/search"
+      ? { query: "retained turn" }
+      : { model: "gpt-image-1", prompt: "A blue square" }),
   }).catch(() => null);
 
   try {
@@ -1174,6 +1176,79 @@ test("server exposes authenticated standalone Web Search on the routed v1 base U
     expect(await upstreamRequest!.json()).toEqual({ query: "bridge route" });
   } finally {
     await server.stop(true);
+  }
+});
+
+test("standalone native image generation and edits preserve their upstream protocol", async () => {
+  const config = { ...defaultConfig("browser-only"), port: 0 };
+  const requests: Request[] = [];
+  const reply = '{ "created": 1778832973, "data": [{ "b64_json": "native-image-bytes" }] }';
+  const denied = '{ "error": { "code": "rate_limit_exceeded", "message": "Image allowance reached" } }';
+  const upstreamServer = Bun.serve({
+    port: 0,
+    fetch: request => {
+      const edit = new URL(request.url).pathname.endsWith("/edits");
+      return new Response(Bun.gzipSync(edit ? denied : reply), {
+        status: edit ? 429 : 200,
+        headers: {
+          "content-type": "application/json", "content-encoding": "gzip",
+          "x-codex-imagegen-request-id": "native-image-request",
+        },
+      });
+    },
+  });
+  const server = startServer(config, {
+    fetchUpstream: async request => {
+      requests.push(request);
+      const path = new URL(request.url).pathname;
+      return fetch(new Request(`http://127.0.0.1:${upstreamServer.port}${path}`, request.clone()));
+    },
+  });
+  const endpoint = `http://127.0.0.1:${server.port}`;
+  try {
+    for (const operation of ["generations", "edits"] as const) {
+      const body = operation === "generations"
+        ? '{ "model": "gpt-image-1", "prompt": "A blue square", "n": 1 }'
+        : '{ "model": "gpt-image-1", "prompt": "Make it green", "images": [{ "image_url": "data:image/png;base64,AAAA" }] }';
+      const response = await fetch(`${endpoint}/v1/images/${operation}?fixture=1`, {
+        method: "POST",
+        headers: {
+          authorization: "Bearer test-codex-session",
+          "content-type": "application/json",
+          "chatgpt-account-id": "test-account",
+          "x-codex-image-turn-id": "native-image-turn",
+        },
+        body,
+      });
+      expect(response.status).toBe(operation === "generations" ? 200 : 429);
+      expect(await response.text()).toBe(operation === "generations" ? reply : denied);
+      expect(response.headers.get("content-encoding")).toBeNull();
+      expect(response.headers.get("x-codex-imagegen-request-id")).toBe("native-image-request");
+      const upstream = requests.at(-1)!;
+      expect(upstream.url).toBe(`https://chatgpt.com/backend-api/codex/images/${operation}?fixture=1`);
+      expect(upstream.method).toBe("POST");
+      expect(upstream.redirect).toBe("manual");
+      expect(upstream.headers.get("authorization")).toBe("Bearer test-codex-session");
+      expect(upstream.headers.get("chatgpt-account-id")).toBe("test-account");
+      expect(upstream.headers.get("x-codex-image-turn-id")).toBe("native-image-turn");
+      expect(upstream.headers.get("host")).toBeNull();
+      expect(await upstream.text()).toBe(body);
+    }
+    expect(requests).toHaveLength(2);
+    const unauthorized = await fetch(`${endpoint}/v1/images/generations`, { method: "POST", body: "{}" });
+    expect(unauthorized.status).toBe(401);
+    expect(requests).toHaveLength(2);
+    await fetch(`${endpoint}/admin/drain`, {
+      method: "POST", headers: { authorization: `Bearer ${config.controlToken}` },
+    });
+    const drained = await fetch(`${endpoint}/v1/images/edits`, {
+      method: "POST", headers: { authorization: "Bearer test-codex-session" }, body: "{}",
+    });
+    expect(drained.status).toBe(503);
+    expect(requests).toHaveLength(2);
+  } finally {
+    await server.stop(true);
+    await upstreamServer.stop(true);
   }
 });
 
