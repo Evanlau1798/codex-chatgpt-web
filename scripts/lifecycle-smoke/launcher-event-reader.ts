@@ -56,11 +56,12 @@ export class LauncherEventReader {
     const fd = openSync(path, "r");
     try {
       this.afterOpen?.(path);
-      const stat = fstatSync(fd);
-      const identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+      const stat = fstatSync(fd, { bigint: true });
+      const size = Number(stat.size);
+      const identity = `${stat.dev}:${stat.ino}:${stat.birthtimeNs}`;
       let cursor = this.cursors.get(path);
-      if (!cursor || cursor.identity !== identity || stat.size < cursor.offset) {
-        const offset = Math.max(0, stat.size - (this.limits.maxInitialTailBytes ?? DEFAULT_INITIAL_TAIL_BYTES));
+      if (!cursor || cursor.identity !== identity || size < cursor.offset) {
+        const offset = Math.max(0, size - (this.limits.maxInitialTailBytes ?? DEFAULT_INITIAL_TAIL_BYTES));
         cursor = {
           identity,
           offset,
@@ -71,10 +72,10 @@ export class LauncherEventReader {
         };
         this.cursors.set(path, cursor);
       }
-      if (stat.size === cursor.offset) return false;
+      if (size === cursor.offset) return false;
       let changed = false;
-      while (cursor.offset < stat.size) {
-        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, stat.size - cursor.offset));
+      while (cursor.offset < size) {
+        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, size - cursor.offset));
         const bytes = readSync(fd, buffer, 0, buffer.length, cursor.offset);
         if (bytes === 0) break;
         cursor.offset += bytes;
