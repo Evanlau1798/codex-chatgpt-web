@@ -2340,6 +2340,7 @@ export class ChatGptBrowserWorker {
         sourceEnd?: number;
       }> = [];
 
+      // CHATGPT_MARKDOWN_CONTENT_BEGIN
       const blockMarkdownTags = new Set([
         "address", "article", "aside", "blockquote", "div", "dl", "fieldset", "figcaption",
         "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr",
@@ -2370,6 +2371,7 @@ export class ChatGptBrowserWorker {
         visit(element);
         return parts.join("").trim();
       };
+      // CHATGPT_MARKDOWN_CONTENT_END
       let listGroupIndex = 0;
       const sourceRange = (candidate: Element): { sourceStart: number; sourceEnd: number } | undefined => {
         const startAttribute = candidate.getAttribute("data-start");
