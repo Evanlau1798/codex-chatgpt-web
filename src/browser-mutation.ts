@@ -27,6 +27,21 @@ export async function runChatGptMutationCleanup<T>(
   }
 }
 
+export async function settleAbortedChatGptMutation<T>(
+  pending: Promise<T>,
+  primaryError: unknown,
+): Promise<unknown> {
+  try {
+    await runChatGptMutationStep(
+      () => pending,
+      Date.now() + CHATGPT_BROWSER_MUTATION_CLEANUP_MS,
+    );
+  } catch (error) {
+    if (error instanceof ChatGptPersistentBrowserStateError) return error;
+  }
+  return primaryError;
+}
+
 export function remainingChatGptMutationMs(deadline: number, signal?: AbortSignal): number {
   if (signal?.aborted) throw new DOMException("ChatGPT browser mutation aborted", "AbortError");
   const remaining = deadline - Date.now();

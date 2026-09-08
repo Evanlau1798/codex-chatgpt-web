@@ -9,14 +9,12 @@ import {
   MAX_CHATGPT_BROWSER_PAGE_REBINDS,
   withChatGptBrowserObservationTimeout,
 } from "../src/adapters/chatgpt-web/browser-observation";
-import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_PROMPT_INSERT_CHUNK_CHARS, CHATGPT_RESPONSE_DOM_GRACE_MS, CHATGPT_STOPPED_THINKING_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptPromptAttachmentIntegrityError, ChatGptStoppedThinkingTracker, ChatGptSuspensionClock, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, browserStageTimeouts, chatGptExternalProgressSuppressesDomHealth, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, remainingStageBudgetMs, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
-import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
-import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
+import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_RESPONSE_DOM_GRACE_MS, CHATGPT_STOPPED_THINKING_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptPromptAttachmentIntegrityError, ChatGptStoppedThinkingTracker, ChatGptSuspensionClock, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, browserStageTimeouts, chatGptExternalProgressSuppressesDomHealth, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, remainingStageBudgetMs, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptWebAdapterError, chatGptStoppedThinkingError } from "../src/adapters/chatgpt-web/adapter-error";
 import { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, defaultChromeExecutable, legacyChatGptConnectorMigrationMessage } from "../src/config";
 import { chatGptEffortSliderAdvancedTowardTarget, parseChatGptEffortSliderState } from "../src/chatgpt-session";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
-import type { CodexParsedRequest, CodexProviderConfig } from "../src/types";
+import type { CodexProviderConfig } from "../src/types";
 
 test("browser turns run six at once and queue the seventh in FIFO order", async () => {
   expect(MAX_CHATGPT_BROWSER_TABS).toBe(6);
@@ -496,171 +494,6 @@ test("prompt verification accepts Lexical NBSP preservation without weakening ot
   ).resolves.toBeUndefined();
 });
 
-test("large read-only context is inserted as contiguous bounded edits before exact verification", async () => {
-  const prompt = `Act as the model backend for the Codex task encoded below.\n${"x".repeat(819_343)}`;
-  const calls: Array<[string, string?]> = [];
-  let asserted = "";
-  const composer = {
-    fill: async (value: string) => { calls.push(["fill", value]); },
-    focus: async () => { calls.push(["focus"]); },
-    evaluate: async (_callback: unknown, value: string) => {
-      calls.push(["insertText", value]);
-      return true;
-    },
-  };
-  const page = {
-    keyboard: {
-      press: async (value: string) => { calls.push(["press", value]); },
-    },
-  };
-  const attachPrompt = (ChatGptBrowserWorker.prototype as unknown as {
-    attachPrompt(page: unknown, prompt: string, localTools: boolean): Promise<void>;
-  }).attachPrompt;
-  const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  }).insertPromptText;
-
-  await attachPrompt.call({
-    activeComposer: async () => composer,
-    insertPromptText,
-    waitForPromptChunkAttached: async (_page: unknown, expected: string) => {
-      calls.push(["chunkCommitted", String(expected.length)]);
-    },
-    reanchorPromptCaret: async () => { calls.push(["reanchor"]); },
-    assertPromptAttached: async (_page: unknown, value: string) => { asserted = value; },
-  }, page, prompt, false);
-
-  const inserted = calls.filter(call => call[0] === "insertText").map(call => call[1] ?? "");
-  const fullChunkCount = Math.floor((prompt.length - 1) / CHATGPT_PROMPT_INSERT_CHUNK_CHARS);
-  expect(calls.slice(0, 2)).toEqual([["fill", ""], ["focus"]]);
-  expect(inserted.every(chunk => chunk.length <= CHATGPT_PROMPT_INSERT_CHUNK_CHARS)).toBeTrue();
-  expect(inserted.length).toBe(Math.ceil(prompt.length / CHATGPT_PROMPT_INSERT_CHUNK_CHARS));
-  expect(inserted.join("")).toBe(prompt);
-  expect(calls.filter(call => call[0] === "chunkCommitted")).toEqual(
-    Array.from({ length: fullChunkCount }, (_value, index) => [
-      "chunkCommitted",
-      String((index + 1) * CHATGPT_PROMPT_INSERT_CHUNK_CHARS),
-    ]),
-  );
-  expect(calls.filter(call => call[0] === "reanchor")).toHaveLength(fullChunkCount);
-  expect(calls.filter(call => call[0] === "press")).toEqual([]);
-  expect(asserted).toBe(prompt);
-});
-
-test("multi-chunk prompt insertion repairs a drifted Lexical caret after each exact prefix", async () => {
-  const prompt = "a".repeat(CHATGPT_PROMPT_INSERT_CHUNK_CHARS)
-    + "b".repeat(457);
-  const calls: Array<[string, string?]> = [];
-  let attached = "";
-  let caret = 0;
-  const page = {
-    keyboard: {},
-  };
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, value: string) => {
-      attached = `${attached.slice(0, caret)}${value}${attached.slice(caret)}`;
-      caret += value.length;
-      calls.push(["insertText", String(value.length)]);
-      return true;
-    },
-  };
-  const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  }).insertPromptText;
-
-  await insertPromptText.call({
-    activeComposer: async () => composer,
-    waitForPromptChunkAttached: async (_page: unknown, expected: string) => {
-      expect(attached).toBe(expected);
-      caret = Math.max(0, attached.length - 16);
-      calls.push(["chunkCommitted", String(expected.length)]);
-    },
-    reanchorPromptCaret: async () => {
-      caret = attached.length;
-      calls.push(["reanchor"]);
-    },
-  }, page, prompt);
-
-  expect(attached).toBe(prompt);
-  expect(calls).toEqual([
-    ["insertText", String(CHATGPT_PROMPT_INSERT_CHUNK_CHARS)],
-    ["chunkCommitted", String(CHATGPT_PROMPT_INSERT_CHUNK_CHARS)],
-    ["reanchor"],
-    ["insertText", "457"],
-  ]);
-});
-
-test("Markdown shortcut delimiters stay literal in the bounded plain-text edit", async () => {
-  const prompt = "Preserve *literal* and `.gitignore`.";
-  const edits: string[] = [];
-  const page = { keyboard: {} };
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, value: string) => {
-      edits.push(value);
-      return true;
-    },
-  };
-  const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  }).insertPromptText;
-
-  await insertPromptText.call({
-    activeComposer: async () => composer,
-    waitForPromptChunkAttached: async () => {},
-    reanchorPromptCaret: async () => {},
-  }, page, prompt);
-
-  expect(edits).toEqual([prompt]);
-});
-
-test("prompt insertion avoids a native edit boundary inside a text token", async () => {
-  const prompt = `${"x".repeat(CHATGPT_PROMPT_INSERT_CHUNK_CHARS - 100)} ${"tonumber".repeat(100)}`;
-  const inserted: string[] = [];
-  let attached = "";
-  let sourceOffset = 0;
-  const page = { keyboard: {} };
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, input: unknown) => {
-      if (typeof input === "string") {
-        if (input.length === 1 && input.charCodeAt(0) >= 0xE000 && input.charCodeAt(0) <= 0xF8FF) {
-          return !attached.includes(input);
-        }
-        const value = input;
-        inserted.push(value);
-        const nextUnit = prompt[sourceOffset + value.length];
-        const splitToken = /[\p{L}\p{N}_]/u.test(value.at(-1) ?? "")
-          && /[\p{L}\p{N}_]/u.test(nextUnit ?? "");
-        attached += splitToken ? `${value.slice(0, -1)}!` : value;
-        sourceOffset += value.length;
-        return true;
-      }
-      const replacement = input as { marker: string; value: string };
-      attached = attached.replace(replacement.marker, replacement.value);
-      return true;
-    },
-  };
-  const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  }).insertPromptText;
-
-  await insertPromptText.call({
-    activeComposer: async () => composer,
-    waitForPromptChunkAttached: async (_page: unknown, expected: string) => {
-      expect(attached).toBe(expected);
-    },
-    reanchorPromptCaret: async () => {},
-  }, page, prompt);
-
-  expect(inserted.join("").replaceAll("\uF8FF", " ")).toBe(prompt);
-  expect(inserted[0]?.length).toBeLessThan(CHATGPT_PROMPT_INSERT_CHUNK_CHARS);
-  expect(inserted[0]?.endsWith("x")).toBeTrue();
-  expect(inserted[1]?.startsWith("\uF8FFtonumber")).toBeTrue();
-  expect(attached).toBe(prompt);
-});
-
 test("compaction prompt attachment retries once only before submission evidence", async () => {
   const attachWithRetry = (ChatGptBrowserWorker.prototype as unknown as {
     attachPromptWithCompactionRetry(
@@ -718,155 +551,6 @@ test("compaction prompt attachment retries once only before submission evidence"
     },
   }, {}, "normal prompt", false, false, baseline)).rejects.toThrow("composer cleared");
   expect(normalAttempts).toBe(1);
-});
-
-test("prompt insertion never sends the six-figure native edit that rewrites the first 100k prefix", async () => {
-  const prompt = "x".repeat(100_000) + "tail";
-  let attached = "";
-  let caret = 0;
-  const nativeEditSizes: number[] = [];
-  const page = { keyboard: {} };
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, value: string) => {
-        nativeEditSizes.push(value.length);
-        // Model the exact v2.1.8 failure boundary: one six-figure native edit preserves length but
-        // rewrites content twelve units before its end. The bounded transport must never invoke it.
-        const committed = value.length >= 100_000
-          ? `${value.slice(0, value.length - 12)}!${value.slice(value.length - 11)}`
-          : value;
-        attached = `${attached.slice(0, caret)}${committed}${attached.slice(caret)}`;
-        caret += committed.length;
-        return true;
-    },
-  };
-  const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  }).insertPromptText;
-
-  await insertPromptText.call({
-    activeComposer: async () => composer,
-    waitForPromptChunkAttached: async (_page: unknown, expected: string) => {
-      expect(attached).toBe(expected);
-    },
-    reanchorPromptCaret: async () => { caret = attached.length; },
-  }, page, prompt);
-
-  expect(nativeEditSizes.length).toBeGreaterThan(1);
-  expect(Math.max(...nativeEditSizes)).toBe(CHATGPT_PROMPT_INSERT_CHUNK_CHARS);
-  expect(attached).toBe(prompt);
-});
-
-test("the real compaction envelope survives simulated caret drift at every bounded edit boundary", async () => {
-  const compact: CodexParsedRequest = {
-    modelId: CHATGPT_WEB_MODEL_ID,
-    context: {
-      systemPrompt: [],
-      messages: [
-        { role: "developer", content: `oldest-static-${"a".repeat(10_000)}`, timestamp: 1 },
-        { role: "developer", content: `newer-static-${"b".repeat(10_000)}`, timestamp: 2 },
-        { role: "user", content: `real-task-${"c".repeat(100_000)}`, timestamp: 3 },
-        { role: "assistant", content: [{ type: "text", text: "verified-progress" }], timestamp: 4 },
-        { role: "user", content: "checkpoint-now", timestamp: 5 },
-      ],
-    },
-    stream: true,
-    options: { reasoning: "high" },
-    _compactionRequest: true,
-  };
-  const compiled = compileChatGptWebPrompt(
-    compact,
-    { localToolsEnabled: false, solAvailable: true, proAvailable: true },
-  );
-  expect(compiled.text.length).toBeGreaterThan(CHATGPT_PROMPT_INSERT_CHUNK_CHARS);
-
-  let attached = "";
-  let caret = 0;
-  let simulatedDrifts = 0;
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, value: unknown) => {
-      if (typeof value === "string") {
-        if (value.length === 1 && value.charCodeAt(0) >= 0xE000 && value.charCodeAt(0) <= 0xF8FF) {
-          return !attached.includes(value);
-        }
-        attached = `${attached.slice(0, caret)}${value}${attached.slice(caret)}`;
-        caret += value.length;
-        return true;
-      }
-      const replacement = value as { marker: string; value: string };
-      attached = attached.replace(replacement.marker, replacement.value);
-      return true;
-    },
-  };
-  const page = { keyboard: {} };
-  const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  }).insertPromptText;
-
-  await insertPromptText.call({
-    activeComposer: async () => composer,
-    waitForPromptChunkAttached: async (_page: unknown, expected: string) => {
-      expect(attached).toBe(expected);
-      caret = Math.max(0, attached.length - 16);
-      simulatedDrifts += 1;
-    },
-    reanchorPromptCaret: async () => { caret = attached.length; },
-  }, page, compiled.text);
-
-  expect(simulatedDrifts).toBe(Math.floor((compiled.text.length - 1) / CHATGPT_PROMPT_INSERT_CHUNK_CHARS));
-  expect(attached).toBe(compiled.text);
-});
-
-test("prompt chunks never split a UTF-16 surrogate pair", async () => {
-  const prompt = `${"x".repeat(CHATGPT_PROMPT_INSERT_CHUNK_CHARS - 1)}😀tail`;
-  const inserted: string[] = [];
-  const page = { keyboard: {} };
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, value: string) => {
-      inserted.push(value);
-      return true;
-    },
-  };
-  const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  }).insertPromptText;
-
-  await insertPromptText.call({
-    activeComposer: async () => composer,
-    waitForPromptChunkAttached: async () => {},
-    reanchorPromptCaret: async () => {},
-  }, page, prompt);
-
-  expect(inserted.join("")).toBe(prompt);
-  expect(inserted[0]?.length).toBe(CHATGPT_PROMPT_INSERT_CHUNK_CHARS - 1);
-  expect(inserted[1]?.startsWith("😀")).toBeTrue();
-});
-
-test("prompt insertion stops after its stage is aborted before another native edit", async () => {
-  const controller = new AbortController();
-  const inserted: string[] = [];
-  const page = { keyboard: {} };
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, value: string) => {
-        inserted.push(value);
-        controller.abort();
-        return true;
-    },
-  };
-  const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
-    insertPromptText(page: unknown, text: string, abortSignal?: AbortSignal): Promise<void>;
-  }).insertPromptText;
-
-  await expect(insertPromptText.call({
-    activeComposer: async () => composer,
-    waitForPromptChunkAttached: async () => {},
-    reanchorPromptCaret: async () => {},
-  }, page, "x".repeat(CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 2 + 1), controller.signal))
-    .rejects.toThrow("aborted");
-  expect(inserted).toHaveLength(1);
 });
 
 test("caret re-anchor fails closed when the live composer cannot be anchored", async () => {
@@ -1429,16 +1113,12 @@ test("tool-capable prompts use the shared Playwright connector selection before 
   const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
     selectConnector(page: unknown): Promise<unknown>;
   }).selectConnector;
-  const insertPromptText = (ChatGptBrowserWorker.prototype as unknown as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  }).insertPromptText;
-
   let activeComposerCalls = 0;
   await attachPrompt.call({
     config: { appName: "Codex Native2" },
     ensureConnectorSurface: async () => {},
     selectConnector,
-    insertPromptText,
+    insertPromptText: async (_page: unknown, text: string) => { calls.push(["insertText", text]); },
     connectorIsSelected: async () => selected,
     selectedConnectorControl: () => selectedConnector,
     activeComposer: async () => {
@@ -1459,7 +1139,6 @@ test("tool-capable prompts use the shared Playwright connector selection before 
     ["selectedConnector"],
     ["selectedFocus"],
     ["press", CHATGPT_COMPOSER_DOCUMENT_END_KEY],
-    ["selectedFocus"],
     ["insertText", " context"],
     ["assertPrompt"],
   ]);

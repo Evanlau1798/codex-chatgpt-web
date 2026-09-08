@@ -147,14 +147,11 @@ import { dismissChatGptTemporaryChatOnboarding } from "./temporary-chat-onboardi
 import {
   chatGptPromptAttachmentMismatch,
   clearChatGptComposerInput,
-  guardChatGptPromptChunkBoundary,
-  insertChatGptComposerPlainText,
   reanchorChatGptComposerCaret,
-  restoreChatGptPromptChunkBoundary,
 } from "./prompt-caret";
+import { insertChatGptPromptText } from "./prompt-insertion";
 import {
   CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS,
-  CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
   chatGptPromptAttachmentTimeoutMs,
 } from "./prompt-attachment-budget";
 import { chatGptCompletionEvidenceFailure } from "./same-surface-readiness";
@@ -183,10 +180,9 @@ import type {
   ChatGptTurnProgressReader,
 } from "./turn-progress";
 import {
-  CHATGPT_BROWSER_MUTATION_CLEANUP_MS,
   ChatGptPersistentBrowserStateError,
   runChatGptMutationCleanup,
-  runChatGptMutationStep,
+  settleAbortedChatGptMutation,
 } from "../../browser-mutation";
 import { ensureChatGptPersonalizedConnectorAccess } from "./personalization";
 
@@ -481,44 +477,12 @@ export const browserStageTimeouts = {
  * the resulting user message remains one exact prompt, and every prefix is still verified before
  * another irreversible edit. This is independent of model context and compaction limits.
  */
-const CHATGPT_PROMPT_INSERT_BOUNDARY_LOOKBACK_CHARS = 4_096;
-const CHATGPT_PROMPT_WHITESPACE = /\s/u;
 export const CHATGPT_COMPOSER_DOCUMENT_END_KEY = process.platform === "darwin"
   ? "Meta+ArrowDown"
   : "Control+End";
 
 function throwIfPromptAttachmentAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw new DOMException("ChatGPT prompt attachment aborted", "AbortError");
-}
-
-function promptInsertChunkEnd(text: string, offset: number): number {
-  const hardEnd = Math.min(offset + CHATGPT_PROMPT_INSERT_CHUNK_CHARS, text.length);
-  if (hardEnd >= text.length) return hardEnd;
-
-  const minimumPreferredEnd = Math.max(
-    offset + 1,
-    hardEnd - CHATGPT_PROMPT_INSERT_BOUNDARY_LOOKBACK_CHARS,
-  );
-  for (let candidate = hardEnd; candidate >= minimumPreferredEnd; candidate -= 1) {
-    if (!CHATGPT_PROMPT_WHITESPACE.test(text[candidate] ?? "")) continue;
-    let whitespaceStart = candidate;
-    while (
-      whitespaceStart > offset
-      && CHATGPT_PROMPT_WHITESPACE.test(text[whitespaceStart - 1] ?? "")
-    ) {
-      whitespaceStart -= 1;
-    }
-    if (whitespaceStart > offset) return whitespaceStart;
-  }
-
-  let end = hardEnd;
-  const previousCodeUnit = text.charCodeAt(hardEnd - 1);
-  const nextCodeUnit = text.charCodeAt(hardEnd);
-  if (previousCodeUnit >= 0xD800 && previousCodeUnit <= 0xDBFF
-    && nextCodeUnit >= 0xDC00 && nextCodeUnit <= 0xDFFF) {
-    end -= 1;
-  }
-  return end;
 }
 
 export interface BrowserTurn {
@@ -1077,15 +1041,7 @@ export class ChatGptBrowserWorker {
     } catch (error) {
       let surfacedError = error;
       if (controller.signal.aborted && awaitAbortedActionSettlement && actionPromise) {
-        const pendingAction = actionPromise;
-        try {
-          await runChatGptMutationStep(
-            () => pendingAction,
-            Date.now() + CHATGPT_BROWSER_MUTATION_CLEANUP_MS,
-          );
-        } catch (settlementError) {
-          if (settlementError instanceof ChatGptPersistentBrowserStateError) surfacedError = settlementError;
-        }
+        surfacedError = await settleAbortedChatGptMutation(actionPromise, surfacedError);
       }
       console.error(`[chatgpt-web] browser turn ${traceId} stage=${stage} failed durationMs=${Math.round(performance.now() - startedAt)}: ${surfacedError instanceof Error ? surfacedError.message : String(surfacedError)}`);
       throw surfacedError;
@@ -2121,31 +2077,11 @@ export class ChatGptBrowserWorker {
   }
 
   private async insertPromptText(page: Page, text: string, abortSignal?: AbortSignal): Promise<void> {
-    const insertionText = text;
-    for (let offset = 0; offset < insertionText.length;) {
-      throwIfPromptAttachmentAborted(abortSignal);
-      const end = promptInsertChunkEnd(insertionText, offset);
-      const originalChunk = insertionText.slice(offset, end);
-      const guardedBoundary = guardChatGptPromptChunkBoundary(insertionText, originalChunk, offset);
-      const chunk = guardedBoundary?.text ?? originalChunk;
-      await insertChatGptComposerPlainText(await this.activeComposer(page), chunk, abortSignal);
-      throwIfPromptAttachmentAborted(abortSignal);
-      if (end < insertionText.length || guardedBoundary) {
-        // Lexical can rebuild the active block after an exact commit and move its native selection.
-        // Re-anchor only after the verified prefix is stable, before the next irreversible edit.
-        const expectedPrefix = `${insertionText.slice(0, offset)}${chunk}`.trimStart();
-        await this.waitForPromptChunkAttached(page, expectedPrefix, abortSignal);
-        if (guardedBoundary && !await restoreChatGptPromptChunkBoundary(
-          await this.activeComposer(page),
-          guardedBoundary.replacement,
-          abortSignal,
-        )) {
-          throw chatGptWebSurfaceError("ChatGPT composer could not restore a prompt chunk boundary", false);
-        }
-        await this.reanchorPromptCaret(page, abortSignal);
-      }
-      offset = end;
-    }
+    await insertChatGptPromptText(text, abortSignal, {
+      composer: () => this.activeComposer(page),
+      verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal),
+      reanchor: () => this.reanchorPromptCaret(page, abortSignal),
+    });
   }
 
   private async waitForPromptChunkAttached(

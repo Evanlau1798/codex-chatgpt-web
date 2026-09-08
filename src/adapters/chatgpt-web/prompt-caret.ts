@@ -8,8 +8,10 @@ export interface ChatGptCaretEvidence {
   trailingEditableText: string;
 }
 
-const ZERO_WIDTH_TEXT = /[\u200B\u200C\u200D\u2060\uFEFF]/g;
+const ZERO_WIDTH_TEXT = /[\u200B\u200C\u200D\uFEFF]/g;
 const RESTORATION_WHITESPACE = /\s/u;
+const MARKDOWN_SHORTCUT_DELIMITERS = ["`", "*", "_", "~", "=", "[", ")"] as const;
+const MARKDOWN_RESTORATION_RANGE_CHARS = 8_192;
 
 function codePointWindow(value: string, offset: number): string {
   return Array.from(value.slice(offset), char => (
@@ -18,8 +20,108 @@ function codePointWindow(value: string, offset: number): string {
 }
 
 type ChatGptPromptBoundaryReplacement = { marker: string; value: string };
+type MarkdownReplacement = ChatGptPromptBoundaryReplacement & { count: number };
 
 const CHATGPT_COMPOSER_SELECT_ALL_KEY = process.platform === "darwin" ? "Meta+A" : "Control+A";
+
+function guardChatGptPromptMarkdown(text: string): {
+  text: string;
+  replacements: MarkdownReplacement[];
+  count: number;
+} | undefined {
+  let guarded = text;
+  let codePoint = 0xE000;
+  const replacements: MarkdownReplacement[] = [];
+  for (const value of MARKDOWN_SHORTCUT_DELIMITERS) {
+    const count = text.length - text.replaceAll(value, "").length;
+    if (count === 0) continue;
+    let marker = String.fromCharCode(codePoint);
+    while (text.includes(marker) || replacements.some(replacement => replacement.marker === marker)) {
+      codePoint += 1;
+      if (codePoint > 0xF8FF) throw new Error("ChatGPT prompt has no available Markdown marker");
+      marker = String.fromCharCode(codePoint);
+    }
+    codePoint += 1;
+    guarded = guarded.replaceAll(value, marker);
+    replacements.push({ marker, value, count });
+  }
+  return replacements.length === 0
+    ? undefined
+    : { text: guarded, replacements, count: replacements.reduce((sum, replacement) => sum + replacement.count, 0) };
+}
+
+async function restoreChatGptPromptMarkdownRanges(
+  composer: Locator,
+  replacements: MarkdownReplacement[],
+  count: number,
+  abortSignal?: AbortSignal,
+): Promise<boolean> {
+  const options = { signal: abortSignal, timeout: 20_000 };
+  let remaining = count;
+  const markers = replacements.map(replacement => replacement.marker);
+  while (remaining > 0) {
+    if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
+    const restored = await composer.evaluate((element, input) => {
+      const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
+      const values = new Map(input.replacements.map(replacement => [replacement.marker, replacement.value]));
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let candidate: { node: Text; right: number } | undefined;
+      for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+        const node = current as Text;
+        if (node.parentElement?.closest(ignoredSelector)) continue;
+        for (let offset = node.data.length - 1; offset >= 0; offset -= 1) {
+          if (values.has(node.data[offset]!)) {
+            candidate = { node, right: offset };
+            break;
+          }
+        }
+      }
+      const selection = window.getSelection();
+      if (!candidate || !selection) return 0;
+      let end = candidate.right + 1;
+      while (end < candidate.node.data.length && /\s/u.test(candidate.node.data[end] ?? "")) end += 1;
+      if (end < candidate.node.data.length) {
+        const next = candidate.node.data.charCodeAt(end);
+        const afterNext = candidate.node.data.charCodeAt(end + 1);
+        end += next >= 0xD800 && next <= 0xDBFF && afterNext >= 0xDC00 && afterNext <= 0xDFFF ? 2 : 1;
+      }
+      const startLimit = Math.max(0, end - input.maxChars);
+      let start = candidate.right;
+      let markerCount = 0;
+      for (let offset = startLimit; offset <= candidate.right; offset += 1) {
+        if (!values.has(candidate.node.data[offset]!)) continue;
+        start = Math.min(start, offset);
+        markerCount += 1;
+      }
+      const restoredText = Array.from(candidate.node.data.slice(start, end), value => values.get(value) ?? value).join("");
+      const range = document.createRange();
+      range.setStart(candidate.node, start);
+      range.setEnd(candidate.node, end);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return document.execCommand("insertText", false, restoredText) ? markerCount : 0;
+    }, { replacements, maxChars: MARKDOWN_RESTORATION_RANGE_CHARS }, options);
+    if (!Number.isSafeInteger(restored) || restored <= 0 || restored > remaining) return false;
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const observedRemaining = await composer.evaluate((element, values) => {
+      const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
+      const markerSet = new Set(values);
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+      let found = 0;
+      for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+        const node = current as Text;
+        if (node.parentElement?.closest(ignoredSelector)) continue;
+        for (const value of node.data) if (markerSet.has(value)) found += 1;
+      }
+      return found;
+    }, markers, options);
+    if (!Number.isSafeInteger(observedRemaining)
+      || observedRemaining < 0
+      || remaining - observedRemaining !== restored) return false;
+    remaining = observedRemaining;
+  }
+  return true;
+}
 
 export async function insertChatGptComposerPlainText(
   composer: Locator,
@@ -27,6 +129,7 @@ export async function insertChatGptComposerPlainText(
   abortSignal?: AbortSignal,
 ): Promise<void> {
   const options = { signal: abortSignal, timeout: 20_000 };
+  const guarded = guardChatGptPromptMarkdown(text);
   await composer.focus(options);
   const inserted = await composer.evaluate((element, value) => {
     const selection = window.getSelection();
@@ -42,9 +145,17 @@ export async function insertChatGptComposerPlainText(
       return false;
     }
     return document.execCommand("insertText", false, value);
-  }, text, options);
+  }, guarded?.text ?? text, options);
   if (!inserted) {
     throw chatGptWebSurfaceError("ChatGPT composer rejected the bounded plain-text edit", false);
+  }
+  if (guarded && !await restoreChatGptPromptMarkdownRanges(
+    composer,
+    guarded.replacements,
+    guarded.count,
+    abortSignal,
+  )) {
+    throw chatGptWebSurfaceError("ChatGPT composer could not preserve literal Markdown in a bounded edit", false);
   }
 }
 

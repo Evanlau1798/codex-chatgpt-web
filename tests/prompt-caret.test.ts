@@ -64,6 +64,15 @@ test("rejects a selection or a caret with remaining editable text", () => {
   })).toBeFalse();
 });
 
+test("does not ignore a literal word joiner after the caret", () => {
+  expect(chatGptCaretAtLogicalEnd({
+    collapsed: true,
+    anchorInsideComposer: true,
+    focusInsideComposer: true,
+    trailingEditableText: "\u2060",
+  })).toBeFalse();
+});
+
 test("rejects a caret that Lexical moved outside the active composer", () => {
   expect(chatGptCaretAtLogicalEnd({
     collapsed: true,

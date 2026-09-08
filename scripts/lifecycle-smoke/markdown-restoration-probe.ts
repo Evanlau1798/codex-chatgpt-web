@@ -53,12 +53,20 @@ async function connectorState(composer: Locator): Promise<string[]> {
 
 async function waitForText(composer: Locator, expected: string, abortSignal?: AbortSignal): Promise<void> {
   const deadline = Date.now() + 20_000;
+  let observed = "";
   do {
     if (abortSignal?.aborted) throw abortSignal.reason;
-    if (await editableText(composer) === expected) return;
+    observed = await editableText(composer);
+    if (observed === expected) return;
     await Bun.sleep(50);
   } while (Date.now() < deadline);
-  throw new Error(`Markdown restoration probe text mismatch (expectedChars=${expected.length})`);
+  let commonPrefixChars = 0;
+  while (commonPrefixChars < expected.length
+    && commonPrefixChars < observed.length
+    && expected[commonPrefixChars] === observed[commonPrefixChars]) commonPrefixChars += 1;
+  throw new Error(
+    `Markdown restoration probe text mismatch (expectedChars=${expected.length}, observedChars=${observed.length}, commonPrefixChars=${commonPrefixChars})`,
+  );
 }
 
 async function selectConnector(page: Page, appName: string): Promise<Locator> {
@@ -163,6 +171,10 @@ export async function runMarkdownRestorationProbe(
       await waitForText(composer, prompt, abortSignal);
       const durationMs = performance.now() - startedAt;
       timings.push(durationMs);
+      process.stdout.write(`WEB_CONTRACT_MARKDOWN_PROBE_RUN ${JSON.stringify({
+        run: run + 1,
+        durationMs: Math.round(durationMs),
+      })}\n`);
       if (durationMs >= 10_000) {
         throw new Error(`Markdown restoration probe attachment exceeded 10 seconds (durationMs=${Math.round(durationMs)})`);
       }
@@ -187,6 +199,12 @@ export async function runMarkdownRestorationProbe(
     }
     process.stdout.write(`WEB_CONTRACT_MARKDOWN_PROBE_TIMINGS ${JSON.stringify(timings.map(Math.round))}\n`);
     return true;
+  } catch (error) {
+    process.stderr.write(`WEB_CONTRACT_MARKDOWN_PROBE_PRIMARY_ERROR ${JSON.stringify({
+      name: error instanceof Error ? error.name : "unknown",
+      message: error instanceof Error ? error.message : String(error),
+    })}\n`);
+    throw error;
   } finally {
     composer = await activeComposer(page);
     await clearChatGptComposerInput(composer);
@@ -195,9 +213,12 @@ export async function runMarkdownRestorationProbe(
       throw new Error("Markdown restoration probe could not clear connector state");
     }
     const send = composer.locator("xpath=ancestor::form[1]").getByTestId("send-button");
-    if (await send.isEnabled().catch(() => false)
-      || await page.locator(CHATGPT_USER_TURN_SELECTOR).count() !== initialUserTurns) {
-      throw new Error("Markdown restoration probe cleanup left submittable content");
+    const sendEnabled = await send.isEnabled().catch(() => false);
+    const finalUserTurns = await page.locator(CHATGPT_USER_TURN_SELECTOR).count();
+    if (sendEnabled || finalUserTurns !== initialUserTurns) {
+      throw new Error(
+        `Markdown restoration probe cleanup left submittable content (sendEnabled=${sendEnabled}, initialUserTurns=${initialUserTurns}, finalUserTurns=${finalUserTurns})`,
+      );
     }
   }
 }
