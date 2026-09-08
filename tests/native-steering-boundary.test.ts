@@ -38,17 +38,21 @@ function initialRequest(): CodexParsedRequest {
     _rawBody: {
       prompt_cache_key: threadId,
       client_metadata: {
-        "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: turnId }),
+        "x-codex-turn-metadata": JSON.stringify({
+          request_kind: "turn", thread_id: threadId, parent_thread_id: "thread_parent",
+          turn_id: turnId, agent_name: "/root/reviewer", subagent_kind: "thread_spawn",
+          sandbox: "none", workspaces: { [process.cwd()]: {} },
+        }),
       },
       input: [
         {
-          type: "message",
+          type: "message", id: "msg_environment",
           role: "user",
           content: [{ type: "input_text", text: environmentXml }],
           internal_chat_message_metadata_passthrough: { turn_id: turnId },
         },
         {
-          type: "message",
+          type: "message", id: "msg_task",
           role: "user",
           content: [{ type: "input_text", text: "Inspect the project" }],
           internal_chat_message_metadata_passthrough: { turn_id: turnId },
@@ -279,6 +283,8 @@ test("delivers a canonical tool result before a later native V2 revision", async
       {
         id: "agent_message_boundary",
         type: "agent_message",
+        author: "/root",
+        recipient: "/root/reviewer",
         content: [{ type: "input_text", text: "Continue with the V2 agent update." }],
       },
     );
