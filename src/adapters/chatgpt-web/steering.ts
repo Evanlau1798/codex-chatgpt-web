@@ -177,9 +177,10 @@ export function claudeConversationResumeRequest(parsed: CodexParsedRequest): Cod
 export function retainedConversationResumeRequest(parsed: CodexParsedRequest): CodexParsedRequest | undefined {
   const lastAssistant = parsed.context.messages.findLastIndex(message => message.role === "assistant");
   if (lastAssistant < 0) return undefined;
+  const { systemPrompt: _systemPrompt, ...context } = parsed.context;
   return {
     ...parsed,
-    context: { ...parsed.context, messages: parsed.context.messages.slice(lastAssistant + 1) },
+    context: { ...context, messages: parsed.context.messages.slice(lastAssistant + 1) },
   };
 }
 

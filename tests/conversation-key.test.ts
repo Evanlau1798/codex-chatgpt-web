@@ -6,6 +6,8 @@ import type { CodexParsedRequest } from "../src/types";
 function request(input: unknown[]): CodexParsedRequest {
   return {
     modelId: "chatgpt-web/medium",
+    context: { messages: [] },
+    stream: true,
     options: { reasoning: "medium" },
     _rawBody: {
       input,
@@ -58,4 +60,22 @@ test("Claude subagent partial-history resume keeps its retained Web conversation
 
   expect(chatGptConversationKey(resumed, "provider")).toBe(chatGptConversationKey(initial, "provider"));
   expect(chatGptTurnTraceId(resumed, "provider")).toBe(chatGptTurnTraceId(initial, "provider"));
+});
+
+test("retained conversation keys bind the ordered system prompt contract", () => {
+  const parsed = request([]);
+  parsed.context = { systemPrompt: ["system-one", "system-two"], messages: [] };
+  const same = structuredClone(parsed);
+
+  expect(chatGptConversationKey(same, "provider")).toBe(chatGptConversationKey(parsed, "provider"));
+  for (const systemPrompt of [
+    ["system-one"],
+    ["system-two", "system-one"],
+    ["system-one", "system-edited"],
+    ["system-one", "system-two", "system-three"],
+  ]) {
+    const changed = structuredClone(parsed);
+    changed.context.systemPrompt = systemPrompt;
+    expect(chatGptConversationKey(changed, "provider")).not.toBe(chatGptConversationKey(parsed, "provider"));
+  }
 });

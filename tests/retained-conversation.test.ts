@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { claudeBrowserTurnOptions } from "../src/adapters/chatgpt-web/claude-subagent";
 import { chatGptConversationKey } from "../src/adapters/chatgpt-web/conversation-key";
+import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { retainedConversationResumeRequest, sessionForChatGptRequest } from "../src/adapters/chatgpt-web/steering";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
+import { estimateTokens } from "../src/lib/token-estimate";
 import type { CodexParsedRequest } from "../src/types";
 
 function request(clientMetadata: Record<string, unknown> = {}): CodexParsedRequest {
@@ -80,6 +82,53 @@ test("retained conversations send only the suffix after the latest assistant tur
   expect(retainedConversationResumeRequest(request())?.context.messages).toEqual([
     { role: "user", content: "new prompt", timestamp: 3 },
   ]);
+});
+
+test("retained prompts omit stable system instructions but preserve the current turn contract", () => {
+  const parsed = request();
+  const systemSentinel = Array.from({ length: 1_200 }, (_unused, index) => `stable-system-${index}`).join(" ");
+  const environment = "<environment_context><cwd>C:/current-work</cwd></environment_context>";
+  parsed.context.systemPrompt = [systemSentinel];
+  parsed.context.tools = [{ name: "Read", description: "Read a file", parameters: {} }];
+  parsed.context.messages = [
+    { role: "user", content: `old-history-${"x".repeat(100_000)}`, timestamp: 1 },
+    { role: "assistant", content: [{ type: "text", text: "old answer" }], timestamp: 2 },
+    { role: "developer", content: environment, timestamp: 3 },
+    { role: "user", content: "latest-user-sentinel", timestamp: 4 },
+  ];
+  parsed.options.verbosity = "high";
+  parsed.options.outputFormat = {
+    type: "json_schema",
+    name: "retained_result",
+    strict: true,
+    schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"] },
+  };
+  const resume = retainedConversationResumeRequest(parsed)!;
+  const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true };
+  const oldToken = "turn_12345678901234567890123456789012";
+  const currentToken = "turn_abcdefghijklmnopqrstuvwxyz123456";
+
+  expect(resume.context.systemPrompt).toBeUndefined();
+  expect(resume.context.messages).toEqual(parsed.context.messages.slice(2));
+  for (const manualControl of [false, true]) {
+    const options = manualControl ? { manualControl: true as const } : undefined;
+    const full = compileChatGptWebPrompt(parsed, capabilities, oldToken, options);
+    const incremental = compileChatGptWebPrompt(resume, capabilities, currentToken, options);
+    expect(full.text).toContain(systemSentinel);
+    expect(incremental.text).not.toContain(systemSentinel);
+    expect(incremental.text).not.toContain("old-history-");
+    expect(incremental.text).toContain(environment);
+    expect(incremental.text).toContain("latest-user-sentinel");
+    expect(incremental.text).toContain("Read");
+    expect(incremental.text).toContain("retained_result");
+    expect(incremental.text).toContain(currentToken);
+    expect(incremental.text).not.toContain(oldToken);
+    expect(incremental.text.length).toBeLessThan(full.text.length * 0.3);
+    expect(estimateTokens(incremental.text)).toBeLessThan(estimateTokens(full.text) * 0.3);
+    expect(new Set(Array.from({ length: 100 }, () => (
+      compileChatGptWebPrompt(resume, capabilities, currentToken, options).text.length
+    ))).size).toBe(1);
+  }
 });
 
 test("completed Claude steering suppression follows a successful retained root session", async () => {
