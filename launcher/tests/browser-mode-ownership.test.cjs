@@ -60,6 +60,7 @@ test("interaction-mode changes preserve mode-bound retained tabs on failure and 
   const retainedAutomatic = { id: "automatic-ready", status: "ready" };
   const retainedManual = { id: "manual-ready", status: "ready", interactionMode: "manual" };
   let ownershipMarks = 0;
+  const descriptorModes = [];
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     getBrowserInteractionMode: () => "manual",
     interactionModeOverride: null,
@@ -70,6 +71,7 @@ test("interaction-mode changes preserve mode-bound retained tabs on failure and 
     ]),
     selectedTabId: retainedAutomatic.id,
     markOwnedSurface: async () => { ownershipMarks += 1; },
+    writeDescriptor() { descriptorModes.push(this.browserInteractionMode()); },
     snapshot: () => ({ activeTabId: "home" }),
   });
 
@@ -85,6 +87,7 @@ test("interaction-mode changes preserve mode-bound retained tabs on failure and 
   assert.equal(fixture.currentOperation(), null);
   assert.equal(fixture.browserInteractionMode(), "manual");
   assert.equal(ownershipMarks, 0);
+  assert.deepEqual(descriptorModes, ["automatic", "manual"]);
 
   const result = await fixture.withInteractionModeChange("automatic", async commit => {
     await commit();
@@ -95,6 +98,7 @@ test("interaction-mode changes preserve mode-bound retained tabs on failure and 
   assert.equal(fixture.selectedTabId, retainedAutomatic.id);
   assert.equal(fixture.currentOperation(), null);
   assert.equal(ownershipMarks, 1);
+  assert.deepEqual(descriptorModes, ["automatic", "manual", "automatic"]);
 
   const live = Object.assign(Object.create(BrowserHost.prototype), {
     turnTabs: new Map([["running", { id: "running", status: "running" }]]),
@@ -118,6 +122,7 @@ test("switching from Zero Risk to Automatic marks the already-loaded primary sur
     view: { webContents: {
       executeJavaScript: async script => { scripts.push(script); },
     } },
+    writeDescriptor() {},
     snapshot: () => ({ activeTabId: "home" }),
   });
 
@@ -140,6 +145,7 @@ test("a failed Automatic ownership proof stays inside the runtime rollback bound
     turnTabs: new Map([[retained.id, retained]]),
     selectedTabId: retained.id,
     markOwnedSurface: async () => { throw new Error("surface ownership failed"); },
+    writeDescriptor() {},
   });
 
   await assert.rejects(

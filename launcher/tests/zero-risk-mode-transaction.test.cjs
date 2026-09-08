@@ -14,6 +14,7 @@ function hostFixture() {
     turnTabs: new Map([["retained", { id: "retained", status: "ready", interactionMode: "manual" }]]),
     selectedTabId: "retained", snapshot: () => ({ activeTabId: "home" }),
     markOwnedSurface: async () => {},
+    writeDescriptor() {},
     removeTurnTab(tab, abort) { assert.equal(abort, false); removed.push(tab.id); this.turnTabs.delete(tab.id); },
   });
   return { host, removed };

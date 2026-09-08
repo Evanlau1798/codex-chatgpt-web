@@ -441,7 +441,11 @@ class BrowserHost {
     this.assertTurnTabsCanResetForInteractionModeChange();
     this.interactionModeOverride = mode;
     this.manualOperation = INTERACTION_MODE_CHANGE_OPERATION;
+    let completed = false;
     try {
+      // Setup capability inspection runs before its runtime-ready callback, so publish the target
+      // mode's native surface mapping for the transaction and restore it if setup rolls back.
+      this.writeDescriptor();
       let browserCommitted = false;
       const commitBrowserChange = async () => {
         if (browserCommitted) throw new Error("Browser interaction mode change was committed more than once");
@@ -455,10 +459,12 @@ class BrowserHost {
       if (!browserCommitted) {
         throw new Error("Runtime setup returned before committing the browser interaction mode");
       }
+      completed = true;
       return result;
     } finally {
       this.manualOperation = null;
       this.interactionModeOverride = null;
+      if (!completed) this.writeDescriptor();
     }
   }
 
