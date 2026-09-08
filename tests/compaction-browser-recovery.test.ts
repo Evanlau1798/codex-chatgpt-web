@@ -37,8 +37,8 @@ test.each([[true, false, true], [false, false, true], [true, true, true], [true,
       waitFor: async () => {}, isEnabled: async () => true, press: async () => { actions.push("send"); },
     }) }) }),
     waitForSubmissionAccepted: async (...args: unknown[]) => {
-      expect(args[7]).toBe(progress);
-      recoveryCallbacks.push(args[9]);
+      expect(args[8]).toBe(progress);
+      recoveryCallbacks.push(args[10]);
       return "user_turn";
     },
     attachPrompt: async (_page: unknown, _text: string, localTools: boolean) => {
