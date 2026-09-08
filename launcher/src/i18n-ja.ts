@@ -136,7 +136,7 @@ export const ja: Record<keyof Copy, string> = {
   launchAtLoginBody: "Codex を開く前からローカル Responses ルートを利用できるようにします。",
   bridgeRoute: "Codex ブリッジ",
   bridgeRouteBody: "Codex をこのランチャー経由でルーティングします。無効にすると、セットアップや保存済み認証情報を削除せずに以前のモデルルートへ戻します。変更後は Codex を再起動してください。",
-  enhancedWebSessionMode: "Enhanced Web セッションモード（Beta）",
+  enhancedWebSessionMode: "Enhanced Web セッションモード",
   enhancedWebSessionModeBody: "新規インストールでは既定で有効です。ChatGPT Web モデルに会話の保持、steering、handoff compaction、大規模コンテキストのアーカイブ転送を追加します。変更するとローカルランタイムが再起動します。",
   ...zeroRiskCopy.ja,
   keepRunningOnClose: "ウィンドウを閉じてもサーバーを実行",

@@ -139,7 +139,7 @@ Zero Risk 保留本地 Responses bridge 与完整 Codex harness，但不会读�
 替你发送提示。启动器只准备并复制提示；模型、effort、`Codex Zero Risk` 连接器、贴上与发送均由
 你手动完成，以排除 ChatGPT 网页自动化本身带来的帐号风险。
 
-### 增强型 Web 工作阶段模式（Beta）
+### 增强型 Web 工作阶段模式
 
 此设置在 Enhanced fork 的新安装中默认开启，且只影响 `chatgpt-web/*` 路由。已有安装的明确选择
 会原样保留；从未选择过模式的旧配置会保守迁移为关闭。无论该设置如何，非 Web 的 OpenAI／Codex

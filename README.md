@@ -153,7 +153,7 @@ ChatGPT page and never sends a prompt for you. The launcher prepares and copies 
 choose the model, effort, and `Codex Zero Risk` connector, then paste and send it yourself. This
 removes the account risk specifically associated with ChatGPT web automation.
 
-### Enhanced Web session mode (Beta)
+### Enhanced Web session mode
 
 This setting is enabled by default for new Enhanced fork installations and affects only
 `chatgpt-web/*` routes. Existing explicit choices are preserved, while older configurations that

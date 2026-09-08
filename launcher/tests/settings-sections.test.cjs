@@ -22,12 +22,22 @@ test("settings keep upstream controls in General and fork controls in Enhanced F
 
   const enhancedSource = settingsSource.slice(enhanced, general);
   const generalSource = settingsSource.slice(general, diagnostics);
-  for (const key of ["launchAtLogin", "interactionMode", "keepRunningOnClose", "showDuringTurns", "biggerContext", "language"]) {
+  for (const key of ["launchAtLogin", "bridgeRoute", "interactionMode", "keepRunningOnClose", "showDuringTurns", "biggerContext", "language"]) {
     assert.match(generalSource, new RegExp(`copy\\.${key}`));
   }
-  for (const key of ["bridgeRoute", "enhancedWebSessionMode", "noAutoCompact", "zeroRiskModelSettings", "lockBrowserDuringTurns"]) {
+  assert.ok(generalSource.indexOf("copy.launchAtLogin") < generalSource.indexOf("copy.bridgeRoute"));
+  assert.ok(generalSource.indexOf("copy.bridgeRoute") < generalSource.indexOf("copy.interactionMode"));
+  for (const key of ["enhancedWebSessionMode", "noAutoCompact", "zeroRiskModelSettings", "lockBrowserDuringTurns"]) {
     assert.match(enhancedSource, new RegExp(`copy\\.${key}`));
   }
+  assert.doesNotMatch(enhancedSource, /copy\.bridgeRoute/);
+});
+
+test("Enhanced Web session mode is no longer labelled Beta in any launcher locale", () => {
+  assert.match(i18nSource, /enhancedWebSessionMode: "Enhanced Web session mode"/);
+  assert.match(i18nSource, /enhancedWebSessionMode: "增強型 Web 工作階段模式"/);
+  assert.match(i18nJaSource, /enhancedWebSessionMode: "Enhanced Web セッションモード"/);
+  assert.doesNotMatch(`${i18nSource}\n${i18nJaSource}`, /Enhanced Web session mode \(Beta\)|增強型 Web 工作階段模式（Beta）|Enhanced Web セッションモード（Beta）/);
 });
 
 test("No Context Window remains explicitly experimental in every launcher locale", () => {

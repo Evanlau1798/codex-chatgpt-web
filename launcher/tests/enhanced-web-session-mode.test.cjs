@@ -148,8 +148,8 @@ test("launcher exposes enhanced Web session mode through UI and IPC", () => {
 
   assert.match(types, /useEnhancedWebSessionMode: boolean/);
   assert.match(types, /setUseEnhancedWebSessionMode\(enabled: boolean\)/);
-  assert.match(i18n, /Enhanced Web session mode \(Beta\)/);
-  assert.match(i18n, /增強型 Web 工作階段模式（Beta）/);
+  assert.match(i18n, /Enhanced Web session mode"/);
+  assert.match(i18n, /增強型 Web 工作階段模式"/);
   assert.match(settingsSource, /checked=\{snapshot\.state\.useEnhancedWebSessionMode\}/);
   assert.match(settingsSource, /api!\.setUseEnhancedWebSessionMode\(enabled\)/);
   assert.doesNotMatch(settingsSource, /!devProfile \? <SettingRow body=\{copy\.enhancedWebSessionModeBody\}/);

@@ -169,13 +169,6 @@ export function SettingsSurface({
     <ContentSurface narrow title={devProfile ? copy.devSettingsTitle : copy.settingsTitle}>
       <SectionHeading label={copy.enhancedFeatureSettings} />
       <div className="settings-list">
-        {!devProfile ? <SettingRow body={copy.bridgeRouteBody} label={copy.bridgeRoute}>
-          <Switch
-            checked={snapshot.state.bridgeEnabled}
-            disabled={busy || snapshot.state.codexSetupComplete !== true}
-            onChange={(checked) => void setBridgeEnabled(checked)}
-          />
-        </SettingRow> : null}
         <SettingRow body={copy.enhancedWebSessionModeBody} label={copy.enhancedWebSessionMode}>
           <Switch
             checked={snapshot.state.useEnhancedWebSessionMode}
@@ -217,6 +210,13 @@ export function SettingsSurface({
             onChange={(checked) => void api!.setAutostart(checked)
               .then((result) => updateState(result.state))
               .catch((cause) => setError(messageOf(cause)))}
+          />
+        </SettingRow> : null}
+        {!devProfile ? <SettingRow body={copy.bridgeRouteBody} label={copy.bridgeRoute}>
+          <Switch
+            checked={snapshot.state.bridgeEnabled}
+            disabled={busy || snapshot.state.codexSetupComplete !== true}
+            onChange={(checked) => void setBridgeEnabled(checked)}
           />
         </SettingRow> : null}
         <SettingRow
