@@ -24,3 +24,9 @@ test("links Obsidian notes without turning their brackets into LaTeX delimiters"
   expect(chatGptHtmlToMarkdown("<p>Ordinary [brackets] stay escaped</p>"))
     .toBe("Ordinary \\[brackets\\] stay escaped");
 });
+
+test("preserves the exact outer Codex plan envelope", () => {
+  expect(chatGptHtmlToMarkdown(
+    "<p>&lt;proposed_plan&gt;</p><p>Keep an_inner_value unchanged.</p><p>&lt;/proposed_plan&gt;</p>",
+  )).toBe("<proposed_plan>\n\nKeep an\\_inner\\_value unchanged.\n\n</proposed_plan>");
+});

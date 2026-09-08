@@ -86,6 +86,12 @@ function preserveObsidianWikiLinks(markdown: string): string {
   return markdown.replace(/\\\[\\\[([^\r\n]*?)\\\]\\\]/g, "[[$1]]");
 }
 
+function preserveCodexPlanEnvelope(markdown: string): string {
+  return markdown
+    .replace(/^<proposed\\_plan>/, "<proposed_plan>")
+    .replace(/<\/proposed\\_plan>$/, "</proposed_plan>");
+}
+
 function obsidianWikiLink(value: string): string | undefined {
   const separator = value.indexOf("|");
   const target = (separator >= 0 ? value.slice(0, separator) : value).trim();
@@ -146,7 +152,9 @@ function linkObsidianWikiLinks(markdown: string): string {
 
 export function chatGptHtmlToMarkdown(html: string): string {
   if (!html.trim()) return "";
-  return linkObsidianWikiLinks(preserveObsidianWikiLinks(turndown.turndown(html))).trim();
+  return preserveCodexPlanEnvelope(
+    linkObsidianWikiLinks(preserveObsidianWikiLinks(turndown.turndown(html))).trim(),
+  );
 }
 
 export interface ChatGptMarkdownSegment {
