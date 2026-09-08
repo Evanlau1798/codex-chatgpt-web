@@ -15,6 +15,8 @@ import {
 import {
   markdownRestorationProbeText,
   MARKDOWN_RESTORATION_PROBE_CHARS,
+  STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS,
+  structuredMarkdownRestorationProbeText,
 } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
 
 describe("lightweight Web contract smoke", () => {
@@ -44,7 +46,7 @@ describe("lightweight Web contract smoke", () => {
     expect(script).not.toContain("inspectLauncherBrowserHost");
     expect(script).toContain("detectChatGptAccountCapabilities(connection.page)");
     expect(script).toContain("runMarkdownRestorationProbe(");
-    expect(script).toContain("connection.page,\n    config.appName,");
+    expect(script).toContain("runMarkdownRestorationProbe(connection.page, config.appName, signal)");
     expect(script).toContain("connectorVerified = true");
     expect(script).toContain("authenticated: true");
     expect(script).toContain("composer: true");
@@ -56,6 +58,7 @@ describe("lightweight Web contract smoke", () => {
 
   test("uses the incident-sized Markdown insertion probe without sending its contents", () => {
     const prompt = markdownRestorationProbeText();
+    const structuredPrompt = structuredMarkdownRestorationProbeText();
     const probe = readFileSync(
       new URL("../scripts/lifecycle-smoke/markdown-restoration-probe.ts", import.meta.url),
       "utf8",
@@ -64,11 +67,31 @@ describe("lightweight Web contract smoke", () => {
     expect(prompt).toHaveLength(MARKDOWN_RESTORATION_PROBE_CHARS);
     expect(prompt[16_000]).toBe(" ");
     expect(prompt).toContain('{"key":[1,2,3]}');
+    expect(STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS).toBe(13_958);
+    expect(structuredPrompt).toHaveLength(STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS);
+    expect(structuredPrompt).toContain("```json\n");
+    expect(structuredPrompt).toContain("<environment_context>\n");
     expect(probe).toContain("finally {");
     expect(probe).toContain("for (let run = 0; run < 3; run += 1)");
     expect(probe).toContain("durationMs >= 10_000");
     expect(probe).toContain("medianMs >= 5_000");
     expect(probe).toContain("WEB_CONTRACT_MARKDOWN_PROBE_TIMINGS");
+    expect(probe).toContain("WEB_CONTRACT_STRUCTURED_MARKDOWN_PROBE_OK");
+    const structuredAt = probe.indexOf("const structuredPrompt = structuredMarkdownRestorationProbeText()");
+    const structuredInsertAt = probe.indexOf("await insertChatGptComposerPlainText(composer, structuredPrompt, abortSignal)");
+    const structuredReadbackAt = probe.indexOf("await waitForText(composer, structuredPrompt, abortSignal)");
+    const structuredConnectorAt = probe.indexOf("JSON.stringify(await connectorState(composer)) !== JSON.stringify(structuredConnectors)");
+    const structuredNoTurnAt = probe.indexOf("Structured Markdown restoration probe unexpectedly submitted a turn");
+    const structuredSuccessAt = probe.indexOf("WEB_CONTRACT_STRUCTURED_MARKDOWN_PROBE_OK");
+    expect([
+      structuredAt,
+      structuredInsertAt,
+      structuredReadbackAt,
+      structuredConnectorAt,
+      structuredNoTurnAt,
+      structuredSuccessAt,
+    ].every((position, index, positions) => position >= 0 && (index === 0 || position > positions[index - 1]!)))
+      .toBeTrue();
     expect(probe).toContain("clearChatGptComposerInput(composer)");
     expect(probe.indexOf("await clearChatGptComposerInput(composer)"))
       .toBeLessThan(probe.indexOf("composer = await selectConnector(page, appName)"));
@@ -203,8 +226,10 @@ describe("lightweight Web contract smoke", () => {
     expect(script).toContain("runtimePid");
     expect(WEB_CONTRACT_TURN_TIMEOUT_MS).toBe(180_000);
     expect(WEB_CONTRACT_PROBE_TIMEOUT_MS).toBe(300_000);
-    expect(script).toContain("AbortSignal.timeout(WEB_CONTRACT_PROBE_TIMEOUT_MS)");
-    expect(script).toContain("AbortSignal.timeout(WEB_CONTRACT_TURN_TIMEOUT_MS)");
+    expect(script).toMatch(/withDeadline\(\s*WEB_CONTRACT_PROBE_TIMEOUT_MS,/);
+    expect(script).toContain("withDeadline(WEB_CONTRACT_TURN_TIMEOUT_MS");
+    expect(script).toContain("clearTimeout(timer)");
+    expect(script).not.toContain("AbortSignal.timeout(");
     expect(script).toContain("**bold**, `code`, and _emphasis_");
   });
 });

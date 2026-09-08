@@ -19,6 +19,7 @@ import {
 import { openChatGptConnectorPlusMenu } from "../../src/adapters/chatgpt-web/connector-plus-menu";
 
 export const MARKDOWN_RESTORATION_PROBE_CHARS = 96_000;
+export const STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS = 13_958;
 const CONNECTOR_SELECTOR = '[data-id^="plugin:"][data-keyword]';
 
 export function markdownRestorationProbeText(): string {
@@ -49,6 +50,24 @@ async function connectorState(composer: Locator): Promise<string[]> {
     (element.closest("form") ?? element).querySelectorAll(selector),
     node => node.getAttribute("data-keyword") ?? "",
   ), CONNECTOR_SELECTOR, { timeout: 20_000 });
+}
+
+export function structuredMarkdownRestorationProbeText(): string {
+  const section = [
+    "## Native2 bootstrap contract",
+    "- Preserve `literal_code`, *emphasis*, _underscores_, ~=operators=~, and [links](https://example.test/path).",
+    "- Keep the structured payload exact; do not reinterpret delimiters.",
+    "<environment_context>",
+    "  <cwd>G:\\workspace</cwd>",
+    "  <permission_profile type=\"disabled\"><file_system type=\"unrestricted\" /></permission_profile>",
+    "</environment_context>",
+    "```json",
+    '{"tool":"codex_exec","arguments":{"path":"G:\\\\workspace\\\\file_name.ts","flags":["*","_","~","="]}}',
+    "```",
+    "",
+  ].join("\n");
+  return section.repeat(Math.ceil(STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS / section.length))
+    .slice(0, STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS);
 }
 
 async function waitForText(composer: Locator, expected: string, abortSignal?: AbortSignal): Promise<void> {
@@ -198,6 +217,27 @@ export async function runMarkdownRestorationProbe(
       throw new Error(`Markdown restoration probe median attachment exceeded 5 seconds (medianMs=${Math.round(medianMs)})`);
     }
     process.stdout.write(`WEB_CONTRACT_MARKDOWN_PROBE_TIMINGS ${JSON.stringify(timings.map(Math.round))}\n`);
+    await clearChatGptComposerInput(composer);
+    composer = await selectConnector(page, appName);
+    const structuredPrompt = structuredMarkdownRestorationProbeText();
+    const structuredConnectors = await connectorState(composer);
+    const structuredStartedAt = performance.now();
+    await composer.focus();
+    await insertChatGptComposerPlainText(composer, structuredPrompt, abortSignal);
+    composer = await activeComposer(page);
+    await waitForText(composer, structuredPrompt, abortSignal);
+    const structuredDurationMs = performance.now() - structuredStartedAt;
+    if (JSON.stringify(await connectorState(composer)) !== JSON.stringify(structuredConnectors)) {
+      throw new Error("Structured Markdown restoration probe changed connector state");
+    }
+    if (await page.locator(CHATGPT_USER_TURN_SELECTOR).count() !== initialUserTurns
+      || await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count() !== 0) {
+      throw new Error("Structured Markdown restoration probe unexpectedly submitted a turn");
+    }
+    process.stdout.write(`WEB_CONTRACT_STRUCTURED_MARKDOWN_PROBE_OK ${JSON.stringify({
+      durationMs: Math.round(structuredDurationMs),
+      chars: structuredPrompt.length,
+    })}\n`);
     return true;
   } catch (error) {
     process.stderr.write(`WEB_CONTRACT_MARKDOWN_PROBE_PRIMARY_ERROR ${JSON.stringify({

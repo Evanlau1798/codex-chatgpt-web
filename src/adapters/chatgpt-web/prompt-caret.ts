@@ -12,6 +12,8 @@ const ZERO_WIDTH_TEXT = /[\u200B\u200C\u200D\uFEFF]/g;
 const RESTORATION_WHITESPACE = /\s/u;
 const MARKDOWN_SHORTCUT_DELIMITERS = ["`", "*", "_", "~", "=", "[", ")"] as const;
 const MARKDOWN_RESTORATION_RANGE_CHARS = 8_192;
+const MARKDOWN_RESTORATION_BATCH_SIZE = 128;
+const STRUCTURED_MARKDOWN = /[\r\n\u2028\u2029]/u;
 
 function codePointWindow(value: string, offset: number): string {
   return Array.from(value.slice(offset), char => (
@@ -21,6 +23,14 @@ function codePointWindow(value: string, offset: number): string {
 
 type ChatGptPromptBoundaryReplacement = { marker: string; value: string };
 type MarkdownReplacement = ChatGptPromptBoundaryReplacement & { count: number };
+type MarkdownRestorationStrategy = "exact" | "range";
+type MarkdownRestorationEvidence = {
+  ok: boolean;
+  strategy: MarkdownRestorationStrategy;
+  initialMarkers: number;
+  remainingMarkers: number;
+  batches: number;
+};
 
 const CHATGPT_COMPOSER_SELECT_ALL_KEY = process.platform === "darwin" ? "Meta+A" : "Control+A";
 
@@ -55,9 +65,10 @@ async function restoreChatGptPromptMarkdownRanges(
   replacements: MarkdownReplacement[],
   count: number,
   abortSignal?: AbortSignal,
-): Promise<boolean> {
+): Promise<MarkdownRestorationEvidence> {
   const options = { signal: abortSignal, timeout: 20_000 };
   let remaining = count;
+  let batches = 0;
   const markers = replacements.map(replacement => replacement.marker);
   while (remaining > 0) {
     if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
@@ -101,7 +112,10 @@ async function restoreChatGptPromptMarkdownRanges(
       selection.addRange(range);
       return document.execCommand("insertText", false, restoredText) ? markerCount : 0;
     }, { replacements, maxChars: MARKDOWN_RESTORATION_RANGE_CHARS }, options);
-    if (!Number.isSafeInteger(restored) || restored <= 0 || restored > remaining) return false;
+    batches += 1;
+    if (!Number.isSafeInteger(restored) || restored <= 0 || restored > remaining) {
+      return { ok: false, strategy: "range", initialMarkers: count, remainingMarkers: remaining, batches };
+    }
     await new Promise(resolve => setTimeout(resolve, 0));
     const observedRemaining = await composer.evaluate((element, values) => {
       const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
@@ -117,10 +131,108 @@ async function restoreChatGptPromptMarkdownRanges(
     }, markers, options);
     if (!Number.isSafeInteger(observedRemaining)
       || observedRemaining < 0
-      || remaining - observedRemaining !== restored) return false;
+      || remaining - observedRemaining !== restored) {
+      return { ok: false, strategy: "range", initialMarkers: count, remainingMarkers: observedRemaining, batches };
+    }
     remaining = observedRemaining;
   }
-  return true;
+  return { ok: true, strategy: "range", initialMarkers: count, remainingMarkers: 0, batches };
+}
+
+async function restoreChatGptPromptMarkdownExactly(
+  composer: Locator,
+  replacements: MarkdownReplacement[],
+  count: number,
+  abortSignal?: AbortSignal,
+): Promise<MarkdownRestorationEvidence> {
+  const options = { signal: abortSignal, timeout: 20_000 };
+  const markers = replacements.map(replacement => replacement.marker);
+  const countMarkers = () => composer.evaluate((element, values) => {
+    const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
+    const markerSet = new Set(values);
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let found = 0;
+    for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+      const node = current as Text;
+      if (node.parentElement?.closest(ignoredSelector)) continue;
+      for (const value of node.data) if (markerSet.has(value)) found += 1;
+    }
+    return found;
+  }, markers, options);
+  let remaining = count;
+  let batches = 0;
+  while (remaining > 0) {
+    if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
+    await composer.focus(options);
+    const restored = await composer.evaluate(async (element, input) => {
+      const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
+      const selection = window.getSelection();
+      if (!selection) return 0;
+      const values = new Map(input.replacements.map(replacement => [replacement.marker, replacement.value]));
+      const rightmostText = (node: Node): Text | undefined => {
+        if (node.nodeType === 1 && (node as Element).matches(ignoredSelector)) return undefined;
+        if (node.nodeType === 3) {
+          const text = node as Text;
+          return text.parentElement?.closest(ignoredSelector) ? undefined : text;
+        }
+        for (let child = node.lastChild; child; child = child.previousSibling) {
+          const found = rightmostText(child);
+          if (found) return found;
+        }
+        return undefined;
+      };
+      const previousText = (node: Node): Text | undefined => {
+        for (let current: Node | null = node; current && current !== element; current = current.parentNode) {
+          for (let sibling = current.previousSibling; sibling; sibling = sibling.previousSibling) {
+            const found = rightmostText(sibling);
+            if (found) return found;
+          }
+        }
+        return undefined;
+      };
+      let position = rightmostText(element);
+      let before = position?.data.length ?? 0;
+      let edited = 0;
+      while (position && edited < input.batchSize) {
+        let match: { offset: number; value: string } | undefined;
+        for (const replacement of input.replacements) {
+          const offset = position.data.lastIndexOf(replacement.marker, before - 1);
+          if (offset >= 0 && (!match || offset > match.offset)) match = { offset, value: replacement.value };
+        }
+        if (!match) {
+          position = previousText(position);
+          before = position?.data.length ?? 0;
+          continue;
+        }
+        const range = document.createRange();
+        range.setStart(position, match.offset);
+        range.setEnd(position, match.offset + 1);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        if (!document.execCommand("insertText", false, match.value)) return -1;
+        edited += 1;
+        before = match.offset;
+        await Promise.resolve();
+        if (!element.contains(position)) break;
+      }
+      return edited;
+    }, { replacements, batchSize: MARKDOWN_RESTORATION_BATCH_SIZE }, options);
+    batches += 1;
+    if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
+    if (!Number.isSafeInteger(restored) || restored <= 0 || restored > remaining) {
+      return { ok: false, strategy: "exact", initialMarkers: count, remainingMarkers: remaining, batches };
+    }
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
+    const observedRemaining = await countMarkers();
+    if (!Number.isSafeInteger(observedRemaining)
+      || observedRemaining < 0
+      || remaining - observedRemaining !== restored) {
+      return { ok: false, strategy: "exact", initialMarkers: count, remainingMarkers: observedRemaining, batches };
+    }
+    remaining = observedRemaining;
+  }
+  return { ok: true, strategy: "exact", initialMarkers: count, remainingMarkers: 0, batches };
 }
 
 export async function insertChatGptComposerPlainText(
@@ -149,13 +261,16 @@ export async function insertChatGptComposerPlainText(
   if (!inserted) {
     throw chatGptWebSurfaceError("ChatGPT composer rejected the bounded plain-text edit", false);
   }
-  if (guarded && !await restoreChatGptPromptMarkdownRanges(
-    composer,
-    guarded.replacements,
-    guarded.count,
-    abortSignal,
-  )) {
-    throw chatGptWebSurfaceError("ChatGPT composer could not preserve literal Markdown in a bounded edit", false);
+  if (guarded) {
+    const restoration = STRUCTURED_MARKDOWN.test(text)
+      ? await restoreChatGptPromptMarkdownExactly(composer, guarded.replacements, guarded.count, abortSignal)
+      : await restoreChatGptPromptMarkdownRanges(composer, guarded.replacements, guarded.count, abortSignal);
+    if (!restoration.ok) {
+      throw chatGptWebSurfaceError(
+        `ChatGPT composer could not preserve literal Markdown in a bounded edit (strategy=${restoration.strategy}, initialMarkers=${restoration.initialMarkers}, remainingMarkers=${restoration.remainingMarkers}, batches=${restoration.batches})`,
+        false,
+      );
+    }
   }
 }
 

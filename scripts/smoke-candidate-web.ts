@@ -65,10 +65,18 @@ async function waitForBrowserIdle(baseUrl: string): Promise<void> {
 }
 
 async function waitForExit(child: Bun.Subprocess, timeoutMs: number): Promise<boolean> {
-  return await Promise.race([
-    child.exited.then(() => true),
-    Bun.sleep(timeoutMs).then(() => false),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      child.exited.then(() => true),
+      new Promise<false>(resolveTimeout => {
+        timer = setTimeout(() => resolveTimeout(false), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 async function terminate(child: Bun.Subprocess): Promise<void> {
@@ -102,15 +110,11 @@ async function runWebContract(env: Record<string, string | undefined>): Promise<
     stdout: "inherit",
     stderr: "inherit",
   });
-  const exitCode = await Promise.race([
-    smoke.exited,
-    Bun.sleep(WEB_CONTRACT_PROBE_TIMEOUT_MS + WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000)
-      .then(() => undefined),
-  ]);
-  if (exitCode === undefined) {
+  if (!await waitForExit(smoke, WEB_CONTRACT_PROBE_TIMEOUT_MS + WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000)) {
     await terminate(smoke);
     throw new Error("Candidate Web smoke timed out");
   }
+  const exitCode = await smoke.exited;
   if (exitCode !== 0) throw new Error("Candidate runtime Web contract smoke failed");
 }
 

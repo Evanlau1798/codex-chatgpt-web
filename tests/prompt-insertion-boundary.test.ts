@@ -8,11 +8,11 @@ import {
   restoreChatGptPromptChunkBoundary,
 } from "../src/adapters/chatgpt-web/prompt-caret";
 
-test("Markdown density does not increase bounded composer edit count", async () => {
+test("single-line Markdown density does not increase bounded composer edit count", async () => {
   const { createDocument } = require("@mixmark-io/domino") as {
     createDocument: (html: string) => Document;
   };
-  const pattern = '```json\n{"key": ["*value*", "~x~", "a_b=c", "call()"]}\n```\n';
+  const pattern = '`json` {"key": ["*value*", "~x~", "a_b=c", "call()"]} ';
   const prompt = pattern.repeat(Math.ceil((CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 6 + 17) / pattern.length))
     .slice(0, CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 6 + 17);
   const document = createDocument('<div id="composer"></div>') as Document & {
@@ -284,6 +284,38 @@ test("bounded Markdown restoration rejects an inconsistent marker recount", asyn
 
   await expect(insertChatGptComposerPlainText(composer as never, "**"))
     .rejects.toThrow("could not preserve literal Markdown");
+});
+
+test("structured Markdown restoration reports a rejected exact edit without prompt content", async () => {
+  const composer = {
+    focus: async () => {},
+    evaluate: async (_callback: unknown, input: unknown) => typeof input === "string" ? true : -1,
+  };
+
+  const failure = await insertChatGptComposerPlainText(composer as never, "*private-sentinel*\n")
+    .catch(error => error as Error);
+  expect(failure).toBeInstanceOf(Error);
+  if (!(failure instanceof Error)) throw new Error("Expected structured Markdown restoration to fail");
+  expect(failure.message).toContain("strategy=exact, initialMarkers=2, remainingMarkers=2, batches=1");
+  expect(failure.message).not.toContain("private-sentinel");
+});
+
+test("structured Markdown restoration stops after aborting its current exact batch", async () => {
+  const controller = new AbortController();
+  let evaluations = 0;
+  const composer = {
+    focus: async () => {},
+    evaluate: async (_callback: unknown, input: unknown) => {
+      evaluations += 1;
+      if (typeof input === "string") return true;
+      controller.abort(new DOMException("stopped", "AbortError"));
+      return 1;
+    },
+  };
+
+  await expect(insertChatGptComposerPlainText(composer as never, "*value*\n", controller.signal))
+    .rejects.toThrow("stopped");
+  expect(evaluations).toBe(2);
 });
 
 test("bounded Markdown restoration does not split its trailing surrogate pair", async () => {

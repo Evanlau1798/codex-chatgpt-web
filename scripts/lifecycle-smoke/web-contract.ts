@@ -43,6 +43,20 @@ function save(value: Record<string, unknown>): void {
   writeFileSync(resultPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+async function withDeadline<T>(timeoutMs: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException(`Web contract deadline exceeded after ${timeoutMs}ms`, "TimeoutError")),
+    timeoutMs,
+  );
+  timer.unref?.();
+  try {
+    return await run(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function health(baseUrl: string): Promise<Record<string, unknown>> {
   const response = await fetch(`${baseUrl}/healthz`);
   if (!response.ok) throw new Error(`Lifecycle daemon health check failed: HTTP ${response.status}`);
@@ -113,10 +127,9 @@ try {
   sessionUrl = connection.page.url();
   if (!isTemporaryChatGptUrl(sessionUrl)) throw new Error("Web contract smoke requires Temporary Chat");
   process.stdout.write("WEB_CONTRACT_MARKDOWN_PROBE_STARTED\n");
-  markdownRestoration = await runMarkdownRestorationProbe(
-    connection.page,
-    config.appName,
-    AbortSignal.timeout(WEB_CONTRACT_PROBE_TIMEOUT_MS),
+  markdownRestoration = await withDeadline(
+    WEB_CONTRACT_PROBE_TIMEOUT_MS,
+    signal => runMarkdownRestorationProbe(connection.page, config.appName, signal),
   );
   // The Markdown probe selects exactly config.appName on this leased surface and verifies that
   // connector state survives the full restoration pass before cleaning the composer.
@@ -155,33 +168,35 @@ const metadata = {
   sandbox: "none",
   workspaces: { [repo]: {} },
 };
-const request = new Request(`${baseUrl}/v1/responses`, {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  signal: AbortSignal.timeout(WEB_CONTRACT_TURN_TIMEOUT_MS),
-  body: JSON.stringify({
-    model: "chatgpt-web/medium",
-    stream: false,
-    reasoning: { effort: "medium" },
-    prompt_cache_key: threadId,
-    client_metadata: {
-      thread_id: threadId,
-      "x-codex-turn-metadata": JSON.stringify(metadata),
-    },
-    input: [
-      item("msg_web_contract_environment", environment),
-      item("msg_web_contract_prompt", "Reply briefly to confirm this turn completed.\n\nVerification: **bold**, `code`, and _emphasis_."),
-    ],
-    tools: [],
-  }),
+const payload = await withDeadline(WEB_CONTRACT_TURN_TIMEOUT_MS, async signal => {
+  const request = new Request(`${baseUrl}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    signal,
+    body: JSON.stringify({
+      model: "chatgpt-web/medium",
+      stream: false,
+      reasoning: { effort: "medium" },
+      prompt_cache_key: threadId,
+      client_metadata: {
+        thread_id: threadId,
+        "x-codex-turn-metadata": JSON.stringify(metadata),
+      },
+      input: [
+        item("msg_web_contract_environment", environment),
+        item("msg_web_contract_prompt", "Reply briefly to confirm this turn completed.\n\nVerification: **bold**, `code`, and _emphasis_."),
+      ],
+      tools: [],
+    }),
+  });
+  const result = await requestWebContractTurn(fetch, request);
+  if (result.status === "account-blocked") {
+    save({ status: "account-blocked", runtimeVersion: VERSION, httpStatus: 429, at: new Date(now).toISOString() });
+    throw new Error("WEB_CONTRACT_ACCOUNT_BLOCKED: ChatGPT returned a rate or verification limit; no retry was attempted");
+  }
+  if (!result.response.ok) throw new Error(`Web contract turn failed: HTTP ${result.response.status}`);
+  return await result.response.json();
 });
-const result = await requestWebContractTurn(fetch, request);
-if (result.status === "account-blocked") {
-  save({ status: "account-blocked", runtimeVersion: VERSION, httpStatus: 429, at: new Date(now).toISOString() });
-  throw new Error("WEB_CONTRACT_ACCOUNT_BLOCKED: ChatGPT returned a rate or verification limit; no retry was attempted");
-}
-if (!result.response.ok) throw new Error(`Web contract turn failed: HTTP ${result.response.status}`);
-const payload = await result.response.json();
 const finalProjection = responseHasFinalProjection(payload);
 if (!finalProjection) throw new Error("Web contract turn did not complete a final projection");
 const browserIdle = await waitForBrowserIdle(baseUrl);
@@ -190,7 +205,7 @@ const capture = deriveWebContractCapabilities({
   session,
   connectorVerified,
   markdownRestoration,
-  responseAccepted: result.response.ok,
+  responseAccepted: true,
   finalProjection,
   browserIdle,
 });
