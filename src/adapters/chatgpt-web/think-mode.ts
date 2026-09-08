@@ -1,5 +1,6 @@
 import type { Locator } from "playwright-core";
 import { CHATGPT_COMPOSER_SELECTOR } from "../../chatgpt-session";
+import { withAbort } from "./runtime-lifecycle";
 
 const ACTION_TIMEOUT_MS = 10_000;
 const DOCUMENT_END_KEY = process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End";
@@ -74,13 +75,7 @@ export async function setChatGptThinkMode(
       if (currentCount === 1 && pressed !== "true" && pressed !== "false") {
         throw new Error("ChatGPT Think control lost its semantic pressed state");
       }
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, 100);
-        abortSignal?.addEventListener("abort", () => {
-          clearTimeout(timer);
-          reject(abortSignal.reason ?? new DOMException("ChatGPT Think selection aborted", "AbortError"));
-        }, { once: true });
-      });
+      await withAbort(new Promise<void>(resolve => setTimeout(resolve, 100)), abortSignal);
     }
     if (pressed !== target) throw new Error(`ChatGPT did not ${enabled ? "enable" : "disable"} Think mode`);
     const after = await composerState();

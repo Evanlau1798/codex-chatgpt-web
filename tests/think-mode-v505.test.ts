@@ -4,8 +4,14 @@ import { ChatGptBrowserWorker, setChatGptThinkMode } from "../src/adapters/chatg
 function fixture() {
   const state = { pressed: false, controlPresent: true, highlighted: true, popupCount: 1,
     optionCount: 1, draft: "", connectors: [] as string[], loseConnector: false,
-    commands: [] as string[], enters: 0 };
-  const control = { getAttribute: async () => state.pressed ? "true" : "false" };
+    commands: [] as string[], enters: 0, pollsBeforeToggle: 0, pendingToggle: false };
+  const control = { getAttribute: async () => {
+    if (state.pendingToggle && state.pollsBeforeToggle-- <= 0) {
+      state.pressed = !state.pressed;
+      state.pendingToggle = false;
+    }
+    return state.pressed ? "true" : "false";
+  } };
   const controls = { count: async () => state.controlPresent ? 1 : 0, first: () => control };
   const row = { getAttribute: async () => state.highlighted ? "" : null,
     waitFor: async () => { if (!state.optionCount) throw new Error("Think command is unavailable"); } };
@@ -23,7 +29,8 @@ function fixture() {
       if (key === "Enter") {
         if (state.draft !== "/think" || !state.highlighted) throw new Error("Unexpected composer submission");
         state.enters += 1;
-        state.pressed = !state.pressed;
+        if (state.pollsBeforeToggle > 0) state.pendingToggle = true;
+        else state.pressed = !state.pressed;
         state.controlPresent = true;
         state.draft = "";
         if (state.loseConnector) state.connectors = [];
@@ -56,6 +63,20 @@ test("Think slash verifies one command and a newly exposed pressed state", async
   ambiguous.state.optionCount = 2;
   await expect(setChatGptThinkMode(ambiguous.composerForm as never, true)).rejects.toThrow("exactly one command option");
   expect(ambiguous.state.enters).toBe(0);
+});
+
+test("Think polling removes each abort listener after its timer settles", async () => {
+  const ui = fixture();
+  ui.state.pollsBeforeToggle = 2;
+  const listeners = { added: 0, removed: 0 };
+  const signal = {
+    aborted: false,
+    addEventListener: () => { listeners.added += 1; },
+    removeEventListener: () => { listeners.removed += 1; },
+  } as unknown as AbortSignal;
+  await setChatGptThinkMode(ui.composerForm as never, true, undefined, signal);
+  expect(listeners.added).toBeGreaterThan(0);
+  expect(listeners.removed).toBe(listeners.added);
 });
 
 test("Think attachment runs after connector selection and rolls back connector loss", async () => {
