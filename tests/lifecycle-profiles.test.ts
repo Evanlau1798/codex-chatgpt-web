@@ -29,7 +29,7 @@ test("the local release gate runs verification before the account-bound Web smok
   expect(verify).toContain('process.argv.includes("--live-web")');
   expect(verify).toContain('process.argv.includes("--verbose")');
   expect(verify).toContain('stdout: "pipe"');
-  expect(verify).toContain('if (verbose || exitCode !== 0)');
+  expect(verify).toContain('if (showOutput || exitCode !== 0)');
   expect(verify).toContain("export async function run(");
   expect(verify).toContain("if (import.meta.main)");
   expect(verify).toContain('"scripts/smoke-candidate-web.ts", runtimeBundle');
