@@ -31,11 +31,12 @@ for (const [terminal, status, code, errorClass] of [
       const control = server.descriptor();
       const path = join(root, "descriptor.json");
       writeFileSync(path, JSON.stringify({
-        version: 2, kind: LAUNCHER_BROWSER_HOST_KIND, profile: "production", pid: process.pid,
+        version: 3, kind: LAUNCHER_BROWSER_HOST_KIND, profile: "production", pid: process.pid,
         endpoint: "http://127.0.0.1:39110", control,
         helper: { executable: process.execPath, script: import.meta.path },
         partition: "persist:codex-web-gpt-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
         surfaceId: "launcher_surface_id_0123456789AB", createdAt: new Date().toISOString(),
+        surfaceTargets: { launcher_surface_id_0123456789AB: "native-owned-target" },
       }), { mode: 0o600 });
       const activity = { traceId: "trace-terminal", helperPid: process.pid, prompt: "test" };
       const response = await fetch(`${control.endpoint}/v1/manual/start`, {

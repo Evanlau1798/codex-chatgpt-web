@@ -23,12 +23,13 @@ test("manual launcher liveness reads metadata only and rejects a wrong profile o
   const root = mkdtempSync(join(scratch, "manual-liveness-"));
   const path = join(root, "descriptor.json");
   writeFileSync(path, JSON.stringify({
-    version: 2, kind: LAUNCHER_BROWSER_HOST_KIND, profile: "production", pid: process.pid,
+    version: 3, kind: LAUNCHER_BROWSER_HOST_KIND, profile: "production", pid: process.pid,
     endpoint: server.url.origin,
     control: { endpoint: server.url.origin, token: "launcher-control-token-0123456789abcdefghijklmnop" },
     helper: { executable: process.execPath, script: import.meta.path },
     partition: "persist:codex-web-gpt-chatgpt", idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB", createdAt: new Date().toISOString(),
+    surfaceTargets: { launcher_surface_id_0123456789AB: "native-owned-target" },
   }), { mode: 0o600 });
   try {
     await expect(inspectLauncherBrowserHostLiveness(path, { expectedProfile: "development" }))

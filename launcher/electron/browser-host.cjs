@@ -1570,7 +1570,7 @@ class BrowserHost {
       && (!connectorIdentity || tab.connectorBound === true)
     )) : [];
     if (retainedMatches.length > 1) {
-      throw new Error(`ChatGPT retained conversation ${conversationKey} owns multiple browser tabs`);
+      throw new Error("ChatGPT retained conversation owns multiple browser tabs");
     }
     const exactRetained = retainedMatches[0];
     if (sameTrace?.status === "ready" && sameTrace !== exactRetained) {

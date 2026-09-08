@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { expandUserPath, stripUtf8Bom } from "./config";
+import { assertLauncherLoopbackEndpoint } from "./launcher-loopback-endpoint";
 import { processRunning } from "./process";
 
 export const LAUNCHER_BROWSER_HOST_KIND = "codex-web-gpt-launcher";
@@ -52,20 +53,6 @@ export interface LauncherBrowserConnection {
   page: Page;
 }
 
-function assertLoopbackEndpoint(value: unknown, label: string): string {
-  if (typeof value !== "string" || !value.trim()) throw new Error(`${label} is missing`);
-  let parsed: URL;
-  try { parsed = new URL(value); }
-  catch { throw new Error(`${label} is not a valid URL`); }
-  if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1") {
-    throw new Error(`${label} must use http://127.0.0.1`);
-  }
-  if (!parsed.port || parsed.username || parsed.password || parsed.search || parsed.hash) {
-    throw new Error(`${label} must contain only a loopback host and explicit port`);
-  }
-  return parsed.origin;
-}
-
 function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Launcher browser descriptor is not an object");
@@ -80,11 +67,11 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   if (!Number.isInteger(descriptor.pid) || descriptor.pid! < 1) {
     throw new Error("Launcher browser descriptor has an invalid pid");
   }
-  const endpoint = assertLoopbackEndpoint(descriptor.endpoint, "Launcher CDP endpoint");
+  const endpoint = assertLauncherLoopbackEndpoint(descriptor.endpoint, "Launcher CDP endpoint");
   if (!descriptor.control || typeof descriptor.control !== "object") {
     throw new Error("Launcher browser descriptor is missing its control channel");
   }
-  const controlEndpoint = assertLoopbackEndpoint(descriptor.control.endpoint, "Launcher control endpoint");
+  const controlEndpoint = assertLauncherLoopbackEndpoint(descriptor.control.endpoint, "Launcher control endpoint");
   if (typeof descriptor.control.token !== "string" || !/^[A-Za-z0-9_-]{40,}$/.test(descriptor.control.token)) {
     throw new Error("Launcher browser descriptor has an invalid control token");
   }

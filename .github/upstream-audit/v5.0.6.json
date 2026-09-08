@@ -305,15 +305,17 @@
         "targetBlob": "798573503dc98f021e7257c3ed946ceb414e96fb"
       },
       "classification": "adapted",
-      "reason": "Adapt immediate stopped-thinking and short-response failures plus Chinese personalization controls while preserving final projection, retained sessions, and fail-closed browser ownership.",
+      "reason": "Adapt immediate stopped-thinking, short-response failures, Chinese personalization controls, and privacy-safe structural diagnostics while preserving final projection, retained sessions, and fail-closed browser ownership.",
       "implementation": [
         "src/adapters/chatgpt-web/browser-worker.ts",
+        "src/adapters/chatgpt-web/browser-diagnostics.ts",
         "src/adapters/chatgpt-web/adapter-error.ts",
         "src/adapters/chatgpt-web/personalization.ts",
         "src/chatgpt-session.ts"
       ],
       "tests": [
         "tests/browser-worker-contract.test.ts",
+        "tests/browser-diagnostics.test.ts",
         "tests/chatgpt-terminal-recovery.test.ts",
         "tests/personalization-visible-control.test.ts",
         "tests/chatgpt-session.test.ts"
@@ -1033,4 +1035,3 @@
     "scope": "Original pre-resolution index stages, automatic changed-path tree, binary diffs, and a self-contained upstream tag bundle. User-owned files and private runtime logs are excluded."
   }
 }
-

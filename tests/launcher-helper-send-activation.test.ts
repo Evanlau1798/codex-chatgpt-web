@@ -41,7 +41,7 @@ test("browser helper waits for parent activation acknowledgement before completi
   `, { mode: 0o700 });
   writeFileSync(descriptorHelper, "process.exit(99);\n", { mode: 0o700 });
   writeFileSync(descriptorPath, `${JSON.stringify({
-    version: 2,
+    version: 3,
     kind: LAUNCHER_BROWSER_HOST_KIND,
     profile: "production",
     pid: process.pid,
@@ -54,6 +54,7 @@ test("browser helper waits for parent activation acknowledgement before completi
     partition: "persist:codex-web-gpt-chatgpt",
     idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB",
+    surfaceTargets: { launcher_surface_id_0123456789AB: "native-owned-target" },
     createdAt: new Date().toISOString(),
   })}\n`, { mode: 0o600 });
   const config: ResolvedBrowserConfig = {

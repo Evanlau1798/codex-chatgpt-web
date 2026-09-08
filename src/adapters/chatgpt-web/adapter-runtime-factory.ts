@@ -104,7 +104,12 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     let toolResultDelivered = false;
     const toolEvidence = mode.localTools && !parsed._compactionRequest ? new ChatGptToolEvidenceGuard() : undefined;
     const submission: NonNullable<ChatGptTurnRuntime["submission"]> = { phase: "prepared" };
-    const runtimeExecutionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
+    let runtimeExecutionKey: string;
+    try {
+      runtimeExecutionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
+    } catch (error) {
+      throw reportChatGptPreparationFailure(traceId, "full", checkpointInput.parsed, error);
+    }
     const { retainConversation: requestedRetention, retryPromptForAnswer: upstreamRetry } = claudeBrowserTurnOptions(
       checkpointInput.parsed, undefined,
       { toolResultDelivered: () => toolResultDelivered, turnToken: () => activeToken },
@@ -115,7 +120,12 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       )
       : upstreamRetry;
     const retainConversation = useEnhancedWebSessionMode && requestedRetention;
-    const conversationKey = retainConversation ? chatGptConversationKey(checkpointInput.parsed, executionNamespace) : undefined;
+    let conversationKey: string | undefined;
+    try {
+      conversationKey = retainConversation ? chatGptConversationKey(checkpointInput.parsed, executionNamespace) : undefined;
+    } catch (error) {
+      throw reportChatGptPreparationFailure(traceId, "full", checkpointInput.parsed, error);
+    }
     const releaseRetainedConversation = retainedConversationRelease(provider, conversationKey);
     const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
     const retryPromptForAnswer = parsed._compactionRequest || !steering ? evidenceRetry : browserSteeringRetry(steering, traceId, evidenceRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, isClaudeClientSession(checkpointInput.parsed));

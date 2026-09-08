@@ -60,6 +60,7 @@ test("turn acquisition requests non-activating visibility", async () => {
     show: (options) => showOptions.push(options),
     syncViewVisibility() {},
     publishState() {},
+    writeDescriptor() {},
     snapshot: () => ({}),
     logger: { info() {} },
   };

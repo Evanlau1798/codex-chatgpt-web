@@ -14,6 +14,7 @@ import { runManualCompaction } from "./manual-compaction";
 import { extractChatGptTurnEnvironment } from "./environment";
 import { resolveChatGptWebModelMode } from "./model";
 import { createChatGptStructuredOutputValidator } from "./output-validation";
+import { reportChatGptPreparationFailure } from "./preparation-diagnostics";
 import { chatGptNoContextStallTimeoutMs } from "./prompt-attachment-budget";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { brokerSocketPath, ChatGptSurfaceRecoveryTracker, withAbort } from "./runtime-lifecycle";
@@ -92,25 +93,38 @@ export function createChatGptWebAdapter(
   return {
     name: "chatgpt-web",
     async runTurn(parsed, incoming, emit) {
-      const stallTimeoutMs = provider.chatgptWeb?.experimentalNoAutoCompact === true
-        ? chatGptNoContextStallTimeoutMs(
-            JSON.stringify(parsed.context).length,
-            provider.chatgptWeb?.stallTimeoutSec,
-            timeoutMs,
-          )
-        : undefined;
-      const heartbeat = setInterval(
-        () => emit({ type: "heartbeat" }),
-        CHATGPT_WEB_ADAPTER_HEARTBEAT_MS,
-      );
-      emit({ type: "heartbeat" });
-      try {
       if (parsed._opaqueMultiAgentV2Payload) {
         throw new Error(
           "ChatGPT Web cannot read this legacy or provider-private encrypted agent message. "
           + "Start a new enhanced Web task so Codex can use direct plaintext Multi-Agent V2 transport.",
         );
       }
+      let traceId: string;
+      try {
+        traceId = chatGptTurnTraceId(parsed, executionNamespace);
+      } catch (error) {
+        throw reportChatGptPreparationFailure("unavailable", "full", parsed, error);
+      }
+      let stallTimeoutMs: number | undefined;
+      try {
+        stallTimeoutMs = provider.chatgptWeb?.experimentalNoAutoCompact === true
+          ? chatGptNoContextStallTimeoutMs(
+              JSON.stringify(parsed.context).length,
+              provider.chatgptWeb?.stallTimeoutSec,
+              timeoutMs,
+            )
+          : undefined;
+      } catch (error) {
+        throw reportChatGptPreparationFailure(
+          traceId, "full", parsed, error,
+        );
+      }
+      const heartbeat = setInterval(
+        () => emit({ type: "heartbeat" }),
+        CHATGPT_WEB_ADAPTER_HEARTBEAT_MS,
+      );
+      emit({ type: "heartbeat" });
+      try {
       const manualRequest = isChatGptWebZeroRiskBackendModel(parsed.modelId);
       if (manualRequest !== manualInteraction) {
         throw new ChatGptWebAdapterError(
@@ -154,7 +168,6 @@ export function createChatGptWebAdapter(
         const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
         if (manualRequest) {
           const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
-          const traceId = chatGptTurnTraceId(parsed, executionNamespace);
           await runManualCompaction({ parsed, executionKey, sourceKey: responseExecutionKey, traceId,
             timeoutMs, abortSignal: incoming.abortSignal, capabilities: turnCapabilities, emit,
             start: signal => sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
@@ -192,7 +205,6 @@ export function createChatGptWebAdapter(
       }
       const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
       await chatGptTurnSessions.waitForRetirement(executionKey, incoming.abortSignal);
-      const traceId = chatGptTurnTraceId(parsed, executionNamespace);
       let session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
         () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
       if (session.runtime.mode === "tools" && !environment) {

@@ -13,10 +13,18 @@ const diagnosticState = {
   composer: { visibleCount: 1, textChars: [0], composerSelectedConnectors: [], mentionMenuConnectors: [] },
   effortControls: [],
   effortItems: [],
+  effortSliders: [{ min: 0, max: 4, value: 3 }],
   menus: [],
   connectorRows: [],
   overlays: [],
-  turns: { user: 1, assistant: [{ textChars: 42, htmlChars: 80 }] },
+  turns: {
+    user: 1,
+    stopButtonCount: 1,
+    assistant: [{
+      textChars: 42, htmlChars: 80, markdownCount: 1, streamingStatusCount: 0,
+      completionActionCount: 1, renderedCompletionActionCount: 1,
+    }],
+  },
   completion: {
     actionVisible: false,
     lastNodePresent: true,
@@ -163,8 +171,10 @@ test("scopes diagnostic capture to the bound assistant turn", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-browser-diagnostic-"));
   try {
     let evaluateArgument: unknown;
+    let evaluateSource = "";
     const page = {
-      evaluate: async (_callback: unknown, argument: unknown) => {
+      evaluate: async (callback: unknown, argument: unknown) => {
+        evaluateSource = String(callback);
         evaluateArgument = argument;
         return diagnosticState;
       },
@@ -176,7 +186,16 @@ test("scopes diagnostic capture to the bound assistant turn", async () => {
 
     expect(evaluateArgument).toMatchObject({
       binding: { id: "conversation-turn-9", ordinal: 3, generation: 1 },
+      selectors: {
+        effortSliderContainer: expect.any(String),
+        userTurn: expect.any(String),
+        stopButton: expect.any(String),
+        completionAction: expect.any(String),
+      },
     });
+    expect(evaluateSource).toContain("effortSliders");
+    expect(evaluateSource).toContain("stopButtonCount");
+    expect(evaluateSource).toContain("renderedCompletionActionCount");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

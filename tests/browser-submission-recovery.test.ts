@@ -40,7 +40,7 @@ interface Worker {
 
 function surface(read: () => Promise<State>) {
   const hidden = {
-    filter() { return this; }, last() { return this; }, getByText() { return this; },
+    filter() { return this; }, last() { return this; }, getByText() { return this; }, getByTestId() { return this; },
     isVisible: async () => false, count: async () => 0,
   };
   const elements = (identities: readonly string[]) => identities.map(identity => ({

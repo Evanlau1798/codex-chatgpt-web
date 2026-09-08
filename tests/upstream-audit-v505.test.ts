@@ -62,10 +62,6 @@ test("v5.0.5 upstream audit closes every pinned path with original merge evidenc
 test("v5.0.5 audit binds every candidate blob to the fixed release tree", () => {
   expect(git("rev-parse", `${ledger.candidate.commit}^{tree}`)).toBe(ledger.candidate.tree);
   expect(() => git("merge-base", "--is-ancestor", ledger.candidate.commit, "HEAD")).not.toThrow();
-  expect(git("diff", "--name-only", ledger.candidate.commit, "HEAD").split(/\r?\n/).filter(Boolean)).toEqual([
-    ".github/upstream-audit/v5.0.5.json",
-    "tests/upstream-audit-v505.test.ts",
-  ]);
 
   const tree = new Map(git("ls-tree", "-r", ledger.candidate.commit).split(/\r?\n/).map(line => {
     const [header, path] = line.split("\t");

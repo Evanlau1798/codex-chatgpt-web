@@ -200,7 +200,7 @@ describe("ChatGPT effort menu failure classification", () => {
     const effortControl = {
       last() { return this; },
       waitFor: async () => {},
-      getAttribute: async (name: string) => name === "aria-expanded" ? "false" : null,
+      getAttribute: async (name: string) => name === "aria-expanded" ? "true" : null,
       press: async () => {},
     };
     const composer = { locator: () => ({ locator: () => effortControl }) };

@@ -9,6 +9,9 @@ import {
   CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   CHATGPT_EFFORT_ITEM_SELECTOR,
+  CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
+  CHATGPT_STOP_BUTTON_SELECTOR,
+  CHATGPT_USER_TURN_SELECTOR,
 } from "../../chatgpt-session";
 import type { ChatGptAssistantTurnBinding } from "./response-turn-boundary";
 import { withChatGptBrowserObservationTimeout } from "./browser-observation";
@@ -260,6 +263,11 @@ async function captureBrowserDiagnosticState(
       const infinite = timing?.iterations === Infinity || endTime === Infinity;
       return !infinite && (animation.playState === "running" || animation.pending);
     }).length;
+    const integerAttribute = (element: Element, name: string): number | null => {
+      const raw = element.getAttribute(name);
+      return raw !== null && /^-?\d+$/.test(raw) && Number.isSafeInteger(Number(raw))
+        ? Number(raw) : null;
+    };
     return {
       location: { origin: location.origin, pathSegments: location.pathname.split("/").filter(Boolean).length,
         temporaryChat: new URL(location.href).searchParams.has("temporary-chat") },
@@ -287,11 +295,20 @@ async function captureBrowserDiagnosticState(
       },
       effortControls: rows(selectors.effortControl, 10),
       effortItems: rows(selectors.effortItem, 20),
+      effortSliders: [...document.querySelectorAll(selectors.effortSliderContainer)]
+        .filter(rendered).slice(-10)
+        .flatMap(container => [...container.querySelectorAll('[role="slider"]')])
+        .map(element => ({
+          min: integerAttribute(element, "aria-valuemin"),
+          max: integerAttribute(element, "aria-valuemax"),
+          value: integerAttribute(element, "aria-valuenow"),
+        })),
       menus: rows('[role="menu"], [role="listbox"], [data-testid="composer-intelligence-picker-content"]', 20),
       connectorRows: rows('.__menu-item[tabindex="0"]', 40),
       overlays: rows('[role="dialog"], [role="alert"], [role="status"]', 30),
       turns: {
-        user: document.querySelectorAll('[data-testid^="conversation-turn-"][data-message-author-role="user"]').length,
+        user: document.querySelectorAll(selectors.userTurn).length,
+        stopButtonCount: [...document.querySelectorAll(selectors.stopButton)].filter(rendered).length,
         boundAssistant: binding ? {
           id: binding.id ?? null,
           ordinal: binding.ordinal,
@@ -302,6 +319,11 @@ async function captureBrowserDiagnosticState(
           testId: element.getAttribute("data-testid"),
           textChars: (element.textContent ?? "").length,
           htmlChars: (element as HTMLElement).innerHTML.length,
+          markdownCount: element.querySelectorAll(".markdown").length,
+          streamingStatusCount: element.querySelectorAll("[data-streaming-response-status]").length,
+          completionActionCount: element.querySelectorAll(selectors.completionAction).length,
+          renderedCompletionActionCount: [...element.querySelectorAll(selectors.completionAction)]
+            .filter(rendered).length,
         })),
       },
       completion: {
@@ -322,7 +344,10 @@ async function captureBrowserDiagnosticState(
       composer: CHATGPT_COMPOSER_SELECTOR,
       effortControl: CHATGPT_EFFORT_CONTROL_SELECTOR,
       effortItem: CHATGPT_EFFORT_ITEM_SELECTOR,
+      effortSliderContainer: CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
       assistantTurn: CHATGPT_ASSISTANT_TURN_SELECTOR,
+      userTurn: CHATGPT_USER_TURN_SELECTOR,
+      stopButton: CHATGPT_STOP_BUTTON_SELECTOR,
       completionAction: CHATGPT_COMPLETION_ACTION_SELECTOR,
     },
     binding,

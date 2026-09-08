@@ -20,6 +20,7 @@ test("an Automatic turn never reuses a retained Zero Risk conversation", async (
     createTurnTab: () => ({ id: "automatic-fresh", surfaceId: "surface-fresh" }),
     syncViewVisibility() {},
     publishState() {},
+    writeDescriptor() {},
     snapshot: () => ({ tabs: [] }),
     logger: { info() {} },
   });

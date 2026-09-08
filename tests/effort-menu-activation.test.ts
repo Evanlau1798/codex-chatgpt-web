@@ -7,7 +7,7 @@ import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 
 function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
   let opened = false;
-  let expanded = false;
+  let expanded = openWith === "hidden-slider";
   const events: string[] = [];
   const clickOptions: unknown[] = [];
   const hidden = {

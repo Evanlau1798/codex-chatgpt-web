@@ -459,8 +459,9 @@ export async function runChatGptMcpServer(options: {
           if (isGatewayAgentWaitTool(wire_name) && input !== undefined) {
             throw new Error(`ChatGPT Web wait_agent requires structured arguments and timeout_ms=${CHATGPT_WEB_AGENT_WAIT_POLL_MS}`);
           }
-          const toolArguments = boundedConnectorToolArguments(wire_name, args ?? {});
-          assertGatewayToolArguments(wire_name, toolArguments);
+          const invocationArguments = args ?? {};
+          assertGatewayToolArguments(wire_name, invocationArguments);
+          const toolArguments = boundedConnectorToolArguments(wire_name, invocationArguments);
           return invoke(claimed.bindingId, bound, gateway, {
             input: execGatewayProgram(wire_name, input !== undefined, {
               ...(input !== undefined ? { input } : { arguments: toolArguments }),
@@ -475,8 +476,9 @@ export async function runChatGptMcpServer(options: {
           }, extra.signal);
         }
         if (input !== undefined) throw new Error(`Function Codex tool ${wire_name} does not accept freeform input`);
-        const toolArguments = boundedConnectorToolArguments(tool, args ?? {});
-        assertBrowserToolArguments(tool, toolArguments);
+        const invocationArguments = args ?? {};
+        assertBrowserToolArguments(tool, invocationArguments);
+        const toolArguments = boundedConnectorToolArguments(tool, invocationArguments);
         if (tool.name === "Bash" && typeof toolArguments.command === "string") {
           assertClaudeBashCommand(toolArguments.command);
         }
