@@ -1,0 +1,1036 @@
+{
+  "schemaVersion": 1,
+  "release": "v5.0.6",
+  "targetVersion": "5.0.6-Enhanced.1",
+  "baseline": {
+    "forkCommit": "ad94876d96ca4195321b98cdbb87c919250062f0",
+    "upstream": "0b053b6750b1d4f127619765388eb43c6d212ca2"
+  },
+  "upstream": {
+    "tagObject": "24250dcf13961b45c2ee6794112c7e77461bde73",
+    "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+    "signed": false,
+    "ciRun": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/34218347716",
+    "releaseRun": "https://github.com/miuuyy/codex-chatgpt-web/actions/runs/34218348841"
+  },
+  "closure": {
+    "expectedPaths": 34,
+    "classifiedPaths": 34,
+    "missingPaths": 0,
+    "status": "complete"
+  },
+  "candidate": {
+    "commit": "884b403d91f043f91eee73c91de51adf05b2907d",
+    "tree": "e91afdec56fa903c5618737e1fd74ef131094c20"
+  },
+  "entries": [
+    {
+      "id": "v506-001",
+      "path": "launcher/electron/browser-host.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "0d14e6abd0b8745615c3c17cc2e814a99a0591d6",
+        "targetBlob": "1e6a6c56adfdb211f776e943978242fd4172ccb7"
+      },
+      "classification": "adapted",
+      "reason": "Adapt launcher surface descriptors, fixed connector ownership, and runtime localization to the fork's split launcher while preserving Zero Risk, Passkey, and transactional setup boundaries.",
+      "implementation": [
+        "launcher/electron/browser-host.cjs",
+        "launcher/electron/runtime.cjs",
+        "launcher/src/App.tsx",
+        "launcher/src/i18n.ts"
+      ],
+      "tests": [
+        "launcher/tests/browser-host.test.cjs",
+        "launcher/tests/runtime-host.test.cjs",
+        "launcher/tests/localization.test.cjs"
+      ],
+      "surfaces": [
+        "launcher",
+        "zero-risk"
+      ],
+      "candidateBlob": "811c9611f65e0e4f3e19d3ad334ba12d1f7d8a78"
+    },
+    {
+      "id": "v506-002",
+      "path": "launcher/electron/runtime.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "ab4c936022ec9c0aea52a73dfcba9b9cf056f7dd",
+        "targetBlob": "49fdcf044d76f3fa3c62e0edd6e2e3cbea671362"
+      },
+      "classification": "adapted",
+      "reason": "Adapt launcher surface descriptors, fixed connector ownership, and runtime localization to the fork's split launcher while preserving Zero Risk, Passkey, and transactional setup boundaries.",
+      "implementation": [
+        "launcher/electron/browser-host.cjs",
+        "launcher/electron/runtime.cjs",
+        "launcher/src/App.tsx",
+        "launcher/src/i18n.ts"
+      ],
+      "tests": [
+        "launcher/tests/browser-host.test.cjs",
+        "launcher/tests/runtime-host.test.cjs",
+        "launcher/tests/localization.test.cjs"
+      ],
+      "surfaces": [
+        "launcher",
+        "zero-risk"
+      ],
+      "candidateBlob": "af9481df045610cce2b5e6cda2cb6d6721d54697"
+    },
+    {
+      "id": "v506-003",
+      "path": "launcher/package.json",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "35f26aa3b061d2b2413b00ff0c6cec32ca9a19f5",
+        "targetBlob": "cf9d469debf42e2aa73614bc9825b48f9668ad3e"
+      },
+      "classification": "adapted",
+      "reason": "Map the pinned upstream release metadata to 5.0.6-Enhanced.1 while preserving fork URLs, package boundaries, and the pinned Bun runtime.",
+      "implementation": [
+        "package.json",
+        "launcher/package.json",
+        "scripts/install.sh",
+        "src/version.ts"
+      ],
+      "tests": [
+        "tests/runtime-layout.test.ts"
+      ],
+      "surfaces": [
+        "release"
+      ],
+      "candidateBlob": "0abb0fd729e92799a3b85aa120b05a47172b7250"
+    },
+    {
+      "id": "v506-004",
+      "path": "launcher/src/App.tsx",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "d70477cd4623e912b1e1e10c528b8e557c4827ee",
+        "targetBlob": "bee8f1c01ba9045211086717391d331bc6d49813"
+      },
+      "classification": "adapted",
+      "reason": "Adapt launcher surface descriptors, fixed connector ownership, and runtime localization to the fork's split launcher while preserving Zero Risk, Passkey, and transactional setup boundaries.",
+      "implementation": [
+        "launcher/electron/browser-host.cjs",
+        "launcher/electron/runtime.cjs",
+        "launcher/src/App.tsx",
+        "launcher/src/i18n.ts"
+      ],
+      "tests": [
+        "launcher/tests/browser-host.test.cjs",
+        "launcher/tests/runtime-host.test.cjs",
+        "launcher/tests/localization.test.cjs"
+      ],
+      "surfaces": [
+        "launcher",
+        "zero-risk"
+      ],
+      "candidateBlob": "c3d07bb8c177d71df93ea06989741f5e573f2510"
+    },
+    {
+      "id": "v506-005",
+      "path": "launcher/src/i18n.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "1691d54f9e1cad804a602644cf1e21d965826fb0",
+        "targetBlob": "145056c989ceb46d149f3507d5b53b70ded0a97b"
+      },
+      "classification": "adapted",
+      "reason": "Adapt launcher surface descriptors, fixed connector ownership, and runtime localization to the fork's split launcher while preserving Zero Risk, Passkey, and transactional setup boundaries.",
+      "implementation": [
+        "launcher/electron/browser-host.cjs",
+        "launcher/electron/runtime.cjs",
+        "launcher/src/App.tsx",
+        "launcher/src/i18n.ts"
+      ],
+      "tests": [
+        "launcher/tests/browser-host.test.cjs",
+        "launcher/tests/runtime-host.test.cjs",
+        "launcher/tests/localization.test.cjs"
+      ],
+      "surfaces": [
+        "launcher",
+        "zero-risk"
+      ],
+      "candidateBlob": "f832dff2dafe8c963aa4a68678864d8381d488b5"
+    },
+    {
+      "id": "v506-006",
+      "path": "launcher/tests/browser-host.test.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "b4ee5ffca5d03cb71ee9460ea1b433b4117c90ae",
+        "targetBlob": "40fc679aa8d76bdddca2b60568d1f1cf114daf8b"
+      },
+      "classification": "adapted",
+      "reason": "Adapt launcher surface descriptors, fixed connector ownership, and runtime localization to the fork's split launcher while preserving Zero Risk, Passkey, and transactional setup boundaries.",
+      "implementation": [
+        "launcher/electron/browser-host.cjs",
+        "launcher/electron/runtime.cjs",
+        "launcher/src/App.tsx",
+        "launcher/src/i18n.ts"
+      ],
+      "tests": [
+        "launcher/tests/browser-host.test.cjs",
+        "launcher/tests/runtime-host.test.cjs",
+        "launcher/tests/localization.test.cjs"
+      ],
+      "surfaces": [
+        "launcher",
+        "zero-risk"
+      ],
+      "candidateBlob": "a80e21080cb0609e44f797f92de17931bd5b13b8"
+    },
+    {
+      "id": "v506-007",
+      "path": "launcher/tests/localization.test.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "90fc329e244ff5211205e9e52191aa32fa2783d7",
+        "targetBlob": "73a071718d53e0ebef03e774fd77fcc9a3800773"
+      },
+      "classification": "adapted",
+      "reason": "Adapt launcher surface descriptors, fixed connector ownership, and runtime localization to the fork's split launcher while preserving Zero Risk, Passkey, and transactional setup boundaries.",
+      "implementation": [
+        "launcher/electron/browser-host.cjs",
+        "launcher/electron/runtime.cjs",
+        "launcher/src/App.tsx",
+        "launcher/src/i18n.ts"
+      ],
+      "tests": [
+        "launcher/tests/browser-host.test.cjs",
+        "launcher/tests/runtime-host.test.cjs",
+        "launcher/tests/localization.test.cjs"
+      ],
+      "surfaces": [
+        "launcher",
+        "zero-risk"
+      ],
+      "candidateBlob": "dc8e2843ed156e811dac0a4c25c043315484de79"
+    },
+    {
+      "id": "v506-008",
+      "path": "launcher/tests/runtime-host.test.cjs",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "330a1ae62ac924568ed97570008c50e539080de3",
+        "targetBlob": "516cd49dd83546156f3b4b6813eb66c7992edf4e"
+      },
+      "classification": "adapted",
+      "reason": "Adapt launcher surface descriptors, fixed connector ownership, and runtime localization to the fork's split launcher while preserving Zero Risk, Passkey, and transactional setup boundaries.",
+      "implementation": [
+        "launcher/electron/browser-host.cjs",
+        "launcher/electron/runtime.cjs",
+        "launcher/src/App.tsx",
+        "launcher/src/i18n.ts"
+      ],
+      "tests": [
+        "launcher/tests/browser-host.test.cjs",
+        "launcher/tests/runtime-host.test.cjs",
+        "launcher/tests/localization.test.cjs"
+      ],
+      "surfaces": [
+        "launcher",
+        "zero-risk"
+      ],
+      "candidateBlob": "988a6a15be8a47b3c8667fd554741c414725bacf"
+    },
+    {
+      "id": "v506-009",
+      "path": "package.json",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "da5f953a67ed53022dfb6f05cb728ed08e189887",
+        "targetBlob": "8456912ea3ebe25e370b6328bbff983dabe5ffa2"
+      },
+      "classification": "adapted",
+      "reason": "Map the pinned upstream release metadata to 5.0.6-Enhanced.1 while preserving fork URLs, package boundaries, and the pinned Bun runtime.",
+      "implementation": [
+        "package.json",
+        "launcher/package.json",
+        "scripts/install.sh",
+        "src/version.ts"
+      ],
+      "tests": [
+        "tests/runtime-layout.test.ts"
+      ],
+      "surfaces": [
+        "release"
+      ],
+      "candidateBlob": "68a90b4f521d56375cf84a72903f4ab745aa35fc"
+    },
+    {
+      "id": "v506-010",
+      "path": "scripts/install.sh",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "7c2c51b585b0766f3eb931143bd3fe56867720f3",
+        "targetBlob": "65c5453450439feecbe40600223779da9d4640ee"
+      },
+      "classification": "adapted",
+      "reason": "Map the pinned upstream release metadata to 5.0.6-Enhanced.1 while preserving fork URLs, package boundaries, and the pinned Bun runtime.",
+      "implementation": [
+        "package.json",
+        "launcher/package.json",
+        "scripts/install.sh",
+        "src/version.ts"
+      ],
+      "tests": [
+        "tests/runtime-layout.test.ts"
+      ],
+      "surfaces": [
+        "release"
+      ],
+      "candidateBlob": "8743e1a701f945b3490d1c32f7b659b7e0875429"
+    },
+    {
+      "id": "v506-011",
+      "path": "src/adapters/chatgpt-web/adapter-error.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "e36901dd92d851471331735929221d2f8636c842",
+        "targetBlob": "798573503dc98f021e7257c3ed946ceb414e96fb"
+      },
+      "classification": "adapted",
+      "reason": "Adapt immediate stopped-thinking and short-response failures plus Chinese personalization controls while preserving final projection, retained sessions, and fail-closed browser ownership.",
+      "implementation": [
+        "src/adapters/chatgpt-web/browser-worker.ts",
+        "src/adapters/chatgpt-web/adapter-error.ts",
+        "src/adapters/chatgpt-web/personalization.ts",
+        "src/chatgpt-session.ts"
+      ],
+      "tests": [
+        "tests/browser-worker-contract.test.ts",
+        "tests/chatgpt-terminal-recovery.test.ts",
+        "tests/personalization-visible-control.test.ts",
+        "tests/chatgpt-session.test.ts"
+      ],
+      "surfaces": [
+        "browser",
+        "responses"
+      ],
+      "candidateBlob": "1e8f75dea3a85673c3f01bf3e1d35b30bf46ffc8"
+    },
+    {
+      "id": "v506-012",
+      "path": "src/adapters/chatgpt-web/browser-worker.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "4190d8286e5e0103626db7934fdcb15e8b34705f",
+        "targetBlob": "815e97e8298fc11f88c92085d2b818d84b842eea"
+      },
+      "classification": "adapted",
+      "reason": "Adapt immediate stopped-thinking and short-response failures plus Chinese personalization controls while preserving final projection, retained sessions, and fail-closed browser ownership.",
+      "implementation": [
+        "src/adapters/chatgpt-web/browser-worker.ts",
+        "src/adapters/chatgpt-web/adapter-error.ts",
+        "src/adapters/chatgpt-web/personalization.ts",
+        "src/chatgpt-session.ts"
+      ],
+      "tests": [
+        "tests/browser-worker-contract.test.ts",
+        "tests/chatgpt-terminal-recovery.test.ts",
+        "tests/personalization-visible-control.test.ts",
+        "tests/chatgpt-session.test.ts"
+      ],
+      "surfaces": [
+        "browser",
+        "responses"
+      ],
+      "candidateBlob": "376945890dfd8f287ea2d0f1193398ccc430f299"
+    },
+    {
+      "id": "v506-013",
+      "path": "src/adapters/chatgpt-web/mcp-server.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "3dd15c9457dbf8273076a2eae919247221de287b",
+        "targetBlob": "eedd0f37f1d403c75cfe4989d73c16f906d5ce20"
+      },
+      "classification": "adapted",
+      "reason": "Adapt the 30-second collaboration wait contract and direct collaboration wait routing to the fork's shared Native2 and Zero Risk MCP gateway.",
+      "implementation": [
+        "src/adapters/chatgpt-web/mcp-server.ts",
+        "src/adapters/chatgpt-web/mcp-tool-inventory.ts",
+        "src/adapters/chatgpt-web/mcp-gateway.ts"
+      ],
+      "tests": [
+        "tests/native-gateway.test.ts",
+        "tests/native-gateway-mcp.test.ts",
+        "tests/chatgpt-web-harness.test.ts",
+        "tests/zero-risk-adapter.test.ts"
+      ],
+      "surfaces": [
+        "mcp",
+        "native"
+      ],
+      "candidateBlob": "f0fa5a5185714ad19bd8aac6e3447d16e5568d7e"
+    },
+    {
+      "id": "v506-014",
+      "path": "src/chatgpt-session.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "343028c45d5e8788a9d4798d090548ac787a7972",
+        "targetBlob": "5eb2efb35d457d8b38b8d599c899852d6e8b5abd"
+      },
+      "classification": "adapted",
+      "reason": "Adapt immediate stopped-thinking and short-response failures plus Chinese personalization controls while preserving final projection, retained sessions, and fail-closed browser ownership.",
+      "implementation": [
+        "src/adapters/chatgpt-web/browser-worker.ts",
+        "src/adapters/chatgpt-web/adapter-error.ts",
+        "src/adapters/chatgpt-web/personalization.ts",
+        "src/chatgpt-session.ts"
+      ],
+      "tests": [
+        "tests/browser-worker-contract.test.ts",
+        "tests/chatgpt-terminal-recovery.test.ts",
+        "tests/personalization-visible-control.test.ts",
+        "tests/chatgpt-session.test.ts"
+      ],
+      "surfaces": [
+        "browser",
+        "responses"
+      ],
+      "candidateBlob": "b3ee615aaeb9b194b97482dd268d31f7f2dd1662"
+    },
+    {
+      "id": "v506-015",
+      "path": "src/cli.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "7cd1f4f55c750c8c993342fd7e91541c13997bcd",
+        "targetBlob": "b53bb38bf446fe3c964fb3ce1fcf122e75cdc2f5"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "fa6d2bf14611140680181b0b0cbf8d96d8a2c036"
+    },
+    {
+      "id": "v506-016",
+      "path": "src/codex-integration-route.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "768535650449ed3ead3abbfff54bb75def668f28",
+        "targetBlob": "b14868ec3fc351d9e68043edb22837aaf48eff83"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "491736cc78759ab8d5244c01eb60d9e3dea813d0"
+    },
+    {
+      "id": "v506-017",
+      "path": "src/codex-interrupt-hook.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "187f61916252ce036c0b6690ba9374f96c3b6d1f",
+        "targetBlob": "aa599ee058f7f72dd2bef12f98b40efdcc240c3b"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "9994bcccc9c57cfab8f31cc7cb30e2dbbf3fff5d"
+    },
+    {
+      "id": "v506-018",
+      "path": "src/config.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "edd3179035f581682f59d3517e8136e98ed123c9",
+        "targetBlob": "75f8ac756b3c2f289b3648e8f169db769e2518bb"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "25bc8ca16b78ffca7efd82a65c651d143df36b2e"
+    },
+    {
+      "id": "v506-019",
+      "path": "src/dev-chat/cli.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "1b6bf1dfa38cee12fc9329ed48a792c0bbce2986",
+        "targetBlob": "012f9dc809d25aafc2538565286a2db89957d13c"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "4e3dc1d61b0f944632b5dff2b4c3ed1037a8846a"
+    },
+    {
+      "id": "v506-020",
+      "path": "src/dev-chat/profile.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "b0b44086c5a0c4829e92c2e9b983ea438e6601a0",
+        "targetBlob": "d4e6c12effaec3e98b897926238b9b0f79c44af8"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "1f10c6f8d9a69d092e2d0f2d70726ceeaaf0d70a"
+    },
+    {
+      "id": "v506-021",
+      "path": "src/launcher-browser-host.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "9f70dd41f4ef5c1e19ac836949483cbcb7307697",
+        "targetBlob": "ef5916943d98e5bf3d6b55411a738d116fbfc7a5"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "23e3f3729087ba9423937cb5b52246b2341cafa4"
+    },
+    {
+      "id": "v506-022",
+      "path": "src/setup.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "ccb9ed0730280795a9a9f5ff722f69542be6a206",
+        "targetBlob": "da04f7470d5a491609ffdeaf346c9d800701edd9"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "66fdcf2947badc51cea9325c960de14d9cf8cf1f"
+    },
+    {
+      "id": "v506-023",
+      "path": "src/version.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "3dc03d4b54e30fa673790ce8f7acecd64a8b02aa",
+        "targetBlob": "823cb8441f466af171642389cdfd2e32c6bade6d"
+      },
+      "classification": "adapted",
+      "reason": "Map the pinned upstream release metadata to 5.0.6-Enhanced.1 while preserving fork URLs, package boundaries, and the pinned Bun runtime.",
+      "implementation": [
+        "package.json",
+        "launcher/package.json",
+        "scripts/install.sh",
+        "src/version.ts"
+      ],
+      "tests": [
+        "tests/runtime-layout.test.ts"
+      ],
+      "surfaces": [
+        "release"
+      ],
+      "candidateBlob": "47a6657a7f3ea4e8b0ba364028028a7d863188a2"
+    },
+    {
+      "id": "v506-024",
+      "path": "tests/browser-worker-contract.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "742aed05d7088ae3024b62eb4cda23bd80ac63f0",
+        "targetBlob": "04d1804c75ca9f86aff251b0457888f58188d7f8"
+      },
+      "classification": "adapted",
+      "reason": "Adapt immediate stopped-thinking and short-response failures plus Chinese personalization controls while preserving final projection, retained sessions, and fail-closed browser ownership.",
+      "implementation": [
+        "src/adapters/chatgpt-web/browser-worker.ts",
+        "src/adapters/chatgpt-web/adapter-error.ts",
+        "src/adapters/chatgpt-web/personalization.ts",
+        "src/chatgpt-session.ts"
+      ],
+      "tests": [
+        "tests/browser-worker-contract.test.ts",
+        "tests/chatgpt-terminal-recovery.test.ts",
+        "tests/personalization-visible-control.test.ts",
+        "tests/chatgpt-session.test.ts"
+      ],
+      "surfaces": [
+        "browser",
+        "responses"
+      ],
+      "candidateBlob": "927147519933971bd1113e5e5693ce4e71903e67"
+    },
+    {
+      "id": "v506-025",
+      "path": "tests/chatgpt-session.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "a5ae0bad7a5ea310562f1d638157656e99614be6",
+        "targetBlob": "e4f1baa693631d63b44afbecdb4240e6cf2a4cbb"
+      },
+      "classification": "adapted",
+      "reason": "Adapt immediate stopped-thinking and short-response failures plus Chinese personalization controls while preserving final projection, retained sessions, and fail-closed browser ownership.",
+      "implementation": [
+        "src/adapters/chatgpt-web/browser-worker.ts",
+        "src/adapters/chatgpt-web/adapter-error.ts",
+        "src/adapters/chatgpt-web/personalization.ts",
+        "src/chatgpt-session.ts"
+      ],
+      "tests": [
+        "tests/browser-worker-contract.test.ts",
+        "tests/chatgpt-terminal-recovery.test.ts",
+        "tests/personalization-visible-control.test.ts",
+        "tests/chatgpt-session.test.ts"
+      ],
+      "surfaces": [
+        "browser",
+        "responses"
+      ],
+      "candidateBlob": "6d8153c772362cfbb00978f796de20874691014e"
+    },
+    {
+      "id": "v506-026",
+      "path": "tests/chatgpt-web-harness.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "a523a2a96978ba0dac237dbcbe3767e37b9de59e",
+        "targetBlob": "e97ba559ca2f2e3037f9e646221d5ba363255c2b"
+      },
+      "classification": "adapted",
+      "reason": "Adapt the 30-second collaboration wait contract and direct collaboration wait routing to the fork's shared Native2 and Zero Risk MCP gateway.",
+      "implementation": [
+        "src/adapters/chatgpt-web/mcp-server.ts",
+        "src/adapters/chatgpt-web/mcp-tool-inventory.ts",
+        "src/adapters/chatgpt-web/mcp-gateway.ts"
+      ],
+      "tests": [
+        "tests/native-gateway.test.ts",
+        "tests/native-gateway-mcp.test.ts",
+        "tests/chatgpt-web-harness.test.ts",
+        "tests/zero-risk-adapter.test.ts"
+      ],
+      "surfaces": [
+        "mcp",
+        "native"
+      ],
+      "candidateBlob": "76ff8ea66958b1699946c7139f6b3515385bbcb6"
+    },
+    {
+      "id": "v506-027",
+      "path": "tests/cli.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "376b88a00c7c3e6843e6788e4c464efbfa283cff",
+        "targetBlob": "bf8321252cdecbd12027890156da0f1b8b3a361a"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "75a97024f2ef3373fc584f9d141444c89f745331"
+    },
+    {
+      "id": "v506-028",
+      "path": "tests/codex-integration.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "7d7957e58a226b7a86a9d9aaa8a11c95a767278c",
+        "targetBlob": "62dc5b86e2bdd6e4d36d7cef8b2108db16e2033d"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "597411edf4bb1c80067ccab8c20003538adbbaff"
+    },
+    {
+      "id": "v506-029",
+      "path": "tests/dev-profile.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "65f78900f4741fb5bed635386c3916d4407b78e3",
+        "targetBlob": "3e2f590917809e8d9bd148939a2b2ca5bc329924"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "333a8ebfeea02f526b7b61a3962b4314a736284b"
+    },
+    {
+      "id": "v506-030",
+      "path": "tests/launcher-browser-host.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "396a21744c8ef28c9191149f8f87cf215b00d9b7",
+        "targetBlob": "29fc1f074545299838dc25b9619ebdcf21987e9e"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "99df1b900fd21233faccad52def1ec77aced589f"
+    },
+    {
+      "id": "v506-031",
+      "path": "tests/launcher-helper-client.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "ea8fc2c17cd351457733e678e866305cb059310c",
+        "targetBlob": "bf0ae189e3abb5ce3f587e15abaac5a23aab927c"
+      },
+      "classification": "adapted",
+      "reason": "Adapt managed hook repair, Windows DEV discovery, fixed connector identity, and launcher surface target validation without weakening reversible integration ownership.",
+      "implementation": [
+        "src/codex-interrupt-hook.ts",
+        "src/dev-chat/profile.ts",
+        "src/config-interaction.ts",
+        "src/setup-config.ts",
+        "src/launcher-browser-host.ts"
+      ],
+      "tests": [
+        "tests/codex-integration.test.ts",
+        "tests/dev-profile.test.ts",
+        "tests/cli.test.ts",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-setup-identity.test.ts"
+      ],
+      "surfaces": [
+        "codex",
+        "configuration",
+        "launcher"
+      ],
+      "candidateBlob": "aa31df8ddced768429b4bd8eb3c6f18f7e0b5f12"
+    },
+    {
+      "id": "v506-032",
+      "path": "tests/personalization-connector-preflight.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "b59cfc47bd0bf1edadc1b23f7d4d9829710e1b51",
+        "targetBlob": "67bf183ff5cd47bc876e71fc066e62c8511c05b2"
+      },
+      "classification": "superseded",
+      "reason": "The upstream monolithic personalization preflight test is superseded by the fork's focused visible-control and transactional mutation tests.",
+      "implementation": [
+        "src/adapters/chatgpt-web/personalization.ts",
+        "tests/personalization-visible-control.test.ts",
+        "tests/browser-mutation-transaction.test.ts"
+      ],
+      "tests": [
+        "tests/personalization-visible-control.test.ts",
+        "tests/browser-mutation-transaction.test.ts"
+      ],
+      "surfaces": [
+        "runtime"
+      ],
+      "candidateBlob": null
+    },
+    {
+      "id": "v506-033",
+      "path": "tests/runtime-layout.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "5379346f759e11b43a31f6a28a5e86988a6bde2b",
+        "targetBlob": "570e139c3f6cbf661b095285f8279f9bceab8e30"
+      },
+      "classification": "adapted",
+      "reason": "Carry the pinned upstream v5.0.6 assertion into the fork's split implementation and focused regression coverage without changing Enhanced semantics.",
+      "implementation": [
+        "tests/runtime-layout.test.ts"
+      ],
+      "tests": [
+        "tests/runtime-layout.test.ts"
+      ],
+      "surfaces": [
+        "runtime"
+      ],
+      "candidateBlob": "e4b37ce35b988193b33d545650ca4eae6507dc81"
+    },
+    {
+      "id": "v506-034",
+      "path": "tests/zero-risk-adapter.test.ts",
+      "changeType": "M",
+      "source": {
+        "commit": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+        "parentBlob": "cf97ee897bfbd02b3040bd0669aaf88aec94ee19",
+        "targetBlob": "13e6c728e8bf3678e7acb6a7aa3be8a64d7d188d"
+      },
+      "classification": "adapted",
+      "reason": "Adapt the 30-second collaboration wait contract and direct collaboration wait routing to the fork's shared Native2 and Zero Risk MCP gateway.",
+      "implementation": [
+        "src/adapters/chatgpt-web/mcp-server.ts",
+        "src/adapters/chatgpt-web/mcp-tool-inventory.ts",
+        "src/adapters/chatgpt-web/mcp-gateway.ts"
+      ],
+      "tests": [
+        "tests/native-gateway.test.ts",
+        "tests/native-gateway-mcp.test.ts",
+        "tests/chatgpt-web-harness.test.ts",
+        "tests/zero-risk-adapter.test.ts"
+      ],
+      "surfaces": [
+        "mcp",
+        "native"
+      ],
+      "candidateBlob": "c0d8763a0493239da6f53a05297501c30bf5440a"
+    }
+  ],
+  "merge": {
+    "commit": "884b403d91f043f91eee73c91de51adf05b2907d",
+    "parents": [
+      "ad94876d96ca4195321b98cdbb87c919250062f0",
+      "e85e3693fdb4e3e033348c08df0298c20fcdb612"
+    ],
+    "tree": "e91afdec56fa903c5618737e1fd74ef131094c20",
+    "strategy": "ort",
+    "rerereEnabled": false
+  },
+  "mergeEvidence": {
+    "kind": "contemporaneous-default-ort",
+    "archive": ".github/upstream-audit/v5.0.6-evidence.tar.gz",
+    "sha256": "40ee0a4b29fb8c4a2e7bdd00f6014312f126a01e123dd9e3de1ce5e7af656fac",
+    "bytes": 23736574,
+    "automaticTree": "6f438e6eb3edb731e82f44115b5614e74c1f2938",
+    "capturedAt": "2026-09-08T12:47:26Z",
+    "scope": "Original pre-resolution index stages, automatic changed-path tree, binary diffs, and a self-contained upstream tag bundle. User-owned files and private runtime logs are excluded."
+  }
+}
+
