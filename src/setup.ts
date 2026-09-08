@@ -5,8 +5,6 @@ import { join } from "node:path";
 import type { AppConfig, RuntimeMode } from "./config";
 import {
   getConfigPath,
-  resolveDevSetupConnectorName,
-  resolveSetupConnectorName,
   saveConfig,
 } from "./config";
 import {
@@ -401,10 +399,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
   if (!options.browserHostDescriptorPath) {
     throw new Error("DEV profile setup requires the isolated launcher browser descriptor");
   }
-  const config = buildSetupConfig(existing, {
-    ...options,
-    appName: resolveDevSetupConnectorName(existing?.automaticAppName, options.appName),
-  });
+  const config = buildSetupConfig(existing, options, "development");
   if (config.browserHost !== "launcher") {
     throw new Error("DEV profile setup requires the desktop launcher browser host");
   }

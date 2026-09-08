@@ -30,3 +30,12 @@ test("native launcher dialogs and tray actions follow persisted Japanese", () =>
   assert.match(electronMain, /updateTrayMenu\(state\.language\)/);
   assert.match(electronMain, /createTray\(logger, stateStore\.read\(\)\.language\)/);
 });
+
+test("runtime health messages are localized without rewriting unknown failures", () => {
+  assert.match(i18nSource, /export function localizeRuntimeMessage\(/);
+  assert.match(i18nSource, /if \(language === "en"\) return message;/);
+  assert.match(i18nSource, /return message;/);
+  assert.match(appSource, /localizeRuntimeMessage\(copy, operation\.message, undefined, language\)/);
+  assert.match(read("launcher", "src", "app-shared.tsx"), /localizeRuntimeMessage\(copy, check\.message, check\.id, language\)/);
+  assert.match(read("launcher", "src", "settings-surface.tsx"), /<DoctorSummary copy=\{copy\} language=\{language\} report=\{doctor\}/);
+});

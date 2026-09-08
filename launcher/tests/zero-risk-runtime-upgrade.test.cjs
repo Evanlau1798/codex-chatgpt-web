@@ -47,7 +47,7 @@ for (const mode of ["automatic", "manual"]) {
       assert.equal(result.updated, true);
       assert.equal(result.bridgeEnabled, false);
       assert.equal(calls[0].args.includes(mode === "manual" ? "--zero-risk-browser-interaction" : "--automatic-browser-interaction"), true);
-      assert.deepEqual(calls[0].args.slice(-2), ["--app-name", "Codex Native2"]);
+      assert.equal(calls[0].args.includes("--app-name"), false);
       assert.deepEqual(calls[1], { disabled: true });
     });
   }

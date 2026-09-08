@@ -183,6 +183,7 @@ export function compileChatGptWebPrompt(
     throw new Error("A read-only ChatGPT Web effort must not receive a local-tool capability token");
   }
   const system = parsed.context.systemPrompt ?? [];
+  const retainedResume = parsed._retainedConversationResume === true;
   const advertisedToolNames = [...toolPolicy.wireNames];
   const claudeClient = typeof (parsed._rawBody as {
     client_metadata?: { claude_subagent?: unknown };
@@ -197,8 +198,12 @@ export function compileChatGptWebPrompt(
     "Codex-supplied environment context blocks, including the XML element named environment_context, are operational context rather than human-authored text. Obey them at their original priority, but do not attribute, quote, summarize, or otherwise mention them unless the latest user request explicitly asks about that context.",
     "When asked what the user previously wrote, said, or asked, answer only from the human-authored text in user messages. Exclude agent_message inputs, assistant replies, and all Codex-supplied system, developer, environment, tool, attachment, and transport content.",
     multipartEnabled
-      ? "Read and reconstruct every acknowledged staged JSON record before acting."
-      : "Read the complete inline JSON task context before acting.",
+      ? retainedResume
+        ? "Read and reconstruct every acknowledged staged incremental JSON record before continuing."
+        : "Read and reconstruct every acknowledged staged JSON record before acting."
+      : retainedResume
+        ? "Read the incremental inline JSON task context before continuing."
+        : "Read the complete inline JSON task context before acting.",
     manualControl
       ? "Each image_attachment in the context refers, in order, to an image the user manually attached to this ChatGPT message. If its corresponding image is absent, say that it was not provided instead of guessing."
       : multipartEnabled
@@ -303,7 +308,9 @@ export function compileChatGptWebPrompt(
     ]
     : manualControl ? [
       "<codex_transport_resume>",
-      "The task context is complete. Execute the latest active user request now.",
+      retainedResume
+        ? "The retained conversation and this turn's incremental context are complete. Execute the latest active user request now."
+        : "The task context is complete. Execute the latest active user request now.",
       "</codex_transport_resume>",
     ] : localTools
     ? [
@@ -313,12 +320,16 @@ export function compileChatGptWebPrompt(
       "Pass this exact turn_token unchanged to every Codex Native call in this response, including continuations after tool results; do not expose it in the answer.",
       "The value begins with turn_. Never substitute a connector or plugin identifier, conversation UUID, or any handle from task history.",
       "</codex_native_turn_binding>",
-      "The task context is complete. Execute the latest active user request now.",
+      retainedResume
+        ? "The retained conversation and this turn's incremental context are complete. Execute the latest active user request now."
+        : "The task context is complete. Execute the latest active user request now.",
       "</codex_transport_resume>",
     ]
     : [
       "<codex_transport_resume>",
-      "The task context is complete. Execute the latest active user request now under the capability contract above.",
+      retainedResume
+        ? "The retained conversation and this turn's incremental context are complete. Execute the latest active user request now under the capability contract above."
+        : "The task context is complete. Execute the latest active user request now under the capability contract above.",
       "</codex_transport_resume>",
     ];
   const build = (sourceMessages: readonly CodexMessage[]): CompiledChatGptWebPrompt => {

@@ -45,13 +45,13 @@ test("interaction mode setup preserves the Automatic connector and refreshes onl
   const automatic = fixture(config, "manual");
   assert.equal((await automatic.host.setBrowserInteractionMode("automatic")).mode, "automatic");
   assert.equal(automatic.invocation().args.includes("--refresh-account-capabilities"), true);
-  assert.deepEqual(automatic.invocation().args.slice(-2), ["--app-name", "Codex Native2"]);
+  assert.equal(automatic.invocation().args.includes("--app-name"), false);
 
   const manual = fixture({ ...config, browserInteractionMode: "automatic" });
   assert.equal((await manual.host.setBrowserInteractionMode("manual")).mode, "manual");
   assert.equal(manual.invocation().args.includes("--refresh-account-capabilities"), false);
   assert.equal(manual.invocation().args.includes("--standard-context"), true);
-  assert.deepEqual(manual.invocation().args.slice(-2), ["--app-name", "Codex Zero Risk"]);
+  assert.equal(manual.invocation().args.includes("--app-name"), false);
 });
 
 test("Automatic mode setup preserves enabled Bigger Context without Enhanced mode", async () => {
@@ -76,8 +76,8 @@ test("MCP setup provisions credentials for the requested inactive interaction mo
     tunnelId: "tunnel_0123456789abcdef0123456789abcdef",
     runtimeKey: "new-private-runtime-key",
   });
-  assert.deepEqual(value.invocation().args.slice(4, 8), [
-    "--zero-risk-browser-interaction", "--app-name", "Codex Zero Risk", "--replace-codex-route",
+  assert.deepEqual(value.invocation().args.slice(4, 6), [
+    "--zero-risk-browser-interaction", "--replace-codex-route",
   ]);
 });
 
@@ -89,7 +89,7 @@ test("Zero Risk Pro is an explicit transactional profile", async () => {
   const result = await value.host.setZeroRiskPro(true);
   assert.equal(result.enabled, true);
   assert.equal(value.invocation().args.includes("--zero-risk-pro"), true);
-  assert.deepEqual(value.invocation().args.slice(4, 8), ["--zero-risk-browser-interaction", "--app-name", "Codex Zero Risk", "--acknowledge-unofficial"]);
+  assert.deepEqual(value.invocation().args.slice(4, 6), ["--zero-risk-browser-interaction", "--acknowledge-unofficial"]);
 });
 
 for (const profile of ["production", "development"]) {
@@ -143,7 +143,7 @@ test("manual core repair preserves selected Codex or Claude integration without 
     assert.equal(value.invocation().args.includes(`--${integration}-only`), true);
     assert.equal(value.invocation().args.includes("--zero-risk-browser-interaction"), true);
     assert.equal(value.invocation().args.includes("--refresh-account-capabilities"), false);
-    assert.deepEqual(value.invocation().args.slice(-2), ["--app-name", "Codex Native2"]);
+    assert.equal(value.invocation().args.includes("--app-name"), false);
   }
   const unconfigured = fixture(null, "manual");
   await assert.rejects(unconfigured.host.setupCore(), /must be installed through MCP setup/);

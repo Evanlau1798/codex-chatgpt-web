@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Icon, type IconName } from "./icons";
-import type { Copy } from "./i18n";
-import type { DoctorReport } from "./types";
+import { localizeRuntimeMessage, type Copy } from "./i18n";
+import type { DoctorReport, Language } from "./types";
 
 export function ContentSurface({
   children,
@@ -58,7 +58,7 @@ export function NoticeRow({
   );
 }
 
-export function DoctorSummary({ copy, report }: { copy: Copy; report: DoctorReport }) {
+export function DoctorSummary({ copy, language, report }: { copy: Copy; language: Language; report: DoctorReport }) {
   const visibleChecks = report.ok
     ? report.checks.slice(-6)
     : report.checks.filter((check) => check.status !== "ok");
@@ -72,7 +72,9 @@ export function DoctorSummary({ copy, report }: { copy: Copy; report: DoctorRepo
         {visibleChecks.map((check) => (
           <p key={check.id}>
             <StateDot state={check.status === "ok" ? "ready" : check.status === "warning" ? "busy" : "error"} />
-            <span>{check.message}</span>
+            <span>{check.status === "ok"
+              ? localizeRuntimeMessage(copy, check.message, check.id, language)
+              : check.message}</span>
           </p>
         ))}
       </div>

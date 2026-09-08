@@ -180,6 +180,7 @@ export function retainedConversationResumeRequest(parsed: CodexParsedRequest): C
   const { systemPrompt: _systemPrompt, ...context } = parsed.context;
   return {
     ...parsed,
+    _retainedConversationResume: true,
     context: { ...context, messages: parsed.context.messages.slice(lastAssistant + 1) },
   };
 }

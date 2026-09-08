@@ -290,7 +290,7 @@ export function SettingsSurface({
         </span>
         <Icon name="chevron" />
       </button> : null}
-      {doctor ? <DoctorSummary copy={copy} report={doctor} /> : null}
+      {doctor ? <DoctorSummary copy={copy} language={language} report={doctor} /> : null}
 
       <div className="about-row">
         <BrandMark small />

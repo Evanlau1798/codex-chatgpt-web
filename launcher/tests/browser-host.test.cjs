@@ -32,6 +32,40 @@ test("Electron and Bun agree on the exact launcher idle surface", () => {
   ));
 });
 
+test("descriptor publishes native surface identities without inspecting renderers or Zero Risk tabs", () => {
+  const dir = fs.mkdtempSync(require("node:path").join(require("node:os").tmpdir(), "browser-targets-"));
+  const queried = [];
+  const contents = id => ({
+    isDestroyed: () => false,
+    getOrCreateDevToolsTargetId: () => { queried.push(id); return id; },
+    executeJavaScript: () => { throw new Error("Descriptor must not inspect renderer content"); },
+  });
+  const automatic = { surfaceId: "a".repeat(32), interactionMode: "automatic", view: { webContents: contents("auto-target") } };
+  const manual = { surfaceId: null, interactionMode: "manual", view: { webContents: contents("manual-target") } };
+  const fixture = {
+    surfaceId: "h".repeat(32), view: { webContents: contents("home-target") },
+    turnTabs: new Map([["automatic", automatic], ["manual", manual]]),
+    getBrowserInteractionMode: () => "automatic", profile: "production", cdpPort: 40000,
+    partition: "persist:codex-web-gpt-chatgpt", control: {}, helper: {},
+    descriptorPath: require("node:path").join(dir, "descriptor.json"),
+  };
+  try {
+    BrowserHost.prototype.writeDescriptor.call(fixture);
+    const descriptor = JSON.parse(fs.readFileSync(fixture.descriptorPath, "utf8"));
+    assert.equal(descriptor.version, 3);
+    assert.deepEqual(descriptor.surfaceTargets, {
+      [fixture.surfaceId]: "home-target", [automatic.surfaceId]: "auto-target",
+    });
+    assert.deepEqual(queried, ["home-target", "auto-target"]);
+    fixture.getBrowserInteractionMode = () => "manual";
+    BrowserHost.prototype.writeDescriptor.call(fixture);
+    assert.deepEqual(JSON.parse(fs.readFileSync(fixture.descriptorPath, "utf8")).surfaceTargets, {});
+    assert.deepEqual(queried, ["home-target", "auto-target"]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("primary browser bootstrap accepts only the exact committed idle document", async () => {
   const calls = [];
   const contents = new EventEmitter();
@@ -1876,6 +1910,7 @@ test("a retained conversation is not reused for a different connector identity",
       assert.deepEqual(args, ["trace_next", 222, true, "conversation-a", "Other Connector"]);
       return created;
     },
+    writeDescriptor() {},
     syncViewVisibility() {},
     publishState() {},
     snapshot: () => ({ tabs: [] }),

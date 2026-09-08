@@ -17,8 +17,6 @@ import {
   loadConfigForSetup,
   providerConfig,
   resolveBrokerEndpoint,
-  resolveDevSetupConnectorName,
-  resolveSetupConnectorName,
   runtimeCommandForProcess,
 } from "../src/config";
 import { removeLegacyRuntimeArtifacts } from "../src/service";
@@ -90,7 +88,7 @@ test("user-home expansion accepts native Unix and Windows separators", () => {
   expect(expandUserPath("~\\runtime")).toBe(join(homedir(), "runtime"));
 });
 
-test("the direct-turn connector identity migrates known legacy setup without overwriting custom names", () => {
+test("default setup uses the fixed production connector identities", () => {
   expect(defaultConfig("full").appName).toBe(CHATGPT_CONNECTOR_NAME);
   expect(defaultConfig("full")).toMatchObject({
     automaticAppName: "Codex Native2", manualAppName: "Codex Zero Risk",
@@ -99,14 +97,6 @@ test("the direct-turn connector identity migrates known legacy setup without ove
   expect(defaultConfig("full").useEnhancedWebSessionMode).toBe(true);
   expect(defaultConfig("full").experimentalNoAutoCompact).toBe(false);
   expect(defaultConfig("full").subagentProtocol).toBe("compatibility-v1");
-  expect(resolveSetupConnectorName("Codex Native")).toBe("Codex Native2");
-  expect(resolveSetupConnectorName(ZERO_RISK_CHATGPT_CONNECTOR_NAME)).toBe(CHATGPT_CONNECTOR_NAME);
-  expect(resolveSetupConnectorName("Team Codex Harness")).toBe("Team Codex Harness");
-  expect(resolveSetupConnectorName(undefined, "Team Codex Harness")).toBe("Team Codex Harness");
-  expect(() => resolveSetupConnectorName(undefined, "Codex Native"))
-    .toThrow(/requires a newly created connector named "Codex Native2"/);
-  expect(() => resolveSetupConnectorName(undefined, ZERO_RISK_CHATGPT_CONNECTOR_NAME))
-    .toThrow(/reserved for Zero Risk/);
 });
 
 test("runtime config validates the experimental no-auto-compact flag", () => {
@@ -166,33 +156,18 @@ test("existing Web session mode choices remain stable while missing legacy setti
   expect(loadConfig().useEnhancedWebSessionMode).toBe(true);
 });
 
-test("manual connector selection preserves and restores a custom automatic identity", () => {
-  const automatic = {
-    appName: "Team Codex Harness",
-    automaticAppName: "Team Codex Harness",
-    browserInteractionMode: "automatic" as const,
-  };
-  const manual = resolveInteractionConnectorIdentities(automatic, "manual");
-  expect(manual).toEqual({
+test.each([
+  ["production", CHATGPT_CONNECTOR_NAME],
+  ["development", DEV_CHATGPT_CONNECTOR_NAME],
+] as const)("%s setup preserves its fixed automatic identity across Zero Risk", (profile, automaticAppName) => {
+  expect(resolveInteractionConnectorIdentities("manual", profile)).toEqual({
     appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-    automaticAppName: "Team Codex Harness",
+    automaticAppName,
     manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
   });
-  expect(resolveInteractionConnectorIdentities({
-    ...manual,
-    browserInteractionMode: "manual",
-  }, "automatic")).toEqual({
-    appName: "Team Codex Harness",
-    automaticAppName: "Team Codex Harness",
-    manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-  });
-  expect(resolveInteractionConnectorIdentities({
-    appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-    automaticAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-    browserInteractionMode: "automatic",
-  }, "manual")).toEqual({
-    appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-    automaticAppName: CHATGPT_CONNECTOR_NAME,
+  expect(resolveInteractionConnectorIdentities("automatic", profile)).toEqual({
+    appName: automaticAppName,
+    automaticAppName,
     manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
   });
 });
@@ -213,15 +188,6 @@ test("setup repairs a legacy automatic connector name that collides with Zero Ri
     automaticAppName: CHATGPT_CONNECTOR_NAME,
     manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
   });
-});
-
-test("the DEV profile uses a distinct connector identity without overwriting custom names", () => {
-  expect(resolveDevSetupConnectorName()).toBe(DEV_CHATGPT_CONNECTOR_NAME);
-  expect(resolveDevSetupConnectorName("Codex Native")).toBe(DEV_CHATGPT_CONNECTOR_NAME);
-  expect(resolveDevSetupConnectorName(CHATGPT_CONNECTOR_NAME)).toBe(DEV_CHATGPT_CONNECTOR_NAME);
-  expect(resolveDevSetupConnectorName(ZERO_RISK_CHATGPT_CONNECTOR_NAME)).toBe(DEV_CHATGPT_CONNECTOR_NAME);
-  expect(resolveDevSetupConnectorName("Team DEV Harness")).toBe("Team DEV Harness");
-  expect(resolveDevSetupConnectorName(undefined, "Explicit DEV Harness")).toBe("Explicit DEV Harness");
 });
 
 test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", () => {

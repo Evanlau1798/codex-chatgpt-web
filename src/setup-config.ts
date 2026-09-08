@@ -26,7 +26,6 @@ export interface SetupOptions {
   chromeExecutablePath?: string;
   browserHostDescriptorPath?: string;
   refreshAccountCapabilities?: boolean;
-  appName?: string;
   forceLogin?: boolean;
   autoApproveToolCalls?: boolean;
   useEnhancedWebSessionMode?: boolean;
@@ -65,12 +64,15 @@ export function existingFullSetupCredentials(
   };
 }
 
-export function buildSetupConfig(existing: AppConfig | undefined, options: SetupOptions): AppConfig {
+export function buildSetupConfig(
+  existing: AppConfig | undefined,
+  options: SetupOptions,
+  profile: "production" | "development" = "production",
+): AppConfig {
   const config = existing ? structuredClone(existing) : defaultConfig(options.mode);
   config.mode = options.mode;
   if (options.browserInteractionMode) config.browserInteractionMode = options.browserInteractionMode;
-  const automaticAppName = config.browserInteractionMode === "automatic" ? options.appName : undefined;
-  Object.assign(config, resolveInteractionConnectorIdentities(existing, config.browserInteractionMode, automaticAppName));
+  Object.assign(config, resolveInteractionConnectorIdentities(config.browserInteractionMode, profile));
   if (options.subagentProtocol) config.subagentProtocol = options.subagentProtocol;
   config.releaseVersion = VERSION;
   config.runtimeCommand = currentRuntimeCommand();

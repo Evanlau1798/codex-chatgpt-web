@@ -78,11 +78,12 @@ export function chatGptBrowserTabClosedError(): ChatGptWebAdapterError {
 
 export function chatGptStoppedThinkingError(): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(
-    "ChatGPT remained in 'Stopped thinking' for 5 seconds, so the Codex turn was cancelled.",
+    "ChatGPT displayed 'Stopped thinking' and could not continue this response. "
+    + "A ChatGPT Web usage limit may have been reached. Check the ChatGPT tab for the exact reason before retrying.",
     {
-      status: 499,
-      errorType: "client_closed_request",
-      code: "client_cancelled",
+      status: 502,
+      errorType: "server_error",
+      code: "chatgpt_stopped_thinking",
       retryable: false,
     },
   );

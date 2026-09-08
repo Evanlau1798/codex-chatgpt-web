@@ -1,12 +1,13 @@
 import { namespacedToolName, type CodexTool } from "../../types";
 
-export const CHATGPT_WEB_AGENT_WAIT_POLL_MS = 10_000;
-export const CHATGPT_WEB_AGENT_WAIT_RULE = "ChatGPT Web transport rule: wait for exactly 10 seconds per call, then release the MCP channel so spawned Web agents can use their own tools. Repeat with the same target ids until a terminal status is returned.";
+export const CHATGPT_WEB_AGENT_WAIT_POLL_MS = 30_000;
+export const CHATGPT_WEB_AGENT_WAIT_RULE = "ChatGPT Web transport rule: use Codex's default 30-second wait_agent poll without changing the native arguments. A timeout means the agent is still pending, not complete; repeat with the same target ids until a terminal status is returned.";
 export const CONNECTOR_LONG_POLL_SLICE_MS = 30_000;
 
 const wireName = (tool: CodexTool): string => namespacedToolName(tool.namespace, tool.name);
 const isAgentWaitTool = (tool: CodexTool): boolean => tool.name === "wait_agent"
-  && (tool.namespace === "multi_agent_v1" || tool.namespace === "multi_agent_v2");
+  && (tool.namespace === "multi_agent_v1" || tool.namespace === "multi_agent_v2"
+    || tool.namespace === "collaboration");
 
 export function matchingToolInventory(tools: CodexTool[], query?: string): CodexTool[] {
   const terms = query?.trim().toLowerCase().split(/[\s,]+/).filter(Boolean) ?? [];
@@ -38,6 +39,7 @@ export function browserToolParameters(tool: CodexTool): Record<string, unknown> 
     ? parameters.properties as Record<string, unknown> : {};
   const timeout = properties.timeout_ms && typeof properties.timeout_ms === "object" && !Array.isArray(properties.timeout_ms)
     ? properties.timeout_ms as Record<string, unknown> : {};
+  const { default: _ignoredDefault, ...timeoutSchema } = timeout;
   const required = Array.isArray(parameters.required)
     ? parameters.required.filter((value): value is string => typeof value === "string") : [];
   return {
@@ -45,9 +47,9 @@ export function browserToolParameters(tool: CodexTool): Record<string, unknown> 
     properties: {
       ...properties,
       timeout_ms: {
-        ...timeout, type: "number", const: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
+        ...timeoutSchema, type: "number", const: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
         minimum: CHATGPT_WEB_AGENT_WAIT_POLL_MS, maximum: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
-        description: "Required transport-safe polling interval. Use exactly 10000 and repeat the same targets until completion.",
+        description: "Required transport-safe polling interval. Use exactly 30000; timeout means pending, so repeat the same targets until completion.",
       },
     },
     required: [...new Set([...required, "timeout_ms"])],

@@ -8,7 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { copyFor, type Copy } from "./i18n";
+import { copyFor, localizeRuntimeMessage, type Copy } from "./i18n";
 import { Icon, type IconName } from "./icons";
 import {
   BrandMark,
@@ -663,6 +663,7 @@ function LauncherShell({
                 copy={copy}
                 devProfile={devProfile}
                 interactionMode={mcpTargetMode ?? snapshot.state.browserInteractionMode}
+                language={language}
                 onDone={() => {
                   setMcpTargetMode(null);
                   setSurface("browser");
@@ -1162,6 +1163,7 @@ function McpSurface({
   copy,
   devProfile,
   interactionMode,
+  language,
   onDone,
   operation,
   setError,
@@ -1171,6 +1173,7 @@ function McpSurface({
   copy: Copy;
   devProfile: boolean;
   interactionMode: BrowserInteractionMode;
+  language: Language;
   onDone: () => void;
   operation: OperationState | null;
   setError: (error: string | null) => void;
@@ -1401,7 +1404,7 @@ function McpSurface({
                     {copy.openConnectors}
                   </SecondaryButton>
                 </div>
-                {doctor ? <DoctorSummary copy={copy} report={doctor} /> : null}
+                {doctor ? <DoctorSummary copy={copy} language={language} report={doctor} /> : null}
               </div>
             ) : null}
           </motion.section>
@@ -1439,7 +1442,7 @@ function McpSurface({
             >
               {busy
                 ? operation?.name === "mcp-verification" && operation.status === "running"
-                  ? operation.message
+                  ? localizeRuntimeMessage(copy, operation.message, undefined, language)
                   : copy.running
                 : verified ? copy.done : copy.verifyRuntime}
             </PrimaryButton>

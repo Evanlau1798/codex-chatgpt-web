@@ -258,7 +258,22 @@ export function verifyCodexInterruptHook(text: string, installed: InstalledCodex
   locateCodexInterruptHook(text, installed);
 }
 
-export function restoreCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): string {
+export function restoreCodexInterruptHook(
+  text: string,
+  installed: InstalledCodexInterruptHook,
+  options: { allowAbsent?: boolean } = {},
+): string {
+  // Explicit Setup can reinstall a fully removed hook. A stale journal alone does not mean
+  // there is still a definition to remove; partial edits must retain the strict checks below.
+  if (options.allowAbsent && managedMarkerCount(text) === 0 && !text.includes(MANAGED_INTERRUPT_HOOK_END)) {
+    const { hooks } = Bun.TOML.parse(text) as { hooks?: unknown };
+    if (hooks === undefined) return text;
+    if (hooks && typeof hooks === "object" && !Array.isArray(hooks) && !Object.hasOwn(hooks, "Interrupt")) {
+      const state = (hooks as Record<string, unknown>).state;
+      if (state === undefined || (state && typeof state === "object" && !Array.isArray(state)
+        && !Object.hasOwn(state, installed.stateKey))) return text;
+    }
+  }
   const owned = locateCodexInterruptHook(text, installed).sort((left, right) => right.start - left.start);
   for (const range of owned) {
     text = text.slice(0, range.start) + range.replacement + text.slice(range.end);

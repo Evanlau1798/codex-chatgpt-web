@@ -1,4 +1,3 @@
-import { CHATGPT_CONNECTOR_NAME } from "./config";
 import { VERSION } from "./version";
 
 export const HELP = `codex-chatgpt-web ${VERSION}
@@ -40,7 +39,6 @@ Setup options:
                                Use the embedded launcher browser described by this owner-only file
   --refresh-account-capabilities
                                Re-read the authenticated account's available Web models
-  --app-name NAME              Automatic-mode ChatGPT connector name (default: ${CHATGPT_CONNECTOR_NAME})
   --tunnel-id ID               Existing OpenAI tunnel id (full mode)
   --runtime-key-file PATH      File containing a Tunnels Read+Use runtime key
   --codex-only                 Install only the native Codex integration

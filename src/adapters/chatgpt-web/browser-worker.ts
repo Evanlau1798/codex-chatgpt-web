@@ -47,7 +47,6 @@ import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import { ChatGptVisibleTraceTracker, type ChatGptVisibleTraceBlock } from "./visible-trace-tracker";
 import {
   ChatGptCompletionTracker,
-  ChatGptStoppedThinkingTracker,
   type ChatGptFinalProjectionState,
 } from "./completion-tracker";
 import type { ChatGptRetryPrompt } from "./steering";
@@ -79,9 +78,7 @@ export type { ChatGptSubmissionEvidence } from "./response-turn-boundary";
 export {
   CHATGPT_COMPLETION_PROJECTION_STALL_MS,
   CHATGPT_COMPLETION_SETTLE_MS,
-  CHATGPT_STOPPED_THINKING_GRACE_MS,
   ChatGptCompletionTracker,
-  ChatGptStoppedThinkingTracker,
   blockingChatGptProjectionAnimations,
   chatGptTurnIsComplete,
 } from "./completion-tracker";
@@ -312,7 +309,7 @@ export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
   );
 }
 
-type ChatGptTextScope = Pick<Locator, "getByText">;
+type ChatGptTextScope = Pick<Locator, "getByText" | "getByTestId">;
 
 const chatGptSubscriptionFailureAlert = (page: Page): Locator => page
   .locator('[role="alert"]')
@@ -347,6 +344,12 @@ export async function throwIfChatGptTerminalErrorAlert(
   completedAnswerVisible = false,
 ): Promise<void> {
   if (completedAnswerVisible) return;
+  if (await scope.getByTestId("regenerate-thread-error-button").last().isVisible().catch(() => false)) {
+    throw new ChatGptWebAdapterError(
+      "ChatGPT displayed an error for this response. Check the ChatGPT tab for the exact error, then retry the turn.",
+      { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
+    );
+  }
   const alert = chatGptTerminalErrorAlert(scope);
   if (!await alert.isVisible().catch(() => false)) return;
   throw new ChatGptWebAdapterError(
@@ -1524,7 +1527,6 @@ export class ChatGptBrowserWorker {
   ): Promise<void> {
     const completionTracker = new ChatGptCompletionTracker();
     const domHealthTracker = new ChatGptTurnDomHealthTracker(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS);
-    const stoppedThinkingTracker = new ChatGptStoppedThinkingTracker();
     for (;;) {
       if (page.isClosed()) throw chatGptBrowserTabClosedError();
       if (abortSignal?.aborted) {
@@ -1546,10 +1548,7 @@ export class ChatGptBrowserWorker {
         await externalProgress.acknowledgeToolBatch(progress.lastToolBatchRevision);
       }
       const externalProgressLive = chatGptExternalProgressSuppressesDomHealth(progress, Date.now());
-      if (externalProgressLive) stoppedThinkingTracker.clear();
-      else if (stoppedThinkingTracker.update(snapshot.stoppedThinkingVisible)) {
-        throw chatGptStoppedThinkingError();
-      }
+      if (snapshot.stoppedThinkingVisible) throw chatGptStoppedThinkingError();
       await throwIfChatGptTerminalErrorAlert(
         responseTurn,
         snapshot.completionActionVisible && snapshot.visibleText.length > 0,
@@ -2669,14 +2668,20 @@ export class ChatGptBrowserWorker {
         } : {}),
       }));
       const stoppedThinkingVisible = (() => {
-        if ([...root.querySelectorAll<HTMLElement>('[aria-label="Stopped thinking"]')].some(renderedInDom)) {
+        const isStatus = (candidate: HTMLElement): boolean => {
+          if (overlapsRenderedAnswer(candidate) || overlapsCommentary(candidate)
+            || candidate.closest("pre, code, blockquote")) return false;
+          for (let element: HTMLElement | null = candidate; element; element = element.parentElement) {
+            if (!renderedInDom(element)) return false;
+          }
           return true;
-        }
+        };
+        if ([...root.querySelectorAll<HTMLElement>('[aria-label="Stopped thinking"]')].some(isStatus)) return true;
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
           if (node.textContent?.replace(/\s+/g, " ").trim() !== "Stopped thinking") continue;
           const parent = node.parentElement;
-          if (parent && renderedInDom(parent)) return true;
+          if (parent && isStatus(parent)) return true;
         }
         return false;
       })();
@@ -3336,7 +3341,6 @@ export class ChatGptBrowserWorker {
         };
         const completionTracker = new ChatGptCompletionTracker();
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
-        const stoppedThinkingTracker = new ChatGptStoppedThinkingTracker();
         const nativeToolActivityTracker = new ChatGptNativeToolActivityTracker();
         let completionFenceRevision: number | undefined;
         let consecutiveObservationRebinds = 0;
@@ -3482,10 +3486,7 @@ export class ChatGptBrowserWorker {
           externalProgressSnapshot,
           Date.now(),
         );
-        if (externalProgressLive) stoppedThinkingTracker.clear();
-        else if (stoppedThinkingTracker.update(snapshot.stoppedThinkingVisible)) {
-          throw chatGptStoppedThinkingError();
-        }
+        if (snapshot.stoppedThinkingVisible) throw chatGptStoppedThinkingError();
         if (!snapshot.responsePresent && externalProgressLive) {
           domHealthTracker.clearMissingResponse();
           await this.waitForTurnDomOrExternalProgress(

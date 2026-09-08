@@ -68,7 +68,7 @@ test("MCP gateway discovers and invokes nested tools while rejecting unsafe wait
       arguments: { targets: [], timeout_ms: 180_000 },
     });
     expect(invalidWait.isError).toBeTrue();
-    expect(JSON.stringify(invalidWait.content)).toContain("timeout_ms=10000");
+    expect(JSON.stringify(invalidWait.content)).toContain("timeout_ms=30000");
 
     const recursive = call("codex_tool_call", {
       turn_token: token, wire_name: "exec", input: "await tools.exec('nested');",

@@ -134,17 +134,20 @@ test("aborted personalization restores the original semantic mode", async () => 
   expect(menuOpen).toBeFalse();
 });
 
-test("semantic Unpersonalized state enables its owned Personalized choice", async () => {
+for (const [personalizedLabel, unpersonalizedLabel] of [
+  ["Personalized", "Unpersonalized"],
+  ["个性化", "非个性化"],
+] as const) test(`semantic ${unpersonalizedLabel} state enables its owned ${personalizedLabel} choice`, async () => {
   let personalized = false;
   let menuOpen = false;
   const events: string[] = [];
   const named = (name: string) => ({
     filter: () => named(name),
-    count: async () => name === "Personalized" ? Number(personalized) : Number(!personalized),
+    count: async () => name === personalizedLabel ? Number(personalized) : Number(!personalized),
     click: async () => { menuOpen = true; events.push("open"); },
     getAttribute: async (attribute: string) => attribute === "aria-controls" ? "owned-menu" : null,
     waitFor: async ({ state }: { state: string }) => {
-      const present = name === "Personalized" ? personalized : !personalized;
+      const present = name === personalizedLabel ? personalized : !personalized;
       expect(state === "visible" ? present : !present).toBeTrue();
     },
   });
@@ -163,7 +166,10 @@ test("semantic Unpersonalized state enables its owned Personalized choice", asyn
     locator: () => ({ filter: () => choice }),
   };
   const page = {
-    getByRole: (_role: string, options: { name: string }) => named(options.name),
+    getByRole: (_role: string, options: { name: string | RegExp }) => named(
+      (typeof options.name === "string" ? options.name === personalizedLabel : options.name.test(personalizedLabel))
+        ? personalizedLabel : unpersonalizedLabel,
+    ),
     locator: (selector: string) => {
       if (selector === "body") return { press: async () => { menuOpen = false; } };
       expect(selector).toBe('[id="owned-menu"]');

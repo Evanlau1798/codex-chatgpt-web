@@ -30,7 +30,7 @@ function descriptorFile(
   roots.push(root);
   const path = join(root, "launcher-browser.json");
   writeFileSync(path, `${JSON.stringify({
-    version: 2,
+    version: 3,
     kind: LAUNCHER_BROWSER_HOST_KIND,
     profile,
     pid: process.pid,
@@ -48,6 +48,7 @@ function descriptorFile(
       : "persist:codex-web-gpt-chatgpt",
     idleUrl: LAUNCHER_BROWSER_IDLE_URL,
     surfaceId: "launcher_surface_id_0123456789AB",
+    surfaceTargets: { ["launcher_surface_id_0123456789AB"]: "native-owned-target" },
     createdAt: new Date().toISOString(),
   })}\n`, { mode: 0o600 });
   return path;
@@ -285,19 +286,31 @@ test("launcher profile checks reject cross-profile browser ownership", async () 
     .rejects.toThrow("belongs to development");
 });
 
-test("launcher page selection uses the owned surface marker instead of URL order", async () => {
+function nativeTargetContext(pages: Page[], targetId: (page: Page) => string): BrowserContext {
+  return {
+    pages: () => pages,
+    newCDPSession: async (page: Page) => ({
+      send: async (method: string) => {
+        expect(method).toBe("Target.getTargetInfo");
+        return { targetInfo: { targetId: targetId(page) } };
+      },
+      detach: async () => {},
+    }),
+  } as unknown as BrowserContext;
+}
+
+test("launcher page selection uses native ownership without evaluating unrelated renderers", async () => {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorFile());
   const hiddenPage = {
     url: () => "https://chatgpt.com/?temporary-chat=true",
-    evaluate: async () => "another_surface_id_0123456789ABC",
+    evaluate: () => { throw new Error("Do not evaluate an unrelated renderer"); },
   } as unknown as Page;
   const ownedPage = {
     url: () => LAUNCHER_BROWSER_IDLE_URL,
-    evaluate: async () => descriptor.surfaceId,
+    evaluate: () => { throw new Error("Ownership comes from the native target"); },
   } as unknown as Page;
-  const context = {
-    pages: () => [hiddenPage, ownedPage],
-  } as unknown as BrowserContext;
+  const context = nativeTargetContext([hiddenPage, ownedPage],
+    page => page === ownedPage ? "native-owned-target" : "native-other-target");
   const browser = {
     contexts: () => [context],
   } as unknown as Browser;
@@ -308,14 +321,12 @@ test("launcher page selection uses the owned surface marker instead of URL order
   });
 });
 
-test("launcher page selection rejects duplicated ownership markers", async () => {
+test("launcher page selection rejects duplicated native target ownership", async () => {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorFile());
   const page = () => ({
     evaluate: async () => descriptor.surfaceId,
   }) as unknown as Page;
-  const context = {
-    pages: () => [page(), page()],
-  } as unknown as BrowserContext;
+  const context = nativeTargetContext([page(), page()], () => "native-owned-target");
   const browser = {
     contexts: () => [context],
   } as unknown as Browser;
@@ -323,6 +334,20 @@ test("launcher page selection rejects duplicated ownership markers", async () =>
   expect(selectLauncherPage(browser, descriptor, 20)).rejects.toThrow(
     "2 surfaces with the same ownership id",
   );
+});
+
+test("launcher descriptor rejects ambiguous native targets and selection rejects retired surfaces", async () => {
+  const path = descriptorFile();
+  const descriptor = readLauncherBrowserHostDescriptor(path);
+  const duplicate = { ...descriptor, surfaceTargets: {
+    ...descriptor.surfaceTargets, ["x".repeat(32)]: "native-owned-target",
+  } };
+  writeFileSync(path, JSON.stringify(duplicate), { mode: 0o600 });
+  expect(() => readLauncherBrowserHostDescriptor(path)).toThrow("duplicated surface targets");
+  const browser = { contexts: () => [] } as unknown as Browser;
+  await expect(selectLauncherPage(browser, descriptor, 20, "retired".repeat(5))).rejects.toThrow("no longer registered");
+  writeFileSync(path, JSON.stringify({ ...descriptor, version: 2 }), { mode: 0o600 });
+  expect(() => readLauncherBrowserHostDescriptor(path)).toThrow("restart the updated launcher");
 });
 
 test("launcher page selection stops immediately when acquisition is aborted", async () => {

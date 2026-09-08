@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { existsSync } from "node:fs";
 import { stdin, stdout } from "node:process";
-import { loadConfig, resolveDevSetupConnectorName, ZERO_RISK_CHATGPT_CONNECTOR_NAME } from "../config";
+import { DEV_CHATGPT_CONNECTOR_NAME, loadConfig, ZERO_RISK_CHATGPT_CONNECTOR_NAME } from "../config";
 import {
   inspectLauncherBrowserHost, inspectLauncherBrowserHostLiveness, readLauncherBrowserHostDescriptor,
 } from "../launcher-browser-host";
@@ -340,7 +340,6 @@ export async function runDevCommand(args: string[]): Promise<void> {
     if (browserOnly === full) throw new Error("Choose exactly one DEV setup mode: --browser-only or --full");
     const tunnelId = takeOption(args, "--tunnel-id");
     const runtimeKeyFile = takeOption(args, "--runtime-key-file");
-    const appName = takeOption(args, "--app-name");
     const descriptorPath = takeOption(args, "--browser-host-descriptor") ?? paths.descriptorPath;
     const acknowledgedUnofficial = takeFlag(args, "--acknowledge-unofficial");
     const refreshAccountCapabilities = takeFlag(args, "--refresh-account-capabilities");
@@ -388,7 +387,6 @@ export async function runDevCommand(args: string[]): Promise<void> {
       ...(noAutoCompact || autoCompact ? { experimentalNoAutoCompact: noAutoCompact } : {}),
       ...(tunnelId ? { tunnelId } : {}),
       ...(runtimeKeyFile ? { runtimeKeyFile } : {}),
-      ...(appName ? { appName } : {}),
     });
     stdout.write(
       `Isolated DEV profile configured (${result.mode}) at ${result.configPath}.\n`
@@ -413,7 +411,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
   }
   const config = loadConfig();
   const expectedConnector = config.browserInteractionMode === "manual"
-    ? ZERO_RISK_CHATGPT_CONNECTOR_NAME : resolveDevSetupConnectorName(config.appName);
+    ? ZERO_RISK_CHATGPT_CONNECTOR_NAME : DEV_CHATGPT_CONNECTOR_NAME;
   if (config.mode === "full" && config.appName !== expectedConnector) {
     throw new Error("DEV connector identity is outdated. Refresh the DEV profile in the launcher before starting a named chat");
   }

@@ -10,6 +10,7 @@ const {
   connectorNameForDevSetup,
   connectorNameForSetup,
   CURRENT_CONNECTOR_NAME,
+  DEV_CONNECTOR_NAME,
   isLegacyConnectorName,
   requireCurrentRuntimeConnectorName,
   validateConnectorName,
@@ -1022,11 +1023,7 @@ class RuntimeHost {
   }
 
   setupConnectorName() {
-    const config = this.runtimeConfigSnapshot().config;
-    const value = config?.automaticAppName ?? config?.appName;
-    return this.launcherProfile === "development"
-      ? connectorNameForDevSetup(value)
-      : value ? connectorNameForSetup(value) : CURRENT_CONNECTOR_NAME;
+    return this.launcherProfile === "development" ? DEV_CONNECTOR_NAME : CURRENT_CONNECTOR_NAME;
   }
 
   cancelActiveTurns() {
@@ -1116,7 +1113,6 @@ class RuntimeHost {
     if (integration === "claude") args.push("--claude-only");
     args.push("--replace-codex-route");
     args.push("--acknowledge-unofficial", "--restart-service");
-    if (mode === "full") args.push("--app-name", this.setupConnectorName());
     const result = await this.runSetup("core-setup", args, {
       message: integration === "claude"
         ? "Installing ChatGPT Web models into Claude Code"
@@ -1146,7 +1142,6 @@ class RuntimeHost {
       ...this.browserInteractionArgs({ mode: interactionMode, refreshCapabilities: true }),
       "--acknowledge-unofficial",
     ];
-    if (mode === "full") args.push("--app-name", this.setupConnectorName());
     const result = await this.runDevSetup("dev-profile-setup", args, {
       message: "Configuring the isolated DEV harness",
       successMessage: "Isolated DEV harness configured",
@@ -1175,7 +1170,6 @@ class RuntimeHost {
         contextFlag,
       ];
       if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
-      if (mode === "full") args.push("--app-name", this.browserConnectorName());
       const result = await this.runDevSetup("bigger-context", args, {
         message: enabled ? "Enabling Bigger Context" : "Disabling Bigger Context",
         successMessage: enabled ? "Bigger Context enabled" : "Standard context restored",
@@ -1195,7 +1189,6 @@ class RuntimeHost {
       contextFlag,
     ];
     if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
-    if (mode === "full") args.push("--app-name", this.browserConnectorName());
     const result = await this.runSetup("bigger-context", args, {
       message: enabled ? "Enabling Bigger Context" : "Disabling Bigger Context",
       successMessage: enabled ? "Bigger Context enabled; restart Codex" : "Standard context restored; restart Codex",
@@ -1227,7 +1220,6 @@ class RuntimeHost {
       compactFlag,
     ];
     if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
-    if (mode === "full") args.push("--app-name", this.browserConnectorName());
     const run = this.launcherProfile === "development"
       ? this.runDevSetup.bind(this)
       : this.runSetup.bind(this);
@@ -1280,9 +1272,6 @@ class RuntimeHost {
       "--acknowledge-unofficial",
       "--restart-service",
     ];
-    if (existing.mode === "full") {
-      args.push("--app-name", this.setupConnectorName());
-    }
     const result = await this.runSetup("runtime-upgrade", args, {
       message: tunnelProfileMigrationRequired
         ? `Separating ${interactionMode === "manual" ? "Zero Risk" : "Automatic"} MCP credentials`
@@ -1321,8 +1310,6 @@ class RuntimeHost {
       "--browser-host-descriptor",
       this.browserDescriptorPath,
       ...this.browserInteractionArgs({ mode: targetMode }),
-      "--app-name",
-      this.browserConnectorName(targetMode),
       "--replace-codex-route",
     ];
     if (reuseSavedCredentials) {
@@ -1375,8 +1362,6 @@ class RuntimeHost {
       "--browser-host-descriptor",
       this.browserDescriptorPath,
       ...this.browserInteractionArgs({ mode: targetMode }),
-      "--app-name",
-      this.browserConnectorName(targetMode),
       "--acknowledge-unofficial",
     ];
     if (reuseSavedCredentials) {
@@ -1411,7 +1396,7 @@ class RuntimeHost {
       ...(this.launcherProfile === "development" ? ["dev", "setup"] : ["setup"]),
       "--full", "--browser-host-descriptor", this.browserDescriptorPath,
       ...this.browserInteractionArgs({ mode: "manual" }),
-      "--app-name", this.browserConnectorName("manual"), "--acknowledge-unofficial", "--standard-context",
+      "--acknowledge-unofficial", "--standard-context",
       enabled ? "--zero-risk-pro" : "--zero-risk-default",
       ...(this.launcherProfile === "production" ? ["--replace-codex-route", "--restart-service"] : []),
     ];
@@ -1443,7 +1428,6 @@ class RuntimeHost {
         ? "--bigger-context" : "--standard-context",
     ];
     if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
-    if (current.mode === "full") args.push("--app-name", this.browserConnectorName(mode));
     const options = {
       message: mode === "manual" ? "Enabling Zero Risk" : "Enabling automatic browser interaction",
       successMessage: `${mode === "manual" ? "Zero Risk" : "Automatic browser interaction"} enabled; restart Codex`,

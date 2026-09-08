@@ -1,6 +1,7 @@
 import { CHATGPT_WEB_AGENT_WAIT_POLL_MS, CHATGPT_WEB_AGENT_WAIT_RULE } from "./mcp-tool-inventory";
 
 export const GATEWAY_AGENT_WAIT_TOOL_NAMES = [
+  "collaboration__wait_agent",
   "multi_agent_v1__wait_agent",
   "multi_agent_v2__wait_agent",
 ] as const;

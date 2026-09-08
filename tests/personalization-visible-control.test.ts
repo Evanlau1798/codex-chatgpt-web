@@ -10,13 +10,14 @@ function visibleLocator(count: () => number, overrides: Record<string, unknown> 
   return locator;
 }
 
-for (const ariaHidden of [false, true]) test(`a visible Personalized control is a preflight no-op (aria-hidden=${ariaHidden})`, async () => {
+for (const [label, ariaHidden] of [["Personalized", false], ["Personalized", true], ["个性化", false]] as const) test(`a visible ${label} control is a preflight no-op (aria-hidden=${ariaHidden})`, async () => {
   const diagnostics: string[] = [];
   const personalized = visibleLocator(() => 1);
   const unpersonalized = visibleLocator(() => 0);
   const page = {
-    getByRole: (_role: string, options: { name: string; includeHidden?: boolean }) => (
-      options.name === "Personalized" && (!ariaHidden || options.includeHidden) ? personalized : unpersonalized
+    getByRole: (_role: string, options: { name: string | RegExp; includeHidden?: boolean }) => (
+      (typeof options.name === "string" ? options.name === label : options.name.test(label))
+        && (!ariaHidden || options.includeHidden) ? personalized : unpersonalized
     ),
   } as any;
 

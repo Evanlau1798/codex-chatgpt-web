@@ -9,6 +9,8 @@ export interface CodexParsedRequest {
   _replayPrefixLen?: number;
   /** Proxy-private proof that context contains a complete canonical request snapshot. */
   _canonicalContextComplete?: boolean;
+  /** Internal proof that the retained Web conversation already owns unchanged system context. */
+  _retainedConversationResume?: boolean;
   /**
    * True when the input carried `{type:"compaction_trigger"}` — Codex remote compaction v2 asking
    * this turn to produce a `{type:"compaction"}` output item. Routed adapters can't natively;

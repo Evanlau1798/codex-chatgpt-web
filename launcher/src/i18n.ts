@@ -124,6 +124,13 @@ const en = {
   openConnectors: "Open ChatGPT Plugins",
   connectorName: "Connector name",
   verifyRuntime: "Verify runtime",
+  checkingChatGptConnector: "Checking ChatGPT connector",
+  doctorProxyHealthy: "Responses proxy is healthy on {endpoint}",
+  doctorTunnelBinaryInstalled: "Pinned openai/tunnel-client binary is installed",
+  doctorTunnelKeyStored: "Tunnel runtime key is stored privately",
+  doctorTunnelRuntimeOwned: "Launcher owns the tunnel runtime",
+  doctorTunnelRuntimeReady: "Tunnel runtime reports healthy and ready",
+  doctorConnectorAvailable: "ChatGPT connector \"{name}\" is available",
   activityTitle: "Runtime activity",
   activitySubtitle: "Local diagnostics. Export a privacy-safe copy before sharing; raw logs stay on this device.",
   recentActivity: "Recent events",
@@ -293,6 +300,13 @@ const zh: Record<keyof typeof en, string> = {
   openConnectors: "打开 ChatGPT Plugins",
   connectorName: "连接器名称",
   verifyRuntime: "验证运行时",
+  checkingChatGptConnector: "正在检查 ChatGPT 连接器",
+  doctorProxyHealthy: "Responses 代理在 {endpoint} 上运行正常",
+  doctorTunnelBinaryInstalled: "已安装固定版本的 openai/tunnel-client 二进制文件",
+  doctorTunnelKeyStored: "隧道运行时密钥已安全存储",
+  doctorTunnelRuntimeOwned: "启动器正在管理隧道运行时",
+  doctorTunnelRuntimeReady: "隧道运行正常，可以使用",
+  doctorConnectorAvailable: "ChatGPT 连接器“{name}”可用",
   activityTitle: "运行时活动",
   activitySubtitle: "本地诊断。分享前请导出隐私安全副本；原始日志仅保留在此设备上。",
   recentActivity: "最近事件",
@@ -344,4 +358,36 @@ export function copyFor(language: Language): Copy {
   if (language === "zh-CN") return zh as Copy;
   if (language === "ja") return ja as Copy;
   return en;
+}
+
+export function localizeRuntimeMessage(
+  copy: Copy,
+  message: string,
+  checkId: string | undefined,
+  language: Language,
+): string {
+  if (language === "en") return message;
+  if (checkId === undefined && message === "Checking ChatGPT connector") return copy.checkingChatGptConnector;
+  if (checkId === "proxy") {
+    const match = /^Responses proxy is healthy on (127\.0\.0\.1:\d+)$/.exec(message);
+    if (match) return copy.doctorProxyHealthy.replace("{endpoint}", () => match[1]!);
+  }
+  const exact = {
+    "tunnel-binary": ["Pinned openai/tunnel-client binary is installed", copy.doctorTunnelBinaryInstalled],
+    "tunnel-key": ["Tunnel runtime key is stored privately", copy.doctorTunnelKeyStored],
+    "tunnel-service": ["Launcher owns the tunnel runtime", copy.doctorTunnelRuntimeOwned],
+    "tunnel-runtime": ["Tunnel runtime reports healthy and ready", copy.doctorTunnelRuntimeReady],
+  } as const;
+  const known = checkId ? exact[checkId as keyof typeof exact] : undefined;
+  if (known && message === known[0]) return known[1];
+  if (checkId === "connector") {
+    const match = /^ChatGPT connector (".*") is available$/s.exec(message);
+    if (match) {
+      try {
+        const name = JSON.parse(match[1]!) as unknown;
+        if (typeof name === "string") return copy.doctorConnectorAvailable.replace("{name}", () => name);
+      } catch {}
+    }
+  }
+  return message;
 }

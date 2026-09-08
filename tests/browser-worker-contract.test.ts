@@ -9,7 +9,7 @@ import {
   MAX_CHATGPT_BROWSER_PAGE_REBINDS,
   withChatGptBrowserObservationTimeout,
 } from "../src/adapters/chatgpt-web/browser-observation";
-import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_RESPONSE_DOM_GRACE_MS, CHATGPT_STOPPED_THINKING_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptPromptAttachmentIntegrityError, ChatGptStoppedThinkingTracker, ChatGptSuspensionClock, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, browserStageTimeouts, chatGptExternalProgressSuppressesDomHealth, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, remainingStageBudgetMs, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
+import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_RESPONSE_DOM_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptPromptAttachmentIntegrityError, ChatGptSuspensionClock, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, browserStageTimeouts, chatGptExternalProgressSuppressesDomHealth, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, remainingStageBudgetMs, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptWebAdapterError, chatGptStoppedThinkingError } from "../src/adapters/chatgpt-web/adapter-error";
 import { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, defaultChromeExecutable, legacyChatGptConnectorMigrationMessage } from "../src/config";
 import { chatGptEffortSliderAdvancedTowardTarget, parseChatGptEffortSliderState } from "../src/chatgpt-session";
@@ -82,14 +82,10 @@ test("browser completion settles final projection before fail-closed Markdown fi
   expect(completion).toContain("throwMarkdownConsistencyError(error)");
 });
 
-test("persistent Stopped thinking is a terminal cancelled turn", () => {
-  expect(CHATGPT_STOPPED_THINKING_GRACE_MS).toBe(5_000);
-  const tracker = new ChatGptStoppedThinkingTracker();
-  expect(tracker.update(true, 1_000)).toBeFalse();
-  expect(tracker.update(true, 5_999)).toBeFalse();
-  expect(tracker.update(false, 6_000)).toBeFalse();
-  expect(tracker.update(true, 10_000)).toBeFalse();
-  expect(tracker.update(true, 15_000)).toBeTrue();
+test("Stopped thinking fails the current turn immediately", () => {
+  const worker = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  expect(worker.match(/if \(snapshot\.stoppedThinkingVisible\) throw chatGptStoppedThinkingError\(\);/g) ?? [])
+    .toHaveLength(2);
 });
 
 test("aborting a queued seventh browser turn removes it without consuming a slot", async () => {
@@ -1290,6 +1286,7 @@ function dialogPage(text: string, buttonText = "Got it"): { page: Page; pressed:
     page: {
       locator: () => createDialog(),
       getByText: (hasText: string | RegExp) => createDialog().filter({ hasText }),
+      getByTestId: () => ({ last: () => ({ isVisible: async () => false }) }),
     } as unknown as Page,
     pressed,
   };
@@ -2248,11 +2245,8 @@ test("the launcher helper transport carries MCP progress into the out-of-process
   expect(fence).toMatch(/externalProgress: session\.progress/);
 });
 
-test("turn cancellation heuristics defer to proven MCP progress in both wait loops", () => {
+test("turn DOM health still defers to proven MCP progress in both wait loops", () => {
   const worker = readFileSync("src/adapters/chatgpt-web/browser-worker.ts", "utf8");
-  // A stale "Stopped thinking" label must not cancel a turn that is still driving tool calls, and
-  // the multipart staging loop must not be the one place that skips the liveness guard.
-  expect((worker.match(/stoppedThinkingTracker\.clear\(\)/g) ?? []).length).toBe(2);
   expect((worker.match(/externalProgressLive,/g) ?? []).length).toBeGreaterThanOrEqual(3);
 });
 
@@ -2358,21 +2352,6 @@ test("stale MCP progress stops suppressing DOM health without penalising long ac
     { revision: 0, lastToolBatchRevision: 0, activeToolCalls: 0 },
     1_000,
   )).toBeFalse();
-});
-
-test("proven progress forgets a Stopped thinking window rather than merely ignoring it", () => {
-  const tracker = new ChatGptStoppedThinkingTracker(5_000);
-
-  // The label appears while a tool call is outstanding. Suppressing only the verdict let this
-  // window keep accruing, so the first observation after the tool result cancelled the turn.
-  expect(tracker.update(true, 1_000)).toBeFalse();
-  expect(tracker.update(true, 3_000)).toBeFalse();
-  tracker.clear();
-
-  // Progress has ended and the window starts again from here, not from the original sighting.
-  expect(tracker.update(true, 6_500)).toBeFalse();
-  expect(tracker.update(true, 11_499)).toBeFalse();
-  expect(tracker.update(true, 11_500)).toBeTrue();
 });
 
 test("the shipped commentary classifier separates answer Markdown from reasoning in a real DOM", () => {

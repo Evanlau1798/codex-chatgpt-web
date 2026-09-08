@@ -41,13 +41,13 @@ test("nested gateway inventory is paginated and rejects hidden outer tools", asy
 test("structured nested gateway validates availability and fixed wait polling", async () => {
   expect(() => assertGatewayToolArguments("multi_agent_v2__wait_agent", {
     targets: [], timeout_ms: 180_000,
-  })).toThrow("timeout_ms=10000");
+  })).toThrow("timeout_ms=30000");
   const calls: Array<{ name: string; input: unknown }> = [];
   await execute(execGatewayProgram("multi_agent_v2__wait_agent", false, {
-    arguments: { targets: [], timeout_ms: 10_000 },
+    arguments: { targets: [], timeout_ms: 30_000 },
   }, ["exec"]), ["multi_agent_v2__wait_agent"], calls);
   expect(calls).toEqual([{
-    name: "multi_agent_v2__wait_agent", input: { targets: [], timeout_ms: 10_000 },
+    name: "multi_agent_v2__wait_agent", input: { targets: [], timeout_ms: 30_000 },
   }]);
   expect(() => execGatewayProgram("exec", true, { input: "text('recursive')" }, ["exec"]))
     .toThrow("not available");
@@ -57,7 +57,7 @@ test("raw exec proxy blocks recursion and enforces wait_agent polling without hi
   const calls: Array<{ name: string; input: unknown }> = [];
   await expect(execute(transportBoundRawExecProgram(
     "await tools.multi_agent_v1__wait_agent({ targets: [], timeout_ms: 180000 });", "exec",
-  ), ["exec", "multi_agent_v1__wait_agent"], calls)).rejects.toThrow("timeout_ms=10000");
+  ), ["exec", "multi_agent_v1__wait_agent"], calls)).rejects.toThrow("timeout_ms=30000");
   await expect(execute(transportBoundRawExecProgram(
     "await tools.exec(\"text('nested')\");", "exec",
   ), ["exec"], calls)).rejects.toThrow("Nested raw exec is unavailable");
@@ -65,6 +65,19 @@ test("raw exec proxy blocks recursion and enforces wait_agent polling without hi
     "await tools.vendor__exec({ task: 'safe' });", "exec",
   ), ["exec", "vendor__exec"], calls);
   expect(calls).toEqual([{ name: "vendor__exec", input: { task: "safe" } }]);
+});
+
+test("collaboration wait_agent uses the shared 30-second transport guard", async () => {
+  expect(() => assertGatewayToolArguments("collaboration__wait_agent", {
+    targets: [], timeout_ms: 10_000,
+  })).toThrow("timeout_ms=30000");
+  const calls: Array<{ name: string; input: unknown }> = [];
+  await execute(execGatewayProgram("collaboration__wait_agent", false, {
+    arguments: { targets: [], timeout_ms: 30_000 },
+  }, ["exec"]), ["collaboration__wait_agent"], calls);
+  expect(calls).toEqual([{
+    name: "collaboration__wait_agent", input: { targets: [], timeout_ms: 30_000 },
+  }]);
 });
 
 test("raw exec proxy slices command-session polls", async () => {

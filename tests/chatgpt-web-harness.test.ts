@@ -2521,10 +2521,10 @@ describe("ChatGPT outer-native harness v4", () => {
         total: 1,
         tools: [{
           wire_name: "multi_agent_v1__wait_agent",
-          description: expect.stringContaining("exactly 10 seconds"),
+          description: expect.stringContaining("default 30-second"),
           parameters: {
             properties: {
-              timeout_ms: { const: 10_000, minimum: 10_000, maximum: 10_000 },
+              timeout_ms: { const: 30_000, minimum: 30_000, maximum: 30_000 },
             },
             required: ["targets", "timeout_ms"],
           },
@@ -2537,17 +2537,17 @@ describe("ChatGPT outer-native harness v4", () => {
         arguments: { targets: ["agent_test"], timeout_ms: 3_600_000 },
       });
       expect(rejectedLongWait.isError).toBe(true);
-      expect(JSON.stringify(rejectedLongWait.content)).toContain("requires timeout_ms=10000");
+      expect(JSON.stringify(rejectedLongWait.content)).toContain("requires timeout_ms=30000");
 
       const agentWait = call("codex_tool_call", {
         turn_token: token,
         wire_name: "multi_agent_v1__wait_agent",
-        arguments: { targets: ["agent_test"], timeout_ms: 10_000 },
+        arguments: { targets: ["agent_test"], timeout_ms: 30_000 },
       });
       const [agentWaitRequest] = await broker.nextToolBatch(token);
       expect(agentWaitRequest).toMatchObject({
         wireName: "multi_agent_v1__wait_agent",
-        arguments: { targets: ["agent_test"], timeout_ms: 10_000 },
+        arguments: { targets: ["agent_test"], timeout_ms: 30_000 },
       });
       broker.completeTool(token, agentWaitRequest!.callId, toolResult({ statuses: {} }));
       expect((await agentWait).structuredContent).toEqual({ statuses: {} });

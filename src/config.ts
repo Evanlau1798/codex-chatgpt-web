@@ -8,8 +8,7 @@ import { effectiveExperimentalBiggerContext } from "./context-mode";
 
 import {
   CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-  isLegacyChatGptConnectorName, resolveDevSetupConnectorName, resolveInteractionConnectorIdentities,
-  resolveSetupConnectorName, tunnelConfigForInteractionMode,
+  isLegacyChatGptConnectorName, resolveInteractionConnectorIdentities, tunnelConfigForInteractionMode,
   type AppConfig, type RuntimeMode, type TunnelConfig,
 } from "./config-interaction";
 export * from "./config-interaction";

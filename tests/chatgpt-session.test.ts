@@ -60,6 +60,27 @@ test("effort activation binds the owned menu after the control opens", async () 
   expect(activation.menu).toBe(ownedMenu as never);
 });
 
+test.each(["aria-expanded", "data-state"])("effort activation does not bind a closing menu (%s)", async attribute => {
+  let opened = false;
+  let clicks = 0;
+  // Escape closes the control immediately, but the outgoing menu remains visible
+  // through its exit animation. Its stale range must not authorize a new selection.
+  const surface = {
+    filter() { return this; }, last() { return this; }, locator() { return this; },
+    isVisible: async () => true,
+  };
+  const control = {
+    getAttribute: async (name: string) => name === attribute
+      ? attribute === "aria-expanded" ? String(opened) : opened ? "open" : "closed"
+      : null,
+    click: async () => { clicks++; opened = true; },
+  };
+  const page = { locator: () => surface, keyboard: { press: async () => {} } };
+  const activation = await activateChatGptEffortMenu(page as never, control as never, { settleMs: 0 });
+  expect(activation.method).toBe("click");
+  expect(clicks).toBe(1);
+});
+
 test("effort activation retries one ghost click with a primary pointerdown", async () => {
   let ghostOpen = false;
   let pointerOpened = false;
