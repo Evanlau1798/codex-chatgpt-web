@@ -6,16 +6,27 @@ const root = resolve(import.meta.dir, "..");
 const scratch = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-verify-"));
 const runtimeBundle = join(scratch, "runtime");
 const liveWeb = process.argv.includes("--live-web");
+const verbose = process.argv.includes("--verbose");
 
 async function run(args: string[]): Promise<void> {
+  const label = `bun ${args.join(" ")}`;
+  console.log(`[verify] ${label}`);
   const child = Bun.spawn([process.execPath, ...args], {
     cwd: root,
     stdin: "inherit",
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  const exitCode = await child.exited;
-  if (exitCode !== 0) throw new Error(`Verification command failed (${exitCode}): bun ${args.join(" ")}`);
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (verbose || exitCode !== 0) {
+    if (stdout) process.stdout.write(stdout);
+    if (stderr) process.stderr.write(stderr);
+  }
+  if (exitCode !== 0) throw new Error(`Verification command failed (${exitCode}): ${label}`);
 }
 
 try {

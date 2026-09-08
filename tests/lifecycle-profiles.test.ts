@@ -27,6 +27,9 @@ test("the local release gate runs verification before the account-bound Web smok
 
   const verify = readFileSync(resolve(repo, "scripts", "verify.ts"), "utf8");
   expect(verify).toContain('process.argv.includes("--live-web")');
+  expect(verify).toContain('process.argv.includes("--verbose")');
+  expect(verify).toContain('stdout: "pipe"');
+  expect(verify).toContain('if (verbose || exitCode !== 0)');
   expect(verify).toContain('"scripts/smoke-candidate-web.ts", runtimeBundle');
 
   for (const workflowName of ["ci.yml", "release.yml"]) {
