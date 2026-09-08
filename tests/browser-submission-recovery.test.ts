@@ -14,8 +14,14 @@ import { activateChatGptSendControl, readChatGptAssistantTurnState } from "../sr
 import { chatGptSuspensionClock } from "../src/adapters/chatgpt-web/browser-stage-lifecycle";
 
 type Recovery = (attempt: number, cause: Error, signal?: AbortSignal) => Promise<Page>;
-type State = { count: number; lastId?: string };
-type Baseline = { userTurns: Locator; responseTurns: Locator; initialUserTurnCount: number; initialResponseTurnCount: number };
+type State = { count: number; lastId?: string; identities?: readonly string[]; knownTurnIdentities?: readonly string[] };
+type Baseline = {
+  userTurns: Locator;
+  responseTurns: Locator;
+  initialUserTurnCount: number;
+  initialResponseTurnCount: number;
+  initialTurnIdentities: readonly string[];
+};
 interface Worker {
   activeComposer(page: Page): Promise<unknown>;
   assertPromptAttached(page: Page, prompt: string, signal?: AbortSignal): Promise<void>;
@@ -24,7 +30,7 @@ interface Worker {
     signal?: AbortSignal, activated?: () => void, progress?: ChatGptExternalTurnProgress, recover?: Recovery,
     expectedPrompt?: string): Promise<string>;
   waitForSubmissionAccepted(page: Page, users: Locator, responses: Locator, response: Locator,
-    userCount: number, initial: State, signal?: AbortSignal, progress?: ChatGptExternalTurnProgress,
+    userCount: number, initial: State, turnIdentities: readonly string[], signal?: AbortSignal, progress?: ChatGptExternalTurnProgress,
     initialRevision?: number, recover?: Recovery): Promise<string>;
   waitForNewAssistantTurn(page: Page, responses: Locator, initial: State, deadline?: number,
     signal?: AbortSignal, progress?: ChatGptExternalTurnProgress, grace?: number, recover?: Recovery): Promise<Locator>;
@@ -37,23 +43,75 @@ function surface(read: () => Promise<State>) {
     filter() { return this; }, last() { return this; }, getByText() { return this; },
     isVisible: async () => false, count: async () => 0,
   };
-  const users = { count: async () => 1 } as Locator;
+  const elements = (identities: readonly string[]) => identities.map(identity => ({
+    getAttribute: (name: string) => name.startsWith("data-turn-id") ? identity : null,
+    parentElement: null,
+  }));
+  const users = {
+    count: async () => 1,
+    evaluateAll: async (callback: (items: unknown[], name?: string) => unknown, name?: string) => (
+      callback(elements(["conversation-turn-old"]), name)
+    ),
+  } as unknown as Locator;
   const selected: string[] = [];
   const assistant = { ...hidden } as unknown as Locator;
+  let lastState: State = {
+    count: 1,
+    lastId: "conversation-turn-old",
+    identities: ["conversation-turn-old"],
+    knownTurnIdentities: ["conversation-turn-old"],
+  };
   const responses = {
-    evaluateAll: read, nth: () => assistant, page: () => page,
+    evaluateAll: async (callback: (items: unknown[], name?: string) => unknown, name?: string) => {
+      const observed = await read();
+      const identities = observed.identities ?? (observed.lastId ? [observed.lastId] : []);
+      lastState = {
+        ...observed,
+        identities,
+        knownTurnIdentities: observed.knownTurnIdentities
+          ?? [...new Set(["conversation-turn-old", ...identities])],
+      };
+      return callback(elements(identities), name);
+    },
+    nth: () => assistant, page: () => page,
   } as unknown as Locator;
   const page = {
     isClosed: () => false,
-    locator: (selector: string) => selector.includes('data-message-author-role="assistant"')
-      ? responses : selector.includes('data-message-author-role="user"') ? users : hidden,
+    locator: (selector: string) => {
+      if (selector.includes('data-message-author-role="assistant"')) return responses;
+      if (selector.includes('data-message-author-role="user"')) return users;
+      if (selector === "[data-turn-id-container]") {
+        return {
+          evaluateAll: async (callback: (items: unknown[], name?: string) => unknown, name?: string) => callback(
+            elements(lastState.knownTurnIdentities ?? ["conversation-turn-old", ...(lastState.identities ?? [])]),
+            name,
+          ),
+        };
+      }
+      if (selector.startsWith("[data-turn-id=")) {
+        selected.push(JSON.parse(selector.slice("[data-turn-id=".length, -1)));
+        return assistant;
+      }
+      return hidden;
+    },
     getByTestId: (id: string) => { selected.push(id); return assistant; },
   } as unknown as Page;
-  const baseline = { userTurns: users, responseTurns: responses, initialUserTurnCount: 1, initialResponseTurnCount: 1 };
+  const baseline = {
+    userTurns: users,
+    responseTurns: responses,
+    initialUserTurnCount: 1,
+    initialResponseTurnCount: 1,
+    initialTurnIdentities: ["conversation-turn-old"],
+  };
   return { page, responses, assistant, baseline, selected };
 }
 
-const initial = { count: 1, lastId: "conversation-turn-old" };
+const initial = {
+  count: 1,
+  lastId: "conversation-turn-old",
+  identities: ["conversation-turn-old"],
+  knownTurnIdentities: ["conversation-turn-old"],
+};
 const timeout = () => Promise.reject(new ChatGptBrowserObservationTimeoutError(5_000));
 const worker = () => Object.create(ChatGptBrowserWorker.prototype) as Worker;
 async function bounded<T>(operation: Promise<T>, ms: number): Promise<T> {
@@ -67,7 +125,7 @@ async function bounded<T>(operation: Promise<T>, ms: number): Promise<T> {
 const accepted = (instance: Worker, fixture: ReturnType<typeof surface>, signal?: AbortSignal,
   progress?: ChatGptExternalTurnProgress, recover?: Recovery) => instance.waitForSubmissionAccepted(
     fixture.page, fixture.baseline.userTurns, fixture.responses, fixture.assistant, 1, initial,
-    signal, progress, 0, recover,
+    fixture.baseline.initialTurnIdentities, signal, progress, 0, recover,
   );
 
 test("accepted send rebinds observation once without sending the prompt twice", async () => {
@@ -344,6 +402,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
       const userTurns = first.baseline.userTurns;
       const initialResponseTurn = initial;
       const initialUserTurnCount = 1;
+      const submissionBaseline = first.baseline;
       let retrySubmitted = () => events.push("retry-submitted");
       const toolTurnObservationRecovery = async () => {
         events.push("rebind");
