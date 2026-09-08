@@ -5,9 +5,9 @@ const os = require("node:os");
 const path = require("node:path");
 const { CURRENT_CONNECTOR_NAME, DEV_CONNECTOR_NAME } = require("../electron/connector-identity.cjs");
 const { RuntimeHost } = require("../electron/runtime.cjs");
-const { canCreateFileSymlink } = require("../../tests/support/symlink-capability.cjs");
+const { shouldRunFileSymlinkTests } = require("../../tests/support/symlink-capability.cjs");
 
-const supportsFileSymlinks = canCreateFileSymlink();
+const testFileSymlinks = shouldRunFileSymlinkTests();
 
 function hostFor(existingConfig) {
   const host = new RuntimeHost({
@@ -975,7 +975,7 @@ test("failed terminal migration verifies the unchanged previous runtime instead 
   assert.deepEqual(calls, ["preflight", "setup", "doctor"]);
 });
 
-test("failed launcher update restores every mutable setup file before restarting the previous runtime", { skip: !supportsFileSymlinks }, async () => {
+test("failed launcher update restores every mutable setup file before restarting the previous runtime", { skip: !testFileSymlinks }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-setup-checkpoint-"));
   const coreHome = path.join(root, "core");
   const codexHome = path.join(root, "codex");

@@ -17,4 +17,10 @@ function canCreateFileSymlink() {
   }
 }
 
-module.exports = { canCreateFileSymlink };
+function shouldRunFileSymlinkTests() {
+  if (!process.env.CI) return false;
+  if (!canCreateFileSymlink()) throw new Error("CI runner cannot create file symlinks");
+  return true;
+}
+
+module.exports = { shouldRunFileSymlinkTests };

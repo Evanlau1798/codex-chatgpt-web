@@ -1,1 +1,1 @@
-export function canCreateFileSymlink(): boolean;
+export function shouldRunFileSymlinkTests(): boolean;
