@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import type { Page } from "playwright-core";
-import { CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, CHATGPT_COMPLETION_SETTLE_MS, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, ChatGptCompletionTracker, chatGptExternalProgressSuppressesDomHealth, CHATGPT_RESPONSE_DOM_GRACE_MS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_COMPOSER_SELECT_ALL_KEY, CHATGPT_STOPPED_THINKING_GRACE_MS, ChatGptBrowserObservationTimeoutError, ChatGptBrowserWorker, ChatGptPromptAttachmentIntegrityError, ChatGptStoppedThinkingTracker, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_PAGE_REBINDS, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, chatGptConnectorAttachmentMode, chatGptNewTurnIdentity, chatGptReboundTurnIdentity, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, sanitizeChatGptBrowserDiagnosticState, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert, withChatGptBrowserObservationTimeout, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, ChatGptSuspensionClock, remainingStageBudgetMs } from "../src/adapters/chatgpt-web/browser-worker";
+import { CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, CHATGPT_COMPLETION_SETTLE_MS, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, ChatGptCompletionTracker, chatGptExternalProgressSuppressesDomHealth, CHATGPT_RESPONSE_DOM_GRACE_MS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_COMPOSER_SELECT_ALL_KEY, ChatGptBrowserObservationTimeoutError, ChatGptBrowserWorker, ChatGptPromptAttachmentIntegrityError, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_PAGE_REBINDS, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, chatGptConnectorAttachmentMode, chatGptNewTurnIdentity, chatGptReboundTurnIdentity, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, sanitizeChatGptBrowserDiagnosticState, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert, withChatGptBrowserObservationTimeout, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, ChatGptSuspensionClock, remainingStageBudgetMs } from "../src/adapters/chatgpt-web/browser-worker";
 import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/browser-worker";
 import { chatGptStoppedThinkingError } from "../src/adapters/chatgpt-web/adapter-error";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
@@ -2361,7 +2361,7 @@ test("an unrelated Continue dialog is never auto-accepted", async () => {
   expect(lookedForButton).toBeFalse();
 });
 
-function dialogPage(text: string, buttonText = "Got it"): { page: Page; pressed: string[] } {
+function dialogPage(text: string, buttonText = "Got it", errorActionVisible = false): { page: Page; pressed: string[] } {
   const pressed: string[] = [];
   const createDialog = () => {
     let matches = true;
@@ -2391,6 +2391,13 @@ function dialogPage(text: string, buttonText = "Got it"): { page: Page; pressed:
     page: {
       locator: () => createDialog(),
       getByText: (hasText: string | RegExp) => createDialog().filter({ hasText }),
+      getByTestId: (testId: string) => {
+        const action = {
+          last: () => action,
+          isVisible: async () => errorActionVisible && testId === "regenerate-thread-error-button",
+        };
+        return action;
+      },
     } as unknown as Page,
     pressed,
   };
@@ -2491,6 +2498,34 @@ test("the known terminal ChatGPT error alert returns a structured retryable fail
     code: "upstream_server_error",
     retryable: true,
   });
+  expect(fixture.pressed).toEqual([]);
+});
+
+test("the current response error action identifies short and localized failures without clicking Retry", async () => {
+  for (const text of [
+    "An error occurred while generating the response.",
+    "При создании ответа произошла ошибка.",
+  ]) {
+    const fixture = dialogPage(text, "Retry", true);
+    await expect(throwIfChatGptTerminalErrorAlert(fixture.page)).rejects.toMatchObject({
+      name: "ChatGptWebAdapterError",
+      code: "upstream_server_error",
+    });
+    expect(fixture.pressed).toEqual([]);
+    await throwIfChatGptTerminalErrorAlert(dialogPage(text, "Retry", false).page);
+  }
+});
+
+test("a previous response error cannot reject a newly accepted user submission", async () => {
+  const fixture = dialogPage("Something went wrong. Please see help.openai.com.", "Retry", true);
+  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    currentSubmissionEvidence: async () => "user_turn",
+  }) as {
+    waitForSubmissionAccepted(page: Page, baseline: unknown): Promise<string>;
+  };
+  await expect(worker.waitForSubmissionAccepted(fixture.page, {
+    responseTurns: { last: () => fixture.page },
+  })).resolves.toBe("user_turn");
   expect(fixture.pressed).toEqual([]);
 });
 
@@ -3249,20 +3284,11 @@ test("visible DOM trace emits one complete commentary paragraph before the next 
   expect(tracker.observe([...completed], false, 1_450)).toEqual([]);
 });
 
-test("persistent Stopped thinking is a terminal cancelled turn", () => {
-  expect(CHATGPT_STOPPED_THINKING_GRACE_MS).toBe(5_000);
-  const tracker = new ChatGptStoppedThinkingTracker();
-  expect(tracker.update(true, 1_000)).toBeFalse();
-  expect(tracker.update(true, 5_999)).toBeFalse();
-  expect(tracker.update(false, 6_000)).toBeFalse();
-  expect(tracker.update(true, 10_000)).toBeFalse();
-  expect(tracker.update(true, 15_000)).toBeTrue();
-  expect(chatGptStoppedThinkingError()).toMatchObject({
-    status: 499,
-    errorType: "client_closed_request",
-    code: "client_cancelled",
-    retryable: false,
-  });
+test("Stopped thinking is an explicit upstream error, not a user cancellation or a proven quota error", () => {
+  const error = chatGptStoppedThinkingError();
+  expect(error).toMatchObject({ status: 502, errorType: "server_error", code: "chatgpt_stopped_thinking", retryable: false });
+  expect(error.message).toContain("usage limit may have been reached");
+  expect(error.message).not.toContain("5 seconds");
 });
 
 test("visible DOM trace keeps a complete action phrase instead of a nested count", () => {
@@ -3467,11 +3493,15 @@ test("the launcher helper transport carries MCP progress into the out-of-process
   expect(helper).toMatch(/externalProgress: progress/);
 });
 
-test("turn cancellation heuristics defer to proven MCP progress in both wait loops", () => {
+test("both response loops check explicit Stopped thinking before acknowledging further MCP work", () => {
   const worker = readFileSync("src/adapters/chatgpt-web/browser-worker.ts", "utf8");
-  // A stale "Stopped thinking" label must not cancel a turn that is still driving tool calls, and
-  // the multipart staging loop must not be the one place that skips the liveness guard.
-  expect((worker.match(/stoppedThinkingTracker\.clear\(\)/g) ?? []).length).toBe(2);
+  for (const method of ["private async waitForMultipartAcknowledgement(", "private async runBrowserTurn("]) {
+    const loop = worker.slice(worker.indexOf(method));
+    const failure = loop.indexOf("if (snapshot.stoppedThinkingVisible) throw chatGptStoppedThinkingError();");
+    const acknowledgement = loop.indexOf(".acknowledgeToolBatch(", failure);
+    expect(failure).toBeGreaterThan(0);
+    expect(acknowledgement).toBeGreaterThan(failure);
+  }
   expect((worker.match(/domHealthTracker\.clearMissingResponse\(\)/g) ?? []).length).toBe(2);
 });
 
@@ -3606,19 +3636,23 @@ test("the daemon prefers the browser helper that shipped beside its own entrypoi
 });
 
 
-test("proven progress forgets a Stopped thinking window rather than merely ignoring it", () => {
-  const tracker = new ChatGptStoppedThinkingTracker(5_000);
-
-  // The label appears while a tool call is outstanding. Clearing progress also clears the window,
-  // so the next observation starts a new grace period.
-  expect(tracker.update(true, 1_000)).toBeFalse();
-  expect(tracker.update(true, 3_000)).toBeFalse();
-  tracker.clear();
-
-  // Progress has ended and the window starts again from here, not from the original sighting.
-  expect(tracker.update(true, 6_500)).toBeFalse();
-  expect(tracker.update(true, 11_499)).toBeFalse();
-  expect(tracker.update(true, 11_500)).toBeTrue();
+test("multipart observation surfaces Stopped thinking on its first observation even with live MCP work", async () => {
+  const absent = { last() { return this; }, filter() { return this; }, isVisible: async () => false };
+  const page = { isClosed: () => false, locator: () => absent };
+  const binding = { locator: { getByText: () => absent, getByTestId: () => absent } };
+  const snapshot = { responsePresent: true, stoppedThinkingVisible: true, visibleText: "", completionActionVisible: false };
+  let observations = 0;
+  let acknowledged = false;
+  const progress = {
+    snapshot: () => ({ revision: 1, lastToolBatchRevision: 1, activeToolCalls: 1, lastProgressAt: Date.now() }),
+    acknowledgeToolBatch: async () => { acknowledged = true; },
+  };
+  const observe = (ChatGptBrowserWorker.prototype as any).waitForMultipartAcknowledgement;
+  await expect(observe.call({ responseDomSnapshot: async () => { observations += 1; return snapshot; } },
+    page, binding, {}, {}, Date.now() + 1_000, undefined, progress,
+  )).rejects.toMatchObject({ code: "chatgpt_stopped_thinking", retryable: false });
+  expect(observations).toBe(1);
+  expect(acknowledged).toBeFalse();
 });
 
 test("the shipped commentary classifier separates answer Markdown from reasoning in a real DOM", () => {

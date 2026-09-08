@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -99,6 +100,31 @@ test("installed launcher discovery has explicit platform candidates", () => {
   })).toEqual([
     "D:\\Apps\\Codex Web GPT\\Codex Web GPT.exe",
   ]);
+});
+
+test("injected Windows discovery avoids the live registry while ordinary discovery still uses it", () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const registry = spyOn(childProcess, "execFileSync").mockImplementation((() =>
+    "    InstallLocation    REG_SZ    D:\\Installed\\Codex Web GPT\n"
+  ) as unknown as typeof childProcess.execFileSync);
+  Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+  try {
+    expect(installedLauncherCandidates({
+      platform: "win32",
+      environment: { LOCALAPPDATA: "C:\\Fixture\\AppData\\Local" },
+    })).toEqual(["C:\\Fixture\\AppData\\Local\\Programs\\Codex Web GPT\\Codex Web GPT.exe"]);
+    expect(registry).not.toHaveBeenCalled();
+    expect(installedLauncherCandidates({ platform: "win32", environment: process.env }))
+      .toEqual(["D:\\Installed\\Codex Web GPT\\Codex Web GPT.exe"]);
+    expect(registry).toHaveBeenCalledTimes(1);
+    expect(installedLauncherCandidates({
+      platform: "win32", environment: {}, windowsInstallLocation: "E:\\Explicit",
+    })).toEqual(["E:\\Explicit\\Codex Web GPT.exe"]);
+    expect(registry).toHaveBeenCalledTimes(1);
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    registry.mockRestore();
+  }
 });
 
 test("DEV launcher child cannot inherit production home or browser-profile overrides", () => {

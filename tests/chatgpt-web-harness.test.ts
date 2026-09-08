@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildResponseJSON } from "../src/bridge";
-import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
+import { ChatGptWebAdapterError, chatGptStoppedThinkingError } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptCompletionTracker, chatGptImageFilePayloads, chatGptPromptFilePayloads, chatGptTurnIsComplete } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { chatGptConversationKey } from "../src/adapters/chatgpt-web/conversation-key";
@@ -1195,6 +1195,37 @@ describe("ChatGPT outer-native harness v4", () => {
       expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
     } finally {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      await TurnBroker.forSocket(socketPath).close();
+    }
+  });
+
+  test("Stopped thinking reaches the native response as a failed upstream turn without an automatic retry", async () => {
+    const socketPath = brokerTestEndpoint(`cgw-stopped-thinking-${process.pid}-${Date.now()}`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web", baseUrl: `browser://stopped-thinking-${Date.now()}`,
+      chatgptWeb: { brokerSocketPath: socketPath, localToolsEnabled: false, solAvailable: true, proAvailable: true },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run;
+    let browserStarts = 0;
+    worker.run = async turn => {
+      browserStarts += 1;
+      turn.onSendActivated?.();
+      throw chatGptStoppedThinkingError();
+    };
+    try {
+      const events: AdapterEvent[] = [];
+      await createChatGptWebAdapter(provider).runTurn!(rawWireRequest(environmentXml),
+        { headers: new Headers() }, event => events.push(event));
+      expect(events.at(-1)).toMatchObject({ type: "error", code: "chatgpt_stopped_thinking", status: 502, retryable: false });
+      const response = buildResponseJSON(events, CHATGPT_WEB_MODEL_ID);
+      expect(response).toMatchObject({ status: "failed", retryable: false,
+        error: { type: "server_error", code: "chatgpt_stopped_thinking" } });
+      expect(JSON.stringify(response)).toContain("usage limit may have been reached");
+      expect(browserStarts).toBe(1);
+      expect(events.some(event => event.type === "done")).toBeFalse();
+    } finally {
+      worker.run = originalRun;
       await TurnBroker.forSocket(socketPath).close();
     }
   });
@@ -2541,6 +2572,11 @@ describe("ChatGPT outer-native harness v4", () => {
   test("serves the complete outer-native bridge contract over MCP stdio", async () => {
     const socketPath = brokerTestEndpoint(`cgw-h3-mcp-${process.pid}-${Date.now()}`);
     const broker = TurnBroker.forSocket(socketPath);
+    const agentWaits = [
+      { name: "multi_agent_v1__wait_agent", args: { targets: ["agent_test"], timeout_ms: 30_000 }, result: { statuses: {} }, direct: true },
+      { name: "multi_agent_v2__wait_agent", args: { targets: [{ agent_id: "agent_test" }], timeout_ms: 30_000 }, result: { statuses: {} }, direct: false },
+      { name: "collaboration__wait_agent", args: { timeout_ms: 30_000 }, result: { message: "Wait timed out.", timed_out: true }, direct: true },
+    ];
     const gatewayOnlyEnvironment = extractChatGptTurnEnvironment(parsed(environmentXml));
     gatewayOnlyEnvironment.tools = [
       { name: "exec", description: "Run nested Codex tools, including exec_command", parameters: {}, freeform: true },
@@ -2558,6 +2594,13 @@ describe("ChatGPT outer-native harness v4", () => {
           },
           required: ["targets"],
           additionalProperties: false,
+        },
+      },
+      {
+        name: "wait_agent", namespace: "collaboration", description: "Wait for mailbox activity.",
+        parameters: {
+          type: "object", additionalProperties: false,
+          properties: { timeout_ms: { type: "number", default: 180_000 } },
         },
       },
     ];
@@ -2741,27 +2784,6 @@ describe("ChatGPT outer-native harness v4", () => {
         next_offset: null,
       });
 
-      const rejectedRawGateway = call("codex_tool_call", {
-        turn_token: token,
-        wire_name: "exec",
-        input: "await tools.multi_agent_v1__wait_agent({ targets: ['agent_test'], timeout_ms: 180000 });",
-      });
-      const [rejectedRawGatewayRequest] = await broker.nextToolBatch(token);
-      expect(rejectedRawGatewayRequest).toMatchObject({ wireName: "exec", freeform: true });
-      const rejectedRawGatewayCalls: GatewayProgramCall[] = [];
-      await expect(executeGatewayProgram(
-        rejectedRawGatewayRequest!.input!,
-        ["multi_agent_v1__wait_agent"],
-        rejectedRawGatewayCalls,
-      )).rejects.toThrow("requires timeout_ms=10000");
-      expect(rejectedRawGatewayCalls).toEqual([]);
-      const guardedError = "ChatGPT Web wait_agent requires timeout_ms=10000";
-      broker.completeTool(token, rejectedRawGatewayRequest!.callId, {
-        content: [{ type: "text", text: guardedError }],
-        isError: true,
-      });
-      expect((await rejectedRawGateway).isError).toBe(true);
-
       const rawWeb = call("codex_tool_call", {
         turn_token: token,
         wire_name: "exec",
@@ -2886,76 +2908,57 @@ describe("ChatGPT outer-native harness v4", () => {
       broker.completeTool(token, waitRequest!.callId, toolResult({ output: "completed" }));
       expect((await waitPromise).structuredContent).toEqual({ output: "completed" });
 
-      const agentInventory = await inventoryThroughGateway(
-        "wait_agent",
-        true,
-        ["multi_agent_v1__wait_agent"],
-      );
-      expect(agentInventory.structuredContent).toMatchObject({
-        total: 1,
-        tools: [{
-          wire_name: "multi_agent_v1__wait_agent",
-          description: expect.stringContaining("exactly 10 seconds"),
-          parameters: {
-            properties: {
-              timeout_ms: { const: 10_000, minimum: 10_000, maximum: 10_000 },
-            },
-            required: ["targets", "timeout_ms"],
-          },
-        }],
-      });
+      for (const wait of agentWaits) {
+        const inventory = await inventoryThroughGateway(wait.name, true, [wait.name]);
+        const catalog = inventory.structuredContent as { tools: Array<{ description: string; parameters: { properties: Record<string, unknown>; required: string[] } }> };
+        expect(catalog.tools).toHaveLength(1);
+        expect(catalog.tools[0]!.description).toContain("exactly 30 seconds");
+        expect(catalog.tools[0]!.description).not.toContain("target ids");
+        if (wait.direct) {
+          const schema = catalog.tools[0]!.parameters;
+          expect(schema.properties.timeout_ms).toEqual({
+            type: "number", const: 30_000, minimum: 30_000, maximum: 30_000,
+            description: expect.stringContaining("exactly 30000"),
+          });
+          expect(schema.required).toEqual("targets" in wait.args ? ["targets", "timeout_ms"] : ["timeout_ms"]);
+          expect(Object.keys(schema.properties).sort()).toEqual(schema.required.toSorted());
+        }
+        for (const args of [{}, { timeout_ms: 180_000 }, { timeout_ms: "30000" }]) {
+          const rejected = await call("codex_tool_call", { turn_token: token, wire_name: wait.name, arguments: args });
+          expect(rejected.isError).toBe(true);
+          expect(JSON.stringify(rejected.content)).toContain("requires timeout_ms=30000");
+        }
+        const pending = call("codex_tool_call", { turn_token: token, wire_name: wait.name, arguments: wait.args });
+        const [request] = await broker.nextToolBatch(token);
+        if (wait.direct) {
+          expect(request).toMatchObject({ wireName: wait.name, arguments: wait.args });
+        } else {
+          const calls: GatewayProgramCall[] = [];
+          await executeGatewayProgram(request!.input!, [wait.name], calls);
+          expect(calls).toEqual([{ name: wait.name, input: wait.args }]);
+        }
+        broker.completeTool(token, request!.callId, toolResult(wait.result));
+        expect((await pending).structuredContent).toEqual(wait.result);
 
-      const rejectedLongWait = await call("codex_tool_call", {
-        turn_token: token,
-        wire_name: "multi_agent_v1__wait_agent",
-        arguments: { targets: ["agent_test"], timeout_ms: 3_600_000 },
-      });
-      expect(rejectedLongWait.isError).toBe(true);
-      expect(JSON.stringify(rejectedLongWait.content)).toContain("requires timeout_ms=10000");
-
-      const agentWait = call("codex_tool_call", {
-        turn_token: token,
-        wire_name: "multi_agent_v1__wait_agent",
-        arguments: { targets: ["agent_test"], timeout_ms: 10_000 },
-      });
-      const [agentWaitRequest] = await broker.nextToolBatch(token);
-      expect(agentWaitRequest).toMatchObject({
-        wireName: "multi_agent_v1__wait_agent",
-        arguments: { targets: ["agent_test"], timeout_ms: 10_000 },
-      });
-      broker.completeTool(token, agentWaitRequest!.callId, toolResult({ statuses: {} }));
-      expect((await agentWait).structuredContent).toEqual({ statuses: {} });
-
-      const rejectedNestedLongWait = await call("codex_tool_call", {
-        turn_token: token,
-        wire_name: "multi_agent_v2__wait_agent",
-        arguments: { targets: [{ agent_id: "agent_test" }], timeout_ms: 180_000 },
-      });
-      expect(rejectedNestedLongWait.isError).toBe(true);
-      expect(JSON.stringify(rejectedNestedLongWait.content)).toContain("requires timeout_ms=10000");
-
-      const nestedAgentWait = call("codex_tool_call", {
-        turn_token: token,
-        wire_name: "multi_agent_v2__wait_agent",
-        arguments: { targets: [{ agent_id: "agent_test" }], timeout_ms: 10_000 },
-      });
-      const [nestedAgentWaitRequest] = await broker.nextToolBatch(token);
-      expect(nestedAgentWaitRequest).toMatchObject({ wireName: "exec", freeform: true });
-      const nestedAgentWaitCalls: GatewayProgramCall[] = [];
-      const nestedAgentWaitContent = await executeGatewayProgram(
-        nestedAgentWaitRequest!.input!,
-        ["multi_agent_v2__wait_agent"],
-        nestedAgentWaitCalls,
-      );
-      expect(nestedAgentWaitCalls).toEqual([{
-        name: "multi_agent_v2__wait_agent",
-        input: { targets: [{ agent_id: "agent_test" }], timeout_ms: 10_000 },
-      }]);
-      broker.completeTool(token, nestedAgentWaitRequest!.callId, { content: nestedAgentWaitContent });
-      expect((await nestedAgentWait).content).toEqual([{
-        type: "text",
-        text: JSON.stringify({ output: "multi_agent_v2__wait_agent", exit_code: 0 }),
-      }]);
+        for (const timeout_ms of [180_000, 30_000]) {
+          const args = { ...wait.args, timeout_ms };
+          const raw = call("codex_tool_call", {
+            turn_token: token, wire_name: "exec", input: `await tools.${wait.name}(${JSON.stringify(args)});`,
+          });
+          const [request] = await broker.nextToolBatch(token);
+          const calls: GatewayProgramCall[] = [];
+          const execution = executeGatewayProgram(request!.input!, [wait.name], calls);
+          if (timeout_ms === 180_000) {
+            await expect(execution).rejects.toThrow("requires timeout_ms=30000");
+            expect(calls).toEqual([]);
+          } else {
+            await execution;
+            expect(calls).toEqual([{ name: wait.name, input: args }]);
+          }
+          broker.completeTool(token, request!.callId, { ...toolResult(wait.result), isError: timeout_ms === 180_000 });
+          expect(Boolean((await raw).isError)).toBe(timeout_ms === 180_000);
+        }
+      }
 
     } finally {
       await client.close().catch(() => {});

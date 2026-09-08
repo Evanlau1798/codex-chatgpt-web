@@ -2289,6 +2289,7 @@ class BrowserHost {
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
     this.logger.info("browser.tab_created", { tabId: tab.id, traceId, tabCount: this.turnTabs.size });
+    this.writeDescriptor();
     return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false, connectorBound: false };
   }
 
@@ -2841,8 +2842,19 @@ class BrowserHost {
   }
 
   writeDescriptor() {
+    const surfaceTargets = {};
+    if (browserInteractionModeFor(this) === "automatic") {
+      const surfaces = [[this.surfaceId, this.view?.webContents],
+        ...[...this.turnTabs.values()].filter(tab => tab.interactionMode === "automatic")
+          .map(tab => [tab.surfaceId, tab.view.webContents])];
+      for (const [surfaceId, contents] of surfaces) {
+        if (!contents || contents.isDestroyed()) continue;
+        if (Object.hasOwn(surfaceTargets, surfaceId)) throw new Error("Browser surface ownership is duplicated");
+        surfaceTargets[surfaceId] = contents.getOrCreateDevToolsTargetId();
+      }
+    }
     const descriptor = {
-      version: 2,
+      version: 3,
       kind: "codex-web-gpt-launcher",
       profile: this.profile,
       pid: process.pid,
@@ -2852,6 +2864,7 @@ class BrowserHost {
       partition: this.partition,
       idleUrl: IDLE_BROWSER_URL,
       surfaceId: this.surfaceId,
+      surfaceTargets,
       createdAt: new Date().toISOString(),
     };
     writePrivateFileAtomic(this.descriptorPath, `${JSON.stringify(descriptor, null, 2)}\n`);

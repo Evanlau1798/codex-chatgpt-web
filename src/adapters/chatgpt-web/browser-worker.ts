@@ -51,6 +51,7 @@ import {
   CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   CHATGPT_EFFORT_ITEM_SELECTOR,
+  CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
   CHATGPT_STOP_BUTTON_SELECTOR,
   CHATGPT_TEMPORARY_CHAT_URL,
   CHATGPT_USER_TURN_SELECTOR,
@@ -736,7 +737,7 @@ export async function dismissChatGptTemporaryChatOnboarding(page: Page): Promise
   return true;
 }
 
-type ChatGptTextScope = Pick<Locator, "getByText">;
+type ChatGptTextScope = Pick<Locator, "getByText" | "getByTestId">;
 
 const chatGptSubscriptionFailureAlert = (page: Page): Locator => page
   .locator('[role="alert"]')
@@ -767,6 +768,12 @@ const chatGptTerminalErrorAlert = (scope: ChatGptTextScope): Locator => scope
   .last();
 
 export async function throwIfChatGptTerminalErrorAlert(scope: ChatGptTextScope): Promise<void> {
+  if (await scope.getByTestId("regenerate-thread-error-button").last().isVisible().catch(() => false)) {
+    throw new ChatGptWebAdapterError(
+      "ChatGPT displayed an error for this response. Check the ChatGPT tab for the exact error, then retry the turn.",
+      { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
+    );
+  }
   if (!await chatGptTerminalErrorAlert(scope).isVisible().catch(() => false)) return;
   throw new ChatGptWebAdapterError(
     "ChatGPT ended the turn with 'Something went wrong'. Retry the turn.",
@@ -1511,8 +1518,6 @@ export class ChatGptTurnDomHealthTracker {
   }
 }
 
-export const CHATGPT_STOPPED_THINKING_GRACE_MS = 5_000;
-
 /**
  * Consecutive internal observation faults tolerated before a turn is abandoned.
  *
@@ -1548,36 +1553,6 @@ export function chatGptExternalProgressSuppressesDomHealth(
   // only precede the observation, so anything meaningfully ahead of now is not evidence at all.
   return age >= -CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS
     && age < CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS;
-}
-
-export class ChatGptStoppedThinkingTracker {
-  private visibleSince?: number;
-
-  /**
-   * Forgets an in-progress "Stopped thinking" window.
-   *
-   * Suppressing only the throw let the window keep accruing while a tool call was outstanding, so
-   * the first observation after progress ended cancelled the turn instantly. Proven activity must
-   * reset the evidence, not merely postpone acting on it.
-   */
-  clear(): void {
-    this.visibleSince = undefined;
-  }
-
-  constructor(private readonly graceMs = CHATGPT_STOPPED_THINKING_GRACE_MS) {
-    if (!Number.isFinite(graceMs) || graceMs < 0) {
-      throw new Error("ChatGPT Stopped thinking grace must be a non-negative finite number");
-    }
-  }
-
-  update(visible: boolean, now = Date.now()): boolean {
-    if (!visible) {
-      this.visibleSince = undefined;
-      return false;
-    }
-    this.visibleSince ??= now;
-    return now - this.visibleSince >= this.graceMs;
-  }
 }
 
 export interface ChatGptVisibleTraceBlock {
@@ -1778,7 +1753,11 @@ class ChatGptBrowserDiagnostics {
           composerSelector,
           effortControlSelector,
           effortItemSelector,
+          effortSliderContainerSelector,
           assistantTurnSelector,
+          userTurnSelector,
+          stopButtonSelector,
+          completionActionSelector,
           appName,
         }) => {
           const rendered = (element: Element): boolean => {
@@ -1821,6 +1800,11 @@ class ChatGptBrowserDiagnostics {
           const exactConnectorRows = [...document.querySelectorAll('.__menu-item[tabindex="0"]')]
             .filter(element => rendered(element) && exactText(element, appName));
           const currentUrl = new URL(location.href);
+          const integerAttribute = (element: Element, name: string): number | null => {
+            const raw = element.getAttribute(name);
+            return raw !== null && /^-?\d+$/.test(raw) && Number.isSafeInteger(Number(raw))
+              ? Number(raw) : null;
+          };
           return {
             location: {
               origin: currentUrl.origin,
@@ -1856,6 +1840,14 @@ class ChatGptBrowserDiagnostics {
             },
             effortControls: rows(effortControlSelector, 10),
             effortItems: rows(effortItemSelector, 20),
+            effortSliders: [...document.querySelectorAll(effortSliderContainerSelector)]
+              .filter(rendered).slice(-10)
+              .flatMap(container => [...container.querySelectorAll('[role="slider"]')])
+              .map(element => ({
+                min: integerAttribute(element, "aria-valuemin"),
+                max: integerAttribute(element, "aria-valuemax"),
+                value: integerAttribute(element, "aria-valuenow"),
+              })),
             menus: rows('[role="menu"], [role="listbox"], [data-testid="composer-intelligence-picker-content"]', 20),
             connectorRows: exactConnectorRows.slice(-20).map(element => {
               const rect = element.getBoundingClientRect();
@@ -1870,10 +1862,16 @@ class ChatGptBrowserDiagnostics {
             }),
             overlays: rows('[role="dialog"], [role="alert"], [role="status"]', 30),
             turns: {
-              user: document.querySelectorAll('[data-testid^="conversation-turn-"][data-message-author-role="user"]').length,
+              user: document.querySelectorAll(userTurnSelector).length,
+              stopButtonCount: [...document.querySelectorAll(stopButtonSelector)].filter(rendered).length,
               assistant: assistantTurns.map(element => ({
                 textChars: (element.textContent ?? "").length,
                 htmlChars: (element as HTMLElement).innerHTML.length,
+                markdownCount: element.querySelectorAll(".markdown").length,
+                streamingStatusCount: element.querySelectorAll("[data-streaming-response-status]").length,
+                completionActionCount: element.querySelectorAll(completionActionSelector).length,
+                renderedCompletionActionCount: [...element.querySelectorAll(completionActionSelector)]
+                  .filter(rendered).length,
               })),
             },
           };
@@ -1881,7 +1879,11 @@ class ChatGptBrowserDiagnostics {
           composerSelector: CHATGPT_COMPOSER_SELECTOR,
           effortControlSelector: CHATGPT_EFFORT_CONTROL_SELECTOR,
           effortItemSelector: CHATGPT_EFFORT_ITEM_SELECTOR,
+          effortSliderContainerSelector: CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
           assistantTurnSelector: CHATGPT_ASSISTANT_TURN_SELECTOR,
+          userTurnSelector: CHATGPT_USER_TURN_SELECTOR,
+          stopButtonSelector: CHATGPT_STOP_BUTTON_SELECTOR,
+          completionActionSelector: CHATGPT_COMPLETION_ACTION_SELECTOR,
           appName: this.appName,
         })),
       ]);
@@ -2580,7 +2582,8 @@ export class ChatGptBrowserWorker {
       if (progress && progress.lastToolBatchRevision > initialToolBatchRevision) return "mcp_tool_call";
       await throwIfChatGptSessionFailureAlert(page);
       await throwIfChatGptRateLimitDialog(page);
-      await throwIfChatGptTerminalErrorAlert(baseline.responseTurns.last());
+      // Until the new response is bound, last() can still be a historical failed answer.
+      // Response errors are checked against the bound current turn in the observation loops.
       let evidence: ChatGptSubmissionEvidence | undefined;
       if (externalProgress) {
         const progressWaitAbort = new AbortController();
@@ -3407,7 +3410,6 @@ export class ChatGptBrowserWorker {
     const domHealthTracker = new ChatGptTurnDomHealthTracker(
       CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS,
     );
-    const stoppedThinkingTracker = new ChatGptStoppedThinkingTracker();
     const responseDomCache: ChatGptResponseDomCache = {};
     let responseTurn = initialResponseTurn;
     for (;;) {
@@ -3437,6 +3439,7 @@ export class ChatGptBrowserWorker {
           snapshot = await this.responseDomSnapshot(responseTurn.locator, responseDomCache);
         }
       }
+      if (snapshot.stoppedThinkingVisible) throw chatGptStoppedThinkingError();
       const externalProgressSnapshot = externalProgress?.snapshot();
       if (externalProgress
         && externalProgressSnapshot
@@ -3452,10 +3455,6 @@ export class ChatGptBrowserWorker {
         Date.now(),
       );
       const externalToolCallsInFlight = chatGptExternalToolCallsAreInFlight(externalProgressSnapshot);
-      if (externalProgressLive) stoppedThinkingTracker.clear();
-      else if (stoppedThinkingTracker.update(snapshot.stoppedThinkingVisible)) {
-        throw chatGptStoppedThinkingError();
-      }
       if (!snapshot.responsePresent && externalProgressLive) {
         // Proven MCP activity outranks a momentarily unavailable staging DOM, exactly as it does
         // in the main turn loop.
@@ -4067,14 +4066,24 @@ export class ChatGptBrowserWorker {
         } : {}),
       }));
       const stoppedThinkingVisible = (() => {
+        // Only ChatGPT UI in the bound response may terminate the turn. A model quoting this
+        // phrase in its answer or reasoning is ordinary content, not a stopped-thinking status.
+        const isStatus = (candidate: HTMLElement): boolean => {
+          if (overlapsRenderedAnswer(candidate) || overlapsCommentary(candidate)
+            || candidate.closest("pre, code, blockquote")) return false;
+          for (let element: HTMLElement | null = candidate; element; element = element.parentElement) {
+            if (!renderedInDom(element)) return false;
+          }
+          return true;
+        };
         const ariaMatch = [...root.querySelectorAll<HTMLElement>('[aria-label="Stopped thinking"]')]
-          .some(renderedInDom);
+          .some(isStatus);
         if (ariaMatch) return true;
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
           if (node.textContent?.replace(/\s+/g, " ").trim() !== "Stopped thinking") continue;
           const parent = node.parentElement;
-          if (parent && renderedInDom(parent)) return true;
+          if (parent && isStatus(parent)) return true;
         }
         return false;
       })();
@@ -4757,7 +4766,6 @@ export class ChatGptBrowserWorker {
         });
       };
       const domHealthTracker = new ChatGptTurnDomHealthTracker();
-      const stoppedThinkingTracker = new ChatGptStoppedThinkingTracker();
       const responseDomCache: ChatGptResponseDomCache = {};
       let consecutiveObservationRebinds = 0;
       let internalObservationFaults = 0;
@@ -4842,6 +4850,7 @@ export class ChatGptBrowserWorker {
             continue;
           }
         }
+        if (snapshot.stoppedThinkingVisible) throw chatGptStoppedThinkingError();
         if (snapshot.responsePresent) consecutiveObservationRebinds = 0;
         // The page was read successfully, so the fault budget is genuinely consecutive even when
         // this iteration goes on to `continue` for a rebind, confirmation, or liveness pause.
@@ -4864,12 +4873,6 @@ export class ChatGptBrowserWorker {
           Date.now(),
         );
         const externalToolCallsInFlight = chatGptExternalToolCallsAreInFlight(externalProgressSnapshot);
-        // A stale "Stopped thinking" label is not terminal while the model is still driving tool
-        // calls, and the window must be forgotten rather than merely ignored.
-        if (externalProgressLive) stoppedThinkingTracker.clear();
-        else if (stoppedThinkingTracker.update(snapshot.stoppedThinkingVisible)) {
-          throw chatGptStoppedThinkingError();
-        }
         if (!snapshot.responsePresent && externalProgressLive) {
           // Current-turn MCP activity proves that ChatGPT is still executing even if its renderer
           // temporarily cannot expose the response subtree. DOM remains authoritative for text and

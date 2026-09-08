@@ -30,11 +30,14 @@ const BRIDGE_TOOL_NAMES = new Set([
 const GATEWAY_AGENT_WAIT_TOOL_NAMES = new Set([
   "multi_agent_v1__wait_agent",
   "multi_agent_v2__wait_agent",
+  "collaboration__wait_agent",
 ]);
 
 const turnTokenSchema = z.string().min(20).max(256);
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
-export const CHATGPT_WEB_AGENT_WAIT_POLL_MS = 10_000;
+// Match Codex's default wait interval while returning before the MCP invocation deadline.
+export const CHATGPT_WEB_AGENT_WAIT_POLL_MS = 30_000;
+const AGENT_WAIT_TRANSPORT_RULE = `ChatGPT Web transport rule: wait for exactly ${CHATGPT_WEB_AGENT_WAIT_POLL_MS / 1_000} seconds per call, matching the Codex default, then release the MCP channel so spawned Web agents can use their own tools. A wait timeout is not task completion; check agent progress and wait again if needed. Keep the native tool's declared arguments.`;
 // The OpenAI tunnel currently owns a two-minute command-response deadline. The local MCP server
 // must settle first so an abandoned native tool call is returned as an MCP error instead of
 // letting the tunnel tear down and poison its long-lived stdio transport.
@@ -135,8 +138,7 @@ function safeVisibleTools(environment: ChatGptTurnEnvironment, contract: ChatGpt
 }
 
 function isAgentWaitTool(tool: CodexTool): boolean {
-  return tool.name === "wait_agent"
-    && (tool.namespace === "multi_agent_v1" || tool.namespace === "multi_agent_v2");
+  return isGatewayAgentWaitTool(wireName(tool));
 }
 
 function isGatewayAgentWaitTool(name: string): boolean {
@@ -144,10 +146,9 @@ function isGatewayAgentWaitTool(name: string): boolean {
 }
 
 function browserToolDescription(tool: CodexTool): string {
-  const waitRule = "ChatGPT Web transport rule: wait for exactly 10 seconds per call, then release the MCP channel so spawned Web agents can use their own tools. Repeat with the same target ids until a terminal status is returned.";
-  if (isAgentWaitTool(tool)) return `${tool.description}\n\n${waitRule}`;
+  if (isAgentWaitTool(tool)) return `${tool.description}\n\n${AGENT_WAIT_TRANSPORT_RULE}`;
   if (!tool.namespace && tool.name === "exec") {
-    return `${tool.description}\n\n${waitRule} This rule is enforced for wait_agent calls made inside exec; recursive raw exec is unavailable.`;
+    return `${tool.description}\n\n${AGENT_WAIT_TRANSPORT_RULE} This rule is enforced for wait_agent calls made inside exec; recursive raw exec is unavailable.`;
   }
   return tool.description;
 }
@@ -161,6 +162,8 @@ function browserToolParameters(tool: CodexTool): Record<string, unknown> {
   const timeout = properties.timeout_ms && typeof properties.timeout_ms === "object" && !Array.isArray(properties.timeout_ms)
     ? properties.timeout_ms as Record<string, unknown>
     : {};
+  // The cloned native schema must not advertise a default that contradicts our required interval.
+  delete timeout.default;
   const required = Array.isArray(parameters.required)
     ? parameters.required.filter((value): value is string => typeof value === "string")
     : [];
@@ -174,7 +177,7 @@ function browserToolParameters(tool: CodexTool): Record<string, unknown> {
         const: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
         minimum: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
         maximum: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
-        description: "Required transport-safe polling interval. Use exactly 10000 and repeat the same targets until completion.",
+        description: `Required transport-safe polling interval. Use exactly ${CHATGPT_WEB_AGENT_WAIT_POLL_MS}; a timed-out wait does not mean the agents have finished.`,
       },
     },
     required: [...new Set([...required, "timeout_ms"])],
@@ -245,7 +248,7 @@ interface GatewayToolCatalogPage {
 
 function gatewayToolDescription(tool: GatewayToolDescriptor): string {
   if (!isGatewayAgentWaitTool(tool.name)) return tool.description;
-  return `${tool.description}\n\nChatGPT Web transport rule: wait for exactly 10 seconds per call, then release the MCP channel so spawned Web agents can use their own tools. Repeat with the same target ids until a terminal status is returned.`;
+  return `${tool.description}\n\n${AGENT_WAIT_TRANSPORT_RULE}`;
 }
 
 function gatewayToolCatalogProgram(options: {
@@ -365,7 +368,7 @@ function execGatewayProgram(
 /**
  * Preserve the native freeform exec surface while applying the same wait_agent deadline contract
  * as direct calls. The model still owns its JavaScript; only the tool registry it receives is a
- * transparent proxy whose two wait functions validate their transport-bound argument before dispatch.
+ * transparent proxy whose native wait functions validate their transport-bound argument before dispatch.
  */
 function transportBoundRawExecProgram(input: string, blockedExecName: string): string {
   return [

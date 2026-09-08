@@ -37,7 +37,7 @@ export class LauncherManualTurnFailedError extends Error {
 }
 
 export interface LauncherBrowserHostDescriptor {
-  version: 2;
+  version: 3;
   kind: typeof LAUNCHER_BROWSER_HOST_KIND;
   profile: LauncherBrowserHostProfile;
   pid: number;
@@ -53,6 +53,7 @@ export interface LauncherBrowserHostDescriptor {
   partition: string;
   idleUrl: string;
   surfaceId: string;
+  surfaceTargets: Record<string, string>;
   createdAt: string;
 }
 
@@ -82,8 +83,8 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     throw new Error("Launcher browser descriptor is not an object");
   }
   const descriptor = value as Partial<LauncherBrowserHostDescriptor>;
-  if (descriptor.version !== 2 || descriptor.kind !== LAUNCHER_BROWSER_HOST_KIND) {
-    throw new Error("Launcher browser descriptor has an unsupported identity or version");
+  if (descriptor.version !== 3 || descriptor.kind !== LAUNCHER_BROWSER_HOST_KIND) {
+    throw new Error("Launcher browser descriptor has an unsupported identity or version; restart the updated launcher");
   }
   if (descriptor.profile !== "production" && descriptor.profile !== "development") {
     throw new Error("Launcher browser descriptor has an invalid profile");
@@ -122,11 +123,18 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   if (typeof descriptor.surfaceId !== "string" || !/^[A-Za-z0-9_-]{32}$/.test(descriptor.surfaceId)) {
     throw new Error("Launcher browser descriptor has an invalid owned surface id");
   }
+  const targets = descriptor.surfaceTargets;
+  if (!targets || typeof targets !== "object" || Array.isArray(targets)
+    || Object.entries(targets).some(([surface, target]) => !/^[A-Za-z0-9_-]{32}$/.test(surface)
+      || typeof target !== "string" || !target.trim())
+    || new Set(Object.values(targets)).size !== Object.keys(targets).length) {
+    throw new Error("Launcher browser descriptor has invalid or duplicated surface targets");
+  }
   if (typeof descriptor.createdAt !== "string" || Number.isNaN(Date.parse(descriptor.createdAt))) {
     throw new Error("Launcher browser descriptor has an invalid creation time");
   }
   return {
-    version: 2,
+    version: 3,
     kind: LAUNCHER_BROWSER_HOST_KIND,
     profile: descriptor.profile,
     pid: descriptor.pid!,
@@ -136,6 +144,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
     partition: descriptor.partition,
     idleUrl: descriptor.idleUrl,
     surfaceId: descriptor.surfaceId,
+    surfaceTargets: targets,
     createdAt: descriptor.createdAt,
   };
 }
@@ -205,20 +214,32 @@ export async function selectLauncherPage(
   surfaceId = descriptor.surfaceId,
   abortSignal?: AbortSignal,
 ): Promise<{ context: BrowserContext; page: Page }> {
+  if (abortSignal?.aborted) {
+    throw new DOMException("Launcher browser connection aborted", "AbortError");
+  }
+  const targetId = descriptor.surfaceTargets[surfaceId];
+  if (!targetId) throw new Error("Launcher browser surface is no longer registered with its native target");
   const deadline = Date.now() + timeoutMs;
   do {
     if (abortSignal?.aborted) {
       throw new DOMException("Launcher browser connection aborted", "AbortError");
     }
     const candidates = browser.contexts().flatMap(context => context.pages().map(page => ({ context, page })));
-    const inspected = await Promise.all(candidates.map(async candidate => ({
-      ...candidate,
-      surfaceId: await candidate.page.evaluate(
-        () => (globalThis as typeof globalThis & { __CODEX_WEB_GPT_SURFACE_ID__?: unknown })
-          .__CODEX_WEB_GPT_SURFACE_ID__,
-      ).catch(() => undefined),
-    })));
-    const owned = inspected.filter(candidate => candidate.surfaceId === surfaceId);
+    // Target metadata belongs to the browser process. Evaluating every page here makes an
+    // unrelated busy/paused renderer block acquisition of an already-responsive owned page.
+    const inspected = await Promise.all(candidates.map(async candidate => {
+      const session = await candidate.context.newCDPSession(candidate.page).catch(() => undefined);
+      if (!session) return { ...candidate, targetId: undefined };
+      try {
+        const { targetInfo } = await session.send("Target.getTargetInfo");
+        return { ...candidate, targetId: targetInfo.targetId };
+      } catch {
+        return { ...candidate, targetId: undefined };
+      } finally {
+        await session.detach().catch(() => {});
+      }
+    }));
+    const owned = inspected.filter(candidate => candidate.targetId === targetId);
     if (owned.length === 1) {
       return { context: owned[0].context, page: owned[0].page };
     }
