@@ -442,6 +442,7 @@ class BrowserHost {
     this.interactionModeOverride = mode;
     this.manualOperation = INTERACTION_MODE_CHANGE_OPERATION;
     let completed = false;
+    let primaryError;
     try {
       // Setup capability inspection runs before its runtime-ready callback, so publish the target
       // mode's native surface mapping for the transaction and restore it if setup rolls back.
@@ -461,11 +462,23 @@ class BrowserHost {
       }
       completed = true;
       return result;
+    } catch (error) {
+      primaryError = error;
     } finally {
       this.manualOperation = null;
       this.interactionModeOverride = null;
-      if (!completed) this.writeDescriptor();
+      if (!completed) {
+        try {
+          this.writeDescriptor();
+        } catch (rollbackError) {
+          if (!primaryError) throw rollbackError;
+          const primary = primaryError instanceof Error ? primaryError.message : String(primaryError);
+          const rollback = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+          throw new Error(`${primary}; restoring the previous browser descriptor failed: ${rollback}`);
+        }
+      }
     }
+    throw primaryError;
   }
 
   get activeTraceId() {

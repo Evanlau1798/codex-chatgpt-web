@@ -165,6 +165,29 @@ test("a failed Automatic ownership proof stays inside the runtime rollback bound
   assert.equal(fixture.browserInteractionMode(), "manual");
 });
 
+test("descriptor rollback failure preserves the setup failure", async () => {
+  let writes = 0;
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    getBrowserInteractionMode: () => "manual",
+    interactionModeOverride: null,
+    manualOperation: null,
+    turnTabs: new Map(),
+    writeDescriptor() {
+      writes += 1;
+      if (writes === 2) throw new Error("descriptor rollback failed");
+    },
+  });
+
+  await assert.rejects(
+    fixture.withInteractionModeChange("automatic", async () => {
+      throw new Error("runtime setup failed");
+    }),
+    /runtime setup failed; restoring the previous browser descriptor failed: descriptor rollback failed/,
+  );
+  assert.equal(fixture.currentOperation(), null);
+  assert.equal(fixture.browserInteractionMode(), "manual");
+});
+
 test("terminal Zero Risk tabs are reclaimed before retained conversations", () => {
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     turnTabs: new Map(), removeTurnTab(tab) { this.turnTabs.delete(tab.id); },
