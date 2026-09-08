@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const root = resolve(import.meta.dir, "..");
+const git = (...args: string[]) => execFileSync("git", args, {
+  cwd: root,
+  encoding: "utf8",
+}).trim();
 
 const ledger = JSON.parse(readFileSync(
   new URL("../.github/upstream-audit/v5.0.5.json", import.meta.url),
@@ -9,7 +17,15 @@ const ledger = JSON.parse(readFileSync(
   baseline: { forkCommit: string; upstream: string };
   upstream: { tagObject: string; commit: string };
   closure: { expectedPaths: number; classifiedPaths: number; missingPaths: number; status: string };
-  entries: Array<{ path: string; classification: string; reason: string; tests: string[] }>;
+  candidate: { commit: string; tree: string };
+  entries: Array<{
+    path: string;
+    classification: string;
+    reason: string;
+    tests: string[];
+    candidateBlob: string | null;
+    source: { targetBlob: string };
+  }>;
   merge: { commit: string; parents: string[]; strategy: string; rerereEnabled: boolean };
   mergeEvidence: { archive: string; sha256: string; bytes: number; automaticTree: string };
 };
@@ -41,4 +57,24 @@ test("v5.0.5 upstream audit closes every pinned path with original merge evidenc
   expect(archive.length).toBe(ledger.mergeEvidence.bytes);
   expect(createHash("sha256").update(archive).digest("hex")).toBe(ledger.mergeEvidence.sha256);
   expect(ledger.mergeEvidence.automaticTree).toBe("1871418e82ba9f5dc5a97ec774d5f9370117bc8c");
+});
+
+test("v5.0.5 audit binds every candidate blob to the fixed release tree", () => {
+  expect(git("rev-parse", `${ledger.candidate.commit}^{tree}`)).toBe(ledger.candidate.tree);
+  expect(() => git("merge-base", "--is-ancestor", ledger.candidate.commit, "HEAD")).not.toThrow();
+  expect(git("diff", "--name-only", ledger.candidate.commit, "HEAD").split(/\r?\n/).filter(Boolean)).toEqual([
+    ".github/upstream-audit/v5.0.5.json",
+    "tests/upstream-audit-v505.test.ts",
+  ]);
+
+  const tree = new Map(git("ls-tree", "-r", ledger.candidate.commit).split(/\r?\n/).map(line => {
+    const [header, path] = line.split("\t");
+    return [path, header!.split(" ")[2]];
+  }));
+  for (const entry of ledger.entries) {
+    expect(tree.get(entry.path) ?? null, entry.path).toBe(entry.candidateBlob);
+    if (entry.classification === "exact") {
+      expect(entry.candidateBlob, entry.path).toBe(entry.source.targetBlob);
+    }
+  }
 });
