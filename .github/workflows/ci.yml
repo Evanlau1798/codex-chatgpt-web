@@ -128,7 +128,7 @@ jobs:
       - name: Preserve the pinned upstream v5 ancestry
         env:
           CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: git merge-base --is-ancestor 74aed4025937eadca13b363cdcbc87963cd4dff3 "$CANDIDATE_HEAD"
+        run: git merge-base --is-ancestor 0b053b6750b1d4f127619765388eb43c6d212ca2 "$CANDIDATE_HEAD"
       - name: Require every CI dependency to succeed
         env:
           LIFECYCLE_SIM_RESULT: ${{ needs['lifecycle-sim'].result }}
