@@ -111,10 +111,15 @@ test("a browser failure remains the authoritative turn error while its token is 
   const originalRun = worker.run.bind(worker);
   let failSurface!: (error: Error) => void;
   const surfaceFailure = new Promise<never>((_resolve, reject) => { failSurface = reject; });
+  let markSurfaceReady!: () => void;
+  const surfaceReady = new Promise<void>(resolve => { markSurfaceReady = resolve; });
 
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     const prepared = await turn.prepare();
-    try { return await surfaceFailure; }
+    try {
+      markSurfaceReady();
+      return await surfaceFailure;
+    }
     finally { prepared.release(); }
   };
 
@@ -124,7 +129,7 @@ test("a browser failure remains the authoritative turn error while its token is 
       () => ({ error: undefined }),
       error => ({ error }),
     );
-    await Bun.sleep(10);
+    await surfaceReady;
     failSurface(new Error("browser surface closed"));
     const { error } = await outcome;
     expect(error).toBeInstanceOf(Error);
