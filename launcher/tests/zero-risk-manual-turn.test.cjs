@@ -58,6 +58,7 @@ test("manual navigation retires completed continuation without invalidating init
   const tab = host.turnTabs.get(first.tabId);
   tab.url = "https://chatgpt.com/?temporary-chat=true";
   controller.navigation(tab, "https://chatgpt.com/c/created", false);
+  tab.url = "https://chatgpt.com/c/created";
   assert.equal(tab.conversationKey, key);
   controller.confirmSent(tab.id);
   controller.started("trace-nav-1", 10);
@@ -89,7 +90,7 @@ test("same-document navigation is safe but document replacement fails a resumed 
   assert.match(tab.message, /full context/);
 });
 
-test("a changed page after the first submission cannot be retained", () => {
+test("the first ChatGPT conversation route created after Sent can be retained", () => {
   const { controller, host } = fixture();
   const first = controller.begin("trace-nav-first", 10, "original", "c".repeat(64));
   const tab = host.turnTabs.get(first.tabId);
@@ -98,7 +99,11 @@ test("a changed page after the first submission cannot be retained", () => {
   controller.navigation(tab, "https://chatgpt.com/c/created", true);
   controller.started("trace-nav-first", 10);
   controller.end("trace-nav-first", 10, "completed", true);
-  assert.equal(host.turnTabs.has(tab.id), false);
+  assert.equal(tab.conversationKey, "c".repeat(64));
+  assert.equal(tab.status, "ready");
+  tab.url = "https://chatgpt.com/c/created";
+  controller.navigation(tab, "https://chatgpt.com/c/another", true);
+  assert.equal(tab.conversationKey, undefined);
 });
 
 test("duplicate manual start preserves the original deadline and running lease shape", () => {

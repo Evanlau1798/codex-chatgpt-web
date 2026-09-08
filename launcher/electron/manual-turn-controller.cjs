@@ -9,6 +9,22 @@ function digest(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
+function isInitialConversationNavigation(tab, url) {
+  if (tab.manualConversationReused || tab.manualInitialConversationNavigationAccepted
+    || !["sent", "running"].includes(tab.manualState)) return false;
+  try {
+    const previous = new URL(tab.url);
+    const next = new URL(url);
+    return previous.origin === "https://chatgpt.com"
+      && next.origin === previous.origin
+      && previous.pathname === "/"
+      && previous.searchParams.get("temporary-chat") === "true"
+      && /^\/c\/[^/]+\/?$/.test(next.pathname);
+  } catch {
+    return false;
+  }
+}
+
 class ManualTurnController {
   constructor({ clipboard, host, logger }) {
     this.clipboard = clipboard;
@@ -77,6 +93,7 @@ class ManualTurnController {
       manualWaiters: new Set(),
       manualTerminalWaiters: new Set(),
       manualConversationReused: reused,
+      manualInitialConversationNavigationAccepted: false,
       manualCompaction: compaction,
       prompt,
       promptDigest: digest(prompt),
@@ -218,6 +235,10 @@ class ManualTurnController {
   navigation(tab, url, inPlace) {
     if (tab.interactionMode !== "manual") return;
     if (inPlace && url.split("#", 1)[0] === tab.url?.split("#", 1)[0]) return;
+    if (isInitialConversationNavigation(tab, url)) {
+      tab.manualInitialConversationNavigationAccepted = true;
+      return;
+    }
     if (!tab.conversationKey
       || (!tab.manualConversationReused && tab.manualState === "awaiting-user")) return;
     tab.conversationKey = undefined;
