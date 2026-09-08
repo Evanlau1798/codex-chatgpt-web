@@ -191,10 +191,11 @@ describe("Codex Multi-Agent V2 plaintext transport", () => {
     const parsed = parseRequest({
       model: "chatgpt-web/extra-high",
       client_metadata: { "x-codex-turn-metadata": JSON.stringify({
-        thread_id: "thread_child", parent_thread_id: "thread_parent", turn_id: "turn_child",
+        request_kind: "turn", thread_id: "thread_child", parent_thread_id: "thread_parent",
+        turn_id: "turn_child", agent_name: "/root/reviewer", subagent_kind: "thread_spawn",
       }) },
       input: [{
-        type: "agent_message", author: "root", recipient: "child",
+        type: "agent_message", id: "amsg_task", author: "/root", recipient: "/root/reviewer",
         content: [{ type: "input_text", text: "Inspect the test directory" }],
         internal_chat_message_metadata_passthrough: { turn_id: "turn_child" },
       }],
