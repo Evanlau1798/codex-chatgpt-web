@@ -2,6 +2,12 @@ import { expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
+import {
+  chatGptTurnUserRevisionHistory,
+  extractChatGptTurnEnvironment,
+  extractChatGptTurnUserRevision,
+} from "../src/adapters/chatgpt-web/environment";
+import { parseRequest } from "../src/responses/parser";
 import type { CodexParsedRequest } from "../src/types";
 import { currentWire, dangerFullAccessProfileXml, root } from "./environment-fixture";
 
@@ -86,4 +92,71 @@ test("does not hide a malformed current child environment behind inherited autho
   } as CodexParsedRequest;
 
   expect(() => store.resolve(child)).toThrow("missing cwd");
+});
+
+test("V2 accepts only direct-parent task revisions without changing native roles", () => {
+  const childTurnId = "turn_child";
+  const environmentItem = {
+    type: "message", id: "msg_environment", role: "user",
+    content: [{ type: "input_text", text: `<environment_context>
+  <cwd>${root}</cwd>
+  <filesystem><workspace_roots><root>${root}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem>
+</environment_context>` }],
+  };
+  const task = {
+    type: "agent_message", id: "amsg_task", author: "/root", recipient: "/root/reviewer",
+    content: [{ type: "input_text", text: "Inspect the workspace." }],
+  };
+  const raw = {
+    model: "chatgpt-web/high",
+    ...metadata("thread_child", childTurnId, "thread_parent"),
+    input: [environmentItem, task],
+  };
+  const parsed = parseRequest(raw);
+  expect(extractChatGptTurnEnvironment(parsed).cwd).toBe(root);
+  expect(extractChatGptTurnUserRevision(parsed)).toEqual(task.content);
+  expect(parsed.context.messages.at(-1)?.role).toBe("agentMessage");
+  expect(parsed._rawBody).toEqual(raw);
+
+  const reply = { ...task, id: "amsg_reply", author: "/root/reviewer/worker",
+    content: [{ type: "input_text", text: "Done." }] };
+  for (const author of [reply.author, "/root/peer"]) {
+    const continued = parseRequest({ ...raw, input: [environmentItem, task, { ...reply, author }] });
+    expect(extractChatGptTurnUserRevision(continued)).toEqual(task.content);
+    expect(chatGptTurnUserRevisionHistory(continued).map(revision => revision.itemId)).toEqual([task.id]);
+  }
+  const followup = { ...task, id: "amsg_followup",
+    content: [{ type: "input_text", text: "Review the second file." }] };
+  const continued = parseRequest({ ...raw, input: [environmentItem, task, reply, followup] });
+  expect(extractChatGptTurnUserRevision(continued)).toEqual(followup.content);
+  expect(chatGptTurnUserRevisionHistory(continued).map(revision => revision.itemId)).toEqual([task.id, followup.id]);
+
+  for (const invalid of [
+    { ...task, id: undefined }, { ...task, author: "/root/peer" },
+    { ...task, recipient: "/root/other" }, { ...task, author: "/root/reviewer/worker" },
+  ]) {
+    const rejected = parseRequest({ ...raw, input: [environmentItem, invalid] });
+    expect(() => extractChatGptTurnEnvironment(rejected)).toThrow("missing cwd");
+    expect(() => extractChatGptTurnUserRevision(rejected)).toThrow("current-turn user message");
+  }
+  const stale = parseRequest({ ...raw, input: [environmentItem, {
+    ...task, internal_chat_message_metadata_passthrough: { turn_id: "turn_parent" },
+  }] });
+  expect(() => extractChatGptTurnEnvironment(stale)).toThrow("missing cwd");
+  expect(() => extractChatGptTurnUserRevision(stale)).toThrow("conflicts with native Codex turn_id");
+  const turnMetadata = JSON.parse(raw.client_metadata["x-codex-turn-metadata"]);
+  for (const changes of [
+    { parent_thread_id: undefined }, { parent_thread_id: "thread_child" },
+    { subagent_kind: undefined }, { agent_name: "/root" },
+  ]) {
+    const rejected = parseRequest({ ...raw, client_metadata: {
+      "x-codex-turn-metadata": JSON.stringify({ ...turnMetadata, ...changes }),
+    } });
+    expect(() => extractChatGptTurnEnvironment(rejected)).toThrow("missing cwd");
+    expect(() => extractChatGptTurnUserRevision(rejected)).toThrow("current-turn user message");
+  }
+  const restricted = parseRequest({ ...raw, client_metadata: {
+    "x-codex-turn-metadata": JSON.stringify({ ...turnMetadata, sandbox: "read-only" }),
+  } });
+  expect(() => extractChatGptTurnEnvironment(restricted)).toThrow("missing cwd");
 });

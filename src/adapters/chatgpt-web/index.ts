@@ -254,7 +254,7 @@ export function createChatGptWebAdapter(
             );
             emitBrowserCompletion(
               { ...settled, answer },
-              estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning }, turnCapabilities),
+              estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning }, turnCapabilities, experimentalBiggerContext),
               emit,
             );
             chatGptWebTurnRetryPolicy.clear(retryKey);
@@ -277,7 +277,7 @@ export function createChatGptWebAdapter(
                 if (!steering) {
                   const reasoning = session.reasoningForOutstandingReplay();
                   replayEvents(session.eventsForOutstandingReplay(), emit);
-                  emitToolBatch(outstanding, estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning, toolRequests: outstanding }, turnCapabilities), emit);
+                  emitToolBatch(outstanding, estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning, toolRequests: outstanding }, turnCapabilities, experimentalBiggerContext), emit);
                   return;
                 }
               } else {
@@ -394,7 +394,7 @@ export function createChatGptWebAdapter(
                 );
                 emitBrowserCompletion(
                   { ...next.outcome, answer },
-                  estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning: roundReasoning }, turnCapabilities),
+                  estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning: roundReasoning }, turnCapabilities, experimentalBiggerContext),
                   emit,
                 );
                 session.setFinalReasoning(roundReasoning);
@@ -409,7 +409,7 @@ export function createChatGptWebAdapter(
               session.setOutstandingEvents(roundReasoning, roundEvents);
               emitToolBatch(
                 next.requests,
-                estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning: roundReasoning, toolRequests: next.requests }, turnCapabilities),
+                estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning: roundReasoning, toolRequests: next.requests }, turnCapabilities, experimentalBiggerContext),
                 emit,
               );
               return;

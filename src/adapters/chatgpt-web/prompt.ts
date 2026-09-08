@@ -2,9 +2,13 @@ import type { CodexMessage, CodexParsedRequest } from "../../types";
 import {
   CHATGPT_WEB_BACKEND_MODEL,
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
+  chatGptWebImageTokenReserve,
   isChatGptWebZeroRiskBackendModel,
+  resolveChatGptWebMessageTokenBudget,
   resolveChatGptWebTransportLimits,
 } from "../../chatgpt-web-models";
+import { estimateTokens } from "../../lib/token-estimate";
+import { ChatGptWebAdapterError } from "./adapter-error";
 import { isReadableCompactionSummaryText } from "../../responses/compaction";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import {
@@ -22,11 +26,14 @@ import {
 } from "./prompt-context";
 import {
   CHATGPT_BIGGER_CONTEXT_PARTS,
+  formatChatGptWebMultipartCommit,
+  formatChatGptWebMultipartStage,
   partitionMultipartContext,
   withoutRetiredTurnHandles,
   type ChatGptWebMultipartPartCount,
   type ChatGptWebMultipartPrompt,
   type MultipartContextRecord,
+  type MultipartRecordBudget,
 } from "./prompt-multipart";
 
 export {
@@ -338,8 +345,13 @@ export function compileChatGptWebPrompt(
           wire_name,
         })) : []),
       ];
+      const emptyPart = (index: number): string => JSON.stringify({
+        version: 1, part_index: index + 1, total_parts: multipartParts, records: [],
+      });
       const multipart: ChatGptWebMultipartPrompt = {
-        parts: partitionMultipartContext(records, multipartParts!),
+        parts: multipartParts === 2
+          ? [emptyPart(0), emptyPart(1)]
+          : [emptyPart(0), emptyPart(1), emptyPart(2)],
         commit: [
           ...sharedContract,
           ...transportContract,
@@ -350,6 +362,29 @@ export function compileChatGptWebPrompt(
           ...transportResume,
         ].join("\n"),
       };
+      const imageTokens = images.reduce((sum, image) => sum + chatGptWebImageTokenReserve(image.detail), 0);
+      const transactionId = `ctx_${"0".repeat(32)}`;
+      const budgets: MultipartRecordBudget[] = multipart.parts.map((payload, index) => {
+        const final = index === multipart.parts.length - 1;
+        const effort = final ? mode.effort : capabilities.proAvailable ? "max" : "medium";
+        const limits = resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, effort, capabilities);
+        const tokenLimit = resolveChatGptWebMessageTokenBudget(
+          CHATGPT_WEB_BACKEND_MODEL, effort, capabilities, final ? imageTokens : 0,
+        );
+        const fixedMessage = final
+          ? formatChatGptWebMultipartCommit(multipart, transactionId)
+          : formatChatGptWebMultipartStage(payload, transactionId, index + 1, multipartParts!).text;
+        const tokens = tokenLimit - estimateTokens(fixedMessage);
+        const chars = (limits.browserComposerCharLimit ?? Infinity) - fixedMessage.length;
+        if (tokens <= 0 || chars <= 0) {
+          throw new ChatGptWebAdapterError(
+            `The Bigger Context ${final ? "final part's instructions and attachments" : "stage wrapper"} exceed the available message budget before any task history is added. Reduce those inputs before retrying.`,
+            { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+          );
+        }
+        return { tokens, chars };
+      });
+      multipart.parts = partitionMultipartContext(records, multipartParts!, budgets);
       return {
         text: multipart.commit,
         images,

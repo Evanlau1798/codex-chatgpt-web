@@ -164,9 +164,9 @@ function hookTextPattern(text: string): string {
     .join("(?:\\r\\n|\\n|\\r)");
 }
 
-function locateCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): {
-  start: number; end: number; appendedConfig: string;
-} {
+function locateCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): Array<{
+  start: number; end: number; replacement: string;
+}> {
   const marker = installed.fragment.indexOf(MANAGED_INTERRUPT_HOOK_END);
   if (marker < 0) throw new Error("Codex interrupt lifecycle hook journal fragment is invalid");
   const ownedPrefix = installed.fragment.slice(0, marker);
@@ -191,15 +191,30 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   if (interruptGroupCount(text.slice(0, first)) !== installed.groupIndex) {
     throw new Error("Codex interrupt lifecycle hook order changed after setup; refusing to overwrite it");
   }
-  const endMarker = text.indexOf(MANAGED_INTERRUPT_HOOK_END, ownedEnd);
+  const endMarker = text.indexOf(MANAGED_INTERRUPT_HOOK_END);
   if (managedMarkerCount(text) !== 1 || endMarker < 0
+    || (endMarker >= first && endMarker < ownedEnd)
     || text.split(MANAGED_INTERRUPT_HOOK_END).length !== 2) {
     throw new Error("Codex interrupt lifecycle hook markers changed after setup; refusing to overwrite them");
+  }
+  const markerMovedBeforeHook = endMarker < first;
+  if (markerMovedBeforeHook) {
+    const precedingConfig = text.slice(0, first);
+    const withoutMarker = precedingConfig.slice(0, endMarker)
+      + precedingConfig.slice(endMarker + MANAGED_INTERRUPT_HOOK_END.length);
+    try {
+      if (JSON.stringify(canonicalJson(Bun.TOML.parse(precedingConfig)))
+        !== JSON.stringify(canonicalJson(Bun.TOML.parse(withoutMarker)))) {
+        throw new Error("Marker removal changes TOML values");
+      }
+    } catch {
+      throw new Error("Codex interrupt lifecycle hook markers changed after setup; refusing to overwrite them");
+    }
   }
   if (codexInterruptHookHash(installed.command) !== installed.trustedHash) {
     throw new Error("Codex interrupt lifecycle hook journal hash is invalid");
   }
-  const trailingConfig = text.slice(ownedEnd, endMarker);
+  const trailingConfig = markerMovedBeforeHook ? "" : text.slice(ownedEnd, endMarker);
   const insertedConfig = [interstitialConfig, trailingConfig];
   for (const fragment of insertedConfig) {
     const firstAssignment = fragment.split(/\r\n|\n|\r/)
@@ -208,7 +223,7 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
       throw new Error("Codex interrupt lifecycle hook changed after setup; refusing to overwrite it");
     }
   }
-  if (insertedConfig.some(fragment => fragment.trim())) {
+  if (markerMovedBeforeHook || insertedConfig.some(fragment => fragment.trim())) {
     // Inserted tables can also extend the owned hook or trust state. Compare those exact
     // definitions with Bun's TOML parser before treating the tables as unrelated.
     const ownedDefinitions = (fragment: string): string => {
@@ -218,7 +233,8 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
       return JSON.stringify(canonicalJson([hooks.Interrupt, hooks.state[installed.stateKey]]));
     };
     try {
-      const actualPrefix = hookPrefix + interstitialConfig + stateSuffix + trailingConfig;
+      const actualPrefix = hookPrefix + interstitialConfig + stateSuffix
+        + (markerMovedBeforeHook ? text.slice(ownedEnd) : trailingConfig);
       if (ownedDefinitions(ownedPrefix) !== ownedDefinitions(actualPrefix)) {
         throw new Error("Modified owned definitions");
       }
@@ -229,7 +245,13 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   const end = endMarker + MANAGED_INTERRUPT_HOOK_END.length;
   const trailing = installed.fragment.slice(marker + MANAGED_INTERRUPT_HOOK_END.length);
   const trailingLength = new RegExp("^" + hookTextPattern(trailing)).exec(text.slice(end))?.[0].length ?? 0;
-  return { start: first, end: end + trailingLength, appendedConfig: insertedConfig.join("") };
+  if (markerMovedBeforeHook) {
+    return [
+      { start: first, end: ownedEnd, replacement: interstitialConfig },
+      { start: endMarker, end: end + trailingLength, replacement: "" },
+    ];
+  }
+  return [{ start: first, end: end + trailingLength, replacement: insertedConfig.join("") }];
 }
 
 export function verifyCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): void {
@@ -237,8 +259,11 @@ export function verifyCodexInterruptHook(text: string, installed: InstalledCodex
 }
 
 export function restoreCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): string {
-  const owned = locateCodexInterruptHook(text, installed);
-  return text.slice(0, owned.start) + owned.appendedConfig + text.slice(owned.end);
+  const owned = locateCodexInterruptHook(text, installed).sort((left, right) => right.start - left.start);
+  for (const range of owned) {
+    text = text.slice(0, range.start) + range.replacement + text.slice(range.end);
+  }
+  return text;
 }
 
 export function verifyCodexInterruptHookRestored(text: string): void {

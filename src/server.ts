@@ -28,7 +28,7 @@ import {
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
 import { forwardNativeCodexRequest } from "./native-passthrough";
-import { modelsRequest, nativeSearchRequest } from "./native-routes";
+import { modelsRequest, nativeAuxiliaryEndpoint, nativeAuxiliaryRequest, nativeSearchRequest } from "./native-routes";
 import { COMPACT_PROMPT } from "./responses/compaction";
 import { handleCompactRequest } from "./responses/compact-handler";
 import { parseRequest } from "./responses/parser";
@@ -450,10 +450,11 @@ export function startServer(
           url.pathname,
         );
       }
-      if (req.method === "POST" && url.pathname === "/v1/alpha/search") {
+      const nativeAuxiliary = req.method === "POST" ? nativeAuxiliaryEndpoint(url.pathname) : undefined;
+      if (nativeAuxiliary) {
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
-          signal => nativeSearchRequest(new Request(req, { signal }), dependencies.fetchUpstream),
+          signal => nativeAuxiliaryRequest(new Request(req, { signal }), nativeAuxiliary, dependencies.fetchUpstream),
           req.signal,
           undefined,
           url.pathname,

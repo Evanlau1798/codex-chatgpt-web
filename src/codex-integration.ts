@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AppConfig } from "./config";
-import { atomicWriteFile, getConfigPath, loadConfig, saveConfig } from "./config";
+import { getConfigPath, loadConfig, saveConfig } from "./config";
 import { installConfiguredRoute } from "./codex-integration-install-route";
 import {
   CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
@@ -13,6 +13,7 @@ import {
   routeUrl,
   sha256,
   snapshotFile,
+  writeFileSnapshot,
   writeIntegrationState,
 } from "./codex-integration-shared";
 import type {
@@ -88,7 +89,7 @@ export function setCodexSubagentProtocol(
     getCodexModelsCachePath(),
     getCodexJournalPath(),
     getCodexJournalRecoveryPath(),
-  ].map(snapshotFile);
+  ].map(path => snapshotFile(path, { followSymlink: path === getCodexConfigPath() }));
   try {
     const journal = installCodexIntegration(nextConfig);
     saveConfig(nextConfig);
@@ -116,8 +117,9 @@ export function preflightCodexIntegration(
   options: InstallCodexIntegrationOptions = {},
 ): void {
   const configPath = getCodexConfigPath();
-  const configExists = existsSync(configPath);
-  const currentText = configExists ? readFileSync(configPath, "utf8") : "";
+  const configSnapshot = snapshotFile(configPath, { followSymlink: true });
+  const configExists = configSnapshot.exists;
+  const currentText = configSnapshot.data?.toString("utf8") ?? "";
   const existing = readJournal({ repair: false });
   const installedUrl = routeUrl(config);
   if (existing) assertJournalTargetsConfig(existing, configPath);
@@ -398,13 +400,13 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
   } else {
     restored = restoreManagedRoute(current, journal);
   }
-  const configSnapshot = snapshotFile(journal.configPath);
+  const configSnapshot = snapshotFile(journal.configPath, { followSymlink: true });
   const catalogSnapshot = journal.version === 2 ? snapshotFile(journal.catalogPath) : undefined;
   const modelsCacheSnapshot = snapshotFile(getCodexModelsCachePath());
   const journalSnapshot = snapshotFile(getCodexJournalPath());
   const recoverySnapshot = snapshotFile(getCodexJournalRecoveryPath());
   try {
-    atomicWriteFile(journal.configPath, restored);
+    writeFileSnapshot(configSnapshot, restored);
     if (catalogSnapshot?.exists) rmSync(catalogSnapshot.path);
     rmSync(modelsCacheSnapshot.path, { force: true });
     rmSync(getCodexJournalPath(), { force: true });

@@ -65,6 +65,7 @@ import {
   chatGptSubmissionEvidence,
   locateChatGptAssistantTurn,
   readChatGptAssistantTurnState,
+  readChatGptTurnIdentities,
   reconcileChatGptAssistantTurnBinding,
   type ChatGptAssistantTurnBinding,
   type ChatGptAssistantTurnState,
@@ -124,7 +125,7 @@ import {
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
-import { ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
+import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { openChatGptConnectorPlusMenu } from "./connector-plus-menu";
@@ -222,6 +223,7 @@ export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
 export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
 export const MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS = 3;
 const CHATGPT_PREEMPTIVE_RETRY_STOP_TIMEOUT_MS = 15_000;
+const CHATGPT_CONNECTOR_MENTION_QUERY = "@codex";
 const CHATGPT_SMOKE_TEXT = "Reply with exactly: CODEX WEB GPT READY";
 const CHATGPT_SMOKE_EXPECTED = "CODEX WEB GPT READY";
 /**
@@ -233,7 +235,8 @@ export const CHATGPT_SEND_ENABLE_GRACE_MS = 5_000;
 const CHATGPT_DOM_REVISION_ATTRIBUTES = [
   "aria-hidden", "aria-label", "aria-busy", "aria-disabled", "aria-expanded", "class",
   "data-item-anchor", "data-is-last-node", "data-message-author-role", "data-state",
-  "data-streaming-response-status", "data-testid", "data-turn", "disabled", "hidden",
+  "data-streaming-response-status", "data-testid", "data-turn", "data-turn-id",
+  "data-turn-id-container", "disabled", "hidden",
   "inert", "open", "role", "start", "style",
 ] as const;
 
@@ -538,6 +541,7 @@ interface ChatGptSubmissionBaseline {
   responseTurns: Locator;
   initialUserTurnCount: number;
   initialResponseTurnCount: number;
+  initialTurnIdentities: readonly string[];
 }
 
 export interface ResolvedBrowserConfig {
@@ -1135,7 +1139,7 @@ export class ChatGptBrowserWorker {
           "ChatGPT Luna was selected from a Luna-only capability probe, but the account now exposes a model selector; rerun setup",
         );
       }
-      await setChatGptThinkMode(composerForm, mode.thinkEnabled, captureDiagnostic);
+      if (!mode.thinkEnabled) await setChatGptThinkMode(composerForm, false, captureDiagnostic);
       return mode;
     }
     const currentEffort = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).last();
@@ -1349,6 +1353,7 @@ export class ChatGptBrowserWorker {
     responseTurn: Locator,
     initialUserTurnCount: number,
     initialResponseTurn: ChatGptAssistantTurnState,
+    initialTurnIdentities: readonly string[],
     signal?: AbortSignal,
     externalProgress?: ChatGptTurnProgressReader,
     initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0,
@@ -1371,20 +1376,27 @@ export class ChatGptBrowserWorker {
           await throwIfChatGptRateLimitDialog(page);
           await throwIfChatGptTerminalErrorAlert(responseTurn);
           return Promise.all([
-            userTurns.count(),
+            readChatGptTurnIdentities(userTurns),
             readChatGptAssistantTurnState(responseTurns),
             page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count(),
           ]);
         }, signal, externalProgress, progress?.revision ?? 0);
         if (!observed) continue;
-        const [userTurnCount, assistantTurn, visibleStopButtonCount] = observed.value;
+        const [userIdentities, assistantTurn, visibleStopButtonCount] = observed.value;
+        const knownTurns = new Set(assistantTurn.knownTurnIdentities ?? []);
+        if (userIdentities.some(identity => !knownTurns.has(identity))) {
+          throw new Error("ChatGPT user turn has no matching identity container");
+        }
         const evidence = chatGptSubmissionEvidence({
           initialUserTurnCount,
-          userTurnCount,
+          userTurnCount: userIdentities.length,
           initialAssistantTurnCount: initialResponseTurn.count,
           assistantTurnCount: assistantTurn.count,
           ...(initialResponseTurn.lastId ? { initialAssistantTurnId: initialResponseTurn.lastId } : {}),
           ...(assistantTurn.lastId ? { assistantTurnId: assistantTurn.lastId } : {}),
+          initialTurnIdentities,
+          userIdentities,
+          responseIdentities: assistantTurn.identities ?? [],
           generationRunning: visibleStopButtonCount > 0,
         });
         if (evidence) return evidence;
@@ -1494,6 +1506,7 @@ export class ChatGptBrowserWorker {
       baseline.responseTurns.nth(initialResponseTurn.count),
       baseline.initialUserTurnCount,
       initialResponseTurn,
+      baseline.initialTurnIdentities,
       abortSignal,
       externalProgress,
       initialToolBatchRevision,
@@ -1600,19 +1613,25 @@ export class ChatGptBrowserWorker {
     page: Page,
     userTurns: Locator,
     responseTurns: Locator,
-    initialUserTurnCount: number,
-    initialResponseTurnCount: number,
+    initialTurnIdentities: readonly string[],
   ): Promise<ChatGptSubmissionEvidence | undefined> {
-    const [userTurnCount, assistantTurnCount, visibleStopButtonCount] = await Promise.all([
-      userTurns.count(),
-      responseTurns.count(),
+    const [userIdentities, assistantTurn, visibleStopButtonCount] = await Promise.all([
+      readChatGptTurnIdentities(userTurns),
+      readChatGptAssistantTurnState(responseTurns),
       page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count(),
     ]);
+    const knownTurns = new Set(assistantTurn.knownTurnIdentities ?? []);
+    if (userIdentities.some(identity => !knownTurns.has(identity))) {
+      throw new Error("ChatGPT user turn has no matching identity container");
+    }
     return chatGptSubmissionEvidence({
-      initialUserTurnCount,
-      userTurnCount,
-      initialAssistantTurnCount: initialResponseTurnCount,
-      assistantTurnCount,
+      initialUserTurnCount: 0,
+      userTurnCount: userIdentities.length,
+      initialAssistantTurnCount: 0,
+      assistantTurnCount: assistantTurn.count,
+      initialTurnIdentities,
+      userIdentities,
+      responseIdentities: assistantTurn.identities ?? [],
       generationRunning: visibleStopButtonCount > 0,
     });
   }
@@ -1777,7 +1796,7 @@ export class ChatGptBrowserWorker {
             await composer.fill("", { signal: personalizationSignal, timeout: 10_000 });
             await composer.focus({ signal: personalizationSignal, timeout: 10_000 });
             await withBrowserTurnAbort(settleChatGptUi(), personalizationSignal);
-            await composer.pressSequentially("@codex", {
+            await composer.pressSequentially(CHATGPT_CONNECTOR_MENTION_QUERY, {
               delay: 25,
               signal: personalizationSignal,
               timeout: 10_000,
@@ -1787,6 +1806,16 @@ export class ChatGptBrowserWorker {
               proofResult = true;
             } catch (error) {
               if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
+              const mention = await composer.evaluate(element => ({
+                text: element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+                  ? element.value : element.textContent ?? "",
+                focused: element === document.activeElement,
+              }), undefined, { timeout: 10_000, signal: personalizationSignal });
+              if (mention.text !== CHATGPT_CONNECTOR_MENTION_QUERY) {
+                throw new ChatGptPromptAttachmentIntegrityError(
+                  `ChatGPT did not preserve the connector mention (expectedChars=${CHATGPT_CONNECTOR_MENTION_QUERY.length}, actualChars=${mention.text.length}, focused=${mention.focused})`,
+                );
+              }
             }
           }
         } catch (error) {
@@ -1840,7 +1869,7 @@ export class ChatGptBrowserWorker {
         await composer.fill("", { signal: abortSignal, timeout: 10_000 });
         await composer.focus({ signal: abortSignal, timeout: 10_000 });
         await withBrowserTurnAbort(settleChatGptUi(), abortSignal);
-        await composer.pressSequentially("@codex", { delay: 25, signal: abortSignal, timeout: 10_000 });
+        await composer.pressSequentially(CHATGPT_CONNECTOR_MENTION_QUERY, { delay: 25, signal: abortSignal, timeout: 10_000 });
         if (!firstMenuCaptured) {
           firstMenuCaptured = true;
           await capture("connector-mention-triggered");
@@ -1923,6 +1952,7 @@ export class ChatGptBrowserWorker {
     abortSignal?: AbortSignal,
     catalogRefreshAvailable = false,
     connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 },
+    requireThink = false,
   ): Promise<void> {
     throwIfPromptAttachmentAborted(abortSignal);
     let mutationStarted = false;
@@ -1934,6 +1964,9 @@ export class ChatGptBrowserWorker {
         // then transport the complete text through verified CDP edits.
         mutationStarted = true;
         await composer.fill("", { signal: abortSignal, timeout: 10_000 });
+        if (requireThink) {
+          await setChatGptThinkMode(composer.locator("xpath=ancestor::form[1]"), true, captureDiagnostic, abortSignal);
+        }
         await composer.focus();
         await this.insertPromptText(page, prompt, abortSignal);
         await this.assertPromptAttached(page, prompt, abortSignal);
@@ -1947,6 +1980,9 @@ export class ChatGptBrowserWorker {
         abortSignal,
       );
       mutationStarted = true;
+      if (requireThink) {
+        await setChatGptThinkMode(selectedComposer.locator("xpath=ancestor::form[1]"), true, captureDiagnostic, abortSignal);
+      }
       await selectedComposer.focus();
       await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
       await this.insertPromptText(page, ` ${prompt}`, abortSignal);
@@ -1974,8 +2010,7 @@ export class ChatGptBrowserWorker {
       page,
       baseline.userTurns,
       baseline.responseTurns,
-      baseline.initialUserTurnCount,
-      baseline.initialResponseTurnCount,
+      baseline.initialTurnIdentities,
     );
     if (before) {
       throw new ChatGptPromptAttachmentIntegrityError(
@@ -1993,8 +2028,7 @@ export class ChatGptBrowserWorker {
       page,
       baseline.userTurns,
       baseline.responseTurns,
-      baseline.initialUserTurnCount,
-      baseline.initialResponseTurnCount,
+      baseline.initialTurnIdentities,
     );
     if (after) {
       throw new ChatGptPromptAttachmentIntegrityError(
@@ -2020,6 +2054,7 @@ export class ChatGptBrowserWorker {
     abortSignal?: AbortSignal,
     catalogRefreshAvailable = false,
     connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 },
+    requireThink = false,
   ): Promise<void> {
     let retryAvailable = compaction;
     for (;;) {
@@ -2033,6 +2068,7 @@ export class ChatGptBrowserWorker {
           abortSignal,
           catalogRefreshAvailable,
           connectorAttemptBudget,
+          requireThink,
         );
         return;
       } catch (error) {
@@ -2042,8 +2078,7 @@ export class ChatGptBrowserWorker {
           page,
           baseline.userTurns,
           baseline.responseTurns,
-          baseline.initialUserTurnCount,
-          baseline.initialResponseTurnCount,
+          baseline.initialTurnIdentities,
         );
         if (evidence) {
           throw new ChatGptPromptAttachmentIntegrityError(
@@ -2310,6 +2345,31 @@ export class ChatGptBrowserWorker {
         "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr",
         "li", "main", "nav", "ol", "p", "pre", "section", "table", "ul",
       ]);
+      const chatGptMarkdownContent = (markdownRoot: HTMLElement): HTMLElement => {
+        const content = markdownRoot.cloneNode(true) as HTMLElement;
+        for (const widget of Array.from(content.querySelectorAll(
+          ".chart-widget-container, [data-code-block-preview-pane], button, script, style, svg, img, picture, source",
+        ))) widget.remove();
+        return content;
+      };
+      const markdownText = (element: HTMLElement): string => {
+        const parts: string[] = [];
+        const blockBoundary = () => {
+          if (parts.length > 0 && !parts.at(-1)!.endsWith("\n")) parts.push("\n");
+        };
+        const visit = (node: Node) => {
+          if (node.nodeType === Node.TEXT_NODE) parts.push(node.textContent ?? "");
+          if (!(node instanceof HTMLElement)) return;
+          const tag = node.tagName.toLowerCase();
+          const block = blockMarkdownTags.has(tag);
+          if (block) blockBoundary();
+          if (tag === "br") parts.push("\n");
+          node.childNodes.forEach(visit);
+          if (block) blockBoundary();
+        };
+        visit(element);
+        return parts.join("").trim();
+      };
       let listGroupIndex = 0;
       const sourceRange = (candidate: Element): { sourceStart: number; sourceEnd: number } | undefined => {
         const startAttribute = candidate.getAttribute("data-start");
@@ -2338,7 +2398,7 @@ export class ChatGptBrowserWorker {
             ? [...child.children].filter(candidate => candidate.tagName === "LI") as HTMLElement[]
             : [];
           if (listItems.length === 0) {
-            flattened.push({ tag, html: child.outerHTML, text: child.innerText.trim(), ...childRange });
+            flattened.push({ tag, html: child.outerHTML, text: markdownText(child), ...childRange });
             return;
           }
 
@@ -2356,7 +2416,7 @@ export class ChatGptBrowserWorker {
             flattened.push({
               tag: `${tag}:item`,
               html: shell.outerHTML,
-              text: item.innerText.trim(),
+              text: markdownText(item),
               group,
               ...sourceRange(item),
             });
@@ -2368,7 +2428,7 @@ export class ChatGptBrowserWorker {
           if (markdownRoot.innerHTML.trim()) flattened.push({
             tag: "root",
             html: markdownRoot.innerHTML,
-            text: markdownRoot.innerText.trim(),
+            text: markdownText(markdownRoot),
             ...sourceRange(markdownRoot),
           });
         } else {
@@ -2379,7 +2439,7 @@ export class ChatGptBrowserWorker {
             inlineRun = [];
             const shell = document.createElement("span");
             nodes.forEach(node => shell.append(node.cloneNode(true)));
-            const text = shell.textContent?.trim() ?? "";
+            const text = markdownText(shell);
             if (!text) return;
             const ranges = nodes.flatMap(node => node instanceof Element
               ? [node, ...node.querySelectorAll<HTMLElement>("[data-start][data-end]")]
@@ -2422,13 +2482,14 @@ export class ChatGptBrowserWorker {
       const markdownRoots = allMarkdownRoots.map(markdownRoot => {
         const renderedIndex = renderedRoots.indexOf(markdownRoot);
         const rootIsComplete = renderedIndex >= 0 && renderedIndex < renderedRoots.length - 1;
+        const content = chatGptMarkdownContent(markdownRoot);
         return {
           nodeId: nodeId(markdownRoot),
           ownership: commentaryRoots.includes(markdownRoot) ? "commentary" as const : "final" as const,
           toolEpoch: root.querySelectorAll("[data-item-anchor]").length,
-          text: markdownRoot.innerText.trim(),
-          html: markdownRoot.innerHTML,
-          segments: segmentsFor(markdownRoot, rootIsComplete),
+          text: markdownText(content),
+          html: content.innerHTML,
+          segments: segmentsFor(content, rootIsComplete),
         };
       });
       const markdownSegments = markdownRoots
@@ -2795,7 +2856,9 @@ export class ChatGptBrowserWorker {
       );
     } catch (error) {
       originalError = error;
-      terminal = (error instanceof DOMException && error.name === "AbortError")
+      terminal = error instanceof ChatGptCompactionHandoffAccepted
+        ? "completed"
+        : (error instanceof DOMException && error.name === "AbortError")
         || (error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")
         ? "aborted"
         : "failed";
@@ -3001,12 +3064,14 @@ export class ChatGptBrowserWorker {
           const stage = multipartTransport.stages[index]!;
           const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
           const initialResponseTurn = await readChatGptAssistantTurnState(responseTurns);
+          const initialTurnIdentities = initialResponseTurn.knownTurnIdentities ?? [];
           const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
           const baseline: ChatGptSubmissionBaseline = {
             userTurns,
             responseTurns,
             initialUserTurnCount: await userTurns.count(),
             initialResponseTurnCount: initialResponseTurn.count,
+            initialTurnIdentities,
           };
           await this.runStage(
             turn.traceId,
@@ -3105,6 +3170,7 @@ export class ChatGptBrowserWorker {
       for (let responseAttempt = 1; ; responseAttempt += 1) {
         let responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
         const initialResponseTurn = await readChatGptAssistantTurnState(responseTurns);
+        const initialTurnIdentities = initialResponseTurn.knownTurnIdentities ?? [];
         let responseTurn = responseTurns.nth(initialResponseTurn.count);
         let responseTurnBinding: ChatGptAssistantTurnBinding | undefined;
         const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
@@ -3114,6 +3180,7 @@ export class ChatGptBrowserWorker {
           responseTurns,
           initialUserTurnCount,
           initialResponseTurnCount: initialResponseTurn.count,
+          initialTurnIdentities,
         };
         try {
         for (;;) {
@@ -3133,6 +3200,7 @@ export class ChatGptBrowserWorker {
                 stageSignal,
                 catalogRefreshAvailable,
                 connectorAttemptBudget,
+                mode.thinkEnabled,
               ),
               turn.abortSignal,
               chatGptSuspensionClock,
@@ -3215,6 +3283,7 @@ export class ChatGptBrowserWorker {
           responseTurn,
           initialUserTurnCount,
           initialResponseTurn,
+          submissionBaseline.initialTurnIdentities,
           stageSignal,
           turn.externalProgress,
           initialToolBatchRevision,
@@ -3589,9 +3658,9 @@ export class ChatGptBrowserWorker {
             }
             break;
           }
-          if (!loggedCompletionWait && Date.now() - sentAt >= 30_000) {
+          if (!loggedCompletionWait && Date.now() - sentAt >= 60_000) {
             loggedCompletionWait = true;
-            await diagnostics.capture(page, "response-stalled-30s");
+            await diagnostics.capture(page, "response-stalled-60s");
             const diagnostic = await this.stalledTurnDiagnostic(page, responseTurn).catch(error => JSON.stringify({
               diagnosticError: error instanceof Error ? error.message : String(error),
             }));
@@ -3677,6 +3746,14 @@ export class ChatGptBrowserWorker {
       console.info(`[chatgpt-web] browser turn ${turn.traceId} completed (markdownChars=${answer.length})`);
       return answer;
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError"
+        && turn.abortSignal?.reason instanceof ChatGptCompactionHandoffAccepted) {
+        console.info(`[chatgpt-web] browser turn ${turn.traceId} ended after accepted structured compaction handoff`);
+        if (diagnosticPage && !diagnosticPage.isClosed()) {
+          await diagnostics.capture(diagnosticPage, "compaction-handoff-accepted");
+        }
+        throw turn.abortSignal.reason;
+      }
       console.error(
         `[chatgpt-web] browser turn ${turn.traceId} failed:`
         + ` ${redactChatGptUiDiagnostic(error instanceof Error ? error.message : String(error))}`,

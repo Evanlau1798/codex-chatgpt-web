@@ -1,10 +1,14 @@
 import { isAbsolute, resolve } from "node:path";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
-import { isContextualCodexUserMessage } from "./contextual-user-message";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
-import { currentTurnUserRevision, priorAbortedTurnIds } from "./turn-user-revision";
+import {
+  currentTurnUserRevision,
+  isUserOrParentInstruction,
+  itemTurnId,
+  priorAbortedTurnIds,
+  turnUserRevisionHistory,
+} from "./turn-user-revision";
 import { isAcceptedCompactionContinuation } from "./compaction-continuation";
-import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import {
   codexTurnMetadataFromBody,
   extractChatGptTurnIdentity,
@@ -44,6 +48,7 @@ export interface ChatGptTurnEnvironment {
 export interface ChatGptTurnUserRevision {
   content: unknown;
   turnId?: string;
+  itemId?: string;
 }
 
 export const CHATGPT_TURN_REVISION_CONFLICT_MESSAGE =
@@ -61,11 +66,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function clientTurnMetadata(parsed: CodexParsedRequest): Record<string, unknown> | undefined {
   return codexTurnMetadataFromBody(parsed._rawBody);
-}
-
-function itemTurnId(value: unknown): string | undefined {
-  const turnId = record(record(value)?.internal_chat_message_metadata_passthrough)?.turn_id;
-  return typeof turnId === "string" ? turnId : undefined;
 }
 
 function rawMessageText(value: Record<string, unknown>): string {
@@ -108,13 +108,6 @@ export function hasCurrentChatGptEnvironmentContext(parsed: CodexParsedRequest):
   return false;
 }
 
-function contextualUserMessage(value: Record<string, unknown>): boolean {
-  const text = rawMessageText(value).trim();
-  return /^<environment_context>[\s\S]*<\/environment_context>$/.test(text)
-    || /^<subagent_notification>[\s\S]*<\/subagent_notification>$/.test(text)
-    || isReadableCompactionSummaryText(text)
-    || text === OPAQUE_COMPACTION_NOTE;
-}
 /** Current native instruction, or an exact daemon-proven checkpoint continuation. */
 export function extractChatGptTurnUserRevision(parsed: CodexParsedRequest): unknown {
   const identity = extractChatGptTurnIdentity(parsed);
@@ -145,19 +138,11 @@ export function extractChatGptTurnUserText(parsed: CodexParsedRequest): string |
 }
 
 function latestChatGptTurnUserRevision(parsed: CodexParsedRequest): ChatGptTurnUserRevision | undefined {
-  const body = record(parsed._rawBody);
-  const input = Array.isArray(body?.input) ? body.input : [];
-  for (let index = input.length - 1; index >= 0; index -= 1) {
-    const item = record(input[index]);
-    const ordinaryUser = item?.type === "message" && item.role === "user";
-    if (!ordinaryUser && item?.type !== "agent_message") continue;
-    if (isContextualCodexUserMessage(item.content)) continue;
-    const messageTurnId = itemTurnId(item);
-    const serverOwnedId = typeof item.id === "string" && item.id.length > 0;
-    if (messageTurnId === undefined && !serverOwnedId) continue;
-    return { content: item.content, ...(messageTurnId ? { turnId: messageTurnId } : {}) };
-  }
-  return undefined;
+  return turnUserRevisionHistory(parsed._rawBody).at(-1);
+}
+
+export function chatGptTurnUserRevisionHistory(parsed: CodexParsedRequest): ChatGptTurnUserRevision[] {
+  return turnUserRevisionHistory(parsed._rawBody);
 }
 
 /** The human instruction summarized by a remote compaction request belongs to an earlier turn. */
@@ -186,17 +171,27 @@ export function extractChatGptContinuationEnvironmentClaim(parsed: CodexParsedRe
     const item = record(value);
     if (item?.type !== "message" || item.role !== "user" || itemTurnId(item) !== turnId
       || typeof item.id !== "string" || !item.id) return [];
-    const text = rawMessageText(item).trim();
-    return /^<environment_context>[\s\S]*<\/environment_context>$/.test(text) ? [text] : [];
+    const parts = typeof item.content === "string" ? [item.content]
+      : Array.isArray(item.content) ? item.content.map(part => record(part)?.text) : [];
+    return parts.flatMap(value => {
+      if (typeof value !== "string") return [];
+      const text = value.trim();
+      return /^<environment_context>[\s\S]*<\/environment_context>$/.test(text) ? [text] : [];
+    });
   });
   if (updates.length !== 1) throw new Error("Compaction continuation requires one current native environment claim");
   return parseChatGptEnvironmentText(parsed, updates[0]!);
 }
 
-function environmentBeforeUser(input: unknown[], userIndex: number, expectedTurnId?: string): string | undefined {
+function environmentBeforeUser(
+  input: unknown[],
+  userIndex: number,
+  expectedTurnId?: string,
+  metadata?: Record<string, unknown>,
+): string | undefined {
   if (userIndex <= 0) return undefined;
   const user = record(input[userIndex]);
-  if (user?.type !== "message" || user.role !== "user") return undefined;
+  if (!isUserOrParentInstruction(user, metadata)) return undefined;
 
   const userTurnId = itemTurnId(user);
   if (!userTurnId || (expectedTurnId && userTurnId !== expectedTurnId)) return undefined;
@@ -303,7 +298,7 @@ function canonicalMetadataEnvironmentBeforeUser(
   if (!metadataTurnId || !metadataSandbox) return undefined;
 
   const user = record(input[userIndex]);
-  if (user?.type !== "message" || user.role !== "user" || typeof user.id !== "string" || !user.id) return undefined;
+  if (!isUserOrParentInstruction(user, metadata) || typeof user.id !== "string" || !user.id) return undefined;
   const userTurnId = itemTurnId(user);
   if (userTurnId !== undefined && userTurnId !== metadataTurnId) return undefined;
 
@@ -350,23 +345,25 @@ function hasAssistantOutputBetween(input: unknown[], startIndex: number, endInde
 function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
   const body = record(parsed._rawBody);
   const input = Array.isArray(body?.input) ? body.input : [];
+  const metadata = clientTurnMetadata(parsed);
   let activeUserIndex = -1;
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = record(input[index]);
-    if (item?.role === "user" && !contextualUserMessage(item)) {
+    if (isUserOrParentInstruction(item, metadata)) {
       activeUserIndex = index;
       break;
     }
   }
-  const turnId = clientTurnMetadata(parsed)?.turn_id;
+  const turnId = metadata?.turn_id;
   const currentByTurn = environmentBeforeUser(
     input,
     activeUserIndex,
     typeof turnId === "string" ? turnId : undefined,
+    metadata,
   );
   if (currentByTurn) return currentByTurn;
 
-  const current = canonicalMetadataEnvironmentBeforeUser(input, activeUserIndex, clientTurnMetadata(parsed));
+  const current = canonicalMetadataEnvironmentBeforeUser(input, activeUserIndex, metadata);
   if (current) return current;
 
   // Native steering appends same-turn user items without repeating the trusted envelope. Reuse
@@ -376,8 +373,7 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
       const following = record(input[index + 1]);
       if (following?.type !== "message" || following.role !== "user" || itemTurnId(following) !== turnId
         || /<\/?environment_context\b/i.test(rawMessageText(following))) break;
-      const earlier = environmentBeforeUser(input, index, turnId);
-      const metadata = clientTurnMetadata(parsed);
+      const earlier = environmentBeforeUser(input, index, turnId, metadata);
       if (earlier && (metadata?.workspaces === undefined || environmentMatchesCanonicalMetadata(earlier, metadata, true))) return earlier;
     }
   }
@@ -385,7 +381,6 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
   // A skill invocation appends another server-owned user item after the real instruction. Recover
   // the earlier current-turn environment/prompt pair only through canonical metadata, and bind all
   // declared roots to metadata workspaces so user-authored XML cannot widen filesystem authority.
-  const metadata = clientTurnMetadata(parsed);
   let crossedAssistantOutput = false;
   for (let index = activeUserIndex - 1; index > 0; index -= 1) {
     crossedAssistantOutput ||= hasAssistantOutputBetween(input, index, index + 1);
@@ -398,7 +393,7 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
 
   const replayPrefixLen = Math.min(parsed._replayPrefixLen ?? 0, input.length);
   for (let index = replayPrefixLen - 1; index > 0; index -= 1) {
-    const replayed = environmentBeforeUser(input, index);
+    const replayed = environmentBeforeUser(input, index, undefined, metadata);
     if (replayed) return replayed;
   }
 
@@ -409,8 +404,7 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
     ? metadata.thread_id
     : undefined;
   const activeUser = record(input[activeUserIndex]);
-  const activeUserOwned = activeUser?.type === "message"
-    && activeUser.role === "user"
+  const activeUserOwned = isUserOrParentInstruction(activeUser, metadata)
     && typeof activeUser.id === "string"
     && activeUser.id.length > 0
     && itemTurnId(activeUser) === currentTurnId;
@@ -419,7 +413,7 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
       const historicalUser = record(input[index]);
       const historicalTurnId = itemTurnId(historicalUser);
       if (!historicalTurnId || historicalTurnId === currentTurnId) continue;
-      const historical = environmentBeforeUser(input, index);
+      const historical = environmentBeforeUser(input, index, undefined, metadata);
       if (!historical) continue;
       if (hasAssistantOutputBetween(input, index + 1, activeUserIndex)) return historical;
       if (!currentThreadId || !metadata || !activeUserOwned) continue;

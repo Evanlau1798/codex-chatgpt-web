@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { estimateTokens } from "../../lib/token-estimate";
 
 export const CHATGPT_BIGGER_CONTEXT_PARTS = 3 as const;
 export type ChatGptWebMultipartPartCount = 2 | typeof CHATGPT_BIGGER_CONTEXT_PARTS;
@@ -107,63 +108,69 @@ export function formatChatGptWebMultipartCommit(
   ].join("\n");
 }
 
-function recordWeight(record: MultipartContextRecord): number {
-  return Buffer.byteLength(JSON.stringify(record), "utf8");
+export interface MultipartRecordBudget {
+  tokens: number;
+  chars: number;
 }
 
-function minimumMultipartGroupCapacity(
-  weights: readonly number[],
-  totalParts: ChatGptWebMultipartPartCount,
-): number {
-  if (weights.length === 0) return 0;
+function recordWeight(record: MultipartContextRecord): MultipartRecordBudget {
+  const text = withoutRetiredTurnHandles(JSON.stringify(record));
+  return { tokens: estimateTokens(text) + 1, chars: text.length + 1 };
+}
+
+function partitionBoundaries(
+  weights: readonly MultipartRecordBudget[],
+  budgets: readonly MultipartRecordBudget[],
+): number[] {
+  const scale = 1_000_000;
+  const load = (part: number, tokens: number, chars: number): number => Math.max(
+    Math.ceil(tokens * scale / budgets[part]!.tokens),
+    Math.ceil(chars * scale / budgets[part]!.chars),
+  );
   let lower = 0;
-  let upper = 0;
+  let totalTokens = 0;
+  let totalChars = 0;
   for (const weight of weights) {
-    lower = Math.max(lower, weight);
-    upper += weight;
+    totalTokens += weight.tokens;
+    totalChars += weight.chars;
   }
-  const requiredGroups = (capacity: number): number => {
-    let groups = 1;
-    let groupWeight = 0;
-    for (const weight of weights) {
-      if (groupWeight > 0 && groupWeight + weight > capacity) {
-        groups += 1;
-        groupWeight = weight;
-      } else {
-        groupWeight += weight;
+  let upper = weights.length === 0 ? 0 : load(0, totalTokens, totalChars);
+  const boundaries = (capacity: number): number[] => {
+    let offset = 0;
+    return budgets.map((_budget, part) => {
+      let tokens = 0;
+      let chars = 0;
+      while (offset < weights.length) {
+        const weight = weights[offset]!;
+        if (load(part, tokens + weight.tokens, chars + weight.chars) > capacity) break;
+        tokens += weight.tokens;
+        chars += weight.chars;
+        offset += 1;
       }
-    }
-    return groups;
+      return offset;
+    });
   };
   while (lower < upper) {
     const candidate = Math.floor((lower + upper) / 2);
-    if (requiredGroups(candidate) <= totalParts) upper = candidate;
+    if (boundaries(candidate).at(-1) === weights.length) upper = candidate;
     else lower = candidate + 1;
   }
-  return lower;
+  return boundaries(lower);
 }
 
 export function partitionMultipartContext(
   records: readonly MultipartContextRecord[],
   totalParts: ChatGptWebMultipartPartCount,
+  budgets: readonly MultipartRecordBudget[],
 ): ChatGptWebMultipartParts {
-  const groups: MultipartContextRecord[][] = Array.from({ length: totalParts }, () => []);
+  if (budgets.length !== totalParts) throw new Error("ChatGPT multipart budget count does not match parts");
   let offset = 0;
   const weights = records.map(recordWeight);
-  const capacity = minimumMultipartGroupCapacity(weights, totalParts);
-  for (let part = 0; part < totalParts; part += 1) {
-    const remainingParts = totalParts - part;
-    const remainingRecords = records.length - offset;
-    if (remainingRecords <= 0) break;
-    const maximumEnd = records.length - Math.min(remainingRecords, remainingParts - 1);
-    let groupWeight = 0;
-    while (offset < maximumEnd) {
-      const weight = weights[offset]!;
-      if (groups[part]!.length > 0 && groupWeight + weight > capacity) break;
-      groups[part]!.push(records[offset++]!);
-      groupWeight += weight;
-    }
-  }
+  const groups = partitionBoundaries(weights, budgets).map(end => {
+    const group = records.slice(offset, end);
+    offset = end;
+    return group;
+  });
   if (offset !== records.length) throw new Error("ChatGPT multipart context partition lost records");
   const payloads = groups.map((group, index) => withoutRetiredTurnHandles(JSON.stringify({
     version: 1, part_index: index + 1, total_parts: totalParts, records: group,

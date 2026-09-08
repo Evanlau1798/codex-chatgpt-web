@@ -268,9 +268,22 @@ async function captureBrowserDiagnosticState(
       bodyTextChars: document.body?.textContent?.length ?? 0,
       composer: {
         visibleCount: composers.length,
-        textChars: composers.map(element => (element.textContent ?? "").length),
+        textChars: composers.map(element => (
+          element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+            ? element.value : element.textContent ?? ""
+        ).length),
+        editors: composers.map(element => ({
+          tag: element.tagName.toLowerCase(),
+          contentEditable: (element as HTMLElement).isContentEditable,
+          focused: element === document.activeElement,
+        })),
         composerSelectedConnectors: scopedRows(composerForm, '[data-id^="plugin:"][data-keyword]', 20),
         mentionMenuConnectors: rows('.__menu-item[tabindex="0"][data-id^="plugin:"][data-keyword], .__menu-item[tabindex="0"] [data-id^="plugin:"][data-keyword]', 20),
+      },
+      focus: {
+        tag: document.activeElement?.tagName.toLowerCase() ?? null,
+        role: document.activeElement?.getAttribute("role") ?? null,
+        documentFocused: document.hasFocus(),
       },
       effortControls: rows(selectors.effortControl, 10),
       effortItems: rows(selectors.effortItem, 20),

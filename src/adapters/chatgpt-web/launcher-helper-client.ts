@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { notifyLauncherTurn, readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
-import { ChatGptWebAdapterError } from "./adapter-error";
+import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
 import {
   parseLauncherHelperMessage,
   type LauncherHelperMessage,
@@ -63,7 +63,13 @@ export class LauncherBrowserHelperClient {
               );
               return;
             }
-            void this.send({ type: "abort", id: turn.traceId }).catch(error => {
+            void this.send({
+              type: "abort",
+              id: turn.traceId,
+              ...(turn.abortSignal?.reason instanceof ChatGptCompactionHandoffAccepted
+                ? { reason: "compaction_handoff_accepted" }
+                : {}),
+            }).catch(error => {
               this.finishWithError(
                 turn.traceId,
                 error instanceof Error ? error : new Error(String(error)),

@@ -1,4 +1,5 @@
 import type { CodexParsedRequest } from "../../types";
+import { ChatGptCompactionHandoffAccepted } from "./adapter-error";
 import type { ChatGptBrowserWorker } from "./browser-worker";
 import { MAX_COMPACTION_HANDOFF_TIMEOUT_MS, withCompactionAbort } from "./compaction-handoff";
 import type { ChatGptWebCapabilities } from "./model";
@@ -73,7 +74,7 @@ export async function requestRetainedCompactionHandoff(
       browserFailure,
     ]), operationSignal);
     console.info("[chatgpt-web] Web session mode=enhanced path=retained_handoff result=checkpoint_submitted");
-    browserAbort.abort(new DOMException("Structured compaction handoff accepted", "AbortError"));
+    browserAbort.abort(new ChatGptCompactionHandoffAccepted());
     await withCompactionAbort(browser.then(() => undefined, () => undefined), operationSignal);
     return handoff;
   } catch (error) {

@@ -215,6 +215,20 @@ class ManualTurnController {
     return this.host.snapshot();
   }
 
+  navigation(tab, url, inPlace) {
+    if (tab.interactionMode !== "manual") return;
+    if (inPlace && url.split("#", 1)[0] === tab.url?.split("#", 1)[0]) return;
+    if (!tab.conversationKey
+      || (!tab.manualConversationReused && tab.manualState === "awaiting-user")) return;
+    tab.conversationKey = undefined;
+    if (tab.manualConversationReused && tab.status === "running") {
+      tab.status = "error";
+      tab.message = "ChatGPT page changed during a resumed Zero Risk turn. Start a new Codex turn to resend the full context.";
+      this.removed(tab, "failed");
+    }
+    this.logger.info("browser.manual_conversation_invalidated", { tabId: tab.id, traceId: tab.traceId });
+  }
+
   end(traceId, helperPid, status, retain = false) {
     if (this.completions.get(traceId) === helperPid) return { cancelledByUser: false };
     if (!this.find(traceId)) {

@@ -94,7 +94,8 @@ export function extractChatGptThreadSpawnLineage(
   const threadId = typeof metadata.thread_id === "string" ? metadata.thread_id.trim() : "";
   const parentThreadId = typeof metadata.parent_thread_id === "string" ? metadata.parent_thread_id.trim() : "";
   const agentName = typeof metadata.agent_name === "string" ? metadata.agent_name.trim() : "";
-  if (!threadId || !parentThreadId || threadId === parentThreadId || !/^\/root\/.+/.test(agentName)) return undefined;
+  if (!threadId || !parentThreadId || threadId === parentThreadId
+    || (agentName !== "/root" && !/^\/root\/.+/.test(agentName))) return undefined;
 
   const sandboxType = sandboxTypeFromMetadata(canonicalSandboxMetadata(metadata));
   if (!sandboxType || sandboxType === "platform") return undefined;

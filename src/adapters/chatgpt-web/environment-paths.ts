@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep, toNamespacedPath } from "node:path";
 
 export class MissingTrustedCodexEnvironmentError extends Error {
   constructor(field: string) {
@@ -10,7 +10,7 @@ export class MissingTrustedCodexEnvironmentError extends Error {
 
 export function pathIdentity(value: string): string {
   const normalized = resolve(value);
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+  return process.platform === "win32" ? toNamespacedPath(normalized).toLowerCase() : normalized;
 }
 
 export function decodeXmlText(value: string): string {

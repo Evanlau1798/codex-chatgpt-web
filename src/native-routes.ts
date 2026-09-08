@@ -3,7 +3,11 @@ import { formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import type { CodexModelContextOverride } from "./codex-integration";
 import { augmentNativeModelCatalog } from "./model-catalog";
-import { forwardNativeCodexRequest, type NativeFetch } from "./native-passthrough";
+import {
+  forwardNativeCodexRequest,
+  type NativeFetch,
+  type NativeImageEndpoint,
+} from "./native-passthrough";
 
 export async function modelsRequest(
   req: Request,
@@ -36,6 +40,29 @@ export async function modelsRequest(
 export async function nativeSearchRequest(req: Request, fetchUpstream?: NativeFetch): Promise<Response> {
   try {
     return await forwardNativeCodexRequest(req, "alpha/search", fetchUpstream);
+  } catch (error) {
+    return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
+  }
+}
+
+export function nativeAuxiliaryEndpoint(pathname: string): "alpha/search" | NativeImageEndpoint | undefined {
+  if (pathname === "/v1/alpha/search") return "alpha/search";
+  if (pathname === "/v1/images/generations") return "images/generations";
+  if (pathname === "/v1/images/edits") return "images/edits";
+}
+
+export async function nativeAuxiliaryRequest(
+  req: Request,
+  endpoint: "alpha/search" | NativeImageEndpoint,
+  fetchUpstream?: NativeFetch,
+): Promise<Response> {
+  const authorization = req.headers.get("authorization") ?? "";
+  if (endpoint !== "alpha/search"
+    && (!authorization.startsWith("Bearer ") || authorization.length <= "Bearer ".length)) {
+    return formatErrorResponse(401, "authentication_error", "Native image requests require incoming Codex Bearer authorization");
+  }
+  try {
+    return await forwardNativeCodexRequest(req, endpoint, fetchUpstream);
   } catch (error) {
     return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
   }

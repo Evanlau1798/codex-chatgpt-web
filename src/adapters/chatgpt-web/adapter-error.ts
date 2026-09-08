@@ -25,6 +25,14 @@ export class ChatGptWebAdapterError extends Error {
   }
 }
 
+// Only the compaction owner may signal this after the broker accepts its one-shot handoff.
+// It cancels browser observation while preserving the accepted summary as the native result.
+export class ChatGptCompactionHandoffAccepted extends DOMException {
+  constructor() {
+    super("Structured compaction handoff accepted", "AbortError");
+  }
+}
+
 export function chatGptWebSurfaceError(message: string, streamed: boolean): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(message, {
     status: 502,

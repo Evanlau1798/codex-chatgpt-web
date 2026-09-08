@@ -147,6 +147,19 @@ Do not assume that a generic 502 means the Tunnel is broken. Since v4.0.7, a nat
 outlives its turn binding is reported explicitly as `codex_tool_timeout` and retired rather than
 being presented as an ambiguous proxy success.
 
+## Native compaction returns `404 Not Found`
+
+For an ordinary Codex model, `/v1/responses/compact` forwards to the native legacy compact
+endpoint. That endpoint can return an upstream 404 even when the model and authorization work.
+Check whether a config layer sets `[features].remote_compaction_v2 = false`. Current Codex enables
+V2 by default; remove that override or set the existing key to `true`, then restart Codex and retry
+compaction on the same native model. V2 uses `/responses` with a compaction trigger.
+
+If it still fails, include the effective feature setting, selected model, exact failure time and
+safe log. `native_compaction_upstream_failed` records the route, model, HTTP status and available
+request identifiers without prompt contents or credentials. A separate Web context-length error
+still requires its own diagnosis; changing the native protocol does not increase Web input limits.
+
 ## ChatGPT says the account is temporarily limited
 
 The bridge permits at most five simultaneous browser tabs as an account-safety ceiling. Five is not
@@ -178,9 +191,16 @@ intentionally do not receive unrestricted filesystem access.
 
 ## Image generation stops before an image appears
 
-Image generation is not currently a supported turn type. ChatGPT uses a separate generation backend
-and lifecycle that the text-response bridge cannot reliably prove complete or retrieve through its
-current contract. This is tracked as a possible future feature, not as a text-streaming timeout.
+Image generation inside the ChatGPT browser conversation is not currently a supported turn type.
+ChatGPT uses a separate generation lifecycle that the text-response bridge cannot reliably prove
+complete or retrieve through its current contract.
+
+Codex's native Image Gen tool uses a different path: it sends `/v1/images/generations` or
+`/v1/images/edits` through the configured Codex base URL. The bridge forwards those requests to the
+native Codex backend using the incoming Codex authorization. A local `404 Not found` on these paths
+in 5.0.4 or earlier is a missing bridge route, not proof of an OpenAI plugin or backend failure.
+Upstream authentication and image-allowance errors remain unchanged; the ChatGPT browser connector
+does not provide credentials or additional allowance for native Image Gen.
 
 ## Update, repair, and remove
 

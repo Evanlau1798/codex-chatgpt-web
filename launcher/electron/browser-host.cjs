@@ -672,6 +672,7 @@ class BrowserHost {
     contents.on("will-redirect", blockAuthenticationNavigation);
     contents.on("did-start-navigation", (_event, url, inPlace, mainFrame) => {
       if (!mainFrame) return;
+      this.manualTurns?.navigation(tab, url, inPlace);
       tab.url = url;
       tab.loading = true;
       if (!inPlace) {
@@ -716,7 +717,10 @@ class BrowserHost {
       this.publishState?.(this.snapshot());
     });
     contents.on("did-navigate-in-page", (_event, url, mainFrame) => {
-      if (mainFrame) tab.url = url;
+      if (mainFrame) {
+        this.manualTurns?.navigation(tab, url, true);
+        tab.url = url;
+      }
       this.publishState?.(this.snapshot());
     });
     contents.on("did-fail-load", (_event, errorCode, errorDescription, url, mainFrame) => {

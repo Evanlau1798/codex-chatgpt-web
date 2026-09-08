@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import {
   resolveChatGptWebContextLimits,
+  resolveChatGptWebMessageTokenBudget,
   resolveChatGptWebTransportLimits,
 } from "../../chatgpt-web-models";
 import { estimateTokens } from "../../lib/token-estimate";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import {
   compiledChatGptWebMaxMessageChars,
+  estimateChatGptWebImageTokens,
   estimateCompiledChatGptWebInputTokens,
   estimateCompiledChatGptWebMessageTokens,
 } from "./input-tokens";
@@ -30,6 +32,7 @@ interface MultipartBoundaryEvidence {
   maxStageChars: number;
   finalMessageTokens: number;
   finalMessageChars: number;
+  finalImageTokens?: number;
 }
 
 export interface PreparedChatGptWebMultipartTransport {
@@ -68,6 +71,7 @@ export function assertChatGptWebMultipartInputWithinLimits(
     messageTokens: number,
     messageChars: number,
     messageEffort: ChatGptWebModelMode["effort"],
+    imageTokens = 0,
   ): void => {
     const limits = resolveChatGptWebTransportLimits(modelId, messageEffort, capabilities);
     if (limits.browserComposerCharLimit !== undefined
@@ -84,6 +88,13 @@ export function assertChatGptWebMultipartInputWithinLimits(
         { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
       );
     }
+    const messageBudget = resolveChatGptWebMessageTokenBudget(modelId, messageEffort, capabilities, imageTokens);
+    if (messageTokens > messageBudget) {
+      throw new ChatGptWebAdapterError(
+        `A Bigger Context ${label} requires ${messageTokens.toLocaleString("en-US")} visible message tokens, which exceeds its ${messageBudget.toLocaleString("en-US")}-token input budget after reserving space for ChatGPT and attachments. The bridge will not split an individual Codex message or JSON record; compact the task before retrying.`,
+        { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+      );
+    }
   };
   if (transport) {
     assertMessageBoundary(
@@ -97,6 +108,7 @@ export function assertChatGptWebMultipartInputWithinLimits(
       transport.finalMessageTokens,
       transport.finalMessageChars,
       effort,
+      transport.finalImageTokens,
     );
   } else {
     assertMessageBoundary("stage", estimatedMessageTokens, maxMessageChars, effort);
@@ -130,9 +142,8 @@ export function resolveChatGptWebMultipartStagingMode(
     : ["low", "medium"];
   for (const effort of efforts) {
     const mode = resolveChatGptWebModelMode(modelId, effort, capabilities);
-    const contextLimits = resolveChatGptWebContextLimits(modelId, effort, { ...capabilities, experimentalBiggerContext: false });
     const limits = resolveChatGptWebTransportLimits(modelId, effort, capabilities);
-    const messageTokenLimit = limits.browserMessageTokenLimit ?? contextLimits.autoCompactTokenLimit;
+    const messageTokenLimit = resolveChatGptWebMessageTokenBudget(modelId, effort, capabilities);
     const tokenFits = maxStageMessageTokens <= messageTokenLimit;
     const charsFit = limits.browserComposerCharLimit === undefined
       || maxStageChars <= limits.browserComposerCharLimit;
@@ -183,6 +194,7 @@ export function prepareChatGptWebMultipartTransport(
       maxStageChars,
       finalMessageTokens: estimateTokens(finalPrompt, modelId),
       finalMessageChars: finalPrompt.length,
+      finalImageTokens: estimateChatGptWebImageTokens(prepared),
     },
   );
   return { transactionId, stages, finalPrompt, stagingMode };

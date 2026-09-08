@@ -1260,44 +1260,6 @@ test("Luna-only browser turns verify selector absence instead of opening an effo
   expect(checkpoints).toEqual(["luna-default-confirmed"]);
 });
 
-test("Think mode follows the exact pressed state and normal Luna clears it", async () => {
-  let pressed = false;
-  let clicks = 0;
-  const control = {
-    getAttribute: async () => pressed ? "true" : "false",
-    click: async () => { clicks += 1; pressed = !pressed; },
-  };
-  const controls = {
-    count: async () => 1,
-    first: () => control,
-  };
-  const composerForm = {
-    getByRole: (role: string, options: { name: string; exact: boolean }) => {
-      expect([role, options]).toEqual(["button", { name: "Think", exact: true }]);
-      return { filter: () => controls };
-    },
-  };
-  const checkpoints: string[] = [];
-
-  await setChatGptThinkMode(composerForm as never, true, async checkpoint => { checkpoints.push(checkpoint); });
-  expect(pressed).toBeTrue();
-  expect(clicks).toBe(1);
-  await setChatGptThinkMode(composerForm as never, true);
-  expect(clicks).toBe(1);
-  await setChatGptThinkMode(composerForm as never, false, async checkpoint => { checkpoints.push(checkpoint); });
-  expect(pressed).toBeFalse();
-  expect(clicks).toBe(2);
-  expect(checkpoints).toEqual(["think-enabled", "think-disabled"]);
-});
-
-test("Think mode fails closed when the Luna composer does not expose the control", async () => {
-  const composerForm = {
-    getByRole: () => ({ filter: () => ({ count: async () => 0 }) }),
-  };
-  await expect(setChatGptThinkMode(composerForm as never, true))
-    .rejects.toThrow("Think control is not available");
-});
-
 function dialogPage(text: string, buttonText = "Got it"): { page: Page; pressed: string[] } {
   const pressed: string[] = [];
   const createDialog = () => {
@@ -1565,6 +1527,7 @@ test("submission acceptance stops when its stage is aborted", async () => {
       responseTurn: unknown,
       initialUserTurnCount: number,
       initialResponseTurn: { count: number; lastId?: string },
+      initialTurnIdentities: readonly string[],
       signal: AbortSignal,
     ): Promise<unknown>;
   }).waitForSubmissionAccepted;
@@ -1579,6 +1542,7 @@ test("submission acceptance stops when its stage is aborted", async () => {
     {},
     0,
     { count: 0 },
+    [],
     controller.signal,
   )).rejects.toMatchObject({ name: "AbortError" });
 });

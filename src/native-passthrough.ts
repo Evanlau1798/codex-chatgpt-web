@@ -25,7 +25,8 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 export type NativeFetch = (request: Request) => Promise<Response>;
-export type NativeCodexEndpoint = "models" | "responses" | "responses/compact" | "alpha/search";
+export type NativeImageEndpoint = "images/generations" | "images/edits";
+export type NativeCodexEndpoint = "models" | "responses" | "responses/compact" | "alpha/search" | NativeImageEndpoint;
 
 export interface NativePassthroughDiagnostic {
   outcome: "completed" | "failed" | "aborted";
@@ -46,6 +47,9 @@ export interface NativePassthroughDiagnostic {
   errorPhase: "prepare" | "headers" | null;
   errorName: string | null;
   errorCode: string | null;
+  compactionRequest?: true;
+  model?: string;
+  cfRay?: string | null;
 }
 
 export type NativePassthroughReporter = (diagnostic: NativePassthroughDiagnostic) => void;
@@ -158,6 +162,16 @@ function emitNativeDiagnostic(
 }
 
 export const reportNativePassthroughDiagnostic: NativePassthroughReporter = diagnostic => {
+  if (diagnostic.compactionRequest && diagnostic.upstreamStatus !== null && diagnostic.upstreamStatus >= 400) {
+    console.warn(`[codex-chatgpt-web] native_compaction_upstream_failed ${JSON.stringify({
+      endpoint: diagnostic.endpoint,
+      model: diagnostic.model,
+      status: diagnostic.upstreamStatus,
+      requestId: diagnostic.requestId,
+      cfRay: diagnostic.cfRay ?? null,
+    })}`);
+    return;
+  }
   const noteworthy = diagnostic.outcome !== "completed"
     || diagnostic.errorPhase !== null
     || diagnostic.upstreamStatus === null
@@ -248,6 +262,9 @@ export async function forwardNativeCodexRequest(
   const headers = endToEndHeaders(request.headers);
   if (endpoint === "models") headers.delete("if-none-match");
   const method = endpoint === "models" ? "GET" : "POST";
+  const imageRequest = endpoint === "images/generations" || endpoint === "images/edits";
+  let compactionRequest = endpoint === "responses/compact";
+  let model: string | undefined;
   const startedAt = now();
   if (request.signal.aborted) {
     const reason = request.signal.reason ?? new DOMException("Request aborted", "AbortError");
@@ -284,11 +301,22 @@ export async function forwardNativeCodexRequest(
     visitedNodes: 0,
   };
   try {
-    if (method === "POST") {
+    if (imageRequest) {
+      body = await request.arrayBuffer();
+      requestBytes = body.byteLength;
+      forwardedBytes = body.byteLength;
+    } else if (method === "POST") {
       const parseRequest = decodedBody === undefined ? request.clone() : undefined;
       const originalBody = await request.arrayBuffer();
       requestBytes = originalBody.byteLength;
       const decoded = decodedBody === undefined ? await readJsonRequestBody(parseRequest!) : decodedBody;
+      if (isObject(decoded)) {
+        if (typeof decoded.model === "string" && /^[A-Za-z0-9_./:-]{1,128}$/.test(decoded.model)) {
+          model = decoded.model;
+        }
+        const tail = Array.isArray(decoded.input) ? decoded.input.at(-1) : undefined;
+        compactionRequest ||= endpoint === "responses" && isObject(tail) && tail.type === "compaction_trigger";
+      }
       summary = summarizeInput(decoded);
       const scrubbed = scrubBridgeArtifactsForNative(decoded);
       bodyRewritten = scrubbed.changed;
@@ -326,6 +354,7 @@ export async function forwardNativeCodexRequest(
     headers,
     ...(body ? { body } : {}),
     signal: request.signal,
+    redirect: imageRequest ? "manual" : "follow",
   });
   if (request.signal.aborted) {
     const reason = request.signal.reason ?? new DOMException("Request aborted", "AbortError");
@@ -383,6 +412,11 @@ export async function forwardNativeCodexRequest(
     errorPhase: null,
     errorName: null,
     errorCode: null,
+    ...(compactionRequest && !upstream.ok ? {
+      compactionRequest: true as const,
+      model,
+      cfRay: safeDiagnosticIdentifier(upstream.headers.get("cf-ray")),
+    } : {}),
   });
   const isEventStream = (upstream.headers.get("content-type") ?? "")
     .toLowerCase()
@@ -395,9 +429,11 @@ export async function forwardNativeCodexRequest(
         );
       })
     : upstream.body;
+  const responseHeaders = endToEndHeaders(upstream.headers);
+  if (imageRequest) responseHeaders.delete("content-encoding");
   return new Response(responseBody, {
     status: upstream.status,
     statusText: upstream.statusText,
-    headers: endToEndHeaders(upstream.headers),
+    headers: responseHeaders,
   });
 }

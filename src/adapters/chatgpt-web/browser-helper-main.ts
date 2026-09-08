@@ -2,7 +2,7 @@ import { createInterface } from "node:readline";
 import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
 import { ChatGptBrowserWorker, closeChatGptBrowserWorkers, type BrowserTurn } from "./browser-worker";
-import { ChatGptWebAdapterError } from "./adapter-error";
+import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
 import type { ChatGptWebCapabilities } from "./model";
 import { createProcessLineWriter } from "./process-line-writer";
 import type { CompiledChatGptWebPrompt } from "./prompt";
@@ -75,7 +75,7 @@ type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage
   | { type: "completion_fence_commit_ack"; id: string; requestId: number; committed: boolean }
   | { type: "preempt_retry"; id: string; prompt: string }
   | { type: "progress"; id: string; snapshot: ChatGptExternalTurnProgressSnapshot }
-  | { type: "abort"; id: string }
+  | { type: "abort"; id: string; reason?: "compaction_handoff_accepted" }
   | { type: "shutdown" };
 
 let outputFailure: Error | undefined;
@@ -368,7 +368,9 @@ input.on("line", line => {
     );
     sendActivationWaiters.delete(message.id);
     completionFences.end(message.id);
-    abortControllers.get(message.id)?.abort();
+    abortControllers.get(message.id)?.abort(message.reason === "compaction_handoff_accepted"
+      ? new ChatGptCompactionHandoffAccepted()
+      : undefined);
   } else if (message.type === "progress") {
     // Progress is only meaningful for a turn this helper is actually running. Creating a mirror
     // for any unrecognised id let late, malformed, or misaddressed frames grow this map without

@@ -51,6 +51,56 @@ test("Zero Risk rejects ownership changes and prompt rewrites", () => {
   controller.cancel("trace-a2", 10);
 });
 
+test("manual navigation retires completed continuation without invalidating initial setup", () => {
+  const { clipboard, controller, host } = fixture();
+  const key = "a".repeat(64);
+  const first = controller.begin("trace-nav-1", 10, "original context", key);
+  const tab = host.turnTabs.get(first.tabId);
+  tab.url = "https://chatgpt.com/?temporary-chat=true";
+  controller.navigation(tab, "https://chatgpt.com/c/created", false);
+  assert.equal(tab.conversationKey, key);
+  controller.confirmSent(tab.id);
+  controller.started("trace-nav-1", 10);
+  controller.end("trace-nav-1", 10, "completed", true);
+  controller.navigation(tab, "https://chatgpt.com/c/another", false);
+  assert.equal(tab.conversationKey, undefined);
+  const next = controller.begin("trace-nav-2", 10, "full history", key, "delta only");
+  assert.equal(next.reused, false);
+  assert.deepEqual(clipboard, ["original context", "full history"]);
+  controller.cancel("trace-nav-2", 10);
+});
+
+test("same-document navigation is safe but document replacement fails a resumed manual turn", async () => {
+  const { controller, host } = fixture();
+  const key = "b".repeat(64);
+  const first = controller.begin("trace-nav-base", 10, "original", key);
+  controller.confirmSent(first.tabId);
+  controller.started("trace-nav-base", 10);
+  controller.end("trace-nav-base", 10, "completed", true);
+  const resumed = controller.begin("trace-nav-resume", 10, "full", key, "delta");
+  const tab = host.turnTabs.get(resumed.tabId);
+  tab.url = "https://chatgpt.com/c/retained";
+  controller.navigation(tab, `${tab.url}#answer`, true);
+  assert.equal(tab.conversationKey, key);
+  const terminal = controller.waitTerminal("trace-nav-resume", 10, 1_000);
+  controller.navigation(tab, tab.url, false);
+  assert.equal(tab.status, "error");
+  assert.equal((await terminal).status, "failed");
+  assert.match(tab.message, /full context/);
+});
+
+test("a changed page after the first submission cannot be retained", () => {
+  const { controller, host } = fixture();
+  const first = controller.begin("trace-nav-first", 10, "original", "c".repeat(64));
+  const tab = host.turnTabs.get(first.tabId);
+  tab.url = "https://chatgpt.com/?temporary-chat=true";
+  controller.confirmSent(tab.id);
+  controller.navigation(tab, "https://chatgpt.com/c/created", true);
+  controller.started("trace-nav-first", 10);
+  controller.end("trace-nav-first", 10, "completed", true);
+  assert.equal(host.turnTabs.has(tab.id), false);
+});
+
 test("duplicate manual start preserves the original deadline and running lease shape", () => {
   const { controller, host, clipboard } = fixture();
   const first = controller.begin("trace-retry", 10, "original");

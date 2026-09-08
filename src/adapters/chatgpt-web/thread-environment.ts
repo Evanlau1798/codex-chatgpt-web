@@ -19,6 +19,7 @@ import {
 } from "./environment";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
 import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
+import { unattributedChatGptEnvironmentMessages } from "./environment-history";
 
 interface StoredThreadEnvironment {
   cwd: string;
@@ -155,9 +156,12 @@ export class ChatGptThreadEnvironmentStore {
     } catch (error) {
       if (!(error instanceof MissingTrustedCodexEnvironmentError) || !identity.threadId) throw error;
       const hasCurrentContext = hasCurrentChatGptEnvironmentContext(parsed);
-      if (hasCurrentContext && !isChatGptCompactionContinuation(parsed)) throw error;
-      const currentClaim = hasCurrentContext ? extractChatGptContinuationEnvironmentClaim(parsed) : undefined;
       const lineage = extractChatGptThreadSpawnLineage(parsed);
+      const currentCompaction = hasCurrentContext && isChatGptCompactionContinuation(parsed);
+      const historicalMessages = hasCurrentContext && !currentCompaction && lineage
+        ? unattributedChatGptEnvironmentMessages(parsed) : undefined;
+      if (hasCurrentContext && !currentCompaction && !historicalMessages) throw error;
+      const currentClaim = currentCompaction ? extractChatGptContinuationEnvironmentClaim(parsed) : undefined;
       const rolloutIdentity = lineage ?? extractChatGptRootThreadMetadata(parsed);
       // Automatic compaction has a current turn_context; standalone compaction has only its
       // source turn_context. Either must be the latest native record, never an arbitrary ancestor.
@@ -170,6 +174,7 @@ export class ChatGptThreadEnvironmentStore {
           lineage: rolloutIdentity,
           turnId: identity.turnId,
           ...(compactionSourceTurnId ? { compactionSourceTurnId } : {}),
+          ...(historicalMessages ? { historicalEnvironmentMessages: historicalMessages } : {}),
           tools: effectiveChatGptToolPolicy(parsed).tools,
         });
         if (rolloutEnvironment) {

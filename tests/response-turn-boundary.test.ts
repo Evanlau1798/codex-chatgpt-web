@@ -3,11 +3,43 @@ import {
   activateChatGptSendControl,
   bindChatGptAssistantTurn,
   chatGptAssistantTurnChanged,
+  chatGptNewTurnIdentity,
   chatGptSubmissionEvidence,
   locateChatGptAssistantTurn,
   readChatGptAssistantTurnState,
   reconcileChatGptAssistantTurnBinding,
 } from "../src/adapters/chatgpt-web/response-turn-boundary";
+
+test("logical turn identities ignore remounted history and reject ambiguous additions", () => {
+  expect(chatGptNewTurnIdentity(["turn-old-1", "turn-old-2"], ["turn-old-2"])).toBeUndefined();
+  expect(chatGptNewTurnIdentity(["turn-old-1", "turn-old-2"], ["turn-old-2", "turn-new"]))
+    .toBe("turn-new");
+  expect(() => chatGptNewTurnIdentity(["turn-old"], ["turn-new-1", "turn-new-2"]))
+    .toThrow("2 new conversation turns");
+});
+
+test("submission evidence uses the persistent logical baseline instead of display counts", () => {
+  expect(chatGptSubmissionEvidence({
+    initialUserTurnCount: 1,
+    userTurnCount: 2,
+    initialAssistantTurnCount: 1,
+    assistantTurnCount: 1,
+    initialTurnIdentities: ["turn-user-old", "turn-assistant-old"],
+    userIdentities: ["turn-user-old"],
+    responseIdentities: ["turn-assistant-old"],
+    generationRunning: false,
+  })).toBeUndefined();
+  expect(chatGptSubmissionEvidence({
+    initialUserTurnCount: 1,
+    userTurnCount: 1,
+    initialAssistantTurnCount: 1,
+    assistantTurnCount: 1,
+    initialTurnIdentities: ["turn-user-old", "turn-assistant-old"],
+    userIdentities: ["turn-user-old"],
+    responseIdentities: ["turn-assistant-new"],
+    generationRunning: false,
+  })).toBe("assistant_turn");
+});
 
 test("send control uses semantic keyboard activation", async () => {
   const activations: string[] = [];
@@ -98,6 +130,7 @@ test("reads assistant count and public identity from one DOM snapshot", async ()
   expect(await readChatGptAssistantTurnState(turns as never)).toEqual({
     count: 2,
     lastId: "conversation-turn-7",
+    identities: ["conversation-turn-5", "conversation-turn-7"],
   });
   expect(snapshots).toBe(1);
 });
@@ -149,8 +182,8 @@ test("locates a bound assistant response exclusively by its stable public identi
   let observedId = "";
   const turns = {
     page: () => ({
-      getByTestId(id: string) {
-        observedId = id;
+      locator(selector: string) {
+        observedId = selector;
         return resolved;
       },
     }),
@@ -162,7 +195,7 @@ test("locates a bound assistant response exclusively by its stable public identi
     ordinal: 3,
     generation: 0,
   })).toBe(resolved);
-  expect(observedId).toBe("conversation-turn-9");
+  expect(observedId).toBe('[data-turn-id="conversation-turn-9"]');
 });
 
 test("keeps an attached response binding when historical turns are virtualized", () => {
