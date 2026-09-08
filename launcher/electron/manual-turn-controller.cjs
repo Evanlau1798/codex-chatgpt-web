@@ -9,23 +9,17 @@ function digest(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function freshNavigationKind(tab, url) {
-  if (tab.manualConversationReused) return undefined;
+function isFirstConversationNavigation(tab, url) {
+  if (tab.manualConversationReused
+    || tab.manualInitialConversationNavigationAccepted
+    || !["sent", "running"].includes(tab.manualState)) return false;
   try {
     const previous = new URL(tab.url);
     const next = new URL(url);
-    if (previous.href === "about:blank"
-      && next.origin === "https://chatgpt.com"
-      && next.pathname === "/"
-      && next.searchParams.get("temporary-chat") === "true") return "bootstrap";
-    if (!tab.manualInitialConversationNavigationAccepted
-      && ["sent", "running"].includes(tab.manualState)
-      && previous.origin === "https://chatgpt.com"
-      && next.origin === previous.origin) return "conversation";
+    return previous.origin === "https://chatgpt.com" && next.origin === previous.origin;
   } catch {
-    return undefined;
+    return false;
   }
-  return undefined;
 }
 
 class ManualTurnController {
@@ -238,9 +232,8 @@ class ManualTurnController {
   navigation(tab, url, inPlace) {
     if (tab.interactionMode !== "manual") return;
     if (inPlace && url.split("#", 1)[0] === tab.url?.split("#", 1)[0]) return;
-    const freshNavigation = freshNavigationKind(tab, url);
-    if (freshNavigation) {
-      if (freshNavigation === "conversation") tab.manualInitialConversationNavigationAccepted = true;
+    if (isFirstConversationNavigation(tab, url)) {
+      tab.manualInitialConversationNavigationAccepted = true;
       return;
     }
     if (!tab.conversationKey

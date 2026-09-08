@@ -106,23 +106,6 @@ test("the first ChatGPT conversation route created after Sent can be retained", 
   assert.equal(tab.conversationKey, undefined);
 });
 
-test("a fresh turn keeps ownership across delayed bootstrap and one same-origin route", () => {
-  const { controller, host } = fixture();
-  const key = "d".repeat(64);
-  const first = controller.begin("trace-nav-bootstrap", 10, "original", key);
-  const tab = host.turnTabs.get(first.tabId);
-  tab.url = "about:blank";
-  controller.confirmSent(tab.id);
-  controller.navigation(tab, "https://chatgpt.com/?temporary-chat=true", false);
-  assert.equal(tab.conversationKey, key);
-  tab.url = "https://chatgpt.com/?temporary-chat=true";
-  controller.navigation(tab, "https://chatgpt.com/g/codex-zero-risk", true);
-  assert.equal(tab.conversationKey, key);
-  tab.url = "https://chatgpt.com/g/codex-zero-risk";
-  controller.navigation(tab, "https://chatgpt.com/c/another", true);
-  assert.equal(tab.conversationKey, undefined);
-});
-
 test("a fresh turn never retains navigation outside ChatGPT", () => {
   const { controller, host } = fixture();
   const first = controller.begin("trace-nav-external", 10, "original", "e".repeat(64));
