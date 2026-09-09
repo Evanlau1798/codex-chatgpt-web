@@ -5,6 +5,7 @@ import { type AppConfig, defaultBrokerEndpoint, loadConfig } from "../src/config
 import { VERSION } from "../src/version";
 import {
   WEB_CONTRACT_PROBE_TIMEOUT_MS,
+  WEB_CONTRACT_REFRESH_SYSTEM,
   WEB_CONTRACT_TURN_TIMEOUT_MS,
   webContractBrowserIsIdle,
 } from "./lifecycle-smoke/web-contract-core";
@@ -149,12 +150,13 @@ async function verifyRetainedRefreshStats(stats: PromptStat[]): Promise<void> {
   while (stats.length < 2 && Date.now() < deadline) await Bun.sleep(25);
   const full = stats.find(value => value.mode === "full" && !value.reused);
   const refresh = stats.find(value => value.mode === "refresh" && value.reused);
-  if (!full || !refresh || refresh.chars >= full.chars * 0.3) {
+  if (!full || !refresh || refresh.chars >= WEB_CONTRACT_REFRESH_SYSTEM.length * 0.3) {
     throw new Error(`Candidate retained refresh evidence is invalid: ${JSON.stringify(stats)}`);
   }
   process.stdout.write(`CANDIDATE_RETAINED_REFRESH_OK ${JSON.stringify({
     fullPromptChars: full.chars,
     refreshPromptChars: refresh.chars,
+    refreshSystemChars: WEB_CONTRACT_REFRESH_SYSTEM.length,
     promptMode: refresh.mode,
     tabReused: refresh.reused,
   })}\n`);

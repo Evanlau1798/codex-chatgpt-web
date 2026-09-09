@@ -1,6 +1,13 @@
 export const WEB_CONTRACT_COOLDOWN_MS = 2 * 60_000;
 export const WEB_CONTRACT_PROBE_TIMEOUT_MS = 5 * 60_000;
 export const WEB_CONTRACT_TURN_TIMEOUT_MS = 3 * 60_000;
+export const WEB_CONTRACT_INITIAL_SYSTEM = "Retained release-gate revision A. Reply briefly.";
+export const WEB_CONTRACT_REFRESH_SYSTEM = [
+  "Retained release-gate revision B. Read the refreshed context, then reply briefly.",
+  ...Array.from({ length: 400 }, (_, index) => (
+    `Verification marker ${String(index).padStart(3, "0")}: preserve the current release-gate safety contract.`
+  )),
+].join("\n");
 
 const capabilityKeys = [
   "authenticated",

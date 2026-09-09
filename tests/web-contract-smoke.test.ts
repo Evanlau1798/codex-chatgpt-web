@@ -8,6 +8,8 @@ import {
   retainedRefreshTabId,
   requestWebContractTurn,
   responseHasFinalProjection,
+  WEB_CONTRACT_INITIAL_SYSTEM,
+  WEB_CONTRACT_REFRESH_SYSTEM,
   WEB_CONTRACT_COOLDOWN_MS,
   WEB_CONTRACT_PROBE_TIMEOUT_MS,
   WEB_CONTRACT_TURN_TIMEOUT_MS,
@@ -21,6 +23,12 @@ import {
 } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
 
 describe("lightweight Web contract smoke", () => {
+  test("keeps the first live turn inline and moves the large revision to retained refresh", () => {
+    expect(WEB_CONTRACT_INITIAL_SYSTEM.length).toBeLessThan(512);
+    expect(WEB_CONTRACT_REFRESH_SYSTEM.length).toBeGreaterThan(20_000);
+    expect(WEB_CONTRACT_REFRESH_SYSTEM).not.toBe(WEB_CONTRACT_INITIAL_SYSTEM);
+  });
+
   test("uses the requested Medium route without model fallback", () => {
     const script = readFileSync(
       new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url),

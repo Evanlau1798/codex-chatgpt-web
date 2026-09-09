@@ -19,7 +19,9 @@ import {
   retainedRefreshTabId,
   requestWebContractTurn,
   responseHasFinalProjection,
+  WEB_CONTRACT_INITIAL_SYSTEM,
   WEB_CONTRACT_PROBE_TIMEOUT_MS,
+  WEB_CONTRACT_REFRESH_SYSTEM,
   WEB_CONTRACT_TURN_TIMEOUT_MS,
   webContractBrowserIsIdle,
 } from "./web-contract-core";
@@ -162,7 +164,6 @@ const item = (id: string, text: string, turnId: string) => ({
   content: [{ type: "input_text", text }],
   internal_chat_message_metadata_passthrough: { turn_id: turnId },
 });
-const systemBase = "Stable retained release-gate instruction. ".repeat(300);
 const tools = [{
   type: "function",
   name: "release_gate_noop",
@@ -216,7 +217,7 @@ async function runTurn(
 }
 
 const firstTurnId = `turn_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
-const first = await runTurn(firstTurnId, `${systemBase}Revision A.`, [
+const first = await runTurn(firstTurnId, WEB_CONTRACT_INITIAL_SYSTEM, [
   item("msg_web_contract_environment", environment, firstTurnId),
   item("msg_web_contract_prompt", "Reply briefly to confirm the first retained turn completed.\n\nVerification: **bold**, `code`, and _emphasis_.", firstTurnId),
 ]);
@@ -224,7 +225,7 @@ if (!responseHasFinalProjection(first) || typeof first.id !== "string" || !first
   throw new Error("Web contract first retained turn did not complete a final projection");
 }
 const secondTurnId = `turn_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
-const second = await runTurn(secondTurnId, `${systemBase}Revision B.`, [
+const second = await runTurn(secondTurnId, WEB_CONTRACT_REFRESH_SYSTEM, [
   item("msg_web_contract_resume", "Reply briefly to confirm the retained system refresh completed.", secondTurnId),
 ], first.id);
 const finalProjection = responseHasFinalProjection(second);
