@@ -77,7 +77,7 @@ test("the daemon prefers the browser helper that shipped beside its own entrypoi
 
   // Belt and braces: negotiate the frame, and never treat an unrecognised frame as a run.
   expect(client).toContain('this.helperFeatures.has("progress")');
-  expect(helper).toContain('features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack"]');
+  expect(helper).toContain('features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "answer-before-completion"]');
   expect(helper).toMatch(/message\.type === "run"/);
   expect(helper).toContain("Browser helper received an unsupported message type");
 
