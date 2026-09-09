@@ -57,8 +57,10 @@ test("remote completion fences distinguish an unread retained context archive", 
     const remote = new RemoteTurnBroker(socketPath);
     await remote.assertCompatible();
     const token = await broker.register(environment(root));
-    await broker.registerContext("updated system", 5_000, "remote-context-fence", token, false);
-    expect(await remote.beginCompletionFence(token)).toEqual({ blocked: "context_archive" });
+    await broker.registerContext("first\nsecond\nthird", 5_000, "remote-context-fence", token, false);
+    expect(await remote.beginCompletionFence(token)).toEqual({ blocked: "context_archive", nextIndex: 0 });
+    await callTurnBroker(socketPath, { method: "read_context", token, index: 0, chunkChars: 10, contract: "native" });
+    expect(await remote.beginCompletionFence(token)).toEqual({ blocked: "context_archive", nextIndex: 1 });
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });

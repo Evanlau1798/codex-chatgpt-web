@@ -3,10 +3,10 @@ import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { ChatGptRetryPrompt } from "./steering";
 import type { ChatGptCompletionFenceStart } from "./turn-broker-completion";
 
-const RETAINED_CONTEXT_ARCHIVE_RETRY_PROMPT = [
-  "The required Codex context archive was not read.",
-  "Call codex_tool_inventory now with the exact turn_token from the preceding codex_native_turn_binding, query \"__codex_context__:0\", offset 0, limit 1, and include_schema false.",
-  "Read every archive chunk in order through next_query and verify its shared SHA-256 and final sentinel before any further work or final answer.",
+const retainedContextArchiveRetryPrompt = (nextIndex: number): string => [
+  "The required Codex context archive was not fully read.",
+  `Call codex_tool_inventory now with the exact turn_token from the preceding codex_native_turn_binding, query "__codex_context__:${nextIndex}", offset 0, limit 1, and include_schema false.`,
+  "Continue through every next_query and verify the shared SHA-256 and final sentinel before any further work or final answer.",
 ].join(" ");
 
 type TraceSink = (value: string, continuation?: boolean) => void;
@@ -59,7 +59,7 @@ export class RetainedContextArchiveRecovery {
     }
     if (!this.correctionUsed) {
       this.correctionUsed = true;
-      return { status: "retry", prompt: RETAINED_CONTEXT_ARCHIVE_RETRY_PROMPT };
+      return { status: "retry", prompt: retainedContextArchiveRetryPrompt(start.nextIndex) };
     }
     throw new ChatGptWebAdapterError("ChatGPT did not read the required context archive after one same-surface correction", {
       status: 502,
@@ -76,7 +76,7 @@ export class RetainedContextArchiveRecovery {
     answerRetry: () => RetryPrompt | Promise<RetryPrompt>,
   ): Promise<{ prompt: RetryPrompt; pendingPreemptiveRetry?: string }> {
     if (completionRetry) {
-      return { prompt: completionRetry, ...(preemptiveRetry ? { pendingPreemptiveRetry: preemptiveRetry } : {}) };
+      return { prompt: preemptiveRetry ? `${completionRetry}\n\nAfter the archive is ready:\n${preemptiveRetry}` : completionRetry };
     }
     if (preemptiveRetry) return { prompt: preemptiveRetry };
     return { prompt: await answerRetry() };

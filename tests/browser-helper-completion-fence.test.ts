@@ -30,8 +30,8 @@ test("helper protocol validates tool boundaries and completion requests", () => 
   expect(() => parseLauncherHelperMessage(JSON.stringify({
     type: "event", id: "trace_123", event: "completion_fence_commit", requestId: 1, revision: -1,
   }))).toThrow("revision is invalid");
-  expect(() => parseBrowserHelperCompletionFenceStart(1, "context_archive")).toThrow("ambiguous");
-  expect(() => parseBrowserHelperCompletionFenceStart(undefined, undefined)).toThrow("invalid");
+  expect(() => parseBrowserHelperCompletionFenceStart(1, "context_archive", 0)).toThrow("ambiguous");
+  expect(() => parseBrowserHelperCompletionFenceStart(undefined, undefined, undefined)).toThrow("invalid");
 });
 
 test("helper fence registry correlates begin and commit acknowledgements", async () => {
@@ -48,8 +48,8 @@ test("helper fence registry correlates begin and commit acknowledgements", async
 
   const blocked = transport.completionFence!.begin();
   const blockedFrame = sent[1] as { requestId: number };
-  registry.resolveBegin("trace_123", blockedFrame.requestId, { blocked: "context_archive" });
-  expect(await blocked).toEqual({ blocked: "context_archive" });
+  registry.resolveBegin("trace_123", blockedFrame.requestId, { blocked: "context_archive", nextIndex: 2 });
+  expect(await blocked).toEqual({ blocked: "context_archive", nextIndex: 2 });
 
   const commit = transport.completionFence!.commit(4);
   const commitFrame = sent[2] as { requestId: number };

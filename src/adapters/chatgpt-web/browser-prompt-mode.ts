@@ -16,6 +16,14 @@ export function selectBrowserPromptMode(
   return requested !== "full" && (!nativeConnector || connectorBound === true) ? requested : "full";
 }
 
+export function reuseChatGptConnectorSelection(
+  transport: CompiledChatGptWebPrompt["transport"],
+  reusedConversation: boolean,
+  responseAttempt: number,
+): boolean {
+  return transport !== "retained-system-archive" && (reusedConversation || responseAttempt > 1);
+}
+
 export function prepareBrowserPrompt(
   turn: PromptPreparers,
   mode: BrowserPromptMode,

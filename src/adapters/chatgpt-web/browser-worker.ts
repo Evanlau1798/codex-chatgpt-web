@@ -125,6 +125,7 @@ import {
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import {
   prepareBrowserPrompt,
+  reuseChatGptConnectorSelection,
   selectBrowserPromptMode,
   type BrowserPromptMode,
 } from "./browser-prompt-mode";
@@ -3190,6 +3191,7 @@ export class ChatGptBrowserWorker {
       let preemptiveStop: PreemptiveRetryStopState | undefined;
       const archiveRecovery = new RetainedContextArchiveRecovery(prepared.transport, turn.completionFence);
       for (let responseAttempt = 1; ; responseAttempt += 1) {
+        const responseConnectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 };
         let completionRetryPrompt: string | undefined;
         let responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
         const initialResponseTurn = await readChatGptAssistantTurnState(responseTurns);
@@ -3219,10 +3221,10 @@ export class ChatGptBrowserWorker {
                 turn.compaction === true,
                 submissionBaseline,
                 checkpoint => diagnostics.capture(page, checkpoint),
-                reuseConversation || responseAttempt > 1,
+                reuseChatGptConnectorSelection(prepared.transport, reuseConversation, responseAttempt),
                 stageSignal,
                 catalogRefreshAvailable,
-                connectorAttemptBudget,
+                responseConnectorAttemptBudget,
                 mode.thinkEnabled,
               ),
               turn.abortSignal,

@@ -73,7 +73,7 @@ interface AnswerRetryMessage {
 type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage
   | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
   | { type: "send_activated_ack"; id: string }
-  | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision?: number; blocked?: "context_archive" | "activity" }
+  | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision?: number; blocked?: "context_archive" | "activity"; nextIndex?: number }
   | { type: "completion_fence_commit_ack"; id: string; requestId: number; committed: boolean }
   | { type: "preempt_retry"; id: string; prompt: string }
   | { type: "progress"; id: string; snapshot: ChatGptExternalTurnProgressSnapshot }
@@ -388,7 +388,7 @@ input.on("line", line => {
     // bound, since nothing would ever remove an entry that has no turn to end it.
     completionFences.apply(message.id, message.snapshot);
   } else if (message.type === "completion_fence_begin_ack") {
-    try { completionFences.resolveBegin(message.id, message.requestId, parseBrowserHelperCompletionFenceStart(message.revision, message.blocked)); }
+    try { completionFences.resolveBegin(message.id, message.requestId, parseBrowserHelperCompletionFenceStart(message.revision, message.blocked, message.nextIndex)); }
     catch (error) {
       writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
       completionFences.end(message.id);

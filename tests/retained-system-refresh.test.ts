@@ -1,11 +1,12 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CHATGPT_WEB_BACKEND_MODEL, CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL } from "../src/chatgpt-web-models";
 import { defaultBrokerEndpoint } from "../src/config";
 import { retainedSystemContextArchive } from "../src/adapters/chatgpt-web/context-bootstrap";
 import { RetainedContextArchiveRecovery } from "../src/adapters/chatgpt-web/context-archive-recovery";
+import { reuseChatGptConnectorSelection } from "../src/adapters/chatgpt-web/browser-prompt-mode";
 import { createChatGptRuntimeStarter } from "../src/adapters/chatgpt-web/adapter-runtime-factory";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
@@ -22,13 +23,25 @@ import type { CodexParsedRequest } from "../src/types";
 const root = mkdtempSync(join(tmpdir(), "cgw-retained-system-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
-test("a skipped retained archive gets one same-surface correction before failing closed", async () => {
-  const contextBlocker = { begin: async () => ({ blocked: "context_archive" as const }), commit: async () => true };
+test("retained archive refresh reattaches the connector for every browser response", () => {
+  expect(reuseChatGptConnectorSelection("retained-system-archive", true, 1)).toBeFalse();
+  expect(reuseChatGptConnectorSelection("retained-system-archive", true, 2)).toBeFalse();
+  expect(reuseChatGptConnectorSelection("inline", true, 1)).toBeTrue();
+  expect(reuseChatGptConnectorSelection("inline", false, 2)).toBeTrue();
+  const worker = readFileSync(join(import.meta.dir, "../src/adapters/chatgpt-web/browser-worker.ts"), "utf8");
+  const responseLoop = worker.indexOf("for (let responseAttempt = 1;");
+  const responseBudget = worker.indexOf("const responseConnectorAttemptBudget", responseLoop);
+  expect(responseBudget).toBeGreaterThan(responseLoop);
+  expect(worker.indexOf("responseConnectorAttemptBudget", responseBudget + 1)).toBeGreaterThan(responseBudget);
+});
+
+test("a skipped retained archive resumes at the broker-confirmed chunk before failing closed", async () => {
+  const contextBlocker = { begin: async () => ({ blocked: "context_archive" as const, nextIndex: 2 }), commit: async () => true };
   const recovery = new RetainedContextArchiveRecovery("retained-system-archive", contextBlocker);
   const first = await recovery.completion(undefined);
   expect(first.status).toBe("retry");
   if (first.status !== "retry") throw new Error("expected retained archive correction");
-  expect(first.prompt).toContain("Call codex_tool_inventory now");
+  expect(first.prompt).toContain('query "__codex_context__:2"');
   expect(await new RetainedContextArchiveRecovery("retained-system-archive", {
     begin: async () => ({ blocked: "activity" }), commit: async () => true,
   }).completion(undefined)).toEqual({ status: "wait" });
@@ -53,19 +66,16 @@ test("retained refresh discards trace output produced before archive confirmatio
   expect(output.at(-1)).toBe("commentary:current");
 });
 
-test("archive correction preserves an already pending preemptive retry", async () => {
+test("archive correction folds an already pending preemptive retry into the same next response", async () => {
   const recovery = new RetainedContextArchiveRecovery("retained-system-archive");
   let answerRetries = 0;
   const corrected = await recovery.selectRetry("read archive", "compact checkpoint", () => {
     answerRetries += 1;
     return "answer retry";
   });
-  expect(corrected).toEqual({ prompt: "read archive", pendingPreemptiveRetry: "compact checkpoint" });
-  expect(answerRetries).toBe(0);
-  expect(await recovery.selectRetry(undefined, corrected.pendingPreemptiveRetry, () => {
-    answerRetries += 1;
-    return "answer retry";
-  })).toEqual({ prompt: "compact checkpoint" });
+  expect(corrected.prompt).toContain("read archive");
+  expect(corrected.prompt).toContain("compact checkpoint");
+  expect(corrected.pendingPreemptiveRetry).toBeUndefined();
   expect(answerRetries).toBe(0);
 });
 
@@ -347,7 +357,7 @@ test("an incomplete archive blocks Automatic completion fences", async () => {
   try {
     const token = await broker.register(environment, 5_000, "completion-refresh");
     await broker.registerContext("updated system", 5_000, "completion-refresh", token, false);
-    expect(broker.beginCompletionFence(token)).toEqual({ blocked: "context_archive" });
+    expect(broker.beginCompletionFence(token)).toEqual({ blocked: "context_archive", nextIndex: 0 });
     expect(broker.commitCompletionFence(token, 0)).toBe(false);
     await callTurnBroker(socketPath, { method: "read_context", token, contract: "native" });
     expect(broker.beginCompletionFence(token)).toEqual({ revision: 0 });

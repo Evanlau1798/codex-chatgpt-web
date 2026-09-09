@@ -2,7 +2,8 @@ import type { TurnChannel } from "./turn-broker-state";
 
 export type ChatGptCompletionFenceStart =
   | { revision: number }
-  | { blocked: "context_archive" | "activity" };
+  | { blocked: "context_archive"; nextIndex: number }
+  | { blocked: "activity" };
 
 const ACTIVITY_ID = /^activity_[A-Za-z0-9_-]{16,128}$/;
 

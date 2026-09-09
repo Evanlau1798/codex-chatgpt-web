@@ -273,15 +273,25 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
   }
 
   async beginCompletionFence(token: string): Promise<ChatGptCompletionFenceStart> {
-    const response = await callTurnBroker<{ revision?: unknown; blocked?: unknown }>(this.socketPath, {
+    const response = await callTurnBroker<{ revision?: unknown; blocked?: unknown; nextIndex?: unknown }>(this.socketPath, {
       method: "owner_completion_fence_begin",
       token,
     });
-    if (response.blocked === "context_archive" || response.blocked === "activity") {
+    if (response.blocked === "context_archive") {
       if (response.revision !== undefined) throw new Error("DEV turn owner received an ambiguous completion fence result");
+      if (!Number.isSafeInteger(response.nextIndex) || (response.nextIndex as number) < 0) {
+        throw new Error("DEV turn owner received an invalid context archive completion blocker");
+      }
+      return { blocked: response.blocked, nextIndex: response.nextIndex as number };
+    }
+    if (response.blocked === "activity") {
+      if (response.revision !== undefined || response.nextIndex !== undefined) {
+        throw new Error("DEV turn owner received an ambiguous completion fence result");
+      }
       return { blocked: response.blocked };
     }
-    if (!Number.isSafeInteger(response.revision) || (response.revision as number) < 0 || response.blocked !== undefined) {
+    if (!Number.isSafeInteger(response.revision) || (response.revision as number) < 0
+      || response.blocked !== undefined || response.nextIndex !== undefined) {
       throw new Error("DEV turn owner received an invalid completion fence result");
     }
     return { revision: response.revision as number };

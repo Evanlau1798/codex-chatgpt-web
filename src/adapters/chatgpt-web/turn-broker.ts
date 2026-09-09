@@ -242,7 +242,8 @@ export class TurnBroker implements TurnBrokerOwner {
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
     assertSafeHarnessRunning(channel);
-    if (this.contexts.hasIncomplete(token)) return { blocked: "context_archive" };
+    const nextIndex = this.contexts.nextIncompleteIndex(token);
+    if (nextIndex !== undefined) return { blocked: "context_archive", nextIndex };
     const revision = beginTurnCompletionFence(channel);
     return revision === undefined ? { blocked: "activity" } : { revision };
   }

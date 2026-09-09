@@ -40,6 +40,12 @@ export class TurnContextStore {
     return [...this.contexts.values()].some(context => context.turnToken === turnToken && !context.complete);
   }
 
+  nextIncompleteIndex(turnToken: string): number | undefined {
+    const pending = [...this.contexts.values()].filter(context => context.turnToken === turnToken && !context.complete);
+    if (pending.length > 1) throw new Error("turn token has multiple incomplete context archives");
+    return pending[0]?.nextChunk;
+  }
+
   ownerToken(token: string): string | undefined { return this.resolve(token)?.turnToken; }
 
   read(

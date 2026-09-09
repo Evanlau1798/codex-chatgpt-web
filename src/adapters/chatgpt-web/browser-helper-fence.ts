@@ -12,12 +12,16 @@ type Session = {
 export function parseBrowserHelperCompletionFenceStart(
   revision: number | undefined,
   blocked: unknown,
+  nextIndex: unknown,
 ): ChatGptCompletionFenceStart {
   if (revision !== undefined && blocked !== undefined) {
     throw new Error("Browser helper completion fence result is ambiguous");
   }
-  if (blocked === "context_archive" || blocked === "activity") return { blocked };
-  if (blocked !== undefined || !Number.isSafeInteger(revision) || revision! < 0) {
+  if (blocked === "context_archive" && Number.isSafeInteger(nextIndex) && (nextIndex as number) >= 0) {
+    return { blocked, nextIndex: nextIndex as number };
+  }
+  if (blocked === "activity" && nextIndex === undefined) return { blocked };
+  if (blocked !== undefined || nextIndex !== undefined || !Number.isSafeInteger(revision) || revision! < 0) {
     throw new Error("Browser helper completion fence result is invalid");
   }
   return { revision: revision! };
@@ -64,7 +68,8 @@ export class BrowserHelperFenceRegistry {
   resolveBegin(id: string, requestId: number, result: ChatGptCompletionFenceStart): void {
     const valid = "revision" in result
       ? Number.isSafeInteger(result.revision) && result.revision >= 0
-      : result.blocked === "context_archive" || result.blocked === "activity";
+      : result.blocked === "activity"
+        || (result.blocked === "context_archive" && Number.isSafeInteger(result.nextIndex) && result.nextIndex >= 0);
     if (!Number.isSafeInteger(requestId) || requestId <= 0 || !valid) {
       throw new Error("Browser helper completion fence result is invalid");
     }
