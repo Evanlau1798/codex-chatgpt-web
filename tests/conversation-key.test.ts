@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chatGptConversationKey, chatGptSystemRevision, chatGptTurnTraceId } from "../src/adapters/chatgpt-web/turn-execution";
+import { chatGptConversationKey, chatGptTurnTraceId } from "../src/adapters/chatgpt-web/turn-execution";
 import { SUMMARY_PREFIX } from "../src/responses/compaction";
 import type { CodexParsedRequest } from "../src/types";
 
@@ -62,13 +62,12 @@ test("Claude subagent partial-history resume keeps its retained Web conversation
   expect(chatGptTurnTraceId(resumed, "provider")).toBe(chatGptTurnTraceId(initial, "provider"));
 });
 
-test("retained conversation keys stay stable when system instructions change", () => {
+test("retained conversation keys bind the ordered system prompt contract", () => {
   const parsed = request([]);
   parsed.context = { systemPrompt: ["system-one", "system-two"], messages: [] };
   const same = structuredClone(parsed);
 
   expect(chatGptConversationKey(same, "provider")).toBe(chatGptConversationKey(parsed, "provider"));
-  expect(chatGptSystemRevision(same)).toBe(chatGptSystemRevision(parsed));
   for (const systemPrompt of [
     ["system-one"],
     ["system-two", "system-one"],
@@ -77,7 +76,6 @@ test("retained conversation keys stay stable when system instructions change", (
   ]) {
     const changed = structuredClone(parsed);
     changed.context.systemPrompt = systemPrompt;
-    expect(chatGptConversationKey(changed, "provider")).toBe(chatGptConversationKey(parsed, "provider"));
-    expect(chatGptSystemRevision(changed)).not.toBe(chatGptSystemRevision(parsed));
+    expect(chatGptConversationKey(changed, "provider")).not.toBe(chatGptConversationKey(parsed, "provider"));
   }
 });

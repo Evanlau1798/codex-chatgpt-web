@@ -43,8 +43,6 @@ import {
   estimateCompiledChatGptWebMessageTokens,
 } from "./input-tokens";
 import { CHATGPT_MAX_INPUT_IMAGES, type CompiledChatGptWebPrompt, type ChatGptWebPromptImage } from "./prompt";
-import { RetainedContextArchiveRecovery } from "./context-archive-recovery";
-import type { ChatGptCompletionFenceStart } from "./turn-broker-completion";
 import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import { ChatGptVisibleTraceTracker, type ChatGptVisibleTraceBlock } from "./visible-trace-tracker";
 import {
@@ -123,12 +121,6 @@ import {
   resolveChatGptWebTransportLimits,
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
-import {
-  prepareBrowserPrompt,
-  reuseChatGptConnectorSelection,
-  selectBrowserPromptMode,
-  type BrowserPromptMode,
-} from "./browser-prompt-mode";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
@@ -508,12 +500,10 @@ export interface BrowserTurn {
   nativeConnector?: boolean;
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
-  prepareRefresh?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   retainConversation?: boolean;
   /** Fail closed unless launcher reused the matching retained conversation. */
   requireRetainedConversation?: boolean;
   conversationKey?: string;
-  systemRevision?: string;
   abortSignal?: AbortSignal;
   onHeartbeat?: () => void;
   /** Semantic DOM progress used only to reset the upstream silence timer. */
@@ -524,7 +514,7 @@ export interface BrowserTurn {
   onSubmitted?: () => void;
   onMultipartStageAcknowledged?: (stageIndex: number) => void | Promise<void>;
   /** Release the unselected full/resume transport after the launcher resolves the retained lease. */
-  onPreparedSelected?: (mode: BrowserPromptMode) => void | Promise<void>;
+  onPreparedSelected?: (reused: boolean) => void | Promise<void>;
   /** Visible ChatGPT reasoning-summary step titles only; never hidden chain-of-thought. */
   onReasoningSummary?: (text: string, continuation?: boolean) => void;
   /** Stable visible ChatGPT prose between status/tool rows. */
@@ -535,7 +525,7 @@ export interface BrowserTurn {
   externalProgress?: ChatGptTurnProgressReader;
   /** Atomically fences browser completion against concurrent MCP work accepted by the broker. */
   completionFence?: {
-    begin(): Promise<ChatGptCompletionFenceStart>;
+    begin(): Promise<number | undefined>;
     commit(revision: number): Promise<boolean>;
   };
   /** Allow one clean pre-submit composer retry for isolated history compaction only. */
@@ -2826,8 +2816,6 @@ export class ChatGptBrowserWorker {
       helperPid: process.pid,
       ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
       ...(nativeConnector ? { connectorIdentity: this.config.appName } : {}),
-      ...(turn.systemRevision ? { systemRevision: turn.systemRevision } : {}),
-      ...(turn.systemRevision ? { systemRefreshAvailable: turn.prepareRefresh !== undefined } : {}),
       ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     }).catch(error => {
       if (error instanceof LauncherBrowserTurnCancelledError) throw chatGptBrowserTabClosedError();
@@ -2863,15 +2851,15 @@ export class ChatGptBrowserWorker {
       if (turn.requireRetainedConversation && lease.reused !== true) {
         throw new Error("The retained ChatGPT conversation is no longer available");
       }
-      const selectedMode = selectBrowserPromptMode(lease.promptMode ?? "full", nativeConnector, lease.connectorBound);
-      await turn.onPreparedSelected?.(selectedMode);
+      const reuseConversation = lease.reused === true && (!nativeConnector || lease.connectorBound === true);
+      await turn.onPreparedSelected?.(reuseConversation && turn.prepareResume !== undefined);
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
       return await this.runBrowserTurn(
         turn,
         surfaceId,
         undefined,
-        selectedMode,
+        reuseConversation,
       );
     } catch (error) {
       originalError = error;
@@ -2912,9 +2900,8 @@ export class ChatGptBrowserWorker {
     turn: BrowserTurn,
     launcherSurfaceId?: string,
     maintenancePage?: Page,
-    promptMode: BrowserPromptMode = "full",
+    reuseConversation = false,
   ): Promise<string> {
-    const reuseConversation = promptMode !== "full";
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     if ((turn.captureLunaCheckpoint === true) !== (turn.onLunaCheckpoint !== undefined)) {
       throw new Error("ChatGPT Luna checkpoint capture requires exactly one checkpoint callback");
@@ -2923,11 +2910,9 @@ export class ChatGptBrowserWorker {
       throw new Error("Private rolling checkpoint capture is valid only for ChatGPT Luna");
     }
       const requestedMode = resolveChatGptWebModelMode(turn.modelId, turn.reasoning, turn.capabilities);
-    const prepared = await prepareBrowserPrompt(turn, promptMode);
-    console.info(
-      `[chatgpt-web] browser turn ${turn.traceId} promptMode=${promptMode}`
-      + ` promptChars=${prepared.text.length} reused=${reuseConversation}`,
-    );
+    const prepared = reuseConversation && turn.prepareResume
+      ? await turn.prepareResume()
+      : await turn.prepare();
     const diagnostics = new ChatGptBrowserDiagnostics(
       turn.traceId,
       this.config.browserDiagnosticsPath,
@@ -3189,10 +3174,7 @@ export class ChatGptBrowserWorker {
       let retrySubmitted: (() => void) | undefined;
       let preemptiveRetryPrompt: string | undefined;
       let preemptiveStop: PreemptiveRetryStopState | undefined;
-      const archiveRecovery = new RetainedContextArchiveRecovery(prepared.transport, turn.completionFence);
       for (let responseAttempt = 1; ; responseAttempt += 1) {
-        const responseConnectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 };
-        let completionRetryPrompt: string | undefined;
         let responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
         const initialResponseTurn = await readChatGptAssistantTurnState(responseTurns);
         const initialTurnIdentities = initialResponseTurn.knownTurnIdentities ?? [];
@@ -3221,10 +3203,10 @@ export class ChatGptBrowserWorker {
                 turn.compaction === true,
                 submissionBaseline,
                 checkpoint => diagnostics.capture(page, checkpoint),
-                reuseChatGptConnectorSelection(prepared.transport, reuseConversation, responseAttempt),
+                reuseConversation || responseAttempt > 1,
                 stageSignal,
                 catalogRefreshAvailable,
-                responseConnectorAttemptBudget,
+                connectorAttemptBudget,
                 mode.thinkEnabled,
               ),
               turn.abortSignal,
@@ -3332,10 +3314,6 @@ export class ChatGptBrowserWorker {
         let sentAt = Date.now();
         const latency = new ChatGptTurnLatencyDiagnostics(turn.traceId, sentAt);
         const visibleTrace = new ChatGptVisibleTraceTracker();
-        const traceOutput = archiveRecovery.outputGate({
-          reasoning: (value, continuation) => turn.onReasoningSummary?.(value, continuation),
-          commentary: (value, continuation) => turn.onCommentary?.(value, continuation),
-        });
         const markdownOwnership = new ChatGptMarkdownOwnershipTracker();
         const markdownBuffer = new ChatGptMarkdownBuffer();
         let progressChars = 0;
@@ -3348,9 +3326,7 @@ export class ChatGptBrowserWorker {
           const visible = checkpointStream ? checkpointStream.push(delta) : delta;
           if (visible) {
             answerBuffer.append(visible);
-            const deliverable = answerBuffer.takeDeliverable(
-              !turn.retryPromptForAnswer && prepared.transport !== "retained-system-archive",
-            );
+            const deliverable = answerBuffer.takeDeliverable(!turn.retryPromptForAnswer);
             if (deliverable) turn.onTextDelta(deliverable);
           }
         };
@@ -3571,8 +3547,8 @@ export class ChatGptBrowserWorker {
             }
           })();
           for (const trace of visibleTrace.observe(snapshot.traceBlocks, snapshot.completionActionVisible)) {
-            if (trace.kind === "commentary") { latency.commentaryEmitted(); traceOutput.commentary(trace.text, trace.continuation === true); }
-            else traceOutput.reasoning(trace.text, trace.continuation === true);
+            if (trace.kind === "commentary") { latency.commentaryEmitted(); turn.onCommentary?.(trace.text, trace.continuation === true); }
+            else turn.onReasoningSummary?.(trace.text, trace.continuation === true);
           }
           if (textDelta) emitMarkdownDelta(textDelta);
           const domError = domHealthTracker.update({
@@ -3637,10 +3613,17 @@ export class ChatGptBrowserWorker {
             );
           }
           if (completion.status === "complete") {
-            const fenced = await archiveRecovery.completion(completionFenceRevision);
-            if (fenced.status === "retry") { completionRetryPrompt = fenced.prompt; break; }
-            if (fenced.status === "wait") { completionFenceRevision = fenced.revision; continue; }
-            traceOutput.commit();
+            if (turn.completionFence) {
+              if (completionFenceRevision === undefined) {
+                completionFenceRevision = await turn.completionFence.begin();
+                if (completionFenceRevision === undefined) continue;
+                continue;
+              }
+              if (!await turn.completionFence.commit(completionFenceRevision)) {
+                completionFenceRevision = undefined;
+                continue;
+              }
+            }
 
             if (snapshot.visibleText === "api_tool unavailable") {
               throw new ChatGptWebAdapterError(
@@ -3740,13 +3723,8 @@ export class ChatGptBrowserWorker {
           console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying response failure attempt=${responseAttempt + 1} reason=${reason}`);
           continue;
         }
-        const retrySelection = await archiveRecovery.selectRetry(
-          completionRetryPrompt,
-          preemptiveRetryPrompt,
-          () => turn.retryPromptForAnswer?.(finalText, responseAttempt),
-        );
-        const retryPrompt = retrySelection.prompt;
-        preemptiveRetryPrompt = retrySelection.pendingPreemptiveRetry;
+        const retryPrompt = preemptiveRetryPrompt ?? await turn.retryPromptForAnswer?.(finalText, responseAttempt);
+        preemptiveRetryPrompt = undefined;
         preemptiveStop = undefined;
         if (!retryPrompt) {
           const deliverable = answerBuffer.takeDeliverable(true);

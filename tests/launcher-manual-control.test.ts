@@ -33,7 +33,7 @@ async function withControl(fetch: (request: Request) => Promise<Response>, run: 
 test("manual launcher control separates idempotent start from reconnectable Sent observation", async () => {
   const requests: Array<{ path: string; body: unknown }> = [];
   let sentPolls = 0;
-  const lease = { tabId: "manual-tab", reused: false, promptMode: "full", deadlineAt: "2026-09-04T00:03:00.000Z", state: "awaiting-user" } as const;
+  const lease = { tabId: "manual-tab", reused: false, deadlineAt: "2026-09-04T00:03:00.000Z", state: "awaiting-user" } as const;
   await withControl(async request => {
     expect(request.method).toBe("POST");
     expect(request.headers.get("authorization")).toBe("Bearer launcher-control-token-0123456789abcdefghijklmnop");
@@ -62,18 +62,6 @@ test("manual launcher control separates idempotent start from reconnectable Sent
       { path: "/v1/manual/wait-terminal", body: owner },
       { path: "/v1/manual/end", body: { ...owner, status: "completed", retain: true } },
     ]);
-  });
-});
-
-test("manual retained revisions fail closed against an old launcher lease", async () => {
-  await withControl(async request => {
-    await request.json();
-    return Response.json({ ok: true, tabId: "old-tab", reused: true, deadlineAt: null, state: "awaiting-user" });
-  }, async path => {
-    await expect(startLauncherManualTurn(path, {
-      traceId: "manual_old_launcher", helperPid: process.pid, prompt: "full",
-      systemRevision: "a".repeat(64),
-    })).rejects.toThrow("does not support retained system refresh");
   });
 });
 

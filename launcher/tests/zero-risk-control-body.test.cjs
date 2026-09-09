@@ -46,28 +46,6 @@ test("manual start transports a large UTF-8 prompt and resume suffix without rew
   } finally { server.server.closeAllConnections(); await server.close(); }
 });
 
-test("manual start requires and transports complete system refresh metadata", async () => {
-  const { server, calls } = fixture();
-  await server.start();
-  try {
-    const request = (body) => fetch(`${server.descriptor().endpoint}/v1/manual/start`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ ...owner, prompt: "full", resumePrompt: "resume", conversationKey: "a".repeat(64), ...body }),
-    });
-    const incomplete = await request({ refreshPrompt: "refresh" });
-    assert.equal(incomplete.status, 400);
-    const fresh = await request({ systemRevision: "c".repeat(64) });
-    assert.equal(fresh.status, 200, await fresh.text());
-    const response = await request({ refreshPrompt: "refresh", systemRevision: "b".repeat(64) });
-    assert.equal(response.status, 200, await response.text());
-    assert.deepEqual(calls, [
-      [owner.traceId, owner.helperPid, "full", "a".repeat(64), "resume", false, undefined, "c".repeat(64)],
-      [owner.traceId, owner.helperPid, "full", "a".repeat(64), "resume", false, "refresh", "b".repeat(64)],
-    ]);
-  } finally { server.server.closeAllConnections(); await server.close(); }
-});
-
 for (const [route, size, authenticated, accepted] of [
   ["start", 3 * 1024 * 1024, true, true],
   ["start", 3 * 1024 * 1024 + 1, true, false],

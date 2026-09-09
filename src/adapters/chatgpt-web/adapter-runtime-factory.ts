@@ -3,7 +3,7 @@ import { retainedConversationRelease } from "./adapter-runtime-config";
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { claudeBrowserTurnOptions, isClaudeClientSession } from "./claude-subagent";
 import { observeCapabilityRetirement } from "./capability-retirement";
-import { prepareChatGptWebContext, prepareRetainedSystemRefresh } from "./context-bootstrap";
+import { prepareChatGptWebContext } from "./context-bootstrap";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { reportChatGptPreparationFailure } from "./preparation-diagnostics";
@@ -21,7 +21,6 @@ import {
   ChatGptTextFeed,
   ChatGptTraceFeed,
   chatGptConversationKey,
-  chatGptSystemRevision,
   chatGptTurnExecutionKey,
   type ChatGptTurnRuntime,
 } from "./turn-execution";
@@ -129,13 +128,6 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     }
     const releaseRetainedConversation = retainedConversationRelease(provider, conversationKey);
     const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
-    const refreshInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed, true) : undefined;
-    let systemRevision: string | undefined;
-    try {
-      systemRevision = conversationKey ? chatGptSystemRevision(checkpointInput.parsed) : undefined;
-    } catch (error) {
-      throw reportChatGptPreparationFailure(traceId, "full", checkpointInput.parsed, error);
-    }
     const retryPromptForAnswer = parsed._compactionRequest || !steering ? evidenceRetry : browserSteeringRetry(steering, traceId, evidenceRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, isClaudeClientSession(checkpointInput.parsed));
     const retryPromptForError = createChatGptSameSurfaceRetry({ traceId, executionKey: runtimeExecutionKey, enhancedMode: useEnhancedWebSessionMode, abortSignal: browserAbort.signal });
     const emitCommentary = (value: string, continuation?: boolean): void => {
@@ -161,7 +153,6 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         } : {}),
         ...(retainConversation ? { retainConversation: true } : {}),
         ...(conversationKey ? { conversationKey } : {}),
-        ...(systemRevision ? { systemRevision } : {}),
         abortSignal: browserAbort.signal,
         ...(captureLunaCheckpoint ? { captureLunaCheckpoint: true, onLunaCheckpoint: captureCheckpoint } : {}),
       };
@@ -196,7 +187,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     if (!environment) throw new Error("Tool-capable ChatGPT web mode requires a trusted Codex environment");
     const token = deferred<string>();
     let tokenSettled = false;
-    const prepareWith = async (input: CodexParsedRequest, source: "full" | "resume" | "refresh") => {
+    const prepareWith = async (input: CodexParsedRequest, source: "full" | "resume") => {
       const turnToken = activeToken ?? await brokerOwner.register(
         environment,
         timeoutMs === undefined ? undefined : timeoutMs + 60_000,
@@ -204,24 +195,9 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         () => trace.signalProgress(),
       );
       try {
-        const compiled = compileChatGptWebPrompt(input, turnCapabilities, turnToken, compileOptions);
-        const prepared = source === "refresh"
-          ? await prepareRetainedSystemRefresh(
-              broker,
-              compiled,
-              checkpointInput.parsed.context.systemPrompt ?? [],
-              contextTtlMs,
-              traceId,
-              turnToken,
-              compileChatGptWebPrompt(checkpointInput.parsed, turnCapabilities, turnToken, compileOptions).text,
-            )
-          : await prepareChatGptWebContext(
-              broker,
-              compiled,
-              useEnhancedWebSessionMode,
-              contextTtlMs,
-              traceId,
-            );
+        const prepared = await prepareChatGptWebContext(broker,
+          compileChatGptWebPrompt(input, turnCapabilities, turnToken, compileOptions),
+          useEnhancedWebSessionMode, contextTtlMs, traceId);
         if (activeToken !== turnToken) {
           activeToken = turnToken;
           observeCapabilityRetirement(brokerOwner, turnToken, externalProgress, browserAbort, () => browserOwnerSettled);
@@ -250,10 +226,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       ...(parsed._compactionRequest ? { compaction: true } : {}),
       prepare: () => prepareWith(checkpointInput.parsed, "full"),
       ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput, "resume") } : {}),
-      ...(refreshInput ? { prepareRefresh: () => prepareWith(refreshInput, "refresh") } : {}),
       ...(retainConversation ? { retainConversation: true } : {}),
       ...(conversationKey ? { conversationKey } : {}),
-      ...(systemRevision ? { systemRevision } : {}),
       abortSignal: browserAbort.signal,
       externalProgress,
       completionFence: {

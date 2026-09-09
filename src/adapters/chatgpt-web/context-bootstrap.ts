@@ -76,18 +76,6 @@ function longestTextRunChars(text: string): number {
   return longest;
 }
 
-function formatArchive(records: ArchiveRecord[]): string {
-  return [
-    "CODEX_CONTEXT_ARCHIVE_NDJSON v=2",
-    ...records.flatMap(archiveRecordLines),
-    "CODEX_CONTEXT_ARCHIVE_NDJSON_END",
-  ].join("\n");
-}
-
-export function retainedSystemContextArchive(system: readonly string[]): string {
-  return formatArchive(system.map((value, index) => ({ kind: "system", index, value })));
-}
-
 function withinLimits(text: string, limits: { chars: number; tokens?: number }): boolean {
   return text.length <= limits.chars
     && longestTextRunChars(text) <= CHATGPT_STABLE_COMPOSER_TEXT_RUN_CHARS
@@ -175,33 +163,12 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
       : [{ kind: "tool" as const, index, value }]),
   ];
   if (records.length === 0) throw new Error("ChatGPT Web archive split omitted no context");
-  const archive = formatArchive(records);
+  const archive = [
+    "CODEX_CONTEXT_ARCHIVE_NDJSON v=2",
+    ...records.flatMap(archiveRecordLines),
+    "CODEX_CONTEXT_ARCHIVE_NDJSON_END",
+  ].join("\n");
   return { bootstrap: render(), archive };
-}
-
-export async function prepareRetainedSystemRefresh(
-  broker: Pick<TurnBroker, "registerContext" | "revokeContext">,
-  compiled: CompiledChatGptWebPrompt,
-  system: readonly string[],
-  ttlMs: number | undefined,
-  traceId: string,
-  turnToken: string,
-  modelInputText: string,
-): Promise<CompiledChatGptWebPrompt & { release: () => void }> {
-  const archive = retainedSystemContextArchive(system);
-  const contextToken = await broker.registerContext(archive, ttlMs, traceId, turnToken, false);
-  console.info(
-    `[chatgpt-web] context trace=${traceId} transport=retained-system-archive`
-    + ` bootstrapChars=${compiled.text.length} archiveChars=${archive.length}`,
-  );
-  return {
-    ...compiled,
-    modelInputText,
-    transport: "retained-system-archive",
-    inlineChars: compiled.text.length,
-    archiveChars: archive.length,
-    release: () => broker.revokeContext(contextToken),
-  };
 }
 
 export async function prepareChatGptWebContext(

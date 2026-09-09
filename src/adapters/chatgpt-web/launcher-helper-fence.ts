@@ -7,12 +7,6 @@ type FenceEvent = Extract<LauncherHelperMessage, {
 }>;
 
 export function assertLauncherHelperFenceFeatures(turn: BrowserTurn, features: Set<string>): void {
-  if (turn.systemRevision && !features.has("retained-system-refresh")) {
-    throw new Error("Launcher browser helper does not support retained system refresh");
-  }
-  if (turn.systemRevision && !features.has("completion-fence-blockers")) {
-    throw new Error("Launcher browser helper does not support retained system refresh completion blockers");
-  }
   if (turn.onMultipartStageAcknowledged && !features.has("multipart-stage-ack")) {
     throw new Error("Launcher browser helper does not support multipart acknowledgement forwarding; update or restart the launcher");
   }
@@ -40,8 +34,8 @@ export function handleLauncherHelperFenceEvent(
   const fence = turn.completionFence;
   if (!fence) return fail(new Error("Browser helper requested a completion fence for an unfenced turn"));
   const request = message.event === "completion_fence_begin"
-    ? fence.begin().then(result => ({
-      type: "completion_fence_begin_ack", id: message.id, requestId: message.requestId, ...result,
+    ? fence.begin().then(revision => ({
+      type: "completion_fence_begin_ack", id: message.id, requestId: message.requestId, revision: revision ?? null,
     }))
     : fence.commit(message.revision).then(committed => ({
       type: "completion_fence_commit_ack", id: message.id, requestId: message.requestId, committed,

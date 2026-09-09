@@ -4,7 +4,7 @@ import { SUMMARY_PREFIX } from "../../responses/compaction";
 import { extractChatGptTurnIdentity } from "./environment";
 import { chatGptTurnExecutionKey } from "./turn-execution-key";
 
-const RETAINED_ENVELOPE_REVISION = 2;
+const RETAINED_ENVELOPE_REVISION = 1;
 
 function messageText(item: Record<string, unknown>): string | undefined {
   const content = item.content;
@@ -49,11 +49,8 @@ export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: st
     reasoning: parsed.options.reasoning,
     compaction: compactionEpoch(raw?.input),
     claudeHistoryAnchor,
+    systemPrompt: parsed.context.systemPrompt ?? [],
   })).digest("hex");
-}
-
-export function chatGptSystemRevision(parsed: CodexParsedRequest): string {
-  return createHash("sha256").update(JSON.stringify(parsed.context.systemPrompt ?? [])).digest("hex");
 }
 
 export function chatGptTurnTraceId(parsed: CodexParsedRequest, namespace: string): string {

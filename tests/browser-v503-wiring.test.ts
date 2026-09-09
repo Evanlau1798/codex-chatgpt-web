@@ -60,6 +60,7 @@ test("retained turns recheck effort and failed rebound pages remain diagnosable"
   );
 });
 
+
 test("the daemon prefers the browser helper that shipped beside its own entrypoint", () => {
   const client = readFileSync("src/adapters/chatgpt-web/launcher-helper-client.ts", "utf8");
   const processHelper = readFileSync("src/adapters/chatgpt-web/launcher-helper-process.ts", "utf8");
@@ -76,8 +77,7 @@ test("the daemon prefers the browser helper that shipped beside its own entrypoi
 
   // Belt and braces: negotiate the frame, and never treat an unrecognised frame as a run.
   expect(client).toContain('this.helperFeatures.has("progress")');
-  expect(helper).toContain('"multipart-stage-ack", "retained-system-refresh"');
-  expect(helper).toContain('"retained-system-archive"');
+  expect(helper).toContain('features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack"]');
   expect(helper).toMatch(/message\.type === "run"/);
   expect(helper).toContain("Browser helper received an unsupported message type");
 

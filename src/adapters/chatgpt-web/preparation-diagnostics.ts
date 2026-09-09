@@ -1,6 +1,6 @@
 import type { CodexParsedRequest } from "../../types";
 
-type PreparationSource = "full" | "resume" | "refresh";
+type PreparationSource = "full" | "resume";
 
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));

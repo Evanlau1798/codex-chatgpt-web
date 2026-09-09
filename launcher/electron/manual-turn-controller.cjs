@@ -1,8 +1,5 @@
 const { createHash } = require("node:crypto");
 const { processRunning } = require("./process-tree.cjs");
-const {
-  assertSystemRevision, beginSystemRevision, commitSystemRevision, selectSystemRevisionMode,
-} = require("./retained-system-revision.cjs");
 
 const MAX_PROMPT_CHARS = 2_000_000;
 const MAX_TERMINALS = 256;
@@ -85,8 +82,7 @@ class ManualTurnController {
     tab.manualTimer.unref?.();
   }
 
-  prepare(tab, prompt, promptMode, compaction) {
-    const reused = promptMode !== "full";
+  prepare(tab, prompt, reused, compaction) {
     Object.assign(tab, {
       interactionMode: "manual",
       interactionLocked: false,
@@ -94,7 +90,6 @@ class ManualTurnController {
       manualWaiters: new Set(),
       manualTerminalWaiters: new Set(),
       manualConversationReused: reused,
-      manualPromptMode: promptMode,
       manualInitialConversationNavigationAccepted: false,
       manualCompaction: compaction,
       prompt,
@@ -107,13 +102,12 @@ class ManualTurnController {
     return {
       tabId: tab.id,
       reused,
-      promptMode,
       deadlineAt: new Date(tab.manualDeadlineAt).toISOString(),
       state: tab.manualState,
     };
   }
 
-  begin(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false, refreshPrompt, systemRevision) {
+  begin(traceId, helperPid, prompt, conversationKey, resumePrompt, compaction = false) {
     if (typeof compaction !== "boolean") throw new Error("Manual compaction flag must be boolean");
     if (this.host.manualOperation) throw new Error(`ChatGPT browser is busy with ${this.host.manualOperation}`);
     if (typeof prompt !== "string" || prompt.length < 1 || prompt.length > MAX_PROMPT_CHARS) {
@@ -123,11 +117,6 @@ class ManualTurnController {
       || resumePrompt.length < 1 || resumePrompt.length > MAX_PROMPT_CHARS)) {
       throw new Error("Manual resume prompt size is invalid");
     }
-    if (refreshPrompt !== undefined && (typeof refreshPrompt !== "string"
-      || refreshPrompt.length < 1 || refreshPrompt.length > MAX_PROMPT_CHARS)) {
-      throw new Error("Manual refresh prompt size is invalid");
-    }
-    assertSystemRevision(systemRevision);
     if (this.completions.has(traceId)) {
       throw new Error(this.completions.get(traceId) === helperPid
         ? `Zero Risk turn ${traceId} is already completed`
@@ -145,8 +134,7 @@ class ManualTurnController {
       if (existing.interactionMode !== "manual" || existing.helperPid !== helperPid) {
         throw new Error(`Zero Risk turn ${traceId} is owned by another process`);
       }
-      const retry = existing.manualPromptMode === "refresh" ? refreshPrompt
-        : existing.manualPromptMode === "resume" ? resumePrompt : prompt;
+      const retry = existing.manualConversationReused ? resumePrompt : prompt;
       if (existing.manualCompaction !== compaction) {
         throw new Error(`Zero Risk turn ${traceId} was retried with a different compaction mode`);
       }
@@ -154,8 +142,7 @@ class ManualTurnController {
         throw new Error(`Zero Risk turn ${traceId} was retried with a different prompt`);
       }
       this.host.presentManualTurn?.(existing);
-      return { tabId: existing.id, reused: true,
-        promptMode: existing.manualPromptMode, state: existing.manualState,
+      return { tabId: existing.id, reused: true, state: existing.manualState,
         deadlineAt: existing.manualDeadlineAt ? new Date(existing.manualDeadlineAt).toISOString() : null };
     }
     const retained = conversationKey
@@ -164,23 +151,15 @@ class ManualTurnController {
       : [];
     if (retained.length > 1) throw new Error("Zero Risk conversation ownership is ambiguous");
     if (retained[0]) {
-      const promptMode = selectSystemRevisionMode(retained[0], systemRevision, true);
-      const selected = promptMode === "refresh" ? refreshPrompt : resumePrompt;
-      if (typeof selected !== "string" || !selected) {
-        throw new Error(`A retained Zero Risk conversation requires a ${promptMode} prompt`);
+      if (typeof resumePrompt !== "string" || !resumePrompt) {
+        throw new Error("A retained Zero Risk conversation requires an incremental resume prompt");
       }
-      this.clipboard.writeText(selected);
-      beginSystemRevision(retained[0], systemRevision, true);
+      this.clipboard.writeText(resumePrompt);
       Object.assign(retained[0], { traceId, helperPid, status: "running" });
-      return this.prepare(retained[0], selected, promptMode, compaction);
+      return this.prepare(retained[0], resumePrompt, true, compaction);
     }
     this.clipboard.writeText(prompt);
-    return this.prepare(
-      this.host.createManualTurnTab(traceId, helperPid, conversationKey, systemRevision),
-      prompt,
-      "full",
-      compaction,
-    );
+    return this.prepare(this.host.createManualTurnTab(traceId, helperPid, conversationKey, prompt), prompt, false, compaction);
   }
 
   async wait(tab, setName, timeoutMs) {
@@ -285,7 +264,6 @@ class ManualTurnController {
     clearTimeout(tab.manualTimer);
     if (status === "completed") this.rememberCompletion(traceId, helperPid);
     if (status === "completed" && retain && tab.conversationKey) {
-      commitSystemRevision(tab);
       Object.assign(tab, {
         manualState: "completed", status: "ready", prompt: null, promptDigest: null,
         lastHeartbeatAt: Date.now(),

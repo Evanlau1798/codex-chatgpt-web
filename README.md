@@ -65,11 +65,10 @@ connects ChatGPT back to the tools of that same Codex task.
   remain intact.
 - **Local-first task sessions.** Codex or Claude Code remains the source of truth for task history
   on your computer. Original mode keeps upstream's fresh-turn behavior. Enhanced mode retains a
-  completed root or subagent conversation for 30 minutes and sends only the continuation suffix.
-  If system instructions change within that TTL, the same browser chat receives the exact replacement
-  through the authenticated context archive instead of replaying it through the composer. Compaction
-  still rotates to a new epoch. Browser chats are never shared across unrelated tasks or added to
-  normal ChatGPT history.
+  completed root or subagent conversation for 30 minutes and sends only the continuation suffix while
+  its ordered system instructions remain unchanged. A system-instruction change starts a fresh browser
+  chat with the complete prompt; compaction likewise rotates to a new epoch. Browser chats are never
+  shared across unrelated tasks or added to normal ChatGPT history.
 - **Codex and Claude Code clients.** The launcher installs either integration independently.
   Codex uses the OpenAI-compatible Responses route; Claude Code uses the standard Anthropic
   Messages stream while preserving Markdown, tool-use blocks, subagents, additive steering, and
@@ -166,9 +165,9 @@ When disabled, Web models follow the upstream session and compact behavior. When
 bridge adds 30-minute retained root/subagent conversations, same-conversation steering, six-way
 browser scheduling, structured handoff compaction, canonical continuation after stop/restart, and
 bootstrap/archive transport for prompts that exceed the measured inline browser boundary. Stable
-system instructions are not replayed on each continuation; changed instructions are replaced through
-the turn-bound context archive while the same retained browser chat remains valid. A compact always
-starts a new conversation epoch; old turn tokens and completed tool calls are not replayed.
+system instructions are not replayed on each continuation; any exact system-instruction change rotates
+to a fresh browser chat and full prompt. A compact also starts a new conversation epoch; old turn tokens
+and completed tool calls are not replayed.
 
 ### Bigger Context (experimental)
 

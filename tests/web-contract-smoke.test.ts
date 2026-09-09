@@ -5,11 +5,8 @@ import {
   assertWebContractRuntimeVersion,
   captureWebContract,
   deriveWebContractCapabilities,
-  retainedRefreshTabId,
   requestWebContractTurn,
   responseHasFinalProjection,
-  WEB_CONTRACT_INITIAL_SYSTEM,
-  WEB_CONTRACT_REFRESH_SYSTEM,
   WEB_CONTRACT_COOLDOWN_MS,
   WEB_CONTRACT_PROBE_TIMEOUT_MS,
   WEB_CONTRACT_TURN_TIMEOUT_MS,
@@ -23,12 +20,6 @@ import {
 } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
 
 describe("lightweight Web contract smoke", () => {
-  test("keeps the first live turn inline and moves the large revision to retained refresh", () => {
-    expect(WEB_CONTRACT_INITIAL_SYSTEM.length).toBeLessThan(512);
-    expect(WEB_CONTRACT_REFRESH_SYSTEM.length).toBeGreaterThan(20_000);
-    expect(WEB_CONTRACT_REFRESH_SYSTEM).not.toBe(WEB_CONTRACT_INITIAL_SYSTEM);
-  });
-
   test("uses the requested Medium route without model fallback", () => {
     const script = readFileSync(
       new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url),
@@ -123,7 +114,6 @@ describe("lightweight Web contract smoke", () => {
       effort: true,
       connector: true,
       markdownRestoration: true,
-      retainedRefresh: true,
       submitted: true,
       finalProjection: true,
       browserIdle: true,
@@ -139,7 +129,6 @@ describe("lightweight Web contract smoke", () => {
       effort: true,
       connector: true,
       markdownRestoration: true,
-      retainedRefresh: true,
       submitted: true,
       finalProjection: true,
       browserIdle: true,
@@ -153,7 +142,6 @@ describe("lightweight Web contract smoke", () => {
       session: { authenticated: true, temporary: true, composer: true, solAvailable: true },
       connectorVerified: false,
       markdownRestoration: true,
-      retainedRefresh: false,
       responseAccepted: true,
       finalProjection: false,
       browserIdle: true,
@@ -164,22 +152,10 @@ describe("lightweight Web contract smoke", () => {
       effort: true,
       connector: false,
       markdownRestoration: true,
-      retainedRefresh: false,
       submitted: true,
       finalProjection: false,
       browserIdle: true,
     });
-  });
-
-  test("requires the second live turn to reuse the first retained tab", () => {
-    expect(retainedRefreshTabId([
-      { event: "browser.tab_retained", detail: { tabId: "tab-a" } },
-      { event: "browser.tab_reused", detail: { tabId: "tab-a" } },
-    ])).toBe("tab-a");
-    expect(() => retainedRefreshTabId([
-      { event: "browser.tab_retained", detail: { tabId: "tab-a" } },
-      { event: "browser.tab_reused", detail: { tabId: "tab-b" } },
-    ])).toThrow("did not reuse");
   });
 
   test("allows unrelated HTTP turns but rejects a parallel Web turn", () => {

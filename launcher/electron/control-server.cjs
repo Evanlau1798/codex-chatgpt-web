@@ -126,21 +126,10 @@ class BrowserControlServer {
           if (body.conversationKey !== undefined && !/^[a-f0-9]{64}$/.test(body.conversationKey)) {
             throw new Error("conversationKey is invalid");
           }
-          if (body.systemRevision !== undefined && !/^[a-f0-9]{64}$/.test(body.systemRevision)) {
-            throw new Error("systemRevision is invalid");
-          }
-          if (body.refreshPrompt !== undefined && body.systemRevision === undefined) {
-            throw new Error("manual retained system refresh metadata is incomplete");
-          }
           if (body.compaction !== undefined && body.compaction !== true) throw new Error("manual compaction flag is invalid");
-          const args = [
-            body.traceId, body.helperPid, body.prompt, body.conversationKey, body.resumePrompt,
-            body.compaction === true,
-          ];
-          if (body.refreshPrompt !== undefined || body.systemRevision !== undefined) {
-            args.push(body.refreshPrompt, body.systemRevision);
-          }
-          value = host.beginManualTurn(...args);
+          value = host.beginManualTurn(
+            body.traceId, body.helperPid, body.prompt, body.conversationKey, body.resumePrompt, body.compaction === true,
+          );
         } else if (manualAction === "wait-sent") {
           value = await host.waitManualSent(body.traceId, body.helperPid);
           if (value.status === "pending") { writeJson(response, 202, value); return; }
@@ -224,12 +213,6 @@ class BrowserControlServer {
       if (body.conversationKey !== undefined && !/^[a-f0-9]{64}$/.test(body.conversationKey)) {
         throw new Error("conversationKey is invalid");
       }
-      if (body.systemRevision !== undefined && !/^[a-f0-9]{64}$/.test(body.systemRevision)) {
-        throw new Error("systemRevision is invalid");
-      }
-      if (body.systemRefreshAvailable !== undefined && typeof body.systemRefreshAvailable !== "boolean") {
-        throw new Error("systemRefreshAvailable is invalid");
-      }
       if (body.connectorIdentity !== undefined
         && (typeof body.connectorIdentity !== "string" || !body.connectorIdentity.trim() || body.connectorIdentity.length > 80)) {
         throw new Error("connectorIdentity is invalid");
@@ -246,7 +229,7 @@ class BrowserControlServer {
       }
       const preferences = this.getPreferences();
       if (request.url === "/v1/turn/start") {
-        const args = [
+        const lease = await host.beginTurn(
           body.traceId,
           preferences.showBrowserDuringTurns === true,
           body.helperPid,
@@ -254,11 +237,7 @@ class BrowserControlServer {
           body.conversationKey,
           body.connectorIdentity,
           body.requireRetainedConversation === true,
-        ];
-        if (body.systemRevision !== undefined) {
-          args.push(body.systemRevision, body.systemRefreshAvailable !== false);
-        }
-        const lease = await host.beginTurn(...args);
+        );
         this.logger.info("browser.turn_started", { traceId: body.traceId });
         writeJson(response, 200, { ok: true, ...lease });
         return;

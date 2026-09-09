@@ -23,7 +23,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
       if ((this as any).config.experimentalNoAutoCompact !== true) {
         throw new Error("Experimental no-auto-compact setting was lost across helper IPC");
       }
-      await turn.onPreparedSelected("full");
+      await turn.onPreparedSelected(false);
       const prepared = await turn.prepare();
       if (prepared.multipart.parts.length !== 3) throw new Error("Multipart context was lost");
       await turn.onMultipartStageAcknowledged?.(1);
@@ -99,8 +99,6 @@ test("daemon streams browser lifecycle through the real helper process", async (
         multipart: { parts: ["part one", "part two", "part three"], commit: "inspect" },
         release: () => { released = true; },
       }),
-      prepareRefresh: async () => ({ text: "refresh", images: [], release: () => {} }),
-      systemRevision: "a".repeat(64),
       onMultipartStageAcknowledged: stage => { acknowledgedStages.push(stage); },
       onSendActivated: () => { sendActivated = true; },
       onSubmitted: () => { submitted = true; },

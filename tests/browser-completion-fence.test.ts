@@ -21,11 +21,11 @@ test("broker completion fences reject activity that races a terminal browser dec
   try {
     const token = await broker.register(environment(root));
     const remote = new RemoteTurnBroker(socketPath);
-    expect(await remote.beginCompletionFence(token)).toEqual({ revision: 0 });
+    expect(await remote.beginCompletionFence(token)).toBe(0);
 
     const activityId = "activity_abcdefghijklmnop";
     await callTurnBroker(socketPath, { method: "claim", token, activityId });
-    expect(await remote.beginCompletionFence(token)).toEqual({ blocked: "activity" });
+    expect(await remote.beginCompletionFence(token)).toBeUndefined();
     expect(await callTurnBroker<{ completed: boolean }>(socketPath, {
       method: "activity_complete",
       token,
@@ -33,34 +33,14 @@ test("broker completion fences reject activity that races a terminal browser dec
     })).toEqual({ completed: true });
 
     const revision = await remote.beginCompletionFence(token);
-    expect(revision).toEqual({ revision: 2 });
-    if (!("revision" in revision)) throw new Error("expected a completion fence revision");
+    expect(revision).toBe(2);
     expect(await remote.commitCompletionFence(token, 0)).toBeFalse();
-    expect(await remote.commitCompletionFence(token, revision.revision)).toBeTrue();
+    expect(await remote.commitCompletionFence(token, revision!)).toBeTrue();
     await expect(callTurnBroker(socketPath, {
       method: "claim",
       token,
       activityId: "activity_qrstuvwxyzabcdef",
     })).rejects.toThrow("already finished");
-  } finally {
-    await broker.close();
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("remote completion fences distinguish an unread retained context archive", async () => {
-  const root = mkdtempSync(join(tmpdir(), "cgw-completion-context-"));
-  const socketPath = defaultBrokerEndpoint(root);
-  const broker = TurnBroker.forSocket(socketPath);
-  await broker.listen();
-  try {
-    const remote = new RemoteTurnBroker(socketPath);
-    await remote.assertCompatible();
-    const token = await broker.register(environment(root));
-    await broker.registerContext("first\nsecond\nthird", 5_000, "remote-context-fence", token, false);
-    expect(await remote.beginCompletionFence(token)).toEqual({ blocked: "context_archive", nextIndex: 0 });
-    await callTurnBroker(socketPath, { method: "read_context", token, index: 0, chunkChars: 10, contract: "native" });
-    expect(await remote.beginCompletionFence(token)).toEqual({ blocked: "context_archive", nextIndex: 1 });
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });

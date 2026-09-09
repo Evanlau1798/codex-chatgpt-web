@@ -3,7 +3,7 @@ import type { BrokerToolRequest } from "./turn-broker";
 import { ChatGptSteeringFeed, steeringFingerprint, type ClaudeSteeringDelivery } from "./steering-feed";
 import { ChatGptTextFeed, ChatGptTraceFeed } from "./turn-feeds";
 import type { ChatGptExternalTurnProgress } from "./turn-progress";
-export { chatGptConversationKey, chatGptSystemRevision, chatGptTurnTraceId } from "./conversation-key";
+export { chatGptConversationKey, chatGptTurnTraceId } from "./conversation-key";
 export {
   chatGptCompactionSourceExecutionKey,
   chatGptTurnExecutionKey,

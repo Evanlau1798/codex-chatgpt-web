@@ -357,7 +357,7 @@ export async function runChatGptMcpServer(options: {
         });
       }
       const archiveMatch = /^__codex_context__:(\d+)$/.exec(query?.trim() ?? "");
-      if (archiveMatch) {
+      if (contract === "native" && archiveMatch) {
         const requestedIndex = Number(archiveMatch[1]);
         const archive = await callTurnBroker<{
           context: string;
@@ -368,13 +368,12 @@ export async function runChatGptMcpServer(options: {
         }>(options.brokerSocketPath, {
           method: "read_context",
           token: requestId,
-          contract,
           index: requestedIndex,
           chunkChars: CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS,
         }, 5_000, extra.signal);
         return { content: [{
           type: "text" as const,
-          text: formatContextArchiveChunk(archive, contract),
+          text: formatContextArchiveChunk(archive),
         }] };
       }
       return withTurn("codex_tool_inventory", requestId, extra, claimed => {

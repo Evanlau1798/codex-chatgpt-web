@@ -53,9 +53,6 @@ export async function dispatchTurnBrokerRequest(
   if (request.method === "safe_complete") {
     if (!request.token) throw new Error("Zero Risk request_id is required");
     if (typeof request.finalAnswer !== "string") throw new Error("Zero Risk turn final_answer is required");
-    if (state.contexts.hasIncomplete(request.token)) {
-      throw new Error("Read and verify the complete Codex context archive before completing this turn");
-    }
     return state.completeSafeTurn(request.token, request.finalAnswer);
   }
   if (request.method.startsWith("owner_")) return dispatchExternalOwnerRequest(request, {
@@ -86,14 +83,6 @@ export async function dispatchTurnBrokerRequest(
   }
   if (request.method === "read_context") {
     if (typeof request.token !== "string" || request.token.length === 0) throw new Error("context token is required");
-    const channel = state.channels.get(state.contexts.ownerToken(request.token) ?? request.token);
-    if (channel?.safe && request.contract !== "safe") {
-      throw new Error("Zero Risk request id requires the Zero Risk MCP contract");
-    }
-    if (!channel?.safe && request.contract === "safe") {
-      throw new Error("Zero Risk MCP contract requires a Zero Risk request id");
-    }
-    if (channel?.safe) assertSafeHarnessRunning(channel);
     return state.contexts.read(request.token, request.index, request.chunkChars, state.channels);
   }
   if (request.method === "claim") return claim(request, signal, state);
@@ -139,10 +128,10 @@ async function claim(request: BrokerRequest, signal: AbortSignal, state: Dispatc
     throw new Error("Zero Risk MCP contract requires a Zero Risk request id");
   }
   assertTurnActivityId(request.activityId);
+  claimTurnActivity(activeChannel, request.activityId);
   if (state.contexts.hasIncomplete(token)) {
     throw new Error("Read and verify the complete Codex context archive before calling work tools");
   }
-  claimTurnActivity(activeChannel, request.activityId);
   if (activeChannel.bindingId) {
     const existing = state.bindings.get(activeChannel.bindingId);
     if (!existing || existing.token !== token || existing.channel !== activeChannel) {

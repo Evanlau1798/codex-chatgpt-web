@@ -8,7 +8,6 @@ import {
 } from "./launcher-helper-protocol";
 import { forwardLauncherHelperProgress } from "./launcher-helper-progress";
 import { acknowledgeLauncherMultipartStage, assertLauncherHelperFenceFeatures, handleLauncherHelperFenceEvent } from "./launcher-helper-fence";
-import { launcherHelperRunFrame } from "./launcher-helper-run-frame";
 import {
   resolveLauncherHelperScript,
   terminateLauncherHelperProcess,
@@ -90,7 +89,32 @@ export class LauncherBrowserHelperClient {
         pending.sent = true;
         const progressForwarding = new AbortController();
         pending.progressForwarding = progressForwarding;
-        void this.send(launcherHelperRunFrame(this.config, turn)).then(() => {
+        void this.send({
+          type: "run",
+          id: turn.traceId,
+          config: {
+            appName: this.config.appName,
+            browserHostDescriptorPath: this.config.browserHostDescriptorPath!,
+            browserDiagnosticsPath: this.config.browserDiagnosticsPath,
+            turnTimeoutMs: this.config.turnTimeoutMs,
+            autoApproveToolCalls: this.config.autoApproveToolCalls,
+            experimentalNoAutoCompact: this.config.experimentalNoAutoCompact,
+          },
+          turn: {
+            traceId: turn.traceId,
+            modelId: turn.modelId,
+            reasoning: turn.reasoning,
+            capabilities: turn.capabilities,
+            ...(turn.nativeConnector ? { nativeConnector: true } : {}),
+            ...(turn.prepareResume ? { resumeAvailable: true } : {}),
+            ...(turn.retainConversation ? { retainConversation: true } : {}),
+            ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
+            ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
+            ...(turn.compaction ? { compaction: true } : {}),
+            ...(turn.captureLunaCheckpoint ? { captureLunaCheckpoint: true } : {}),
+            ...(turn.externalProgress ? { externalProgress: true } : {}),
+          },
+        }).then(() => {
           if (!progressForwarding.signal.aborted) {
             forwardLauncherHelperProgress(
               turn,
@@ -259,8 +283,7 @@ export class LauncherBrowserHelperClient {
         if (acknowledge) this.invokeEventCallback(message.id, pending, acknowledge);
       }
       else if (message.event === "prepared_selected") {
-        const prepare = message.mode === "refresh" ? pending.turn.prepareRefresh
-          : message.mode === "resume" ? pending.turn.prepareResume : pending.turn.prepare;
+        const prepare = message.reused ? pending.turn.prepareResume : pending.turn.prepare;
         void Promise.resolve().then(() => prepare?.())
           .then(prepared => {
             if (!prepared) throw new Error("Launcher browser helper selected an unavailable resume prompt");
@@ -269,7 +292,7 @@ export class LauncherBrowserHelperClient {
               return;
             }
             pending.prepared = prepared;
-            return Promise.resolve(pending.turn.onPreparedSelected?.(message.mode))
+            return Promise.resolve(pending.turn.onPreparedSelected?.(message.reused))
               .then(() => {
                 if (this.pending.get(message.id) !== pending) return;
                 return this.send({

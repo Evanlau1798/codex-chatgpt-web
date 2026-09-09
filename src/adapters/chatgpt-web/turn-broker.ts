@@ -14,11 +14,7 @@ import {
 } from "./turn-broker-state";
 import { opaqueId, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker-protocol";
 import { TurnContextStore } from "./turn-context-store";
-import {
-  beginTurnCompletionFence,
-  commitTurnCompletionFence,
-  type ChatGptCompletionFenceStart,
-} from "./turn-broker-completion";
+import { beginTurnCompletionFence, commitTurnCompletionFence } from "./turn-broker-completion";
 import { rejectTurnChannel, takeQueuedTools } from "./turn-broker-queue";
 import {
   assertSafeHarnessRunning,
@@ -146,11 +142,10 @@ export class TurnBroker implements TurnBrokerOwner {
     ttlMs?: number,
     traceId = "unknown",
     turnToken?: string,
-    allowReplay = true,
   ): Promise<string> {
     await this.start();
     this.prune();
-    return this.contexts.register(text, ttlMs, traceId, turnToken, allowReplay);
+    return this.contexts.register(text, ttlMs, traceId, turnToken);
   }
 
   async beginCompactionTransaction(
@@ -237,22 +232,18 @@ export class TurnBroker implements TurnBrokerOwner {
     invocation.resolve(result);
   }
 
-  beginCompletionFence(token: string): ChatGptCompletionFenceStart {
+  beginCompletionFence(token: string): number | undefined {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
     assertSafeHarnessRunning(channel);
-    const nextIndex = this.contexts.nextIncompleteIndex(token);
-    if (nextIndex !== undefined) return { blocked: "context_archive", nextIndex };
-    const revision = beginTurnCompletionFence(channel);
-    return revision === undefined ? { blocked: "activity" } : { revision };
+    return beginTurnCompletionFence(channel);
   }
 
   commitCompletionFence(token: string, revision: number): boolean {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
-    if (this.contexts.hasIncomplete(token)) return false;
     const committed = commitTurnCompletionFence(channel, revision);
     if (committed) {
       console.info(`[chatgpt-web] broker trace=${channel.traceId} committed browser completion revision=${revision}`);

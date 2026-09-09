@@ -29,7 +29,7 @@ test("active checkpoint preemption stops generation without taking the abort pat
   const request = source.indexOf("const requestedPreemption =");
   const stop = source.indexOf('await stop.press("Enter")', request);
   const snapshot = source.indexOf("const snapshot = await this.responseDomSnapshot", request);
-  const retry = source.indexOf("const retrySelection =", snapshot);
+  const retry = source.indexOf("preemptiveRetryPrompt ?? await turn.retryPromptForAnswer", snapshot);
   const control = source.slice(request, retry);
 
   expect(request).toBeGreaterThan(-1);

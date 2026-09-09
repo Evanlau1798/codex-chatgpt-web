@@ -97,17 +97,9 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
       phase: "start",
       traceId: "abc123def456",
       helperPid: process.pid,
-    })).resolves.toEqual({ surfaceId: "launcher_surface_id_0123456789AB", reused: true, promptMode: "resume" });
+    })).resolves.toEqual({ surfaceId: "launcher_surface_id_0123456789AB", reused: true });
     expect(received.authorization).toBe("Bearer launcher-control-token-0123456789abcdefghijklmnop");
     expect(received.body).toEqual({ phase: "start", traceId: "abc123def456", helperPid: process.pid });
-    await expect(notifyLauncherTurn(path, {
-      phase: "start", traceId: "revision123456", helperPid: process.pid,
-      systemRevision: "a".repeat(64),
-    })).rejects.toThrow("does not support retained system refresh");
-    expect(received.body).toEqual({
-      phase: "end", traceId: "revision123456", helperPid: process.pid,
-      status: "failed", message: "invalid start acknowledgement",
-    });
     await notifyLauncherTurn(path, {
       phase: "heartbeat",
       traceId: "abc123def456",
@@ -128,53 +120,6 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
       status: "completed",
       retain: true,
     });
-  } finally {
-    await new Promise<void>(resolve => server.close(() => resolve()));
-  }
-});
-
-test("an invalid retained start acknowledgement releases the accepted launcher turn", async () => {
-  const received: Array<{ url?: string; body: Record<string, unknown> }> = [];
-  const server = createServer(async (request, response) => {
-    const chunks: Buffer[] = [];
-    for await (const chunk of request) chunks.push(Buffer.from(chunk));
-    received.push({
-      url: request.url,
-      body: JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>,
-    });
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(request.url === "/v1/turn/start"
-      ? '{"ok":true,"surfaceId":"launcher_surface_id_0123456789AB","reused":true}\n'
-      : '{"ok":true,"cancelledByUser":false}\n');
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  try {
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("test server has no port");
-    const path = descriptorFile(`http://127.0.0.1:${address.port}`);
-    await expect(notifyLauncherTurn(path, {
-      phase: "start", traceId: "invalid-start-ack", helperPid: process.pid,
-      systemRevision: "a".repeat(64),
-    })).rejects.toThrow("does not support retained system refresh");
-    expect(received).toEqual([
-      {
-        url: "/v1/turn/start",
-        body: {
-          phase: "start", traceId: "invalid-start-ack", helperPid: process.pid,
-          systemRevision: "a".repeat(64),
-        },
-      },
-      {
-        url: "/v1/turn/end",
-        body: {
-          phase: "end", traceId: "invalid-start-ack", helperPid: process.pid,
-          status: "failed", message: "invalid start acknowledgement",
-        },
-      },
-    ]);
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
   }

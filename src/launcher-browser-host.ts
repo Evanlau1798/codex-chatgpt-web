@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { expandUserPath, stripUtf8Bom } from "./config";
 import { assertLauncherLoopbackEndpoint } from "./launcher-loopback-endpoint";
-import { parseLauncherTurnStart } from "./launcher-turn-response";
 import { processRunning } from "./process";
 
 export const LAUNCHER_BROWSER_HOST_KIND = "codex-web-gpt-launcher";
@@ -378,8 +377,9 @@ export type LauncherTurnActivity =
       phase: "start";
       traceId: string;
       helperPid: number;
-      conversationKey?: string; systemRevision?: string; systemRefreshAvailable?: boolean;
-      connectorIdentity?: string; requireRetainedConversation?: boolean;
+      conversationKey?: string;
+      connectorIdentity?: string;
+      requireRetainedConversation?: boolean;
     }
   | { phase: "heartbeat"; traceId: string; helperPid: number; refreshViewport?: boolean }
   | {
@@ -405,7 +405,7 @@ export async function notifyLauncherTurn(
     : activity.phase === "heartbeat"
       ? LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS
       : LAUNCHER_TURN_START_TIMEOUT_MS,
-): Promise<{ surfaceId?: string; reused?: boolean; promptMode?: "full" | "resume" | "refresh"; connectorBound?: boolean; cancelledByUser?: boolean }> {
+): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean; cancelledByUser?: boolean }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -431,15 +431,20 @@ export async function notifyLauncherTurn(
     }
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (activity.phase === "start") {
-      try {
-        return parseLauncherTurnStart(body, activity.systemRevision !== undefined);
-      } catch (error) {
-        await notifyLauncherTurn(descriptorPath, {
-          phase: "end", traceId: activity.traceId, helperPid: activity.helperPid,
-          status: "failed", message: "invalid start acknowledgement",
-        }).catch(() => {});
-        throw error;
+      if (typeof body.surfaceId !== "string" || !/^[A-Za-z0-9_-]{32}$/.test(body.surfaceId)) {
+        throw new Error("Launcher browser control channel returned an invalid turn surface id");
       }
+      if (body.reused !== undefined && typeof body.reused !== "boolean") {
+        throw new Error("Launcher browser control channel returned an invalid reuse state");
+      }
+      if (body.connectorBound !== undefined && typeof body.connectorBound !== "boolean") {
+        throw new Error("Launcher browser control channel returned an invalid connector state");
+      }
+      return {
+        surfaceId: body.surfaceId,
+        reused: body.reused === true,
+        ...(body.connectorBound === true ? { connectorBound: true } : {}),
+      };
     }
     if (activity.phase === "end") {
       if (typeof body.cancelledByUser !== "boolean") {

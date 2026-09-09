@@ -9,7 +9,7 @@ import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { ChatGptRetryPrompt } from "./steering";
 import { createBrowserHelperPromptSelection } from "./browser-helper-prompt-selection";
 import type { ChatGptExternalTurnProgressSnapshot } from "./turn-progress";
-import { BrowserHelperFenceRegistry, parseBrowserHelperCompletionFenceStart } from "./browser-helper-fence";
+import { BrowserHelperFenceRegistry } from "./browser-helper-fence";
 
 interface RunMessage {
   type: "run";
@@ -29,11 +29,9 @@ interface RunMessage {
     capabilities: ChatGptWebCapabilities;
     nativeConnector?: boolean;
     resumeAvailable?: boolean;
-    refreshAvailable?: boolean;
     retainConversation?: boolean;
     requireRetainedConversation?: boolean;
     conversationKey?: string;
-    systemRevision?: string;
     compaction?: boolean;
     captureLunaCheckpoint?: boolean;
     externalProgress?: boolean;
@@ -73,7 +71,7 @@ interface AnswerRetryMessage {
 type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage
   | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
   | { type: "send_activated_ack"; id: string }
-  | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision?: number; blocked?: "context_archive" | "activity"; nextIndex?: number }
+  | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision: number | null }
   | { type: "completion_fence_commit_ack"; id: string; requestId: number; committed: boolean }
   | { type: "preempt_retry"; id: string; prompt: string }
   | { type: "progress"; id: string; snapshot: ChatGptExternalTurnProgressSnapshot }
@@ -149,9 +147,6 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.resumeAvailable !== undefined && typeof message.turn.resumeAvailable !== "boolean") {
     throw new Error("Browser helper resume availability is invalid");
   }
-  if (message.turn.refreshAvailable !== undefined && typeof message.turn.refreshAvailable !== "boolean") {
-    throw new Error("Browser helper refresh availability is invalid");
-  }
   if (message.turn.nativeConnector !== undefined && typeof message.turn.nativeConnector !== "boolean") {
     throw new Error("Browser helper Native2 connector flag is invalid");
   }
@@ -165,10 +160,6 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.conversationKey !== undefined
     && !/^[a-f0-9]{64}$/.test(message.turn.conversationKey)) {
     throw new Error("Browser helper conversation key is invalid");
-  }
-  if (message.turn.systemRevision !== undefined
-    && !/^[a-f0-9]{64}$/.test(message.turn.systemRevision)) {
-    throw new Error("Browser helper system revision is invalid");
   }
   if (message.turn.captureLunaCheckpoint !== undefined && typeof message.turn.captureLunaCheckpoint !== "boolean") {
     throw new Error("Browser helper Luna checkpoint flag is invalid");
@@ -213,11 +204,9 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.nativeConnector ? { nativeConnector: true } : {}),
     prepare: prepareSelected,
     ...(message.turn.resumeAvailable ? { prepareResume: prepareSelected } : {}),
-    ...(message.turn.refreshAvailable ? { prepareRefresh: prepareSelected } : {}),
     ...(message.turn.retainConversation ? { retainConversation: true } : {}),
     ...(message.turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     ...(message.turn.conversationKey ? { conversationKey: message.turn.conversationKey } : {}),
-    ...(message.turn.systemRevision ? { systemRevision: message.turn.systemRevision } : {}),
     ...(message.turn.compaction ? { compaction: true } : {}),
     abortSignal: abortController.signal,
     ...fenced,
@@ -233,8 +222,8 @@ async function run(message: RunMessage): Promise<void> {
       reject(new Error("Browser helper could not publish Send activation"));
     }),
     onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "submitted" }),
-    onPreparedSelected: mode => {
-      writeProtocol({ type: "event", id: message.id, event: "prepared_selected", mode });
+    onPreparedSelected: reused => {
+      writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused });
       return promptSelection.wait().then(() => {});
     },
     onMultipartStageAcknowledged: stageIndex => {
@@ -388,7 +377,7 @@ input.on("line", line => {
     // bound, since nothing would ever remove an entry that has no turn to end it.
     completionFences.apply(message.id, message.snapshot);
   } else if (message.type === "completion_fence_begin_ack") {
-    try { completionFences.resolveBegin(message.id, message.requestId, parseBrowserHelperCompletionFenceStart(message.revision, message.blocked, message.nextIndex)); }
+    try { completionFences.resolveBegin(message.id, message.requestId, message.revision); }
     catch (error) {
       writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
       completionFences.end(message.id);
@@ -427,7 +416,7 @@ input.on("line", line => {
       || invalidMultipart
       || (prepared.modelInputText !== undefined && typeof prepared.modelInputText !== "string")
       || (prepared.transport !== undefined
-        && !["inline", "native2-archive", "retained-system-archive"].includes(prepared.transport))
+        && prepared.transport !== "inline" && prepared.transport !== "native2-archive")
       || (prepared.inlineChars !== undefined && !Number.isSafeInteger(prepared.inlineChars))
       || (prepared.archiveChars !== undefined && !Number.isSafeInteger(prepared.archiveChars))
       || (prepared.archiveSha256 !== undefined && !/^[a-f0-9]{64}$/.test(prepared.archiveSha256))) {
@@ -494,7 +483,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({
-  type: "ready",
-  features: ["progress", "tool-boundary-ack", "completion-fence", "completion-fence-blockers", "multipart-stage-ack", "retained-system-refresh"],
-});
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack"] });
