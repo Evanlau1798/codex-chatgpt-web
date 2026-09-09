@@ -75,11 +75,14 @@ test("browser turn orchestration retains owned prompt insertion and semantic sub
 
 test("browser completion settles final projection before fail-closed Markdown finalization", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const gateSource = readFileSync(new URL("../src/adapters/chatgpt-web/final-answer-gate.ts", import.meta.url), "utf8");
   const completion = workerSource.slice(workerSource.indexOf("const completion = completionTracker.update"));
   expect(workerSource).not.toContain("markdownBuffer.currentSnapshotIsConsistent()");
   expect(completion.indexOf("completionTracker.update"))
-    .toBeLessThan(completion.indexOf("markdownBuffer.finish()"));
+    .toBeLessThan(completion.indexOf("prepareChatGptFinalAnswer"));
   expect(completion).toContain("throwMarkdownConsistencyError(error)");
+  expect(gateSource.indexOf("completionFence.commit(revision)"))
+    .toBeLessThan(gateSource.indexOf("options.finalizeAnswer?.()"));
 });
 
 test("Stopped thinking fails the current turn immediately", () => {
@@ -2156,13 +2159,13 @@ test("a stalled final projection retires the surface before Markdown is finalize
   const stalled = source.indexOf('completion.status === "stalled"', decision);
   const retirement = source.indexOf("retireSession: true", stalled);
   const completed = source.indexOf('completion.status === "complete"', stalled);
-  const finish = source.indexOf("markdownBuffer.finish()", completed);
+  const prepare = source.indexOf("prepareChatGptFinalAnswer", completed);
 
   expect(decision).toBeGreaterThan(-1);
   expect(stalled).toBeGreaterThan(decision);
   expect(retirement).toBeGreaterThan(stalled);
   expect(completed).toBeGreaterThan(retirement);
-  expect(finish).toBeGreaterThan(completed);
+  expect(prepare).toBeGreaterThan(completed);
 });
 
 test("browser send accepts only conclusive ChatGPT submission evidence", () => {
