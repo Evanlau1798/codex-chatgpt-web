@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { Locator } from "playwright-core";
 import {
-  chatGptTerminalErrorRetryPrompt,
   throwIfChatGptTerminalErrorAlert,
 } from "../src/adapters/chatgpt-web/browser-worker";
+import { chatGptTerminalErrorRetryPrompt } from "../src/adapters/chatgpt-web/same-surface-recovery";
 
 function terminalErrorScope() {
   let visible = true;
@@ -47,6 +47,10 @@ test("a terminal ChatGPT error continues once without pressing the Web retry but
   expect(failure).toMatchObject({ code: "upstream_server_error", retryable: true });
   expect(fixture.pressed).toEqual([]);
   expect(chatGptTerminalErrorRetryPrompt(failure!, 1, "")).toContain("Do not repeat completed tool calls");
+  const compactionRetry = chatGptTerminalErrorRetryPrompt(failure!, 1, "", true);
+  expect(compactionRetry).toContain("history-compaction checkpoint");
+  expect(compactionRetry).toContain("not a normal task turn");
+  expect(compactionRetry).not.toContain("completed tool results");
   expect(chatGptTerminalErrorRetryPrompt(failure!, 2, "")).toBeUndefined();
   expect(chatGptTerminalErrorRetryPrompt(failure!, 1, "partial answer")).toBeUndefined();
 });
@@ -71,7 +75,7 @@ test("a visible completed answer wins over a stale terminal error banner", async
 test("terminal recovery is integrated as a same-conversation continuation", () => {
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
 
-  expect(source).toContain("chatGptTerminalErrorRetryPrompt(failure, responseAttempt, answerBuffer.value())");
+  expect(source).toContain("failure, responseAttempt, answerBuffer.value(), turn.compaction === true,");
   expect(source).not.toContain("terminalErrorRetryUsed");
   expect(source).toContain('(candidate.innerText ?? candidate.textContent ?? "").trim().length');
   expect(source).toContain('(root.innerText ?? root.textContent ?? "").trim().length');

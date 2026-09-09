@@ -1,4 +1,5 @@
 import type { BrowserTurn } from "./browser-worker";
+import { ChatGptWebAdapterError } from "./adapter-error";
 import {
   CHATGPT_SAME_SURFACE_RECOVERY_PROMPT,
   chatGptSameSurfaceRecoveryDecision,
@@ -6,6 +7,21 @@ import {
 import { chatGptTurnSessions } from "./turn-execution";
 
 type ErrorRetry = NonNullable<BrowserTurn["retryPromptForError"]>;
+
+export function chatGptTerminalErrorRetryPrompt(
+  error: Error,
+  attempt: number,
+  emittedText: string,
+  compaction = false,
+): string | undefined {
+  if (attempt !== 1
+    || emittedText.length > 0
+    || !(error instanceof ChatGptWebAdapterError)
+    || error.code !== "upstream_server_error") return undefined;
+  return compaction
+    ? "Retry the immediately preceding Codex history-compaction checkpoint. This is not a normal task turn. Do not continue or execute the task. Summarize only the supplied task context and return only the checkpoint summary."
+    : "Continue the current response from the completed Codex Native2 tool results above. Do not repeat completed tool calls. Complete only the remaining work, then return the requested answer.";
+}
 
 export function createChatGptSameSurfaceRetry(options: {
   traceId: string;

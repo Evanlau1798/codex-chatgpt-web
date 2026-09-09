@@ -154,6 +154,7 @@ import {
   chatGptPromptAttachmentTimeoutMs,
 } from "./prompt-attachment-budget";
 import { chatGptCompletionEvidenceFailure } from "./same-surface-readiness";
+import { chatGptTerminalErrorRetryPrompt } from "./same-surface-recovery";
 import {
   ChatGptLunaCheckpointStream,
   type CapturedChatGptLunaCheckpoint,
@@ -357,18 +358,6 @@ export async function throwIfChatGptTerminalErrorAlert(
     "ChatGPT ended the turn with 'Something went wrong'. Retry the turn.",
     { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
   );
-}
-
-export function chatGptTerminalErrorRetryPrompt(
-  error: Error,
-  attempt: number,
-  emittedText: string,
-): string | undefined {
-  if (attempt !== 1
-    || emittedText.length > 0
-    || !(error instanceof ChatGptWebAdapterError)
-    || error.code !== "upstream_server_error") return undefined;
-  return "Continue the current response from the completed Codex Native2 tool results above. Do not repeat completed tool calls. Complete only the remaining work, then return the requested answer.";
 }
 
 export async function resolveChatGptToolConfirmation(
@@ -3730,7 +3719,9 @@ export class ChatGptBrowserWorker {
           turn.finalAnswerAdmission?.reopen();
           const failure = error instanceof Error ? error : new Error(String(error));
           if (failure instanceof ChatGptWebAdapterError && failure.retireSession) throw failure;
-          const retryPrompt = chatGptTerminalErrorRetryPrompt(failure, responseAttempt, answerBuffer.value())
+          const retryPrompt = chatGptTerminalErrorRetryPrompt(
+            failure, responseAttempt, answerBuffer.value(), turn.compaction === true,
+          )
             ?? await turn.retryPromptForError?.(failure, responseAttempt);
           if (!retryPrompt) throw error;
           if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry browser failures");
