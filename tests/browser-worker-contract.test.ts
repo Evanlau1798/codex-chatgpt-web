@@ -117,25 +117,6 @@ test("aborting a queued seventh browser turn removes it without consuming a slot
   await Promise.all(active);
 });
 
-test("retained tool conversations attach plain suffix text without reopening the connector menu", async () => {
-  const calls: string[] = [];
-  const composer = {
-    fill: async (value: string) => { calls.push(`fill:${value}`); },
-    focus: async () => { calls.push("focus"); },
-  };
-  const attachPrompt = (ChatGptBrowserWorker.prototype as unknown as {
-    attachPrompt(page: unknown, prompt: string, localTools: boolean, capture: undefined, reuse: boolean): Promise<void>;
-  }).attachPrompt;
-  await attachPrompt.call({
-    activeComposer: async () => composer,
-    selectConnector: async () => { throw new Error("retained turns must not select a connector"); },
-    insertPromptText: async (_page: unknown, text: string) => { calls.push(`insert:${text}`); },
-    assertPromptAttached: async () => { calls.push("assert"); },
-  }, {}, "new suffix", true, undefined, true);
-
-  expect(calls).toEqual(["fill:", "focus", "insert:new suffix", "assert"]);
-});
-
 test("browser diagnostics distinguish composer pills from connector menu rows", () => {
   const diagnosticSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-diagnostics.ts", import.meta.url), "utf8");
   expect(diagnosticSource).toContain("composerSelectedConnectors:");

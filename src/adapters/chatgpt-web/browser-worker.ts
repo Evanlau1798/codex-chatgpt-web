@@ -1943,7 +1943,7 @@ export class ChatGptBrowserWorker {
     prompt: string,
     localTools: boolean,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
-    reuseConnector = false,
+    _reuseConnector = false,
     abortSignal?: AbortSignal,
     catalogRefreshAvailable = false,
     connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 },
@@ -1953,7 +1953,7 @@ export class ChatGptBrowserWorker {
     throwIfPromptAttachmentAborted(abortSignal);
     let mutationStarted = false;
     try {
-      if (!localTools || reuseConnector) {
+      if (!localTools) {
         const composer = await this.activeComposer(page, 30_000, abortSignal);
         // Playwright's multiline fill maps through an input action that ChatGPT's Lexical editor can
         // collapse to the first paragraph on the launcher-owned Electron surface. Clear separately,
@@ -2085,6 +2085,7 @@ export class ChatGptBrowserWorker {
         }
         await captureDiagnostic?.("prompt-attachment-integrity-retry");
         await this.resetCompactionComposerForRetry(page, baseline, abortSignal);
+        connectorAttemptBudget.triggerAttempts = 0;
       }
     }
   }
