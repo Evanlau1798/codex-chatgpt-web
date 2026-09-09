@@ -1,12 +1,27 @@
 import type { BrowserTurn } from "./browser-worker";
 import { ChatGptMirroredTurnProgress, type ChatGptExternalTurnProgressSnapshot } from "./turn-progress";
+import type { ChatGptCompletionFenceStart } from "./turn-broker-completion";
 
 type Waiter<T> = { requestId: number; resolve: (value: T) => void; reject: (error: Error) => void };
 type Session = {
   progress: ChatGptMirroredTurnProgress;
-  begin?: Waiter<number | undefined>;
+  begin?: Waiter<ChatGptCompletionFenceStart>;
   commit?: Waiter<boolean>;
 };
+
+export function parseBrowserHelperCompletionFenceStart(
+  revision: number | undefined,
+  blocked: unknown,
+): ChatGptCompletionFenceStart {
+  if (revision !== undefined && blocked !== undefined) {
+    throw new Error("Browser helper completion fence result is ambiguous");
+  }
+  if (blocked === "context_archive" || blocked === "activity") return { blocked };
+  if (blocked !== undefined || !Number.isSafeInteger(revision) || revision! < 0) {
+    throw new Error("Browser helper completion fence result is invalid");
+  }
+  return { revision: revision! };
+}
 
 export class BrowserHelperFenceRegistry {
   private readonly sessions = new Map<string, Session>();
@@ -46,16 +61,18 @@ export class BrowserHelperFenceRegistry {
     }
   }
 
-  resolveBegin(id: string, requestId: number, revision: number | null): void {
-    if (!Number.isSafeInteger(requestId) || requestId <= 0
-      || (revision !== null && (!Number.isSafeInteger(revision) || revision < 0))) {
-      throw new Error("Browser helper completion fence revision is invalid");
+  resolveBegin(id: string, requestId: number, result: ChatGptCompletionFenceStart): void {
+    const valid = "revision" in result
+      ? Number.isSafeInteger(result.revision) && result.revision >= 0
+      : result.blocked === "context_archive" || result.blocked === "activity";
+    if (!Number.isSafeInteger(requestId) || requestId <= 0 || !valid) {
+      throw new Error("Browser helper completion fence result is invalid");
     }
     const session = this.sessions.get(id);
     const waiter = session?.begin;
     if (!waiter || waiter.requestId !== requestId) return;
     session!.begin = undefined;
-    waiter.resolve(revision ?? undefined);
+    waiter.resolve(result);
   }
 
   resolveCommit(id: string, requestId: number, committed: boolean): void {
@@ -82,9 +99,9 @@ export class BrowserHelperFenceRegistry {
     for (const id of this.sessions.keys()) this.end(id);
   }
 
-  private request(id: string, kind: "begin"): Promise<number | undefined>;
+  private request(id: string, kind: "begin"): Promise<ChatGptCompletionFenceStart>;
   private request(id: string, kind: "commit", revision: number): Promise<boolean>;
-  private request(id: string, kind: "begin" | "commit", revision?: number): Promise<number | boolean | undefined> {
+  private request(id: string, kind: "begin" | "commit", revision?: number): Promise<ChatGptCompletionFenceStart | boolean> {
     const session = this.sessions.get(id);
     if (!session) return Promise.reject(new Error("Browser helper completion fence is unavailable"));
     if (session[kind]) return Promise.reject(new Error(`Browser helper completion fence already awaits ${kind}`));

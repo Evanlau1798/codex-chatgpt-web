@@ -3,6 +3,9 @@ import type { ChatGptTurnEnvironment } from "./environment";
 import { callTurnBroker } from "./turn-broker-client";
 import type { BrokerRequest, BrokerToolRequest, BrokerToolResult } from "./turn-broker-protocol";
 import { assertSurfaceNonce } from "./turn-broker-safe";
+import type { ChatGptCompletionFenceStart } from "./turn-broker-completion";
+
+const TURN_OWNER_PROTOCOL_VERSION = 6;
 
 export interface TurnBrokerOwner {
   register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId?: string): Promise<string>;
@@ -15,7 +18,7 @@ export interface TurnBrokerOwner {
   waitForSafeCompletion(token: string, signal?: AbortSignal): Promise<string>;
   requestCompaction(token: string, result: BrokerToolResult): number | Promise<number>;
   compactionDeliveryCount(token: string): number | Promise<number>;
-  beginCompletionFence(token: string): number | undefined | Promise<number | undefined>;
+  beginCompletionFence(token: string): ChatGptCompletionFenceStart | Promise<ChatGptCompletionFenceStart>;
   commitCompletionFence(token: string, revision: number): boolean | Promise<boolean>;
   waitForRetirement(token: string, signal?: AbortSignal): Promise<void>;
   revoke(token: string, reason?: Error): void | Promise<void>;
@@ -33,7 +36,7 @@ export function dispatchExternalOwnerRequest(
   signal?: AbortSignal,
 ): unknown | Promise<unknown> {
   if (request.method === "owner_status") {
-    return { protocolVersion: 5, acceptingExternalOwners: target.accepting() };
+    return { protocolVersion: TURN_OWNER_PROTOCOL_VERSION, acceptingExternalOwners: target.accepting() };
   }
   if (request.method === "owner_register") {
     const environment = ownerEnvironment(request.environment);
@@ -88,7 +91,7 @@ export function dispatchExternalOwnerRequest(
     return Promise.resolve(target.compactionDeliveryCount(request.token)).then(count => ({ count }));
   }
   if (request.method === "owner_completion_fence_begin") {
-    return Promise.resolve(target.beginCompletionFence(request.token)).then(revision => ({ revision: revision ?? null }));
+    return target.beginCompletionFence(request.token);
   }
   if (request.method === "owner_completion_fence_commit") {
     if (!Number.isSafeInteger(request.revision) || request.revision! < 0) {
@@ -152,7 +155,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
         + ` (${error instanceof Error ? error.message : String(error)})`,
       );
     }
-    if (status.protocolVersion !== 5) {
+    if (status.protocolVersion !== TURN_OWNER_PROTOCOL_VERSION) {
       throw new Error(`Unsupported DEV turn-owner protocol version: ${String(status.protocolVersion)}`);
     }
     if (status.acceptingExternalOwners !== true) {
@@ -269,16 +272,19 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     return Number(response.count);
   }
 
-  async beginCompletionFence(token: string): Promise<number | undefined> {
-    const response = await callTurnBroker<{ revision?: unknown }>(this.socketPath, {
+  async beginCompletionFence(token: string): Promise<ChatGptCompletionFenceStart> {
+    const response = await callTurnBroker<{ revision?: unknown; blocked?: unknown }>(this.socketPath, {
       method: "owner_completion_fence_begin",
       token,
     });
-    if (response.revision === null) return undefined;
-    if (!Number.isSafeInteger(response.revision) || (response.revision as number) < 0) {
-      throw new Error("DEV turn owner received an invalid completion fence revision");
+    if (response.blocked === "context_archive" || response.blocked === "activity") {
+      if (response.revision !== undefined) throw new Error("DEV turn owner received an ambiguous completion fence result");
+      return { blocked: response.blocked };
     }
-    return response.revision as number;
+    if (!Number.isSafeInteger(response.revision) || (response.revision as number) < 0 || response.blocked !== undefined) {
+      throw new Error("DEV turn owner received an invalid completion fence result");
+    }
+    return { revision: response.revision as number };
   }
 
   async commitCompletionFence(token: string, revision: number): Promise<boolean> {

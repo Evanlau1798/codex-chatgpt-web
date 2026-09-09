@@ -14,7 +14,11 @@ import {
 } from "./turn-broker-state";
 import { opaqueId, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker-protocol";
 import { TurnContextStore } from "./turn-context-store";
-import { beginTurnCompletionFence, commitTurnCompletionFence } from "./turn-broker-completion";
+import {
+  beginTurnCompletionFence,
+  commitTurnCompletionFence,
+  type ChatGptCompletionFenceStart,
+} from "./turn-broker-completion";
 import { rejectTurnChannel, takeQueuedTools } from "./turn-broker-queue";
 import {
   assertSafeHarnessRunning,
@@ -233,13 +237,14 @@ export class TurnBroker implements TurnBrokerOwner {
     invocation.resolve(result);
   }
 
-  beginCompletionFence(token: string): number | undefined {
+  beginCompletionFence(token: string): ChatGptCompletionFenceStart {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
     assertSafeHarnessRunning(channel);
-    if (this.contexts.hasIncomplete(token)) return undefined;
-    return beginTurnCompletionFence(channel);
+    if (this.contexts.hasIncomplete(token)) return { blocked: "context_archive" };
+    const revision = beginTurnCompletionFence(channel);
+    return revision === undefined ? { blocked: "activity" } : { revision };
   }
 
   commitCompletionFence(token: string, revision: number): boolean {

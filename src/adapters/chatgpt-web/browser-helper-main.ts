@@ -9,7 +9,7 @@ import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { ChatGptRetryPrompt } from "./steering";
 import { createBrowserHelperPromptSelection } from "./browser-helper-prompt-selection";
 import type { ChatGptExternalTurnProgressSnapshot } from "./turn-progress";
-import { BrowserHelperFenceRegistry } from "./browser-helper-fence";
+import { BrowserHelperFenceRegistry, parseBrowserHelperCompletionFenceStart } from "./browser-helper-fence";
 
 interface RunMessage {
   type: "run";
@@ -73,7 +73,7 @@ interface AnswerRetryMessage {
 type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage
   | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
   | { type: "send_activated_ack"; id: string }
-  | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision: number | null }
+  | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision?: number; blocked?: "context_archive" | "activity" }
   | { type: "completion_fence_commit_ack"; id: string; requestId: number; committed: boolean }
   | { type: "preempt_retry"; id: string; prompt: string }
   | { type: "progress"; id: string; snapshot: ChatGptExternalTurnProgressSnapshot }
@@ -388,7 +388,7 @@ input.on("line", line => {
     // bound, since nothing would ever remove an entry that has no turn to end it.
     completionFences.apply(message.id, message.snapshot);
   } else if (message.type === "completion_fence_begin_ack") {
-    try { completionFences.resolveBegin(message.id, message.requestId, message.revision); }
+    try { completionFences.resolveBegin(message.id, message.requestId, parseBrowserHelperCompletionFenceStart(message.revision, message.blocked)); }
     catch (error) {
       writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
       completionFences.end(message.id);
@@ -496,5 +496,5 @@ process.once("SIGTERM", () => {
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
 writeProtocol({
   type: "ready",
-  features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "retained-system-refresh"],
+  features: ["progress", "tool-boundary-ack", "completion-fence", "completion-fence-blockers", "multipart-stage-ack", "retained-system-refresh"],
 });

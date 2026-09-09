@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { BrowserHelperFenceRegistry } from "../src/adapters/chatgpt-web/browser-helper-fence";
+import {
+  BrowserHelperFenceRegistry,
+  parseBrowserHelperCompletionFenceStart,
+} from "../src/adapters/chatgpt-web/browser-helper-fence";
 import { assertLauncherHelperFenceFeatures } from "../src/adapters/chatgpt-web/launcher-helper-fence";
 import { parseLauncherHelperMessage } from "../src/adapters/chatgpt-web/launcher-helper-protocol";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
@@ -10,6 +13,10 @@ test("legacy helpers remain usable only for turns without external MCP progress"
   expect(() => assertLauncherHelperFenceFeatures({} as BrowserTurn, new Set())).not.toThrow();
   expect(() => assertLauncherHelperFenceFeatures({ systemRevision: "a".repeat(64) } as BrowserTurn, new Set()))
     .toThrow("retained system refresh");
+  expect(() => assertLauncherHelperFenceFeatures(
+    { systemRevision: "a".repeat(64) } as BrowserTurn,
+    new Set(["retained-system-refresh"]),
+  )).toThrow("completion blockers");
   expect(() => assertLauncherHelperFenceFeatures(fencedTurn, new Set(["progress"])))
     .toThrow("tool-boundary acknowledgement");
   expect(() => assertLauncherHelperFenceFeatures(fencedTurn, new Set(["progress", "tool-boundary-ack"])))
@@ -23,6 +30,8 @@ test("helper protocol validates tool boundaries and completion requests", () => 
   expect(() => parseLauncherHelperMessage(JSON.stringify({
     type: "event", id: "trace_123", event: "completion_fence_commit", requestId: 1, revision: -1,
   }))).toThrow("revision is invalid");
+  expect(() => parseBrowserHelperCompletionFenceStart(1, "context_archive")).toThrow("ambiguous");
+  expect(() => parseBrowserHelperCompletionFenceStart(undefined, undefined)).toThrow("invalid");
 });
 
 test("helper fence registry correlates begin and commit acknowledgements", async () => {
@@ -34,11 +43,16 @@ test("helper fence registry correlates begin and commit acknowledgements", async
   const transport = registry.start("trace_123", true);
   const begin = transport.completionFence!.begin();
   const beginFrame = sent[0] as { requestId: number };
-  registry.resolveBegin("trace_123", beginFrame.requestId, 4);
-  expect(await begin).toBe(4);
+  registry.resolveBegin("trace_123", beginFrame.requestId, { revision: 4 });
+  expect(await begin).toEqual({ revision: 4 });
+
+  const blocked = transport.completionFence!.begin();
+  const blockedFrame = sent[1] as { requestId: number };
+  registry.resolveBegin("trace_123", blockedFrame.requestId, { blocked: "context_archive" });
+  expect(await blocked).toEqual({ blocked: "context_archive" });
 
   const commit = transport.completionFence!.commit(4);
-  const commitFrame = sent[1] as { requestId: number };
+  const commitFrame = sent[2] as { requestId: number };
   registry.resolveCommit("trace_123", commitFrame.requestId, true);
   expect(await commit).toBeTrue();
   registry.end("trace_123");

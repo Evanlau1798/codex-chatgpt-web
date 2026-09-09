@@ -1,5 +1,9 @@
 import type { TurnChannel } from "./turn-broker-state";
 
+export type ChatGptCompletionFenceStart =
+  | { revision: number }
+  | { blocked: "context_archive" | "activity" };
+
 const ACTIVITY_ID = /^activity_[A-Za-z0-9_-]{16,128}$/;
 
 export function assertTurnActivityId(activityId: unknown): asserts activityId is string {

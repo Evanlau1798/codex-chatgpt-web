@@ -43,6 +43,8 @@ import {
   estimateCompiledChatGptWebMessageTokens,
 } from "./input-tokens";
 import { CHATGPT_MAX_INPUT_IMAGES, type CompiledChatGptWebPrompt, type ChatGptWebPromptImage } from "./prompt";
+import { RetainedContextArchiveRecovery } from "./context-archive-recovery";
+import type { ChatGptCompletionFenceStart } from "./turn-broker-completion";
 import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import { ChatGptVisibleTraceTracker, type ChatGptVisibleTraceBlock } from "./visible-trace-tracker";
 import {
@@ -532,7 +534,7 @@ export interface BrowserTurn {
   externalProgress?: ChatGptTurnProgressReader;
   /** Atomically fences browser completion against concurrent MCP work accepted by the broker. */
   completionFence?: {
-    begin(): Promise<number | undefined>;
+    begin(): Promise<ChatGptCompletionFenceStart>;
     commit(revision: number): Promise<boolean>;
   };
   /** Allow one clean pre-submit composer retry for isolated history compaction only. */
@@ -3186,7 +3188,9 @@ export class ChatGptBrowserWorker {
       let retrySubmitted: (() => void) | undefined;
       let preemptiveRetryPrompt: string | undefined;
       let preemptiveStop: PreemptiveRetryStopState | undefined;
+      const archiveRecovery = new RetainedContextArchiveRecovery(prepared.transport, turn.completionFence);
       for (let responseAttempt = 1; ; responseAttempt += 1) {
+        let completionRetryPrompt: string | undefined;
         let responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
         const initialResponseTurn = await readChatGptAssistantTurnState(responseTurns);
         const initialTurnIdentities = initialResponseTurn.knownTurnIdentities ?? [];
@@ -3326,6 +3330,10 @@ export class ChatGptBrowserWorker {
         let sentAt = Date.now();
         const latency = new ChatGptTurnLatencyDiagnostics(turn.traceId, sentAt);
         const visibleTrace = new ChatGptVisibleTraceTracker();
+        const traceOutput = archiveRecovery.outputGate({
+          reasoning: (value, continuation) => turn.onReasoningSummary?.(value, continuation),
+          commentary: (value, continuation) => turn.onCommentary?.(value, continuation),
+        });
         const markdownOwnership = new ChatGptMarkdownOwnershipTracker();
         const markdownBuffer = new ChatGptMarkdownBuffer();
         let progressChars = 0;
@@ -3338,7 +3346,9 @@ export class ChatGptBrowserWorker {
           const visible = checkpointStream ? checkpointStream.push(delta) : delta;
           if (visible) {
             answerBuffer.append(visible);
-            const deliverable = answerBuffer.takeDeliverable(!turn.retryPromptForAnswer);
+            const deliverable = answerBuffer.takeDeliverable(
+              !turn.retryPromptForAnswer && prepared.transport !== "retained-system-archive",
+            );
             if (deliverable) turn.onTextDelta(deliverable);
           }
         };
@@ -3559,8 +3569,8 @@ export class ChatGptBrowserWorker {
             }
           })();
           for (const trace of visibleTrace.observe(snapshot.traceBlocks, snapshot.completionActionVisible)) {
-            if (trace.kind === "commentary") { latency.commentaryEmitted(); turn.onCommentary?.(trace.text, trace.continuation === true); }
-            else turn.onReasoningSummary?.(trace.text, trace.continuation === true);
+            if (trace.kind === "commentary") { latency.commentaryEmitted(); traceOutput.commentary(trace.text, trace.continuation === true); }
+            else traceOutput.reasoning(trace.text, trace.continuation === true);
           }
           if (textDelta) emitMarkdownDelta(textDelta);
           const domError = domHealthTracker.update({
@@ -3625,17 +3635,10 @@ export class ChatGptBrowserWorker {
             );
           }
           if (completion.status === "complete") {
-            if (turn.completionFence) {
-              if (completionFenceRevision === undefined) {
-                completionFenceRevision = await turn.completionFence.begin();
-                if (completionFenceRevision === undefined) continue;
-                continue;
-              }
-              if (!await turn.completionFence.commit(completionFenceRevision)) {
-                completionFenceRevision = undefined;
-                continue;
-              }
-            }
+            const fenced = await archiveRecovery.completion(completionFenceRevision);
+            if (fenced.status === "retry") { completionRetryPrompt = fenced.prompt; break; }
+            if (fenced.status === "wait") { completionFenceRevision = fenced.revision; continue; }
+            traceOutput.commit();
 
             if (snapshot.visibleText === "api_tool unavailable") {
               throw new ChatGptWebAdapterError(
@@ -3735,8 +3738,13 @@ export class ChatGptBrowserWorker {
           console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying response failure attempt=${responseAttempt + 1} reason=${reason}`);
           continue;
         }
-        const retryPrompt = preemptiveRetryPrompt ?? await turn.retryPromptForAnswer?.(finalText, responseAttempt);
-        preemptiveRetryPrompt = undefined;
+        const retrySelection = await archiveRecovery.selectRetry(
+          completionRetryPrompt,
+          preemptiveRetryPrompt,
+          () => turn.retryPromptForAnswer?.(finalText, responseAttempt),
+        );
+        const retryPrompt = retrySelection.prompt;
+        preemptiveRetryPrompt = retrySelection.pendingPreemptiveRetry;
         preemptiveStop = undefined;
         if (!retryPrompt) {
           const deliverable = answerBuffer.takeDeliverable(true);

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CHATGPT_WEB_BACKEND_MODEL, CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL } from "../src/chatgpt-web-models";
 import { defaultBrokerEndpoint } from "../src/config";
 import { retainedSystemContextArchive } from "../src/adapters/chatgpt-web/context-bootstrap";
+import { RetainedContextArchiveRecovery } from "../src/adapters/chatgpt-web/context-archive-recovery";
 import { createChatGptRuntimeStarter } from "../src/adapters/chatgpt-web/adapter-runtime-factory";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
@@ -20,6 +21,53 @@ import type { CodexParsedRequest } from "../src/types";
 
 const root = mkdtempSync(join(tmpdir(), "cgw-retained-system-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+test("a skipped retained archive gets one same-surface correction before failing closed", async () => {
+  const contextBlocker = { begin: async () => ({ blocked: "context_archive" as const }), commit: async () => true };
+  const recovery = new RetainedContextArchiveRecovery("retained-system-archive", contextBlocker);
+  const first = await recovery.completion(undefined);
+  expect(first.status).toBe("retry");
+  if (first.status !== "retry") throw new Error("expected retained archive correction");
+  expect(first.prompt).toContain("Call codex_tool_inventory now");
+  expect(await new RetainedContextArchiveRecovery("retained-system-archive", {
+    begin: async () => ({ blocked: "activity" }), commit: async () => true,
+  }).completion(undefined)).toEqual({ status: "wait" });
+  expect(await new RetainedContextArchiveRecovery("inline", contextBlocker).completion(undefined)).toEqual({ status: "wait" });
+  await expect(recovery.completion(undefined)).rejects.toThrow(
+    "did not read the required context archive",
+  );
+});
+
+test("retained refresh discards trace output produced before archive confirmation", () => {
+  const output: string[] = [];
+  const gate = new RetainedContextArchiveRecovery("retained-system-archive").outputGate({
+    reasoning: value => output.push(`reasoning:${value}`),
+    commentary: value => output.push(`commentary:${value}`),
+  });
+  gate.reasoning("stale");
+  gate.commentary("stale");
+  expect(output).toEqual([]);
+  gate.commit();
+  expect(output).toEqual([]);
+  gate.commentary("current");
+  expect(output.at(-1)).toBe("commentary:current");
+});
+
+test("archive correction preserves an already pending preemptive retry", async () => {
+  const recovery = new RetainedContextArchiveRecovery("retained-system-archive");
+  let answerRetries = 0;
+  const corrected = await recovery.selectRetry("read archive", "compact checkpoint", () => {
+    answerRetries += 1;
+    return "answer retry";
+  });
+  expect(corrected).toEqual({ prompt: "read archive", pendingPreemptiveRetry: "compact checkpoint" });
+  expect(answerRetries).toBe(0);
+  expect(await recovery.selectRetry(undefined, corrected.pendingPreemptiveRetry, () => {
+    answerRetries += 1;
+    return "answer retry";
+  })).toEqual({ prompt: "compact checkpoint" });
+  expect(answerRetries).toBe(0);
+});
 
 function request(): CodexParsedRequest {
   return {
@@ -299,10 +347,10 @@ test("an incomplete archive blocks Automatic completion fences", async () => {
   try {
     const token = await broker.register(environment, 5_000, "completion-refresh");
     await broker.registerContext("updated system", 5_000, "completion-refresh", token, false);
-    expect(broker.beginCompletionFence(token)).toBeUndefined();
+    expect(broker.beginCompletionFence(token)).toEqual({ blocked: "context_archive" });
     expect(broker.commitCompletionFence(token, 0)).toBe(false);
     await callTurnBroker(socketPath, { method: "read_context", token, contract: "native" });
-    expect(broker.beginCompletionFence(token)).toBe(0);
+    expect(broker.beginCompletionFence(token)).toEqual({ revision: 0 });
   } finally {
     await broker.close();
   }
@@ -322,7 +370,7 @@ test("a rejected archive-gated tool claim leaves no active activity", async () =
       method: "claim", token, contract: "native", activityId: "activity_archive_gated_claim_01",
     })).rejects.toThrow("complete Codex context archive");
     await callTurnBroker(socketPath, { method: "read_context", token, contract: "native" });
-    expect(broker.beginCompletionFence(token)).toBe(0);
+    expect(broker.beginCompletionFence(token)).toEqual({ revision: 0 });
   } finally {
     await broker.close();
   }
