@@ -84,6 +84,7 @@ export function createChatGptWebAdapter(
     ? createZeroRiskRuntimeStarter({
         provider,
         broker: brokerOwner,
+        contextBroker: broker,
         capabilities: configuredCapabilities,
         executionNamespace,
         control: dependencies.zeroRiskManualControl ?? launcherZeroRiskManualControl,

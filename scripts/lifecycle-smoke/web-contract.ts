@@ -16,12 +16,14 @@ import {
   assertWebContractCooldown,
   assertWebContractRuntimeVersion,
   deriveWebContractCapabilities,
+  retainedRefreshTabId,
   requestWebContractTurn,
   responseHasFinalProjection,
   WEB_CONTRACT_PROBE_TIMEOUT_MS,
   WEB_CONTRACT_TURN_TIMEOUT_MS,
   webContractBrowserIsIdle,
 } from "./web-contract-core";
+import { events } from "./common";
 import { runMarkdownRestorationProbe } from "./markdown-restoration-probe";
 
 const repo = resolve(import.meta.dir, "..", "..");
@@ -152,63 +154,99 @@ const session = { authenticated: true, temporary: true, composer: true, url: ses
 if (session.solAvailable !== true) throw new Error("Web contract smoke requires the ChatGPT effort control");
 
 const threadId = `thread_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
-const turnId = `turn_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
 const environment = `<environment_context>\n  <cwd>${repo}</cwd>\n  <filesystem><workspace_roots><root>${repo}</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>\n</environment_context>`;
-const item = (id: string, text: string) => ({
+const item = (id: string, text: string, turnId: string) => ({
   type: "message",
   id,
   role: "user",
   content: [{ type: "input_text", text }],
   internal_chat_message_metadata_passthrough: { turn_id: turnId },
 });
-const metadata = {
-  thread_id: threadId,
-  turn_id: turnId,
-  request_kind: "turn",
-  sandbox: "none",
-  workspaces: { [repo]: {} },
-};
-const payload = await withDeadline(WEB_CONTRACT_TURN_TIMEOUT_MS, async signal => {
-  const request = new Request(`${baseUrl}/v1/responses`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    signal,
-    body: JSON.stringify({
-      model: "chatgpt-web/medium",
-      stream: false,
-      reasoning: { effort: "medium" },
-      prompt_cache_key: threadId,
-      client_metadata: {
-        thread_id: threadId,
-        "x-codex-turn-metadata": JSON.stringify(metadata),
-      },
-      input: [
-        item("msg_web_contract_environment", environment),
-        item("msg_web_contract_prompt", "Reply briefly to confirm this turn completed.\n\nVerification: **bold**, `code`, and _emphasis_."),
-      ],
-      tools: [],
-    }),
+const systemBase = "Stable retained release-gate instruction. ".repeat(300);
+const tools = [{
+  type: "function",
+  name: "release_gate_noop",
+  description: "Release-gate sentinel. Do not call this function.",
+  parameters: { type: "object", properties: {}, additionalProperties: false },
+  strict: true,
+}];
+const liveStartedAt = Date.now();
+
+async function runTurn(
+  turnId: string,
+  instructions: string,
+  input: unknown[],
+  previousResponseId?: string,
+): Promise<Record<string, unknown>> {
+  const metadata = {
+    thread_id: threadId,
+    turn_id: turnId,
+    request_kind: "turn",
+    sandbox: "none",
+    workspaces: { [repo]: {} },
+  };
+  return await withDeadline(WEB_CONTRACT_TURN_TIMEOUT_MS, async signal => {
+    const request = new Request(`${baseUrl}/v1/responses`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      signal,
+      body: JSON.stringify({
+        model: "chatgpt-web/medium",
+        stream: false,
+        reasoning: { effort: "medium" },
+        instructions,
+        prompt_cache_key: threadId,
+        ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+        client_metadata: {
+          thread_id: threadId,
+          "x-codex-turn-metadata": JSON.stringify(metadata),
+        },
+        input,
+        tools,
+      }),
+    });
+    const result = await requestWebContractTurn(fetch, request);
+    if (result.status === "account-blocked") {
+      save({ status: "account-blocked", runtimeVersion: VERSION, httpStatus: 429, at: new Date(now).toISOString() });
+      throw new Error("WEB_CONTRACT_ACCOUNT_BLOCKED: ChatGPT returned a rate or verification limit; no retry was attempted");
+    }
+    if (!result.response.ok) throw new Error(`Web contract turn failed: HTTP ${result.response.status}`);
+    return await result.response.json() as Record<string, unknown>;
   });
-  const result = await requestWebContractTurn(fetch, request);
-  if (result.status === "account-blocked") {
-    save({ status: "account-blocked", runtimeVersion: VERSION, httpStatus: 429, at: new Date(now).toISOString() });
-    throw new Error("WEB_CONTRACT_ACCOUNT_BLOCKED: ChatGPT returned a rate or verification limit; no retry was attempted");
-  }
-  if (!result.response.ok) throw new Error(`Web contract turn failed: HTTP ${result.response.status}`);
-  return await result.response.json();
-});
-const finalProjection = responseHasFinalProjection(payload);
-if (!finalProjection) throw new Error("Web contract turn did not complete a final projection");
+}
+
+const firstTurnId = `turn_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
+const first = await runTurn(firstTurnId, `${systemBase}Revision A.`, [
+  item("msg_web_contract_environment", environment, firstTurnId),
+  item("msg_web_contract_prompt", "Reply briefly to confirm the first retained turn completed.\n\nVerification: **bold**, `code`, and _emphasis_.", firstTurnId),
+]);
+if (!responseHasFinalProjection(first) || typeof first.id !== "string" || !first.id) {
+  throw new Error("Web contract first retained turn did not complete a final projection");
+}
+const secondTurnId = `turn_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
+const second = await runTurn(secondTurnId, `${systemBase}Revision B.`, [
+  item("msg_web_contract_resume", "Reply briefly to confirm the retained system refresh completed.", secondTurnId),
+], first.id);
+const finalProjection = responseHasFinalProjection(second);
+if (!finalProjection) throw new Error("Web contract retained refresh did not complete a final projection");
+retainedRefreshTabId(events(liveStartedAt));
 const browserIdle = await waitForBrowserIdle(baseUrl);
 assertWebContractRuntimeVersion(await health(baseUrl), VERSION, runtimePid);
 const capture = deriveWebContractCapabilities({
   session,
   connectorVerified,
   markdownRestoration,
+  retainedRefresh: true,
   responseAccepted: true,
   finalProjection,
   browserIdle,
 });
 if (Object.values(capture).some(value => !value)) throw new Error("Web contract smoke did not return browser idle");
-save({ status: "passed", runtimeVersion: VERSION, at: new Date(now).toISOString(), capabilities: capture });
+save({
+  status: "passed",
+  runtimeVersion: VERSION,
+  at: new Date(now).toISOString(),
+  capabilities: capture,
+  retainedSystemRefresh: { selectionMode: "refresh", tabReused: true },
+});
 process.stdout.write(`WEB_CONTRACT_SMOKE_OK ${JSON.stringify(capture)}\n`);

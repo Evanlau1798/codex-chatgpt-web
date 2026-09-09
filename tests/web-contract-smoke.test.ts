@@ -5,6 +5,7 @@ import {
   assertWebContractRuntimeVersion,
   captureWebContract,
   deriveWebContractCapabilities,
+  retainedRefreshTabId,
   requestWebContractTurn,
   responseHasFinalProjection,
   WEB_CONTRACT_COOLDOWN_MS,
@@ -114,6 +115,7 @@ describe("lightweight Web contract smoke", () => {
       effort: true,
       connector: true,
       markdownRestoration: true,
+      retainedRefresh: true,
       submitted: true,
       finalProjection: true,
       browserIdle: true,
@@ -129,6 +131,7 @@ describe("lightweight Web contract smoke", () => {
       effort: true,
       connector: true,
       markdownRestoration: true,
+      retainedRefresh: true,
       submitted: true,
       finalProjection: true,
       browserIdle: true,
@@ -142,6 +145,7 @@ describe("lightweight Web contract smoke", () => {
       session: { authenticated: true, temporary: true, composer: true, solAvailable: true },
       connectorVerified: false,
       markdownRestoration: true,
+      retainedRefresh: false,
       responseAccepted: true,
       finalProjection: false,
       browserIdle: true,
@@ -152,10 +156,22 @@ describe("lightweight Web contract smoke", () => {
       effort: true,
       connector: false,
       markdownRestoration: true,
+      retainedRefresh: false,
       submitted: true,
       finalProjection: false,
       browserIdle: true,
     });
+  });
+
+  test("requires the second live turn to reuse the first retained tab", () => {
+    expect(retainedRefreshTabId([
+      { event: "browser.tab_retained", detail: { tabId: "tab-a" } },
+      { event: "browser.tab_reused", detail: { tabId: "tab-a" } },
+    ])).toBe("tab-a");
+    expect(() => retainedRefreshTabId([
+      { event: "browser.tab_retained", detail: { tabId: "tab-a" } },
+      { event: "browser.tab_reused", detail: { tabId: "tab-b" } },
+    ])).toThrow("did not reuse");
   });
 
   test("allows unrelated HTTP turns but rejects a parallel Web turn", () => {

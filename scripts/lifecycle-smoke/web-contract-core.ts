@@ -9,6 +9,7 @@ const capabilityKeys = [
   "effort",
   "connector",
   "markdownRestoration",
+  "retainedRefresh",
   "submitted",
   "finalProjection",
   "browserIdle",
@@ -40,6 +41,7 @@ export function deriveWebContractCapabilities(evidence: {
   session: { authenticated: boolean; temporary: boolean; composer: boolean; solAvailable?: boolean };
   connectorVerified: boolean;
   markdownRestoration: boolean;
+  retainedRefresh: boolean;
   responseAccepted: boolean;
   finalProjection: boolean;
   browserIdle: boolean;
@@ -51,10 +53,24 @@ export function deriveWebContractCapabilities(evidence: {
     effort: evidence.session.solAvailable === true,
     connector: evidence.connectorVerified,
     markdownRestoration: evidence.markdownRestoration,
+    retainedRefresh: evidence.retainedRefresh,
     submitted: evidence.responseAccepted,
     finalProjection: evidence.finalProjection,
     browserIdle: evidence.browserIdle,
   });
+}
+
+export function retainedRefreshTabId(events: Array<{
+  event: string;
+  detail?: Record<string, unknown>;
+}>): string {
+  const retained = events.find(value => value.event === "browser.tab_retained"
+    && typeof value.detail?.tabId === "string");
+  if (!retained) throw new Error("Web contract first turn was not retained");
+  const reused = events.find(value => value.event === "browser.tab_reused"
+    && value.detail?.tabId === retained.detail!.tabId);
+  if (!reused) throw new Error("Web contract system refresh did not reuse the retained browser tab");
+  return retained.detail!.tabId as string;
 }
 
 export function assertWebContractCooldown(lastRunAt: number | undefined, now = Date.now()): void {

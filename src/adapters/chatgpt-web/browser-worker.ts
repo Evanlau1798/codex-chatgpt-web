@@ -121,6 +121,11 @@ import {
   resolveChatGptWebTransportLimits,
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
+import {
+  prepareBrowserPrompt,
+  selectBrowserPromptMode,
+  type BrowserPromptMode,
+} from "./browser-prompt-mode";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
@@ -500,10 +505,12 @@ export interface BrowserTurn {
   nativeConnector?: boolean;
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
+  prepareRefresh?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   retainConversation?: boolean;
   /** Fail closed unless launcher reused the matching retained conversation. */
   requireRetainedConversation?: boolean;
   conversationKey?: string;
+  systemRevision?: string;
   abortSignal?: AbortSignal;
   onHeartbeat?: () => void;
   /** Semantic DOM progress used only to reset the upstream silence timer. */
@@ -514,7 +521,7 @@ export interface BrowserTurn {
   onSubmitted?: () => void;
   onMultipartStageAcknowledged?: (stageIndex: number) => void | Promise<void>;
   /** Release the unselected full/resume transport after the launcher resolves the retained lease. */
-  onPreparedSelected?: (reused: boolean) => void | Promise<void>;
+  onPreparedSelected?: (mode: BrowserPromptMode) => void | Promise<void>;
   /** Visible ChatGPT reasoning-summary step titles only; never hidden chain-of-thought. */
   onReasoningSummary?: (text: string, continuation?: boolean) => void;
   /** Stable visible ChatGPT prose between status/tool rows. */
@@ -2816,6 +2823,8 @@ export class ChatGptBrowserWorker {
       helperPid: process.pid,
       ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
       ...(nativeConnector ? { connectorIdentity: this.config.appName } : {}),
+      ...(turn.systemRevision ? { systemRevision: turn.systemRevision } : {}),
+      ...(turn.systemRevision ? { systemRefreshAvailable: turn.prepareRefresh !== undefined } : {}),
       ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     }).catch(error => {
       if (error instanceof LauncherBrowserTurnCancelledError) throw chatGptBrowserTabClosedError();
@@ -2851,15 +2860,15 @@ export class ChatGptBrowserWorker {
       if (turn.requireRetainedConversation && lease.reused !== true) {
         throw new Error("The retained ChatGPT conversation is no longer available");
       }
-      const reuseConversation = lease.reused === true && (!nativeConnector || lease.connectorBound === true);
-      await turn.onPreparedSelected?.(reuseConversation && turn.prepareResume !== undefined);
+      const selectedMode = selectBrowserPromptMode(lease.promptMode ?? "full", nativeConnector, lease.connectorBound);
+      await turn.onPreparedSelected?.(selectedMode);
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
       return await this.runBrowserTurn(
         turn,
         surfaceId,
         undefined,
-        reuseConversation,
+        selectedMode,
       );
     } catch (error) {
       originalError = error;
@@ -2900,8 +2909,9 @@ export class ChatGptBrowserWorker {
     turn: BrowserTurn,
     launcherSurfaceId?: string,
     maintenancePage?: Page,
-    reuseConversation = false,
+    promptMode: BrowserPromptMode = "full",
   ): Promise<string> {
+    const reuseConversation = promptMode !== "full";
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     if ((turn.captureLunaCheckpoint === true) !== (turn.onLunaCheckpoint !== undefined)) {
       throw new Error("ChatGPT Luna checkpoint capture requires exactly one checkpoint callback");
@@ -2910,9 +2920,11 @@ export class ChatGptBrowserWorker {
       throw new Error("Private rolling checkpoint capture is valid only for ChatGPT Luna");
     }
       const requestedMode = resolveChatGptWebModelMode(turn.modelId, turn.reasoning, turn.capabilities);
-    const prepared = reuseConversation && turn.prepareResume
-      ? await turn.prepareResume()
-      : await turn.prepare();
+    const prepared = await prepareBrowserPrompt(turn, promptMode);
+    console.info(
+      `[chatgpt-web] browser turn ${turn.traceId} promptMode=${promptMode}`
+      + ` promptChars=${prepared.text.length} reused=${reuseConversation}`,
+    );
     const diagnostics = new ChatGptBrowserDiagnostics(
       turn.traceId,
       this.config.browserDiagnosticsPath,

@@ -16,6 +16,10 @@ const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { ManualTurnController } = require("./manual-turn-controller.cjs");
 const { initializeAutomaticTurnTab, markTurnTabSurface } = require("./automatic-turn-surface.cjs");
 const {
+  beginSystemRevision, commitSystemRevision, matchesOwnedSystemRevision,
+  shouldReplaceForUnavailableRefresh,
+} = require("./retained-system-revision.cjs");
+const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
   sweepGapIndicatesSuspension,
@@ -515,7 +519,7 @@ class BrowserHost {
     return this.turnTabs.get(this.selectedTabId) || null;
   }
 
-  createTurnTab(traceId, helperPid, interactionLocked = true, conversationKey, connectorIdentity, manual = false) {
+  createTurnTab(traceId, helperPid, interactionLocked = true, conversationKey, connectorIdentity, manual = false, systemRevision) {
     if (this.turnTabs.size >= MAX_BROWSER_TABS
       && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
       throw new Error(
@@ -543,6 +547,7 @@ class BrowserHost {
       surfaceId,
       traceId,
       conversationKey,
+      pendingSystemRevision: systemRevision,
       connectorIdentity,
       connectorBound: false,
       helperPid,
@@ -600,8 +605,8 @@ class BrowserHost {
     return tab;
   }
 
-  createManualTurnTab(traceId, helperPid, conversationKey) {
-    return this.createTurnTab(traceId, helperPid, false, conversationKey, undefined, true);
+  createManualTurnTab(traceId, helperPid, conversationKey, systemRevision) {
+    return this.createTurnTab(traceId, helperPid, false, conversationKey, undefined, true, systemRevision);
   }
 
   presentManualTurn(tab) {
@@ -1566,7 +1571,7 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  async beginTurn(traceId, reveal, helperPid, interactionLocked = true, conversationKey, connectorIdentity, requireRetainedConversation = false) {
+  async beginTurn(traceId, reveal, helperPid, interactionLocked = true, conversationKey, connectorIdentity, requireRetainedConversation = false, systemRevision, systemRefreshAvailable = true) {
     if (this.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.manualOperation}`);
     }
@@ -1578,7 +1583,8 @@ class BrowserHost {
       throw new Error(`Browser turn ${traceId} already belongs to Zero Risk interaction`);
     }
     if (sameTrace && (sameTrace.conversationKey !== conversationKey
-      || sameTrace.connectorIdentity !== connectorIdentity)) {
+      || sameTrace.connectorIdentity !== connectorIdentity
+      || !matchesOwnedSystemRevision(sameTrace, systemRevision))) {
       throw new Error(`ChatGPT browser turn ${traceId} conversation metadata does not match its owned tab`);
     }
     const retainedMatches = conversationKey ? [...this.turnTabs.values()].filter((tab) => (
@@ -1595,11 +1601,17 @@ class BrowserHost {
     if (sameTrace?.status === "ready" && sameTrace !== exactRetained) {
       throw new Error(`ChatGPT browser turn ${traceId} is retained under different conversation metadata`);
     }
-    const existing = sameTrace?.status === "running" ? sameTrace : exactRetained;
+    let existing = sameTrace?.status === "running" ? sameTrace : exactRetained;
+    if (existing?.status === "ready"
+      && shouldReplaceForUnavailableRefresh(existing, systemRevision, systemRefreshAvailable)) {
+      if (requireRetainedConversation) throw new Error("The retained ChatGPT conversation cannot refresh system context");
+      this.removeTurnTab(existing, false);
+      existing = undefined;
+    }
     if (existing) {
       if (existing.initializingSurface) {
         await existing.initialization;
-        return this.beginTurn(traceId, reveal, helperPid, interactionLocked, conversationKey, connectorIdentity, requireRetainedConversation);
+        return this.beginTurn(traceId, reveal, helperPid, interactionLocked, conversationKey, connectorIdentity, requireRetainedConversation, systemRevision, systemRefreshAvailable);
       }
       const reused = existing.status === "ready";
       if (existing.status === "running" && existing.helperPid !== helperPid) {
@@ -1614,6 +1626,7 @@ class BrowserHost {
           evidence: "previous helper exited",
         });
       }
+      const promptMode = beginSystemRevision(existing, systemRevision, reused);
       existing.helperPid = helperPid;
       existing.traceId = traceId;
       existing.interactionLocked = interactionLocked;
@@ -1638,20 +1651,28 @@ class BrowserHost {
         surfaceId: existing.surfaceId,
         tabId: existing.id,
         reused,
+        ...(systemRevision ? { promptMode } : {}),
         ...(existing.connectorBound === true ? { connectorBound: true } : {}),
       };
     }
     if (requireRetainedConversation) {
       throw new Error("The retained ChatGPT conversation is no longer available");
     }
-    const tab = await this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity);
+    const tab = systemRevision === undefined
+      ? await this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity)
+      : await this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity, false, systemRevision);
     this.selectedTabId = tab.id;
     if (reveal) this.show({ activate: false });
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
     this.logger.info("browser.tab_created", { tabId: tab.id, traceId, tabCount: this.turnTabs.size });
     this.writeDescriptor();
-    return { surfaceId: tab.surfaceId, tabId: tab.id, reused: false };
+    return {
+      surfaceId: tab.surfaceId,
+      tabId: tab.id,
+      reused: false,
+      ...(systemRevision ? { promptMode: "full" } : {}),
+    };
   }
 
   async endTurn(traceId, helperPid, status, hideAfterTurn, message, retain = false, connectorBound = false) {
@@ -1680,6 +1701,7 @@ class BrowserHost {
       this.logger.info("browser.tab_completed", { tabId: tab.id, traceId });
     }
     if (status === "completed" && retain && (!tab.connectorIdentity || connectorBound)) {
+      commitSystemRevision(tab);
       tab.connectorBound = connectorBound === true;
       tab.lastHeartbeatAt = Date.now();
       if (hideAfterTurn && !this.activeTraceId) this.hide();

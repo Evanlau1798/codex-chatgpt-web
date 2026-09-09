@@ -22,13 +22,17 @@ export interface LauncherManualTurnStart extends LauncherManualTurnOwner {
   prompt: string;
   /** Used only when the exact retained ChatGPT conversation already owns the accumulated history. */
   resumePrompt?: string;
+  /** Used when the retained conversation needs an exact system-context refresh. */
+  refreshPrompt?: string;
   conversationKey?: string;
+  systemRevision?: string;
   compaction?: true;
 }
 
 export interface LauncherManualTurnLease {
   tabId: string;
   reused: boolean;
+  promptMode: "full" | "resume" | "refresh";
   deadlineAt: string | null;
   state: "awaiting-user" | "sent" | "running" | "completed";
 }
@@ -103,6 +107,7 @@ function isLauncherManualTurnLease(body: Record<string, unknown>): boolean {
     && typeof body.tabId === "string"
     && body.tabId.length > 0
     && typeof body.reused === "boolean"
+    && (body.promptMode === undefined || ["full", "resume", "refresh"].includes(String(body.promptMode)))
     && (body.deadlineAt === null
       || (typeof body.deadlineAt === "string" && !Number.isNaN(Date.parse(body.deadlineAt))))
     && ["awaiting-user", "sent", "running", "completed"].includes(String(body.state));
@@ -130,9 +135,13 @@ export async function startLauncherManualTurn(
     "Launcher returned an invalid manual turn lease",
   );
   if (!response.ok) throwManualControlError(response, body);
+  if (activity.systemRevision && body.promptMode === undefined) {
+    throw new LauncherManualTurnFailedError("Launcher does not support retained system refresh");
+  }
   return {
     tabId: body.tabId as string,
     reused: body.reused as boolean,
+    promptMode: (body.promptMode ?? (body.reused ? "resume" : "full")) as LauncherManualTurnLease["promptMode"],
     deadlineAt: body.deadlineAt as string | null,
     state: body.state as LauncherManualTurnLease["state"],
   };

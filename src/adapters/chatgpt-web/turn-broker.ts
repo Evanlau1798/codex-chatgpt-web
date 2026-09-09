@@ -142,10 +142,11 @@ export class TurnBroker implements TurnBrokerOwner {
     ttlMs?: number,
     traceId = "unknown",
     turnToken?: string,
+    allowReplay = true,
   ): Promise<string> {
     await this.start();
     this.prune();
-    return this.contexts.register(text, ttlMs, traceId, turnToken);
+    return this.contexts.register(text, ttlMs, traceId, turnToken, allowReplay);
   }
 
   async beginCompactionTransaction(
@@ -237,6 +238,7 @@ export class TurnBroker implements TurnBrokerOwner {
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
     assertSafeHarnessRunning(channel);
+    if (this.contexts.hasIncomplete(token)) return undefined;
     return beginTurnCompletionFence(channel);
   }
 
@@ -244,6 +246,7 @@ export class TurnBroker implements TurnBrokerOwner {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
+    if (this.contexts.hasIncomplete(token)) return false;
     const committed = commitTurnCompletionFence(channel, revision);
     if (committed) {
       console.info(`[chatgpt-web] broker trace=${channel.traceId} committed browser completion revision=${revision}`);

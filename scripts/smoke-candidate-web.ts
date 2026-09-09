@@ -11,6 +11,8 @@ import {
 
 const CONTROL_TIMEOUT_MS = 5_000;
 
+type PromptStat = { mode: "full" | "resume" | "refresh"; chars: number; reused: boolean };
+
 const repo = resolve(import.meta.dir, "..");
 const require = createRequire(import.meta.url);
 const { validateRuntimeBundle } = require("../launcher/electron/runtime-install.cjs") as {
@@ -118,6 +120,46 @@ async function runWebContract(env: Record<string, string | undefined>): Promise<
   if (exitCode !== 0) throw new Error("Candidate runtime Web contract smoke failed");
 }
 
+async function observeCandidateOutput(
+  stream: ReadableStream<Uint8Array>,
+  stats: PromptStat[],
+): Promise<void> {
+  const decoder = new TextDecoder();
+  let pending = "";
+  for await (const chunk of stream) {
+    const text = decoder.decode(chunk, { stream: true });
+    process.stdout.write(text);
+    pending += text;
+    for (let newline = pending.indexOf("\n"); newline >= 0; newline = pending.indexOf("\n")) {
+      const line = pending.slice(0, newline);
+      pending = pending.slice(newline + 1);
+      const match = /promptMode=(full|resume|refresh) promptChars=(\d+) reused=(true|false)/.exec(line);
+      if (match) stats.push({
+        mode: match[1] as PromptStat["mode"],
+        chars: Number(match[2]),
+        reused: match[3] === "true",
+      });
+    }
+  }
+  process.stdout.write(decoder.decode());
+}
+
+async function verifyRetainedRefreshStats(stats: PromptStat[]): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (stats.length < 2 && Date.now() < deadline) await Bun.sleep(25);
+  const full = stats.find(value => value.mode === "full" && !value.reused);
+  const refresh = stats.find(value => value.mode === "refresh" && value.reused);
+  if (!full || !refresh || refresh.chars >= full.chars * 0.3) {
+    throw new Error(`Candidate retained refresh evidence is invalid: ${JSON.stringify(stats)}`);
+  }
+  process.stdout.write(`CANDIDATE_RETAINED_REFRESH_OK ${JSON.stringify({
+    fullPromptChars: full.chars,
+    refreshPromptChars: refresh.chars,
+    promptMode: refresh.mode,
+    tabReused: refresh.reused,
+  })}\n`);
+}
+
 async function main(): Promise<void> {
   const runtimeRoot = resolve(process.argv[2] ?? "");
   validateRuntimeBundle(runtimeRoot, { version: VERSION, platform: process.platform, arch: process.arch });
@@ -140,6 +182,8 @@ async function main(): Promise<void> {
   let child: Bun.Subprocess | undefined;
   let baseUrl: string | undefined;
   let controlToken: string | undefined;
+  let output: Promise<void> | undefined;
+  const promptStats: PromptStat[] = [];
   try {
     const home = join(root, "home");
     mkdirSync(home);
@@ -154,18 +198,25 @@ async function main(): Promise<void> {
       cwd: runtimeRoot,
       env,
       stdin: "ignore",
-      stdout: "inherit",
+      stdout: "pipe",
       stderr: "inherit",
     });
+    output = observeCandidateOutput(child.stdout as ReadableStream<Uint8Array>, promptStats);
     baseUrl = `http://127.0.0.1:${port}`;
     await waitForHealth(baseUrl, child.pid);
     await runWebContract(env);
+    await verifyRetainedRefreshStats(promptStats);
   } finally {
     let cleanupError: unknown;
     try {
       if (child && baseUrl && controlToken) await stopCandidate(child, baseUrl, controlToken);
     } catch (error) {
       cleanupError = error;
+    }
+    try {
+      await output;
+    } catch (error) {
+      cleanupError ??= error;
     }
     try {
       rmSync(root, { recursive: true, force: true });

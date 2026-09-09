@@ -25,7 +25,7 @@ test("manual compact revokes queued broker work before releasing the source and 
   };
   let requestId = "", checkpointStarted = false;
   const start = createZeroRiskRuntimeStarter({
-    broker, capabilities, executionNamespace: key,
+    broker, contextBroker: broker, capabilities, executionNamespace: key,
     provider: { adapter: "chatgpt-web", baseUrl: "manual://fixture", chatgptWeb: {
       browserInteractionMode: "manual", browserHost: "launcher", browserHostDescriptorPath: join(root, "launcher.json"),
     } },

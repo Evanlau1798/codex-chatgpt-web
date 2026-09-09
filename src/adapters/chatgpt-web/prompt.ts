@@ -60,7 +60,7 @@ export interface CompiledChatGptWebPrompt {
   turnToken?: string;
   bootstrapLimits?: { chars: number; tokens?: number };
   modelInputText?: string;
-  transport?: "inline" | "native2-archive";
+  transport?: "inline" | "native2-archive" | "retained-system-archive";
   inlineChars?: number;
   archiveChars?: number;
   archiveSha256?: string;
@@ -184,6 +184,7 @@ export function compileChatGptWebPrompt(
   }
   const system = parsed.context.systemPrompt ?? [];
   const retainedResume = parsed._retainedConversationResume === true;
+  const retainedSystemRefresh = parsed._retainedSystemRefresh === true;
   const advertisedToolNames = [...toolPolicy.wireNames];
   const claudeClient = typeof (parsed._rawBody as {
     client_metadata?: { claude_subagent?: unknown };
@@ -308,6 +309,10 @@ export function compileChatGptWebPrompt(
     ]
     : manualControl ? [
       "<codex_transport_resume>",
+      ...(retainedSystemRefresh ? [
+        `After codex_turn_start, call codex_tool_inventory with request_id ${turnToken}, query \"__codex_context__:0\", offset 0, limit 1, and include_schema false before any work tool.`,
+        "Read every archive chunk in order through next_query and verify its shared SHA-256 and final sentinel. The archived system records replace the retained conversation's prior encoded system set in full; they are not an append-only update.",
+      ] : []),
       retainedResume
         ? "The retained conversation and this turn's incremental context are complete. Execute the latest active user request now."
         : "The task context is complete. Execute the latest active user request now.",
@@ -320,6 +325,10 @@ export function compileChatGptWebPrompt(
       "Pass this exact turn_token unchanged to every Codex Native call in this response, including continuations after tool results; do not expose it in the answer.",
       "The value begins with turn_. Never substitute a connector or plugin identifier, conversation UUID, or any handle from task history.",
       "</codex_native_turn_binding>",
+      ...(retainedSystemRefresh ? [
+        `Before any work tool, call codex_tool_inventory with turn_token ${turnToken}, query \"__codex_context__:0\", offset 0, limit 1, and include_schema false.`,
+        "Read every archive chunk in order through next_query and verify its shared SHA-256 and final sentinel. The archived system records replace the retained conversation's prior encoded system set in full; they are not an append-only update.",
+      ] : []),
       retainedResume
         ? "The retained conversation and this turn's incremental context are complete. Execute the latest active user request now."
         : "The task context is complete. Execute the latest active user request now.",

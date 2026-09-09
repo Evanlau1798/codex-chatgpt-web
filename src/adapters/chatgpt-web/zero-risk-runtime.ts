@@ -13,6 +13,7 @@ import {
   waitForLauncherManualSent,
   waitForLauncherManualTerminal,
   type LauncherManualTurnEnd,
+  type LauncherManualTurnLease,
   type LauncherManualTurnOwner,
   type LauncherManualTurnStart,
 } from "../../launcher-browser-host";
@@ -21,22 +22,25 @@ import { ChatGptWebAdapterError } from "./adapter-error";
 import { retainedConversationRelease } from "./adapter-runtime-config";
 import { canonicalizeCompactionHandoff } from "./compaction-handoff";
 import { observeCapabilityRetirement } from "./capability-retirement";
+import { prepareRetainedSystemRefresh } from "./context-bootstrap";
 import type { ChatGptTurnEnvironment } from "./environment";
 import type { ChatGptWebCapabilities } from "./model";
+import { reportChatGptPreparationFailure } from "./preparation-diagnostics";
 import { compileChatGptWebPrompt } from "./prompt";
 import { deferred } from "./runtime-lifecycle";
 import { retainedConversationResumeRequest } from "./steering";
 import { ChatGptExternalTurnProgress } from "./turn-progress";
-import type { TurnBrokerOwner } from "./turn-broker";
+import type { TurnBroker, TurnBrokerOwner } from "./turn-broker";
 import {
   ChatGptTextFeed,
   ChatGptTraceFeed,
   chatGptConversationKey,
+  chatGptSystemRevision,
   type ChatGptTurnRuntime,
 } from "./turn-execution";
 
 export interface ChatGptZeroRiskManualControl {
-  start(descriptorPath: string, activity: LauncherManualTurnStart): Promise<unknown>;
+  start(descriptorPath: string, activity: LauncherManualTurnStart): Promise<LauncherManualTurnLease | void>;
   waitSent(
     descriptorPath: string,
     owner: LauncherManualTurnOwner,
@@ -111,6 +115,7 @@ function cancellable(run: Promise<string>, controller: AbortController) {
 interface ZeroRiskRuntimeOptions {
   provider: CodexProviderConfig;
   broker: TurnBrokerOwner;
+  contextBroker: Pick<TurnBroker, "registerContext" | "revokeContext">;
   capabilities: ChatGptWebCapabilities;
   executionNamespace: string;
   control: ChatGptZeroRiskManualControl;
@@ -144,7 +149,14 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
     const conversationKey = parsed._compactionRequest
       ? undefined
       : chatGptConversationKey(parsed, options.executionNamespace);
+    let systemRevision: string | undefined;
+    try {
+      systemRevision = conversationKey ? chatGptSystemRevision(parsed) : undefined;
+    } catch (error) {
+      throw reportChatGptPreparationFailure(traceId, "full", parsed, error);
+    }
     const resume = conversationKey ? retainedConversationResumeRequest(parsed) : undefined;
+    const refresh = conversationKey ? retainedConversationResumeRequest(parsed, true) : undefined;
     const release = options.control === launcherZeroRiskManualControl
       ? retainedConversationRelease(options.provider, conversationKey)
       : undefined;
@@ -153,6 +165,7 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
     let launcherStartAttempted = false;
     let launcherEnded = false;
     let browserOwnerSettled = false;
+    let releaseRefreshArchive: (() => void) | undefined;
 
     const finishLauncher = async (status: LauncherManualTurnEnd["status"]): Promise<void> => {
       if (!launcherStartAttempted || launcherEnded) return;
@@ -176,7 +189,10 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
         const suffix = resume
           ? compileChatGptWebPrompt(resume, options.capabilities, activeToken, { manualControl: true })
           : undefined;
-        if (full.multipart || suffix?.multipart) {
+        const refreshPrompt = refresh
+          ? compileChatGptWebPrompt(refresh, options.capabilities, activeToken, { manualControl: true })
+          : undefined;
+        if (full.multipart || suffix?.multipart || refreshPrompt?.multipart) {
           throw new ChatGptWebAdapterError("ChatGPT Zero Risk does not support multipart browser transport", {
             status: 409, errorType: "invalid_request_error", code: "manual_multipart_unsupported", retryable: false,
           });
@@ -186,13 +202,29 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
           text: "> **Action required in Zero Risk**\n>\n> Open the launcher, copy and paste the prompt into ChatGPT, add any images yourself because Zero Risk cannot transfer them, select the `Codex Zero Risk` plugin and the model you want, send the prompt, then confirm it was sent in the launcher.",
         });
         launcherStartAttempted = true;
-        await options.control.start(descriptorPath, {
+        const preparedRefresh = refreshPrompt ? await prepareRetainedSystemRefresh(
+          options.contextBroker,
+          refreshPrompt,
+          parsed.context.systemPrompt ?? [],
+          options.timeoutMs === undefined ? undefined : options.timeoutMs + 60_000,
+          traceId,
+          activeToken,
+          full.modelInputText ?? full.text,
+        ) : undefined;
+        releaseRefreshArchive = preparedRefresh?.release;
+        const lease = await options.control.start(descriptorPath, {
           ...owner,
           prompt: full.text,
           ...(parsed._compactionRequest ? { compaction: true as const } : {}),
           ...(suffix ? { resumePrompt: suffix.text } : {}),
+          ...(preparedRefresh ? { refreshPrompt: preparedRefresh.text } : {}),
           ...(conversationKey ? { conversationKey } : {}),
+          ...(systemRevision ? { systemRevision } : {}),
         });
+        if (lease?.promptMode !== "refresh") {
+          releaseRefreshArchive?.();
+          releaseRefreshArchive = undefined;
+        }
         token.resolve(activeToken);
         await options.control.waitSent(descriptorPath, owner, { abortSignal: browserAbort.signal });
         await options.broker.confirmSafeTurnSent(activeToken, surfaceNonce);
@@ -236,6 +268,9 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
           console.error(`[chatgpt-web] failed to release Zero Risk launcher turn: ${controlError instanceof Error ? controlError.message : String(controlError)}`);
         });
         throw normalized;
+      } finally {
+        releaseRefreshArchive?.();
+        releaseRefreshArchive = undefined;
       }
     };
     const turn = cancellable(run().finally(() => { browserOwnerSettled = true; }), browserAbort);

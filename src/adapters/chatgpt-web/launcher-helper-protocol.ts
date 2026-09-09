@@ -10,7 +10,7 @@ export type LauncherHelperMessage =
   | { type: "event"; id: string; event: "tool_batch_observed"; revision: number }
   | { type: "event"; id: string; event: "completion_fence_begin"; requestId: number }
   | { type: "event"; id: string; event: "completion_fence_commit"; requestId: number; revision: number }
-  | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
+  | { type: "event"; id: string; event: "prepared_selected"; mode: "full" | "resume" | "refresh" }
   | { type: "event"; id: string; event: "answer"; text: string; attempt: number }
   | {
       type: "event";
@@ -144,10 +144,13 @@ function parseEvent(message: Record<string, unknown> & { id: string }): Launcher
     };
   }
   if (event === "prepared_selected") {
-    if (typeof message.reused !== "boolean") {
+    const mode = ["full", "resume", "refresh"].includes(String(message.mode))
+      ? message.mode
+      : typeof message.reused === "boolean" ? (message.reused ? "resume" : "full") : undefined;
+    if (!mode) {
       throw new Error("Launcher browser helper prepared-selection event is invalid");
     }
-    return { type: "event", id: message.id, event, reused: message.reused };
+    return { type: "event", id: message.id, event, mode: mode as "full" | "resume" | "refresh" };
   }
   if (!["heartbeat", "send_activated", "submitted", "retry_submitted", "reasoning", "commentary", "text"].includes(String(event))) {
     throw new Error("Launcher browser helper emitted an unknown event");

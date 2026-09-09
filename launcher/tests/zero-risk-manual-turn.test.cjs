@@ -9,8 +9,9 @@ function fixture(Controller = ManualTurnController) {
   const clipboard = [];
   const host = {
     turnTabs: tabs,
-    createManualTurnTab(traceId, helperPid, conversationKey, prompt) {
-      const tab = { id: traceId, traceId, helperPid, conversationKey, prompt, status: "running" };
+    createManualTurnTab(traceId, helperPid, conversationKey, systemRevision) {
+      const tab = { id: traceId, traceId, helperPid, conversationKey,
+        pendingSystemRevision: systemRevision, status: "running" };
       tabs.set(tab.id, tab);
       return tab;
     },
@@ -252,6 +253,39 @@ test("retained TTL starts at successful manual completion, including suffix reus
     assert.ok(host.turnTabs.get(first.tabId).lastHeartbeatAt >= before);
     assert.equal(host.turnTabs.get(first.tabId).status, "ready");
   }
+});
+
+test("Zero Risk refreshes changed system context on the retained tab and commits only after completion", () => {
+  const { controller, host, clipboard } = fixture();
+  const key = "d".repeat(64);
+  const firstRevision = "1".repeat(64);
+  const nextRevision = "2".repeat(64);
+  const first = controller.begin("trace-refresh-1", 10, "full", key, undefined, false, undefined, firstRevision);
+  assert.equal(first.promptMode, "full");
+  controller.confirmSent(first.tabId);
+  controller.started("trace-refresh-1", 10);
+  controller.end("trace-refresh-1", 10, "completed", true);
+  const tab = host.turnTabs.get(first.tabId);
+  assert.equal(tab.systemRevision, firstRevision);
+
+  const refreshed = controller.begin(
+    "trace-refresh-2", 10, "full", key, "delta", false, "refresh", nextRevision,
+  );
+  assert.equal(refreshed.promptMode, "refresh");
+  assert.equal(tab.systemRevision, firstRevision);
+  assert.equal(tab.pendingSystemRevision, nextRevision);
+  assert.equal(clipboard.at(-1), "refresh");
+  controller.confirmSent(first.tabId);
+  controller.started("trace-refresh-2", 10);
+  controller.end("trace-refresh-2", 10, "completed", true);
+  assert.equal(tab.systemRevision, nextRevision);
+
+  const resumed = controller.begin(
+    "trace-refresh-3", 10, "full", key, "delta-2", false, "refresh-2", nextRevision,
+  );
+  assert.equal(resumed.promptMode, "resume");
+  assert.equal(clipboard.at(-1), "delta-2");
+  controller.cancel("trace-refresh-3", 10);
 });
 
 test("clipboard failure preserves retained ownership and permits a later suffix retry", () => {

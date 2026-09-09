@@ -174,13 +174,17 @@ export function claudeConversationResumeRequest(parsed: CodexParsedRequest): Cod
   return retainedConversationResumeRequest(parsed);
 }
 
-export function retainedConversationResumeRequest(parsed: CodexParsedRequest): CodexParsedRequest | undefined {
+export function retainedConversationResumeRequest(
+  parsed: CodexParsedRequest,
+  refreshSystem = false,
+): CodexParsedRequest | undefined {
   const lastAssistant = parsed.context.messages.findLastIndex(message => message.role === "assistant");
   if (lastAssistant < 0) return undefined;
   const { systemPrompt: _systemPrompt, ...context } = parsed.context;
   return {
     ...parsed,
     _retainedConversationResume: true,
+    ...(refreshSystem ? { _retainedSystemRefresh: true } : {}),
     context: { ...context, messages: parsed.context.messages.slice(lastAssistant + 1) },
   };
 }

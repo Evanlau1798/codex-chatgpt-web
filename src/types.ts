@@ -11,6 +11,8 @@ export interface CodexParsedRequest {
   _canonicalContextComplete?: boolean;
   /** Internal proof that the retained Web conversation already owns unchanged system context. */
   _retainedConversationResume?: boolean;
+  /** Internal marker that the retained surface must replace its encoded system context. */
+  _retainedSystemRefresh?: boolean;
   /**
    * True when the input carried `{type:"compaction_trigger"}` — Codex remote compaction v2 asking
    * this turn to produce a `{type:"compaction"}` output item. Routed adapters can't natively;

@@ -71,6 +71,7 @@ export interface PendingContext {
   chunkChars?: number;
   chunks?: string[];
   complete: boolean;
+  allowReplay: boolean;
 }
 
 export function retiredTurnLabel(traceId: string): string {

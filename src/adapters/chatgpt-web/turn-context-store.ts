@@ -5,7 +5,14 @@ import { MAX_BROKER_LINE_CHARS, opaqueId } from "./turn-broker-protocol";
 export class TurnContextStore {
   private readonly contexts = new Map<string, PendingContext>();
 
-  register(text: string, ttlMs?: number, traceId = "unknown", turnToken?: string): string {
+  private resolve(token: string): PendingContext | undefined {
+    const direct = this.contexts.get(token);
+    const inherited = direct ? [] : [...this.contexts.values()].filter(context => context.turnToken === token);
+    if (inherited.length > 1) throw new Error("turn token has multiple active context archives");
+    return direct ?? inherited[0];
+  }
+
+  register(text: string, ttlMs?: number, traceId = "unknown", turnToken?: string, allowReplay = true): string {
     if (!text) throw new Error("ChatGPT web context must not be empty");
     if (JSON.stringify({ context: text }).length + 256 > MAX_BROKER_LINE_CHARS) {
       throw new Error("ChatGPT web context exceeds the turn broker response size limit");
@@ -20,6 +27,7 @@ export class TurnContextStore {
       ...(turnToken ? { turnToken } : {}),
       nextChunk: 0,
       complete: false,
+      allowReplay,
       ...(ttlMs !== undefined ? { expiresAt: Date.now() + ttlMs } : {}),
     });
     return token;
@@ -32,16 +40,15 @@ export class TurnContextStore {
     return [...this.contexts.values()].some(context => context.turnToken === turnToken && !context.complete);
   }
 
+  ownerToken(token: string): string | undefined { return this.resolve(token)?.turnToken; }
+
   read(
     token: string,
     index: number | undefined,
     chunkChars: number | undefined,
     channels: Map<string, TurnChannel>,
   ): unknown {
-    const direct = this.contexts.get(token);
-    const inherited = direct ? [] : [...this.contexts.values()].filter(context => context.turnToken === token);
-    if (inherited.length > 1) throw new Error("turn token has multiple active context archives");
-    const context = direct ?? inherited[0];
+    const context = this.resolve(token);
     if (!context) throw new Error("context token is invalid, expired, or revoked");
     if (context.turnToken) channels.get(context.turnToken)?.onProgress?.();
     if (index === undefined && chunkChars === undefined) {
@@ -62,6 +69,7 @@ export class TurnContextStore {
     if (index! > context.nextChunk) throw new Error(`context archive chunk is out of order; expected ${context.nextChunk}`);
     const chunk = context.chunks[index!]!;
     const replayed = index! < context.nextChunk;
+    if (replayed && !context.allowReplay) throw new Error("context archive chunk replay is not allowed");
     if (!replayed) {
       context.nextChunk += 1;
       context.complete = context.nextChunk === total;

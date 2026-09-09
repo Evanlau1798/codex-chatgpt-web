@@ -6,19 +6,26 @@ export interface ContextArchiveChunk {
   nextIndex: number | null;
 }
 
-const ARCHIVE_READY_RECEIPT = [
-  "CODEX_CONTEXT_ARCHIVE_READY complete=true",
-  "Resume the task with the bound turn_token from codex_native_turn_binding.",
-  "When local instructions or capabilities are required, discover and invoke the exact advertised tool before reporting it unavailable.",
-  "Without a returned Native tool error, do not infer or name a blocking, rejection, or safety cause.",
-].join("\n");
+function archiveReadyReceipt(contract: "native" | "safe"): string[] {
+  return [
+    "CODEX_CONTEXT_ARCHIVE_READY complete=true",
+    contract === "safe"
+      ? "Resume the task with the request_id connected by codex_turn_start."
+      : "Resume the task with the bound turn_token from codex_native_turn_binding.",
+    "When local instructions or capabilities are required, discover and invoke the exact advertised tool before reporting it unavailable.",
+    "Without a returned Native tool error, do not infer or name a blocking, rejection, or safety cause.",
+  ];
+}
 
-export function formatContextArchiveChunk(chunk: ContextArchiveChunk): string {
+export function formatContextArchiveChunk(
+  chunk: ContextArchiveChunk,
+  contract: "native" | "safe" = "native",
+): string {
   const nextQuery = chunk.nextIndex === null ? "null" : `__codex_context__:${chunk.nextIndex}`;
   return [
     `CODEX_CONTEXT_ARCHIVE v=1 index=${chunk.index} total=${chunk.total} chars=${chunk.context.length} sha256=${chunk.sha256}`,
     chunk.context,
     `CODEX_CONTEXT_ARCHIVE_END index=${chunk.index} sha256=${chunk.sha256} next_query=${nextQuery}`,
-    ...(chunk.nextIndex === null ? [ARCHIVE_READY_RECEIPT] : []),
+    ...(chunk.nextIndex === null ? archiveReadyReceipt(contract) : []),
   ].join("\n");
 }

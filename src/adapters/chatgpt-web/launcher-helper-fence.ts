@@ -7,6 +7,9 @@ type FenceEvent = Extract<LauncherHelperMessage, {
 }>;
 
 export function assertLauncherHelperFenceFeatures(turn: BrowserTurn, features: Set<string>): void {
+  if (turn.systemRevision && !features.has("retained-system-refresh")) {
+    throw new Error("Launcher browser helper does not support retained system refresh");
+  }
   if (turn.onMultipartStageAcknowledged && !features.has("multipart-stage-ack")) {
     throw new Error("Launcher browser helper does not support multipart acknowledgement forwarding; update or restart the launcher");
   }

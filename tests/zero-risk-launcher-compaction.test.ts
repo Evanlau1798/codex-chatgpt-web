@@ -1,6 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -113,12 +112,10 @@ for (const scenario of [
     manualOperation: null, clipboard: { writeText() {} }, logger,
     publishState() {}, snapshot: () => ({}), showWindow() {}, show() {}, writeDescriptor() {},
     createManualTurnTab(traceId: string, helperPid: number, conversationKey: string | undefined,
-      prompt: string, manualSubmitTimeoutMs: number) {
+      systemRevision: string | undefined) {
       const tab = {
         id: traceId, traceId, helperPid, conversationKey, interactionMode: "manual", status: "running",
-        manualState: "awaiting-user", manualSubmitTimeoutMs, manualDeadlineAt: Date.now() + manualSubmitTimeoutMs,
-        manualDeadlineTimer: null, manualWaiters: new Set(), manualTerminalWaiters: new Set(),
-        prompt, promptDigest: createHash("sha256").update(prompt).digest("hex"), manualConversationReused: false,
+        pendingSystemRevision: systemRevision,
       };
       host.turnTabs.set(tab.id, tab);
       return tab;
