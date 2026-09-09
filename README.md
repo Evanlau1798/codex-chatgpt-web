@@ -65,9 +65,10 @@ connects ChatGPT back to the tools of that same Codex task.
   remain intact.
 - **Local-first task sessions.** Codex or Claude Code remains the source of truth for task history
   on your computer. Original mode keeps upstream's fresh-turn behavior. Enhanced mode retains a
-  completed root or subagent conversation for 30 minutes and sends only the continuation suffix while
-  its ordered system instructions remain unchanged. A system-instruction change starts a fresh browser
-  chat with the complete prompt; compaction likewise rotates to a new epoch. Browser chats are never
+  completed root or subagent conversation for 30 minutes and sends only the continuation suffix.
+  Codex Desktop binds that conversation to its stable native session key, so rebuilt base instructions
+  do not discard a live retained tab; current developer and environment updates travel in the suffix.
+  Other clients rotate on an exact system-instruction change. Compaction likewise starts a new epoch. Browser chats are never
   shared across unrelated tasks or added to normal ChatGPT history.
 - **Codex and Claude Code clients.** The launcher installs either integration independently.
   Codex uses the OpenAI-compatible Responses route; Claude Code uses the standard Anthropic
@@ -165,8 +166,9 @@ When disabled, Web models follow the upstream session and compact behavior. When
 bridge adds 30-minute retained root/subagent conversations, same-conversation steering, six-way
 browser scheduling, structured handoff compaction, canonical continuation after stop/restart, and
 bootstrap/archive transport for prompts that exceed the measured inline browser boundary. Stable
-system instructions are not replayed on each continuation; any exact system-instruction change rotates
-to a fresh browser chat and full prompt. A compact also starts a new conversation epoch; old turn tokens
+system instructions are not replayed on each continuation. Codex Desktop uses its stable native session
+key while current turn-local context remains in the suffix; clients without that identity rotate on an
+exact system-instruction change. A compact also starts a new conversation epoch; old turn tokens
 and completed tool calls are not replayed.
 
 ### Bigger Context (experimental)

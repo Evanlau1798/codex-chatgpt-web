@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { chatGptConversationKey, chatGptTurnTraceId } from "../src/adapters/chatgpt-web/turn-execution";
+import { retainedConversationResumeRequest } from "../src/adapters/chatgpt-web/steering";
+import { translateClaudeMessages } from "../src/messages/request";
 import { SUMMARY_PREFIX } from "../src/responses/compaction";
+import { parseRequest } from "../src/responses/parser";
 import type { CodexParsedRequest } from "../src/types";
 
 function request(input: unknown[]): CodexParsedRequest {
@@ -78,4 +81,46 @@ test("retained conversation keys bind the ordered system prompt contract", () =>
     changed.context.systemPrompt = systemPrompt;
     expect(chatGptConversationKey(changed, "provider")).not.toBe(chatGptConversationKey(parsed, "provider"));
   }
+});
+
+test("Codex Desktop prompt cache identity survives turn-local base instruction changes", () => {
+  const desktopRequest = (instructions: string, promptCacheKey = "codex-session-key") => parseRequest({
+    model: "chatgpt-web/medium",
+    instructions,
+    prompt_cache_key: promptCacheKey,
+    reasoning: { effort: "medium" },
+    client_metadata: {
+      "x-codex-turn-metadata": JSON.stringify({ thread_id: "desktop-thread", turn_id: "desktop-turn" }),
+    },
+    input: [
+      { type: "message", role: "user", content: "original task" },
+      { type: "message", role: "assistant", content: "previous answer" },
+      { type: "message", role: "developer", content: "current developer context" },
+      { type: "message", role: "user", content: "current user request" },
+    ],
+  });
+  const parsed = desktopRequest("desktop-base-one");
+  const changedInstructions = desktopRequest("desktop-base-two");
+
+  expect(chatGptConversationKey(changedInstructions, "provider"))
+    .toBe(chatGptConversationKey(parsed, "provider"));
+  expect(retainedConversationResumeRequest(changedInstructions)?.context.messages.map(message => message.role))
+    .toEqual(["developer", "user"]);
+  expect(chatGptConversationKey(desktopRequest("desktop-base-two", "other-codex-session-key"), "provider"))
+    .not.toBe(chatGptConversationKey(parsed, "provider"));
+});
+
+test("Claude system changes rotate despite its transport prompt cache key", () => {
+  const headers = new Headers({
+    "x-claude-code-session-id": "claude-system-session",
+    "x-claude-code-agent-id": "claude-system-agent",
+  });
+  const claudeRequest = (system: string) => parseRequest(translateClaudeMessages({
+    model: "chatgpt-web/medium",
+    system,
+    messages: [{ role: "user", content: "continue" }],
+  }, headers).body);
+
+  expect(chatGptConversationKey(claudeRequest("system-one"), "messages"))
+    .not.toBe(chatGptConversationKey(claudeRequest("system-two"), "messages"));
 });

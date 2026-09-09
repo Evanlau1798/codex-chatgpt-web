@@ -115,10 +115,11 @@ the envelope. Attachment acceptance and send readiness are verified before the t
 Initial Launcher setup asks which interaction mode to install and defaults to With Automation. The
 same choice remains available in Settings; changing it uses the transactional setup path, replaces
 the installed catalog, and requires a Codex restart. Zero Risk never reads or mutates the ChatGPT DOM.
-For a new ChatGPT chat the adapter provides the complete compiled prompt. A retained chat is keyed by
-its exact ordered system instructions and receives only the incremental suffix after the last assistant
-reply. Any system-instruction change produces a different conversation key, so the Launcher starts a
-fresh surface and sends the complete prompt instead of risking stale instructions. The user has thirty
+For a new ChatGPT chat the adapter provides the complete compiled prompt. A retained chat receives only
+the incremental suffix after the last assistant reply. Codex Desktop binds the retained identity to its
+stable native prompt-cache session, while rebuilt developer and environment context remains in the
+message suffix. Clients without that stable identity still bind the exact ordered system instructions,
+so a change starts a fresh surface instead of risking stale instructions. The user has thirty
 seconds to paste, select the visible
 ChatGPT model, effort, and Zero Risk connector, send, and confirm Sent; a manual compaction handoff
 allows two minutes. Sent ends that confirmation deadline. Waiting for the first MCP bind is part of

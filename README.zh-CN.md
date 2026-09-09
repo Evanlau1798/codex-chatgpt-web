@@ -60,8 +60,9 @@ Codex 会保留原生任务、上下文生命周期、界面和工具 harness。
   原有的模型选择器、任务生命周期、流式输出、追踪和工具界面保持不变。
 - **本地优先的任务会话。** Codex 或 Claude Code 仍然是电脑上任务历史的真实来源。原始模式
   保留上游每轮新建会话的行为；Enhanced 模式会将完成的 root／subagent 对话保留 30 分钟，
-  只在有序 system instructions 完全不变时续接并发送新增后缀。任何 system instructions 变化都会
-  建立新浏览器对话并发送完整 prompt；compact 后也会切换到新的 epoch。浏览器聊天不会在无关任务
+  并只发送新增后缀。Codex Desktop 以稳定的原生 session key 维持同一浏览器对话，因此每轮重建的
+  base instructions 不会释放仍在 TTL 内的 tab；当前 developer 与 environment 更新仍随新增后缀传送。
+  其他没有该身分的 client 在 system instructions 改变时会建立新对话。compact 后也会切换到新的 epoch。浏览器聊天不会在无关任务
   之间共享，也不会加入普通 ChatGPT 历史记录。
 - **同时支持 Codex 与 Claude Code。** 启动器可分别安装两种集成。Codex 使用兼容 OpenAI 的
   Responses 路由；Claude Code 使用标准 Anthropic Messages 数据流，并保留 Markdown、工具区块、
@@ -149,7 +150,8 @@ Zero Risk 保留本地 Responses bridge 与完整 Codex harness，但不会读�
 关闭时，Web 模型使用上游原始的会话与压缩行为。开启后，桥接会增加 30 分钟 root／subagent
 会话保留、同对话 steering、六路浏览器调度、结构化 handoff compact、停止／重启后的 canonical
 续接，以及对超过实测浏览器 inline 边界的 bootstrap／archive 传输。稳定的 system instructions
-不会在每轮重送；其有序内容只要发生变化，就会建立新浏览器对话并发送完整 prompt。每次 compact
+不会在每轮重送；Codex Desktop 使用稳定的原生 session key，当前回合 context 则保留在新增后缀。
+没有该稳定身分的 client 在 system instructions 改变时仍会建立新浏览器对话。每次 compact
 也会建立新 epoch；旧 turn token 与已完成工具调用不会被重播。
 
 ### 更大上下文（实验性）

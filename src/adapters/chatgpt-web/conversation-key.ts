@@ -4,7 +4,7 @@ import { SUMMARY_PREFIX } from "../../responses/compaction";
 import { extractChatGptTurnIdentity } from "./environment";
 import { chatGptTurnExecutionKey } from "./turn-execution-key";
 
-const RETAINED_ENVELOPE_REVISION = 1;
+const RETAINED_ENVELOPE_REVISION = 2;
 
 function messageText(item: Record<string, unknown>): string | undefined {
   const content = item.content;
@@ -40,6 +40,8 @@ export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: st
     && typeof raw.client_metadata.claude_history_anchor === "string"
     ? raw.client_metadata.claude_history_anchor
     : null;
+  const codexSession = typeof raw?.client_metadata?.claude_subagent === "boolean"
+    ? null : identity.promptCacheKey ?? null;
   return createHash("sha256").update(JSON.stringify({
     retainedEnvelopeRevision: RETAINED_ENVELOPE_REVISION,
     namespace,
@@ -49,7 +51,10 @@ export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: st
     reasoning: parsed.options.reasoning,
     compaction: compactionEpoch(raw?.input),
     claudeHistoryAnchor,
-    systemPrompt: parsed.context.systemPrompt ?? [],
+    codexSession,
+    // Codex rebuilds its base instructions on each request but binds their lifetime to the stable
+    // prompt cache key. Turn-local developer and environment updates remain in the message suffix.
+    systemPrompt: codexSession ? null : parsed.context.systemPrompt ?? [],
   })).digest("hex");
 }
 
