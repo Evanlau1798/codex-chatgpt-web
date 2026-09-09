@@ -9,7 +9,7 @@ export interface ChatGptCaretEvidence {
 }
 
 const ZERO_WIDTH_TEXT = /[\u200B\u200C\u200D\uFEFF]/g;
-const RESTORATION_WHITESPACE = /\s/u;
+const RESTORATION_WHITESPACE = /[^\S\r\n\u2028\u2029]/u;
 const MARKDOWN_SHORTCUT_DELIMITERS = ["`", "*", "_", "~", "=", "[", ")"] as const;
 const MARKDOWN_RESTORATION_RANGE_CHARS = 8_192;
 const MARKDOWN_RESTORATION_BATCH_SIZE = 128;
@@ -23,6 +23,11 @@ function codePointWindow(value: string, offset: number): string {
 
 type ChatGptPromptBoundaryReplacement = { marker: string; value: string };
 type MarkdownReplacement = ChatGptPromptBoundaryReplacement & { count: number };
+export type ChatGptPromptMarkdownGuard = {
+  text: string;
+  replacements: MarkdownReplacement[];
+  count: number;
+};
 type MarkdownRestorationStrategy = "exact" | "range";
 type MarkdownRestorationEvidence = {
   ok: boolean;
@@ -34,11 +39,7 @@ type MarkdownRestorationEvidence = {
 
 const CHATGPT_COMPOSER_SELECT_ALL_KEY = process.platform === "darwin" ? "Meta+A" : "Control+A";
 
-function guardChatGptPromptMarkdown(text: string): {
-  text: string;
-  replacements: MarkdownReplacement[];
-  count: number;
-} | undefined {
+export function guardChatGptPromptMarkdown(text: string): ChatGptPromptMarkdownGuard | undefined {
   let guarded = text;
   let codePoint = 0xE000;
   const replacements: MarkdownReplacement[] = [];
@@ -235,13 +236,27 @@ async function restoreChatGptPromptMarkdownExactly(
   return { ok: true, strategy: "exact", initialMarkers: count, remainingMarkers: 0, batches };
 }
 
-export async function insertChatGptComposerPlainText(
+export async function restoreChatGptPromptMarkdown(
+  composer: Locator,
+  text: string,
+  guarded: ChatGptPromptMarkdownGuard,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  const restoration = STRUCTURED_MARKDOWN.test(text)
+    ? await restoreChatGptPromptMarkdownExactly(composer, guarded.replacements, guarded.count, abortSignal)
+    : await restoreChatGptPromptMarkdownRanges(composer, guarded.replacements, guarded.count, abortSignal);
+  if (!restoration.ok) throw chatGptWebSurfaceError(
+    `ChatGPT composer could not preserve literal Markdown in a bounded edit (strategy=${restoration.strategy}, initialMarkers=${restoration.initialMarkers}, remainingMarkers=${restoration.remainingMarkers}, batches=${restoration.batches})`,
+    false,
+  );
+}
+
+export async function insertChatGptComposerGuardedText(
   composer: Locator,
   text: string,
   abortSignal?: AbortSignal,
 ): Promise<void> {
   const options = { signal: abortSignal, timeout: 20_000 };
-  const guarded = guardChatGptPromptMarkdown(text);
   await composer.focus(options);
   const inserted = await composer.evaluate((element, value) => {
     const selection = window.getSelection();
@@ -257,20 +272,21 @@ export async function insertChatGptComposerPlainText(
       return false;
     }
     return document.execCommand("insertText", false, value);
-  }, guarded?.text ?? text, options);
+  }, text, options);
   if (!inserted) {
     throw chatGptWebSurfaceError("ChatGPT composer rejected the bounded plain-text edit", false);
   }
+}
+
+export async function insertChatGptComposerPlainText(
+  composer: Locator,
+  text: string,
+  abortSignal?: AbortSignal,
+): Promise<void> {
+  const guarded = guardChatGptPromptMarkdown(text);
+  await insertChatGptComposerGuardedText(composer, guarded?.text ?? text, abortSignal);
   if (guarded) {
-    const restoration = STRUCTURED_MARKDOWN.test(text)
-      ? await restoreChatGptPromptMarkdownExactly(composer, guarded.replacements, guarded.count, abortSignal)
-      : await restoreChatGptPromptMarkdownRanges(composer, guarded.replacements, guarded.count, abortSignal);
-    if (!restoration.ok) {
-      throw chatGptWebSurfaceError(
-        `ChatGPT composer could not preserve literal Markdown in a bounded edit (strategy=${restoration.strategy}, initialMarkers=${restoration.initialMarkers}, remainingMarkers=${restoration.remainingMarkers}, batches=${restoration.batches})`,
-        false,
-      );
-    }
+    await restoreChatGptPromptMarkdown(composer, text, guarded, abortSignal);
   }
 }
 

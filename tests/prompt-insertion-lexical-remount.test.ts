@@ -9,7 +9,7 @@ test("preserves literal Markdown after Lexical settles before the next chunk", a
   const { createDocument } = require("@mixmark-io/domino") as {
     createDocument: (html: string) => Document;
   };
-  const prompt = `${"field *bold* value ".repeat(1_000)}tail`;
+  const prompt = `\`\`\`json\n${"field *bold* value ".repeat(1_000)}\n\`\`\`\ntail`;
   expect(prompt.length).toBeGreaterThan(CHATGPT_PROMPT_INSERT_CHUNK_CHARS);
   const document = createDocument('<div id="composer"></div>') as Document & {
     createRange: () => Range;
@@ -61,8 +61,11 @@ test("preserves literal Markdown after Lexical settles before the next chunk", a
       anchorOffset: selected.end,
       focusOffset: selected.end,
     };
-    if (start === end && value.includes("*bold* ")) {
-      setTimeout(() => { text.data = text.data.replace("*bold*", "bold"); }, 0);
+    if (start === end && text.data.slice(0, start).includes("```json")) {
+      setTimeout(() => {
+        text.data = text.data.replace("```json", "json");
+        selected.start = selected.end = text.data.length;
+      }, 0);
     }
     return true;
   };

@@ -2,8 +2,10 @@ import type { Locator } from "playwright-core";
 import { chatGptWebSurfaceError } from "./adapter-error";
 import { CHATGPT_PROMPT_INSERT_CHUNK_CHARS } from "./prompt-attachment-budget";
 import {
+  guardChatGptPromptMarkdown,
   guardChatGptPromptChunkBoundary,
-  insertChatGptComposerPlainText,
+  insertChatGptComposerGuardedText,
+  restoreChatGptPromptMarkdown,
   restoreChatGptPromptChunkBoundary,
 } from "./prompt-caret";
 
@@ -35,21 +37,28 @@ export async function insertChatGptPromptText(
     reanchor(): Promise<void>;
   },
 ): Promise<void> {
-  for (let offset = 0; offset < text.length;) {
+  const markdown = guardChatGptPromptMarkdown(text);
+  const insertionText = markdown?.text ?? text;
+  for (let offset = 0; offset < insertionText.length;) {
     if (abortSignal?.aborted) throw new DOMException("ChatGPT prompt attachment aborted", "AbortError");
-    const end = promptInsertChunkEnd(text, offset);
-    const original = text.slice(offset, end);
-    const boundary = guardChatGptPromptChunkBoundary(text, original, offset);
+    const end = promptInsertChunkEnd(insertionText, offset);
+    const original = insertionText.slice(offset, end);
+    const boundary = guardChatGptPromptChunkBoundary(insertionText, original, offset);
     const chunk = boundary?.text ?? original;
-    await insertChatGptComposerPlainText(await actions.composer(), chunk, abortSignal);
-    await actions.verify(`${text.slice(0, offset)}${chunk}`.trimStart());
+    await insertChatGptComposerGuardedText(await actions.composer(), chunk, abortSignal);
+    await actions.verify(`${insertionText.slice(0, offset)}${chunk}`.trimStart());
     if (boundary) {
       if (!await restoreChatGptPromptChunkBoundary(await actions.composer(), boundary.replacement, abortSignal)) {
         throw chatGptWebSurfaceError("ChatGPT composer could not restore a prompt chunk boundary", false);
       }
-      await actions.verify(text.slice(0, end).trimStart());
+      await actions.verify(insertionText.slice(0, end).trimStart());
     }
-    if (end < text.length || boundary) await actions.reanchor();
+    if (end < insertionText.length || boundary) await actions.reanchor();
     offset = end;
+  }
+  if (markdown) {
+    await restoreChatGptPromptMarkdown(await actions.composer(), text, markdown, abortSignal);
+    await actions.verify(text.trimStart());
+    await actions.reanchor();
   }
 }

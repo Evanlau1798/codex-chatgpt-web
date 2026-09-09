@@ -17,9 +17,10 @@ import {
   MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS,
 } from "../../src/adapters/chatgpt-web/browser-worker";
 import { openChatGptConnectorPlusMenu } from "../../src/adapters/chatgpt-web/connector-plus-menu";
+import { insertChatGptPromptText } from "../../src/adapters/chatgpt-web/prompt-insertion";
 
 export const MARKDOWN_RESTORATION_PROBE_CHARS = 96_000;
-export const STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS = 13_958;
+export const STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS = 79_976;
 const CONNECTOR_SELECTOR = '[data-id^="plugin:"][data-keyword]';
 
 export function markdownRestorationProbeText(): string {
@@ -53,7 +54,7 @@ async function connectorState(composer: Locator): Promise<string[]> {
 }
 
 export function structuredMarkdownRestorationProbeText(): string {
-  const section = [
+  const structuredBlock = [
     "## Native2 bootstrap contract",
     "- Preserve `literal_code`, *emphasis*, _underscores_, ~=operators=~, and [links](https://example.test/path).",
     "- Keep the structured payload exact; do not reinterpret delimiters.",
@@ -66,7 +67,10 @@ export function structuredMarkdownRestorationProbeText(): string {
     "```",
     "",
   ].join("\n");
-  return section.repeat(Math.ceil(STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS / section.length))
+  const filler = "Retained context remains plain while the bounded composer appends later chunks.\n";
+  const middleChars = 70_000 - structuredBlock.length;
+  const middle = filler.repeat(Math.ceil(middleChars / filler.length)).slice(0, middleChars);
+  return `${structuredBlock}${middle}${structuredBlock.repeat(4)}${filler.repeat(200)}`
     .slice(0, STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS);
 }
 
@@ -223,10 +227,28 @@ export async function runMarkdownRestorationProbe(
     const structuredConnectors = await connectorState(composer);
     const structuredStartedAt = performance.now();
     await composer.focus();
-    await insertChatGptComposerPlainText(composer, structuredPrompt, abortSignal);
-    composer = await activeComposer(page);
-    await waitForText(composer, structuredPrompt, abortSignal);
+    await insertChatGptPromptText(structuredPrompt, abortSignal, {
+      composer: async () => {
+        composer = await activeComposer(page);
+        return composer;
+      },
+      verify: async expected => {
+        composer = await activeComposer(page);
+        await waitForText(composer, expected, abortSignal);
+      },
+      reanchor: async () => {
+        composer = await activeComposer(page);
+        if (!await reanchorChatGptComposerCaret(composer)) {
+          throw new Error("Structured Markdown restoration probe could not re-anchor the composer");
+        }
+      },
+    });
     const structuredDurationMs = performance.now() - structuredStartedAt;
+    if (structuredDurationMs >= 55_000) {
+      throw new Error(
+        `Structured Markdown restoration probe attachment exceeded 55 seconds (durationMs=${Math.round(structuredDurationMs)})`,
+      );
+    }
     if (JSON.stringify(await connectorState(composer)) !== JSON.stringify(structuredConnectors)) {
       throw new Error("Structured Markdown restoration probe changed connector state");
     }

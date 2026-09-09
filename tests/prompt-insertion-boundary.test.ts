@@ -4,9 +4,15 @@ import {
   ChatGptBrowserWorker,
 } from "../src/adapters/chatgpt-web/browser-worker";
 import {
+  guardChatGptPromptChunkBoundary,
   insertChatGptComposerPlainText,
   restoreChatGptPromptChunkBoundary,
 } from "../src/adapters/chatgpt-web/prompt-caret";
+
+test("line-break chunk boundaries stay inside the bounded text edit", () => {
+  expect(guardChatGptPromptChunkBoundary("prefix\ntail", "\ntail", 6)).toBeUndefined();
+  expect(guardChatGptPromptChunkBoundary("prefix tail", " tail", 6)).toBeDefined();
+});
 
 test("single-line Markdown density does not increase bounded composer edit count", async () => {
   const { createDocument } = require("@mixmark-io/domino") as {
