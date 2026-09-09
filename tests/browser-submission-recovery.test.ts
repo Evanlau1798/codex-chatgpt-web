@@ -381,6 +381,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
       onSendActivated: () => { events.push("activated"); },
       onSubmitted: () => { events.push("submitted"); },
     },
+    mode: { localTools: false },
     prepared: { multipart: lane === "multipart" ? { parts: ["part"] } : undefined },
     responsePrompt: "final prompt",
     multipartTransport: { stages: [{ text: "stage" }] },

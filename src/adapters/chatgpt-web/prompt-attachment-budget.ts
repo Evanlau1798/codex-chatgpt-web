@@ -6,16 +6,20 @@ import {
 
 export const CHATGPT_PROMPT_INSERT_CHUNK_CHARS = 16_000;
 export const CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS = 60_000;
+const CHATGPT_LARGE_DIRECT_INSERT_TIMEOUT_MS = 90_000;
 const CHATGPT_EXPERIMENTAL_PROMPT_ATTACHMENT_TIMEOUT_PER_CHUNK_MS = 30_000;
 
 export function chatGptPromptAttachmentTimeoutMs(
   promptChars: number,
   experimentalNoAutoCompact?: boolean,
 ): number {
-  if (!experimentalNoAutoCompact) return CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS;
+  const directInsertMs = promptChars > CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 2
+    ? CHATGPT_LARGE_DIRECT_INSERT_TIMEOUT_MS
+    : CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS;
+  if (!experimentalNoAutoCompact) return directInsertMs;
   const chunks = Math.ceil(promptChars / CHATGPT_PROMPT_INSERT_CHUNK_CHARS);
   return Math.max(
-    CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS,
+    directInsertMs,
     chunks * CHATGPT_EXPERIMENTAL_PROMPT_ATTACHMENT_TIMEOUT_PER_CHUNK_MS,
   );
 }

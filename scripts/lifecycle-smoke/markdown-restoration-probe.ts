@@ -13,6 +13,7 @@ import {
 } from "../../src/adapters/chatgpt-web/prompt-caret";
 import {
   CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
+  CHATGPT_SEND_ENABLE_GRACE_MS,
   CHATGPT_UI_SETTLE_MS,
   MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS,
 } from "../../src/adapters/chatgpt-web/browser-worker";
@@ -20,7 +21,7 @@ import { openChatGptConnectorPlusMenu } from "../../src/adapters/chatgpt-web/con
 import { insertChatGptPromptText } from "../../src/adapters/chatgpt-web/prompt-insertion";
 
 export const MARKDOWN_RESTORATION_PROBE_CHARS = 96_000;
-export const STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS = 79_976;
+export const STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS = 94_534;
 const CONNECTOR_SELECTOR = '[data-id^="plugin:"][data-keyword]';
 
 export function markdownRestorationProbeText(): string {
@@ -53,6 +54,16 @@ async function connectorState(composer: Locator): Promise<string[]> {
   ), CONNECTOR_SELECTOR, { timeout: 20_000 });
 }
 
+function promptTextEquivalent(expected: string, observed: string): boolean {
+  if (expected.length !== observed.length) return false;
+  for (let index = 0; index < expected.length; index += 1) {
+    if (expected[index] === observed[index]) continue;
+    if (expected[index] !== " " || observed[index] !== "\u00A0"
+      || (expected[index - 1] !== " " && expected[index + 1] !== " ")) return false;
+  }
+  return true;
+}
+
 export function structuredMarkdownRestorationProbeText(): string {
   const structuredBlock = [
     "## Native2 bootstrap contract",
@@ -70,7 +81,7 @@ export function structuredMarkdownRestorationProbeText(): string {
   const filler = "Retained context remains plain while the bounded composer appends later chunks.\n";
   const middleChars = 70_000 - structuredBlock.length;
   const middle = filler.repeat(Math.ceil(middleChars / filler.length)).slice(0, middleChars);
-  return `${structuredBlock}${middle}${structuredBlock.repeat(4)}${filler.repeat(200)}`
+  return `${structuredBlock}${middle}${structuredBlock.repeat(4)}${filler.repeat(400)}`
     .slice(0, STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS);
 }
 
@@ -80,7 +91,7 @@ async function waitForText(composer: Locator, expected: string, abortSignal?: Ab
   do {
     if (abortSignal?.aborted) throw abortSignal.reason;
     observed = await editableText(composer);
-    if (observed === expected) return;
+    if (promptTextEquivalent(expected, observed)) return;
     await Bun.sleep(50);
   } while (Date.now() < deadline);
   let commonPrefixChars = 0;
@@ -90,6 +101,20 @@ async function waitForText(composer: Locator, expected: string, abortSignal?: Ab
   throw new Error(
     `Markdown restoration probe text mismatch (expectedChars=${expected.length}, observedChars=${observed.length}, commonPrefixChars=${commonPrefixChars})`,
   );
+}
+
+async function waitForSendEnabled(page: Page, abortSignal?: AbortSignal): Promise<Locator> {
+  const deadline = Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
+  for (;;) {
+    if (abortSignal?.aborted) throw abortSignal.reason;
+    const composer = await activeComposer(page);
+    const send = composer.locator("xpath=ancestor::form[1]").getByTestId("send-button");
+    if (await send.isEnabled().catch(() => false)) return composer;
+    if (Date.now() >= deadline) {
+      throw new Error("Structured Markdown restoration probe send control remained disabled");
+    }
+    await Bun.sleep(CHATGPT_UI_SETTLE_MS);
+  }
 }
 
 async function selectConnector(page: Page, appName: string): Promise<Locator> {
@@ -221,43 +246,58 @@ export async function runMarkdownRestorationProbe(
       throw new Error(`Markdown restoration probe median attachment exceeded 5 seconds (medianMs=${Math.round(medianMs)})`);
     }
     process.stdout.write(`WEB_CONTRACT_MARKDOWN_PROBE_TIMINGS ${JSON.stringify(timings.map(Math.round))}\n`);
-    await clearChatGptComposerInput(composer);
-    composer = await selectConnector(page, appName);
     const structuredPrompt = structuredMarkdownRestorationProbeText();
-    const structuredConnectors = await connectorState(composer);
-    const structuredStartedAt = performance.now();
-    await composer.focus();
-    await insertChatGptPromptText(structuredPrompt, abortSignal, {
-      composer: async () => {
-        composer = await activeComposer(page);
-        return composer;
-      },
-      verify: async expected => {
-        composer = await activeComposer(page);
-        await waitForText(composer, expected, abortSignal);
-      },
-      reanchor: async () => {
-        composer = await activeComposer(page);
-        if (!await reanchorChatGptComposerCaret(composer)) {
-          throw new Error("Structured Markdown restoration probe could not re-anchor the composer");
-        }
-      },
-    });
-    const structuredDurationMs = performance.now() - structuredStartedAt;
-    if (structuredDurationMs >= 55_000) {
-      throw new Error(
-        `Structured Markdown restoration probe attachment exceeded 55 seconds (durationMs=${Math.round(structuredDurationMs)})`,
-      );
-    }
-    if (JSON.stringify(await connectorState(composer)) !== JSON.stringify(structuredConnectors)) {
-      throw new Error("Structured Markdown restoration probe changed connector state");
-    }
-    if (await page.locator(CHATGPT_USER_TURN_SELECTOR).count() !== initialUserTurns
-      || await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count() !== 0) {
-      throw new Error("Structured Markdown restoration probe unexpectedly submitted a turn");
+    const structuredTimings: number[] = [];
+    for (let run = 0; run < 3; run += 1) {
+      await clearChatGptComposerInput(composer);
+      const structuredStartedAt = performance.now();
+      composer = await selectConnector(page, appName);
+      const connectorSelectedAt = performance.now();
+      const structuredConnectors = await connectorState(composer);
+      await composer.focus();
+      await insertChatGptPromptText(structuredPrompt, abortSignal, {
+        composer: async () => {
+          composer = await activeComposer(page);
+          return composer;
+        },
+        verify: async expected => {
+          composer = await activeComposer(page);
+          await waitForText(composer, expected, abortSignal);
+        },
+        reanchor: async () => {
+          composer = await activeComposer(page);
+          if (!await reanchorChatGptComposerCaret(composer)) {
+            throw new Error("Structured Markdown restoration probe could not re-anchor the composer");
+          }
+        },
+      }, { largeStructuredDirect: true });
+      const insertionCompletedAt = performance.now();
+      composer = await waitForSendEnabled(page, abortSignal);
+      const readyAt = performance.now();
+      const structuredReadyMs = readyAt - structuredStartedAt;
+      structuredTimings.push(structuredReadyMs);
+      process.stdout.write(`WEB_CONTRACT_STRUCTURED_MARKDOWN_PROBE_RUN ${JSON.stringify({
+        run: run + 1,
+        connectorMs: Math.round(connectorSelectedAt - structuredStartedAt),
+        insertionMs: Math.round(insertionCompletedAt - connectorSelectedAt),
+        sendReadyMs: Math.round(readyAt - insertionCompletedAt),
+        totalMs: Math.round(structuredReadyMs),
+      })}\n`);
+      if (structuredReadyMs >= 90_000) {
+        throw new Error(
+          `Structured Markdown restoration probe readiness exceeded 90 seconds (durationMs=${Math.round(structuredReadyMs)})`,
+        );
+      }
+      if (JSON.stringify(await connectorState(composer)) !== JSON.stringify(structuredConnectors)) {
+        throw new Error("Structured Markdown restoration probe changed connector state");
+      }
+      if (await page.locator(CHATGPT_USER_TURN_SELECTOR).count() !== initialUserTurns
+        || await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count() !== 0) {
+        throw new Error("Structured Markdown restoration probe unexpectedly submitted a turn");
+      }
     }
     process.stdout.write(`WEB_CONTRACT_STRUCTURED_MARKDOWN_PROBE_OK ${JSON.stringify({
-      durationMs: Math.round(structuredDurationMs),
+      durationMs: structuredTimings.map(Math.round),
       chars: structuredPrompt.length,
     })}\n`);
     return true;

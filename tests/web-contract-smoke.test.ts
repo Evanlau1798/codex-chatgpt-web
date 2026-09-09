@@ -67,7 +67,7 @@ describe("lightweight Web contract smoke", () => {
     expect(prompt).toHaveLength(MARKDOWN_RESTORATION_PROBE_CHARS);
     expect(prompt[16_000]).toBe(" ");
     expect(prompt).toContain('{"key":[1,2,3]}');
-    expect(STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS).toBe(79_976);
+    expect(STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS).toBe(94_534);
     expect(structuredPrompt).toHaveLength(STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS);
     expect(structuredPrompt).toContain("```json\n");
     expect(structuredPrompt).toContain("<environment_context>\n");
@@ -79,10 +79,11 @@ describe("lightweight Web contract smoke", () => {
     expect(probe).toContain("medianMs >= 5_000");
     expect(probe).toContain("WEB_CONTRACT_MARKDOWN_PROBE_TIMINGS");
     expect(probe).toContain("WEB_CONTRACT_STRUCTURED_MARKDOWN_PROBE_OK");
-    expect(probe).toContain("structuredDurationMs >= 55_000");
+    expect(probe).toContain("structuredReadyMs >= 90_000");
     const structuredAt = probe.indexOf("const structuredPrompt = structuredMarkdownRestorationProbeText()");
     const structuredInsertAt = probe.indexOf("await insertChatGptPromptText(structuredPrompt, abortSignal");
     const structuredReadbackAt = probe.indexOf("await waitForText(composer, expected, abortSignal)");
+    const structuredSendReadyAt = probe.indexOf("composer = await waitForSendEnabled(page, abortSignal)", structuredInsertAt);
     const structuredConnectorAt = probe.indexOf("JSON.stringify(await connectorState(composer)) !== JSON.stringify(structuredConnectors)");
     const structuredNoTurnAt = probe.indexOf("Structured Markdown restoration probe unexpectedly submitted a turn");
     const structuredSuccessAt = probe.indexOf("WEB_CONTRACT_STRUCTURED_MARKDOWN_PROBE_OK");
@@ -90,6 +91,7 @@ describe("lightweight Web contract smoke", () => {
       structuredAt,
       structuredInsertAt,
       structuredReadbackAt,
+      structuredSendReadyAt,
       structuredConnectorAt,
       structuredNoTurnAt,
       structuredSuccessAt,
@@ -106,6 +108,7 @@ describe("lightweight Web contract smoke", () => {
     expect(probe).toContain("MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS");
     expect(probe).toContain("unexpectedly submitted a turn");
     expect(probe).toContain("could not clear connector state");
+    expect(probe).toContain("Structured Markdown restoration probe send control remained disabled");
     expect(probe).toContain("cleanup left submittable content");
   });
 

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
   chatGptNoContextStallTimeoutMs,
@@ -11,6 +12,7 @@ import { providerConfig } from "../src/provider-config";
 
 test("no-auto-compact scales prompt attachment time with composer chunks", () => {
   expect(chatGptPromptAttachmentTimeoutMs(CHATGPT_PROMPT_INSERT_CHUNK_CHARS, false)).toBe(60_000);
+  expect(chatGptPromptAttachmentTimeoutMs(94_534, false)).toBe(90_000);
   expect(chatGptPromptAttachmentTimeoutMs(CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 2, true)).toBe(60_000);
   expect(chatGptPromptAttachmentTimeoutMs(CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 10, true)).toBe(300_000);
   expect(chatGptPromptAttachmentTimeoutMs(CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 6, true)).toBe(180_000);
@@ -32,7 +34,7 @@ test("the experimental setting reaches both browser attachment stages", () => {
   expect(provider.chatgptWeb?.experimentalNoAutoCompact).toBe(true);
   expect(resolveBrowserConfig(provider).experimentalNoAutoCompact).toBe(true);
 
-  const source = readFileSync("src/adapters/chatgpt-web/browser-worker.ts", "utf8");
+  const source = readFileSync(resolve(import.meta.dir, "..", "src", "adapters", "chatgpt-web", "browser-worker.ts"), "utf8");
   expect(source).toContain(
     "chatGptPromptAttachmentTimeoutMs(stage.text.length, this.config.experimentalNoAutoCompact)",
   );

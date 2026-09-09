@@ -11,6 +11,8 @@ import {
 
 const BOUNDARY_LOOKBACK_CHARS = 4_096;
 const WHITESPACE = /\s/u;
+const STRUCTURED_PROMPT = /[\r\n\u2028\u2029]/u;
+const DIRECT_INSERT_MIN_CHARS = CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 2;
 
 function promptInsertChunkEnd(text: string, offset: number): number {
   const hardEnd = Math.min(offset + CHATGPT_PROMPT_INSERT_CHUNK_CHARS, text.length);
@@ -36,7 +38,22 @@ export async function insertChatGptPromptText(
     verify(expected: string): Promise<void>;
     reanchor(): Promise<void>;
   },
+  options?: { largeStructuredDirect?: boolean },
 ): Promise<void> {
+  if (options?.largeStructuredDirect === true
+    && text.length > DIRECT_INSERT_MIN_CHARS
+    && STRUCTURED_PROMPT.test(text)) {
+    // One exact editor transaction avoids both cumulative Lexical remounts and thousands of
+    // delimiter-restoration edits. Full readback remains the acceptance boundary.
+    await actions.verify("");
+    await insertChatGptComposerGuardedText(await actions.composer(), text, abortSignal);
+    await actions.verify(text.trimStart());
+    await new Promise(resolve => setTimeout(resolve, 0));
+    if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("ChatGPT prompt attachment aborted", "AbortError");
+    await actions.verify(text.trimStart());
+    await actions.reanchor();
+    return;
+  }
   const markdown = guardChatGptPromptMarkdown(text);
   const insertionText = markdown?.text ?? text;
   for (let offset = 0; offset < insertionText.length;) {

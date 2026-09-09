@@ -1948,6 +1948,7 @@ export class ChatGptBrowserWorker {
     catalogRefreshAvailable = false,
     connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 },
     requireThink = false,
+    largeStructuredDirect = false,
   ): Promise<void> {
     throwIfPromptAttachmentAborted(abortSignal);
     let mutationStarted = false;
@@ -1963,7 +1964,7 @@ export class ChatGptBrowserWorker {
           await setChatGptThinkMode(composer.locator("xpath=ancestor::form[1]"), true, captureDiagnostic, abortSignal);
         }
         await composer.focus();
-        await this.insertPromptText(page, prompt, abortSignal);
+        await this.insertPromptText(page, prompt, abortSignal, largeStructuredDirect);
         await this.assertPromptAttached(page, prompt, abortSignal);
         return;
       }
@@ -1980,7 +1981,7 @@ export class ChatGptBrowserWorker {
       }
       await selectedComposer.focus();
       await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
-      await this.insertPromptText(page, ` ${prompt}`, abortSignal);
+      await this.insertPromptText(page, ` ${prompt}`, abortSignal, largeStructuredDirect);
       await this.assertPromptAttached(page, prompt, abortSignal);
     } catch (error) {
       if (!mutationStarted || error instanceof ChatGptPersistentBrowserStateError) throw error;
@@ -2050,6 +2051,7 @@ export class ChatGptBrowserWorker {
     catalogRefreshAvailable = false,
     connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 },
     requireThink = false,
+    largeStructuredDirect = false,
   ): Promise<void> {
     let retryAvailable = compaction;
     for (;;) {
@@ -2064,6 +2066,7 @@ export class ChatGptBrowserWorker {
           catalogRefreshAvailable,
           connectorAttemptBudget,
           requireThink,
+          largeStructuredDirect,
         );
         return;
       } catch (error) {
@@ -2106,12 +2109,17 @@ export class ChatGptBrowserWorker {
     }
   }
 
-  private async insertPromptText(page: Page, text: string, abortSignal?: AbortSignal): Promise<void> {
+  private async insertPromptText(
+    page: Page,
+    text: string,
+    abortSignal?: AbortSignal,
+    largeStructuredDirect = false,
+  ): Promise<void> {
     await insertChatGptPromptText(text, abortSignal, {
       composer: () => this.activeComposer(page),
       verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal),
       reanchor: () => this.reanchorPromptCaret(page, abortSignal),
-    });
+    }, { largeStructuredDirect });
   }
 
   private async waitForPromptChunkAttached(
@@ -3205,6 +3213,7 @@ export class ChatGptBrowserWorker {
                 catalogRefreshAvailable,
                 connectorAttemptBudget,
                 mode.thinkEnabled,
+                !multipartTransport && prepared.transport === "inline",
               ),
               turn.abortSignal,
               chatGptSuspensionClock,
@@ -3276,6 +3285,10 @@ export class ChatGptBrowserWorker {
           await settleChatGptUi();
         }
         await this.assertPromptAttached(page, responsePrompt, stageSignal);
+        if ((turn.nativeConnector === true || mode.localTools)
+          && !await this.connectorIsSelected(composer, stageSignal)) {
+          throw chatGptWebSurfaceError("ChatGPT connector was lost before prompt submission", false);
+        }
         await diagnostics.capture(page, "send-ready");
         const initialToolBatchRevision = turn.externalProgress?.snapshot().lastToolBatchRevision ?? 0;
         await turn.onSendActivated?.();
