@@ -115,10 +115,15 @@ the envelope. Attachment acceptance and send readiness are verified before the t
 Initial Launcher setup asks which interaction mode to install and defaults to With Automation. The
 same choice remains available in Settings; changing it uses the transactional setup path, replaces
 the installed catalog, and requires a Codex restart. Zero Risk never reads or mutates the ChatGPT DOM.
-For a new ChatGPT chat the adapter provides the complete compiled prompt; for an exactly retained
-chat it also provides an incremental prompt containing only the Codex suffix after the last assistant
-reply. The Launcher chooses between those two prompts from its own retained-tab ownership and writes
-the selected text to the system clipboard. The user has thirty seconds to paste, select the visible
+For a new ChatGPT chat the adapter provides the complete compiled prompt. A retained chat has a stable
+conversation identity plus a SHA-256 revision of its exact ordered system instructions. The Launcher
+chooses a full prompt for a new surface, an incremental suffix when the revision is unchanged, or a
+short refresh prompt when only the revision changed. Refresh keeps the same tab and retrieves the full
+replacement system set, in order and with checksum validation, from the existing turn-bound context
+archive. The Launcher stores only the confirmed revision digest, never the system text. It commits a
+new revision only after that turn completes and the tab is retained; uncertain surfaces are released.
+In Zero Risk the archive is bound to the current `request_id`, is unavailable before `codex_turn_start`,
+and must be read completely before work tools or completion. The user has thirty seconds to paste, select the visible
 ChatGPT model, effort, and Zero Risk connector, send, and confirm Sent; a manual compaction handoff
 allows two minutes. Sent ends that confirmation deadline. Waiting for the first MCP bind is part of
 the live turn, which remains subject to explicit cancellation and runtime-owner cleanup.
