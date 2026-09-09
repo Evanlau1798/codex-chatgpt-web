@@ -99,6 +99,10 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     const text = new ChatGptTextFeed();
     const externalProgress = new ChatGptExternalTurnProgress();
     const steering = captureLunaCheckpoint || !useEnhancedWebSessionMode ? undefined : new ChatGptSteeringFeed();
+    const finalAnswerAdmission = steering ? {
+      seal: () => steering.sealCompletion(),
+      reopen: () => steering.reopenCompletion(),
+    } : undefined;
     let activeToken: string | undefined;
     let browserOwnerSettled = false;
     let toolResultDelivered = false;
@@ -170,6 +174,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         onTextDelta: delta => text.push(delta),
         ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
         ...(retryPromptForError ? { retryPromptForError } : {}),
+        ...(finalAnswerAdmission ? { finalAnswerAdmission } : {}),
       });
       const browser = finalizeCheckpoint(browserRun);
       return {
@@ -234,6 +239,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         begin: async () => brokerOwner.beginCompletionFence(activeToken ?? await token.promise),
         commit: async revision => brokerOwner.commitCompletionFence(activeToken ?? await token.promise, revision),
       },
+      ...(finalAnswerAdmission ? { finalAnswerAdmission } : {}),
       onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: emitCommentary,
       onProgress: () => trace.signalProgress(),

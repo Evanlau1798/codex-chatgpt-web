@@ -129,6 +129,16 @@ export async function sessionForChatGptRequest(
   );
   const settled = session.settledOutcome();
   const activeClaudeRoot = Boolean(claudeRootThreadId && !settled);
+  if (!session.canAcceptUserRevision(revision, text, !activeClaudeRoot)) {
+    const completedClaudeSteering = session.completedClaudeSteering();
+    await sessions.retireAndWait(key, replacementConversationKey, signal);
+    session = await sessions.getOrCreateAfterConversationRetirement(
+      key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId, signal, manualOwner, nativeIdentity.threadId,
+    );
+    if (claudeRootThreadId) session.inheritCompletedClaudeSteering(completedClaudeSteering);
+    session.updateUserRevision(revision, text);
+    return session;
+  }
   const steering = session.updateUserRevision(revision, text, !activeClaudeRoot);
   if (manualOwner) return session;
   if (!allowSteering && steering) {

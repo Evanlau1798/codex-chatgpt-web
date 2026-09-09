@@ -318,6 +318,8 @@ export class TurnBroker implements TurnBrokerOwner {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
+    if (channel.completionCommitted) throw new Error("turn capability is already finished");
+    channel.activityRevision += 1;
     channel.queuedCallIds.length = 0;
     if (channel.invocations.size === 0) {
       channel.steeringInstruction = channel.steeringInstruction

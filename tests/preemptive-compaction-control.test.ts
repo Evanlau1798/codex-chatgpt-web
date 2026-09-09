@@ -12,6 +12,7 @@ test("direct browser checkpoint preemption is one-shot and scoped to an active t
     activeRuns: new Map([["active-trace", new Promise<string>(() => {})]]),
     preemptiveRetries: new Map<string, string>(),
     preemptedRuns: new Set<string>(),
+    finalizingRuns: new Set<string>(),
   }) as ChatGptBrowserWorker;
   const take = (ChatGptBrowserWorker.prototype as unknown as {
     takePreemptiveRetry(traceId: string): string | undefined;
@@ -29,7 +30,7 @@ test("active checkpoint preemption stops generation without taking the abort pat
   const request = source.indexOf("const requestedPreemption =");
   const stop = source.indexOf('await stop.press("Enter")', request);
   const snapshot = source.indexOf("const snapshot = await this.responseDomSnapshot", request);
-  const retry = source.indexOf("preemptiveRetryPrompt ?? await turn.retryPromptForAnswer", snapshot);
+  const retry = source.indexOf("const finalDecision = await decideChatGptFinalAnswer", snapshot);
   const control = source.slice(request, retry);
 
   expect(request).toBeGreaterThan(-1);
@@ -39,6 +40,7 @@ test("active checkpoint preemption stops generation without taking the abort pat
   expect(control).toContain("CHATGPT_PREEMPTIVE_RETRY_STOP_TIMEOUT_MS");
   expect(control).toContain("chatgpt_compaction_preemption_failed");
   expect(control).not.toContain('throw new DOMException("ChatGPT web turn aborted"');
+  expect(source.slice(retry, source.indexOf("break;", retry))).toContain("preemptiveRetryPrompt,");
 });
 
 test("checkpoint preemption remains bounded when generation starts after the request is consumed", () => {
@@ -53,6 +55,17 @@ test("checkpoint preemption remains bounded when generation starts after the req
   expect(started.state.stopPressed).toBeTrue();
   expect(advancePreemptiveRetryStop(started.state, true, 15_999).action).toBe("wait");
   expect(advancePreemptiveRetryStop(started.state, true, 16_000).action).toBe("timed_out");
+});
+
+test("answer decision failures bypass generic browser error retry", () => {
+  const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const catchStart = source.indexOf("} catch (error) {", source.indexOf("const finalDecision = await decideChatGptFinalAnswer"));
+  const decisionFailure = source.indexOf("error instanceof ChatGptFinalAnswerDecisionError", catchStart);
+  const genericRetry = source.indexOf("retryPromptForError?.", catchStart);
+  expect(catchStart).toBeGreaterThan(-1);
+  expect(decisionFailure).toBeGreaterThan(catchStart);
+  expect(genericRetry).toBeGreaterThan(decisionFailure);
+  expect(source.slice(decisionFailure, genericRetry)).toContain("throw error.original");
 });
 
 test("persistent helper preserves the control-only Native2 connector flag", () => {

@@ -24,12 +24,30 @@ export class ChatGptSteeringFeed {
   private readonly provisionalClaude: CompletedClaudeSteering[] = [];
   private readonly completedClaude: CompletedClaudeSteering[] = [];
   private nextEventId = 1;
+  private completionSealed = false;
 
-  push(instruction: string): void {
+  canAccept(): boolean {
+    return !this.completionSealed;
+  }
+
+  sealCompletion(): boolean {
+    if (this.completionSealed) return false;
+    this.completionSealed = true;
+    return true;
+  }
+
+  reopenCompletion(): void {
+    this.completionSealed = false;
+  }
+
+  push(instruction: string): boolean {
+    if (!this.canAccept()) return false;
     this.queued.push({ text: instruction, claude: false, source: "user", eventId: `native-${this.nextEventId++}` });
+    return true;
   }
 
   pushClaude(instruction: string, deliveryId?: string, source: ClaudeSteeringSource = "user"): boolean {
+    if (!this.canAccept()) return false;
     if (!deliveryId) {
       this.queued.push({
         text: instruction,
@@ -59,6 +77,7 @@ export class ChatGptSteeringFeed {
   }
 
   syncClaude(active: ClaudeSteeringDelivery[], observedThrough?: number): string[] {
+    if (!this.canAccept()) return [];
     const activeIds = new Set(active.map(item => item.deliveryId));
     const accepted: string[] = [];
     for (const item of active) {

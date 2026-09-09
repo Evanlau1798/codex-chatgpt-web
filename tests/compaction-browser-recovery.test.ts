@@ -23,6 +23,7 @@ test.each([[true, false, true], [false, false, true], [true, true, true], [true,
     url: () => { actions.push("observe"); throw finalResponse; } };
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics, ...(owned ? { browserHostDescriptorPath: "owned-descriptor" } : {}) },
+    finalizingRuns: new Set<string>(),
     runStage: async (_trace: string, name: string, timeout: number, action: (signal: AbortSignal) => Promise<unknown>) => {
       stage = name;
       if (name === "send" || name.endsWith("_send")) sendBudgets.push(timeout);

@@ -7,6 +7,8 @@ interface PendingFixture {
   resolve: (value: string) => void;
   reject: (error: Error) => void;
   sent?: boolean;
+  answerCompletionSealed?: boolean;
+  localFailure?: Error;
 }
 
 interface ClientFixture {
@@ -132,4 +134,75 @@ test("a deferred prepared-selection callback cannot acknowledge a reused trace",
   expect(sent).toEqual([]);
   expect(releases).toBe(1);
   expect(internal.pending.get(traceId)).toBe(replacement);
+});
+
+test("helper answer selection seals steering until a failed fence commit reopens it", async () => {
+  const { internal, child, sent } = fixture();
+  const traceId = "helper-answer-fence-123";
+  let sealed = false;
+  internal.pending.set(traceId, {
+    turn: turn(traceId, {
+      retryPromptForAnswer: () => undefined,
+      finalAnswerAdmission: {
+        seal: () => sealed ? false : (sealed = true),
+        reopen: () => { sealed = false; },
+      },
+      completionFence: { begin: async () => 4, commit: async () => false },
+    }),
+    resolve() {}, reject() {}, sent: true,
+  });
+
+  internal.handleLine(child, JSON.stringify({
+    type: "event", id: traceId, event: "answer", text: "candidate", attempt: 1,
+  }));
+  await Bun.sleep(0);
+  expect(sealed).toBeTrue();
+  expect((internal as unknown as { requestPreemptiveRetry(id: string, prompt: string): boolean })
+    .requestPreemptiveRetry(traceId, "too late")).toBeFalse();
+  expect(sent).toEqual([{ type: "answer_retry", id: traceId }]);
+
+  internal.handleLine(child, JSON.stringify({
+    type: "event", id: traceId, event: "completion_fence_commit", requestId: 7, revision: 4,
+  }));
+  await Bun.sleep(0);
+  expect(sealed).toBeFalse();
+  expect(sent.at(-1)).toEqual({
+    type: "completion_fence_commit_ack", id: traceId, requestId: 7, committed: false,
+  });
+});
+
+test("helper answer retry reopens steering admission before the retry is sent", async () => {
+  const { internal, child, sent } = fixture();
+  const traceId = "helper-answer-retry-123";
+  let sealed = false;
+  internal.pending.set(traceId, {
+    turn: turn(traceId, {
+      retryPromptForAnswer: () => "continue",
+      finalAnswerAdmission: {
+        seal: () => sealed ? false : (sealed = true),
+        reopen: () => { sealed = false; },
+      },
+    }),
+    resolve() {}, reject() {}, sent: true,
+  });
+
+  internal.handleLine(child, JSON.stringify({
+    type: "event", id: traceId, event: "answer", text: "candidate", attempt: 1,
+  }));
+  await Bun.sleep(0);
+  expect(sealed).toBeFalse();
+  expect(sent).toEqual([{ type: "answer_retry", id: traceId, prompt: "continue" }]);
+});
+
+test("helper output callbacks are suppressed after a local terminal failure", () => {
+  const { internal, child } = fixture();
+  const traceId = "failed-helper-callback-123";
+  let deltas = 0;
+  internal.pending.set(traceId, {
+    turn: turn(traceId, { onTextDelta: () => { deltas += 1; } }),
+    resolve() {}, reject() {}, sent: true,
+    localFailure: new Error("local failure"),
+  });
+  internal.handleLine(child, JSON.stringify({ type: "event", id: traceId, event: "text", text: "late" }));
+  expect(deltas).toBe(0);
 });

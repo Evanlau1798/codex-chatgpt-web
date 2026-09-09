@@ -141,6 +141,15 @@ export class ChatGptLunaCheckpointStream {
   }
 
   /** A missing checkpoint skips the private cache; a present checkpoint still validates strictly. */
+  previewOptional(rawResponseText: string): CompletedChatGptLunaCheckpoint {
+    const preview = new ChatGptLunaCheckpointStream();
+    preview.pending = this.pending;
+    preview.checkpointText = this.checkpointText;
+    preview.visibleAnswer = this.visibleAnswer;
+    preview.markerSeen = this.markerSeen;
+    return preview.finishOptional(rawResponseText);
+  }
+
   finishOptional(rawResponseText: string): CompletedChatGptLunaCheckpoint {
     if (this.markerSeen) {
       const completed = this.finish(rawResponseText);

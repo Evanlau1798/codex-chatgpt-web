@@ -7,7 +7,7 @@ import {
   type LauncherHelperMessage,
 } from "./launcher-helper-protocol";
 import { forwardLauncherHelperProgress } from "./launcher-helper-progress";
-import { acknowledgeLauncherMultipartStage, assertLauncherHelperFenceFeatures, handleLauncherHelperFenceEvent } from "./launcher-helper-fence";
+import { acknowledgeLauncherMultipartStage, assertLauncherHelperFenceFeatures, handleLauncherHelperAnswer, handleLauncherHelperFenceEvent } from "./launcher-helper-fence";
 import {
   resolveLauncherHelperScript,
   terminateLauncherHelperProcess,
@@ -27,6 +27,7 @@ interface PendingTurn {
   localFailure?: Error;
   preemptiveRetryRequested?: boolean;
   progressForwarding?: AbortController;
+  answerCompletionSealed?: boolean;
 }
 export class LauncherBrowserHelperClient {
   private child?: ChildProcessWithoutNullStreams;
@@ -131,7 +132,8 @@ export class LauncherBrowserHelperClient {
 
   requestPreemptiveRetry(traceId: string, prompt: string): boolean {
     const pending = this.pending.get(traceId);
-    if (!pending?.sent || pending.localFailure || pending.preemptiveRetryRequested || !prompt.trim()) return false;
+    if (!pending?.sent || pending.localFailure || pending.preemptiveRetryRequested
+      || pending.answerCompletionSealed || !prompt.trim()) return false;
     pending.preemptiveRetryRequested = true;
     void this.send({ type: "preempt_retry", id: traceId, prompt }).catch(error => this.abortWithLocalFailure(
       traceId,
@@ -251,10 +253,18 @@ export class LauncherBrowserHelperClient {
     const pending = this.pending.get(message.id);
     if (!pending) return;
     if (message.type === "event") {
+      const fenceEvent = message.event === "tool_batch_observed" || message.event === "completion_fence_begin"
+        || message.event === "completion_fence_commit";
+      if (pending.localFailure && !fenceEvent) return;
       if (message.event === "tool_batch_observed" || message.event === "completion_fence_begin"
         || message.event === "completion_fence_commit") {
         handleLauncherHelperFenceEvent(message, pending.turn, () => this.pending.get(message.id) === pending,
-          value => this.send(value), error => this.abortWithLocalFailure(message.id, error, pending));
+          value => this.send(value), error => this.abortWithLocalFailure(message.id, error, pending), committed => {
+            if (!committed && pending.answerCompletionSealed) {
+              pending.answerCompletionSealed = false;
+              pending.turn.finalAnswerAdmission?.reopen();
+            }
+          });
       }
       else if (message.event === "heartbeat") {
         this.invokeEventCallback(message.id, pending, () => pending.turn.onHeartbeat?.());
@@ -323,24 +333,8 @@ export class LauncherBrowserHelperClient {
           });
       }
       else if (message.event === "answer") {
-        void Promise.resolve().then(() => pending.turn.retryPromptForAnswer?.(message.text, message.attempt))
-          .then(prompt => {
-            if (this.pending.get(message.id) !== pending) return;
-            if (!prompt) return this.send({ type: "answer_retry", id: message.id });
-            const retry = typeof prompt === "string" ? { text: prompt } : prompt;
-            pending.acknowledgeRetry = retry.onSubmitted;
-            return this.send({
-              type: "answer_retry", id: message.id, prompt: retry.text,
-              ...(retry.onSubmitted ? { acknowledge: true } : {}),
-              ...(retry.replaceCandidate ? { replaceCandidate: true } : {}),
-            });
-          })
-          .catch(error => {
-            if (this.pending.get(message.id) === pending) this.abortWithLocalFailure(
-              message.id,
-              error instanceof Error ? error : new Error(String(error)),
-            );
-          });
+        handleLauncherHelperAnswer(message, pending, () => this.pending.get(message.id) === pending && !pending.localFailure,
+          value => this.send(value), error => this.abortWithLocalFailure(message.id, error, pending));
       }
       else if (message.event === "error_retry") {
         const failure = message.status !== undefined

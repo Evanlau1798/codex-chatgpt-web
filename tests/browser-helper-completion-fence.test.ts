@@ -8,6 +8,12 @@ const fencedTurn = { externalProgress: {} } as BrowserTurn;
 
 test("legacy helpers remain usable only for turns without external MCP progress", () => {
   expect(() => assertLauncherHelperFenceFeatures({} as BrowserTurn, new Set())).not.toThrow();
+  expect(() => assertLauncherHelperFenceFeatures({ retryPromptForAnswer: () => undefined } as unknown as BrowserTurn, new Set()))
+    .toThrow("answer retries before committing completion");
+  expect(() => assertLauncherHelperFenceFeatures(
+    { retryPromptForAnswer: () => undefined } as unknown as BrowserTurn,
+    new Set(["answer-before-completion"]),
+  )).not.toThrow();
   expect(() => assertLauncherHelperFenceFeatures(fencedTurn, new Set(["progress"])))
     .toThrow("tool-boundary acknowledgement");
   expect(() => assertLauncherHelperFenceFeatures(fencedTurn, new Set(["progress", "tool-boundary-ack"])))

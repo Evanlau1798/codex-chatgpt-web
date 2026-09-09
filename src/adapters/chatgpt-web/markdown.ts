@@ -288,6 +288,22 @@ export class ChatGptMarkdownBuffer {
     return { markdown: this.markdown, delta };
   }
 
+  preview(): string {
+    if (this.consistencyError) throw this.consistencyError;
+    let markdown = this.markdown;
+    let lastGroup = this.lastGroup;
+    for (const segment of this.latest) {
+      const block = this.transform(chatGptHtmlToMarkdown(segment.html));
+      if (!block) continue;
+      const separator = markdown
+        ? segment.group !== undefined && segment.group === lastGroup ? "\n" : "\n\n"
+        : "";
+      markdown += `${separator}${block}`;
+      lastGroup = segment.group;
+    }
+    return markdown;
+  }
+
   currentSnapshotIsConsistent(): boolean {
     return this.consistencyError === undefined;
   }

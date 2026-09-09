@@ -50,6 +50,7 @@ import {
   type ChatGptFinalProjectionState,
 } from "./completion-tracker";
 import type { ChatGptRetryPrompt } from "./steering";
+import { ChatGptFinalAnswerDecisionError, decideChatGptFinalAnswer, prepareChatGptFinalAnswer } from "./final-answer-gate";
 import { withAbort as withBrowserTurnAbort } from "./runtime-lifecycle";
 import { ChatGptTurnLatencyDiagnostics } from "./turn-latency";
 import {
@@ -528,6 +529,10 @@ export interface BrowserTurn {
     begin(): Promise<number | undefined>;
     commit(revision: number): Promise<boolean>;
   };
+  finalAnswerAdmission?: {
+    seal(): boolean;
+    reopen(): void;
+  };
   /** Allow one clean pre-submit composer retry for isolated history compaction only. */
   compaction?: boolean;
   /** Require and remove the private Luna checkpoint tail from the visible Markdown stream. */
@@ -817,6 +822,7 @@ export class ChatGptBrowserWorker {
   private readonly activeRuns = new Map<string, Promise<string>>();
   private readonly preemptiveRetries = new Map<string, string>();
   private readonly preemptedRuns = new Set<string>();
+  private readonly finalizingRuns = new Set<string>();
 
   private constructor(private readonly config: ResolvedBrowserConfig) {}
 
@@ -888,12 +894,13 @@ export class ChatGptBrowserWorker {
       if (this.activeRuns.get(turn.traceId) === run) this.activeRuns.delete(turn.traceId);
       this.preemptiveRetries.delete(turn.traceId);
       this.preemptedRuns.delete(turn.traceId);
+      this.finalizingRuns.delete(turn.traceId);
     }).catch(() => {});
     return run;
   }
 
   requestPreemptiveRetry(traceId: string, prompt: string): boolean {
-    if (!prompt.trim() || !this.activeRuns.has(traceId)) return false;
+    if (!prompt.trim() || !this.activeRuns.has(traceId) || this.finalizingRuns.has(traceId)) return false;
     const useHelper = this.config.browserHost === "launcher"
       && process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS !== "1";
     if (useHelper) return this.launcherHelper?.requestPreemptiveRetry(traceId, prompt) === true;
@@ -3175,6 +3182,7 @@ export class ChatGptBrowserWorker {
       let preemptiveRetryPrompt: string | undefined;
       let preemptiveStop: PreemptiveRetryStopState | undefined;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
+        let completedRetryPrompt: ChatGptRetryPrompt | undefined;
         let responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
         const initialResponseTurn = await readChatGptAssistantTurnState(responseTurns);
         const initialTurnIdentities = initialResponseTurn.knownTurnIdentities ?? [];
@@ -3619,10 +3627,6 @@ export class ChatGptBrowserWorker {
                 if (completionFenceRevision === undefined) continue;
                 continue;
               }
-              if (!await turn.completionFence.commit(completionFenceRevision)) {
-                completionFenceRevision = undefined;
-                continue;
-              }
             }
 
             if (snapshot.visibleText === "api_tool unavailable") {
@@ -3637,28 +3641,41 @@ export class ChatGptBrowserWorker {
                 },
               );
             }
-            const final = (() => {
-              try {
-                return markdownBuffer.finish();
-              } catch (error) {
-                return throwMarkdownConsistencyError(error);
-              }
-            })();
-            if (!final.markdown && snapshot.plainTextFallback) {
-              emitMarkdownDelta(snapshot.plainTextFallback);
-            } else if (!final.markdown && snapshot.visibleText) {
-              throw new Error("ChatGPT completed with visible text that could not be serialized as Markdown");
+            const candidate = prepareChatGptFinalAnswer({
+              markdown: markdownBuffer,
+              checkpoint: checkpointStream,
+              visibleText: snapshot.visibleText,
+              plainTextFallback: snapshot.plainTextFallback,
+              emitMarkdownDelta,
+              onTextDelta: turn.onTextDelta,
+              onCheckpoint: turn.onLunaCheckpoint,
+              onMissingCheckpoint: () => console.warn(`[chatgpt-web] browser turn ${turn.traceId} completed without a Luna rolling checkpoint; preserving full native history`),
+              normalizeMarkdownError: throwMarkdownConsistencyError,
+            });
+            this.finalizingRuns.add(turn.traceId);
+            preemptiveRetryPrompt ??= this.takePreemptiveRetry(turn.traceId);
+            const finalDecision = await decideChatGptFinalAnswer({
+              answer: candidate.preview,
+              attempt: responseAttempt,
+              preemptiveRetryPrompt,
+              retryPromptForAnswer: turn.retryPromptForAnswer,
+              completionFence: turn.completionFence,
+              completionFenceRevision,
+              completionAdmission: turn.finalAnswerAdmission,
+              abortSignal: turn.abortSignal,
+              finalizeAnswer: candidate.finalize,
+            });
+            preemptiveRetryPrompt = undefined;
+            preemptiveStop = undefined;
+            if (finalDecision.status === "observe") {
+              this.finalizingRuns.delete(turn.traceId);
+              completionFenceRevision = undefined;
+              continue;
             }
-            if (final.delta) emitMarkdownDelta(final.delta);
-            if (checkpointStream) {
-              const completed = checkpointStream.finishOptional(snapshot.visibleText);
-              if (completed.visibleRemainder) turn.onTextDelta(completed.visibleRemainder);
-              if (completed.captured) turn.onLunaCheckpoint!(completed.captured);
-              else console.warn(`[chatgpt-web] browser turn ${turn.traceId} completed without a Luna rolling checkpoint; preserving full native history`);
-              finalText = completed.answer;
-            } else {
-              finalText = final.markdown || snapshot.plainTextFallback;
-            }
+            if (finalDecision.status === "retry") {
+              this.finalizingRuns.delete(turn.traceId);
+              completedRetryPrompt = finalDecision.retry;
+            } else finalText = finalDecision.answer;
             break;
           }
           if (!loggedCompletionWait && Date.now() - sentAt >= 60_000) {
@@ -3705,6 +3722,12 @@ export class ChatGptBrowserWorker {
           }
         }
         } catch (error) {
+          this.finalizingRuns.delete(turn.traceId);
+          if (error instanceof ChatGptFinalAnswerDecisionError) {
+            if (!error.completionCommitted) turn.finalAnswerAdmission?.reopen();
+            throw error.original;
+          }
+          turn.finalAnswerAdmission?.reopen();
           const failure = error instanceof Error ? error : new Error(String(error));
           if (failure instanceof ChatGptWebAdapterError && failure.retireSession) throw failure;
           const retryPrompt = chatGptTerminalErrorRetryPrompt(failure, responseAttempt, answerBuffer.value())
@@ -3723,19 +3746,16 @@ export class ChatGptBrowserWorker {
           console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying response failure attempt=${responseAttempt + 1} reason=${reason}`);
           continue;
         }
-        const retryPrompt = preemptiveRetryPrompt ?? await turn.retryPromptForAnswer?.(finalText, responseAttempt);
-        preemptiveRetryPrompt = undefined;
-        preemptiveStop = undefined;
+        const retryPrompt = completedRetryPrompt;
         if (!retryPrompt) {
           const deliverable = answerBuffer.takeDeliverable(true);
           if (deliverable) turn.onTextDelta(deliverable);
           break;
         }
         if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry their final answer");
-        const retry = typeof retryPrompt === "string" ? { text: retryPrompt } : retryPrompt;
-        responsePrompt = retry.text;
+        responsePrompt = retryPrompt.text;
         answerBuffer.retryReplacement();
-        retrySubmitted = retry.onSubmitted;
+        retrySubmitted = retryPrompt.onSubmitted;
         console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying final answer attempt=${responseAttempt + 1}`);
 
       }

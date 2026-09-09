@@ -243,7 +243,7 @@ export class ChatGptTurnSessions {
     this.prune();
     let target: ChatGptTurnSession | undefined;
     for (const session of this.entries.values()) {
-      if (session.isActive() && session.steeringId === steeringId) target = session;
+      if (session.isActive() && session.canAcceptSteering() && session.steeringId === steeringId) target = session;
     }
     target?.queueSteering(instruction);
     return Boolean(target);
@@ -256,7 +256,7 @@ export class ChatGptTurnSessions {
   ): "accepted" | "inactive" | "ambiguous" | "duplicate" | "stale" {
     this.prune();
     const targets = [...this.entries.values()].filter(session => (
-      session.isActive() && session.claudeRootThreadId === threadId
+      session.isActive() && session.canAcceptSteering() && session.claudeRootThreadId === threadId
     ));
     if (targets.length === 0) return "inactive";
     if (targets.length > 1) return "ambiguous";
@@ -272,7 +272,7 @@ export class ChatGptTurnSessions {
   ): "accepted" | "inactive" | "ambiguous" | "duplicate" {
     this.prune();
     const targets = [...this.entries.values()].filter(session => (
-      session.isActive() && session.steeringId === steeringId
+      session.isActive() && session.canAcceptSteering() && session.steeringId === steeringId
     ));
     if (targets.length === 0) return "inactive";
     if (targets.length > 1) return "ambiguous";
@@ -285,7 +285,9 @@ export class ChatGptTurnSessions {
     observedThrough?: number,
   ): number | "inactive" | "ambiguous" {
     this.prune();
-    const targets = [...this.entries.values()].filter(session => session.isActive() && session.claudeRootThreadId === threadId);
+    const targets = [...this.entries.values()].filter(session => (
+      session.isActive() && session.canAcceptSteering() && session.claudeRootThreadId === threadId
+    ));
     if (targets.length === 0) return "inactive";
     if (targets.length > 1) return "ambiguous";
     const target = targets[0]!;

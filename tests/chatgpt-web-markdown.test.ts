@@ -56,3 +56,11 @@ test("Markdown conflicts expose only bounded structural diagnostics", () => {
     expect(JSON.stringify(diagnostic)).not.toMatch(/Stable|Changed|<p/);
   }
 });
+
+test("previewing final Markdown does not commit pending output", () => {
+  const buffer = new ChatGptMarkdownBuffer(value => value, 1_000);
+  buffer.observe([{ key: "answer", html: "<p>Final answer.</p>", text: "Final answer.", streamable: false }], 0);
+  expect(buffer.preview()).toBe("Final answer.");
+  expect(buffer.preview()).toBe("Final answer.");
+  expect(buffer.finish()).toEqual({ markdown: "Final answer.", delta: "Final answer." });
+});

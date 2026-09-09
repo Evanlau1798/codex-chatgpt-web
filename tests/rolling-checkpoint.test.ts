@@ -128,6 +128,15 @@ test("Luna checkpoint stream preserves the answer and skips the cache when the m
   });
 });
 
+test("previewing a Luna completion leaves its pending stream untouched", () => {
+  const stream = new ChatGptLunaCheckpointStream();
+  stream.push("A pending answer without a checkpoint.");
+  expect(stream.previewOptional("A pending answer without a checkpoint.").answer)
+    .toBe("A pending answer without a checkpoint.");
+  expect(stream.finishOptional("A pending answer without a checkpoint.").visibleRemainder)
+    .toBe("A pending answer without a checkpoint.");
+});
+
 test("Luna checkpoint stream still rejects a marker that was lost by Markdown serialization", () => {
   const stream = new ChatGptLunaCheckpointStream();
   stream.push("A normal answer whose Markdown stream omitted the marker.");

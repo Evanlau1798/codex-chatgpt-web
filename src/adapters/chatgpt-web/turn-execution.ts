@@ -181,12 +181,23 @@ export class ChatGptTurnSession {
     return [...this.finalPrelude];
   }
 
+  canAcceptUserRevision(revision: string, steering: string, queue = true): boolean {
+    return this.userRevision === undefined
+      || this.userRevision === revision
+      || this.seenUserRevisions.includes(revision)
+      || this.hookedSteeringReplays.includes(steeringFingerprint(steering))
+      || this.steering.canAccept();
+  }
+
+  canAcceptSteering(): boolean { return this.steering.canAccept(); }
+
   updateUserRevision(revision: string, steering: string, queue = true): string | undefined {
     if (this.userRevision === undefined) {
       this.seenUserRevisions.push(this.userRevision = revision);
       return undefined;
     }
     if (this.userRevision === revision) return undefined;
+    if (!this.canAcceptUserRevision(revision, steering, queue)) return steering;
     this.userRevision = revision;
     if (this.seenUserRevisions.includes(revision)) return undefined;
     if (this.seenUserRevisions.push(revision) > 32) this.seenUserRevisions.shift();
@@ -195,7 +206,7 @@ export class ChatGptTurnSession {
       this.hookedSteeringReplays.splice(hooked, 1);
       return undefined;
     }
-    if (queue) this.steering.push(steering);
+    if (queue && !this.steering.push(steering)) return steering;
     return steering;
   }
 
@@ -203,6 +214,7 @@ export class ChatGptTurnSession {
   peekPendingClaudeSteering() { return this.steering.peekClaude(); }
   takePendingSteering(count?: number): string | undefined { return this.steering.take(count); }
   queueSteering(steering: string, hooked = false, deliveryId?: string, source: "user" | "coordinator" = "user"): boolean {
+    if (!this.steering.canAccept()) return false;
     if (hooked && !this.steering.pushClaude(steering, deliveryId, source)) return false;
     if (hooked) {
       this.hookedSteeringReplays.push(steeringFingerprint(steering));
@@ -213,6 +225,7 @@ export class ChatGptTurnSession {
   }
 
   syncClaudeSteering(active: ClaudeSteeringDelivery[], observedThrough?: number): number {
+    if (!this.steering.canAccept()) return 0;
     const accepted = this.steering.syncClaude(active, observedThrough);
     this.hookedSteeringReplays.push(...accepted.map(steeringFingerprint));
     if (this.hookedSteeringReplays.length > 32) this.hookedSteeringReplays.splice(0, this.hookedSteeringReplays.length - 32);
