@@ -310,7 +310,7 @@ export function compileChatGptWebPrompt(
     : manualControl ? [
       "<codex_transport_resume>",
       ...(retainedSystemRefresh ? [
-        `After codex_turn_start, call codex_tool_inventory with request_id ${turnToken}, query \"__codex_context__:0\", offset 0, limit 1, and include_schema false before any work tool.`,
+        `After codex_turn_start, call codex_tool_inventory with request_id ${turnToken}, query \"__codex_context__:0\", offset 0, limit 1, and include_schema false before any user work or final answer; this context read is mandatory even when no other tool is needed.`,
         "Read every archive chunk in order through next_query and verify its shared SHA-256 and final sentinel. The archived system records replace the retained conversation's prior encoded system set in full; they are not an append-only update.",
       ] : []),
       retainedResume
@@ -326,7 +326,7 @@ export function compileChatGptWebPrompt(
       "The value begins with turn_. Never substitute a connector or plugin identifier, conversation UUID, or any handle from task history.",
       "</codex_native_turn_binding>",
       ...(retainedSystemRefresh ? [
-        `Before any work tool, call codex_tool_inventory with turn_token ${turnToken}, query \"__codex_context__:0\", offset 0, limit 1, and include_schema false.`,
+        `Before any user work or final answer, call codex_tool_inventory with turn_token ${turnToken}, query \"__codex_context__:0\", offset 0, limit 1, and include_schema false; this context read is mandatory even when no other tool is needed.`,
         "Read every archive chunk in order through next_query and verify its shared SHA-256 and final sentinel. The archived system records replace the retained conversation's prior encoded system set in full; they are not an append-only update.",
       ] : []),
       retainedResume

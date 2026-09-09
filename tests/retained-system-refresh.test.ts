@@ -48,6 +48,7 @@ test("retained refresh keeps the exact system out of the composer prompt", () =>
   expect(full.text).toContain("SYSTEM_SENTINEL_");
   expect(compiled.text).not.toContain("SYSTEM_SENTINEL_");
   expect(compiled.text).toContain("__codex_context__:0");
+  expect(compiled.text).toContain("mandatory even when no other tool is needed");
   expect(compiled.text.length).toBeLessThan(full.text.length * 0.3);
   expect(retainedSystemContextArchive(parsed.context.systemPrompt!)).toContain("SYSTEM_SENTINEL_");
 });
@@ -109,6 +110,7 @@ test("Automatic Native2 prepares a short archive-backed refresh on the retained 
         try {
           expect(prepared.transport).toBe("retained-system-archive");
           expect(prepared.text).not.toContain("SYSTEM_SENTINEL_");
+          expect(prepared.text).toContain("mandatory even when no other tool is needed");
           expect(prepared.archiveChars).toBeGreaterThan(20_000);
         } finally {
           prepared.release();
