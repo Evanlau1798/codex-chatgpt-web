@@ -137,6 +137,7 @@ test("aborted personalization restores the original semantic mode", async () => 
 for (const [personalizedLabel, unpersonalizedLabel] of [
   ["Personalized", "Unpersonalized"],
   ["个性化", "非个性化"],
+  ["個人化", "非個人化"],
 ] as const) test(`semantic ${unpersonalizedLabel} state enables its owned ${personalizedLabel} choice`, async () => {
   let personalized = false;
   let menuOpen = false;

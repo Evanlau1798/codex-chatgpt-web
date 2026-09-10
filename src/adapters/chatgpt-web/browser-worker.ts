@@ -1789,37 +1789,35 @@ export class ChatGptBrowserWorker {
         let proofResult = false;
         let proofError: unknown;
         try {
-          const plusResult = typeof page.getByTestId === "function"
-            ? await openChatGptConnectorPlusMenu(page, this.config.appName, personalizationSignal)
-            : undefined;
-          if (plusResult) {
+          const composer = await this.activeComposer(page, 30_000, personalizationSignal);
+          await composer.fill("", { signal: personalizationSignal, timeout: 10_000 });
+          await composer.focus({ signal: personalizationSignal, timeout: 10_000 });
+          await withBrowserTurnAbort(settleChatGptUi(), personalizationSignal);
+          await composer.pressSequentially(CHATGPT_CONNECTOR_MENTION_QUERY, {
+            delay: 25,
+            signal: personalizationSignal,
+            timeout: 10_000,
+          });
+          try {
+            await appResult.waitFor({ state: "visible", timeout: 2_500, signal: personalizationSignal });
             proofResult = true;
-          } else {
-            const composer = await this.activeComposer(page, 30_000, personalizationSignal);
-            await composer.fill("", { signal: personalizationSignal, timeout: 10_000 });
-            await composer.focus({ signal: personalizationSignal, timeout: 10_000 });
-            await withBrowserTurnAbort(settleChatGptUi(), personalizationSignal);
-            await composer.pressSequentially(CHATGPT_CONNECTOR_MENTION_QUERY, {
-              delay: 25,
-              signal: personalizationSignal,
-              timeout: 10_000,
-            });
-            try {
-              await appResult.waitFor({ state: "visible", timeout: 2_500, signal: personalizationSignal });
-              proofResult = true;
-            } catch (error) {
-              if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
-              const mention = await composer.evaluate(element => ({
-                text: element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
-                  ? element.value : element.textContent ?? "",
-                focused: element === document.activeElement,
-              }), undefined, { timeout: 10_000, signal: personalizationSignal });
-              if (mention.text !== CHATGPT_CONNECTOR_MENTION_QUERY) {
-                throw new ChatGptPromptAttachmentIntegrityError(
-                  `ChatGPT did not preserve the connector mention (expectedChars=${CHATGPT_CONNECTOR_MENTION_QUERY.length}, actualChars=${mention.text.length}, focused=${mention.focused})`,
-                );
-              }
+          } catch (error) {
+            if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
+            const mention = await composer.evaluate(element => ({
+              text: element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+                ? element.value : element.textContent ?? "",
+              focused: element === document.activeElement,
+            }), undefined, { timeout: 10_000, signal: personalizationSignal });
+            if (mention.text !== CHATGPT_CONNECTOR_MENTION_QUERY) {
+              throw new ChatGptPromptAttachmentIntegrityError(
+                `ChatGPT did not preserve the connector mention (expectedChars=${CHATGPT_CONNECTOR_MENTION_QUERY.length}, actualChars=${mention.text.length}, focused=${mention.focused})`,
+              );
             }
+            await this.clearChatGptComposerState(page);
+            const plusResult = typeof page.getByTestId === "function"
+              ? await openChatGptConnectorPlusMenu(page, this.config.appName, personalizationSignal)
+              : undefined;
+            proofResult = plusResult !== undefined;
           }
         } catch (error) {
           proofError = error;
@@ -1857,15 +1855,9 @@ export class ChatGptBrowserWorker {
         return selectedComposer;
       };
 
-      const plusResult = typeof page.getByTestId === "function"
-        ? await openChatGptConnectorPlusMenu(page, this.config.appName, abortSignal)
-        : undefined;
-      if (plusResult) {
-        await capture("connector-menu-visible");
-        return await activateConnectorChoice(plusResult);
-      }
-
       let firstMenuCaptured = false;
+      let mentionMenuVisible = false;
+      let mentionFailure: string | undefined;
       while (attemptBudget.triggerAttempts < MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS) {
         attemptBudget.triggerAttempts += 1;
         composer = await this.activeComposer(page, 30_000, abortSignal);
@@ -1880,6 +1872,7 @@ export class ChatGptBrowserWorker {
         try {
           await appResult.waitFor({ state: "visible", timeout: 2_500, signal: abortSignal });
           await capture("connector-menu-visible");
+          mentionMenuVisible = true;
           break;
         } catch (error) {
           if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
@@ -1888,10 +1881,12 @@ export class ChatGptBrowserWorker {
             && (visibleRows.includes(DEV_CHATGPT_CONNECTOR_NAME)
               || LEGACY_CHATGPT_CONNECTOR_NAMES.some(name => visibleRows.includes(name)));
           if (knownIdentityMismatch) {
-            await capture("connector-menu-missing");
-            throw chatGptConnectorUnavailableError(
-              await this.connectorMentionFailure(menuRows, attemptBudget.triggerAttempts, abortSignal),
+            mentionFailure = await this.connectorMentionFailure(
+              menuRows,
+              attemptBudget.triggerAttempts,
+              abortSignal,
             );
+            break;
           }
           if (catalogRefreshAvailable
             && visibleRows.length > 0
@@ -1900,12 +1895,26 @@ export class ChatGptBrowserWorker {
             throw new ChatGptConnectorCatalogStaleError(this.config.appName, attemptBudget.triggerAttempts);
           }
           if (attemptBudget.triggerAttempts >= MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS) {
-            await capture("connector-menu-missing");
-            throw chatGptConnectorUnavailableError(
-              await this.connectorMentionFailure(menuRows, attemptBudget.triggerAttempts, abortSignal),
-            );
+            break;
           }
         }
+      }
+      if (!mentionMenuVisible) {
+        mentionFailure ??= await this.connectorMentionFailure(
+          menuRows,
+          attemptBudget.triggerAttempts,
+          abortSignal,
+        );
+        await this.clearChatGptComposerState(page);
+        const plusResult = typeof page.getByTestId === "function"
+          ? await openChatGptConnectorPlusMenu(page, this.config.appName, abortSignal)
+          : undefined;
+        if (plusResult) {
+          await capture("connector-menu-visible");
+          return await activateConnectorChoice(plusResult);
+        }
+        await capture("connector-menu-missing");
+        throw chatGptConnectorUnavailableError(mentionFailure);
       }
       const exactResultCount = await withBrowserTurnAbort(
         withChatGptBrowserObservationTimeout(appResult.count()),

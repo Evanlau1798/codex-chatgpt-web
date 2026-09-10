@@ -37,20 +37,22 @@ test("opens the connector plus menu and resolves one exact ARIA connector row", 
   expect(calls).toEqual(["plus:focus", "key:Enter", "row:visible", "row:focus"]);
 });
 
-test("production connector selection activates the exact plus-menu row", async () => {
+test("production connector selection uses the plus menu after a conclusive mention mismatch", async () => {
   const calls: string[] = [];
   let selected = false;
+  const timeout = new Error("mention menu unavailable");
+  timeout.name = "TimeoutError";
   const plus = {
     count: async () => 1,
     focus: async () => { calls.push("plus:focus"); },
-    press: async (key: string) => { calls.push(`key:${key}`); },
+    press: async (key: string) => { calls.push(`plus:${key}`); },
   };
   const row = {
     count: async () => 1,
     focus: async () => { calls.push("row:focus"); },
     waitFor: async () => { calls.push("row:visible"); },
     press: async (key: string) => {
-      calls.push(`key:${key}`);
+      calls.push(`row:${key}`);
       selected = true;
     },
   };
@@ -60,11 +62,20 @@ test("production connector selection activates the exact plus-menu row", async (
   const page = {
     getByTestId: () => ({ filter: () => plus }),
     getByRole: () => ({ filter: () => row }),
-    getByText: () => ({}),
-    locator: () => ({ filter: () => ({}) }),
+    getByText: () => ({ exactConnectorLabel: true }),
+    locator: () => ({
+      filter: (options: { visible?: boolean }) => options.visible
+        ? { count: async () => 0 }
+        : { waitFor: async () => { throw timeout; } },
+    }),
     keyboard: { press: async () => {} },
   };
   const selectedComposer = { selected: true };
+  const initialComposer = {
+    fill: async () => { calls.push("mention:clear"); },
+    focus: async () => { calls.push("mention:focus"); },
+    pressSequentially: async () => { calls.push("mention:type"); },
+  };
   const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
     selectConnector(page: unknown): Promise<unknown>;
   }).selectConnector;
@@ -72,17 +83,75 @@ test("production connector selection activates the exact plus-menu row", async (
   const resolved = await selectConnector.call({
     config: { appName: "Codex Native2" },
     ensureConnectorSurface: async () => {},
-    activeComposer: async () => selected ? selectedComposer : { fill: async () => {} },
+    activeComposer: async () => selected ? selectedComposer : initialComposer,
+    clearChatGptComposerState: async () => { calls.push("mention:clear"); },
     connectorIsSelected: async () => selected,
+    connectorMentionRowTitles: async () => ["Codex Native2 DEV"],
+    connectorMentionFailure: async () => "DEV connector mismatch",
     selectedConnectorControl: () => selectedConnector,
   }, page);
   expect(resolved).toBe(selectedComposer);
   expect(calls).toEqual([
+    "mention:clear",
+    "mention:clear", "mention:focus", "mention:type",
+    "mention:clear",
     "plus:focus",
-    "key:Enter",
+    "plus:Enter",
     "row:visible",
     "row:focus",
-    "key:Enter",
+    "row:Enter",
     "selected:visible",
+  ]);
+});
+
+test("personalization proof falls back to the exact plus-menu connector after a clean mention miss", async () => {
+  const calls: string[] = [];
+  const timeout = new Error("mention menu unavailable");
+  timeout.name = "TimeoutError";
+  const composer = {
+    fill: async () => { calls.push("mention:clear"); },
+    focus: async () => { calls.push("mention:focus"); },
+    pressSequentially: async () => { calls.push("mention:type"); },
+    evaluate: async () => ({ text: "@codex", focused: true }),
+  };
+  const plus = {
+    count: async () => 1,
+    focus: async () => { calls.push("plus:focus"); },
+    press: async (key: string) => { calls.push(`plus:${key}`); },
+  };
+  const row = {
+    count: async () => 1,
+    focus: async () => { calls.push("row:focus"); },
+    waitFor: async () => { calls.push("row:visible"); },
+  };
+  const page = {
+    getByTestId: () => ({ filter: () => plus }),
+    getByRole: () => ({ filter: () => row }),
+    getByText: () => ({}),
+    locator: () => ({ filter: () => ({ waitFor: async () => { throw timeout; } }) }),
+    keyboard: { press: async () => {} },
+  };
+  const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
+    selectConnector(page: unknown): Promise<unknown>;
+  }).selectConnector;
+
+  await expect(selectConnector.call({
+    config: { appName: "Codex Native2" },
+    activeComposer: async () => composer,
+    clearChatGptComposerState: async () => { calls.push("proof:cleanup"); },
+    ensureConnectorSurface: async (
+      _page: unknown,
+      _capture: unknown,
+      proveConnectorAccess: (signal: AbortSignal) => Promise<boolean>,
+    ) => {
+      expect(await proveConnectorAccess(new AbortController().signal)).toBeTrue();
+      throw new Error("proof complete");
+    },
+  }, page)).rejects.toThrow("proof complete");
+  expect(calls).toEqual([
+    "mention:clear", "mention:focus", "mention:type",
+    "proof:cleanup",
+    "plus:focus", "plus:Enter", "row:visible", "row:focus",
+    "proof:cleanup",
   ]);
 });

@@ -133,15 +133,10 @@ async function selectConnector(page: Page, appName: string): Promise<Locator> {
   };
   if (await selected().count() === 1) return composer;
 
-  const plusRow = await openChatGptConnectorPlusMenu(page, appName);
-  if (plusRow) {
-    await plusRow.press("Enter", { timeout: 10_000 });
-    return await verifySelected();
-  }
-
   const menuRows = page.locator('.__menu-item[tabindex="0"]');
   const exactRow = menuRows.filter({ has: page.getByText(appName, { exact: true }) });
   let attempt = 0;
+  let mentionMenuVisible = false;
   while (attempt < MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS) {
     attempt += 1;
     composer = await activeComposer(page);
@@ -151,13 +146,24 @@ async function selectConnector(page: Page, appName: string): Promise<Locator> {
     await composer.pressSequentially("@codex", { delay: 25, timeout: 10_000 });
     try {
       await exactRow.waitFor({ state: "visible", timeout: 2_500 });
+      mentionMenuVisible = true;
       break;
     } catch (error) {
       if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
       if (attempt === MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS) {
-        throw new Error(`Markdown restoration probe could not find connector after ${attempt} attempts`);
+        break;
       }
     }
+  }
+  if (!mentionMenuVisible) {
+    await page.keyboard.press("Escape");
+    composer = await activeComposer(page);
+    await clearChatGptComposerInput(composer);
+    await Bun.sleep(CHATGPT_UI_SETTLE_MS);
+    const plusRow = await openChatGptConnectorPlusMenu(page, appName);
+    if (!plusRow) throw new Error(`Markdown restoration probe could not find connector after ${attempt} attempts`);
+    await plusRow.press("Enter", { timeout: 10_000 });
+    return await verifySelected();
   }
   if (await exactRow.count() !== 1) {
     throw new Error("Markdown restoration probe did not find one exact connector row");

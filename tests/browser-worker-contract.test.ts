@@ -632,6 +632,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
     },
   };
   const page = {
+    getByTestId: () => { throw new Error("connector selection opened the plus menu before trying @codex"); },
     getByText: (text: string, options: { exact: boolean }) => {
       expect(text).toBe("Codex Native2");
       expect(options).toEqual({ exact: true });

@@ -106,6 +106,15 @@ describe("lightweight Web contract smoke", () => {
     expect(probe).toContain("CHATGPT_USER_TURN_SELECTOR");
     expect(probe).toContain('pressSequentially("@codex"');
     expect(probe).toContain("MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS");
+    const connectorSelection = probe.slice(
+      probe.indexOf("async function selectConnector"),
+      probe.indexOf("export async function runMarkdownRestorationProbe"),
+    );
+    const connectorMentionAt = connectorSelection.indexOf('pressSequentially("@codex"');
+    const connectorPlusAt = connectorSelection.indexOf("openChatGptConnectorPlusMenu(page, appName)");
+    expect(connectorMentionAt).toBeLessThan(connectorPlusAt);
+    expect(connectorSelection.lastIndexOf("clearChatGptComposerInput(composer)", connectorPlusAt))
+      .toBeGreaterThan(connectorMentionAt);
     expect(probe).toContain("unexpectedly submitted a turn");
     expect(probe).toContain("could not clear connector state");
     expect(probe).toContain("Structured Markdown restoration probe send control remained disabled");
