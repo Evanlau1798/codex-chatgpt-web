@@ -305,8 +305,8 @@ function Acquire-RestartDrain {
         $Drain = Invoke-LifecycleControl 'drain'
         $ResumeRequired = $true
         if ($Drain.status -ne 'ok' -or $Drain.accepting_turns -ne $false -or
-            -not ($Drain.active_http_turns -is [int]) -or
-            -not ($Drain.active_browser_turns -is [int]) -or
+            -not (($Drain.active_http_turns -is [int]) -or ($Drain.active_http_turns -is [long])) -or
+            -not (($Drain.active_browser_turns -is [int]) -or ($Drain.active_browser_turns -is [long])) -or
             [int]$Drain.active_http_turns -lt 0 -or [int]$Drain.active_browser_turns -lt 0) {
             throw 'Server did not acknowledge the drain contract'
         }
