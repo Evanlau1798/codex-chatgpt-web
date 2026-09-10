@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
-import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
+import { ChatGptWebAdapterError, chatGptSessionFailureDisposition } from "../src/adapters/chatgpt-web/adapter-error";
+import { ChatGptFinalAnswerDecisionError } from "../src/adapters/chatgpt-web/final-answer-gate";
 import { submittedBrowserFailure } from "../src/adapters/chatgpt-web/submitted-turn";
+import { decideTunneledDomFallbackFinal } from "../src/adapters/chatgpt-web/tunneled-output-turn";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
 
 function session(manual = false) {
@@ -35,3 +37,17 @@ test.each(["manual_handoff_timeout", "manual_turn_cancelled", "manual_launcher_f
     expect(turn.settledOutcome()).toEqual({ type: "error", error: failure });
   },
 );
+
+test("submitted normalization preserves tunneled fallback retirement", async () => {
+  const turn = session();
+  let original!: ChatGptWebAdapterError;
+  try {
+    await decideTunneledDomFallbackFinal({ answer: " ", attempt: 1 });
+  } catch (error) {
+    expect(error).toBeInstanceOf(ChatGptFinalAnswerDecisionError);
+    original = (error as ChatGptFinalAnswerDecisionError).original as ChatGptWebAdapterError;
+  }
+  const submitted = submittedBrowserFailure(turn, false, original)!;
+  expect(submitted).toBe(original);
+  expect(chatGptSessionFailureDisposition(submitted)).toBe("retire");
+});

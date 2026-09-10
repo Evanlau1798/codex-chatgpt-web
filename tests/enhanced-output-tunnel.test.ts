@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { decideTunneledDomFallbackFinal, runChatGptTunneledOutputTurn } from "../src/adapters/chatgpt-web/tunneled-output-turn";
+import { submitTurnOutput } from "../src/adapters/chatgpt-web/turn-broker-output";
 import type { BrokerTurnOutputEvent } from "../src/adapters/chatgpt-web/turn-broker-protocol";
 import { defaultConfig } from "../src/config";
 import type { CodexParsedRequest } from "../src/types";
@@ -82,6 +83,27 @@ test("tunneled output commits only after Web completion and preserves feed order
   expect(decision).toEqual({ status: "complete", answer: "Complete." });
   expect(projected).toEqual(["commentary:Working.", "reasoning:Verified the boundary.", "final:Complete."]);
   expect(committed).toBe(3);
+});
+
+test("the broker rejects whitespace-only tunneled output", () => {
+  expect(() => submitTurnOutput({ outputEnabled: true } as never, "final", " \n\t"))
+    .toThrow("Codex Native output text is invalid");
+});
+
+test.each(["commentary", "reasoning"] as const)("the broker preserves whitespace-only %s output", kind => {
+  const channel = {
+    outputEnabled: true,
+    safe: false,
+    outputSealed: false,
+    outputEvents: [],
+    outputChars: 0,
+    outputWaiters: new Set(),
+    activities: new Set(),
+    invocations: new Map(),
+    completionCommitted: false,
+    activityRevision: 0,
+  };
+  expect(submitTurnOutput(channel as never, kind, " ").event).toMatchObject({ kind, text: " " });
 });
 
 test("tunneled output acknowledges native tool batches without reading rich DOM text", async () => {
@@ -250,6 +272,17 @@ test("DOM fallback seals completion before checking for pending steering", async
     },
   })).rejects.toMatchObject({ original: { code: "chatgpt_tunneled_fallback_retry_required" } });
   expect(sealed).toBeTrue();
+});
+
+test("empty tunneled DOM fallback retires the surface without recovery", async () => {
+  await expect(decideTunneledDomFallbackFinal({ answer: " \n", attempt: 1 }))
+    .rejects.toMatchObject({
+      original: {
+        code: "chatgpt_completion_evidence_missing",
+        retryable: false,
+        retireSession: true,
+      },
+    });
 });
 
 test("a completion revision race never publishes a stale tunneled final", async () => {

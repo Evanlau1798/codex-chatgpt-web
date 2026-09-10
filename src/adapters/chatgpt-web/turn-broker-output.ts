@@ -12,7 +12,9 @@ export function submitTurnOutput(
 ): { event: BrokerTurnOutputEvent; duplicate: boolean } {
   assertOutputEnabled(channel);
   if (!isOutputKind(kind)) throw new Error("Codex Native output kind is invalid");
-  if (!text || text.length > MAX_OUTPUT_EVENT_CHARS) throw new Error("Codex Native output text is invalid");
+  if (!text || (kind === "final" && !text.trim()) || text.length > MAX_OUTPUT_EVENT_CHARS) {
+    throw new Error("Codex Native output text is invalid");
+  }
   if (channel.safe) throw new Error("Zero Risk requests use the safe completion contract");
   if (channel.outputSealed) throw new Error("Codex Native output arrived after DOM fallback was sealed");
   if (channel.outputFinalSequence !== undefined) {

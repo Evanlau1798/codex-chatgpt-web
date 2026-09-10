@@ -1,6 +1,7 @@
 import type { ChatGptRetryPrompt } from "./steering";
 import type { ChatGptMarkdownBuffer } from "./markdown";
 import type { CapturedChatGptLunaCheckpoint, ChatGptLunaCheckpointStream } from "./rolling-checkpoint";
+import { ChatGptWebAdapterError, chatGptCompletionEvidenceError } from "./adapter-error";
 
 interface CompletionFence {
   commit(revision: number): Promise<boolean>;
@@ -22,6 +23,7 @@ interface FinalAnswerGateOptions {
   };
   abortSignal?: AbortSignal;
   finalizeAnswer?: () => string;
+  emptyAnswerError?: () => Error;
 }
 
 export type FinalAnswerGateDecision =
@@ -34,6 +36,19 @@ export class ChatGptFinalAnswerDecisionError extends Error {
     super(original.message, { cause: original });
     this.name = "ChatGptFinalAnswerDecisionError";
   }
+}
+
+export function recoverableFinalAnswerDecisionError(
+  error: ChatGptFinalAnswerDecisionError,
+  tunneled: boolean,
+): ChatGptWebAdapterError | undefined {
+  const original = error.original;
+  return !error.completionCommitted && !tunneled
+    && original instanceof ChatGptWebAdapterError
+    && original.code === "chatgpt_completion_evidence_missing"
+    && original.retryable
+    ? original
+    : undefined;
 }
 
 export function prepareChatGptFinalAnswer(options: {
@@ -78,6 +93,13 @@ export function prepareChatGptFinalAnswer(options: {
 export async function decideChatGptFinalAnswer(
   options: FinalAnswerGateOptions,
 ): Promise<FinalAnswerGateDecision> {
+  if (!options.answer.trim()) {
+    throw new ChatGptFinalAnswerDecisionError(
+      options.emptyAnswerError?.()
+        ?? chatGptCompletionEvidenceError("ChatGPT completed without a user-facing final answer", false),
+      false,
+    );
+  }
   if (options.completionAdmission && !options.completionAdmission.seal()) {
     return { status: "observe" };
   }

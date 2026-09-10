@@ -58,7 +58,7 @@ test("checkpoint preemption remains bounded when generation starts after the req
   expect(advancePreemptiveRetryStop(started.state, true, 16_000).action).toBe("timed_out");
 });
 
-test("answer decision failures bypass generic browser error retry", () => {
+test("only uncommitted completion-evidence decisions enter generic browser error retry", () => {
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   const catchStart = source.indexOf("} catch (error) {", source.indexOf("const finalOptions ="));
   const decisionFailure = source.indexOf("error instanceof ChatGptFinalAnswerDecisionError", catchStart);
@@ -66,7 +66,8 @@ test("answer decision failures bypass generic browser error retry", () => {
   expect(catchStart).toBeGreaterThan(-1);
   expect(decisionFailure).toBeGreaterThan(catchStart);
   expect(genericRetry).toBeGreaterThan(decisionFailure);
-  expect(source.slice(decisionFailure, genericRetry)).toContain("throw error.original");
+  expect(source.slice(decisionFailure, genericRetry)).toContain("recoverableFinalAnswerDecisionError(error");
+  expect(source.slice(decisionFailure, genericRetry)).toContain("error = recoverable");
 });
 
 test("persistent helper preserves the control-only Native2 connector flag", () => {

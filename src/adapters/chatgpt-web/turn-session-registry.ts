@@ -9,6 +9,7 @@ export class ChatGptTurnSessions {
   private readonly entries = new Map<string, ChatGptTurnSession>();
   private readonly retirements = new Map<string, Promise<void>>();
   private readonly conversationRetirements = new Map<string, Promise<void>>();
+  private readonly conversationReleases = new Map<string, () => Promise<void>>();
   private readonly manualOwnerRetirements = new Map<string, Promise<void>>();
   private readonly nativeOwnerRetirements = new Map<string, Promise<void>>();
   private readonly agentGraph = new ChatGptAgentSessionGraph();
@@ -158,10 +159,8 @@ export class ChatGptTurnSessions {
     conversationKey: string,
     preserved?: { session: ChatGptTurnSession; executionKey: string },
   ): Promise<number> {
-    const pending = this.conversationRetirements.get(conversationKey);
-    if (pending) {
+    for (let pending = this.conversationRetirements.get(conversationKey); pending; pending = this.conversationRetirements.get(conversationKey)) {
       await pending;
-      return 0;
     }
     const owned = [...this.entries].filter(([, session]) => (
       session.conversationKey() === conversationKey
@@ -185,7 +184,9 @@ export class ChatGptTurnSessions {
       }
     }
     if (preserved) this.entries.set(preserved.executionKey, preserved.session);
-    const release = owned.find(([, session]) => session.runtime.release)?.[1].runtime.release;
+    const release = owned.find(([, session]) => session.runtime.release)?.[1].runtime.release
+      ?? this.conversationReleases.get(conversationKey);
+    this.conversationReleases.delete(conversationKey);
     const retirement = trackConversationRetirement(
       this.conversationRetirements,
       conversationKey,
@@ -215,27 +216,59 @@ export class ChatGptTurnSessions {
     const matches = [...this.entries].filter(([, session]) => (
       session.runtime.nativeIdentity?.threadId === threadId && session.runtime.nativeIdentity.turnId === turnId
     ));
-    for (const [key] of matches) this.entries.delete(key);
-    const settlement = Promise.all(matches.map(([key, session]) => this.beginRetirement(key, session, undefined, reason))).then(() => undefined);
+    const retirements: Promise<void>[] = [];
+    for (const [key, session] of matches) {
+      this.entries.delete(key);
+      retirements.push(this.beginRetirement(key, session, undefined, reason));
+    }
+    const settlement = Promise.all(retirements).then(() => undefined);
     return { cancelled: matches.length, settlement };
   }
 
   private beginRetirement(key: string, session: ChatGptTurnSession, preserveConversationKey?: string, reason?: Error): Promise<void> {
     session.cancel(reason);
-    const preserveSurface = preserveConversationKey !== undefined
-      && session.conversationKey() === preserveConversationKey;
-    const release = preserveSurface ? undefined : session.runtime.release;
-    const retirement = trackConversationRetirement(
-      this.retirements, key, session.physicalSettlement.then(async () => { await release?.(); }),
-    );
     const conversationKey = session.conversationKey();
-    if (conversationKey) {
-      trackConversationRetirement(this.conversationRetirements, conversationKey, retirement);
-    }
+    const preserveSurface = preserveConversationKey !== undefined && conversationKey === preserveConversationKey;
+    const surfaceRetirement = conversationKey
+      ? this.retireConversationSurface(conversationKey, session.physicalSettlement, session.runtime.release, preserveSurface)
+      : session.physicalSettlement.then(async () => { await session.runtime.release?.(); });
+    const retirement = trackConversationRetirement(this.retirements, key, surfaceRetirement);
     const manualOwnerKey = session.runtime.manualControl?.ownerKey;
     if (manualOwnerKey) trackConversationRetirement(this.manualOwnerRetirements, manualOwnerKey, retirement);
     const nativeThreadId = session.runtime.nativeIdentity?.threadId;
     if (nativeThreadId) trackConversationRetirement(this.nativeOwnerRetirements, nativeThreadId, retirement);
+    return retirement;
+  }
+
+  private retireConversationSurface(
+    conversationKey: string,
+    settlement: Promise<void>,
+    release: (() => Promise<void>) | undefined,
+    preserveSurface: boolean,
+  ): Promise<void> {
+    if (release && !preserveSurface && !this.conversationReleases.has(conversationKey)) {
+      this.conversationReleases.set(conversationKey, release);
+    }
+    const previous = this.conversationRetirements.get(conversationKey);
+    const barrier = previous
+      ? Promise.allSettled([previous, settlement]).then(results => {
+          const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+          if (failure) throw failure.reason;
+        })
+      : settlement;
+    let retirement!: Promise<void>;
+    retirement = barrier.then(async () => {
+      if (this.conversationRetirements.get(conversationKey) !== retirement || preserveSurface) return;
+      if ([...this.entries.values()].some(owner => owner.conversationKey() === conversationKey)) return;
+      const finalRelease = this.conversationReleases.get(conversationKey);
+      this.conversationReleases.delete(conversationKey);
+      await finalRelease?.();
+    });
+    this.conversationRetirements.set(conversationKey, retirement);
+    const clear = () => {
+      if (this.conversationRetirements.get(conversationKey) === retirement) this.conversationRetirements.delete(conversationKey);
+    };
+    void retirement.then(clear, clear);
     return retirement;
   }
 

@@ -152,19 +152,27 @@ export function decideTunneledDomFallbackFinal(
   const retryPromptForAnswer = options.retryPromptForAnswer;
   return decideChatGptFinalAnswer({
     ...options,
+    emptyAnswerError: () => tunneledFallbackError(
+      "ChatGPT tunneled output fallback completed without a user-facing final answer",
+      "chatgpt_completion_evidence_missing",
+    ),
     retryPromptForAnswer: retryPromptForAnswer ? async (answer, attempt) => {
       if (await retryPromptForAnswer(answer, attempt) === undefined) return undefined;
-      throw new ChatGptWebAdapterError(
+      throw tunneledFallbackError(
         "ChatGPT tunneled output fallback cannot safely complete while a same-surface retry is pending",
-        {
-          status: 502,
-          errorType: "server_error",
-          code: "chatgpt_tunneled_fallback_retry_required",
-          retryable: false,
-          retireSession: true,
-        },
+        "chatgpt_tunneled_fallback_retry_required",
       );
     } : undefined,
+  });
+}
+
+function tunneledFallbackError(message: string, code: string): ChatGptWebAdapterError {
+  return new ChatGptWebAdapterError(message, {
+    status: 502,
+    errorType: "server_error",
+    code,
+    retryable: false,
+    retireSession: true,
   });
 }
 

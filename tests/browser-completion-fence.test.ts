@@ -8,6 +8,8 @@ import { defaultBrokerEndpoint } from "../src/config";
 import {
   ChatGptFinalAnswerDecisionError,
   decideChatGptFinalAnswer,
+  prepareChatGptFinalAnswer,
+  recoverableFinalAnswerDecisionError,
 } from "../src/adapters/chatgpt-web/final-answer-gate";
 import { ChatGptSteeringFeed } from "../src/adapters/chatgpt-web/steering-feed";
 import { ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
@@ -171,6 +173,41 @@ test("finalizes output only after the completion fence commits", async () => {
     finalizeAnswer: () => { order.push("finalize"); return "final"; },
   })).toEqual({ status: "complete", answer: "final" });
   expect(order).toEqual(["commit", "finalize"]);
+});
+
+test("an empty DOM answer fails before browser completion can commit", async () => {
+  let commits = 0;
+  const candidate = prepareChatGptFinalAnswer({
+    markdown: { preview: () => "", finish: () => ({ markdown: "", delta: "" }) } as never,
+    visibleText: "",
+    plainTextFallback: "",
+    emitMarkdownDelta: () => {},
+    onTextDelta: () => {},
+    onMissingCheckpoint: () => {},
+    normalizeMarkdownError: error => { throw error; },
+  });
+  await expect(decideChatGptFinalAnswer({
+    answer: candidate.preview,
+    attempt: 1,
+    completionFence: { commit: async () => { commits += 1; return true; } },
+    completionFenceRevision: 1,
+    finalizeAnswer: candidate.finalize,
+  })).rejects.toMatchObject({
+    original: { code: "chatgpt_completion_evidence_missing", retryable: true },
+    completionCommitted: false,
+  });
+  expect(commits).toBe(0);
+});
+
+test("only ordinary DOM completion evidence enters same-surface recovery", async () => {
+  let failure!: ChatGptFinalAnswerDecisionError;
+  try {
+    await decideChatGptFinalAnswer({ answer: " ", attempt: 1 });
+  } catch (error) {
+    failure = error as ChatGptFinalAnswerDecisionError;
+  }
+  expect(recoverableFinalAnswerDecisionError(failure, false) as Error | undefined).toBe(failure.original);
+  expect(recoverableFinalAnswerDecisionError(failure, true)).toBeUndefined();
 });
 
 test("a steering admission invalidates an in-flight completion revision", async () => {

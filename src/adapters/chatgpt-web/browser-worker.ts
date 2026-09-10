@@ -52,7 +52,12 @@ import {
 import type { ChatGptRetryPrompt } from "./steering";
 import type { BrokerTurnOutputEvent } from "./turn-broker-protocol";
 import { decideTunneledDomFallbackFinal, runChatGptTunneledOutputTurn } from "./tunneled-output-turn";
-import { ChatGptFinalAnswerDecisionError, decideChatGptFinalAnswer, prepareChatGptFinalAnswer } from "./final-answer-gate";
+import {
+  ChatGptFinalAnswerDecisionError,
+  decideChatGptFinalAnswer,
+  prepareChatGptFinalAnswer,
+  recoverableFinalAnswerDecisionError,
+} from "./final-answer-gate";
 import { withAbort as withBrowserTurnAbort } from "./runtime-lifecycle";
 import { ChatGptTurnLatencyDiagnostics } from "./turn-latency";
 import {
@@ -3847,7 +3852,9 @@ export class ChatGptBrowserWorker {
           this.finalizingRuns.delete(turn.traceId);
           if (error instanceof ChatGptFinalAnswerDecisionError) {
             if (!error.completionCommitted) turn.finalAnswerAdmission?.reopen();
-            throw error.original;
+            const recoverable = recoverableFinalAnswerDecisionError(error, turn.tunneledOutput !== undefined);
+            if (!recoverable) throw error.original;
+            error = recoverable;
           }
           turn.finalAnswerAdmission?.reopen();
           const failure = error instanceof Error ? error : new Error(String(error));
