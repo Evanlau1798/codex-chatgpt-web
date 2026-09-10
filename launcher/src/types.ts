@@ -12,6 +12,7 @@ export interface LauncherState {
   autoStart: boolean;
   bridgeEnabled: boolean;
   useEnhancedWebSessionMode: boolean;
+  useEnhancedOutputTunnel: boolean;
   experimentalBiggerContext: boolean;
   experimentalNoAutoCompact: boolean;
   keepRunningOnClose: boolean;
@@ -153,6 +154,7 @@ export interface LauncherApi {
   cancelTurns(): Promise<{ stdout: string }>;
   setBridgeEnabled(enabled: boolean): Promise<LauncherState>;
   setUseEnhancedWebSessionMode(enabled: boolean): Promise<LauncherState>;
+  setUseEnhancedOutputTunnel(enabled: boolean): Promise<LauncherState>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setExperimentalNoAutoCompact(enabled: boolean): Promise<LauncherState>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;

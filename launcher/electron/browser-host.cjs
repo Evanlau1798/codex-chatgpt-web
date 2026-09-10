@@ -619,8 +619,9 @@ class BrowserHost {
     return true;
   }
 
-  releaseRetainedTurnTabs() {
-    const retained = [...this.turnTabs.values()].filter(tab => tab.status === "ready");
+  releaseRetainedTurnTabs(interactionMode) {
+    const retained = [...this.turnTabs.values()].filter(tab => tab.status === "ready"
+      && (!interactionMode || tab.interactionMode === interactionMode));
     for (const tab of retained) this.removeTurnTab(tab, false);
     return retained.length;
   }

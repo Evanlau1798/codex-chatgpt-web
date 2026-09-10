@@ -266,6 +266,7 @@ export async function responseRequest(
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
         "X-Accel-Buffering": "no",
+        "X-Reasoning-Included": "true",
       },
     });
   }
@@ -280,7 +281,7 @@ export async function responseRequest(
     ...(compaction ? { compaction: true } : {}),
   });
   rememberCompletedResponse(json);
-  return Response.json(json);
+  return Response.json(json, { headers: { "X-Reasoning-Included": "true" } });
 }
 
 export async function compactRequest(req: Request, config: AppConfig, adapterFactory: ChatGptWebAdapterFactory = createChatGptWebAdapter, options: Pick<ResponseRequestOptions, "onTurnIdentity"> = {}): Promise<Response> {

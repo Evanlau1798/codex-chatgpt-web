@@ -128,6 +128,14 @@ The pasted task carries one opaque `request_id` for routing concurrent requests.
 sequencing lives in the Zero Risk MCP server metadata, not in user-authored imperative text; the
 per-tab nonce used to validate the Launcher confirmation never leaves the local runtime.
 
+Enhanced Automatic tool turns can route user-visible commentary, reasoning summaries, and one final
+answer through a hidden control wire on the existing Native2 connector. The broker orders these
+in-memory events and rejects conflicting or post-final output. Browser completion still requires all
+tools to settle, Web generation to stop, and the current completion revision to commit. This successful
+path does not continuously traverse rich response Markdown. If no tunneled final arrives, the worker
+validates the response already present on the same page without retrying or resubmitting the prompt.
+Zero Risk, Luna checkpoints, and compaction retain their dedicated output contracts.
+
 The appended models advertise the authenticated account's context window and a ten-percent
 auto-compaction reserve. Usage is counted with the GPT-5 tokenizer plus fixed platform/image
 reserves, rather than inferred from character length. The ChatGPT composer also has an independent

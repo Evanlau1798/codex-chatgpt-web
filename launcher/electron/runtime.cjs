@@ -20,6 +20,7 @@ const { redactText } = require("./logging.cjs");
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require("./process-tree.cjs");
 const { inspectClaudeIntegrationStatus } = require("./claude-integration-status.cjs");
 const { assertBiggerContextChangeAllowed, normalizeContextModes } = require("./context-mode.cjs");
+const { setRuntimeBooleanSetting } = require("./runtime-boolean-setting.cjs");
 
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
@@ -1000,6 +1001,12 @@ class RuntimeHost {
     } finally {
       this.lifecycleOperation = null;
     }
+  }
+
+  setUseEnhancedOutputTunnel(enabled) {
+    return setRuntimeBooleanSetting(this, "useEnhancedOutputTunnel", enabled, {
+      name: "enhanced-output-tunnel-change", label: "Enhanced output tunneling",
+    });
   }
 
   mcpConnectorName() {

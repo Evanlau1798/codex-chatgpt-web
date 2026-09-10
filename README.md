@@ -171,6 +171,13 @@ key while current turn-local context remains in the suffix; clients without that
 exact system-instruction change. A compact also starts a new conversation epoch; old turn tokens
 and completed tool calls are not replayed.
 
+Enhanced Automatic tool turns enable **Tunnel Web agent output** by default. User-visible progress,
+reasoning summaries, and the final answer return through the existing Native2 tunnel, while ChatGPT
+still displays its normal tool cards. The bridge watches only turn status on the successful path; if
+the tunnel omits a final answer, it validates the already-finished response in the same page without
+resubmitting the prompt. Disabling Enhanced or selecting Zero Risk preserves the setting but disables
+this transport.
+
 ### Bigger Context (experimental)
 
 This separately controlled feature can carry a request larger than one measured ChatGPT

@@ -154,6 +154,11 @@ Zero Risk 保留本地 Responses bridge 与完整 Codex harness，但不会读�
 没有该稳定身分的 client 在 system instructions 改变时仍会建立新浏览器对话。每次 compact
 也会建立新 epoch；旧 turn token 与已完成工具调用不会被重播。
 
+Enhanced 自动化工具回合默认启用 **透过 MCP Tunnel 传送 Web Agent 输出**。使用者可见的进度、
+reasoning 摘要与最终答案会通过现有 Native2 tunnel 返回，ChatGPT 仍会正常显示工具卡。成功路径
+只持续观察回合状态；若 tunnel 没有提供最终答案，Bridge 会在同一页面验证已经结束的回应，不会
+重新发送提示。关闭 Enhanced 或切换至 Zero Risk 时会保留偏好，但停用这条传输路径。
+
 ### 更大上下文（实验性）
 
 此功能使用独立开关，可传输超过单条 ChatGPT 消息实测上限的请求，同时确保每次 composer

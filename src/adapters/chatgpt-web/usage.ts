@@ -49,7 +49,8 @@ function conservativeTextTokens(text: string, modelId: string): number {
 export function estimateChatGptWebInputTokens(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
-  options: Pick<CompileChatGptWebPromptOptions, "nativeControlConnector" | "experimentalMultipartParts"> = {},
+  options: Pick<CompileChatGptWebPromptOptions,
+    "nativeControlConnector" | "useEnhancedOutputTunnel" | "experimentalMultipartParts"> = {},
 ): number {
   const manual = isChatGptWebZeroRiskBackendModel(parsed.modelId);
   const mode = manual
@@ -163,8 +164,11 @@ export function estimateChatGptWebUsage(
   evidence: ChatGptWebRoundEvidence,
   capabilities: ChatGptWebCapabilities,
   experimentalBiggerContext = false,
+  promptOptions: Pick<CompileChatGptWebPromptOptions,
+    "nativeControlConnector" | "useEnhancedOutputTunnel"> = {},
 ): CodexUsage {
   const inputTokens = estimateChatGptWebInputTokens(parsed, capabilities, {
+    ...promptOptions,
     experimentalMultipartParts: experimentalBiggerContext
       ? resolveBiggerContextMultipartParts(parsed, capabilities)
       : undefined,

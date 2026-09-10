@@ -5,7 +5,7 @@ import { withStallTimeout } from "../../stall-timeout";
 import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
 import type { ProviderAdapter } from "../base";
 import { ChatGptWebAdapterError, chatGptSessionFailureDisposition } from "./adapter-error";
-import { chatGptAdapterRuntimeConfig } from "./adapter-runtime-config";
+import { chatGptAdapterRuntimeConfig, chatGptAutomaticUsagePromptOptions } from "./adapter-runtime-config";
 import { createChatGptRuntimeStarter, type ChatGptRuntimeWorker } from "./adapter-runtime-factory";
 import { ChatGptBrowserWorker } from "./browser-worker";
 import { codexToolResultsById } from "./compaction-handoff";
@@ -58,13 +58,15 @@ export function createChatGptWebAdapter(
   const worker = dependencies.worker ?? ChatGptBrowserWorker.forProvider(provider);
   const broker = TurnBroker.forSocket(brokerSocketPath(provider));
   const brokerOwner = dependencies.broker ?? broker;
+  const runtimeConfig = chatGptAdapterRuntimeConfig(provider);
   const {
     timeoutMs,
     useEnhancedWebSessionMode,
+    useEnhancedOutputTunnel,
     experimentalBiggerContext,
     configuredCapabilities,
     executionNamespace,
-  } = chatGptAdapterRuntimeConfig(provider);
+  } = runtimeConfig;
   const environmentStore = new ChatGptThreadEnvironmentStore(provider.chatgptWeb?.threadEnvironmentStatePath ? resolve(expandUserPath(provider.chatgptWeb.threadEnvironmentStatePath)) : undefined);
   const lunaCheckpointStore = new ChatGptLunaCheckpointStore(provider.chatgptWeb?.lunaCheckpointStatePath ? resolve(expandUserPath(provider.chatgptWeb.lunaCheckpointStatePath)) : undefined);
   const automaticStartRuntime = createChatGptRuntimeStarter({
@@ -74,12 +76,14 @@ export function createChatGptWebAdapter(
     brokerOwner,
     timeoutMs,
     useEnhancedWebSessionMode,
+    useEnhancedOutputTunnel,
     experimentalBiggerContext,
     configuredCapabilities,
     executionNamespace,
     lunaCheckpointStore,
   });
   const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
+  const automaticUsagePromptOptions = chatGptAutomaticUsagePromptOptions(runtimeConfig, manualInteraction);
   const startRuntime = manualInteraction
     ? createZeroRiskRuntimeStarter({
         provider,
@@ -266,7 +270,8 @@ export function createChatGptWebAdapter(
             );
             emitBrowserCompletion(
               { ...settled, answer },
-              estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning }, turnCapabilities, experimentalBiggerContext),
+              estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning }, turnCapabilities,
+                experimentalBiggerContext, automaticUsagePromptOptions),
               emit,
             );
             chatGptWebTurnRetryPolicy.clear(retryKey);
@@ -289,7 +294,9 @@ export function createChatGptWebAdapter(
                 if (!steering) {
                   const reasoning = session.reasoningForOutstandingReplay();
                   replayEvents(session.eventsForOutstandingReplay(), emit);
-                  emitToolBatch(outstanding, estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning, toolRequests: outstanding }, turnCapabilities, experimentalBiggerContext), emit);
+                  emitToolBatch(outstanding, estimateChatGptWebUsage(runtimeUsageInput(parsed, session),
+                    { reasoning, toolRequests: outstanding }, turnCapabilities, experimentalBiggerContext,
+                    automaticUsagePromptOptions), emit);
                   return;
                 }
               } else {
@@ -406,7 +413,8 @@ export function createChatGptWebAdapter(
                 );
                 emitBrowserCompletion(
                   { ...next.outcome, answer },
-                  estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning: roundReasoning }, turnCapabilities, experimentalBiggerContext),
+                  estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { answer, reasoning: roundReasoning },
+                    turnCapabilities, experimentalBiggerContext, automaticUsagePromptOptions),
                   emit,
                 );
                 session.setFinalReasoning(roundReasoning);
@@ -421,7 +429,9 @@ export function createChatGptWebAdapter(
               session.setOutstandingEvents(roundReasoning, roundEvents);
               emitToolBatch(
                 next.requests,
-                estimateChatGptWebUsage(runtimeUsageInput(parsed, session), { reasoning: roundReasoning, toolRequests: next.requests }, turnCapabilities, experimentalBiggerContext),
+                estimateChatGptWebUsage(runtimeUsageInput(parsed, session),
+                  { reasoning: roundReasoning, toolRequests: next.requests }, turnCapabilities,
+                  experimentalBiggerContext, automaticUsagePromptOptions),
                 emit,
               );
               return;

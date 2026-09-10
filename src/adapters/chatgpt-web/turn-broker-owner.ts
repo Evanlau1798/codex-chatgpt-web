@@ -1,11 +1,17 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { callTurnBroker } from "./turn-broker-client";
-import type { BrokerRequest, BrokerToolRequest, BrokerToolResult } from "./turn-broker-protocol";
+import type { BrokerRequest, BrokerToolRequest, BrokerToolResult, BrokerTurnOutputEvent } from "./turn-broker-protocol";
 import { assertSurfaceNonce } from "./turn-broker-safe";
 
 export interface TurnBrokerOwner {
-  register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId?: string): Promise<string>;
+  register(
+    environment: ChatGptTurnEnvironment,
+    ttlMs?: number,
+    traceId?: string,
+    onProgress?: () => void,
+    outputEnabled?: boolean,
+  ): Promise<string>;
   registerSafe(environment: ChatGptTurnEnvironment, surfaceNonce: string, ttlMs?: number, traceId?: string): Promise<string>;
   updateEnvironment(token: string, environment: ChatGptTurnEnvironment): void | Promise<void>;
   confirmSafeTurnSent(token: string, surfaceNonce: string): { confirmed: true; duplicate: boolean } | Promise<{ confirmed: true; duplicate: boolean }>;
@@ -17,13 +23,22 @@ export interface TurnBrokerOwner {
   compactionDeliveryCount(token: string): number | Promise<number>;
   beginCompletionFence(token: string): number | undefined | Promise<number | undefined>;
   commitCompletionFence(token: string, revision: number): boolean | Promise<boolean>;
+  nextOutput(token: string, afterSequence: number, signal?: AbortSignal): Promise<BrokerTurnOutputEvent>;
+  resetOutput(token: string, finalSequence: number): void | Promise<void>;
+  sealOutput(token: string, afterSequence: number): boolean | Promise<boolean>;
   waitForRetirement(token: string, signal?: AbortSignal): Promise<void>;
   revoke(token: string, reason?: Error): void | Promise<void>;
 }
 
 export interface ExternalOwnerDispatchTarget extends TurnBrokerOwner {
   accepting(): boolean;
-  registerExternal(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId?: string): Promise<string>;
+  registerExternal(
+    environment: ChatGptTurnEnvironment,
+    ttlMs?: number,
+    traceId?: string,
+    onProgress?: () => void,
+    outputEnabled?: boolean,
+  ): Promise<string>;
   registerExternalSafe(environment: ChatGptTurnEnvironment, surfaceNonce: string, ttlMs?: number, traceId?: string): Promise<string>;
 }
 
@@ -33,14 +48,19 @@ export function dispatchExternalOwnerRequest(
   signal?: AbortSignal,
 ): unknown | Promise<unknown> {
   if (request.method === "owner_status") {
-    return { protocolVersion: 5, acceptingExternalOwners: target.accepting() };
+    return { protocolVersion: 6, acceptingExternalOwners: target.accepting() };
   }
   if (request.method === "owner_register") {
     const environment = ownerEnvironment(request.environment);
     if (request.traceId !== undefined && !/^[A-Za-z0-9_-]{6,128}$/.test(request.traceId)) {
       throw new Error("turn owner trace id is invalid");
     }
-    return target.registerExternal(environment, request.ttlMs, request.traceId).then(token => ({ token }));
+    if (request.outputEnabled !== undefined && typeof request.outputEnabled !== "boolean") {
+      throw new Error("turn owner output capability is invalid");
+    }
+    return target.registerExternal(
+      environment, request.ttlMs, request.traceId, undefined, request.outputEnabled === true,
+    ).then(token => ({ token }));
   }
   if (request.method === "owner_register_safe") {
     const environment = ownerEnvironment(request.environment);
@@ -97,6 +117,24 @@ export function dispatchExternalOwnerRequest(
     return Promise.resolve(target.commitCompletionFence(request.token, request.revision!))
       .then(committed => ({ committed }));
   }
+  if (request.method === "owner_next_output") {
+    if (!Number.isSafeInteger(request.afterSequence) || request.afterSequence! < 0) {
+      throw new Error("turn output sequence is invalid");
+    }
+    return target.nextOutput(request.token, request.afterSequence!, signal).then(event => ({ event }));
+  }
+  if (request.method === "owner_reset_output") {
+    if (!Number.isSafeInteger(request.outputSequence) || request.outputSequence! <= 0) {
+      throw new Error("turn output reset sequence is invalid");
+    }
+    return Promise.resolve(target.resetOutput(request.token, request.outputSequence!)).then(() => ({ reset: true }));
+  }
+  if (request.method === "owner_seal_output") {
+    if (!Number.isSafeInteger(request.afterSequence) || request.afterSequence! < 0) {
+      throw new Error("turn output seal sequence is invalid");
+    }
+    return Promise.resolve(target.sealOutput(request.token, request.afterSequence!)).then(sealed => ({ sealed }));
+  }
   if (request.method === "owner_wait_retirement") {
     return target.waitForRetirement(request.token, signal).then(() => ({ retired: true }));
   }
@@ -152,7 +190,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
         + ` (${error instanceof Error ? error.message : String(error)})`,
       );
     }
-    if (status.protocolVersion !== 5) {
+    if (status.protocolVersion !== 6) {
       throw new Error(`Unsupported DEV turn-owner protocol version: ${String(status.protocolVersion)}`);
     }
     if (status.acceptingExternalOwners !== true) {
@@ -160,12 +198,19 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     }
   }
 
-  async register(environment: ChatGptTurnEnvironment, ttlMs?: number, traceId = "unknown"): Promise<string> {
+  async register(
+    environment: ChatGptTurnEnvironment,
+    ttlMs?: number,
+    traceId = "unknown",
+    _onProgress?: () => void,
+    outputEnabled = false,
+  ): Promise<string> {
     const response = await callTurnBroker<{ token?: unknown }>(this.socketPath, {
       method: "owner_register",
       environment,
       ...(ttlMs !== undefined ? { ttlMs } : {}),
       ...(traceId !== "unknown" ? { traceId } : {}),
+      ...(outputEnabled ? { outputEnabled: true } : {}),
     });
     if (typeof response.token !== "string" || !response.token.startsWith("turn_")) {
       throw new Error("DEV turn owner received an invalid broker token");
@@ -293,7 +338,40 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     return response.committed;
   }
 
+  async nextOutput(token: string, afterSequence: number, signal?: AbortSignal): Promise<BrokerTurnOutputEvent> {
+    const response = await callTurnBroker<{ event?: unknown }>(this.socketPath, {
+      method: "owner_next_output", token, afterSequence,
+    }, null, signal);
+    return assertBrokerTurnOutputEvent(response.event);
+  }
+
+  async resetOutput(token: string, finalSequence: number): Promise<void> {
+    const response = await callTurnBroker<{ reset?: unknown }>(this.socketPath, {
+      method: "owner_reset_output", token, outputSequence: finalSequence,
+    });
+    if (response.reset !== true) throw new Error("DEV turn owner received an invalid output reset result");
+  }
+
+  async sealOutput(token: string, afterSequence: number): Promise<boolean> {
+    const response = await callTurnBroker<{ sealed?: unknown }>(this.socketPath, {
+      method: "owner_seal_output", token, afterSequence,
+    });
+    if (typeof response.sealed !== "boolean") throw new Error("DEV turn owner received an invalid output seal result");
+    return response.sealed;
+  }
+
   async revoke(token: string, _reason?: Error): Promise<void> {
     await callTurnBroker(this.socketPath, { method: "owner_revoke", token });
   }
+}
+
+function assertBrokerTurnOutputEvent(value: unknown): BrokerTurnOutputEvent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("DEV turn owner received invalid output");
+  const event = value as Partial<BrokerTurnOutputEvent>;
+  if (!Number.isSafeInteger(event.sequence) || event.sequence! <= 0
+    || !["commentary", "reasoning", "final"].includes(String(event.kind))
+    || typeof event.text !== "string" || event.text.length === 0) {
+    throw new Error("DEV turn owner received invalid output");
+  }
+  return event as BrokerTurnOutputEvent;
 }

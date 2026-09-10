@@ -17,6 +17,7 @@ import {
 } from "./rolling-checkpoint";
 import { claudeSteeringMarker } from "./tool-result-delivery";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
+import { CODEX_OUTPUT_CONTROL_PROMPT, shouldUseEnhancedOutputTunnel } from "./native-output-control";
 import {
   CHATGPT_MAX_INPUT_IMAGES,
   countChatGptContextImages,
@@ -73,6 +74,8 @@ export interface CompileChatGptWebPromptOptions {
   experimentalMultipartParts?: ChatGptWebMultipartPartCount;
   /** Native2 is attached only for bridge-authenticated control operations, not outer work tools. */
   nativeControlConnector?: boolean;
+  /** Enhanced Automatic turns report visible output through the existing Native2 connector. */
+  useEnhancedOutputTunnel?: boolean;
   /** User-controlled Zero Risk transport never reads or mutates the ChatGPT DOM. */
   manualControl?: true;
 }
@@ -156,6 +159,15 @@ export function compileChatGptWebPrompt(
   const nativeControlConnector = options?.nativeControlConnector === true;
   const multipartParts = options?.experimentalMultipartParts;
   const multipartEnabled = multipartParts !== undefined;
+  const tunneledOutput = shouldUseEnhancedOutputTunnel(parsed, {
+    requested: nativeControlConnector && options?.useEnhancedOutputTunnel === true,
+    localTools,
+    toolCount: toolPolicy.tools.length,
+    luna: parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID,
+    manualControl,
+    captureLunaCheckpoint,
+    multipart: multipartEnabled,
+  });
   if (manualControl) {
     if (!capabilities.localToolsEnabled) throw new Error("ChatGPT Zero Risk requires the Full Codex harness");
     if (captureLunaCheckpoint || multipartEnabled) {
@@ -278,6 +290,7 @@ export function compileChatGptWebPrompt(
       ]
       : []),
   ];
+  const tunneledOutputContract = tunneledOutput ? [...CODEX_OUTPUT_CONTROL_PROMPT] : [];
   const checkpointContract = captureLunaCheckpoint
     ? [
       "After the complete user-facing answer, append one private rolling task checkpoint for the next Luna turn.",
@@ -339,7 +352,9 @@ export function compileChatGptWebPrompt(
       dropped: Math.max(0, countChatGptContextImages(sourceMessages) - CHATGPT_MAX_INPUT_IMAGES),
     };
     const messages = sourceMessages.map(message => messageEnvelope(message, images, budget));
-    const answerContract = captureLunaCheckpoint
+    const answerContract = tunneledOutput
+      ? "Complete this response only through the bound Codex Native output control."
+      : captureLunaCheckpoint
       ? "Return the complete answer that the outer Codex task should receive, then the required private checkpoint tail."
       : "Return only the answer that the outer Codex task should receive.";
     if (multipartEnabled) {
@@ -367,6 +382,7 @@ export function compileChatGptWebPrompt(
           ...sharedContract,
           ...transportContract,
           ...outputControlContract,
+          ...tunneledOutputContract,
           ...manualControlContract,
           ...checkpointContract,
           answerContract,
@@ -414,6 +430,7 @@ export function compileChatGptWebPrompt(
       ...sharedContract,
       ...transportContract,
       ...outputControlContract,
+      ...tunneledOutputContract,
       ...manualControlContract,
       ...checkpointContract,
       answerContract,

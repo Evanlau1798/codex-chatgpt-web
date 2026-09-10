@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import { estimateCompiledChatGptWebInputTokens } from "../src/adapters/chatgpt-web/input-tokens";
 import { CHATGPT_WEB_LUNA_MODEL_ID } from "../src/adapters/chatgpt-web/model";
-import { chatGptUsageInputForRound, estimateChatGptWebInputTokens } from "../src/adapters/chatgpt-web/usage";
+import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
+import { chatGptUsageInputForRound, estimateChatGptWebInputTokens, estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
 import type { CodexParsedRequest } from "../src/types";
 
 const capabilities = { localToolsEnabled: false, solAvailable: true, proAvailable: true };
@@ -27,4 +29,25 @@ test("ordinary tool rounds report the latest Codex context while Luna keeps its 
 
   expect(chatGptUsageInputForRound(latest, prepared)).toBe(latest);
   expect(chatGptUsageInputForRound({ ...latest, modelId: CHATGPT_WEB_LUNA_MODEL_ID }, prepared)).toBe(prepared);
+});
+
+test("usage includes the Native2 and enhanced output tunnel contracts actually sent", () => {
+  const parsed = request("Inspect the repository.");
+  parsed.context.systemPrompt = ["Follow the task instructions."];
+  parsed.context.tools = [{ name: "Read", description: "Read a file", parameters: {} }];
+  const toolCapabilities = { ...capabilities, localToolsEnabled: true };
+  const token = "turn_12345678901234567890123456789012";
+  const actual = compileChatGptWebPrompt(parsed, toolCapabilities, token, {
+    nativeControlConnector: true,
+    useEnhancedOutputTunnel: true,
+  });
+  const usage = estimateChatGptWebUsage(
+    parsed,
+    {},
+    toolCapabilities,
+    false,
+    { nativeControlConnector: true, useEnhancedOutputTunnel: true },
+  );
+
+  expect(usage.inputTokens).toBe(estimateCompiledChatGptWebInputTokens(actual, parsed.modelId, [token]));
 });

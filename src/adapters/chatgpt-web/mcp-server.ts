@@ -24,6 +24,7 @@ import {
   isGatewayAgentWaitTool,
 } from "./mcp-gateway";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
+import { CODEX_OUTPUT_CONTROL_WIRE_NAME, submitNativeOutputControl } from "./native-output-control";
 import { callTurnBroker } from "./turn-broker";
 import { invokeChatGptMcpTool } from "./mcp-invocation";
 import { brokerMcpResult as asMcpResult, mcpJsonResult as result } from "./mcp-results";
@@ -428,6 +429,11 @@ export async function runChatGptMcpServer(options: {
     async (toolInput, extra) => {
       const { wire_name, arguments: args, input } = toolInput;
       const requestId = turnReference(contract, toolInput);
+      if (contract === "native" && wire_name === CODEX_OUTPUT_CONTROL_WIRE_NAME) {
+        return result(await submitNativeOutputControl(
+          options.brokerSocketPath, requestId, args, input, extra.signal,
+        ));
+      }
       if (contract === "native" && wire_name === CODEX_COMPACTION_CONTROL_WIRE_NAME) {
         if (input !== undefined) throw new Error("Compaction control handoff does not accept freeform input");
         const handoffId = args?.handoff_id;

@@ -8,13 +8,15 @@ import { startTurnBrokerServer } from "./turn-broker-server";
 import type { TurnBrokerOwner } from "./turn-broker-owner";
 import {
   environmentIdentity,
+  notifyCompactionDelivery,
   steeringResult,
   type ToolWaiter,
   type TurnChannel,
 } from "./turn-broker-state";
-import { opaqueId, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker-protocol";
+import { opaqueId, type BrokerToolRequest, type BrokerToolResult, type BrokerTurnOutputEvent } from "./turn-broker-protocol";
 import { TurnContextStore } from "./turn-context-store";
 import { beginTurnCompletionFence, commitTurnCompletionFence } from "./turn-broker-completion";
+import { rejectTurnOutputWaiters, resetTurnOutput, sealTurnOutput, waitForTurnOutput } from "./turn-broker-output";
 import { rejectTurnChannel, takeQueuedTools } from "./turn-broker-queue";
 import {
   assertSafeHarnessRunning,
@@ -88,6 +90,7 @@ export class TurnBroker implements TurnBrokerOwner {
     ttlMs?: number,
     traceId = "unknown",
     onProgress?: () => void,
+    outputEnabled = false,
     externalOwner = false,
     handlePrefix = "turn",
   ): Promise<string> {
@@ -103,6 +106,7 @@ export class TurnBroker implements TurnBrokerOwner {
     const channel: TurnChannel = {
       traceId,
       externalOwner,
+      outputEnabled,
       ...(onProgress ? { onProgress } : {}),
       environment: {
         ...environment,
@@ -118,6 +122,11 @@ export class TurnBroker implements TurnBrokerOwner {
       completionCommitted: false,
       compactionRequested: false,
       compactionDeliveryCount: 0,
+      outputEvents: [],
+      outputChars: 0,
+      outputWaiters: new Set(),
+      outputResumeAfter: 0,
+      outputSealed: false,
       retirementWaiters: new Set(),
     };
     this.channels.set(token, channel);
@@ -130,7 +139,7 @@ export class TurnBroker implements TurnBrokerOwner {
     traceId = "unknown", externalOwner = false,
   ): Promise<string> {
     const safe = createSafeTurn(surfaceNonce);
-    const token = await this.register(environment, ttlMs, traceId, undefined, externalOwner, "request");
+    const token = await this.register(environment, ttlMs, traceId, undefined, false, externalOwner, "request");
     const channel = this.channels.get(token);
     if (!channel) throw new Error("Zero Risk turn registration was revoked before initialization");
     channel.safe = safe;
@@ -258,7 +267,7 @@ export class TurnBroker implements TurnBrokerOwner {
     return waitForSafeState(channel.retirementWaiters, signal, "turn retirement wait aborted");
   }
 
-  requestCompaction(token: string, queuedResult: BrokerToolResult): number {
+  requestCompaction(token: string, queuedResult: BrokerToolResult, onDelivered?: () => void): number {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
@@ -268,6 +277,7 @@ export class TurnBroker implements TurnBrokerOwner {
     }
     channel.compactionRequested = true;
     channel.compactionResult = structuredClone(queuedResult);
+    channel.onCompactionDelivered = onDelivered;
     if (channel.batchTimer) {
       clearTimeout(channel.batchTimer);
       channel.batchTimer = undefined;
@@ -280,6 +290,7 @@ export class TurnBroker implements TurnBrokerOwner {
       channel.compactionDeliveryCount += 1;
       invocation.resolve(structuredClone(queuedResult));
     }
+    if (queued.length > 0) notifyCompactionDelivery(channel);
     return queued.length;
   }
 
@@ -287,6 +298,27 @@ export class TurnBroker implements TurnBrokerOwner {
     const channel = this.channels.get(token);
     if (!channel) throw new Error("Cannot read compaction delivery after the turn capability retired");
     return channel.compactionDeliveryCount;
+  }
+
+  nextOutput(token: string, afterSequence: number, signal?: AbortSignal): Promise<BrokerTurnOutputEvent> {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    return waitForTurnOutput(channel, afterSequence, signal);
+  }
+
+  resetOutput(token: string, finalSequence: number): void {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    resetTurnOutput(channel, finalSequence);
+  }
+
+  sealOutput(token: string, afterSequence: number): boolean {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    return sealTurnOutput(channel, afterSequence);
   }
 
   startSafeTurn(requestId: string): { started: true; duplicate: boolean } {
@@ -363,6 +395,7 @@ export class TurnBroker implements TurnBrokerOwner {
     revokeSafeTurn(channel, reason);
     this.retire(this.retiredTokens, token, channel.traceId);
     resolveSafeWaiters(channel.retirementWaiters, undefined);
+    rejectTurnOutputWaiters(channel, reason);
     rejectTurnChannel(channel, reason);
   }
 
@@ -432,7 +465,9 @@ export class TurnBroker implements TurnBrokerOwner {
         contexts: this.contexts,
         owner: this,
         pending: this.pending,
-        registerExternal: (environment, ttlMs, traceId) => this.register(environment, ttlMs, traceId, undefined, true),
+        registerExternal: (environment, ttlMs, traceId, onProgress, outputEnabled) => (
+          this.register(environment, ttlMs, traceId, onProgress, outputEnabled, true)
+        ),
         registerExternalSafe: (environment, nonce, ttlMs, traceId) => this.registerSafe(environment, nonce, ttlMs, traceId, true),
         retiredBindings: this.retiredBindings,
         retiredTokens: this.retiredTokens,

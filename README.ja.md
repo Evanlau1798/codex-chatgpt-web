@@ -138,6 +138,12 @@ Zero Risk はローカル Responses bridge と完全な Codex harness を維持�
 読み書きせず、プロンプトも自動送信しません。ランチャーはプロンプトの準備とコピーだけを行い、
 モデル、effort、`Codex Zero Risk` コネクタ、貼り付け、送信は利用者が手動で行います。
 
+Enhanced の自動ツールターンでは、**Web Agent 出力を MCP Tunnel 経由で転送** が既定で有効です。
+利用者向けの進捗、reasoning summary、最終回答は既存の Native2 tunnel を通って返され、ChatGPT の
+ツールカードは通常どおり表示されます。成功時はターン状態だけを継続監視し、tunnel に最終回答が
+ない場合は、同じページで完了済みの応答を検証して prompt の再送は行いません。Enhanced を無効に
+するか Zero Risk を選ぶと、設定値を保持したままこの転送経路を無効にします。
+
 ## Full ハーネス
 
 Full モードは、公式の [OpenAI tunnel-client](https://github.com/openai/tunnel-client) を通じて、

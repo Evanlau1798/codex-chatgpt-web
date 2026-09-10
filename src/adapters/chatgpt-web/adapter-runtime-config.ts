@@ -5,10 +5,12 @@ import { releaseLauncherRetainedConversation } from "../../launcher-browser-host
 import type { CodexProviderConfig } from "../../types";
 import { effectiveExperimentalBiggerContext } from "../../context-mode";
 import type { ChatGptWebCapabilities } from "./model";
+import type { CompileChatGptWebPromptOptions } from "./prompt";
 
 export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
   timeoutMs: number | undefined;
   useEnhancedWebSessionMode: boolean;
+  useEnhancedOutputTunnel: boolean;
   experimentalBiggerContext: boolean;
   configuredCapabilities: ChatGptWebCapabilities;
   executionNamespace: string;
@@ -17,6 +19,7 @@ export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
   return {
     timeoutMs: provider.chatgptWeb?.turnTimeoutMs,
     useEnhancedWebSessionMode,
+    useEnhancedOutputTunnel: provider.chatgptWeb?.useEnhancedOutputTunnel !== false,
     experimentalBiggerContext: effectiveExperimentalBiggerContext(
       useEnhancedWebSessionMode,
       provider.chatgptWeb?.experimentalBiggerContext === true,
@@ -31,6 +34,20 @@ export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
       chatgptWeb: provider.chatgptWeb ?? {},
     })).digest("hex"),
   };
+}
+
+export function chatGptAutomaticUsagePromptOptions(
+  config: Pick<ReturnType<typeof chatGptAdapterRuntimeConfig>,
+    "useEnhancedWebSessionMode" | "useEnhancedOutputTunnel" | "configuredCapabilities">,
+  manualInteraction: boolean,
+): Pick<CompileChatGptWebPromptOptions, "nativeControlConnector" | "useEnhancedOutputTunnel"> {
+  return !manualInteraction && config.useEnhancedWebSessionMode
+    && config.configuredCapabilities.localToolsEnabled
+    ? {
+        nativeControlConnector: true,
+        ...(config.useEnhancedOutputTunnel ? { useEnhancedOutputTunnel: true } : {}),
+      }
+    : {};
 }
 
 export function retainedConversationRelease(

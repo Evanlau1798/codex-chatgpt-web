@@ -315,6 +315,8 @@ export interface CodexProviderConfig {
     proAvailable?: boolean;
     /** Opt into retained Web sessions, handoff compaction, steering, and archive transport. */
     useEnhancedWebSessionMode?: boolean;
+    /** Route Enhanced Automatic assistant output through the turn-bound Native2 capability. */
+    useEnhancedOutputTunnel?: boolean;
     /** Authorize per-call "Allow once" confirmation clicks for this connector. */
     autoApproveToolCalls?: boolean;
     /** DEV-only experimental transport: adapt one context across one, two, or three ChatGPT messages. */

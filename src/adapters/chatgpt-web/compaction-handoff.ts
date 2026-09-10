@@ -117,6 +117,7 @@ export async function settleActiveCompactionSource(
   source: ChatGptTurnSession,
   broker: TurnBroker,
   signal?: AbortSignal,
+  preempt?: (instruction: string) => boolean,
 ): Promise<{ answer: string; compactionInstructionDelivered: boolean }> {
   return source.runExclusive(async () => {
     if (signal?.aborted) { source.cancel(abortReason(signal)); throw abortReason(signal); }
@@ -131,7 +132,11 @@ export async function settleActiveCompactionSource(
     let token: string | undefined;
     try {
       token = await source.runtime.token;
-      broker.requestCompaction(token, interruptedByActiveCompaction());
+      const interruption = activeCompactionToolResultInstruction();
+      broker.requestCompaction(token, interruptedByActiveCompaction(), () => {
+        const accepted = preempt?.(interruption) === true;
+        console.info(`[chatgpt-web] active compaction boundary preemption accepted=${accepted}`);
+      });
       for (const request of outstanding) {
         const result = results.get(request.callId)!;
         broker.completeTool(token, request.callId, codexToolResultToBrokerResult(result));

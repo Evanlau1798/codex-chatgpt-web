@@ -60,6 +60,7 @@ export interface AppConfig {
   port: number;
   contextWindow: number;
   useEnhancedWebSessionMode: boolean;
+  useEnhancedOutputTunnel: boolean;
   appName: string;
   automaticAppName: string;
   manualAppName: typeof ZERO_RISK_CHATGPT_CONNECTOR_NAME;

@@ -145,6 +145,8 @@ export const ja: Record<keyof Copy, string> = {
   bridgeRouteBody: "Codex をこのランチャー経由でルーティングします。無効にすると、セットアップや保存済み認証情報を削除せずに以前のモデルルートへ戻します。変更後は Codex を再起動してください。",
   enhancedWebSessionMode: "Enhanced Web セッションモード",
   enhancedWebSessionModeBody: "新規インストールでは既定で有効です。ChatGPT Web モデルに会話の保持、steering、handoff compaction、大規模コンテキストのアーカイブ転送を追加します。変更するとローカルランタイムが再起動します。",
+  enhancedOutputTunnel: "Web Agent 出力を MCP Tunnel 経由で転送",
+  enhancedOutputTunnelBody: "Enhanced Automatic の commentary、表示可能な reasoning 要約、最終回答を非公開の Native2 Tunnel 経由で転送します。ツールカードは ChatGPT に表示されたままです。変更後は Codex を再起動してください。",
   ...zeroRiskCopy.ja,
   keepRunningOnClose: "ウィンドウを閉じてもサーバーを実行",
   keepRunningOnCloseBody: "ランチャーをシステムトレイに隠し、ネイティブモデルと ChatGPT Web モデルを利用可能な状態に保ちます。",

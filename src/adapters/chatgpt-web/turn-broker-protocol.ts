@@ -16,13 +16,22 @@ export interface BrokerToolResult {
   _meta?: unknown;
 }
 
+export type BrokerTurnOutputKind = "commentary" | "reasoning" | "final";
+
+export interface BrokerTurnOutputEvent {
+  sequence: number;
+  kind: BrokerTurnOutputKind;
+  text: string;
+}
+
 export interface BrokerRequest {
   id: string;
-  method: "claim" | "resolve" | "release" | "invoke" | "read_context" | "submit_compaction_handoff"
+  method: "claim" | "resolve" | "release" | "invoke" | "read_context" | "submit_compaction_handoff" | "submit_output"
     | "owner_status" | "owner_register" | "owner_register_safe" | "owner_update" | "owner_safe_sent"
     | "owner_next" | "owner_complete" | "owner_safe_wait_start" | "owner_safe_wait_completion"
     | "owner_request_compaction" | "owner_compaction_delivery_count" | "safe_start" | "safe_complete"
-    | "owner_completion_fence_begin" | "owner_completion_fence_commit" | "owner_wait_retirement" | "owner_revoke" | "activity_complete";
+    | "owner_completion_fence_begin" | "owner_completion_fence_commit" | "owner_next_output"
+    | "owner_reset_output" | "owner_seal_output" | "owner_wait_retirement" | "owner_revoke" | "activity_complete";
   token?: string;
   bindingId?: string;
   wireName?: string;
@@ -42,6 +51,11 @@ export interface BrokerRequest {
   toolResult?: BrokerToolResult;
   surfaceNonce?: string;
   finalAnswer?: string;
+  outputKind?: BrokerTurnOutputKind;
+  outputText?: string;
+  outputEnabled?: boolean;
+  afterSequence?: number;
+  outputSequence?: number;
   contract?: "native" | "safe";
 }
 

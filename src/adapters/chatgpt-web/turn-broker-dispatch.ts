@@ -12,6 +12,7 @@ import {
   waitForSafeSent,
 } from "./turn-broker-safe";
 import {
+  notifyCompactionDelivery,
   retiredTurnLabel,
   steeringResult,
   type TurnChannel,
@@ -22,6 +23,7 @@ import {
   type BrokerToolRequest,
   type BrokerToolResult,
 } from "./turn-broker-protocol";
+import { submitTurnOutput } from "./turn-broker-output";
 
 interface DispatchState {
   acceptingExternalOwners(): boolean;
@@ -71,6 +73,9 @@ export async function dispatchTurnBrokerRequest(
     compactionDeliveryCount: owner.compactionDeliveryCount.bind(owner),
     beginCompletionFence: owner.beginCompletionFence.bind(owner),
     commitCompletionFence: owner.commitCompletionFence.bind(owner),
+    nextOutput: owner.nextOutput.bind(owner),
+    resetOutput: owner.resetOutput.bind(owner),
+    sealOutput: owner.sealOutput.bind(owner),
     waitForRetirement: owner.waitForRetirement.bind(owner),
     revoke: owner.revoke.bind(owner),
   }, signal);
@@ -80,6 +85,17 @@ export async function dispatchTurnBrokerRequest(
     if (typeof request.summary !== "string") throw new Error("compaction handoff summary is required");
     state.compactionTransactions.submit(request.token, request.handoffId, request.summary);
     return { submitted: true };
+  }
+  if (request.method === "submit_output") {
+    if (!request.token) throw new Error("Codex Native output turn token is required");
+    if (typeof request.outputText !== "string") throw new Error("Codex Native output text is required");
+    const channel = state.channels.get(request.token);
+    if (!channel) throw new Error("turn token is invalid, expired, or revoked");
+    if (request.outputKind === "final" && state.contexts.hasIncomplete(request.token)) {
+      throw new Error("Read and verify the complete Codex context archive before submitting final output");
+    }
+    const submitted = submitTurnOutput(channel, request.outputKind!, request.outputText);
+    return { accepted: true, sequence: submitted.event.sequence, duplicate: submitted.duplicate };
   }
   if (request.method === "read_context") {
     if (typeof request.token !== "string" || request.token.length === 0) throw new Error("context token is required");
@@ -128,6 +144,9 @@ async function claim(request: BrokerRequest, signal: AbortSignal, state: Dispatc
     throw new Error("Zero Risk MCP contract requires a Zero Risk request id");
   }
   assertTurnActivityId(request.activityId);
+  if (activeChannel.outputFinalSequence !== undefined) {
+    throw new Error("Codex Native work cannot start while the final answer is pending");
+  }
   claimTurnActivity(activeChannel, request.activityId);
   if (state.contexts.hasIncomplete(token)) {
     throw new Error("Read and verify the complete Codex context archive before calling work tools");
@@ -164,10 +183,14 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
   }
   if (request.method === "resolve") return { environment: binding.channel.environment };
   assertSafeHarnessRunning(binding.channel);
+  if (binding.channel.outputFinalSequence !== undefined) {
+    throw new Error("Codex Native work cannot start while the final answer is pending");
+  }
   if (binding.channel.compactionRequested) {
     const result = binding.channel.compactionResult;
     if (!result) throw new Error("Codex context compaction control result is unavailable");
     binding.channel.compactionDeliveryCount += 1;
+    notifyCompactionDelivery(binding.channel);
     return structuredClone(result);
   }
   if (binding.channel.steeringInstruction) {

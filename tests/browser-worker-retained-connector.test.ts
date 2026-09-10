@@ -44,7 +44,7 @@ test.each([
       true,
     );
   }],
-] as const)("%s restores the connector before attaching its prompt", async (_name, run) => {
+] as const)("%s reuses its verified connector binding without reopening the mention menu", async (_name, run) => {
   const calls: string[] = [];
   const composer = {
     fill: async () => { calls.push("fill"); },
@@ -64,8 +64,8 @@ test.each([
 
   await run(fixture, page);
 
-  expect(calls.indexOf("select-connector")).toBeGreaterThanOrEqual(0);
-  expect(calls.indexOf("select-connector")).toBeLessThan(calls.indexOf("insert-prompt"));
+  expect(calls).not.toContain("select-connector");
+  expect(calls.indexOf("fill")).toBeLessThan(calls.indexOf("insert-prompt"));
 });
 
 test("compaction attachment retry gets a fresh connector attempt budget", async () => {

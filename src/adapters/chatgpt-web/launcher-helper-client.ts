@@ -2,17 +2,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { notifyLauncherTurn, readLauncherBrowserHostDescriptor } from "../../launcher-browser-host";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
-import {
-  parseLauncherHelperMessage,
-  type LauncherHelperMessage,
-} from "./launcher-helper-protocol";
+import { parseLauncherHelperMessage, type LauncherHelperMessage } from "./launcher-helper-protocol";
 import { forwardLauncherHelperProgress } from "./launcher-helper-progress";
-import { acknowledgeLauncherMultipartStage, assertLauncherHelperFenceFeatures, handleLauncherHelperAnswer, handleLauncherHelperFenceEvent } from "./launcher-helper-fence";
-import {
-  resolveLauncherHelperScript,
-  terminateLauncherHelperProcess,
-  writeLauncherHelperMessage,
-} from "./launcher-helper-process";
+import { acknowledgeLauncherMultipartStage, assertLauncherHelperFenceFeatures, handleLauncherHelperAnswer, handleLauncherHelperFenceEvent, handleLauncherHelperOutputReset, handleLauncherHelperOutputSeal } from "./launcher-helper-fence";
+import { resolveLauncherHelperScript, terminateLauncherHelperProcess, writeLauncherHelperMessage } from "./launcher-helper-process";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { BrowserTurn, ResolvedBrowserConfig } from "./browser-worker";
 interface PendingTurn {
@@ -114,14 +107,16 @@ export class LauncherBrowserHelperClient {
             ...(turn.compaction ? { compaction: true } : {}),
             ...(turn.captureLunaCheckpoint ? { captureLunaCheckpoint: true } : {}),
             ...(turn.externalProgress ? { externalProgress: true } : {}),
+            ...(turn.tunneledOutput ? { tunneledOutput: true } : {}),
           },
         }).then(() => {
           if (!progressForwarding.signal.aborted) {
             forwardLauncherHelperProgress(
               turn,
-              this.helperFeatures.has("progress"),
+              this.helperFeatures,
               progressForwarding.signal,
               message => this.send(message),
+              error => this.abortWithLocalFailure(turn.traceId, error, pending),
             );
           }
         }).catch(error => this.finishWithError(
@@ -254,7 +249,7 @@ export class LauncherBrowserHelperClient {
     if (!pending) return;
     if (message.type === "event") {
       const fenceEvent = message.event === "tool_batch_observed" || message.event === "completion_fence_begin"
-        || message.event === "completion_fence_commit";
+        || message.event === "completion_fence_commit" || message.event === "tunneled_output_reset" || message.event === "tunneled_output_seal";
       if (pending.localFailure && !fenceEvent) return;
       if (message.event === "tool_batch_observed" || message.event === "completion_fence_begin"
         || message.event === "completion_fence_commit") {
@@ -331,6 +326,13 @@ export class LauncherBrowserHelperClient {
               pending,
             );
           });
+      }
+      else if (message.event === "tunneled_output_reset") {
+        void handleLauncherHelperOutputReset(message, pending.turn, value => this.send(value))
+          .catch(error => this.abortWithLocalFailure(message.id, error, pending));
+      }
+      else if (message.event === "tunneled_output_seal") {
+        void handleLauncherHelperOutputSeal(message, pending.turn, value => this.send(value)).catch(error => this.abortWithLocalFailure(message.id, error, pending));
       }
       else if (message.event === "answer") {
         handleLauncherHelperAnswer(message, pending, () => this.pending.get(message.id) === pending && !pending.localFailure,

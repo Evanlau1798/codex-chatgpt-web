@@ -30,7 +30,7 @@ test("active checkpoint preemption stops generation without taking the abort pat
   const request = source.indexOf("const requestedPreemption =");
   const stop = source.indexOf('await stop.press("Enter")', request);
   const snapshot = source.indexOf("const snapshot = await this.responseDomSnapshot", request);
-  const retry = source.indexOf("const finalDecision = await decideChatGptFinalAnswer", snapshot);
+  const retry = source.indexOf("const finalOptions =", snapshot);
   const control = source.slice(request, retry);
 
   expect(request).toBeGreaterThan(-1);
@@ -39,6 +39,7 @@ test("active checkpoint preemption stops generation without taking the abort pat
   expect(retry).toBeGreaterThan(snapshot);
   expect(control).toContain("CHATGPT_PREEMPTIVE_RETRY_STOP_TIMEOUT_MS");
   expect(control).toContain("chatgpt_compaction_preemption_failed");
+  expect(control).toContain("completedRetryPrompt = { text: preemptiveRetryPrompt }");
   expect(control).not.toContain('throw new DOMException("ChatGPT web turn aborted"');
   expect(source.slice(retry, source.indexOf("break;", retry))).toContain("preemptiveRetryPrompt,");
 });
@@ -59,7 +60,7 @@ test("checkpoint preemption remains bounded when generation starts after the req
 
 test("answer decision failures bypass generic browser error retry", () => {
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  const catchStart = source.indexOf("} catch (error) {", source.indexOf("const finalDecision = await decideChatGptFinalAnswer"));
+  const catchStart = source.indexOf("} catch (error) {", source.indexOf("const finalOptions ="));
   const decisionFailure = source.indexOf("error instanceof ChatGptFinalAnswerDecisionError", catchStart);
   const genericRetry = source.indexOf("retryPromptForError?.", catchStart);
   expect(catchStart).toBeGreaterThan(-1);
@@ -70,7 +71,8 @@ test("answer decision failures bypass generic browser error retry", () => {
 
 test("persistent helper preserves the control-only Native2 connector flag", () => {
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-helper-main.ts", import.meta.url), "utf8");
+  const input = readFileSync(new URL("../src/adapters/chatgpt-web/browser-helper-input.ts", import.meta.url), "utf8");
 
-  expect(source).toContain("nativeConnector?: boolean;");
+  expect(input).toContain("nativeConnector?: boolean;");
   expect(source).toContain("...(message.turn.nativeConnector ? { nativeConnector: true } : {}),");
 });

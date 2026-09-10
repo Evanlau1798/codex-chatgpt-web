@@ -7,6 +7,7 @@ function runtimePreferenceState(config) {
       ? { browserInteractionMode: config.browserInteractionMode } : {}),
     zeroRiskProEnabled: config.zeroRiskProEnabled === true,
     useEnhancedWebSessionMode: config.useEnhancedWebSessionMode === true,
+    useEnhancedOutputTunnel: config.useEnhancedOutputTunnel !== false,
     experimentalBiggerContext: config.browserInteractionMode !== "manual"
       && config.experimentalBiggerContext === true,
     experimentalNoAutoCompact: config.experimentalNoAutoCompact === true,

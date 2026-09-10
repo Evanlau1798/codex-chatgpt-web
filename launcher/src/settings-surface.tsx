@@ -93,6 +93,13 @@ export function SettingsSurface({
       setBusy(false);
     }
   };
+  const setUseEnhancedOutputTunnel = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try { updateState(await api!.setUseEnhancedOutputTunnel(enabled)); }
+    catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
   const setBiggerContext = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
@@ -174,6 +181,14 @@ export function SettingsSurface({
             checked={snapshot.state.useEnhancedWebSessionMode}
             disabled={busy || snapshot.state.coreSetupComplete !== true}
             onChange={(enabled) => void setUseEnhancedWebSessionMode(enabled)}
+          />
+        </SettingRow>
+        <SettingRow body={copy.enhancedOutputTunnelBody} label={copy.enhancedOutputTunnel}>
+          <Switch
+            checked={snapshot.state.useEnhancedOutputTunnel}
+            disabled={busy || snapshot.state.coreSetupComplete !== true
+              || !snapshot.state.useEnhancedWebSessionMode || snapshot.state.browserInteractionMode !== "automatic"}
+            onChange={(enabled) => void setUseEnhancedOutputTunnel(enabled)}
           />
         </SettingRow>
         <SettingRow body={copy.noAutoCompactBody} label={copy.noAutoCompact}>

@@ -3,80 +3,13 @@ import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
 import { ChatGptBrowserWorker, closeChatGptBrowserWorkers, type BrowserTurn } from "./browser-worker";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
-import type { ChatGptWebCapabilities } from "./model";
 import { createProcessLineWriter } from "./process-line-writer";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { ChatGptRetryPrompt } from "./steering";
 import { createBrowserHelperPromptSelection } from "./browser-helper-prompt-selection";
-import type { ChatGptExternalTurnProgressSnapshot } from "./turn-progress";
 import { BrowserHelperFenceRegistry } from "./browser-helper-fence";
-
-interface RunMessage {
-  type: "run";
-  id: string;
-  config: {
-    appName: string;
-    browserHostDescriptorPath: string;
-    browserDiagnosticsPath?: string;
-    turnTimeoutMs: number;
-    autoApproveToolCalls: boolean;
-    experimentalNoAutoCompact?: boolean;
-  };
-  turn: {
-    traceId: string;
-    modelId: string;
-    reasoning?: string;
-    capabilities: ChatGptWebCapabilities;
-    nativeConnector?: boolean;
-    resumeAvailable?: boolean;
-    retainConversation?: boolean;
-    requireRetainedConversation?: boolean;
-    conversationKey?: string;
-    compaction?: boolean;
-    captureLunaCheckpoint?: boolean;
-    externalProgress?: boolean;
-  };
-}
-
-interface VerifyMessage {
-  type: "verify";
-  id: string;
-  config: {
-    appName: string;
-    browserHostDescriptorPath: string;
-  };
-}
-
-interface InspectMessage {
-  type: "inspect";
-  id: string;
-  config: VerifyMessage["config"];
-  detectCapabilities: boolean;
-}
-
-interface SmokeMessage {
-  type: "smoke";
-  id: string;
-  config: VerifyMessage["config"];
-}
-
-type MaintenanceMessage = VerifyMessage | InspectMessage | SmokeMessage;
-interface AnswerRetryMessage {
-  type: "answer_retry";
-  id: string;
-  prompt?: string;
-  acknowledge?: boolean;
-  replaceCandidate?: boolean;
-}
-type InputMessage = RunMessage | MaintenanceMessage | AnswerRetryMessage
-  | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
-  | { type: "send_activated_ack"; id: string }
-  | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision: number | null }
-  | { type: "completion_fence_commit_ack"; id: string; requestId: number; committed: boolean }
-  | { type: "preempt_retry"; id: string; prompt: string }
-  | { type: "progress"; id: string; snapshot: ChatGptExternalTurnProgressSnapshot }
-  | { type: "abort"; id: string; reason?: "compaction_handoff_accepted" }
-  | { type: "shutdown" };
+import { BrowserHelperOutputRegistry } from "./browser-helper-output";
+import type { BrowserHelperInputMessage as InputMessage, BrowserHelperMaintenanceMessage as MaintenanceMessage, BrowserHelperRunMessage as RunMessage } from "./browser-helper-input";
 
 let outputFailure: Error | undefined;
 const handleOutputFailure = (error: Error): void => {
@@ -96,6 +29,7 @@ console.info = diagnostic;
 console.warn = diagnostic;
 console.error = diagnostic;
 const completionFences = new BrowserHelperFenceRegistry(writeProtocol, message => diagnostic(message));
+const tunneledOutputs = new BrowserHelperOutputRegistry(writeProtocol);
 
 const abortControllers = new Map<string, AbortController>();
 const answerRetryWaiters = new Map<string, (prompt?: string | ChatGptRetryPrompt) => void>();
@@ -124,6 +58,7 @@ function requestShutdown(): Promise<void> {
   }
   sendActivationWaiters.clear();
   completionFences.close();
+  tunneledOutputs.close();
   input.close();
   void closeChatGptBrowserWorkers().then(
     () => {
@@ -170,6 +105,9 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.externalProgress !== undefined && typeof message.turn.externalProgress !== "boolean") {
     throw new Error("Browser helper external progress flag is invalid");
   }
+  if (message.turn.tunneledOutput !== undefined && typeof message.turn.tunneledOutput !== "boolean") {
+    throw new Error("Browser helper tunneled output flag is invalid");
+  }
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: "https://chatgpt.com",
@@ -190,6 +128,7 @@ async function run(message: RunMessage): Promise<void> {
   // derived deterministically and can repeat, so each run starts a fresh mirror rather than
   // inheriting revisions recorded for an earlier turn that happened to share the id.
   const fenced = completionFences.start(message.id, message.turn.externalProgress === true);
+  const tunneled = tunneledOutputs.start(message.id, message.turn.tunneledOutput === true);
   const promptSelection = createBrowserHelperPromptSelection();
   preparedSelectionWaiters.set(message.id, prepared => {
     if (prepared) promptSelection.select(prepared);
@@ -210,6 +149,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.compaction ? { compaction: true } : {}),
     abortSignal: abortController.signal,
     ...fenced,
+    ...tunneled,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
     onSendActivated: () => new Promise<void>((resolve, reject) => {
       if (sendActivationWaiters.has(message.id)) {
@@ -293,10 +233,11 @@ async function run(message: RunMessage): Promise<void> {
     sendActivationWaiters.delete(message.id);
     abortControllers.delete(message.id);
     completionFences.end(message.id);
+    tunneledOutputs.end(message.id);
   }
 }
 
-async function verify(message: VerifyMessage): Promise<void> {
+async function verify(message: Extract<MaintenanceMessage, { type: "verify" }>): Promise<void> {
   try {
     const selected = await maintenanceWorker(message).verifyConnector(message.id);
     writeProtocol({ type: "result", id: message.id, text: selected });
@@ -327,7 +268,7 @@ function maintenanceWorker(message: MaintenanceMessage): ChatGptBrowserWorker {
   return ChatGptBrowserWorker.forProvider(provider);
 }
 
-async function maintain(message: InspectMessage | SmokeMessage): Promise<void> {
+async function maintain(message: Exclude<MaintenanceMessage, { type: "verify" }>): Promise<void> {
   if (abortControllers.has(message.id)) throw new Error(`Browser helper maintenance operation already exists: ${message.id}`);
   const abortController = new AbortController();
   abortControllers.set(message.id, abortController);
@@ -368,6 +309,7 @@ input.on("line", line => {
     );
     sendActivationWaiters.delete(message.id);
     completionFences.end(message.id);
+    tunneledOutputs.end(message.id);
     abortControllers.get(message.id)?.abort(message.reason === "compaction_handoff_accepted"
       ? new ChatGptCompactionHandoffAccepted()
       : undefined);
@@ -376,6 +318,16 @@ input.on("line", line => {
     // for any unrecognised id let late, malformed, or misaddressed frames grow this map without
     // bound, since nothing would ever remove an entry that has no turn to end it.
     completionFences.apply(message.id, message.snapshot);
+  } else if (message.type === "tunneled_output") {
+    try { tunneledOutputs.apply(message.id, message.output); }
+    catch (error) {
+      writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
+      abortControllers.get(message.id)?.abort();
+    }
+  } else if (message.type === "tunneled_output_reset_ack") {
+    tunneledOutputs.resolveReset(message.id, message.requestId, message.reset);
+  } else if (message.type === "tunneled_output_seal_ack") {
+    tunneledOutputs.resolveSeal(message.id, message.requestId, message.sealed);
   } else if (message.type === "completion_fence_begin_ack") {
     try { completionFences.resolveBegin(message.id, message.requestId, message.revision); }
     catch (error) {
@@ -483,4 +435,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "answer-before-completion"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "answer-before-completion", "tunneled-output-v1"] });

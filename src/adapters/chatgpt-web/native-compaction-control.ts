@@ -34,6 +34,7 @@ export function activeCompactionToolResultInstruction(): string {
     "Codex reached its context limit before this newly requested tool could be sent for execution. The tool was not executed.",
     "Stop ordinary task work now, call no more tools, and end this Web response normally.",
     "Do not create or submit a checkpoint in this response. After it settles, the retained conversation will receive exactly one separate structured compaction handoff request.",
+    "Return exactly CODEX_COMPACTION_SOURCE_SETTLED as the final answer for this response.",
     `</${CODEX_ACTIVE_COMPACTION_REQUEST_MARKER}>`,
   ].join("\n");
 }

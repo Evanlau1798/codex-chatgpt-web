@@ -60,6 +60,39 @@ test("active compaction settles canonical tool results before a separate retaine
   ]);
 });
 
+test("an intercepted compact boundary preempts a silent source onto the retained handoff path", async () => {
+  let finish!: (answer: string) => void;
+  const browser = new Promise<string>(resolve => { finish = resolve; });
+  const source = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_silent"),
+    browser,
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel() {},
+  });
+  const broker = {
+    requestCompaction: (_token: string, _result: BrokerToolResult, onDelivered?: () => void) => {
+      onDelivered?.();
+      return 1;
+    },
+    compactionDeliveryCount: () => 1,
+    revoke() {},
+  } as unknown as TurnBroker;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(new Error("silent source did not preempt")), 100);
+  let prompt = "";
+  try {
+    await expect(settleActiveCompactionSource(
+      compactionRequest(), source, broker, abort.signal,
+      instruction => { prompt = instruction; finish("source settled"); return true; },
+    )).resolves.toEqual({ answer: "source settled", compactionInstructionDelivered: true });
+    expect(prompt).toContain("CODEX_ACTIVE_COMPACTION_REQUEST");
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
 test("a failed exact compaction run is retryable while a successful run is replayable", async () => {
   const key = `compaction-${Date.now()}-${Math.random()}`;
   let starts = 0;

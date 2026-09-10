@@ -48,6 +48,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       solAvailable: manual ? false : config.solAvailable,
       proAvailable: manual ? false : config.proAvailable,
       useEnhancedWebSessionMode: config.useEnhancedWebSessionMode,
+      useEnhancedOutputTunnel: config.useEnhancedOutputTunnel,
       experimentalBiggerContext: manual ? false : effectiveExperimentalBiggerContext(
         config.useEnhancedWebSessionMode, config.experimentalBiggerContext,
       ),

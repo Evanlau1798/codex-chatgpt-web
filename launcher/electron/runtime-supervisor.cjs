@@ -191,6 +191,9 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
   if (config.useEnhancedWebSessionMode !== undefined && typeof config.useEnhancedWebSessionMode !== "boolean") {
     throw new Error("Runtime configuration has an invalid useEnhancedWebSessionMode");
   }
+  if (config.useEnhancedOutputTunnel !== undefined && typeof config.useEnhancedOutputTunnel !== "boolean") {
+    throw new Error("Runtime configuration has an invalid useEnhancedOutputTunnel");
+  }
   if (config.useNewCompactMode !== undefined && typeof config.useNewCompactMode !== "boolean") {
     throw new Error("Runtime configuration has an invalid useNewCompactMode");
   }
@@ -205,6 +208,7 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
   } else if (config.useEnhancedWebSessionMode === undefined) {
     config = { ...config, useEnhancedWebSessionMode: false };
   }
+  if (config.useEnhancedOutputTunnel === undefined) config = { ...config, useEnhancedOutputTunnel: true };
   if (config.mode !== "browser-only" && config.mode !== "full") {
     throw new Error("Runtime configuration has an invalid mode");
   }
@@ -248,7 +252,7 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
   } else if (!absolutePath(config.brokerSocketPath, platform) || windowsPipeEndpoint(config.brokerSocketPath)) {
     throw new Error("Runtime configuration has an invalid Unix broker socket");
   }
-  for (const key of ["headed", "solAvailable", "proAvailable", "autoApproveToolCalls", "useEnhancedWebSessionMode"]) {
+  for (const key of ["headed", "solAvailable", "proAvailable", "autoApproveToolCalls", "useEnhancedWebSessionMode", "useEnhancedOutputTunnel"]) {
     if (typeof config[key] !== "boolean") {
       throw new Error(`Runtime configuration has an invalid ${key}`);
     }

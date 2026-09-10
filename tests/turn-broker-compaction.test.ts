@@ -40,6 +40,30 @@ test("compaction preserves an already delivered call and intercepts only later c
   }
 });
 
+test("compaction reports the first intercepted tool boundary", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-compaction-delivery-"));
+  const { broker, token, bindingId } = await setup(root);
+  let delivered = 0;
+  try {
+    broker.requestCompaction(
+      token,
+      { content: [{ type: "text", text: "compact now" }], isError: true },
+      () => { delivered += 1; },
+    );
+    await expect(callTurnBroker(broker.socketPath, {
+      method: "invoke", bindingId, wireName: "exec_command", arguments: { cmd: "git status" },
+    })).resolves.toMatchObject({ isError: true });
+    expect(delivered).toBe(1);
+    await expect(callTurnBroker(broker.socketPath, {
+      method: "invoke", bindingId, wireName: "exec_command", arguments: { cmd: "git diff" },
+    })).resolves.toMatchObject({ isError: true });
+    expect(delivered).toBe(1);
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("compaction drains a queued call and retires its delivery counter with the token", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-queued-compaction-"));
   const { broker, token, bindingId } = await setup(root);

@@ -7,6 +7,7 @@ import { prepareChatGptWebContext } from "./context-bootstrap";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { reportChatGptPreparationFailure } from "./preparation-diagnostics";
+import { shouldUseEnhancedOutputTunnel } from "./native-output-control";
 import { compileChatGptWebPrompt } from "./prompt";
 import { ChatGptLunaCheckpointStore, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint";
 import { deferred } from "./runtime-lifecycle";
@@ -33,13 +34,15 @@ interface ChatGptRuntimeFactoryOptions {
   brokerOwner: TurnBroker | TurnBrokerOwner;
   timeoutMs?: number;
   useEnhancedWebSessionMode: boolean;
+  useEnhancedOutputTunnel: boolean;
   experimentalBiggerContext: boolean;
   configuredCapabilities: ChatGptWebCapabilities;
   executionNamespace: string;
   lunaCheckpointStore: ChatGptLunaCheckpointStore;
 }
 
-export type ChatGptRuntimeWorker = Pick<ChatGptBrowserWorker, "run">;
+export type ChatGptRuntimeWorker = Pick<ChatGptBrowserWorker, "run">
+  & Partial<Pick<ChatGptBrowserWorker, "requestPreemptiveRetry">>;
 
 export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOptions) {
   const {
@@ -49,6 +52,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     brokerOwner,
     timeoutMs,
     useEnhancedWebSessionMode,
+    useEnhancedOutputTunnel,
     experimentalBiggerContext,
     configuredCapabilities,
     executionNamespace,
@@ -71,9 +75,18 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     const experimentalMultipartParts = experimentalBiggerContext
       ? resolveBiggerContextMultipartParts(checkpointInput.parsed, turnCapabilities)
       : undefined;
+    const tunneledOutput = shouldUseEnhancedOutputTunnel(parsed, {
+      requested: nativeControlConnector && useEnhancedOutputTunnel,
+      localTools: mode.localTools,
+      toolCount: toolPolicy.tools.length,
+      luna: parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID,
+      captureLunaCheckpoint,
+      multipart: experimentalMultipartParts !== undefined,
+    });
     const compileOptions = {
       captureLunaCheckpoint,
       nativeControlConnector,
+      ...(tunneledOutput ? { useEnhancedOutputTunnel: true } : {}),
       ...(experimentalMultipartParts === undefined ? {} : { experimentalMultipartParts }),
     };
     if (captureLunaCheckpoint) {
@@ -198,6 +211,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         timeoutMs === undefined ? undefined : timeoutMs + 60_000,
         traceId,
         () => trace.signalProgress(),
+        tunneledOutput,
       );
       try {
         const prepared = await prepareChatGptWebContext(broker,
@@ -239,6 +253,17 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         begin: async () => brokerOwner.beginCompletionFence(activeToken ?? await token.promise),
         commit: async revision => brokerOwner.commitCompletionFence(activeToken ?? await token.promise, revision),
       },
+      ...(tunneledOutput ? { tunneledOutput: {
+        next: async (afterSequence: number, signal?: AbortSignal) => brokerOwner.nextOutput(
+          activeToken ?? await token.promise, afterSequence, signal,
+        ),
+        reset: async (finalSequence: number) => brokerOwner.resetOutput(
+          activeToken ?? await token.promise, finalSequence,
+        ),
+        seal: async (afterSequence: number) => brokerOwner.sealOutput(
+          activeToken ?? await token.promise, afterSequence,
+        ),
+      } } : {}),
       ...(finalAnswerAdmission ? { finalAnswerAdmission } : {}),
       onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: emitCommentary,

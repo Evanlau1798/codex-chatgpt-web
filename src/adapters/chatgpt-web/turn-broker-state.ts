@@ -1,5 +1,5 @@
 import type { ChatGptTurnEnvironment } from "./environment";
-import type { BrokerToolRequest, BrokerToolResult } from "./turn-broker-protocol";
+import type { BrokerToolRequest, BrokerToolResult, BrokerTurnOutputEvent } from "./turn-broker-protocol";
 
 export interface PendingTurn extends ChatGptTurnEnvironment {
   expiresAt?: number;
@@ -13,6 +13,14 @@ export interface PendingInvocation {
 
 export interface ToolWaiter {
   resolve: (requests: BrokerToolRequest[]) => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+}
+
+export interface TurnOutputWaiter {
+  afterSequence: number;
+  resolve: (event: BrokerTurnOutputEvent) => void;
   reject: (error: Error) => void;
   signal?: AbortSignal;
   onAbort?: () => void;
@@ -41,6 +49,7 @@ export interface SafeTurnControl {
 export interface TurnChannel {
   traceId: string;
   externalOwner: boolean;
+  readonly outputEnabled: boolean;
   onProgress?: () => void;
   environment: PendingTurn;
   bindingId?: string;
@@ -58,8 +67,21 @@ export interface TurnChannel {
   compactionRequested: boolean;
   compactionResult?: BrokerToolResult;
   compactionDeliveryCount: number;
+  onCompactionDelivered?: () => void;
   steeringInstruction?: string;
+  outputEvents: BrokerTurnOutputEvent[];
+  outputChars: number;
+  outputWaiters: Set<TurnOutputWaiter>;
+  outputResumeAfter: number;
+  outputFinalSequence?: number;
+  outputSealed: boolean;
   safe?: SafeTurnControl;
+}
+
+export function notifyCompactionDelivery(channel: TurnChannel): void {
+  const callback = channel.onCompactionDelivered;
+  channel.onCompactionDelivered = undefined;
+  callback?.();
 }
 
 export interface PendingContext {

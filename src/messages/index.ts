@@ -1,5 +1,6 @@
 import type { ProviderAdapter } from "../adapters/base";
 import { chatGptWebExecutionNamespace, createChatGptWebAdapter } from "../adapters/chatgpt-web";
+import { chatGptAdapterRuntimeConfig, chatGptAutomaticUsagePromptOptions } from "../adapters/chatgpt-web/adapter-runtime-config";
 import { ChatGptWebAdapterError } from "../adapters/chatgpt-web/adapter-error";
 import { bindClaudeSessionAbort } from "../adapters/chatgpt-web/claude-subagent";
 import { chatGptTurnSessions } from "../adapters/chatgpt-web/turn-execution";
@@ -68,11 +69,15 @@ export async function messagesRequest(
     console.info(`[chatgpt-web] suppressed acknowledged Claude queued-command replays count=${request.translated.suppressedSteeringReplays}`);
   }
 
+  const provider = providerConfig(config);
+  const usagePromptOptions = chatGptAutomaticUsagePromptOptions(
+    chatGptAdapterRuntimeConfig(provider),
+    provider.chatgptWeb?.browserInteractionMode === "manual",
+  );
   let inputTokens = 0;
-  try { inputTokens = estimateChatGptWebInputTokens(request.parsed, capabilities(config)); } catch {}
+  try { inputTokens = estimateChatGptWebInputTokens(request.parsed, capabilities(config), usagePromptOptions); } catch {}
   const queue = new AsyncEventQueue<AdapterEvent>();
   const abort = new AbortController();
-  const provider = providerConfig(config);
   if (req.signal.aborted) abort.abort();
   else req.signal.addEventListener("abort", () => abort.abort(), { once: true });
   const run = async () => {

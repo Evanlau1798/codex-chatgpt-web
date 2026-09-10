@@ -106,6 +106,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     port: 17841,
     contextWindow: 256_000,
     useEnhancedWebSessionMode: true,
+    useEnhancedOutputTunnel: true,
     appName: CHATGPT_CONNECTOR_NAME,
     automaticAppName: CHATGPT_CONNECTOR_NAME,
     manualAppName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
@@ -304,6 +305,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.useEnhancedWebSessionMode !== undefined && typeof parsed.useEnhancedWebSessionMode !== "boolean") {
     throw new Error(`Invalid useEnhancedWebSessionMode in ${path}`);
   }
+  if (parsed.useEnhancedOutputTunnel !== undefined && typeof parsed.useEnhancedOutputTunnel !== "boolean") {
+    throw new Error(`Invalid useEnhancedOutputTunnel in ${path}`);
+  }
   if (parsed.useNewCompactMode !== undefined && typeof parsed.useNewCompactMode !== "boolean") {
     throw new Error(`Invalid useNewCompactMode in ${path}`);
   }
@@ -438,6 +442,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   return {
     ...canonical,
     useEnhancedWebSessionMode,
+    useEnhancedOutputTunnel: parsed.useEnhancedOutputTunnel !== false,
     appName: expectedAppName,
     automaticAppName,
     manualAppName,

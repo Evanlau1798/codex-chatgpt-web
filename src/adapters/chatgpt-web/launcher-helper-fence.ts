@@ -8,6 +8,9 @@ type FenceEvent = Extract<LauncherHelperMessage, {
 }>;
 
 export function assertLauncherHelperFenceFeatures(turn: BrowserTurn, features: Set<string>): void {
+  if (turn.tunneledOutput && !features.has("tunneled-output-v1")) {
+    throw new Error("Launcher browser helper does not support tunneled Web output; update or restart the launcher");
+  }
   if ((turn.retryPromptForAnswer || turn.finalAnswerAdmission) && !features.has("answer-before-completion")) {
     throw new Error("Launcher browser helper does not select answer retries before committing completion; update or restart the launcher");
   }
@@ -51,6 +54,28 @@ export function handleLauncherHelperFenceEvent(
 
 function errorOf(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
+}
+
+export function handleLauncherHelperOutputReset(
+  message: Extract<LauncherHelperMessage, { type: "event"; event: "tunneled_output_reset" }>,
+  turn: BrowserTurn,
+  send: (message: unknown) => Promise<void>,
+): Promise<void> {
+  if (!turn.tunneledOutput) throw new Error("Browser helper requested output reset for a DOM output turn");
+  return turn.tunneledOutput.reset(message.finalSequence).then(() => send({
+    type: "tunneled_output_reset_ack", id: message.id, requestId: message.requestId, reset: true,
+  }));
+}
+
+export function handleLauncherHelperOutputSeal(
+  message: Extract<LauncherHelperMessage, { type: "event"; event: "tunneled_output_seal" }>,
+  turn: BrowserTurn,
+  send: (message: unknown) => Promise<void>,
+): Promise<void> {
+  if (!turn.tunneledOutput) throw new Error("Browser helper requested output seal for a DOM output turn");
+  return turn.tunneledOutput.seal(message.afterSequence).then(sealed => send({
+    type: "tunneled_output_seal_ack", id: message.id, requestId: message.requestId, sealed,
+  }));
 }
 
 export function handleLauncherHelperAnswer(

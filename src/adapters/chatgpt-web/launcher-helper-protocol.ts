@@ -10,6 +10,8 @@ export type LauncherHelperMessage =
   | { type: "event"; id: string; event: "tool_batch_observed"; revision: number }
   | { type: "event"; id: string; event: "completion_fence_begin"; requestId: number }
   | { type: "event"; id: string; event: "completion_fence_commit"; requestId: number; revision: number }
+  | { type: "event"; id: string; event: "tunneled_output_reset"; requestId: number; finalSequence: number }
+  | { type: "event"; id: string; event: "tunneled_output_seal"; requestId: number; afterSequence: number }
   | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
   | { type: "event"; id: string; event: "answer"; text: string; attempt: number }
   | {
@@ -97,6 +99,20 @@ function parseEvent(message: Record<string, unknown> & { id: string }): Launcher
       type: "event", id: message.id, event,
       requestId: Number(message.requestId), revision: Number(message.revision),
     };
+  }
+  if (event === "tunneled_output_reset") {
+    if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) <= 0
+      || !Number.isSafeInteger(message.finalSequence) || Number(message.finalSequence) <= 0) {
+      throw new Error("Launcher browser helper output reset is invalid");
+    }
+    return { type: "event", id: message.id, event, requestId: Number(message.requestId), finalSequence: Number(message.finalSequence) };
+  }
+  if (event === "tunneled_output_seal") {
+    if (!Number.isSafeInteger(message.requestId) || Number(message.requestId) <= 0
+      || !Number.isSafeInteger(message.afterSequence) || Number(message.afterSequence) < 0) {
+      throw new Error("Launcher browser helper output seal is invalid");
+    }
+    return { type: "event", id: message.id, event, requestId: Number(message.requestId), afterSequence: Number(message.afterSequence) };
   }
   if (event === "answer" || event === "error_retry") {
     if (typeof message.text !== "string" || !Number.isSafeInteger(message.attempt) || Number(message.attempt) < 1) {

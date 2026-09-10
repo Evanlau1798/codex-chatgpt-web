@@ -652,6 +652,19 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return state;
   });
+  handle("launcher:enhanced-output-tunnel", async (_event, enabled) => {
+    const browserOperation = browserHost.currentOperation();
+    if (browserHost.activeTraceId || browserOperation) {
+      throw new Error(browserHost.activeTraceId
+        ? "Finish or cancel active ChatGPT turns before changing Enhanced output tunneling"
+        : `Finish ${browserOperation} before changing Enhanced output tunneling`);
+    }
+    const useEnhancedOutputTunnel = await runtimeHost.setUseEnhancedOutputTunnel(enabled === true);
+    const state = stateStore.update({ useEnhancedOutputTunnel, codexRestartRequired: true });
+    send("launcher:state-changed", state);
+    send("launcher:browser-state", browserHost.snapshot());
+    return state;
+  });
   handle("launcher:no-auto-compact", async (_event, enabled) => {
     const result = await runtimeHost.setExperimentalNoAutoCompact(enabled === true);
     const state = stateStore.update({
