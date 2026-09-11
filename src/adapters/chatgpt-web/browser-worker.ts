@@ -1988,6 +1988,7 @@ export class ChatGptBrowserWorker {
     throwIfPromptAttachmentAborted(abortSignal);
     let mutationStarted = false;
     try {
+      if (forceStructuredDirect) await captureDiagnostic?.("retained-compaction-direct-insertion");
       if (!localTools) {
         const composer = await this.activeComposer(page, 30_000, abortSignal);
         // Playwright's multiline fill maps through an input action that ChatGPT's Lexical editor can
@@ -2014,7 +2015,6 @@ export class ChatGptBrowserWorker {
       if (requireThink) {
         await setChatGptThinkMode(selectedComposer.locator("xpath=ancestor::form[1]"), true, captureDiagnostic, abortSignal);
       }
-      if (forceStructuredDirect) await captureDiagnostic?.("retained-compaction-direct-insertion");
       await selectedComposer.focus();
       await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
       await this.insertPromptText(page, ` ${prompt}`, abortSignal, largeStructuredDirect, forceStructuredDirect);
@@ -3245,7 +3245,8 @@ export class ChatGptBrowserWorker {
               stageSignal => this.attachPromptWithCompactionRetry(
                 page,
                 responsePrompt,
-                turn.nativeConnector === true || mode.localTools,
+                // Connector access persists in this bound conversation without another mention.
+                (turn.nativeConnector === true || mode.localTools) && !(reuseConversation || responseAttempt > 1),
                 turn.compaction === true,
                 submissionBaseline,
                 checkpoint => diagnostics.capture(page, checkpoint),

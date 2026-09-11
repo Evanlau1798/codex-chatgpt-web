@@ -29,6 +29,23 @@ export function responseHasFinalProjection(payload: unknown): boolean {
       && (part as { text: string }).text.trim().length > 0));
 }
 
+export async function runWebContractTurns(
+  send: (turn: number, previousResponseId?: string) => Promise<Record<string, unknown>>,
+  observe: () => Promise<{ surfaceId: string; userTurns: number }>,
+): Promise<void> {
+  const first = await send(0);
+  if (!responseHasFinalProjection(first)) throw new Error("Web contract turn did not complete a final projection");
+  if (typeof first.id !== "string" || !first.id) throw new Error("Web contract response is missing its continuation id");
+  const before = await observe();
+  if (!before.surfaceId || before.userTurns !== 1) throw new Error("Web contract initial turn did not submit exactly once");
+  const second = await send(1, first.id);
+  if (!responseHasFinalProjection(second)) throw new Error("Web contract continuation did not complete a final projection");
+  const after = await observe();
+  if (after.surfaceId !== before.surfaceId || after.userTurns !== before.userTurns + 1) {
+    throw new Error("Web contract continuation must reuse the same surface and submit exactly once");
+  }
+}
+
 export function captureWebContract(source: Record<string, unknown>): WebContractCapture {
   return Object.fromEntries(capabilityKeys.map(key => {
     if (typeof source[key] !== "boolean") throw new Error(`Web contract capability ${key} is missing`);

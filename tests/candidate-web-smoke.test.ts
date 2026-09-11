@@ -39,7 +39,7 @@ test("candidate Web smoke drains before shutdown and bounds the live subprocess"
   const shutdownAt = script.indexOf('control(baseUrl, "shutdown"');
   expect(drainAt).toBeGreaterThan(-1);
   expect(shutdownAt).toBeGreaterThan(drainAt);
-  expect(script).toContain("WEB_CONTRACT_PROBE_TIMEOUT_MS + WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000");
+  expect(script).toContain("WEB_CONTRACT_PROBE_TIMEOUT_MS + 2 * WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000");
   expect(script).toContain("if (timer) clearTimeout(timer)");
   expect(script).toContain("if (!await waitForExit(smoke");
   expect(script).not.toContain("Bun.sleep(WEB_CONTRACT_PROBE_TIMEOUT_MS");

@@ -13,7 +13,7 @@ const FINAL = "Findings: No blocking defects. Review complete.";
 async function runFixture(options: {
   stale?: boolean; tunneledFinal?: boolean; steering?: boolean; batches?: number;
   missingBaseline?: boolean; abortAtBaseline?: boolean; delayedResult?: boolean;
-  pastToolBatch?: boolean;
+  pastToolBatch?: boolean; retained?: boolean;
 } = {}) {
   const diagnostics = mkdtempSync(join(import.meta.dir, "../tmp/boole-browser-"));
   const progress = new ChatGptExternalTurnProgress();
@@ -92,7 +92,10 @@ async function runFixture(options: {
     selectModelAndEffort: async (_page: unknown, model: string, effort: string) => resolveChatGptWebModelMode(
       model, effort, { localToolsEnabled: true, solAvailable: true, proAvailable: true },
     ),
-    attachPromptWithCompactionRetry: async () => { actions.push("attach"); },
+    attachPromptWithCompactionRetry: async (_page: unknown, _prompt: string, bindConnector: boolean) => {
+      expect(bindConnector).toBe(!options.retained);
+      actions.push("attach");
+    },
     attachFiles: async () => {}, assertPromptAttached: async () => {}, connectorIsSelected: async () => true,
     activeComposer: async () => ({ locator: () => ({ getByTestId: () => ({
       waitFor: async () => {}, isEnabled: async () => true,
@@ -146,7 +149,7 @@ async function runFixture(options: {
   };
   let answer: string | undefined;
   let error: unknown;
-  try { answer = await worker.runBrowserTurn(turn, undefined, page); }
+  try { answer = await worker.runBrowserTurn(turn, undefined, page, options.retained); }
   catch (cause) { error = cause; }
   finally {
     clearTimeout(guard);
@@ -177,6 +180,15 @@ test("a new response does not classify settled historical tools against its curr
   expect(result.answer).toBe(FINAL);
   expect(result.deltas).toEqual([FINAL]);
   expect(result.actions).not.toContain("tool-dispatched");
+});
+
+test("retained conversation keeps native tools and final delivery without another connector mention", async () => {
+  const result = await runFixture({ retained: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.deltas).toEqual([FINAL]);
+  expect(result.actions.filter(a => a === "tool-dispatched")).toHaveLength(1);
+  expect(result.actions.filter(a => a === "fence-commit")).toHaveLength(1);
 });
 
 test("DOM fallback still rejects an unchanged pre-tool answer", async () => {

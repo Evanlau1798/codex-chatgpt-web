@@ -110,7 +110,7 @@ async function runWebContract(env: Record<string, string | undefined>): Promise<
     stdout: "inherit",
     stderr: "inherit",
   });
-  if (!await waitForExit(smoke, WEB_CONTRACT_PROBE_TIMEOUT_MS + WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000)) {
+  if (!await waitForExit(smoke, WEB_CONTRACT_PROBE_TIMEOUT_MS + 2 * WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000)) {
     await terminate(smoke);
     throw new Error("Candidate Web smoke timed out");
   }

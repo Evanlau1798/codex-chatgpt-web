@@ -28,10 +28,10 @@ type BrowserWorkerInternals = {
 const workerMethods = ChatGptBrowserWorker.prototype as unknown as BrowserWorkerInternals;
 
 for (const pill of ["missing", "selected", "unrecoverable"] as const) test.each([
-  ["retained response", async (fixture: object, page: object) => {
+  ["prompt attachment", async (fixture: object, page: object) => {
     await workerMethods.attachPrompt.call(fixture, page, "new suffix", true);
   }],
-  ["retained compaction", async (fixture: object, page: object) => {
+  ["compaction retry wrapper", async (fixture: object, page: object) => {
     await workerMethods.attachPromptWithCompactionRetry.call(
       fixture,
       page,
@@ -41,7 +41,7 @@ for (const pill of ["missing", "selected", "unrecoverable"] as const) test.each(
       { userTurns: {}, responseTurns: {}, initialTurnIdentities: [] },
     );
   }],
-] as const)(`REG-03: %s verifies its current ${pill} connector pill before attachment`, async (_name, run) => {
+] as const)(`REG-03: %s verifies its current ${pill} pill when initial connector binding is required`, async (_name, run) => {
   const calls: string[] = [];
   let selected = pill === "selected";
   const selectionError = new Error("fixture connector unavailable");

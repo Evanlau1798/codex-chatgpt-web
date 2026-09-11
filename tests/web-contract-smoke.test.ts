@@ -6,6 +6,7 @@ import {
   captureWebContract,
   deriveWebContractCapabilities,
   requestWebContractTurn,
+  runWebContractTurns,
   responseHasFinalProjection,
   WEB_CONTRACT_COOLDOWN_MS,
   WEB_CONTRACT_PROBE_TIMEOUT_MS,
@@ -20,6 +21,41 @@ import {
 } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
 
 describe("lightweight Web contract smoke", () => {
+  test("appends exactly one message to the completed response on the same retained surface", async () => {
+    const requests: unknown[] = [];
+    let observations = 0;
+    await runWebContractTurns(async (turn, previousResponseId) => {
+      requests.push([turn, previousResponseId]);
+      return { id: `response_${turn}`, output: [{ content: [{ type: "output_text", text: "Done." }] }] };
+    }, async () => ({ surfaceId: "same-tab", userTurns: ++observations }));
+    expect(requests).toEqual([[0, undefined], [1, "response_0"]]);
+    expect(observations).toBe(2);
+  });
+
+  test.each([
+    ["fresh fallback", "other-tab", 2, true],
+    ["duplicate submission", "same-tab", 3, true],
+    ["missing final", "same-tab", 2, false],
+  ] as const)("rejects %s even when HTTP requests succeed", async (_name, secondSurface, secondCount, final) => {
+    let observations = 0;
+    await expect(runWebContractTurns(async turn => ({
+      id: `response_${turn}`, output: final || turn === 0 ? [{ content: [{ type: "output_text", text: "Done." }] }] : [],
+    }), async () => ++observations === 1
+      ? { surfaceId: "same-tab", userTurns: 1 }
+      : { surfaceId: secondSurface, userTurns: secondCount },
+    )).rejects.toThrow();
+  });
+
+  test("does not retry or issue later messages after a failed continuation", async () => {
+    let requests = 0;
+    const blocked = new Error("account blocked");
+    await expect(runWebContractTurns(async turn => {
+      requests++;
+      if (turn === 1) throw blocked;
+      return { id: "response_0", output: [{ content: [{ type: "output_text", text: "Done." }] }] };
+    }, async () => ({ surfaceId: "same-tab", userTurns: 1 }))).rejects.toBe(blocked);
+    expect(requests).toBe(2);
+  });
   test("uses the requested Medium route without model fallback", () => {
     const script = readFileSync(
       new URL("../scripts/lifecycle-smoke/web-contract.ts", import.meta.url),

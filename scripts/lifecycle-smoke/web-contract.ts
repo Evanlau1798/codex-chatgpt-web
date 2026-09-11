@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   CHATGPT_TEMPORARY_CHAT_URL,
+  CHATGPT_USER_TURN_SELECTOR,
   detectChatGptAccountCapabilities,
   isTemporaryChatGptUrl,
 } from "../../src/chatgpt-session";
@@ -11,13 +12,14 @@ import {
   connectLauncherBrowserHost,
   LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS,
   notifyLauncherTurn,
+  readLauncherBrowserHostDescriptor,
 } from "../../src/launcher-browser-host";
 import {
   assertWebContractCooldown,
   assertWebContractRuntimeVersion,
   deriveWebContractCapabilities,
   requestWebContractTurn,
-  responseHasFinalProjection,
+  runWebContractTurns,
   WEB_CONTRACT_PROBE_TIMEOUT_MS,
   WEB_CONTRACT_TURN_TIMEOUT_MS,
   webContractBrowserIsIdle,
@@ -152,53 +154,62 @@ const session = { authenticated: true, temporary: true, composer: true, url: ses
 if (session.solAvailable !== true) throw new Error("Web contract smoke requires the ChatGPT effort control");
 
 const threadId = `thread_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
-const turnId = `turn_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
 const environment = `<environment_context>\n  <cwd>${repo}</cwd>\n  <filesystem><workspace_roots><root>${repo}</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>\n</environment_context>`;
-const item = (id: string, text: string) => ({
+const item = (turnId: string, id: string, text: string) => ({
   type: "message",
   id,
   role: "user",
   content: [{ type: "input_text", text }],
   internal_chat_message_metadata_passthrough: { turn_id: turnId },
 });
-const metadata = {
-  thread_id: threadId,
-  turn_id: turnId,
-  request_kind: "turn",
-  sandbox: "none",
-  workspaces: { [repo]: {} },
-};
-const payload = await withDeadline(WEB_CONTRACT_TURN_TIMEOUT_MS, async signal => {
-  const request = new Request(`${baseUrl}/v1/responses`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    signal,
-    body: JSON.stringify({
-      model: "chatgpt-web/medium",
-      stream: false,
-      reasoning: { effort: "medium" },
-      prompt_cache_key: threadId,
-      client_metadata: {
-        thread_id: threadId,
-        "x-codex-turn-metadata": JSON.stringify(metadata),
-      },
-      input: [
-        item("msg_web_contract_environment", environment),
-        item("msg_web_contract_prompt", "Reply briefly to confirm this turn completed.\n\nVerification: **bold**, `code`, and _emphasis_."),
-      ],
-      tools: [],
-    }),
-  });
-  const result = await requestWebContractTurn(fetch, request);
+const existingSurfaces = new Set(Object.keys(readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath).surfaceTargets));
+await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_CONTRACT_TURN_TIMEOUT_MS, async signal => {
+  const turnId = `turn_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
+  const metadata = {
+    thread_id: threadId,
+    turn_id: turnId,
+    request_kind: "turn",
+    sandbox: "none",
+    workspaces: { [repo]: {} },
+  };
+  const body = {
+    model: "chatgpt-web/medium",
+    stream: false,
+    reasoning: { effort: "medium" },
+    prompt_cache_key: threadId,
+    client_metadata: {
+      thread_id: threadId,
+      "x-codex-turn-metadata": JSON.stringify(metadata),
+    },
+    input: [
+      item(turnId, `msg_web_contract_environment_${turn}`, environment),
+      item(turnId, `msg_web_contract_prompt_${turn}`, turn === 0
+        ? "Reply briefly to confirm this turn completed.\n\nVerification: **bold**, `code`, and _emphasis_."
+        : "Reply briefly to confirm this follow-up message completed in the same conversation."),
+    ],
+    tools: [],
+    ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+  };
+  const result = await requestWebContractTurn(fetch, new Request(`${baseUrl}/v1/responses`, {
+    method: "POST", headers: { "content-type": "application/json" }, signal, body: JSON.stringify(body),
+  }));
   if (result.status === "account-blocked") {
     save({ status: "account-blocked", runtimeVersion: VERSION, httpStatus: 429, at: new Date(now).toISOString() });
     throw new Error("WEB_CONTRACT_ACCOUNT_BLOCKED: ChatGPT returned a rate or verification limit; no retry was attempted");
   }
   if (!result.response.ok) throw new Error(`Web contract turn failed: HTTP ${result.response.status}`);
-  return await result.response.json();
+  return await result.response.json() as Record<string, unknown>;
+}), async () => {
+  if (!await waitForBrowserIdle(baseUrl)) throw new Error("Web contract turn did not settle before reuse inspection");
+  const surfaces = Object.keys(readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!).surfaceTargets)
+    .filter(surfaceId => !existingSurfaces.has(surfaceId));
+  if (surfaces.length !== 1) throw new Error("Web contract expected exactly one retained surface");
+  const retained = await connectLauncherBrowserHost(config.browserHostDescriptorPath!, 5_000, surfaces[0]);
+  try {
+    return { surfaceId: surfaces[0]!, userTurns: await retained.page.locator(CHATGPT_USER_TURN_SELECTOR).count() };
+  } finally { await retained.browser.close(); }
 });
-const finalProjection = responseHasFinalProjection(payload);
-if (!finalProjection) throw new Error("Web contract turn did not complete a final projection");
+const finalProjection = true;
 const browserIdle = await waitForBrowserIdle(baseUrl);
 assertWebContractRuntimeVersion(await health(baseUrl), VERSION, runtimePid);
 const capture = deriveWebContractCapabilities({
@@ -210,5 +221,5 @@ const capture = deriveWebContractCapabilities({
   browserIdle,
 });
 if (Object.values(capture).some(value => !value)) throw new Error("Web contract smoke did not return browser idle");
-save({ status: "passed", runtimeVersion: VERSION, at: new Date(now).toISOString(), capabilities: capture });
+save({ status: "passed", runtimeVersion: VERSION, at: new Date(now).toISOString(), capabilities: capture, retainedReuse: true });
 process.stdout.write(`WEB_CONTRACT_SMOKE_OK ${JSON.stringify(capture)}\n`);
