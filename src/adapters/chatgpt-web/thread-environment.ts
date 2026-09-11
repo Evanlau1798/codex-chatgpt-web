@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { atomicWriteFile, stripUtf8Bom } from "../../config";
 import { getCodexHome } from "../../codex-integration-shared";
+import { isReadableCompactionSummaryText } from "../../responses/compaction";
 import type { CodexParsedRequest } from "../../types";
 import {
   extractChatGptTurnEnvironment,
@@ -20,6 +21,14 @@ import {
 import { effectiveChatGptToolPolicy } from "./tool-policy";
 import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import { unattributedChatGptEnvironmentMessages } from "./environment-history";
+import { isAcceptedCompactionContinuation } from "./compaction-continuation";
+import { codexTurnMetadataFromBody } from "./environment-identity";
+import {
+  isUserOrParentInstruction,
+  itemTurnId,
+  priorAbortedTurnIds,
+  turnUserRevisionHistory,
+} from "./turn-user-revision";
 
 interface StoredThreadEnvironment {
   cwd: string;
@@ -41,6 +50,47 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+function isAcceptedPostCompactionSteering(parsed: CodexParsedRequest): boolean {
+  const identity = extractChatGptTurnIdentity(parsed);
+  if (!identity.turnId) return false;
+  const body = record(parsed._rawBody);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  let checkpointIndex = -1;
+  for (let index = 0; index < input.length; index += 1) {
+    const item = record(input[index]);
+    const text = typeof item?.content === "string" ? item.content : Array.isArray(item?.content)
+      ? item.content.map(part => record(part)?.text ?? "").join("\n") : "";
+    if (item?.type === "compaction" || item?.type === "compaction_summary" || item?.type === "context_compaction"
+      || (item?.role === "user" && isReadableCompactionSummaryText(text))) {
+      checkpointIndex = index;
+    }
+  }
+  if (checkpointIndex < 0) return false;
+
+  const metadata = codexTurnMetadataFromBody(parsed._rawBody);
+  const suffix = input.slice(checkpointIndex + 1);
+  const hasCurrentSteering = suffix.some(value => {
+    const item = record(value);
+    const owner = itemTurnId(item);
+    return isUserOrParentInstruction(item, metadata)
+      && (owner === identity.turnId || (item?.type === "agent_message" && owner === undefined));
+  });
+  const hasNewEnvironment = suffix.some(value => {
+    const item = record(value);
+    return (item?.type === "message" || item?.type === "agent_message")
+      && /<\/?environment_context\b/i.test(JSON.stringify(item.content ?? ""));
+  });
+  if (!hasCurrentSteering || hasNewEnvironment) return false;
+
+  const aborted = new Set(priorAbortedTurnIds(parsed._rawBody, identity.turnId));
+  const sourceBody = { ...body, input: input.slice(0, checkpointIndex) };
+  return turnUserRevisionHistory(sourceBody).some(source => (
+    source.turnId !== identity.turnId
+    && (source.turnId === undefined || !aborted.has(source.turnId))
+    && isAcceptedCompactionContinuation(parsed, identity, source)
+  ));
 }
 
 function pathIdentity(value: string): string {
@@ -158,10 +208,13 @@ export class ChatGptThreadEnvironmentStore {
       const hasCurrentContext = hasCurrentChatGptEnvironmentContext(parsed);
       const lineage = extractChatGptThreadSpawnLineage(parsed);
       const currentCompaction = hasCurrentContext && isChatGptCompactionContinuation(parsed);
-      const historicalMessages = hasCurrentContext && !currentCompaction && lineage
+      const postCompactionSteering = hasCurrentContext && !currentCompaction
+        && isAcceptedPostCompactionSteering(parsed);
+      const historicalMessages = hasCurrentContext && !currentCompaction && !postCompactionSteering && lineage
         ? unattributedChatGptEnvironmentMessages(parsed) : undefined;
-      if (hasCurrentContext && !currentCompaction && !historicalMessages) throw error;
-      const currentClaim = currentCompaction ? extractChatGptContinuationEnvironmentClaim(parsed) : undefined;
+      if (hasCurrentContext && !currentCompaction && !postCompactionSteering && !historicalMessages) throw error;
+      const currentClaim = currentCompaction || postCompactionSteering
+        ? extractChatGptContinuationEnvironmentClaim(parsed) : undefined;
       const rolloutIdentity = lineage ?? extractChatGptRootThreadMetadata(parsed);
       // Automatic compaction has a current turn_context; standalone compaction has only its
       // source turn_context. Either must be the latest native record, never an arbitrary ancestor.

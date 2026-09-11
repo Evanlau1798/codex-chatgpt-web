@@ -1,4 +1,5 @@
 import { isAbsolute, resolve } from "node:path";
+import { isReadableCompactionSummaryText } from "../../responses/compaction";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
 import {
@@ -173,14 +174,16 @@ export function extractChatGptContinuationEnvironmentClaim(parsed: CodexParsedRe
       || typeof item.id !== "string" || !item.id) return [];
     const parts = typeof item.content === "string" ? [item.content]
       : Array.isArray(item.content) ? item.content.map(part => record(part)?.text) : [];
-    return parts.flatMap(value => {
-      if (typeof value !== "string") return [];
-      const text = value.trim();
-      return /^<environment_context>[\s\S]*<\/environment_context>$/.test(text) ? [text] : [];
-    });
+    return parts.filter((value): value is string => (
+      typeof value === "string" && /<\/?environment_context\b/i.test(value)
+    ));
   });
   if (updates.length !== 1) throw new Error("Compaction continuation requires one current native environment claim");
-  return parseChatGptEnvironmentText(parsed, updates[0]!);
+  const update = updates[0]!.trim();
+  if (!/^<environment_context>[\s\S]*<\/environment_context>$/.test(update)) {
+    throw new Error("Compaction continuation contains a malformed current native environment claim");
+  }
+  return parseChatGptEnvironmentText(parsed, update);
 }
 
 function environmentBeforeUser(
@@ -338,6 +341,9 @@ function hasAssistantOutputBetween(input: unknown[], startIndex: number, endInde
     if (!item) continue;
     if (item.type === "message" && item.role === "assistant") return true;
     if (item.type === "function_call" || item.type === "reasoning") return true;
+    if (item.type === "compaction" || item.type === "compaction_summary" || item.type === "context_compaction") return true;
+    if (item.type === "message" && item.role === "user"
+      && isReadableCompactionSummaryText(rawMessageText(item))) return true;
   }
   return false;
 }
