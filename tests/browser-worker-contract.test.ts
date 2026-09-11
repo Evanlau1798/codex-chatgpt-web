@@ -81,6 +81,7 @@ test("browser completion settles final projection before fail-closed Markdown fi
   expect(completion.indexOf("completionTracker.update"))
     .toBeLessThan(completion.indexOf("prepareChatGptFinalAnswer"));
   expect(completion).toContain("throwMarkdownConsistencyError(error)");
+  expect(completion).toContain("onTextDelta: emitVisibleAnswerDelta");
   expect(gateSource.indexOf("completionFence.commit(revision)"))
     .toBeLessThan(gateSource.indexOf("options.finalizeAnswer?.()"));
 });

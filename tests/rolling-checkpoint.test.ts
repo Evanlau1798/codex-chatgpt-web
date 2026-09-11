@@ -120,9 +120,9 @@ test("Luna checkpoint treats a malformed quoted payload as opaque semantic state
 
 test("Luna checkpoint stream preserves the answer and skips the cache when the model omits its private tail", () => {
   const stream = new ChatGptLunaCheckpointStream();
-  const visible = stream.push("A normal answer without a checkpoint.");
+  const visible = stream.push("A normal answer without a checkpoint.\n");
   expect(visible).toBe("");
-  expect(stream.finishOptional("A normal answer without a checkpoint.")).toEqual({
+  expect(stream.finishOptional("A normal answer without a checkpoint.\n")).toEqual({
     answer: "A normal answer without a checkpoint.",
     visibleRemainder: "A normal answer without a checkpoint.",
   });

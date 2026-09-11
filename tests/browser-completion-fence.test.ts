@@ -13,6 +13,8 @@ import {
 } from "../src/adapters/chatgpt-web/final-answer-gate";
 import { ChatGptSteeringFeed } from "../src/adapters/chatgpt-web/steering-feed";
 import { ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
+import { ChatGptAnswerBuffer } from "../src/adapters/chatgpt-web/browser-answer-buffer";
+import { ChatGptLunaCheckpointStream } from "../src/adapters/chatgpt-web/rolling-checkpoint";
 
 const environment = (root: string) => ({
   cwd: root,
@@ -173,6 +175,44 @@ test("finalizes output only after the completion fence commits", async () => {
     finalizeAnswer: () => { order.push("finalize"); return "final"; },
   })).toEqual({ status: "complete", answer: "final" });
   expect(order).toEqual(["commit", "finalize"]);
+});
+
+test("a missing Luna checkpoint tail is delivered once through the answer buffer", async () => {
+  const answer = "Short Luna answer without its private checkpoint.";
+  const streamedAnswer = `${answer}\n`;
+  const checkpoint = new ChatGptLunaCheckpointStream();
+  checkpoint.push(streamedAnswer);
+  const answers = new ChatGptAnswerBuffer();
+  let delivered = "";
+  const emitVisibleAnswerDelta = (delta: string): void => {
+    answers.append(delta);
+    delivered += answers.takeDeliverable(true);
+  };
+  const candidate = prepareChatGptFinalAnswer({
+    markdown: {
+      preview: () => answer,
+      finish: () => ({ markdown: answer, delta: "" }),
+    } as never,
+    checkpoint,
+    visibleText: streamedAnswer,
+    plainTextFallback: "",
+    emitMarkdownDelta: () => {},
+    onTextDelta: emitVisibleAnswerDelta,
+    onMissingCheckpoint: () => {},
+    normalizeMarkdownError: error => { throw error; },
+  });
+
+  const decision = await decideChatGptFinalAnswer({
+    answer: candidate.preview,
+    attempt: 1,
+    finalizeAnswer: candidate.finalize,
+  });
+  expect(decision.status).toBe("complete");
+  if (decision.status !== "complete") throw new Error("fixture did not complete");
+  delivered += answers.finalizeCandidate(decision.answer);
+
+  expect(delivered).toBe(answer);
+  expect(answers.value()).toBe(answer);
 });
 
 test("an empty DOM answer fails before browser completion can commit", async () => {

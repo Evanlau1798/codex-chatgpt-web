@@ -6,7 +6,10 @@ import {
   CHATGPT_RESPONSE_DOM_GRACE_MS,
   throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
 } from "../src/adapters/chatgpt-web/browser-worker";
-import { ChatGptBrowserObservationTimeoutError } from "../src/adapters/chatgpt-web/browser-observation";
+import {
+  ChatGptBrowserObservationTimeoutError,
+  observeChatGptTurnIdentityAfterSend,
+} from "../src/adapters/chatgpt-web/browser-observation";
 import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
@@ -202,6 +205,88 @@ test("submission recovery preserves the original MCP batch revision", async () =
   expect(evidence).toBe("mcp_tool_call");
 });
 
+test("submission observation tolerates a transient duplicate turn identity without resending", async () => {
+  let reads = 0;
+  const fixture = surface(async () => reads++ === 0
+    ? { count: 2, identities: ["conversation-turn-new", "conversation-turn-new"] }
+    : { count: 1, lastId: "conversation-turn-new" });
+  const instance = worker();
+
+  expect(await accepted(instance, fixture)).toBe("assistant_turn");
+  expect(reads).toBe(2);
+});
+
+test("post-Send identity recovery settles once and rereads an ambiguous snapshot", async () => {
+  let reads = 0;
+  let settled = 0;
+  const result = await observeChatGptTurnIdentityAfterSend(
+    async () => {
+      if (reads++ > 0) return { count: 1, lastId: "conversation-turn-new" };
+      const fixture = surface(async () => ({
+        count: 2,
+        identities: ["conversation-turn-new", "conversation-turn-new"],
+      }));
+      return readChatGptAssistantTurnState(fixture.responses);
+    },
+    async () => { settled++; },
+  );
+
+  expect(result).toEqual({ count: 1, lastId: "conversation-turn-new" });
+  expect(reads).toBe(2);
+  expect(settled).toBe(1);
+});
+
+test("post-Send identity recovery rejects a second ambiguous snapshot", async () => {
+  let reads = 0;
+  let settled = 0;
+  const operation = () => observeChatGptTurnIdentityAfterSend(
+    async () => {
+      reads++;
+      const fixture = surface(async () => ({
+        count: 2,
+        identities: ["conversation-turn-new", "conversation-turn-new"],
+      }));
+      return readChatGptAssistantTurnState(fixture.responses);
+    },
+    async () => { settled++; },
+  );
+
+  await expect(operation()).rejects.toThrow("ChatGPT assistant turn identities are ambiguous");
+  expect(reads).toBe(2);
+  expect(settled).toBe(1);
+});
+
+test("assistant acquisition tolerates a transient duplicate identity after Send", async () => {
+  let reads = 0;
+  const fixture = surface(async () => reads++ === 0
+    ? { count: 2, identities: ["conversation-turn-new", "conversation-turn-new"] }
+    : { count: 1, lastId: "conversation-turn-new" });
+
+  await expect(worker().waitForNewAssistantTurn(
+    fixture.page,
+    fixture.responses,
+    initial,
+  )).resolves.toBe(fixture.assistant);
+  expect(reads).toBe(2);
+});
+
+test("persistent duplicate turn identities fail closed without an outer turn deadline", async () => {
+  const fixture = surface(async () => ({
+    count: 2,
+    identities: ["conversation-turn-new", "conversation-turn-new"],
+  }));
+
+  await expect(bounded(worker().waitForNewAssistantTurn(
+    fixture.page,
+    fixture.responses,
+    initial,
+    undefined,
+    undefined,
+    undefined,
+    10,
+  ), 500)).rejects.toThrow("ChatGPT assistant turn identities are ambiguous");
+});
+
 test("recovered MCP batch is acknowledged by the real worker observation before its waiter resumes", async () => {
   const first = surface(timeout);
   const next = surface(async () => ({ count: 1, lastId: "conversation-turn-recovered" }));
@@ -336,6 +421,12 @@ test("production send and multipart observation wire same-page recovery for laun
   expect(source.includes("callerSignal")).toBeTrue();
   expect((source.match(/toolTurnObservationRecovery,/g) ?? []).length).toBe(3);
   expect(source.includes("responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR)")).toBeTrue();
+});
+
+test("every post-Send identity observer uses transient read-only recovery", () => {
+  const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  expect((source.match(/await observeChatGptTurnIdentityAfterSend\(/g) ?? []).length).toBe(4);
+  expect((source.match(/const initialResponseTurn = await readChatGptAssistantTurnState\(/g) ?? []).length).toBe(2);
 });
 
 test.each(["final", "multipart"] as const)("production %s send reacquires locators after recovery without resending", async lane => {

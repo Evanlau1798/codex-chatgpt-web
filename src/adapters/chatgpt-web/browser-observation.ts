@@ -1,5 +1,6 @@
 import type { Page } from "playwright-core";
 import { withAbort } from "./runtime-lifecycle";
+import { ChatGptTurnIdentityAmbiguityError } from "./response-turn-boundary";
 import type { ChatGptTurnProgressReader } from "./turn-progress";
 
 export const CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS = 5_000;
@@ -79,5 +80,22 @@ export async function observeChatGptSubmission<T>(
     ]) : observation);
   } finally {
     waiting.abort();
+  }
+}
+
+/** Retry one transient post-Send identity read; a second ambiguity remains fail-closed. */
+export async function observeChatGptTurnIdentityAfterSend<T>(
+  operation: () => Promise<T>,
+  settle: () => Promise<void>,
+  signal?: AbortSignal,
+): Promise<T | undefined> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!(error instanceof ChatGptTurnIdentityAmbiguityError)) throw error;
+    if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+    await (signal ? withAbort(settle(), signal) : settle());
+    if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+    return operation();
   }
 }

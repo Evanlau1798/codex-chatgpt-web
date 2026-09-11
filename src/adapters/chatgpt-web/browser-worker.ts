@@ -138,6 +138,7 @@ import {
   ChatGptBrowserObservationTimeoutError,
   MAX_CHATGPT_BROWSER_PAGE_REBINDS,
   observeChatGptSubmission,
+  observeChatGptTurnIdentityAfterSend,
   withChatGptBrowserObservationTimeout,
   withChatGptPageObservationRecovery,
   type ChatGptObservationRecovery,
@@ -1383,16 +1384,20 @@ export class ChatGptBrowserWorker {
         if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
         const progress = externalProgress?.snapshot();
         if (progress && progress.lastToolBatchRevision > initialToolBatchRevision) return "mcp_tool_call";
-        const observed = await observeChatGptSubmission(async () => {
-          await throwIfChatGptSessionFailureAlert(page);
-          await throwIfChatGptRateLimitDialog(page);
-          await throwIfChatGptTerminalErrorAlert(responseTurn);
-          return Promise.all([
-            readChatGptTurnIdentities(userTurns),
-            readChatGptAssistantTurnState(responseTurns),
-            page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count(),
-          ]);
-        }, signal, externalProgress, progress?.revision ?? 0);
+        const observed = await observeChatGptTurnIdentityAfterSend(
+          () => observeChatGptSubmission(async () => {
+            await throwIfChatGptSessionFailureAlert(page);
+            await throwIfChatGptRateLimitDialog(page);
+            await throwIfChatGptTerminalErrorAlert(responseTurn);
+            return Promise.all([
+              readChatGptTurnIdentities(userTurns),
+              readChatGptAssistantTurnState(responseTurns),
+              page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count(),
+            ]);
+          }, signal, externalProgress, progress?.revision ?? 0),
+          settleChatGptUi,
+          signal,
+        );
         if (!observed) continue;
         const [userIdentities, assistantTurn, visibleStopButtonCount] = observed.value;
         const knownTurns = new Set(assistantTurn.knownTurnIdentities ?? []);
@@ -1446,11 +1451,15 @@ export class ChatGptBrowserWorker {
         if (page.isClosed()) throw chatGptBrowserTabClosedError();
         if (deadline !== undefined && Date.now() >= deadline) throw new Error("ChatGPT web turn timed out");
         const progress = externalProgress?.snapshot();
-        const observed = await observeChatGptSubmission(async () => {
-          await throwIfChatGptSessionFailureAlert(page);
-          await throwIfChatGptRateLimitDialog(page);
-          return readChatGptAssistantTurnState(responseTurns);
-        }, signal, externalProgress, progress?.revision ?? 0);
+        const observed = await observeChatGptTurnIdentityAfterSend(
+          () => observeChatGptSubmission(async () => {
+            await throwIfChatGptSessionFailureAlert(page);
+            await throwIfChatGptRateLimitDialog(page);
+            return readChatGptAssistantTurnState(responseTurns);
+          }, signal, externalProgress, progress?.revision ?? 0),
+          settleChatGptUi,
+          signal,
+        );
         if (!observed) continue;
         const current = observed.value;
         const binding = bindChatGptAssistantTurn(initialResponseTurn, current);
@@ -3196,7 +3205,6 @@ export class ChatGptBrowserWorker {
         // Temporary Chat. Connector lookup therefore fails closed instead of refreshing here.
         catalogRefreshAvailable = false;
       }
-      let finalText = "";
       const answerBuffer = new ChatGptAnswerBuffer();
       let responsePrompt = multipartTransport?.finalPrompt ?? prepared.text;
       let retrySubmitted: (() => void) | undefined;
@@ -3379,8 +3387,16 @@ export class ChatGptBrowserWorker {
               )) turn.onProgress?.();
               let current: ChatGptAssistantTurnState;
               for (;;) {
+                if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+                if (deadline !== undefined && Date.now() >= deadline) throw new Error("ChatGPT web turn timed out");
                 try {
-                  current = await withChatGptBrowserObservationTimeout(readChatGptAssistantTurnState(responseTurns));
+                  const observed = await observeChatGptTurnIdentityAfterSend(
+                    () => withChatGptBrowserObservationTimeout(readChatGptAssistantTurnState(responseTurns)),
+                    settleChatGptUi,
+                    turn.abortSignal,
+                  );
+                  if (!observed) continue;
+                  current = observed;
                   tunneledObservationRebinds = 0;
                   break;
                 } catch (error) {
@@ -3420,7 +3436,8 @@ export class ChatGptBrowserWorker {
           });
           if (tunneled.status === "complete") {
             console.info(`[chatgpt-web] browser turn ${turn.traceId} completed outputSource=tunnel finalChars=${tunneled.answer.length}`);
-            finalText = tunneled.answer;
+            const deliverable = answerBuffer.finalizeCandidate(tunneled.answer);
+            if (deliverable) turn.onTextDelta(deliverable);
             break;
           }
           tunneledOutputSequence = tunneled.lastSequence;
@@ -3447,13 +3464,15 @@ export class ChatGptBrowserWorker {
         const checkpointStream = turn.captureLunaCheckpoint
           ? new ChatGptLunaCheckpointStream()
           : undefined;
+        const emitVisibleAnswerDelta = (delta: string): void => {
+          if (!delta) return;
+          answerBuffer.append(delta);
+          const deliverable = answerBuffer.takeDeliverable(!turn.retryPromptForAnswer);
+          if (deliverable) turn.onTextDelta(deliverable);
+        };
         const emitMarkdownDelta = (delta: string): void => {
           const visible = checkpointStream ? checkpointStream.push(delta) : delta;
-          if (visible) {
-            answerBuffer.append(visible);
-            const deliverable = answerBuffer.takeDeliverable(!turn.retryPromptForAnswer);
-            if (deliverable) turn.onTextDelta(deliverable);
-          }
+          emitVisibleAnswerDelta(visible);
         };
         const throwMarkdownConsistencyError = (error: unknown): never => {
           if (!(error instanceof ChatGptMarkdownConsistencyError)) throw error;
@@ -3498,9 +3517,13 @@ export class ChatGptBrowserWorker {
 
         let currentResponseTurn: ChatGptAssistantTurnState;
         try {
-          currentResponseTurn = await withChatGptBrowserObservationTimeout(
-            readChatGptAssistantTurnState(responseTurns),
+          const observed = await observeChatGptTurnIdentityAfterSend(
+            () => withChatGptBrowserObservationTimeout(readChatGptAssistantTurnState(responseTurns)),
+            settleChatGptUi,
+            turn.abortSignal,
           );
+          if (!observed) continue;
+          currentResponseTurn = observed;
           consecutiveObservationRebinds = 0;
         } catch (error) {
           if (!(error instanceof ChatGptBrowserObservationTimeoutError)) throw error;
@@ -3771,7 +3794,7 @@ export class ChatGptBrowserWorker {
               visibleText: snapshot.visibleText,
               plainTextFallback: snapshot.plainTextFallback,
               emitMarkdownDelta,
-              onTextDelta: turn.onTextDelta,
+              onTextDelta: emitVisibleAnswerDelta,
               onCheckpoint: turn.onLunaCheckpoint,
               onMissingCheckpoint: () => console.warn(`[chatgpt-web] browser turn ${turn.traceId} completed without a Luna rolling checkpoint; preserving full native history`),
               normalizeMarkdownError: throwMarkdownConsistencyError,
@@ -3802,7 +3825,10 @@ export class ChatGptBrowserWorker {
             if (finalDecision.status === "retry") {
               this.finalizingRuns.delete(turn.traceId);
               completedRetryPrompt = finalDecision.retry;
-            } else finalText = finalDecision.answer;
+            } else {
+              const deliverable = answerBuffer.finalizeCandidate(finalDecision.answer);
+              if (deliverable) turn.onTextDelta(deliverable);
+            }
             break;
           }
           if (!loggedCompletionWait && Date.now() - sentAt >= 60_000) {

@@ -158,9 +158,14 @@ export class ChatGptLunaCheckpointStream {
     if (rawResponseText.includes(CHATGPT_LUNA_CHECKPOINT_MARKER)) {
       throw new Error("ChatGPT Luna rolling checkpoint marker was not preserved in the Markdown stream");
     }
-    const visibleRemainder = this.flushVisibleRemainder();
+    const emittedAnswer = this.visibleAnswer;
+    this.flushVisibleRemainder();
     const answer = canonicalAnswer(this.visibleAnswer);
     if (!answer) throw new Error("ChatGPT Luna completed without a user-facing answer");
+    if (!answer.startsWith(emittedAnswer)) {
+      throw new Error("ChatGPT Luna streamed answer does not match its finalized answer");
+    }
+    const visibleRemainder = answer.slice(emittedAnswer.length);
     return { answer, visibleRemainder };
   }
 

@@ -6,9 +6,26 @@ import {
   chatGptNewTurnIdentity,
   chatGptSubmissionEvidence,
   locateChatGptAssistantTurn,
+  ChatGptTurnIdentityAmbiguityError,
   readChatGptAssistantTurnState,
+  readChatGptTurnIdentities,
   reconcileChatGptAssistantTurnBinding,
 } from "../src/adapters/chatgpt-web/response-turn-boundary";
+
+test("duplicate DOM turn identities are classified as transient observation ambiguity", async () => {
+  const turns = {
+    evaluateAll(callback: (elements: Array<{ getAttribute(name: string): string | null }>, name: string) => unknown,
+      name: string) {
+      const elements = ["duplicate", "duplicate"].map(identity => ({
+        getAttribute: () => identity,
+      }));
+      return Promise.resolve(callback(elements, name));
+    },
+  };
+
+  await expect(readChatGptTurnIdentities(turns as never))
+    .rejects.toBeInstanceOf(ChatGptTurnIdentityAmbiguityError);
+});
 
 test("logical turn identities ignore remounted history and reject ambiguous additions", () => {
   expect(chatGptNewTurnIdentity(["turn-old-1", "turn-old-2"], ["turn-old-2"])).toBeUndefined();

@@ -21,6 +21,14 @@ export class ChatGptAnswerBuffer {
     this.candidate = "";
   }
 
+  finalizeCandidate(answer: string): string {
+    if (!answer.startsWith(this.candidate)) {
+      throw new Error("ChatGPT streamed answer does not match the finalized answer");
+    }
+    this.candidate = answer;
+    return this.takeDeliverable(true);
+  }
+
   takeDeliverable(includeCandidate: boolean): string {
     const value = this.accepted + (includeCandidate ? this.candidate : "");
     const delta = value.slice(this.delivered);

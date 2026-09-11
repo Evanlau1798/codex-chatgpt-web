@@ -48,3 +48,23 @@ test("same-surface error recovery replaces an uncommitted stale candidate", () =
   expect(answers.value()).toBe("complete recovered final");
   expect(answers.takeDeliverable(true)).toBe("complete recovered final");
 });
+
+test("terminal answer fills an unobserved suffix without losing prior retries", () => {
+  const answers = new ChatGptAnswerBuffer();
+  answers.append("Earlier recovered work. ");
+  expect(answers.takeDeliverable(true)).toBe("Earlier recovered work. ");
+  answers.continueAfterError();
+  answers.append("Final");
+  expect(answers.takeDeliverable(true)).toBe("Final");
+
+  expect(answers.finalizeCandidate("Final answer.")).toBe(" answer.");
+  expect(answers.value()).toBe("Earlier recovered work. Final answer.");
+});
+
+test("terminal answer rejects a conflicting streamed candidate", () => {
+  const answers = new ChatGptAnswerBuffer();
+  answers.append("visible prefix");
+
+  expect(() => answers.finalizeCandidate("different final"))
+    .toThrow("does not match the finalized answer");
+});

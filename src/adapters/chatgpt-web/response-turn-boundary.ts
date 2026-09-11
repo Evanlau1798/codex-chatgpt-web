@@ -19,6 +19,13 @@ export type ChatGptSubmissionEvidence =
   | "generation_running"
   | "mcp_tool_call";
 
+export class ChatGptTurnIdentityAmbiguityError extends Error {
+  constructor(scope: "assistant" | "conversation") {
+    super(`ChatGPT ${scope} turn identities are ambiguous`);
+    this.name = "ChatGptTurnIdentityAmbiguityError";
+  }
+}
+
 export async function activateChatGptSendControl(
   sendButton: Pick<Locator, "press">,
   signal?: AbortSignal,
@@ -37,27 +44,33 @@ export async function readChatGptAssistantTurnState(
       throw new Error("ChatGPT assistant turn has no stable data-turn-id identity");
     }
     const typed = identities as string[];
-    if (new Set(typed).size !== typed.length) throw new Error("ChatGPT assistant turn identities are ambiguous");
     const lastId = typed.at(-1);
-    return lastId ? { count, lastId, identities: typed } : { count, identities: typed };
+    return {
+      count,
+      identities: typed,
+      ambiguous: new Set(typed).size !== typed.length,
+      ...(lastId ? { lastId } : {}),
+    };
   });
+  if (state.ambiguous) throw new ChatGptTurnIdentityAmbiguityError("assistant");
+  const { ambiguous: _ambiguous, ...stableState } = state;
   const page = (turns as unknown as Partial<Pick<Locator, "page">>).page?.();
-  if (!page) return state;
+  if (!page) return stableState;
   const knownTurnIdentities = await readChatGptTurnIdentities(
     page.locator("[data-turn-id-container]"), "data-turn-id-container",
   );
   const known = new Set(knownTurnIdentities);
-  if (state.identities?.some(identity => !known.has(identity))) {
+  if (stableState.identities.some(identity => !known.has(identity))) {
     throw new Error("ChatGPT assistant turn has no matching identity container");
   }
-  return { ...state, knownTurnIdentities };
+  return { ...stableState, knownTurnIdentities };
 }
 
 export async function readChatGptTurnIdentities(
   turns: Pick<Locator, "evaluateAll">,
   attribute = "data-turn-id",
 ): Promise<string[]> {
-  return turns.evaluateAll((elements, name) => {
+  const identities = await turns.evaluateAll((elements, name) => {
     const candidates = name === "data-turn-id-container"
       ? elements.filter(element => element.parentElement?.closest("[data-turn-id-container]")
         ?.getAttribute("data-turn-id-container") !== element.getAttribute("data-turn-id-container"))
@@ -66,10 +79,12 @@ export async function readChatGptTurnIdentities(
     if (identities.some(identity => typeof identity !== "string" || identity.trim().length === 0)) {
       throw new Error(`ChatGPT conversation turn has no stable ${name} identity`);
     }
-    const typed = identities as string[];
-    if (new Set(typed).size !== typed.length) throw new Error("ChatGPT conversation turn identities are ambiguous");
-    return typed;
+    return identities as string[];
   }, attribute);
+  if (new Set(identities).size !== identities.length) {
+    throw new ChatGptTurnIdentityAmbiguityError("conversation");
+  }
+  return identities;
 }
 
 export function chatGptNewTurnIdentity(
