@@ -106,20 +106,6 @@ test.each(["commentary", "reasoning"] as const)("the broker preserves whitespace
   expect(submitTurnOutput(channel as never, kind, " ").event).toMatchObject({ kind, text: " " });
 });
 
-test("tunneled output acknowledges native tool batches without reading rich DOM text", async () => {
-  let acknowledgements = 0;
-  const decision = await runChatGptTunneledOutputTurn({
-    output: queue([{ sequence: 1, kind: "final", text: "Complete." }]),
-    attempt: 1,
-    acknowledgeToolBatch: async () => { acknowledgements += 1; },
-    observe: async () => ({ running: false, responsePresent: true }),
-    onFinal: () => {},
-    pollMs: 1,
-  });
-  expect(decision.status).toBe("complete");
-  expect(acknowledgements).toBeGreaterThan(0);
-});
-
 test("tunneled final resets before a same-surface answer retry", async () => {
   let reset = 0;
   const output = queue([{ sequence: 1, kind: "final", text: "Premature." }], value => { reset = value; });
@@ -301,16 +287,6 @@ test("a completion revision race never publishes a stale tunneled final", async 
   expect(decision).toEqual({ status: "complete", answer: "Stable." });
   expect(commits).toBe(2);
   expect(finals).toBe(1);
-});
-
-test("successful tunnel completion precedes rich DOM response traversal", () => {
-  const source = readFileSync(join(import.meta.dir, "..", "src/adapters/chatgpt-web/browser-worker.ts"), "utf8");
-  const tunnel = source.indexOf("runChatGptTunneledOutputTurn({");
-  const richDom = source.indexOf("this.responseDomSnapshot(responseTurn", tunnel);
-  expect(tunnel).toBeGreaterThan(-1);
-  expect(richDom).toBeGreaterThan(tunnel);
-  expect(source.slice(tunnel, richDom)).toContain('if (tunneled.status === "complete")');
-  expect(source.slice(tunnel, richDom)).toContain("break;");
 });
 
 test("tunneled browser turns use content-free completion diagnostics", () => {

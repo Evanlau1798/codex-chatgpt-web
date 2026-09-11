@@ -3216,7 +3216,6 @@ export class ChatGptBrowserWorker {
       let preemptiveRetryPrompt: string | undefined;
       let preemptiveStop: PreemptiveRetryStopState | undefined;
       let tunneledOutputSequence = 0;
-      let tunneledToolBatchRevision = 0;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
         let completedRetryPrompt: ChatGptRetryPrompt | undefined;
         let responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
@@ -3224,6 +3223,8 @@ export class ChatGptBrowserWorker {
         const initialTurnIdentities = initialResponseTurn.knownTurnIdentities ?? [];
         let responseTurn = responseTurns.nth(initialResponseTurn.count);
         let responseTurnBinding: ChatGptAssistantTurnBinding | undefined;
+        const completionTracker = new ChatGptCompletionTracker();
+        let initialToolBatchRevision = 0;
         const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
         const initialUserTurnCount = await userTurns.count();
         const submissionBaseline: ChatGptSubmissionBaseline = {
@@ -3331,7 +3332,7 @@ export class ChatGptBrowserWorker {
           throw chatGptWebSurfaceError("ChatGPT connector was lost before prompt submission", false);
         }
         await diagnostics.capture(page, "send-ready");
-        const initialToolBatchRevision = turn.externalProgress?.snapshot().lastToolBatchRevision ?? 0;
+        initialToolBatchRevision = turn.externalProgress?.snapshot().lastToolBatchRevision ?? 0;
         await turn.onSendActivated?.();
         await activateChatGptSendControl(sendButton, stageSignal);
         const evidence = await this.waitForSubmissionAccepted(
@@ -3371,13 +3372,6 @@ export class ChatGptBrowserWorker {
             stopForRetry: async () => {
               const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
               if (await stop.isVisible().catch(() => false)) await stop.press("Enter");
-            },
-            acknowledgeToolBatch: async () => {
-              const progress = turn.externalProgress?.snapshot();
-              if (!turn.externalProgress || !progress
-                || progress.lastToolBatchRevision <= tunneledToolBatchRevision) return;
-              await turn.externalProgress.acknowledgeToolBatch(progress.lastToolBatchRevision);
-              tunneledToolBatchRevision = progress.lastToolBatchRevision;
             },
             observe: async () => {
               if (page.isClosed()) throw chatGptBrowserTabClosedError();
@@ -3421,9 +3415,26 @@ export class ChatGptBrowserWorker {
               if (responsePresent && current.lastId) {
                 await throwIfChatGptTerminalErrorAlert(page.locator(`[data-turn-id=${JSON.stringify(current.lastId)}]`));
               }
+              const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible().catch(() => false);
+              const progress = turn.externalProgress?.snapshot();
+              if (responsePresent && turn.externalProgress && progress
+                && progress.lastToolBatchRevision > initialToolBatchRevision
+                && completionTracker.needsToolBatchObservation(progress.lastToolBatchRevision)) {
+                const binding = bindChatGptAssistantTurn(initialResponseTurn, current);
+                if (binding) {
+                  // Capture before dispatch, then retain this same baseline if the tunnel needs DOM fallback.
+                  const baseline = await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running);
+                  turn.abortSignal?.throwIfAborted();
+                  if (!baseline.responsePresent) {
+                    throw chatGptWebSurfaceError("ChatGPT could not observe the current answer before native tool dispatch", false);
+                  }
+                  completionTracker.observeToolBatch(progress.lastToolBatchRevision, baseline.visibleText);
+                  await turn.externalProgress.acknowledgeToolBatch(progress.lastToolBatchRevision);
+                }
+              }
               return {
                 responsePresent,
-                running: await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible().catch(() => false),
+                running,
                 toolCallsInFlight: chatGptExternalToolCallsAreInFlight(turn.externalProgress?.snapshot()),
               };
             },
@@ -3488,7 +3499,6 @@ export class ChatGptBrowserWorker {
             retryable: false,
           });
         };
-        const completionTracker = new ChatGptCompletionTracker();
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
         const nativeToolActivityTracker = new ChatGptNativeToolActivityTracker();
         let completionFenceRevision: number | undefined;
@@ -3635,6 +3645,7 @@ export class ChatGptBrowserWorker {
         const externalProgressSnapshot = turn.externalProgress?.snapshot();
         if (turn.externalProgress
           && externalProgressSnapshot
+          && externalProgressSnapshot.lastToolBatchRevision > initialToolBatchRevision
           && completionTracker.needsToolBatchObservation(externalProgressSnapshot.lastToolBatchRevision)) {
           completionTracker.observeToolBatch(
             externalProgressSnapshot.lastToolBatchRevision,

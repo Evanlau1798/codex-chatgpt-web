@@ -14,7 +14,6 @@ interface TunnelObservation { running: boolean; responsePresent: boolean; toolCa
 interface TunnelOptions {
   output: ChatGptTunneledOutputReader;
   afterSequence?: number;
-  acknowledgeToolBatch?(): Promise<void>;
   observe(): Promise<TunnelObservation>;
   completionFence?: { begin(): Promise<number | undefined>; commit(revision: number): Promise<boolean> };
   completionAdmission?: { seal(): boolean; reopen(): void };
@@ -73,7 +72,6 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
         continue;
       }
 
-      await options.acknowledgeToolBatch?.();
       const observed = await options.observe();
       preemptiveRetry ??= options.takePreemptiveRetry?.();
       if (preemptiveRetry && observed.running && !stopRequested) {
@@ -95,7 +93,6 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
         if (stoppedWithoutFinalSince !== undefined && Date.now() - stoppedWithoutFinalSince >= fallbackGraceMs) {
           const settled = await Promise.race([pending, delay(pollMs)]);
           if (settled.kind === "output") { acceptOutput(settled.event); continue; }
-          await options.acknowledgeToolBatch?.();
           const confirmed = await options.observe();
           if (!confirmed.responsePresent || confirmed.running || confirmed.toolCallsInFlight) {
             stoppedWithoutFinalSince = undefined;

@@ -94,6 +94,7 @@ test("the executable manifest owns every deterministic lifecycle test", () => {
     "tests/browser-worker-retained-connector.test.ts",
     "tests/prompt-fast-insertion.test.ts",
     "tests/compaction-browser-recovery.test.ts",
+    "tests/browser-tunneled-fallback.test.ts",
     "tests/structured-compaction-handoff.test.ts",
   ] as const) expect(sharedLifecycleTests).toContain(contract);
   const registered = new Set<string>([...codexLifecycleTests, ...claudeLifecycleTests, ...sharedLifecycleTests]);
