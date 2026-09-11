@@ -2,12 +2,15 @@ import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { runEnhancedCompaction } from "../src/adapters/chatgpt-web/enhanced-compaction";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
-import { cancelAllStructuredCompactions } from "../src/adapters/chatgpt-web/compaction-handoff";
+import { cancelAllStructuredCompactions, canonicalizeCompactionHandoff } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { requestRetainedCompactionHandoff } from "../src/adapters/chatgpt-web/retained-compaction-handoff";
 import { deferred } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptConversationKey, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import type { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import type { CodexParsedRequest } from "../src/types";
+import type { AdapterEvent } from "../src/types";
+import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
+import { chatGptRetainedSurfaceUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
 
 function fixture(active = false) {
   const key = randomUUID();
@@ -132,3 +135,69 @@ test("retained handoff cancellation waits for the handoff worker to settle", asy
     expect((await run).message).toContain("operator cancelled");
   } finally { physical.resolve("cleanup"); await run; await f.cleanup(); }
 });
+
+for (const surfaceLost of [false, true]) {
+  test(`REG-05: retained compact ${surfaceLost ? "recovers once from surface loss" : "succeeds without fallback"}`, async () => {
+    const f = fixture();
+    await f.source.browserOutcome;
+    f.release.resolve();
+    const conversationKey = f.source.conversationKey();
+    const submitted = deferred<void>();
+    const events: AdapterEvent[] = [];
+    const turns: BrowserTurn[] = [];
+    let fallbackCalls = 0;
+    let workerSettlements = 0;
+    let transactionStarts = 0;
+    let transactionAborts = 0;
+    const summary = canonicalizeCompactionHandoff(f.options.parsed, "Canonical retained checkpoint.")!;
+    const broker = {
+      beginCompactionTransaction: async () => {
+        transactionStarts++;
+        return { token: "control", handoffId: "handoff" };
+      },
+      waitForCompactionHandoff: async () => { await submitted.promise; return summary; },
+      abortCompactionTransaction: () => { transactionAborts++; submitted.resolve(); },
+    } as unknown as TurnBroker;
+    try {
+      const result = await runEnhancedCompaction({ ...f.options, broker,
+        worker: { run: async turn => {
+          turns.push(turn);
+          try {
+            if (surfaceLost) throw chatGptRetainedSurfaceUnavailableError(new Error("fixture surface loss"));
+            const prepared = await turn.prepare();
+            try {
+              expect(prepared.text).toContain("codex.control.compaction_handoff");
+              submitted.resolve();
+              await new Promise<void>(resolve => {
+                if (turn.abortSignal!.aborted) resolve();
+                else turn.abortSignal!.addEventListener("abort", () => resolve(), { once: true });
+              });
+              return "browser text is not the checkpoint";
+            } finally { prepared.release(); }
+          } finally { workerSettlements++; }
+        } },
+        startFallback: async traceId => {
+          fallbackCalls++;
+          expect(traceId).toEndWith("_fallback");
+          expect(workerSettlements).toBe(1);
+          expect(f.source.conversationKey()).toBeUndefined();
+          return summary;
+        },
+        emit: event => { events.push(event); },
+      });
+      expect(result).toBe("completed");
+      expect(fallbackCalls).toBe(surfaceLost ? 1 : 0);
+      expect(turns).toHaveLength(1);
+      expect(turns[0]).toMatchObject({ conversationKey, requireRetainedConversation: true, nativeConnector: true });
+      expect(workerSettlements).toBe(1);
+      expect(transactionStarts).toBe(1);
+      expect(transactionAborts).toBe(1);
+      expect(events.filter(event => event.type === "text_delta")).toEqual([
+        { type: "text_delta", text: summary, phase: "final_answer" },
+      ]);
+      expect(events.filter(event => event.type === "done")).toHaveLength(1);
+      expect(f.source.conversationKey()).toBeUndefined();
+      expect(f.source.isActive()).toBeFalse();
+    } finally { submitted.resolve(); await f.cleanup(); }
+  });
+}

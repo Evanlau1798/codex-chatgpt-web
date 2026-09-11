@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   assertCodexLifecycleRequests,
+  assertCodexWaitResult,
   digestLifecyclePayload as digest,
 } from "../scripts/lifecycle-sim/codex-evidence";
 
@@ -9,11 +10,11 @@ type Call = { callId: string; name: string; argumentsDigest: string; index: numb
 type Output = { callId: string; outputDigest: string; index: number };
 
 const names = {
-  root: ["spawn_agent", "wait_agent", "followup_task", "wait_agent"],
+  root: ["spawn_agent", "wait_agent", "wait_agent", "followup_task", "wait_agent"],
   child: ["spawn_agent", "wait_agent"],
   grandchild: [],
 } satisfies Record<Role, string[]>;
-const steps = { root: 5, child: 4, grandchild: 1 } satisfies Record<Role, number>;
+const steps = { root: 6, child: 4, grandchild: 1 } satisfies Record<Role, number>;
 const agents = {
   root: "/root",
   child: "/root/lifecycle_child",
@@ -54,6 +55,26 @@ function validate(values = evidence()) {
 }
 
 describe("Codex deterministic lifecycle request evidence", () => {
+  test("REG-01: timeout evidence cannot hide a terminal, aborted, or missing target", () => {
+    const running = { pending: true, completed: false, aborted: false };
+    for (const result of [{ timed_out: true }, { status: {}, timed_out: true }]) {
+      expect(() => assertCodexWaitResult(result, true, running)).not.toThrow();
+      expect(() => assertCodexWaitResult({ ...result, timed_out: false }, true, running)).toThrow("REG-01");
+      expect(() => assertCodexWaitResult(result, true, { ...running, pending: false })).toThrow("REG-01");
+      expect(() => assertCodexWaitResult(result, true, { ...running, aborted: true })).toThrow("REG-01");
+      expect(() => assertCodexWaitResult(result, true, { ...running, completed: true })).toThrow("REG-01");
+    }
+    expect(() => assertCodexWaitResult({ timed_out: true, status: { child: "running" } }, true,
+      { ...running, id: "child" })).not.toThrow();
+    for (const status of ["not_found", { completed: "premature" }, { errored: "failure" }]) {
+      expect(() => assertCodexWaitResult({ timed_out: true, status: { child: status } }, true,
+        { ...running, id: "child" })).toThrow("REG-01");
+    }
+    const completed = { pending: false, completed: true, aborted: false, id: "child" };
+    expect(() => assertCodexWaitResult({ timed_out: false, status: { child: { completed: "CHILD_LIFECYCLE_OK" } } },
+      false, completed)).not.toThrow();
+    expect(() => assertCodexWaitResult({ timed_out: false, status: {} }, false, completed)).toThrow("REG-01");
+  });
   test("accepts append-only history despite shifted absolute input indexes", () => {
     expect(validate).not.toThrow();
   });

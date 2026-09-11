@@ -88,6 +88,14 @@ test("the executable manifest owns every deterministic lifecycle test", () => {
   expect(sharedLifecycleTests).toContain("tests/lifecycle-race-ordering.test.ts");
   expect(sharedLifecycleTests).toContain("tests/broker-retirement-boundary.test.ts");
   expect(sharedLifecycleTests).toContain("tests/zero-risk-adapter-outcomes.test.ts");
+  for (const contract of [
+    "tests/bridge-platform.test.ts",
+    "tests/enhanced-compaction-settlement.test.ts",
+    "tests/browser-worker-retained-connector.test.ts",
+    "tests/prompt-fast-insertion.test.ts",
+    "tests/compaction-browser-recovery.test.ts",
+    "tests/structured-compaction-handoff.test.ts",
+  ] as const) expect(sharedLifecycleTests).toContain(contract);
   const registered = new Set<string>([...codexLifecycleTests, ...claudeLifecycleTests, ...sharedLifecycleTests]);
   const lifecycleSimTests = readdirSync(resolve(repo, "tests"))
     .filter(name => /^lifecycle-sim-.*\.test\.ts$/.test(name))

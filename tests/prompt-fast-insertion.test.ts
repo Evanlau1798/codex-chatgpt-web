@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { insertChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-insertion";
 import { structuredCompactionHandoffInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
+import { CHATGPT_PROMPT_INSERT_CHUNK_CHARS } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 
 type FakeComposer = {
   composer: { focus(): Promise<void>; evaluate(callback: (element: HTMLElement, input: unknown) => unknown, input: unknown): Promise<unknown> };
@@ -86,12 +87,13 @@ async function insertWithFakeEditor(prompt: string, forceStructuredDirect = fals
   }
 }
 
-test("uses one direct edit for the generated retained compaction control prompt", async () => {
+test("REG-04: uses one exact direct edit for the short generated structured compaction prompt", async () => {
   const prompt = structuredCompactionHandoffInstruction({
     token: "control-token-0123456789abcdef",
     handoffId: "handoff-id-0123456789abcdef",
   });
-  expect(prompt.length).toBeLessThan(32_000);
+  expect(prompt.length).toBeLessThan(CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 2);
+  expect(prompt.match(/[`*_#]/g)!.length).toBeGreaterThan(10);
   const editor = await insertWithFakeEditor(prompt, true);
   expect(editor.text()).toBe(prompt);
   expect(editor.editCommands()).toBe(1);

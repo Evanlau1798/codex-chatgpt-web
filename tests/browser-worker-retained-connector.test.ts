@@ -5,6 +5,7 @@ import {
 } from "../src/adapters/chatgpt-web/browser-worker";
 
 type BrowserWorkerInternals = {
+  selectConnector(page: unknown): Promise<unknown>;
   attachPrompt(
     page: unknown,
     prompt: string,
@@ -26,7 +27,7 @@ type BrowserWorkerInternals = {
 
 const workerMethods = ChatGptBrowserWorker.prototype as unknown as BrowserWorkerInternals;
 
-test.each([
+for (const pill of ["missing", "selected", "unrecoverable"] as const) test.each([
   ["retained response", async (fixture: object, page: object) => {
     await workerMethods.attachPrompt.call(fixture, page, "new suffix", true);
   }],
@@ -40,28 +41,59 @@ test.each([
       { userTurns: {}, responseTurns: {}, initialTurnIdentities: [] },
     );
   }],
-] as const)("%s verifies the current connector pill before attaching its prompt", async (_name, run) => {
+] as const)(`REG-03: %s verifies its current ${pill} connector pill before attachment`, async (_name, run) => {
   const calls: string[] = [];
+  let selected = pill === "selected";
+  const selectionError = new Error("fixture connector unavailable");
   const composer = {
     fill: async () => { calls.push("fill"); },
     focus: async () => { calls.push("focus"); },
+    pressSequentially: async () => { calls.push("mention"); },
+    press: async (key: string) => {
+      expect(key).toBe("Enter");
+      calls.push("select");
+      selected = true;
+    },
   };
-  const page = { keyboard: { press: async () => { calls.push("document-end"); } } };
+  const row = {
+    waitFor: async () => { if (pill === "unrecoverable") throw selectionError; },
+    count: async () => 1,
+    getAttribute: async () => "",
+  };
+  const page = {
+    getByText: () => ({}),
+    locator: () => ({ filter: () => row }),
+    keyboard: { press: async () => { calls.push("document-end"); } },
+  };
   const fixture = {
+    config: { appName: "Codex Native2" },
     attachPrompt: workerMethods.attachPrompt,
     activeComposer: async () => composer,
-    selectConnector: async () => {
-      calls.push("select-connector");
-      return composer;
+    selectConnector: workerMethods.selectConnector,
+    ensureConnectorSurface: async () => {},
+    clearChatGptComposerState: async () => { calls.push("cleanup"); },
+    connectorIsSelected: async () => {
+      calls.push(selected ? "verified" : "missing");
+      return selected;
     },
+    selectedConnectorControl: () => ({ waitFor: async () => {} }),
     insertPromptText: async () => { calls.push("insert-prompt"); },
     assertPromptAttached: async () => { calls.push("assert-prompt"); },
   };
 
+  if (pill === "unrecoverable") {
+    await expect(run(fixture, page)).rejects.toBe(selectionError);
+    expect(calls).toContain("cleanup");
+    expect(calls).not.toContain("insert-prompt");
+    expect(calls).not.toContain("assert-prompt");
+    return;
+  }
   await run(fixture, page);
-
-  expect(calls.filter(call => call === "select-connector")).toHaveLength(1);
-  expect(calls.indexOf("select-connector")).toBeLessThan(calls.indexOf("insert-prompt"));
+  expect(calls.filter(call => call === "select")).toHaveLength(pill === "selected" ? 0 : 1);
+  expect(calls.filter(call => call === "insert-prompt")).toHaveLength(1);
+  expect(calls).toContain("verified");
+  expect(calls.indexOf("verified")).toBeLessThan(calls.indexOf("insert-prompt"));
+  expect(calls.at(-1)).toBe("assert-prompt");
 });
 
 test("compaction attachment retry gets a fresh connector attempt budget", async () => {

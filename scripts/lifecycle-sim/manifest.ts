@@ -19,6 +19,12 @@ export const claudeLifecycleTests = [
 ] as const;
 
 export const sharedLifecycleTests = [
+  "tests/bridge-platform.test.ts",
+  "tests/enhanced-compaction-settlement.test.ts",
+  "tests/browser-worker-retained-connector.test.ts",
+  "tests/prompt-fast-insertion.test.ts",
+  "tests/compaction-browser-recovery.test.ts",
+  "tests/structured-compaction-handoff.test.ts",
   "tests/turn-progress-retirement.test.ts",
   "tests/broker-retirement-boundary.test.ts",
   "tests/server-adapter-injection.test.ts",

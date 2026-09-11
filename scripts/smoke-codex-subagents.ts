@@ -6,7 +6,8 @@ import { bridgeToResponsesSSE } from "../src/bridge";
 import { defaultConfig } from "../src/config";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
 import type { AdapterEvent } from "../src/types";
-import { assertCodexLifecycleRequests, digestLifecyclePayload } from "./lifecycle-sim/codex-evidence";
+import { deferred } from "../src/adapters/chatgpt-web/runtime-lifecycle";
+import { assertCodexLifecycleRequests, assertCodexWaitResult, digestLifecyclePayload } from "./lifecycle-sim/codex-evidence";
 
 const protocol = process.argv.includes("--v1") ? "v1" : "v2";
 const explicitChildModel = "gpt-5.6-sol";
@@ -41,6 +42,11 @@ const steps = new Map<Role, number>();
 const rolesByThread = new Map<string, Role>();
 const observed: string[] = [];
 const failures: string[] = [];
+const childStarted = deferred<void>();
+const releaseChild = deferred<void>();
+let childPending = false;
+let childAborted = false;
+let childCompleted = false;
 const requestLog: Array<{
   role: Role;
   step: number;
@@ -173,6 +179,7 @@ async function* toolCall(name: string, args: Record<string, unknown>): AsyncGene
 
 async function* finalAnswer(text: string): AsyncGenerator<AdapterEvent> {
   yield { type: "text_delta", text, phase: "final_answer" };
+  if (text === "CHILD_LIFECYCLE_OK") childCompleted = true;
   yield { type: "done", stopReason: "stop", endTurn: true };
 }
 
@@ -191,6 +198,22 @@ async function* rootFinalAnswer(): AsyncGenerator<AdapterEvent> {
   yield* finalAnswer("ROOT_LIFECYCLE_OK");
 }
 
+async function* heldChild(events: AsyncIterable<AdapterEvent>, signal: AbortSignal): AsyncGenerator<AdapterEvent> {
+  const aborted = () => { childAborted = true; releaseChild.resolve(); };
+  signal.addEventListener("abort", aborted, { once: true });
+  childPending = true;
+  childStarted.resolve();
+  try { await releaseChild.promise; yield* events; }
+  finally { childPending = false; signal.removeEventListener("abort", aborted); }
+}
+
+async function* firstWait(body: Record<string, unknown>): AsyncGenerator<AdapterEvent> {
+  await childStarted.promise;
+  yield* toolCall("wait_agent", protocol === "v1"
+    ? { targets: [spawnedAgentId(body)], timeout_ms: 500 }
+    : { timeout_ms: 500 });
+}
+
 function responseFor(role: Role, step: number, body: Record<string, unknown>): AsyncIterable<AdapterEvent> {
   if (role === "root") {
     if (step === 0) return toolCall("spawn_agent", protocol === "v1" ? {
@@ -205,10 +228,23 @@ function responseFor(role: Role, step: number, body: Record<string, unknown>): A
       model: explicitChildModel,
       reasoning_effort: explicitChildReasoningEffort,
     });
-    if (step === 1) return toolCall("wait_agent", protocol === "v1"
-      ? { targets: [spawnedAgentId(body)], timeout_ms: 500 }
-      : { timeout_ms: 500 });
-    if (step === 2) return toolCall(protocol === "v1" ? "send_input" : "followup_task", protocol === "v1" ? {
+    if (step === 1) return firstWait(body);
+    if (step === 2 || step === 3) {
+      const input = body.input as Array<Record<string, unknown>>;
+      const call = input.findLast(item => item.type === "function_call" && item.name === "wait_agent")!;
+      const output = input.find(item => item.type === "function_call_output" && item.call_id === call.call_id)!;
+      assertCodexWaitResult(JSON.parse(String(output.output)), step === 2, {
+        pending: childPending, completed: childCompleted, aborted: childAborted,
+        ...(protocol === "v1" ? { id: spawnedAgentId(body) } : {}),
+      });
+    }
+    if (step === 2) {
+      releaseChild.resolve();
+      return toolCall("wait_agent", protocol === "v1"
+        ? { targets: [spawnedAgentId(body)], timeout_ms: 5_000 }
+        : { timeout_ms: 5_000 });
+    }
+    if (step === 3) return toolCall(protocol === "v1" ? "send_input" : "followup_task", protocol === "v1" ? {
       target: spawnedAgentId(body),
       message: "FOLLOWUP_LIFECYCLE: acknowledge this follow-up with CHILD_FOLLOWUP_OK.",
       interrupt: true,
@@ -216,10 +252,10 @@ function responseFor(role: Role, step: number, body: Record<string, unknown>): A
       target: "/root/lifecycle_child",
       message: "FOLLOWUP_LIFECYCLE: acknowledge this follow-up with CHILD_FOLLOWUP_OK.",
     });
-    if (step === 3) return toolCall("wait_agent", protocol === "v1"
+    if (step === 4) return toolCall("wait_agent", protocol === "v1"
       ? { targets: [spawnedAgentId(body)], timeout_ms: 500 }
       : { timeout_ms: 500 });
-    if (step === 4) return rootFinalAnswer();
+    if (step === 5) return rootFinalAnswer();
     throw new Error(`Unexpected root lifecycle step ${step}`);
   }
   if (role === "child") {
@@ -321,7 +357,9 @@ const server = Bun.serve({
         }
       }
       return new Response(bridgeToResponsesSSE(
-        responseFor(role, step, body),
+        role === "child" && step === 0
+          ? heldChild(responseFor(role, step, body), request.signal)
+          : responseFor(role, step, body),
         "chatgpt-web/pro",
         collaborationMap,
       ), {
@@ -348,11 +386,14 @@ writeFileSync(join(codexHome, "config.toml"), [
   'env_key = "OPENAI_API_KEY"',
   'wire_api = "responses"',
   "supports_websockets = false",
+  "request_max_retries = 0",
+  "stream_max_retries = 0",
   "",
   "[agents]",
   "max_depth = 2",
   "",
   "[features]",
+  "plugins = false",
   "multi_agent = true",
   ...(protocol === "v1" ? ["multi_agent_v2 = false"] : [
     "",
@@ -393,7 +434,7 @@ try {
     new Response(processHandle.stderr).text(),
   ]);
   clearTimeout(timeout);
-  if (exitCode !== 0) throw new Error(`Codex lifecycle exited ${exitCode}: ${stderr || stdout}`);
+  if (exitCode !== 0) throw new Error(`Codex lifecycle exited ${exitCode}: ${failures.join("; ")}\n${stderr || stdout}`);
   if (!stdout.includes("ROOT_LIFECYCLE_OK")) {
     throw new Error(
       `Codex lifecycle did not return the root result. Observed: ${JSON.stringify([...observed])}`
@@ -425,6 +466,8 @@ try {
   }
   process.stdout.write(`CODEX_SUBAGENT_${protocol.toUpperCase()}_LIFECYCLE_SMOKE_OK ${JSON.stringify(observed)}\n`);
 } finally {
+  releaseChild.resolve();
+  childStarted.resolve();
   await server.stop(true);
   rmSync(root, { recursive: true, force: true });
 }

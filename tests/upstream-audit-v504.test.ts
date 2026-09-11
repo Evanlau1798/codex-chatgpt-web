@@ -34,7 +34,7 @@ test("v5.0.4 closes every pinned upstream path obligation", () => {
     if (entry.classification === "exact") expect(entry.candidateBlob).toBe(entry.source.targetBlob);
   }
   expect(ledger.closure.classifications).toEqual({ adapted: 18, exact: 1, superseded: 1, rejected: 1 });
-});
+}, 30_000); // Match the other ledgers' budget for serial Git processes on Windows.
 
 test("v5.0.4 preserves the original merge evidence and upstream object closure", () => {
   const archive = readFileSync(resolve(root, ledger.mergeEvidence.archive));

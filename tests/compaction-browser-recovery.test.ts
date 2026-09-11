@@ -14,8 +14,8 @@ test.each([
   [true, true, false, "inline", true, false],
   [true, true, false, "native2-archive", false, false],
   [true, true, false, undefined, false, false],
-  [true, true, false, "inline", true, true],
-] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s, retained=%s)", async (owned, tools, multipart, transport, direct, requiredRetained) => {
+  [true, false, false, "inline", true, true],
+] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s, direct=%s, retained=%s)", async (owned, tools, multipart, transport, direct, requiredRetained) => {
   const diagnostics = mkdtempSync(join(tmpdir(), "compaction-observation-"));
   const finalResponse = new Error("fixture reached final response observation");
   const capabilities = { localToolsEnabled: tools, solAvailable: true, proAvailable: true };
@@ -25,10 +25,17 @@ test.each([
   const sendBudgets: number[] = [];
   let stage = "";
   let released = false;
+  let selected = false;
+  const methods = ChatGptBrowserWorker.prototype as unknown as Record<string, (...args: any[]) => Promise<any>>;
   const hidden = { count: async () => 0, evaluateAll: async () => ({ count: 0 }),
     filter() { return this; }, last() { return this; }, nth() { return this; }, getByText() { return this; },
     isVisible: async () => false };
-  const page = { evaluate: async () => ({}), isClosed: () => false, locator: () => hidden,
+  const row = { waitFor: async () => {}, count: async () => 1, getAttribute: async () => "" };
+  const page = { evaluate: async () => ({}), isClosed: () => false,
+    getByText: () => ({}),
+    keyboard: { press: async () => {} },
+    locator: (selector: string) => selector === '.__menu-item[tabindex="0"]'
+      ? { filter: () => row } : hidden,
     url: () => { actions.push("observe"); throw finalResponse; } };
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics, ...(owned ? { browserHostDescriptorPath: "owned-descriptor" } : {}) },
@@ -43,7 +50,10 @@ test.each([
       actions.push(`effort:${effort}`);
       return resolveChatGptWebModelMode(model, effort, capabilities);
     },
-    activeComposer: async () => ({ locator: () => ({ getByTestId: () => ({
+    activeComposer: async () => ({
+      fill: async () => {}, focus: async () => {}, pressSequentially: async () => {},
+      press: async () => { actions.push("connector-select"); selected = true; },
+      locator: () => ({ getByTestId: () => ({
       waitFor: async () => {}, isEnabled: async () => true, press: async () => { actions.push("send"); },
     }) }) }),
     waitForSubmissionAccepted: async (...args: unknown[]) => {
@@ -51,14 +61,17 @@ test.each([
       recoveryCallbacks.push(args[10]);
       return "user_turn";
     },
-    attachPrompt: async (_page: unknown, _text: string, localTools: boolean) => {
+    attachPrompt: async function (...args: unknown[]) {
+      if (requiredRetained) return methods.attachPrompt!.apply(this, args);
+      const localTools = args[2];
       expect(localTools).toBe(false);
       actions.push("attach:plain");
     },
-    attachPromptWithCompactionRetry: async (_page: unknown, _text: string, localTools: boolean, ...args: unknown[]) => {
-      expect(localTools).toBe(tools);
+    attachPromptWithCompactionRetry: async function (_page: unknown, _text: string, localTools: boolean, ...args: unknown[]) {
+      expect(localTools).toBe(requiredRetained || tools);
       expect(args[7]).toBe(direct);
       expect(args[8]).toBe(requiredRetained);
+      if (requiredRetained) return methods.attachPromptWithCompactionRetry!.call(this, _page, _text, localTools, ...args);
       actions.push(localTools ? "attach:tools" : "attach:plain");
     },
     assertPromptAttached: async (_page: unknown, text: string) => {
@@ -66,7 +79,16 @@ test.each([
       else expect(text).toBe("Summarize the context");
       actions.push("verify");
     },
-    connectorIsSelected: async () => { actions.push("connector-check"); return true; },
+    ensureConnectorSurface: async () => {},
+    selectConnector: methods.selectConnector,
+    selectedConnectorControl: () => ({ waitFor: async () => {} }),
+    clearChatGptComposerState: async () => {},
+    insertPromptText: async (_page: unknown, _text: string, _signal: unknown, _large: boolean, forceDirect: boolean) => {
+      expect(selected).toBeTrue();
+      expect(forceDirect).toBeTrue();
+      actions.push("attach:tools");
+    },
+    connectorIsSelected: async () => { actions.push("connector-check"); return requiredRetained ? selected : true; },
     attachFiles: async () => { actions.push("files"); },
     sendAttachedPrompt: async (...args: unknown[]) => {
       // Context ingestion cannot mistake tool activity for acknowledgement of a part.
@@ -91,6 +113,7 @@ test.each([
       modelId: "gpt-5.6-sol",
       reasoning: "high",
       capabilities,
+      nativeConnector: requiredRetained,
       compaction: requiredRetained || !tools,
       requireRetainedConversation: requiredRetained,
       externalProgress: progress,
@@ -110,7 +133,8 @@ test.each([
         "attach:plain", "send", "observe", "ack",
       ] : []),
       "effort:high",
-      tools ? "attach:tools" : "attach:plain", "files", "verify",
+      ...(requiredRetained ? ["connector-check", "connector-select", "connector-check", "attach:tools", "verify"]
+        : [tools ? "attach:tools" : "attach:plain"]), "files", "verify",
       ...(tools && !requiredRetained ? ["connector-check"] : []),
       "send", "observe",
     ]);

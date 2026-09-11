@@ -20,6 +20,29 @@ export const digestLifecyclePayload = (value: string): string => (
   createHash("sha256").update(value).digest("hex")
 );
 
+/** Native V2 omits status; the held provider request proves that its target is still pending. */
+export function assertCodexWaitResult(
+  result: unknown,
+  timedOut: boolean,
+  target: { pending: boolean; completed: boolean; aborted: boolean; id?: string },
+): void {
+  const value = result as { timed_out?: unknown; status?: Record<string, unknown> } | null;
+  if (!value || value.timed_out !== timedOut || target.aborted
+    || target.pending !== timedOut || target.completed === timedOut) {
+    throw new Error("REG-01: wait result disagrees with the target lifecycle");
+  }
+  if (target.id) {
+    if (!value.status || typeof value.status !== "object" || Array.isArray(value.status)) {
+      throw new Error("REG-01: native V1 wait has no target status evidence");
+    }
+    if (timedOut ? Object.entries(value.status).some(([id, status]) => id !== target.id
+        || (status !== "running" && status !== "pending_init"))
+      : JSON.stringify(value.status) !== JSON.stringify({ [target.id]: { completed: "CHILD_LIFECYCLE_OK" } })) {
+      throw new Error("REG-01: wait changed or lost its target terminal status");
+    }
+  }
+}
+
 function orderedHistory(request: CodexLifecycleRequestEvidence): HistoryEvent[] {
   return [
     ...request.functionCalls.map(call => ({
@@ -52,13 +75,13 @@ const v2AgentNames: Record<CodexLifecycleRole, string> = {
 };
 
 const expectedSteps: Record<CodexLifecycleRole, number[]> = {
-  root: [0, 1, 2, 3, 4],
+  root: [0, 1, 2, 3, 4, 5],
   child: [0, 1, 2, 3],
   grandchild: [0],
 };
 
 const expectedTools = (protocol: "v1" | "v2"): Record<CodexLifecycleRole, string[]> => ({
-  root: ["spawn_agent", "wait_agent", protocol === "v1" ? "send_input" : "followup_task", "wait_agent"],
+  root: ["spawn_agent", "wait_agent", "wait_agent", protocol === "v1" ? "send_input" : "followup_task", "wait_agent"],
   child: ["spawn_agent", "wait_agent"],
   grandchild: [],
 });
