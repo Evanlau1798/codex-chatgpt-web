@@ -10,7 +10,6 @@ type BrowserWorkerInternals = {
     prompt: string,
     localTools: boolean,
     captureDiagnostic?: unknown,
-    reuseConnector?: boolean,
   ): Promise<void>;
   attachPromptWithCompactionRetry(
     page: unknown,
@@ -19,7 +18,6 @@ type BrowserWorkerInternals = {
     compaction: boolean,
     baseline: unknown,
     captureDiagnostic?: unknown,
-    reuseConnector?: boolean,
     abortSignal?: AbortSignal,
     catalogRefreshAvailable?: boolean,
     connectorAttemptBudget?: { triggerAttempts: number },
@@ -30,7 +28,7 @@ const workerMethods = ChatGptBrowserWorker.prototype as unknown as BrowserWorker
 
 test.each([
   ["retained response", async (fixture: object, page: object) => {
-    await workerMethods.attachPrompt.call(fixture, page, "new suffix", true, undefined, true);
+    await workerMethods.attachPrompt.call(fixture, page, "new suffix", true);
   }],
   ["retained compaction", async (fixture: object, page: object) => {
     await workerMethods.attachPromptWithCompactionRetry.call(
@@ -40,11 +38,9 @@ test.each([
       true,
       true,
       { userTurns: {}, responseTurns: {}, initialTurnIdentities: [] },
-      undefined,
-      true,
     );
   }],
-] as const)("%s reuses its verified connector binding without reopening the mention menu", async (_name, run) => {
+] as const)("%s verifies the current connector pill before attaching its prompt", async (_name, run) => {
   const calls: string[] = [];
   const composer = {
     fill: async () => { calls.push("fill"); },
@@ -64,8 +60,8 @@ test.each([
 
   await run(fixture, page);
 
-  expect(calls).not.toContain("select-connector");
-  expect(calls.indexOf("fill")).toBeLessThan(calls.indexOf("insert-prompt"));
+  expect(calls.filter(call => call === "select-connector")).toHaveLength(1);
+  expect(calls.indexOf("select-connector")).toBeLessThan(calls.indexOf("insert-prompt"));
 });
 
 test("compaction attachment retry gets a fresh connector attempt budget", async () => {
@@ -73,7 +69,7 @@ test("compaction attachment retry gets a fresh connector attempt budget", async 
   let attempts = 0;
   const fixture = {
     attachPrompt: async (...args: unknown[]) => {
-      const budget = args[7] as { triggerAttempts: number };
+      const budget = args[6] as { triggerAttempts: number };
       attempts += 1;
       if (attempts === 1) {
         budget.triggerAttempts = 3;
@@ -93,7 +89,6 @@ test("compaction attachment retry gets a fresh connector attempt budget", async 
     true,
     { userTurns: {}, responseTurns: {}, initialTurnIdentities: [] },
     undefined,
-    true,
     undefined,
     false,
     connectorAttemptBudget,

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { insertChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-insertion";
+import { structuredCompactionHandoffInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
 
 type FakeComposer = {
   composer: { focus(): Promise<void>; evaluate(callback: (element: HTMLElement, input: unknown) => unknown, input: unknown): Promise<unknown> };
@@ -68,7 +69,7 @@ function fakeLexicalComposer(acceptEdit = true, onEdit?: () => void): FakeCompos
   };
 }
 
-async function insertWithFakeEditor(prompt: string): Promise<FakeComposer> {
+async function insertWithFakeEditor(prompt: string, forceStructuredDirect = false): Promise<FakeComposer> {
   const editor = fakeLexicalComposer();
   const view = editor.document.defaultView!;
   const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
@@ -78,12 +79,23 @@ async function insertWithFakeEditor(prompt: string): Promise<FakeComposer> {
       composer: async () => editor.composer as never,
       verify: async expected => expect(editor.text()).toBe(expected),
       reanchor: async () => {},
-    }, { largeStructuredDirect: true });
+    }, { largeStructuredDirect: !forceStructuredDirect, forceStructuredDirect });
     return editor;
   } finally {
     Object.assign(globalThis, previous);
   }
 }
+
+test("uses one direct edit for the generated retained compaction control prompt", async () => {
+  const prompt = structuredCompactionHandoffInstruction({
+    token: "control-token-0123456789abcdef",
+    handoffId: "handoff-id-0123456789abcdef",
+  });
+  expect(prompt.length).toBeLessThan(32_000);
+  const editor = await insertWithFakeEditor(prompt, true);
+  expect(editor.text()).toBe(prompt);
+  expect(editor.editCommands()).toBe(1);
+});
 
 test("keeps the direct edit opt-in for callers that own an inline transport", async () => {
   const prompt = `header\n${"x".repeat(40_000)}`;

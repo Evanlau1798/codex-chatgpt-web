@@ -153,7 +153,7 @@ export async function runEnhancedCompaction(
       }
       operationSignal.throwIfAborted();
       if (error instanceof RetainedCompactionSourceUnavailableError) {
-        return await fallback("source_disappeared_before_handoff");
+        return await fallback("retained_surface_unavailable");
       }
       throw error;
     } finally {

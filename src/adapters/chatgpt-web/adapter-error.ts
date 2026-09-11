@@ -25,6 +25,19 @@ export class ChatGptWebAdapterError extends Error {
   }
 }
 
+export const CHATGPT_RETAINED_SURFACE_UNAVAILABLE = "The retained ChatGPT conversation is no longer available";
+
+export function chatGptRetainedSurfaceUnavailableError(cause: unknown): ChatGptWebAdapterError {
+  return new ChatGptWebAdapterError(CHATGPT_RETAINED_SURFACE_UNAVAILABLE, {
+    status: 502,
+    errorType: "server_error",
+    code: "chatgpt_retained_surface_unavailable",
+    retryable: false,
+    retireSession: true,
+    cause,
+  });
+}
+
 // Only the compaction owner may signal this after the broker accepts its one-shot handoff.
 // It cancels browser observation while preserving the accepted summary as the native result.
 export class ChatGptCompactionHandoffAccepted extends DOMException {

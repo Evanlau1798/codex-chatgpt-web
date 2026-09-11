@@ -7,14 +7,15 @@ import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 
 test.each([
-  [true, false, true, "inline", false],
-  [false, false, true, "inline", false],
-  [true, true, true, "inline", false],
-  [true, false, false, "inline", true],
-  [true, true, false, "inline", true],
-  [true, true, false, "native2-archive", false],
-  [true, true, false, undefined, false],
-] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s)", async (owned, tools, multipart, transport, direct) => {
+  [true, false, true, "inline", false, false],
+  [false, false, true, "inline", false, false],
+  [true, true, true, "inline", false, false],
+  [true, false, false, "inline", true, false],
+  [true, true, false, "inline", true, false],
+  [true, true, false, "native2-archive", false, false],
+  [true, true, false, undefined, false, false],
+  [true, true, false, "inline", true, true],
+] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s, retained=%s)", async (owned, tools, multipart, transport, direct, requiredRetained) => {
   const diagnostics = mkdtempSync(join(tmpdir(), "compaction-observation-"));
   const finalResponse = new Error("fixture reached final response observation");
   const capabilities = { localToolsEnabled: tools, solAvailable: true, proAvailable: true };
@@ -56,7 +57,8 @@ test.each([
     },
     attachPromptWithCompactionRetry: async (_page: unknown, _text: string, localTools: boolean, ...args: unknown[]) => {
       expect(localTools).toBe(tools);
-      expect(args[8]).toBe(direct);
+      expect(args[7]).toBe(direct);
+      expect(args[8]).toBe(requiredRetained);
       actions.push(localTools ? "attach:tools" : "attach:plain");
     },
     assertPromptAttached: async (_page: unknown, text: string) => {
@@ -89,14 +91,15 @@ test.each([
       modelId: "gpt-5.6-sol",
       reasoning: "high",
       capabilities,
-      compaction: !tools,
+      compaction: requiredRetained || !tools,
+      requireRetainedConversation: requiredRetained,
       externalProgress: progress,
       completionFence: tools ? {
         begin: async () => { throw new Error("fixture must stop before completion"); },
         commit: async () => { throw new Error("fixture must stop before completion"); },
       } : undefined,
       prepare: async () => ({ text: "Summarize the context", images: [], transport, multipart: multipart ? { parts: ['{"part":1}', '{"part":2}', '{"part":3}'], commit: "Summarize" } : undefined, release: () => { released = true; } }),
-    }, owned ? "owned-surface" : undefined, page)).rejects.toBe(finalResponse);
+    }, owned ? "owned-surface" : undefined, page, requiredRetained)).rejects.toBe(finalResponse);
     expect(recoveryCallbacks.map(callback => typeof callback)).toEqual(
       Array(multipart ? 5 : 1).fill(owned ? "function" : "undefined"),
     );
@@ -108,7 +111,7 @@ test.each([
       ] : []),
       "effort:high",
       tools ? "attach:tools" : "attach:plain", "files", "verify",
-      ...(tools ? ["connector-check"] : []),
+      ...(tools && !requiredRetained ? ["connector-check"] : []),
       "send", "observe",
     ]);
     expect(sendBudgets).toEqual(multipart ? [180_000, 180_000, 180_000] : [60_000]);

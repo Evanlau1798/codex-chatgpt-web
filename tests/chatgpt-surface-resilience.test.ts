@@ -52,6 +52,30 @@ describe("ChatGPT Web surface resilience", () => {
     expect(attempts).toBe(2);
   });
 
+  test("does not perform an impossible fresh retry for a required retained surface", async () => {
+    const Worker = ChatGptBrowserWorker as unknown as new (config: object) => ChatGptBrowserWorker;
+    const worker = new Worker({ browserHost: "managed-chrome" });
+    let attempts = 0;
+    (worker as unknown as { runExclusive: () => Promise<string> }).runExclusive = async () => {
+      attempts += 1;
+      if (attempts === 1) throw chatGptWebSurfaceError("surface changed", false);
+      return "incorrect fresh replay";
+    };
+
+    await expect(worker.run({
+      traceId: "required-retained-no-fresh-retry",
+      modelId: CHATGPT_WEB_MODEL_ID,
+      reasoning: "high",
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+      requireRetainedConversation: true,
+      conversationKey: "a".repeat(64),
+    } as BrowserTurn)).rejects.toMatchObject({
+      code: "chatgpt_retained_surface_unavailable",
+      retryable: false,
+    });
+    expect(attempts).toBe(1);
+  });
+
   test("classifies a frozen send stage as a recoverable unsubmitted surface failure", async () => {
     const Worker = ChatGptBrowserWorker as unknown as new (config: object) => ChatGptBrowserWorker;
     const worker = new Worker({ browserHost: "managed-chrome" });

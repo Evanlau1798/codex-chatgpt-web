@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { chatGptRetainedSurfaceUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { requestRetainedCompactionHandoff } from "../src/adapters/chatgpt-web/retained-compaction-handoff";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
@@ -41,6 +42,7 @@ test("structured handoff ignores browser text and uses only the control result",
   expect(prepared.text).toContain("codex.control.compaction_handoff");
   expect(prepared.text).not.toContain("Inspect");
   expect(turn?.capabilities.localToolsEnabled).toBeFalse();
+  expect(turn?.compaction).toBeTrue();
 });
 
 test("handoff deadline aborts and cleans up a cooperating browser", async () => {
@@ -62,4 +64,22 @@ test("handoff deadline aborts and cleans up a cooperating browser", async () => 
     { localToolsEnabled: true, solAvailable: true, proAvailable: true }, "trace_timeout", undefined, 20,
   )).rejects.toThrow("timed out");
   expect(cleaned).toBeTrue();
+});
+
+test("pre-submit retained surface loss is exposed to the single outer fallback", async () => {
+  const worker = {
+    run: async () => {
+      throw chatGptRetainedSurfaceUnavailableError(new Error("fixture surface drift"));
+    },
+  };
+  const broker = {
+    beginCompactionTransaction: async () => ({ token: "control", handoffId: "handoff" }),
+    waitForCompactionHandoff: () => new Promise<string>(() => {}),
+    abortCompactionTransaction() {},
+  } as unknown as TurnBroker;
+
+  await expect(requestRetainedCompactionHandoff(
+    worker as never, parsed, source(), broker,
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true }, "trace_surface_loss",
+  )).rejects.toMatchObject({ name: "RetainedCompactionSourceUnavailableError" });
 });

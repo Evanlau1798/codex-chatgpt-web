@@ -91,7 +91,7 @@ test("Think attachment runs after connector selection and rolls back connector l
     assertPromptAttached: async () => {},
     clearChatGptComposerState: async () => { cleanup += 1; ui.state.draft = ""; ui.state.connectors = []; },
   };
-  await attach.call(worker, ui.page, "requested task", true, undefined, false, undefined, false, undefined, true);
+  await attach.call(worker, ui.page, "requested task", true, undefined, undefined, false, undefined, true);
   expect(submitted).toEqual([true]);
 
   const lost = fixture();
@@ -101,7 +101,7 @@ test("Think attachment runs after connector selection and rolls back connector l
     return lost.composer;
   }, insertPromptText: async () => { throw new Error("prompt must not be inserted"); } };
   await expect(attach.call(
-    failingWorker, lost.page, "must not be inserted", true, undefined, false, undefined, false, undefined, true,
+    failingWorker, lost.page, "must not be inserted", true, undefined, undefined, false, undefined, true,
   )).rejects.toThrow("selected connectors");
   expect(cleanup).toBe(1);
 });

@@ -1,5 +1,9 @@
 import type { CodexParsedRequest } from "../../types";
-import { ChatGptCompactionHandoffAccepted } from "./adapter-error";
+import {
+  CHATGPT_RETAINED_SURFACE_UNAVAILABLE,
+  ChatGptCompactionHandoffAccepted,
+  ChatGptWebAdapterError,
+} from "./adapter-error";
 import type { ChatGptBrowserWorker } from "./browser-worker";
 import { MAX_COMPACTION_HANDOFF_TIMEOUT_MS, withCompactionAbort } from "./compaction-handoff";
 import type { ChatGptWebCapabilities } from "./model";
@@ -7,11 +11,9 @@ import { structuredCompactionHandoffInstruction } from "./native-compaction-cont
 import type { TurnBroker } from "./turn-broker";
 import type { ChatGptTurnSession } from "./turn-execution";
 
-const RETAINED_CONVERSATION_UNAVAILABLE = "The retained ChatGPT conversation is no longer available";
-
 export class RetainedCompactionSourceUnavailableError extends Error {
-  constructor() {
-    super(RETAINED_CONVERSATION_UNAVAILABLE);
+  constructor(cause?: unknown) {
+    super(CHATGPT_RETAINED_SURFACE_UNAVAILABLE, cause === undefined ? undefined : { cause });
     this.name = "RetainedCompactionSourceUnavailableError";
   }
 }
@@ -65,6 +67,7 @@ export async function requestRetainedCompactionHandoff(
       prepareResume: prepare,
       conversationKey,
       requireRetainedConversation: true,
+      compaction: true,
       abortSignal: browserAbort.signal,
       onTextDelta: () => {},
     });
@@ -79,8 +82,9 @@ export async function requestRetainedCompactionHandoff(
     return handoff;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
-    if (error instanceof Error && error.message.includes(RETAINED_CONVERSATION_UNAVAILABLE)) {
-      throw new RetainedCompactionSourceUnavailableError();
+    if ((error instanceof ChatGptWebAdapterError && error.code === "chatgpt_retained_surface_unavailable")
+      || (error instanceof Error && error.message.includes(CHATGPT_RETAINED_SURFACE_UNAVAILABLE))) {
+      throw new RetainedCompactionSourceUnavailableError(error);
     }
     throw error;
   } finally {

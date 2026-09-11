@@ -130,7 +130,7 @@ import {
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
-import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
+import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptRetainedSurfaceUnavailableError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { openChatGptConnectorPlusMenu } from "./connector-plus-menu";
@@ -941,13 +941,17 @@ export class ChatGptBrowserWorker {
         turn.reasoning,
         turn.capabilities,
       ).localTools;
-      if (!(error instanceof ChatGptWebAdapterError)
-        || (error.code !== "chatgpt_surface_changed" && error.code !== "chatgpt_connector_unavailable")
-        || !error.retryable
-        || (adapterOwnsRecovery && error.code !== "chatgpt_connector_unavailable")
-        || sendActivated
-        || submitted
-        || turn.abortSignal?.aborted) throw error;
+      const canRetryFreshSurface = error instanceof ChatGptWebAdapterError
+        && (error.code === "chatgpt_surface_changed" || error.code === "chatgpt_connector_unavailable")
+        && error.retryable
+        && (!adapterOwnsRecovery || error.code === "chatgpt_connector_unavailable")
+        && !sendActivated
+        && !submitted
+        && !turn.abortSignal?.aborted;
+      if (!canRetryFreshSurface) throw error;
+      if (turn.requireRetainedConversation) {
+        throw chatGptRetainedSurfaceUnavailableError(error);
+      }
       console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying once on a fresh surface`);
       return this.runExclusive(submittedTurn);
     }
@@ -1974,17 +1978,17 @@ export class ChatGptBrowserWorker {
     prompt: string,
     localTools: boolean,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
-    reuseConnector = false,
     abortSignal?: AbortSignal,
     catalogRefreshAvailable = false,
     connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 },
     requireThink = false,
     largeStructuredDirect = false,
+    forceStructuredDirect = false,
   ): Promise<void> {
     throwIfPromptAttachmentAborted(abortSignal);
     let mutationStarted = false;
     try {
-      if (!localTools || reuseConnector) {
+      if (!localTools) {
         const composer = await this.activeComposer(page, 30_000, abortSignal);
         // Playwright's multiline fill maps through an input action that ChatGPT's Lexical editor can
         // collapse to the first paragraph on the launcher-owned Electron surface. Clear separately,
@@ -1995,7 +1999,7 @@ export class ChatGptBrowserWorker {
           await setChatGptThinkMode(composer.locator("xpath=ancestor::form[1]"), true, captureDiagnostic, abortSignal);
         }
         await composer.focus();
-        await this.insertPromptText(page, prompt, abortSignal, largeStructuredDirect);
+        await this.insertPromptText(page, prompt, abortSignal, largeStructuredDirect, forceStructuredDirect);
         await this.assertPromptAttached(page, prompt, abortSignal);
         return;
       }
@@ -2010,9 +2014,10 @@ export class ChatGptBrowserWorker {
       if (requireThink) {
         await setChatGptThinkMode(selectedComposer.locator("xpath=ancestor::form[1]"), true, captureDiagnostic, abortSignal);
       }
+      if (forceStructuredDirect) await captureDiagnostic?.("retained-compaction-direct-insertion");
       await selectedComposer.focus();
       await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
-      await this.insertPromptText(page, ` ${prompt}`, abortSignal, largeStructuredDirect);
+      await this.insertPromptText(page, ` ${prompt}`, abortSignal, largeStructuredDirect, forceStructuredDirect);
       await this.assertPromptAttached(page, prompt, abortSignal);
     } catch (error) {
       if (!mutationStarted || error instanceof ChatGptPersistentBrowserStateError) throw error;
@@ -2077,12 +2082,12 @@ export class ChatGptBrowserWorker {
     compaction: boolean,
     baseline: ChatGptSubmissionBaseline,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
-    reuseConnector = false,
     abortSignal?: AbortSignal,
     catalogRefreshAvailable = false,
     connectorAttemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 },
     requireThink = false,
     largeStructuredDirect = false,
+    forceStructuredDirect = false,
   ): Promise<void> {
     let retryAvailable = compaction;
     for (;;) {
@@ -2092,12 +2097,12 @@ export class ChatGptBrowserWorker {
           prompt,
           localTools,
           captureDiagnostic,
-          reuseConnector,
           abortSignal,
           catalogRefreshAvailable,
           connectorAttemptBudget,
           requireThink,
           largeStructuredDirect,
+          forceStructuredDirect,
         );
         return;
       } catch (error) {
@@ -2146,12 +2151,13 @@ export class ChatGptBrowserWorker {
     text: string,
     abortSignal?: AbortSignal,
     largeStructuredDirect = false,
+    forceStructuredDirect = false,
   ): Promise<void> {
     await insertChatGptPromptText(text, abortSignal, {
       composer: () => this.activeComposer(page),
       verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal),
       reanchor: () => this.reanchorPromptCaret(page, abortSignal),
-    }, { largeStructuredDirect });
+    }, { largeStructuredDirect, forceStructuredDirect });
   }
 
   private async waitForPromptChunkAttached(
@@ -3126,7 +3132,6 @@ export class ChatGptBrowserWorker {
               stage.text,
               false,
               checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
-              false,
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
             ),
             turn.abortSignal,
@@ -3243,12 +3248,12 @@ export class ChatGptBrowserWorker {
                 turn.compaction === true,
                 submissionBaseline,
                 checkpoint => diagnostics.capture(page, checkpoint),
-                reuseConversation || responseAttempt > 1,
                 stageSignal,
                 catalogRefreshAvailable,
                 connectorAttemptBudget,
                 mode.thinkEnabled,
                 !multipartTransport && prepared.transport === "inline",
+                turn.compaction === true && turn.requireRetainedConversation === true,
               ),
               turn.abortSignal,
               chatGptSuspensionClock,

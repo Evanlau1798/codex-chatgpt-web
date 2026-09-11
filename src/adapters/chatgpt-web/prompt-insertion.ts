@@ -38,10 +38,10 @@ export async function insertChatGptPromptText(
     verify(expected: string): Promise<void>;
     reanchor(): Promise<void>;
   },
-  options?: { largeStructuredDirect?: boolean },
+  options?: { largeStructuredDirect?: boolean; forceStructuredDirect?: boolean },
 ): Promise<void> {
-  if (options?.largeStructuredDirect === true
-    && text.length > DIRECT_INSERT_MIN_CHARS
+  if ((options?.forceStructuredDirect === true
+      || (options?.largeStructuredDirect === true && text.length > DIRECT_INSERT_MIN_CHARS))
     && STRUCTURED_PROMPT.test(text)) {
     // One exact editor transaction avoids both cumulative Lexical remounts and thousands of
     // delimiter-restoration edits. Full readback remains the acceptance boundary.
