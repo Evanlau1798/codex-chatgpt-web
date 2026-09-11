@@ -35,6 +35,10 @@ test("Enhanced Native prompts bind visible output to the existing Codex tool gat
   expect(compiled).toContain("commentary");
   expect(compiled).toContain("reasoning");
   expect(compiled).toContain("final");
+  expect(compiled).toContain("no inventory lookup is needed");
+  expect(compiled).toContain("queued the text");
+  expect(compiled).toContain("not a UI render receipt");
+  expect(compiled).toContain("end this Web response");
   expect(compiled.match(new RegExp(TURN_TOKEN, "g"))).toHaveLength(1);
 });
 
