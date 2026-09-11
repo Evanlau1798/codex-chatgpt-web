@@ -10,7 +10,7 @@ export function loadExistingConfig() {
   return existsSync(getConfigPath()) ? loadConfigForSetup() : undefined;
 }
 
-export function setupIntegrationSelection(integration: SetupOptions["integration"] = "all") {
+export function setupIntegrationSelection(integration: SetupOptions["integration"] = "codex") {
   return { codex: integration !== "claude", claude: integration !== "codex" };
 }
 

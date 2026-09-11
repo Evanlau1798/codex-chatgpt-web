@@ -27,8 +27,8 @@ function fixture(run: (root: string, invoke: (args: string[]) => { exitCode: num
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
 
-for (const target of [[], ["--codex-only"], ["--claude-only"]]) {
-  test(`preflight validates ${target[0] ?? "both integrations"} without installing or inspecting a browser`, () => {
+for (const target of [[], ["--codex-only"], ["--claude-only"], ["--all-integrations"]]) {
+  test(`preflight validates ${target[0] ?? "default Codex integration"} without installing or inspecting a browser`, () => {
     fixture((_root, invoke) => {
       const result = invoke(["--browser-only", ...target]);
       expect(result.exitCode).toBe(0);
@@ -52,14 +52,27 @@ test("manual preflight requires its own tunnel and key before any setup side eff
 test("preflight honors the selected integration instead of validating an unrelated client", () => {
   fixture((root, invoke) => {
     writeFileSync(join(root, "claude/settings.json"), "{ invalid JSON");
-    expect(invoke(["--browser-only", "--codex-only"]).exitCode).toBe(0);
-    for (const target of [[], ["--claude-only"]]) {
+    for (const target of [[], ["--codex-only"]]) {
+      expect(invoke(["--browser-only", ...target]).exitCode).toBe(0);
+    }
+    for (const target of [["--claude-only"], ["--all-integrations"]]) {
       const result = invoke(["--browser-only", ...target]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr.toString()).toContain("Claude settings");
     }
   });
 });
+
+for (const targets of [["--codex-only", "--claude-only"], ["--codex-only", "--all-integrations"],
+  ["--claude-only", "--all-integrations"]]) {
+  test(`preflight rejects conflicting integration targets ${targets.join(" ")}`, () => {
+    fixture((_root, invoke) => {
+      const result = invoke(["--browser-only", ...targets]);
+      expect(result.exitCode).not.toBe(0);
+      expect(result.stderr).toContain("Choose at most one integration target");
+    });
+  });
+}
 
 for (const state of ["missing recovery", "missing primary", "corrupt recovery", "divergent recovery"]) {
   test(`failed preflight never repairs ${state} journal`, () => {

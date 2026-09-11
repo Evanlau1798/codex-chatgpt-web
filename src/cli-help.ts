@@ -41,8 +41,9 @@ Setup options:
                                Re-read the authenticated account's available Web models
   --tunnel-id ID               Existing OpenAI tunnel id (full mode)
   --runtime-key-file PATH      File containing a Tunnels Read+Use runtime key
-  --codex-only                 Install only the native Codex integration
+  --codex-only                 Install only the native Codex integration (default)
   --claude-only                Install only the Claude Code integration
+  --all-integrations           Explicitly install both Codex and Claude Code integrations
   --replace-codex-route        Reversibly replace an existing openai_base_url
   --subagent-protocol MODE     compatibility-v1 (default) or native (advanced)
   --restart-service            Explicitly restart this project's daemon after an update

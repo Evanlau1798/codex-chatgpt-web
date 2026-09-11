@@ -134,12 +134,15 @@ async function setupCommand(args: string[]): Promise<void> {
   if (browserOnly === full) throw new Error("Choose exactly one setup mode: --browser-only or --full");
   const codexOnly = takeFlag(args, "--codex-only");
   const claudeOnly = takeFlag(args, "--claude-only");
-  if (codexOnly && claudeOnly) throw new Error("Choose at most one integration target: --codex-only or --claude-only");
+  const allIntegrations = takeFlag(args, "--all-integrations");
+  if ([codexOnly, claudeOnly, allIntegrations].filter(Boolean).length > 1) {
+    throw new Error("Choose at most one integration target: --codex-only, --claude-only or --all-integrations");
+  }
   const portRaw = takeOption(args, "--port");
   let acknowledged = takeFlag(args, "--acknowledge-unofficial");
   const options: SetupOptions = {
     mode: full ? "full" : "browser-only",
-    integration: codexOnly ? "codex" : claudeOnly ? "claude" : "all",
+    integration: claudeOnly ? "claude" : allIntegrations ? "all" : "codex",
     ...(portRaw ? { port: Number(portRaw) } : {}),
   };
   const automaticBrowserInteraction = takeFlag(args, "--automatic-browser-interaction");
