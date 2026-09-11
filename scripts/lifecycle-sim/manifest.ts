@@ -7,6 +7,7 @@ export const codexLifecycleTests = [
   "tests/codex-interrupt-shell.test.ts",
   "tests/environment-rollout.test.ts",
   "tests/environment-steering.test.ts",
+  "tests/environment-post-compaction-steering.test.ts",
   "tests/native-steering-boundary.test.ts",
   "tests/local-compaction-release.test.ts",
   "tests/subagent-environment-inheritance.test.ts",

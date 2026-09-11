@@ -52,7 +52,51 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function isAcceptedPostCompactionSteering(parsed: CodexParsedRequest): boolean {
+function isSingleEnvelope(text: string, whole: RegExp, tags: RegExp): boolean {
+  return whole.test(text) && (text.match(tags)?.length ?? 0) === 2;
+}
+
+function environmentContextPart(value: unknown): boolean {
+  const part = record(value);
+  return (part?.type === "input_text" || part?.type === "text") && typeof part.text === "string"
+    && isSingleEnvelope(
+      part.text.trim(),
+      /^<environment_context>[\s\S]*<\/environment_context>$/i,
+      /<\/?environment_context>/gi,
+    );
+}
+
+function contextualEnvelopePart(value: unknown): boolean {
+  const part = record(value);
+  if ((part?.type !== "input_text" && part?.type !== "text") || typeof part.text !== "string") return false;
+  const text = part.text.trim();
+  return environmentContextPart(part) || [
+    [/^# agents\.md instructions[\s\S]*<instructions>[\s\S]*<\/instructions>$/i, /<\/?instructions>/gi],
+    [/^<external_([^>]+)>[\s\S]*<\/external_\1>$/i, /<\/?external_[^>]+>/gi],
+    [/^<skill>[\s\S]*<\/skill>$/i, /<\/?skill>/gi],
+    [/^<user_shell_command>[\s\S]*<\/user_shell_command>$/i, /<\/?user_shell_command>/gi],
+    [/^<turn_aborted>[\s\S]*<\/turn_aborted>$/i, /<\/?turn_aborted>/gi],
+    [/^<subagent_notification>[\s\S]*<\/subagent_notification>$/i, /<\/?subagent_notification>/gi],
+    [/^<codex_internal_context source="[a-z][a-z0-9_]*">[\s\S]*<\/codex_internal_context>$/i,
+      /<\/?codex_internal_context(?:\s+source="[a-z][a-z0-9_]*")?>/gi],
+    [/^<goal_context>[\s\S]*<\/goal_context>$/i, /<\/?goal_context>/gi],
+    [/^<recommended_plugins>[\s\S]*<\/recommended_plugins>$/i, /<\/?recommended_plugins>/gi],
+    [/^<hook_prompt hook_run_id="[^"]+">[\s\S]*<\/hook_prompt>$/i,
+      /<\/?hook_prompt(?:\s+hook_run_id="[^"]+")?>/gi],
+  ].some(([whole, tags]) => isSingleEnvelope(text, whole!, tags!));
+}
+
+function goalContextPart(value: unknown): boolean {
+  const part = record(value);
+  if ((part?.type !== "input_text" && part?.type !== "text") || typeof part.text !== "string") return false;
+  return isSingleEnvelope(
+    part.text.trim(),
+    /^<codex_internal_context source="goal">[\s\S]*<\/codex_internal_context>$/,
+    /<\/?codex_internal_context(?:\s+source="[a-z][a-z0-9_]*")?>/g,
+  );
+}
+
+function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
   const identity = extractChatGptTurnIdentity(parsed);
   if (!identity.turnId) return false;
   const body = record(parsed._rawBody);
@@ -82,6 +126,41 @@ function isAcceptedPostCompactionSteering(parsed: CodexParsedRequest): boolean {
     return (item?.type === "message" || item?.type === "agent_message")
       && /<\/?environment_context\b/i.test(JSON.stringify(item.content ?? ""));
   });
+  const suffixUserMessages = suffix.flatMap(value => {
+    const item = record(value);
+    return item?.type === "message" && item.role === "user" ? [item] : [];
+  });
+  const goalContextCount = suffixUserMessages.reduce((count, item) => count + (
+    Array.isArray(item.content) ? item.content.filter(goalContextPart).length : 0
+  ), 0);
+  const currentEnvironmentClaimCount = suffixUserMessages.reduce((count, item) => count + (
+    Array.isArray(item.content) ? item.content.filter(environmentContextPart).length : 0
+  ), 0);
+  const goalIndex = suffix.findIndex(value => {
+    const item = record(value);
+    return item?.type === "message" && item.role === "user"
+      && Array.isArray(item.content) && item.content.some(goalContextPart);
+  });
+  const hasOnlyCurrentContext = suffix.length > 0 && suffix.every((value, index) => {
+    const item = record(value);
+    if (!item || typeof item.id !== "string" || !item.id || itemTurnId(item) !== identity.turnId) return false;
+    // Once the Goal context is established, native output/tool round trips keep the same authority.
+    // Output before that boundary, unowned replay and new instructions still fail closed.
+    if (goalIndex >= 0 && index > goalIndex) return item.type === "reasoning"
+      || item.type === "function_call" || item.type === "function_call_output"
+      || (item.type === "message" && item.role === "assistant");
+    if (item.type !== "message" || !Array.isArray(item.content) || item.content.length === 0) return false;
+    if (item.role === "user") return item.content.every(contextualEnvelopePart);
+    return item.role === "developer" && item.content.every(part => {
+      const content = record(part);
+      return (content?.type === "input_text" || content?.type === "text") && typeof content.text === "string"
+        && !/<\/?(?:environment_context|codex_internal_context)\b/i.test(content.text);
+    });
+  });
+  // Goal-driven continuation has no ordinary user revision. Its current, server-owned environment
+  // still proceeds only through the canonical rollout comparison in resolve().
+  if (!hasCurrentSteering && currentEnvironmentClaimCount === 1 && goalContextCount === 1 && hasOnlyCurrentContext
+    && !extractChatGptThreadSpawnLineage(parsed) && extractChatGptRootThreadMetadata(parsed)) return true;
   if (!hasCurrentSteering || hasNewEnvironment) return false;
 
   const aborted = new Set(priorAbortedTurnIds(parsed._rawBody, identity.turnId));
@@ -208,12 +287,12 @@ export class ChatGptThreadEnvironmentStore {
       const hasCurrentContext = hasCurrentChatGptEnvironmentContext(parsed);
       const lineage = extractChatGptThreadSpawnLineage(parsed);
       const currentCompaction = hasCurrentContext && isChatGptCompactionContinuation(parsed);
-      const postCompactionSteering = hasCurrentContext && !currentCompaction
-        && isAcceptedPostCompactionSteering(parsed);
-      const historicalMessages = hasCurrentContext && !currentCompaction && !postCompactionSteering && lineage
+      const postCompactionContext = hasCurrentContext && !currentCompaction
+        && isAcceptedPostCompactionContext(parsed);
+      const historicalMessages = hasCurrentContext && !currentCompaction && !postCompactionContext && lineage
         ? unattributedChatGptEnvironmentMessages(parsed) : undefined;
-      if (hasCurrentContext && !currentCompaction && !postCompactionSteering && !historicalMessages) throw error;
-      const currentClaim = currentCompaction || postCompactionSteering
+      if (hasCurrentContext && !currentCompaction && !postCompactionContext && !historicalMessages) throw error;
+      const currentClaim = currentCompaction || postCompactionContext
         ? extractChatGptContinuationEnvironmentClaim(parsed) : undefined;
       const rolloutIdentity = lineage ?? extractChatGptRootThreadMetadata(parsed);
       // Automatic compaction has a current turn_context; standalone compaction has only its
