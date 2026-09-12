@@ -8,6 +8,7 @@ export const codexLifecycleTests = [
   "tests/environment-rollout.test.ts",
   "tests/environment-steering.test.ts",
   "tests/environment-post-compaction-steering.test.ts",
+  "tests/trusted-environment-cleanup.test.ts",
   "tests/native-steering-boundary.test.ts",
   "tests/local-compaction-release.test.ts",
   "tests/subagent-environment-inheritance.test.ts",
@@ -20,6 +21,7 @@ export const claudeLifecycleTests = [
 ] as const;
 
 export const sharedLifecycleTests = [
+  "tests/context-bootstrap.test.ts",
   "tests/bridge-platform.test.ts",
   "tests/enhanced-compaction-settlement.test.ts",
   "tests/browser-worker-retained-connector.test.ts",

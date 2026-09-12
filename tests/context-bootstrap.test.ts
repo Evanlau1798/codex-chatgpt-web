@@ -29,7 +29,7 @@ async function clientFor(socketPath: string): Promise<Client> {
   await client.connect(new StdioClientTransport({
     command: process.execPath,
     args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
-    cwd: process.cwd(),
+    cwd: join(import.meta.dir, ".."),
     stderr: "pipe",
   }));
   return client;
@@ -338,7 +338,7 @@ test("oversize beta prompt maximizes a complete bootstrap and archives only omit
   }
 }, 30_000);
 
-test("archive chunks use complete indexed frames above the MCP result ceiling", async () => {
+test("large recovery archives use bounded complete MCP pages without losing context", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-context-chunks-"));
   const socketPath = defaultBrokerEndpoint(root);
   const broker = TurnBroker.forSocket(socketPath);
@@ -366,7 +366,8 @@ test("archive chunks use complete indexed frames above the MCP result ceiling", 
       arguments: { turn_token: contextToken, query: "__codex_context__:0", include_schema: false },
     });
     const firstText = (first.content as Array<{ text: string }>)[0]?.text ?? "";
-    expect(firstText).toContain("index=0 total=2");
+    expect(firstText.length).toBeLessThanOrEqual(66_000);
+    expect(firstText).toContain("index=0 total=");
     expect(firstText).toContain("next_query=__codex_context__:1");
     const retriedFirst = await client.callTool({
       name: "codex_tool_inventory",
@@ -379,15 +380,21 @@ test("archive chunks use complete indexed frames above the MCP result ceiling", 
       arguments: { turn_token: contextToken, query: "__codex_context__:2", include_schema: false },
     });
     expect(skipped.isError).toBe(true);
-    const second = await client.callTool({
-      name: "codex_tool_inventory",
-      arguments: { turn_token: contextToken, query: "__codex_context__:1", include_schema: false },
-    });
-    const secondText = (second.content as Array<{ text: string }>)[0]?.text ?? "";
-    expect(secondText).toContain("index=1 total=2");
-    expect(secondText).toContain("next_query=null");
-    expect(`${firstText}${secondText}`).toContain("OMITTED_A_");
-    expect(`${firstText}${secondText}`).toContain("OMITTED_B_");
+    const pages = [firstText];
+    for (let index = 1; !pages.at(-1)!.includes("next_query=null"); index++) {
+      expect(index).toBeLessThan(100);
+      const page = await client.callTool({ name: "codex_tool_inventory",
+        arguments: { turn_token: contextToken, query: `__codex_context__:${index}`, include_schema: false } });
+      expect(page.isError).not.toBe(true);
+      const text = (page.content as Array<{ text: string }>)[0]?.text ?? "";
+      expect(text.length).toBeLessThanOrEqual(66_000);
+      expect(text).toContain(`CODEX_CONTEXT_ARCHIVE_END index=${index}`);
+      pages.push(text);
+    }
+    const archive = pages.map(text => text.slice(text.indexOf("\n") + 1, text.lastIndexOf("\nCODEX_CONTEXT_ARCHIVE_END"))).join("");
+    expect(createHash("sha256").update(archive).digest("hex")).toBe(prepared.archiveSha256!);
+    expect(archive).toContain("OMITTED_A_");
+    expect(archive).toContain("OMITTED_B_");
   } finally {
     await client.close().catch(() => {});
     prepared.release();

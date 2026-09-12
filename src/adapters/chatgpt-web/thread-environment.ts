@@ -148,6 +148,7 @@ function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
     // Output before that boundary, unowned replay and new instructions still fail closed.
     if (goalIndex >= 0 && index > goalIndex) return item.type === "reasoning"
       || item.type === "function_call" || item.type === "function_call_output"
+      || item.type === "custom_tool_call" || item.type === "custom_tool_call_output"
       || (item.type === "message" && item.role === "assistant");
     if (item.type !== "message" || !Array.isArray(item.content) || item.content.length === 0) return false;
     if (item.role === "user") return item.content.every(contextualEnvelopePart);

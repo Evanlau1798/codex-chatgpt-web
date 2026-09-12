@@ -165,8 +165,9 @@ export function createChatGptWebAdapter(
         return;
       }
       let environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined;
+      const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
       if (mode.localTools) {
-        environment = resolveTrustedCodexEnvironment(environmentStore, parsed);
+        environment = await resolveTrustedCodexEnvironment(environmentStore, parsed, executionKey);
       }
       if (parsed._compactionRequest) {
         const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
@@ -207,12 +208,11 @@ export function createChatGptWebAdapter(
           await chatGptTurnSessions.retireAndWait(responseExecutionKey, incoming.abortSignal);
         }
       }
-      const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
       await chatGptTurnSessions.waitForRetirement(executionKey, incoming.abortSignal);
       let session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
         () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
       if (session.runtime.mode === "tools" && !environment) {
-        environment = resolveTrustedCodexEnvironment(environmentStore, parsed);
+        environment = await resolveTrustedCodexEnvironment(environmentStore, parsed, executionKey);
       }
       let surfaceRecoveries = 0;
       const surfaceRecovery = new ChatGptSurfaceRecoveryTracker(traceId);

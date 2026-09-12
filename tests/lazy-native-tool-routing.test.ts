@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
+import { CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS } from "../src/adapters/chatgpt-web/context-bootstrap";
 import type { CodexTool } from "../src/types";
 
 const result = (value: unknown): BrokerToolResult => ({
@@ -18,7 +19,7 @@ async function clientFor(socketPath: string): Promise<Client> {
   await client.connect(new StdioClientTransport({
     command: process.execPath,
     args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
-    cwd: process.cwd(),
+    cwd: join(import.meta.dir, ".."),
     stderr: "pipe",
   }));
   return client;
@@ -136,7 +137,7 @@ test("the final context archive chunk resumes bound Native2 tool discovery", asy
     tools: [readTool],
   };
   const turnToken = await broker.register(environment, 60_000, "context-resume-test");
-  const archive = `${"A".repeat(300_000)}\n${"B".repeat(300_000)}\n`;
+  const archive = `${"A".repeat(CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS - 1)}\n${"B".repeat(CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS - 1)}\n`;
   const contextToken = await broker.registerContext(archive, 60_000, "context-resume-test", turnToken);
   const client = await clientFor(socketPath);
 

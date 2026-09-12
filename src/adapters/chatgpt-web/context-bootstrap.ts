@@ -3,7 +3,9 @@ import { estimateTokens } from "../../lib/token-estimate";
 import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { TurnBroker } from "./turn-broker";
 
-export const CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS = 512 * 1_024;
+// Keep model-facing pages bounded; fresh recovery stalled rereading a 514K-character page.
+// This is our transport budget, not a claim about ChatGPT's undocumented response ceiling.
+export const CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS = 64 * 1_024;
 /**
  * Current ChatGPT Lexical composers reject an append once one uninterrupted text run reaches the
  * observed 15,999 UTF-16-unit boundary even though the complete message remains well below its

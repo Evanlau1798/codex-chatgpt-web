@@ -118,6 +118,7 @@ test("same-turn steering after a V1 compact checkpoint recovers the exact rollou
 
 test.each([
   ["initial context", 0], ["assistant commentary", 1], ["reasoning", 2], ["tool call", 3], ["tool result", 4],
+  ["custom tool call", 5], ["custom tool result", 6],
 ] as const)("goal-only continuation after compact keeps rollout authority through %s", (_stage, outputCount) => {
   const goalThreadId = "01a09103-0000-7000-8000-000000000001";
   const goalTurnId = "01a09103-0000-7000-8000-000000000002";
@@ -159,6 +160,8 @@ test.each([
     { type: "reasoning", id: "rs_goal", summary: [{ type: "summary_text", text: "Inspect the current state." }] },
     { type: "function_call", id: "fc_goal", call_id: "call_goal", name: "exec_command", arguments: '{"cmd":"git status --short"}' },
     { type: "function_call_output", id: "fco_goal", call_id: "call_goal", output: "clean" },
+    { type: "custom_tool_call", id: "ctc_goal", call_id: "call_patch", name: "apply_patch", input: "*** Begin Patch\n*** End Patch" },
+    { type: "custom_tool_call_output", id: "ctco_goal", call_id: "call_patch", output: "Success" },
   ].map(item => ({ ...item, internal_chat_message_metadata_passthrough: { turn_id: goalTurnId } }));
   body.input.push(...outputs.slice(0, outputCount));
   expect(initial.cwd).toBe(root);
@@ -167,7 +170,7 @@ test.each([
   expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(parseRequest(body))).toEqual(initial);
 
   if (outputCount === outputs.length) {
-    for (const index of [0, 1, 2, 3]) {
+    for (const index of outputs.keys()) {
       for (const owner of [undefined, sourceTurnId]) {
         const invalid = structuredClone(body);
         invalid.input[invalid.input.length - outputs.length + index]!.internal_chat_message_metadata_passthrough = { turn_id: owner };
