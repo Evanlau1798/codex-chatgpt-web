@@ -7,7 +7,7 @@ import type { CodexParsedRequest } from "../../types";
 import {
   extractChatGptTurnEnvironment,
   extractChatGptCompactionSourceRevision,
-  extractChatGptContinuationEnvironmentClaim,
+  extractChatGptContinuationEnvironmentClaims,
   extractChatGptTurnIdentity,
   extractChatGptThreadSpawnLineage,
   extractChatGptRootThreadMetadata,
@@ -144,12 +144,14 @@ function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
   const hasOnlyCurrentContext = suffix.length > 0 && suffix.every((value, index) => {
     const item = record(value);
     if (!item || typeof item.id !== "string" || !item.id || itemTurnId(item) !== identity.turnId) return false;
-    // Once the Goal context is established, native output/tool round trips keep the same authority.
+    // Goal output/tool rounds and environment refreshes retain rollout-verified authority.
     // Output before that boundary, unowned replay and new instructions still fail closed.
     if (goalIndex >= 0 && index > goalIndex) return item.type === "reasoning"
       || item.type === "function_call" || item.type === "function_call_output"
       || item.type === "custom_tool_call" || item.type === "custom_tool_call_output"
-      || (item.type === "message" && item.role === "assistant");
+      || (item.type === "message" && (item.role === "assistant"
+        || (item.role === "user" && Array.isArray(item.content) && item.content.length > 0
+          && item.content.every(environmentContextPart))));
     if (item.type !== "message" || !Array.isArray(item.content) || item.content.length === 0) return false;
     if (item.role === "user") return item.content.every(contextualEnvelopePart);
     return item.role === "developer" && item.content.every(part => {
@@ -160,7 +162,7 @@ function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
   });
   // Goal-driven continuation has no ordinary user revision. Its current, server-owned environment
   // still proceeds only through the canonical rollout comparison in resolve().
-  if (!hasCurrentSteering && currentEnvironmentClaimCount === 1 && goalContextCount === 1 && hasOnlyCurrentContext
+  if (!hasCurrentSteering && currentEnvironmentClaimCount >= 1 && goalContextCount === 1 && hasOnlyCurrentContext
     && !extractChatGptThreadSpawnLineage(parsed) && extractChatGptRootThreadMetadata(parsed)) return true;
   if (!hasCurrentSteering || hasNewEnvironment) return false;
 
@@ -171,6 +173,36 @@ function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
     && (source.turnId === undefined || !aborted.has(source.turnId))
     && isAcceptedCompactionContinuation(parsed, identity, source)
   ));
+}
+
+/** A refresh after native work is a claim to compare with the current rollout, never authority. */
+function hasOwnedEnvironmentRefresh(parsed: CodexParsedRequest): boolean {
+  const { turnId } = extractChatGptTurnIdentity(parsed);
+  const body = record(parsed._rawBody);
+  if (!turnId || !Array.isArray(body?.input)) return false;
+  const metadata = codexTurnMetadataFromBody(body);
+  const input = body.input;
+  const source = input.findLastIndex(value => isUserOrParentInstruction(record(value), metadata));
+  if (source < 0 || itemTurnId(input[source]) !== turnId || !record(input[source])?.id) return false;
+  let outputSeen = false;
+  let refreshSeen = false;
+  return input.slice(source + 1).every(value => {
+    const item = record(value);
+    if (!item || typeof item.id !== "string" || !item.id || itemTurnId(item) !== turnId) return false;
+    if (item.type === "message" && item.role === "user") {
+      if (!Array.isArray(item.content) || !item.content.length || !item.content.every(contextualEnvelopePart)) return false;
+      if (item.content.some(environmentContextPart)) {
+        if (!outputSeen || !item.content.every(environmentContextPart)) return false;
+        refreshSeen = true;
+      }
+      return true;
+    }
+    outputSeen ||= item.type === "function_call" || item.type === "custom_tool_call"
+      || (item.type === "message" && item.role === "assistant");
+    return item.type === "reasoning" || item.type === "function_call" || item.type === "function_call_output"
+      || item.type === "custom_tool_call" || item.type === "custom_tool_call_output"
+      || (item.type === "message" && item.role === "assistant");
+  }) && refreshSeen;
 }
 
 function pathIdentity(value: string): string {
@@ -290,11 +322,13 @@ export class ChatGptThreadEnvironmentStore {
       const currentCompaction = hasCurrentContext && isChatGptCompactionContinuation(parsed);
       const postCompactionContext = hasCurrentContext && !currentCompaction
         && isAcceptedPostCompactionContext(parsed);
-      const historicalMessages = hasCurrentContext && !currentCompaction && !postCompactionContext && lineage
+      const currentRefresh = hasCurrentContext && !currentCompaction && !postCompactionContext
+        && hasOwnedEnvironmentRefresh(parsed);
+      const historicalMessages = hasCurrentContext && !currentCompaction && !postCompactionContext && !currentRefresh && lineage
         ? unattributedChatGptEnvironmentMessages(parsed) : undefined;
-      if (hasCurrentContext && !currentCompaction && !postCompactionContext && !historicalMessages) throw error;
-      const currentClaim = currentCompaction || postCompactionContext
-        ? extractChatGptContinuationEnvironmentClaim(parsed) : undefined;
+      if (hasCurrentContext && !currentCompaction && !postCompactionContext && !currentRefresh && !historicalMessages) throw error;
+      const currentClaims = currentCompaction || postCompactionContext || currentRefresh
+        ? extractChatGptContinuationEnvironmentClaims(parsed) : [];
       const rolloutIdentity = lineage ?? extractChatGptRootThreadMetadata(parsed);
       // Automatic compaction has a current turn_context; standalone compaction has only its
       // source turn_context. Either must be the latest native record, never an arbitrary ancestor.
@@ -311,7 +345,7 @@ export class ChatGptThreadEnvironmentStore {
           tools: effectiveChatGptToolPolicy(parsed).tools,
         });
         if (rolloutEnvironment) {
-          if (currentClaim && !sameAuthority(currentClaim, rolloutEnvironment)) {
+          if (currentClaims.some(claim => !sameAuthority(claim, rolloutEnvironment))) {
             throw new Error("Compaction continuation environment conflicts with its current Codex rollout");
           }
           this.set(rolloutIdentity.threadId, rolloutEnvironment);

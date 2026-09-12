@@ -129,6 +129,45 @@ test("recovers an ordinary resumed task from its exact current rollout with an e
   });
 });
 
+test("a running resumed root validates midnight refreshes against its current rollout", () => {
+  const { codexHome, request, rolloutPath } = resumedRootFixture();
+  const body = request._rawBody as { input: Array<Record<string, unknown>> };
+  const owned = { turn_id: rolloutTurnId };
+  body.input.push({ type: "function_call", id: "fc_wait", call_id: "wait", name: "wait_agent", arguments: "{}",
+    internal_chat_message_metadata_passthrough: owned },
+  { type: "function_call_output", id: "fco_wait", call_id: "wait", output: '{"timed_out":true}',
+    internal_chat_message_metadata_passthrough: owned });
+  const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+  expect(store.resolve(request).cwd).toBe(root);
+  const update = { type: "message", role: "user", id: "midnight_environment",
+    content: [{ type: "input_text", text: `<environment_context><current_date>2026-09-13</current_date><filesystem><workspace_roots><root>${root}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem><subagents>Fermat</subagents></environment_context>` }],
+    internal_chat_message_metadata_passthrough: owned };
+  body.input.push(update);
+  expect(store.resolve(request).cwd).toBe(root);
+  expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
+  for (const patch of [
+    { id: undefined }, { internal_chat_message_metadata_passthrough: {} },
+    { role: "developer" },
+    { content: [{ type: "input_text", text: "<environment_context><cwd/></environment_context>" }] },
+    { content: [{ type: "input_text", text: environmentXml.replaceAll(root, join(root, "other")) }] },
+    { content: [{ type: "input_text", text: update.content[0]!.text }, { type: "input_text", text: "New instruction" }] },
+  ]) {
+    body.input[body.input.length - 1] = { ...update, ...patch };
+    expect(() => store.resolve(request), JSON.stringify(patch)).toThrow();
+  }
+  // A different turn's envelope remains historical and cannot replace current rollout authority.
+  body.input[body.input.length - 1] = { ...update,
+    internal_chat_message_metadata_passthrough: { turn_id: rolloutParentId },
+    content: [{ type: "input_text", text: environmentXml.replaceAll(root, join(root, "other")) }] };
+  expect(store.resolve(request).cwd).toBe(root);
+  body.input[body.input.length - 1] = update;
+  writeFileSync(rolloutPath, [
+    JSON.stringify({ type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } }),
+    JSON.stringify(childTurnContext(rolloutParentId)),
+  ].join("\n") + "\n");
+  expect(() => store.resolve(request)).toThrow("current turn");
+});
+
 for (const format of ["v1", "v2"]) test(`${format} context-only continuation requires a matching current rollout, not just a checkpoint`, () => {
   const { codexHome, request, rolloutPath } = resumedRootFixture();
   const body = request._rawBody as { input: Array<Record<string, unknown>> };

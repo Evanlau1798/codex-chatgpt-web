@@ -6,6 +6,7 @@ export const codexLifecycleTests = [
   "tests/codex-interrupt-hook.test.ts",
   "tests/codex-interrupt-shell.test.ts",
   "tests/environment-rollout.test.ts",
+  "tests/environment-root-continuation.test.ts",
   "tests/environment-steering.test.ts",
   "tests/environment-post-compaction-steering.test.ts",
   "tests/trusted-environment-cleanup.test.ts",

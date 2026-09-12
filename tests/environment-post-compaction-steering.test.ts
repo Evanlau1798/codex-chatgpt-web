@@ -119,6 +119,7 @@ test("same-turn steering after a V1 compact checkpoint recovers the exact rollou
 test.each([
   ["initial context", 0], ["assistant commentary", 1], ["reasoning", 2], ["tool call", 3], ["tool result", 4],
   ["custom tool call", 5], ["custom tool result", 6],
+  ["midnight environment refresh", 7], ["tool after environment refresh", 8], ["second environment refresh", 9],
 ] as const)("goal-only continuation after compact keeps rollout authority through %s", (_stage, outputCount) => {
   const goalThreadId = "01a09103-0000-7000-8000-000000000001";
   const goalTurnId = "01a09103-0000-7000-8000-000000000002";
@@ -162,6 +163,10 @@ test.each([
     { type: "function_call_output", id: "fco_goal", call_id: "call_goal", output: "clean" },
     { type: "custom_tool_call", id: "ctc_goal", call_id: "call_patch", name: "apply_patch", input: "*** Begin Patch\n*** End Patch" },
     { type: "custom_tool_call_output", id: "ctco_goal", call_id: "call_patch", output: "Success" },
+    { type: "message", role: "user", id: "msg_midnight_environment", content: [{ type: "input_text",
+      text: `<environment_context><current_date>2026-09-13</current_date><timezone>Asia/Taipei</timezone><filesystem><workspace_roots><root>${root}</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem><subagents><agent>Fermat</agent></subagents></environment_context>` }] },
+    { type: "function_call", id: "fc_after_refresh", call_id: "call_after_refresh", name: "wait_agent", arguments: "{}" },
+    { type: "message", role: "user", id: "msg_second_environment", content: [{ type: "input_text", text: (currentEnvironment!.content as Array<{ text: string }>).at(-1)!.text }] },
   ].map(item => ({ ...item, internal_chat_message_metadata_passthrough: { turn_id: goalTurnId } }));
   body.input.push(...outputs.slice(0, outputCount));
   expect(initial.cwd).toBe(root);
@@ -184,6 +189,19 @@ test.each([
     const environment = conflicting.input[3]!.content as Array<{ type: string; text: string }>;
     environment.at(-1)!.text = `<environment_context><cwd>${root}</cwd><sandbox_mode>read-only</sandbox_mode></environment_context>`;
     expect(() => store.resolve(parseRequest(conflicting))).toThrow("conflicts with its current Codex rollout");
+    for (const text of [
+      `<environment_context><cwd>${root}</cwd><sandbox_mode>read-only</sandbox_mode></environment_context>`,
+      `<environment_context><cwd>${join(root, "other")}</cwd><sandbox_mode>danger-full-access</sandbox_mode></environment_context>`,
+      `<environment_context><cwd>${root}</cwd><workspace_roots><root>${root}</root><root>${join(root, "extra")}</root></workspace_roots><sandbox_mode>danger-full-access</sandbox_mode></environment_context>`,
+      "<environment_context><cwd/></environment_context>",
+      "<environment_context><cwd/></environment_context> trailing",
+    ]) {
+      const invalid = structuredClone(body);
+      invalid.input[invalid.input.length - 3]!.content = [{ type: "input_text", text }];
+      expect(() => store.resolve(parseRequest(invalid))).toThrow();
+    }
+    const missingRollout = new ChatGptThreadEnvironmentStore(undefined, Date.now, join(codexHome, "absent"));
+    expect(() => missingRollout.resolve(parseRequest(body))).toThrow();
   }
 });
 

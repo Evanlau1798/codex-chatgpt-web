@@ -165,7 +165,7 @@ export function isChatGptCompactionContinuation(parsed: CodexParsedRequest): boo
 }
 
 /** Parse a claim only: the caller must compare it with this turn's native rollout authority. */
-export function extractChatGptContinuationEnvironmentClaim(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
+export function extractChatGptContinuationEnvironmentClaims(parsed: CodexParsedRequest): ChatGptTurnEnvironment[] {
   const turnId = extractChatGptTurnIdentity(parsed).turnId;
   const body = record(parsed._rawBody);
   const updates = (Array.isArray(body?.input) ? body.input : []).flatMap(value => {
@@ -178,12 +178,14 @@ export function extractChatGptContinuationEnvironmentClaim(parsed: CodexParsedRe
       typeof value === "string" && /<\/?environment_context\b/i.test(value)
     ));
   });
-  if (updates.length !== 1) throw new Error("Compaction continuation requires one current native environment claim");
-  const update = updates[0]!.trim();
-  if (!/^<environment_context>[\s\S]*<\/environment_context>$/.test(update)) {
-    throw new Error("Compaction continuation contains a malformed current native environment claim");
-  }
-  return parseChatGptEnvironmentText(parsed, update);
+  if (updates.length === 0) throw new Error("Compaction continuation requires a current native environment claim");
+  return updates.map(text => {
+    const update = text.trim();
+    if (!/^<environment_context>[\s\S]*<\/environment_context>$/.test(update)) {
+      throw new Error("Compaction continuation contains a malformed current native environment claim");
+    }
+    return parseChatGptEnvironmentText(parsed, update);
+  });
 }
 
 function environmentBeforeUser(
