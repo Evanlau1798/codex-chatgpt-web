@@ -1,7 +1,6 @@
 import type { CodexParsedRequest } from "../../types";
 import {
   CHATGPT_RETAINED_SURFACE_UNAVAILABLE,
-  ChatGptCompactionHandoffAccepted,
   ChatGptWebAdapterError,
 } from "./adapter-error";
 import type { ChatGptBrowserWorker } from "./browser-worker";
@@ -42,6 +41,7 @@ export async function requestRetainedCompactionHandoff(
   const abortBrowser = () => browserAbort.abort(operationSignal.reason);
   let transaction: Awaited<ReturnType<TurnBroker["beginCompactionTransaction"]>> | undefined;
   let browser: Promise<string> | undefined;
+  let completed = false;
   if (operationSignal.aborted) abortBrowser();
   else operationSignal.addEventListener("abort", abortBrowser, { once: true });
   try {
@@ -71,14 +71,12 @@ export async function requestRetainedCompactionHandoff(
       abortSignal: browserAbort.signal,
       onTextDelta: () => {},
     });
-    const browserFailure = browser.then<never>(() => new Promise<never>(() => {}), error => { throw error; });
-    const handoff = await withCompactionAbort(Promise.race([
+    const [handoff] = await withCompactionAbort(Promise.all([
       broker.waitForCompactionHandoff(transaction.token, operationSignal),
-      browserFailure,
+      browser,
     ]), operationSignal);
-    console.info("[chatgpt-web] Web session mode=enhanced path=retained_handoff result=checkpoint_submitted");
-    browserAbort.abort(new ChatGptCompactionHandoffAccepted());
-    await withCompactionAbort(browser.then(() => undefined, () => undefined), operationSignal);
+    completed = true;
+    console.info("[chatgpt-web] Web session mode=enhanced path=retained_handoff result=checkpoint_and_response_settled");
     return handoff;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
@@ -88,7 +86,7 @@ export async function requestRetainedCompactionHandoff(
     }
     throw error;
   } finally {
-    browserAbort.abort();
+    if (!completed) browserAbort.abort();
     if (transaction) broker.abortCompactionTransaction(transaction.token);
     if (browser) await browser.then(() => undefined, () => undefined);
     operationSignal.removeEventListener("abort", abortBrowser);

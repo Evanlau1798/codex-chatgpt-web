@@ -5,6 +5,7 @@ import { extractChatGptCompactionSourceRevision } from "./environment";
 import type { BrokerToolResult, TurnBroker } from "./turn-broker";
 import type { ChatGptTurnSession } from "./turn-execution";
 import { activeCompactionToolResultInstruction } from "./native-compaction-control";
+import type { CompactionTransactionHandle } from "./compaction-transaction";
 
 export const LATEST_USER_PROMPT_MARKER = "CODEX_LATEST_USER_PROMPT_JSON";
 export const MAX_COMPACTION_HANDOFF_TIMEOUT_MS = 5 * 60_000;
@@ -40,11 +41,11 @@ export function codexToolResultToBrokerResult(message: CodexToolResultMessage): 
   };
 }
 
-function interruptedByActiveCompaction(): BrokerToolResult {
+function interruptedByActiveCompaction(transaction: CompactionTransactionHandle): BrokerToolResult {
   return {
     content: [{
       type: "text",
-      text: activeCompactionToolResultInstruction(),
+      text: activeCompactionToolResultInstruction(transaction),
     }],
     isError: true,
   };
@@ -117,11 +118,17 @@ export async function settleActiveCompactionSource(
   source: ChatGptTurnSession,
   broker: TurnBroker,
   signal?: AbortSignal,
-  preempt?: (instruction: string) => boolean,
-): Promise<{ answer: string; compactionInstructionDelivered: boolean }> {
+  timeoutMs = MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+): Promise<{ answer: string; compactionInstructionDelivered: boolean; handoff?: string }> {
   return source.runExclusive(async () => {
     if (signal?.aborted) { source.cancel(abortReason(signal)); throw abortReason(signal); }
-    if (!source.isActive() || source.runtime.mode !== "tools") {
+    if (!source.isActive()) {
+      const outcome = await source.browserOutcome;
+      if (outcome.type === "error") throw outcome.error;
+      await withCompactionAbort(source.physicalSettlement, signal);
+      return { answer: outcome.answer, compactionInstructionDelivered: false };
+    }
+    if (source.runtime.mode !== "tools") {
       throw new Error("The active ChatGPT compaction source has no MCP tool boundary");
     }
     const outstanding = source.outstanding();
@@ -130,12 +137,22 @@ export async function settleActiveCompactionSource(
       throw new Error(`Codex supplied ${results.size} of ${outstanding.length} required tool results for compaction`);
     }
     let token: string | undefined;
+    let transaction: CompactionTransactionHandle | undefined;
+    let handoff: string | undefined;
+    let handoffWait: Promise<void> | undefined;
     try {
-      token = await source.runtime.token;
-      const interruption = activeCompactionToolResultInstruction();
-      broker.requestCompaction(token, interruptedByActiveCompaction(), () => {
-        const accepted = preempt?.(interruption) === true;
-        console.info(`[chatgpt-web] active compaction boundary preemption accepted=${accepted}`);
+      token = await withCompactionAbort(source.runtime.token, signal);
+      const pending = broker.beginCompactionTransaction(source.traceId ?? "active_compaction", timeoutMs);
+      void pending.then(late => {
+        if (signal?.aborted && transaction !== late) broker.abortCompactionTransaction(late.token);
+      }, () => {});
+      transaction = await withCompactionAbort(pending, signal);
+      handoffWait = broker.waitForCompactionHandoff(transaction.token, signal).then(
+        summary => { handoff = summary; }, () => {},
+      );
+      source.runtime.compactionRequested = true;
+      broker.requestCompaction(token, interruptedByActiveCompaction(transaction), () => {
+        console.info("[chatgpt-web] active compaction boundary action=request_checkpoint_in_current_response");
       });
       for (const request of outstanding) {
         const result = results.get(request.callId)!;
@@ -146,11 +163,13 @@ export async function settleActiveCompactionSource(
       if (outcome.type === "error") throw outcome.error;
       const compactionInstructionDelivered = broker.compactionDeliveryCount(token) > 0;
       await withCompactionAbort(source.physicalSettlement, signal);
-      return { answer: outcome.answer, compactionInstructionDelivered };
+      return { answer: outcome.answer, compactionInstructionDelivered, ...(handoff ? { handoff } : {}) };
     } catch (error) {
       if (signal?.aborted) source.cancel(abortReason(signal));
       throw error;
     } finally {
+      if (transaction) broker.abortCompactionTransaction(transaction.token);
+      await handoffWait;
       if (token) await broker.revoke(token);
     }
   });

@@ -11,8 +11,9 @@ import type { CodexParsedRequest } from "../src/types";
 import type { AdapterEvent } from "../src/types";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { chatGptRetainedSurfaceUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
+import { CompactionTransactionStore } from "../src/adapters/chatgpt-web/compaction-transaction";
 
-function fixture(active = false) {
+function fixture(active = false, tools = false) {
   const key = randomUUID();
   const browser = deferred<string>();
   const release = deferred<void>();
@@ -27,7 +28,8 @@ function fixture(active = false) {
       internal_chat_message_metadata_passthrough: { turn_id: "source-turn" } }] },
   };
   const source = chatGptTurnSessions.getOrCreate(key, () => ({
-    mode: "read-only", browser: active ? browser.promise : Promise.resolve("completed source"),
+    ...(tools ? { mode: "tools" as const, token: Promise.resolve("active_source") } : { mode: "read-only" as const }),
+    browser: active ? browser.promise : Promise.resolve("completed source"),
     trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), conversationKey: chatGptConversationKey(parsed, key),
     usageInput: parsed, cancel: () => browser.resolve("cancelled"),
     release: async () => { releasing.resolve(); await release.promise; },
@@ -40,8 +42,67 @@ function fixture(active = false) {
     startFallback: async () => "Checkpoint summary.", emit: () => {},
   };
   const cleanup = async () => { release.resolve(); browser.resolve("cleanup"); await chatGptTurnSessions.retireAndWait(key); };
-  return { key, source, options, release, releasing, cleanup };
+  return { key, source, options, release, releasing, cleanup, browser };
 }
+
+for (const stoppedWithoutHandoff of [false, true]) test(`active compact avoids preemption and reserves another message for a stopped source (missing checkpoint: ${stoppedWithoutHandoff})`, async () => {
+  const f = fixture(true, true);
+  const store = new CompactionTransactionStore();
+  const boundary = deferred<string>();
+  const events: AdapterEvent[] = [];
+  let starts = 0;
+  let preemptions = 0;
+  let fallbackCalls = 0;
+  let workerCalls = 0;
+  const submit = (instruction: string) => {
+    const token = /turn_token (control_\w+)/.exec(instruction)![1]!;
+    const handoffId = /handoff_id (handoff_\w+)/.exec(instruction)![1]!;
+    store.submit(token, handoffId, "Canonical active checkpoint.");
+  };
+  const broker = {
+    beginCompactionTransaction: async (trace: string, ttl: number) => { starts++; return store.begin(trace, ttl); },
+    waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
+    abortCompactionTransaction: (token: string) => store.abort(token),
+    requestCompaction: (_token: string, result: { content: { text: string }[] }, delivered?: () => void) => {
+      boundary.resolve(result.content[0]!.text); delivered?.(); return 1;
+    },
+    compactionDeliveryCount: () => 1, revoke() {},
+  } as unknown as TurnBroker;
+  const run = runEnhancedCompaction({ ...f.options, broker, timeoutMs: 2_000,
+    worker: { run: async turn => {
+      workerCalls++;
+      expect(stoppedWithoutHandoff).toBeTrue();
+      expect(f.source.isActive()).toBeFalse();
+      const prepared = await turn.prepare();
+      try { submit(prepared.text); return "turn complete"; } finally { prepared.release(); }
+    },
+      requestPreemptiveRetry: () => { preemptions++; return true; } },
+    startFallback: async () => { fallbackCalls++; return "Fallback checkpoint."; },
+    emit: event => { events.push(event); },
+  }).then(result => ({ result }), error => ({ error }));
+  try {
+    const instruction = await boundary.promise;
+    expect(instruction).toContain("codex.control.compaction_handoff");
+    expect(preemptions).toBe(0);
+    expect(f.source.runtime.compactionRequested).toBeTrue();
+    if (!stoppedWithoutHandoff) submit(instruction);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(events).toEqual([]);
+    expect(f.source.isActive()).toBeTrue();
+    f.browser.resolve(stoppedWithoutHandoff ? "compact turn had started" : "turn complete");
+    await f.releasing.promise;
+    expect(events).toEqual([]);
+    f.release.resolve();
+    expect(await run).toEqual({ result: "completed" });
+    expect(starts).toBe(stoppedWithoutHandoff ? 2 : 1);
+    expect(workerCalls).toBe(stoppedWithoutHandoff ? 1 : 0);
+    expect(fallbackCalls).toBe(0);
+    expect(events.filter(event => event.type === "done")).toHaveLength(1);
+    expect(events.filter(event => event.type === "text_delta")).toEqual([
+      { type: "text_delta", phase: "final_answer", text: canonicalizeCompactionHandoff(f.options.parsed, "Canonical active checkpoint.")! },
+    ]);
+  } finally { store.close(); await f.cleanup(); await run; }
+});
 
 for (const sameExecutionKey of [true, false]) test(`enhanced compact waits for detached source release (same key: ${sameExecutionKey})`, async () => {
   const f = fixture();
@@ -168,11 +229,8 @@ for (const surfaceLost of [false, true]) {
             try {
               expect(prepared.text).toContain("codex.control.compaction_handoff");
               submitted.resolve();
-              await new Promise<void>(resolve => {
-                if (turn.abortSignal!.aborted) resolve();
-                else turn.abortSignal!.addEventListener("abort", () => resolve(), { once: true });
-              });
-              return "browser text is not the checkpoint";
+              expect(turn.abortSignal!.aborted).toBeFalse();
+              return "turn complete";
             } finally { prepared.release(); }
           } finally { workerSettlements++; }
         } },

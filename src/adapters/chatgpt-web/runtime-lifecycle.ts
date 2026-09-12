@@ -53,6 +53,7 @@ export function withAbort<T>(promise: Promise<T>, signal: AbortSignal | undefine
 
 export type ChatGptSurfaceRecoveryReason =
   | "eligible"
+  | "compaction_requested"
   | "already_recovered"
   | "aborted"
   | "read_only"
@@ -73,6 +74,7 @@ export interface ChatGptSurfaceRecoveryDecision {
 
 export type ChatGptSameSurfaceRecoveryReason =
   | "eligible"
+  | "compaction_requested"
   | "mode_disabled"
   | "already_recovered"
   | "aborted"
@@ -114,6 +116,7 @@ export function chatGptSameSurfaceRecoveryDecision(
     unresolvedSupersededCount,
   });
   if (!enhancedMode) return reject("mode_disabled");
+  if (session.runtime.compactionRequested) return reject("compaction_requested");
   if (attempt > 1) return reject("already_recovered");
   if (signal?.aborted) return reject("aborted");
   if (!(error instanceof ChatGptWebAdapterError)
@@ -143,6 +146,7 @@ export function chatGptSurfaceRecoveryDecision(
     unresolvedSupersededCount,
   });
   if (recoveries > 0) return reject("already_recovered");
+  if (session.runtime.compactionRequested) return reject("compaction_requested");
   if (signal?.aborted) return reject("aborted");
   if (session.runtime.mode !== "tools") return reject("read_only");
   if (session.runtime.submission?.phase === "send_activated") return reject("submission_activated");

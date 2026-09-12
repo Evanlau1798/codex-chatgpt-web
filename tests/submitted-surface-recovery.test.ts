@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import { chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatGptCompletionEvidenceError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
@@ -68,7 +69,7 @@ function textOf(result: BrokerToolResult): string {
   )).join("\n");
 }
 
-test("recovers missing completion evidence once in the active Web conversation", async () => {
+for (const compacting of [false, true]) test(`same-conversation recovery respects compact ownership (compacting: ${compacting})`, async () => {
   const socketPath = brokerTestEndpoint(`cgw-same-surface-${process.pid}-${Date.now()}`);
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
@@ -84,6 +85,14 @@ test("recovers missing completion evidence once in the active Web conversation",
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const originalRun = worker.run.bind(worker);
   let browserStarts = 0;
+  let observedRetry: unknown;
+  let observedCorrection: unknown;
+  const originalFind = chatGptTurnSessions.find.bind(chatGptTurnSessions);
+  const find = spyOn(chatGptTurnSessions, "find").mockImplementation(key => {
+    const session = originalFind(key);
+    if (session && compacting) Object.assign(session.runtime, { compactionRequested: true });
+    return session;
+  });
 
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     browserStarts += 1;
@@ -94,10 +103,8 @@ test("recovers missing completion evidence once in the active Web conversation",
       chatGptCompletionEvidenceError("completion evidence disappeared", false),
       1,
     );
-    expect(retry).toMatchObject({
-      text: CHATGPT_SAME_SURFACE_RECOVERY_PROMPT,
-      replaceCandidate: true,
-    });
+    observedRetry = retry;
+    observedCorrection = await turn.retryPromptForAnswer?.("The tool was blocked by safety policy.", 1);
     const answer = "Recovered in the retained conversation.";
     turn.onTextDelta(answer);
     return answer;
@@ -109,11 +116,20 @@ test("recovers missing completion evidence once in the active Web conversation",
     const events: AdapterEvent[] = [];
     await createChatGptWebAdapter(provider).runTurn!(request, { headers: new Headers() }, event => events.push(event));
 
+    if (compacting) {
+      expect(observedRetry).toBeUndefined();
+      expect(observedCorrection).toBeUndefined();
+    } else {
+      expect(observedRetry).toMatchObject({ text: CHATGPT_SAME_SURFACE_RECOVERY_PROMPT, replaceCandidate: true });
+      expect(observedCorrection).toBeDefined();
+    }
+
     expect(browserStarts).toBe(1);
     expect(events.filter(event => event.type === "text_delta").map(event => event.text).join(""))
       .toBe("Recovered in the retained conversation.");
     expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
   } finally {
+    find.mockRestore();
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
     await TurnBroker.forSocket(socketPath).close();
   }

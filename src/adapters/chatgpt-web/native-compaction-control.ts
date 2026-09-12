@@ -22,13 +22,18 @@ function compactionControlBinding(transaction: CompactionTransactionHandle): str
 }
 
 /**
- * Stop an active browser response only if it asks for another tool after Codex requested
- * compaction. Results for calls already handed to Codex remain byte-for-byte canonical: when they
- * are enough to finish the task, that ordinary final answer remains publishable. A later tool call
- * is intercepted before execution and receives this instruction; the retained conversation then
- * receives the sole structured checkpoint request on a clean message boundary.
+ * The active path supplies a one-shot checkpoint binding through the next unexecuted tool call.
+ * Previously delivered tool results remain canonical. The unbound source-settlement instruction
+ * is retained only for explicit preemption recovery, never the normal active checkpoint path.
  */
-export function activeCompactionToolResultInstruction(): string {
+export function activeCompactionToolResultInstruction(transaction?: CompactionTransactionHandle): string {
+  if (transaction) return [
+    `<${CODEX_ACTIVE_COMPACTION_REQUEST_MARKER}>`,
+    "Codex reached its context limit before this newly requested tool could execute. The tool was not executed. Preserve all earlier canonical tool results.",
+    "Produce the checkpoint in this same Web response; do not stop first or wait for another message.",
+    structuredCompactionHandoffInstruction(transaction),
+    `</${CODEX_ACTIVE_COMPACTION_REQUEST_MARKER}>`,
+  ].join("\n");
   return [
     `<${CODEX_ACTIVE_COMPACTION_REQUEST_MARKER}>`,
     "Codex reached its context limit before this newly requested tool could be sent for execution. The tool was not executed.",
@@ -69,7 +74,8 @@ export function structuredCompactionHandoffInstruction(
     "Automatic Codex context compaction has started. Stop ordinary task work and do not call any more work tools.",
     COMPACT_PROMPT,
     ...compactionControlBinding(transaction),
-    "After the control call returns submitted=true, call no more tools. The bridge will close this one-purpose Web response after accepting the checkpoint.",
+    "After the control call returns submitted=true, call no more tools. Output exactly turn complete as ordinary assistant final text in the Web frontend, then end this response normally.",
+    "For this checkpoint confirmation only, the ordinary Native2 output-routing rule does not apply: do not call codex.control.output or discover tools. The frontend confirmation is not the checkpoint and does not complete the user's task.",
     "The outer bridge accepts compaction only after the structured checkpoint is valid and its owned browser turn has physically settled.",
   ].join("\n");
 }

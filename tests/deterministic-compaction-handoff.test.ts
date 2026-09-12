@@ -8,6 +8,8 @@ import { ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-session-re
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
 import type { BrokerToolResult, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import type { CodexParsedRequest } from "../src/types";
+import { CompactionTransactionStore } from "../src/adapters/chatgpt-web/compaction-transaction";
+import { deferred } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 
 function compactionRequest(): CodexParsedRequest {
   return {
@@ -23,7 +25,26 @@ function compactionRequest(): CodexParsedRequest {
   };
 }
 
-test("active compaction settles canonical tool results before a separate retained handoff", async () => {
+test("a source finishing while compact waits for ownership remains eligible for retained handoff", async () => {
+  const browser = deferred<string>();
+  const owner = deferred<void>();
+  const source = new ChatGptTurnSession({ mode: "tools", token: Promise.resolve("source"),
+    browser: browser.promise, trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), cancel() {},
+  });
+  const previous = source.runExclusive(() => owner.promise);
+  const run = settleActiveCompactionSource(compactionRequest(), source, {} as TurnBroker)
+    .then(value => ({ value }), error => ({ error }));
+  try {
+    expect(source.isActive()).toBeTrue();
+    browser.resolve("Ordinary completed answer.");
+    await source.browserOutcome;
+    owner.resolve();
+    expect(await run).toEqual({ value: { answer: "Ordinary completed answer.", compactionInstructionDelivered: false } });
+  } finally { owner.resolve(); browser.resolve("cleanup"); await previous; await run; }
+});
+
+test("active compaction preserves canonical results when the source finishes before requesting its checkpoint", async () => {
+  const store = new CompactionTransactionStore();
   const completed: Array<{ callId: string; result: BrokerToolResult }> = [];
   let finish!: (answer: string) => void;
   const browser = new Promise<string>(resolve => { finish = resolve; });
@@ -41,6 +62,9 @@ test("active compaction settles canonical tool results before a separate retaine
     { callId: "call_two", wireName: "exec_command", freeform: false },
   ]);
   const broker = {
+    beginCompactionTransaction: async (trace: string, ttl: number) => store.begin(trace, ttl),
+    waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
+    abortCompactionTransaction: (token: string) => store.abort(token),
     requestCompaction: () => 0,
     compactionDeliveryCount: () => 0,
     completeTool: (_token: string, callId: string, result: BrokerToolResult) => {
@@ -60,7 +84,8 @@ test("active compaction settles canonical tool results before a separate retaine
   ]);
 });
 
-test("an intercepted compact boundary preempts a silent source onto the retained handoff path", async () => {
+test("an intercepted compact boundary supplies its checkpoint binding without preempting", async () => {
+  const store = new CompactionTransactionStore();
   let finish!: (answer: string) => void;
   const browser = new Promise<string>(resolve => { finish = resolve; });
   const source = new ChatGptTurnSession({
@@ -72,24 +97,29 @@ test("an intercepted compact boundary preempts a silent source onto the retained
     cancel() {},
   });
   const broker = {
-    requestCompaction: (_token: string, _result: BrokerToolResult, onDelivered?: () => void) => {
+    beginCompactionTransaction: async (trace: string, ttl: number) => store.begin(trace, ttl),
+    waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
+    abortCompactionTransaction: (token: string) => store.abort(token),
+    requestCompaction: (_token: string, result: BrokerToolResult, onDelivered?: () => void) => {
+      const prompt = (result.content[0] as { text: string }).text;
+      expect(prompt).toContain("do not stop first or wait for another message");
+      store.submit(/turn_token (control_\w+)/.exec(prompt)![1]!, /handoff_id (handoff_\w+)/.exec(prompt)![1]!, "Valid source checkpoint.");
       onDelivered?.();
+      finish("turn complete");
       return 1;
     },
     compactionDeliveryCount: () => 1,
     revoke() {},
   } as unknown as TurnBroker;
   const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(new Error("silent source did not preempt")), 100);
-  let prompt = "";
+  const timer = setTimeout(() => abort.abort(new Error("source did not settle")), 1_000);
   try {
     await expect(settleActiveCompactionSource(
       compactionRequest(), source, broker, abort.signal,
-      instruction => { prompt = instruction; finish("source settled"); return true; },
-    )).resolves.toEqual({ answer: "source settled", compactionInstructionDelivered: true });
-    expect(prompt).toContain("CODEX_ACTIVE_COMPACTION_REQUEST");
+    )).resolves.toEqual({ answer: "turn complete", compactionInstructionDelivered: true, handoff: "Valid source checkpoint." });
   } finally {
     clearTimeout(timer);
+    store.close();
   }
 });
 

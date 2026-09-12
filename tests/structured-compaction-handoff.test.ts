@@ -4,6 +4,7 @@ import { requestRetainedCompactionHandoff } from "../src/adapters/chatgpt-web/re
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
 import type { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import type { CodexParsedRequest } from "../src/types";
+import { deferred } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 
 const parsed: CodexParsedRequest = {
   modelId: "chatgpt-web", stream: true,
@@ -11,10 +12,12 @@ const parsed: CodexParsedRequest = {
   options: { reasoning: "high" }, _compactionRequest: true,
 };
 
-test("retained compaction submits one structured checkpoint and closes its browser turn", async () => {
+test("retained compaction waits for natural Web confirmation after accepting its checkpoint", async () => {
+  const accepted = deferred<void>();
+  const browser = deferred<string>();
   const broker = {
     beginCompactionTransaction: async () => ({ token: "control", handoffId: "handoff" }),
-    waitForCompactionHandoff: async () => "Structured retained checkpoint is valid.",
+    waitForCompactionHandoff: async () => { accepted.resolve(); return "Structured retained checkpoint is valid."; },
     abortCompactionTransaction() {},
   } as unknown as TurnBroker;
   const source = new ChatGptTurnSession({
@@ -26,21 +29,31 @@ test("retained compaction submits one structured checkpoint and closes its brows
   let browserAborted = false;
   const worker = { run: (value: BrowserTurn) => {
     turn = value;
-    return new Promise<string>((_resolve, reject) => value.abortSignal?.addEventListener("abort", () => {
+    value.abortSignal?.addEventListener("abort", () => {
       browserAborted = true;
-      reject(new DOMException("retired", "AbortError"));
-    }, { once: true }));
+      browser.reject(new DOMException("retired", "AbortError"));
+    }, { once: true });
+    return browser.promise;
   } };
 
-  await expect(requestRetainedCompactionHandoff(
+  let completed = false;
+  const run = requestRetainedCompactionHandoff(
     worker as never, parsed, source, broker,
     { localToolsEnabled: true, solAvailable: true, proAvailable: true }, "trace_retained",
-  )).resolves.toBe("Structured retained checkpoint is valid.");
-  expect(turn?.conversationKey).toBe("a".repeat(64));
-  expect(turn?.nativeConnector).toBeTrue();
-  expect(turn?.requireRetainedConversation).toBeTrue();
-  expect(turn?.prepareResume).toBeDefined();
-  expect(browserAborted).toBeTrue();
+  ).then(value => { completed = true; return value; });
+  try {
+    await accepted.promise;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(browserAborted).toBeFalse();
+    expect(completed).toBeFalse();
+    browser.resolve("turn complete");
+    await expect(run).resolves.toBe("Structured retained checkpoint is valid.");
+    expect(turn?.conversationKey).toBe("a".repeat(64));
+    expect(turn?.nativeConnector).toBeTrue();
+    expect(turn?.requireRetainedConversation).toBeTrue();
+    expect(turn?.prepareResume).toBeDefined();
+    expect(browserAborted).toBeFalse();
+  } finally { browser.resolve("cleanup"); await run.catch(() => {}); }
 });
 
 test("retained compaction requires an attached conversation", async () => {

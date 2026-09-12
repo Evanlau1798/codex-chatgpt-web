@@ -24,9 +24,7 @@ test("structured handoff ignores browser text and uses only the control result",
   let turn: BrowserTurn | undefined;
   const worker = { run: (value: BrowserTurn) => {
     turn = value;
-    return new Promise<string>((_resolve, reject) => value.abortSignal?.addEventListener("abort", () => {
-      reject(new DOMException("retired", "AbortError"));
-    }, { once: true }));
+    return Promise.resolve("turn complete");
   } };
   const broker = {
     beginCompactionTransaction: async () => ({ token: "control", handoffId: "handoff" }),

@@ -23,6 +23,7 @@ import {
   ChatGptTraceFeed,
   chatGptConversationKey,
   chatGptTurnExecutionKey,
+  chatGptTurnSessions,
   type ChatGptTurnRuntime,
 } from "./turn-execution";
 import { resolveBiggerContextMultipartParts } from "./usage";
@@ -145,7 +146,11 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     }
     const releaseRetainedConversation = retainedConversationRelease(provider, conversationKey);
     const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
-    const retryPromptForAnswer = parsed._compactionRequest || !steering ? evidenceRetry : browserSteeringRetry(steering, traceId, evidenceRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, isClaudeClientSession(checkpointInput.parsed));
+    const taskAnswerRetry = parsed._compactionRequest || !steering ? evidenceRetry : browserSteeringRetry(steering, traceId, evidenceRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, isClaudeClientSession(checkpointInput.parsed));
+    const retryPromptForAnswer = taskAnswerRetry ? (answer: string, attempt: number) => (
+      chatGptTurnSessions.find(runtimeExecutionKey)?.runtime.compactionRequested
+        ? undefined : taskAnswerRetry(answer, attempt)
+    ) : undefined;
     const retryPromptForError = createChatGptSameSurfaceRetry({ traceId, executionKey: runtimeExecutionKey, enhancedMode: useEnhancedWebSessionMode, abortSignal: browserAbort.signal });
     const emitCommentary = (value: string, continuation?: boolean): void => {
       if (toolEvidence && !toolEvidence.shouldEmitCommentary(value)) return;

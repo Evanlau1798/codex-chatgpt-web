@@ -106,22 +106,25 @@ export async function runEnhancedCompaction(
         );
         return await fallback("source_unavailable_before_handoff");
       }
+      let raw: string | undefined;
       if (source.isActive() && source.runtime.mode === "tools") {
         const settled = await settleActiveCompactionSource(
           parsed,
           source,
           broker,
           operationSignal,
-          instruction => Boolean(source?.traceId && worker.requestPreemptiveRetry?.(source.traceId, instruction)),
+          handoffTimeoutMs,
         );
         preserveFinal = !settled.compactionInstructionDelivered;
+        raw = settled.handoff;
+        console.info(`[chatgpt-web] active compaction result=${raw ? "checkpoint_and_response_settled" : "source_settled_without_checkpoint"}`);
       } else if (source.isActive()) {
         const outcome = await withCompactionAbort(source.browserOutcome, operationSignal);
         if (outcome.type === "error") throw outcome.error;
         await withCompactionAbort(source.physicalSettlement, operationSignal);
         preserveFinal = true;
       }
-      const raw = await requestRetainedCompactionHandoff(
+      raw ??= await requestRetainedCompactionHandoff(
         worker, parsed, source, broker, capabilities, traceId, operationSignal, handoffTimeoutMs,
       );
       const canonical = canonicalizeCompactionHandoff(parsed, raw);
@@ -162,7 +165,7 @@ export async function runEnhancedCompaction(
   });
   try {
     const handoff = await withCompactionAbort(shared, abortSignal);
-    console.info("[chatgpt-web] Web session mode=enhanced path=active_handoff result=completed");
+    console.info("[chatgpt-web] Web session mode=enhanced operation=structured_compaction result=completed");
     emit({ type: "text_delta", text: handoff, phase: "final_answer" });
     emitBrowserCompletion(
       { type: "final", answer: handoff },

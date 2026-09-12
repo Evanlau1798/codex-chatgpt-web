@@ -29,6 +29,7 @@ interface ChatGptTurnRuntimeBase {
   onToolResultDelivered?: (result?: CodexToolResultMessage) => void;
   externalProgress?: ChatGptExternalTurnProgress;
   submission?: { phase: "prepared" | "send_activated" | "accepted" };
+  compactionRequested?: boolean;
   manualControl?: { surfaceNonce: string; ownerKey?: string };
   cancel: (reason?: Error) => void;
   /** Release a completed retained browser surface when this canonical session is superseded. */
