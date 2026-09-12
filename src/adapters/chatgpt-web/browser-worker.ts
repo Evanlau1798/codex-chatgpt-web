@@ -3360,6 +3360,8 @@ export class ChatGptBrowserWorker {
         );
         await diagnostics.capture(page, "send-accepted");
 
+        // Both output paths must reach the shared answer-retry handling below.
+        responseObservation: {
         if (turn.tunneledOutput) {
           let tunneledObservationRebinds = 0;
           const tunneled = await runChatGptTunneledOutputTurn({
@@ -3455,12 +3457,12 @@ export class ChatGptBrowserWorker {
             console.info(`[chatgpt-web] browser turn ${turn.traceId} completed outputSource=tunnel finalChars=${tunneled.answer.length}`);
             const deliverable = answerBuffer.finalizeCandidate(tunneled.answer);
             if (deliverable) turn.onTextDelta(deliverable);
-            break;
+            break responseObservation;
           }
           tunneledOutputSequence = tunneled.lastSequence;
           if (tunneled.status === "retry") {
             completedRetryPrompt = tunneled.retry;
-            break;
+            break responseObservation;
           }
           tunneledDomFallback = true;
           console.warn(`[chatgpt-web] browser turn ${turn.traceId} received no tunneled final; validating the current DOM response`);
@@ -3890,6 +3892,7 @@ export class ChatGptBrowserWorker {
             await diagnostics.capture(page, "internal-observation-fault");
             await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
           }
+        }
         }
         } catch (error) {
           this.finalizingRuns.delete(turn.traceId);

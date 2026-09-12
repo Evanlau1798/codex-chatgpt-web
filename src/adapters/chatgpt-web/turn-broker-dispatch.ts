@@ -95,6 +95,8 @@ export async function dispatchTurnBrokerRequest(
       throw new Error("Read and verify the complete Codex context archive before submitting final output");
     }
     const submitted = submitTurnOutput(channel, request.outputKind!, request.outputText);
+    console.info(`[chatgpt-web] broker trace=${channel.traceId} output accepted kind=${submitted.event.kind}`
+      + ` sequence=${submitted.event.sequence} chars=${submitted.event.text.length} duplicate=${submitted.duplicate}`);
     return { accepted: true, sequence: submitted.event.sequence, duplicate: submitted.duplicate };
   }
   if (request.method === "read_context") {

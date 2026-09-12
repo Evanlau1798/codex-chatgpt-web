@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,6 +17,7 @@ test("turn output is ordered and final delivery is fail closed", async () => {
   const socket = defaultBrokerEndpoint(root);
   const broker = TurnBroker.forSocket(socket);
   const owner = new RemoteTurnBroker(socket);
+  const log = spyOn(console, "info").mockImplementation(() => {});
   try {
     const token = await broker.register(environment(root), undefined, "output-test", undefined, true);
     const submit = (kind: "commentary" | "reasoning" | "final", text: string) => callTurnBroker<{ duplicate: boolean }>(socket, {
@@ -46,6 +47,15 @@ test("turn output is ordered and final delivery is fail closed", async () => {
     ]), "waiting");
     await submit("final", "Retried final.");
     assert.deepEqual(await nextAttempt, { sequence: 4, kind: "final", text: "Retried final." });
+    const receipts = log.mock.calls.flat().filter(line => String(line).includes("output accepted"));
+    expect(receipts).toHaveLength(5);
+    expect(receipts).toContain("[chatgpt-web] broker trace=output-test output accepted kind=final sequence=3 chars=5 duplicate=false");
+    expect(receipts).toContain("[chatgpt-web] broker trace=output-test output accepted kind=final sequence=3 chars=5 duplicate=true");
+    expect(String(receipts)).toContain("kind=commentary sequence=1");
+    expect(String(receipts)).toContain("kind=reasoning sequence=2");
+    for (const privateValue of [token, "Checking the repository.", "The shared boundary is the smallest fix.", "Done.", "Retried final."]) {
+      expect(String(receipts)).not.toContain(privateValue);
+    }
     await broker.revoke(token);
     await assert.rejects(owner.nextOutput(token, 4));
     await assert.rejects(submit("final", "Late."), /invalid, expired, or revoked/);
@@ -56,6 +66,7 @@ test("turn output is ordered and final delivery is fail closed", async () => {
       method: "submit_output", token: sealedToken, outputKind: "final", outputText: "Too late.",
     }), /DOM fallback was sealed/);
   } finally {
+    log.mockRestore();
     await broker.close();
     rmSync(root, { recursive: true, force: true });
   }

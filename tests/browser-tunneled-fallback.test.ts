@@ -13,7 +13,7 @@ const FINAL = "Findings: No blocking defects. Review complete.";
 async function runFixture(options: {
   stale?: boolean; tunneledFinal?: boolean; steering?: boolean; batches?: number;
   missingBaseline?: boolean; abortAtBaseline?: boolean; delayedResult?: boolean;
-  pastToolBatch?: boolean; retained?: boolean;
+  pastToolBatch?: boolean; retained?: boolean; tunneledRetry?: "answer" | "preemptive";
 } = {}) {
   const diagnostics = mkdtempSync(join(import.meta.dir, "../tmp/boole-browser-"));
   const progress = new ChatGptExternalTurnProgress();
@@ -23,7 +23,8 @@ async function runFixture(options: {
   const guard = setTimeout(() => controller.abort(new Error("fixture did not settle")), 5_000);
   let now = Date.now();
   const clock = spyOn(Date, "now").mockImplementation(() => now);
-  let submitted = false;
+  let submitted = 0;
+  let finalSequence = 1;
   let text = OLD;
   let pendingReaders = 0;
   let batch = 0;
@@ -68,7 +69,7 @@ async function runFixture(options: {
         text = FINAL;
         pendingResult = false;
       }
-      const identities = submitted ? ["historical", "current"] : ["historical"];
+      const identities = ["historical", ...Array.from({ length: submitted }, (_, index) => `current${index || ""}`)];
       return { count: identities.length, lastId: identities.at(-1), identities };
     },
   };
@@ -77,29 +78,30 @@ async function runFixture(options: {
     locator: (selector: string) => {
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
       if (selector === "[data-turn-id-container]") return {
-        evaluateAll: async () => submitted ? ["historical", "current"] : ["historical"],
+        evaluateAll: async () => ["historical", ...Array.from({ length: submitted }, (_, index) => `current${index || ""}`)],
       };
-      if (selector === '[data-turn-id="current"]') return response;
+      if (selector.startsWith('[data-turn-id="current')) return response;
       return hidden;
     },
   };
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics },
     finalizingRuns: new Set<string>(),
-    takePreemptiveRetry: () => undefined,
+    takePreemptiveRetry: () => options.tunneledRetry === "preemptive" && submitted === 1
+      ? "Apply pending steering." : undefined,
     runStage: async (_trace: string, _name: string, _timeout: number, action: (s: AbortSignal) => unknown) => action(controller.signal),
     prepareTemporaryChatSurface: async () => {},
     selectModelAndEffort: async (_page: unknown, model: string, effort: string) => resolveChatGptWebModelMode(
       model, effort, { localToolsEnabled: true, solAvailable: true, proAvailable: true },
     ),
     attachPromptWithCompactionRetry: async (_page: unknown, _prompt: string, bindConnector: boolean) => {
-      expect(bindConnector).toBe(!options.retained);
+      expect(bindConnector).toBe(!options.retained && submitted === 0);
       actions.push("attach");
     },
     attachFiles: async () => {}, assertPromptAttached: async () => {}, connectorIsSelected: async () => true,
     activeComposer: async () => ({ locator: () => ({ getByTestId: () => ({
       waitFor: async () => {}, isEnabled: async () => true,
-      press: async () => { submitted = true; if (options.pastToolBatch) text = FINAL; actions.push("send"); },
+      press: async () => { submitted++; if (options.pastToolBatch) text = FINAL; actions.push("send"); },
     }) }) }),
     waitForSubmissionAccepted: async () => "generation_running",
     responseDomSnapshot: async (locator: unknown) => {
@@ -126,14 +128,18 @@ async function runFixture(options: {
     prepare: async () => ({ text: "Review the candidate.", images: [], transport: "native2-archive",
       release: () => { actions.push("release"); } }),
     onSubmitted: () => { actions.push("submitted"); }, onTextDelta: delta => { deltas.push(delta); },
-    retryPromptForAnswer: () => options.steering ? "Apply pending steering." : undefined,
+    retryPromptForAnswer: (_answer, attempt) => options.steering || (options.tunneledRetry === "answer" && attempt === 1)
+      ? { text: "Apply pending steering.", onSubmitted: () => { actions.push("retry-submitted"); } } : undefined,
     completionFence: {
       begin: async () => { actions.push("fence-begin"); return 1; },
       commit: async () => { actions.push("fence-commit"); return true; },
     },
     tunneledOutput: {
       next: (after, signal) => {
-        if (options.tunneledFinal && after === 0) return Promise.resolve({ sequence: 1, kind: "final", text: FINAL });
+        if (options.tunneledFinal && after < finalSequence) {
+          return Promise.resolve({ sequence: finalSequence, kind: "final",
+            text: options.tunneledRetry && finalSequence === 1 ? "Superseded review." : FINAL });
+        }
         if (!batch && !options.tunneledFinal) batch = progress.recordToolBatch(1);
         return new Promise<BrokerTurnOutputEvent>((_resolve, reject) => {
           pendingReaders++;
@@ -143,7 +149,12 @@ async function runFixture(options: {
           }, { once: true });
         });
       },
-      reset: async () => { throw new Error("unexpected replay"); },
+      reset: async sequence => {
+        if (!options.tunneledRetry) throw new Error("unexpected replay");
+        expect(sequence).toBe(finalSequence);
+        actions.push("output-reset");
+        finalSequence++;
+      },
       seal: async () => { expect(progress.snapshot().activeToolCalls).toBe(0); actions.push("output-seal"); return true; },
     },
   };
@@ -159,8 +170,8 @@ async function runFixture(options: {
   }
   expect(pendingReaders).toBe(0);
   expect(actions.filter(a => a === "release")).toHaveLength(1);
-  expect(actions.filter(a => a === "send")).toHaveLength(1);
-  expect(actions.filter(a => a === "submitted")).toHaveLength(1);
+  expect(actions.filter(a => a === "send")).toHaveLength(options.tunneledRetry ? 2 : 1);
+  expect(actions.filter(a => a === "submitted")).toHaveLength(options.tunneledRetry ? 2 : 1);
   return { answer, error, actions, deltas, snapshotsBeforeDispatch };
 }
 
@@ -204,6 +215,17 @@ test("an explicit tunneled final without work tools needs no rich DOM traversal"
   expect(result.answer).toBe(FINAL);
   expect(result.deltas).toEqual([FINAL]);
   expect(result.actions.some(a => a.startsWith("snapshot:"))).toBeFalse();
+});
+
+test.each(["answer", "preemptive"] as const)("a tunneled final requiring %s retry cannot complete with an empty buffer", async tunneledRetry => {
+  const result = await runFixture({ tunneledFinal: true, tunneledRetry });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.deltas).toEqual([FINAL]);
+  expect(result.actions.filter(a => a === "output-reset")).toHaveLength(1);
+  expect(result.actions.filter(a => a === "retry-submitted")).toHaveLength(tunneledRetry === "answer" ? 1 : 0);
+  expect(result.actions.filter(a => a === "fence-commit")).toHaveLength(1);
+  expect(result.actions).not.toContain("output-seal");
 });
 
 test("DOM fallback does not publish a final superseded by pending steering", async () => {
