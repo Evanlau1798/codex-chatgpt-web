@@ -2,12 +2,13 @@ import { expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { RemoteTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 
 test("Native2 accepts bound output without per-turn inventory discovery", async () => {
-  const root = mkdtempSync(join(import.meta.dir, "../tmp/native2-output-"));
+  const root = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "native2-output-"));
   const socket = defaultBrokerEndpoint(root);
   const broker = TurnBroker.forSocket(socket);
   const client = new Client({ name: "output-control-contract-test", version: "1.0.0" });

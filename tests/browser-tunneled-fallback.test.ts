@@ -1,5 +1,6 @@
 import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
@@ -22,7 +23,7 @@ async function runFixture(options: {
   emptyStopped?: boolean; recoveryFails?: boolean; composerBusy?: boolean; stoppedThinking?: boolean;
   composerBusyAfterAdmission?: boolean;
 } = {}) {
-  const diagnostics = mkdtempSync(join(import.meta.dir, "../tmp/boole-browser-"));
+  const diagnostics = mkdtempSync(join(tmpdir(), "boole-browser-"));
   const progress = new ChatGptExternalTurnProgress();
   const actions: string[] = [];
   const deltas: string[] = [];
