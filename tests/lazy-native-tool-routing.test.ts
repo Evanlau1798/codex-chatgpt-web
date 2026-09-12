@@ -136,7 +136,7 @@ test("the final context archive chunk resumes bound Native2 tool discovery", asy
     sandboxPolicy: { type: "readOnly" as const, networkAccess: false },
     tools: [readTool],
   };
-  const turnToken = await broker.register(environment, 60_000, "context-resume-test");
+  const turnToken = await broker.register(environment, 60_000, "context-resume-test", undefined, true);
   const archive = `${"A".repeat(CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS - 1)}\n${"B".repeat(CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS - 1)}\n`;
   const contextToken = await broker.registerContext(archive, 60_000, "context-resume-test", turnToken);
   const client = await clientFor(socketPath);
@@ -150,6 +150,7 @@ test("the final context archive chunk resumes bound Native2 tool discovery", asy
     expect(first.isError).not.toBe(true);
     expect(firstText).toContain("next_query=__codex_context__:1");
     expect(firstText).not.toContain("CODEX_CONTEXT_ARCHIVE_READY");
+    expect(firstText).not.toContain("startup guidance");
 
     const blocked = await client.callTool({
       name: "codex_tool_inventory",
@@ -157,6 +158,8 @@ test("the final context archive chunk resumes bound Native2 tool discovery", asy
     });
     expect(blocked.isError).toBe(true);
     expect((blocked.content as Array<{ text: string }>)[0]?.text).toContain("complete Codex context archive");
+    const outputArguments = { turn_token: turnToken, wire_name: "codex.control.output",
+      arguments: { kind: "commentary", text: "I will inspect the task instructions." } };
 
     const second = await client.callTool({
       name: "codex_tool_inventory",
@@ -166,6 +169,7 @@ test("the final context archive chunk resumes bound Native2 tool discovery", asy
     expect(second.isError).not.toBe(true);
     expect(secondText).toContain("next_query=null");
     expect(secondText.match(/CODEX_CONTEXT_ARCHIVE_READY/g)).toHaveLength(1);
+    expect(secondText).toContain("follow the active output contract's startup guidance");
     expect(secondText).toContain("codex_native_turn_binding");
     expect(secondText).not.toContain(turnToken);
     expect(secondText).not.toContain(contextToken);
@@ -174,6 +178,13 @@ test("the final context archive chunk resumes bound Native2 tool discovery", asy
       text.lastIndexOf("\nCODEX_CONTEXT_ARCHIVE_END"),
     );
     expect(`${archiveBody(firstText)}${archiveBody(secondText)}`).toBe(archive);
+
+    // The first visible update needs neither work-tool discovery nor a render acknowledgement.
+    const output = await client.callTool({ name: "codex_tool_call", arguments: outputArguments });
+    expect(output.isError).not.toBe(true);
+    expect(output.structuredContent).toEqual({ accepted: true, sequence: 1, duplicate: false });
+    expect(await broker.nextOutput(turnToken, 0)).toEqual({ sequence: 1, kind: "commentary",
+      text: "I will inspect the task instructions." });
 
     const inventory = await client.callTool({
       name: "codex_tool_inventory",
@@ -184,6 +195,13 @@ test("the final context archive chunk resumes bound Native2 tool discovery", asy
       total: 1,
       tools: [{ wire_name: "read_file", kind: "function" }],
     });
+    const read = client.callTool({ name: "codex_tool_call", arguments: {
+      turn_token: turnToken, wire_name: "read_file", arguments: { path: "AGENTS.md" },
+    } });
+    const [request] = await broker.nextToolBatch(turnToken);
+    expect(request).toMatchObject({ wireName: "read_file", arguments: { path: "AGENTS.md" } });
+    broker.completeTool(turnToken, request!.callId, result({ text: "Follow repository instructions." }));
+    expect((await read).isError).not.toBe(true);
   } finally {
     await client.close().catch(() => {});
     broker.revokeContext(contextToken);
