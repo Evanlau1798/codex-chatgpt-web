@@ -59,6 +59,7 @@ import {
   recoverableFinalAnswerDecisionError,
 } from "./final-answer-gate";
 import { withAbort as withBrowserTurnAbort } from "./runtime-lifecycle";
+import { activeCompactionToolResultInstruction } from "./native-compaction-control";
 import { ChatGptTurnLatencyDiagnostics } from "./turn-latency";
 import {
   advancePreemptiveRetryStop,
@@ -3465,7 +3466,12 @@ export class ChatGptBrowserWorker {
             break responseObservation;
           }
           tunneledDomFallback = true;
-          console.warn(`[chatgpt-web] browser turn ${turn.traceId} received no tunneled final; validating the current DOM response`);
+          // Classify only the exact internal control prompt; completion validation stays unchanged.
+          if (responsePrompt === activeCompactionToolResultInstruction()) {
+            console.info(`[chatgpt-web] browser turn ${turn.traceId} output observation path=dom reason=compaction_source_settlement`);
+          } else {
+            console.warn(`[chatgpt-web] browser turn ${turn.traceId} output recovery path=dom reason=tunnel_final_missing`);
+          }
         }
 
         let lastHeartbeat = 0;
@@ -3934,7 +3940,11 @@ export class ChatGptBrowserWorker {
         responsePrompt = retryPrompt.text;
         answerBuffer.retryReplacement();
         retrySubmitted = retryPrompt.onSubmitted;
-        console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying final answer attempt=${responseAttempt + 1}`);
+        if (responsePrompt === activeCompactionToolResultInstruction()) {
+          console.info(`[chatgpt-web] browser turn ${turn.traceId} compaction source settlement action=send_control_response attempt=${responseAttempt + 1}`);
+        } else {
+          console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying final answer attempt=${responseAttempt + 1}`);
+        }
 
       }
 

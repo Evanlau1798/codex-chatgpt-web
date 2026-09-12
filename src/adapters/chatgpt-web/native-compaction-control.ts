@@ -33,8 +33,11 @@ export function activeCompactionToolResultInstruction(): string {
     `<${CODEX_ACTIVE_COMPACTION_REQUEST_MARKER}>`,
     "Codex reached its context limit before this newly requested tool could be sent for execution. The tool was not executed.",
     "Stop ordinary task work now, call no more tools, and end this Web response normally.",
+    "For this compaction source-settlement response only, the normal Native2 output-routing rule does not apply.",
+    "Do not call codex.control.output or discover any tools.",
     "Do not create or submit a checkpoint in this response. After it settles, the retained conversation will receive exactly one separate structured compaction handoff request.",
-    "Return exactly CODEX_COMPACTION_SOURCE_SETTLED as the final answer for this response.",
+    "Return exactly CODEX_COMPACTION_SOURCE_SETTLED as ordinary assistant final text, not a tool call, then end the response immediately.",
+    "This sentinel only settles the source response; it does not complete the user's task or submit the checkpoint.",
     `</${CODEX_ACTIVE_COMPACTION_REQUEST_MARKER}>`,
   ].join("\n");
 }

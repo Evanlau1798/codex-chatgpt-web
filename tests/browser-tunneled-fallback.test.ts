@@ -6,6 +6,7 @@ import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-pr
 import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
 import type { BrokerTurnOutputEvent } from "../src/adapters/chatgpt-web/turn-broker-protocol";
+import { activeCompactionToolResultInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
 
 const OLD = "Review in progress.";
 const FINAL = "Findings: No blocking defects. Review complete.";
@@ -14,11 +15,15 @@ async function runFixture(options: {
   stale?: boolean; tunneledFinal?: boolean; steering?: boolean; batches?: number;
   missingBaseline?: boolean; abortAtBaseline?: boolean; delayedResult?: boolean;
   pastToolBatch?: boolean; retained?: boolean; tunneledRetry?: "answer" | "preemptive";
+  compactionSettlement?: boolean;
 } = {}) {
   const diagnostics = mkdtempSync(join(import.meta.dir, "../tmp/boole-browser-"));
   const progress = new ChatGptExternalTurnProgress();
   const actions: string[] = [];
   const deltas: string[] = [];
+  const logs: string[] = [];
+  const info = spyOn(console, "info").mockImplementation(message => { logs.push(`info:${message}`); });
+  const warn = spyOn(console, "warn").mockImplementation(message => { logs.push(`warn:${message}`); });
   const controller = new AbortController();
   const guard = setTimeout(() => controller.abort(new Error("fixture did not settle")), 5_000);
   let now = Date.now();
@@ -88,7 +93,7 @@ async function runFixture(options: {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics },
     finalizingRuns: new Set<string>(),
     takePreemptiveRetry: () => options.tunneledRetry === "preemptive" && submitted === 1
-      ? "Apply pending steering." : undefined,
+      ? options.compactionSettlement ? activeCompactionToolResultInstruction() : "Apply pending steering." : undefined,
     runStage: async (_trace: string, _name: string, _timeout: number, action: (s: AbortSignal) => unknown) => action(controller.signal),
     prepareTemporaryChatSurface: async () => {},
     selectModelAndEffort: async (_page: unknown, model: string, effort: string) => resolveChatGptWebModelMode(
@@ -101,7 +106,12 @@ async function runFixture(options: {
     attachFiles: async () => {}, assertPromptAttached: async () => {}, connectorIsSelected: async () => true,
     activeComposer: async () => ({ locator: () => ({ getByTestId: () => ({
       waitFor: async () => {}, isEnabled: async () => true,
-      press: async () => { submitted++; if (options.pastToolBatch) text = FINAL; actions.push("send"); },
+      press: async () => {
+        submitted++;
+        if (options.pastToolBatch) text = FINAL;
+        if (options.compactionSettlement && submitted === 2) text = "CODEX_COMPACTION_SOURCE_SETTLED";
+        actions.push("send");
+      },
     }) }) }),
     waitForSubmissionAccepted: async () => "generation_running",
     responseDomSnapshot: async (locator: unknown) => {
@@ -136,7 +146,7 @@ async function runFixture(options: {
     },
     tunneledOutput: {
       next: (after, signal) => {
-        if (options.tunneledFinal && after < finalSequence) {
+        if (options.tunneledFinal && after < finalSequence && !(options.compactionSettlement && submitted === 2)) {
           return Promise.resolve({ sequence: finalSequence, kind: "final",
             text: options.tunneledRetry && finalSequence === 1 ? "Superseded review." : FINAL });
         }
@@ -165,6 +175,8 @@ async function runFixture(options: {
   finally {
     clearTimeout(guard);
     clock.mockRestore();
+    info.mockRestore();
+    warn.mockRestore();
     progress.retire(new Error("fixture finished"));
     rmSync(diagnostics, { recursive: true, force: true });
   }
@@ -172,7 +184,7 @@ async function runFixture(options: {
   expect(actions.filter(a => a === "release")).toHaveLength(1);
   expect(actions.filter(a => a === "send")).toHaveLength(options.tunneledRetry ? 2 : 1);
   expect(actions.filter(a => a === "submitted")).toHaveLength(options.tunneledRetry ? 2 : 1);
-  return { answer, error, actions, deltas, snapshotsBeforeDispatch };
+  return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs };
 }
 
 test.each([1, 2])("Boole regression: DOM fallback delivers a final already rendered after %i native batches", async batches => {
@@ -183,6 +195,7 @@ test.each([1, 2])("Boole regression: DOM fallback delivers a final already rende
   expect(result.snapshotsBeforeDispatch).toBe(batches);
   expect(result.actions.indexOf(`snapshot:${OLD}`)).toBeLessThan(result.actions.indexOf("tool-dispatched"));
   expect(result.actions.filter(a => a === "fence-commit")).toHaveLength(1);
+  expect(result.logs.some(line => line.includes("warn:") && line.includes("output recovery path=dom reason=tunnel_final_missing"))).toBeTrue();
 });
 
 test("a new response does not classify settled historical tools against its current final", async () => {
@@ -226,6 +239,21 @@ test.each(["answer", "preemptive"] as const)("a tunneled final requiring %s retr
   expect(result.actions.filter(a => a === "retry-submitted")).toHaveLength(tunneledRetry === "answer" ? 1 : 0);
   expect(result.actions.filter(a => a === "fence-commit")).toHaveLength(1);
   expect(result.actions).not.toContain("output-seal");
+  expect(result.logs.some(line => line.includes("warn:") && line.includes("retrying final answer attempt=2"))).toBeTrue();
+  expect(result.logs.some(line => line.includes("compaction source settlement"))).toBeFalse();
+});
+
+test("compaction source settlement reports a planned control response and DOM observation", async () => {
+  const result = await runFixture({ tunneledFinal: true, tunneledRetry: "preemptive", compactionSettlement: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe("CODEX_COMPACTION_SOURCE_SETTLED");
+  expect(result.deltas).toEqual(["CODEX_COMPACTION_SOURCE_SETTLED"]);
+  expect(result.actions.filter(a => a === "fence-commit")).toHaveLength(1);
+  expect(result.actions.filter(a => a === "output-reset")).toHaveLength(1);
+  expect(result.actions.filter(a => a === "output-seal")).toHaveLength(1);
+  expect(result.logs.some(line => line.includes("info:") && line.includes("compaction source settlement action=send_control_response attempt=2"))).toBeTrue();
+  expect(result.logs.some(line => line.includes("info:") && line.includes("output observation path=dom reason=compaction_source_settlement"))).toBeTrue();
+  expect(result.logs.some(line => line.includes("warn:") && /retrying final answer|output recovery/.test(line))).toBeFalse();
 });
 
 test("DOM fallback does not publish a final superseded by pending steering", async () => {

@@ -88,6 +88,10 @@ test("active Zero Risk compaction returns its checkpoint through the bound compl
   expect(automatic).toContain("separate structured compaction handoff request");
   expect(automatic.toLowerCase()).toContain("call no more tools");
   expect(automatic).not.toContain("codex_turn_complete");
+  expect(automatic).toContain("For this compaction source-settlement response only, the normal Native2 output-routing rule does not apply.");
+  expect(automatic).toContain("Do not call codex.control.output or discover any tools.");
+  expect(automatic).toContain("ordinary assistant final text, not a tool call");
+  expect(automatic).toContain("This sentinel only settles the source response; it does not complete the user's task or submit the checkpoint.");
   expect(safe).toContain("codex_turn_complete");
   expect(safe).toContain("Return only the complete checkpoint summary to Codex");
   expect(safe).toContain("CONTEXT CHECKPOINT COMPACTION");
