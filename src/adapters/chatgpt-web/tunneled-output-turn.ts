@@ -30,6 +30,8 @@ interface TunnelOptions {
   attempt: number;
   pollMs?: number;
   fallbackGraceMs?: number;
+  /** Inspect an empty stopped response while its output epoch is still open. */
+  beforeDomFallback?(stoppedMs: number): Promise<"observe" | ChatGptRetryPrompt | undefined>;
 }
 
 export type ChatGptTunneledOutputDecision =
@@ -100,6 +102,27 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
           }
           const finalCheck = await Promise.race([pending, delay(0)]);
           if (finalCheck.kind === "output") { acceptOutput(finalCheck.event); continue; }
+          if (options.beforeDomFallback) {
+            const admission = await options.beforeDomFallback(Date.now() - stoppedWithoutFinalSince)
+              .then(retry => ({ retry }), error => ({ error }));
+            // Native output, resumed work and cancellation take precedence over a recovery decision.
+            const current = await options.observe();
+            const arrived = await Promise.race([pending, delay(0)]);
+            options.signal?.throwIfAborted();
+            if (arrived.kind === "output") { acceptOutput(arrived.event); continue; }
+            if (!current.responsePresent || current.running || current.toolCallsInFlight) {
+              stoppedWithoutFinalSince = undefined;
+              continue;
+            }
+            preemptiveRetry ??= options.takePreemptiveRetry?.();
+            if (preemptiveRetry) continue;
+            if ("error" in admission) throw admission.error;
+            if (admission.retry === "observe") continue;
+            if (admission.retry) {
+              options.completionAdmission?.reopen();
+              return { status: "retry", retry: admission.retry, lastSequence: sequence };
+            }
+          }
           if (!await options.output.seal(sequence)) {
             stoppedWithoutFinalSince = undefined;
             continue;

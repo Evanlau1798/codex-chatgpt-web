@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { decideTunneledDomFallbackFinal, runChatGptTunneledOutputTurn } from "../src/adapters/chatgpt-web/tunneled-output-turn";
-import { submitTurnOutput } from "../src/adapters/chatgpt-web/turn-broker-output";
+import { submitTurnOutput, waitForTurnOutput, resetTurnOutput, sealTurnOutput } from "../src/adapters/chatgpt-web/turn-broker-output";
+import type { TurnChannel } from "../src/adapters/chatgpt-web/turn-broker-state";
 import type { BrokerTurnOutputEvent } from "../src/adapters/chatgpt-web/turn-broker-protocol";
 import { defaultConfig } from "../src/config";
 import type { CodexParsedRequest } from "../src/types";
@@ -162,6 +163,52 @@ test("DOM fallback cannot discard output accepted before the broker seal", async
     fallbackGraceMs: 0,
   });
   expect(decision).toEqual({ status: "complete", answer: "Authoritative final." });
+});
+
+test.each(["final", "tools", "abort"] as const)("%s arriving during missing-final recovery wins before any resubmission", async race => {
+  const channel = {
+    outputEnabled: true, outputSealed: false, outputEvents: [], outputChars: 0,
+    outputWaiters: new Set(), outputResumeAfter: 0, activities: new Set(), invocations: new Map(),
+    completionCommitted: false, activityRevision: 0,
+  } as unknown as TurnChannel;
+  const controller = new AbortController();
+  let inspections = 0;
+  let toolChecks = 0;
+  let seals = 0;
+  const finals: string[] = [];
+  const result = runChatGptTunneledOutputTurn({
+    output: {
+      next: (after, signal) => waitForTurnOutput(channel, after, signal),
+      reset: async sequence => { resetTurnOutput(channel, sequence); },
+      seal: async sequence => { seals++; return sealTurnOutput(channel, sequence); },
+    },
+    signal: controller.signal, attempt: 1, pollMs: 1, fallbackGraceMs: 0,
+    observe: async () => ({
+      responsePresent: true, running: false,
+      toolCallsInFlight: race === "tools" && inspections === 1 && toolChecks++ === 0,
+    }),
+    beforeDomFallback: async () => {
+      inspections++;
+      if (race === "final") {
+        submitTurnOutput(channel, "final", "Late authoritative final.");
+        throw new Error("Superseded recovery failure");
+      }
+      if (race === "abort") controller.abort();
+      return { text: "Continue remaining work." };
+    },
+    onFinal: text => { finals.push(text); },
+  });
+  if (race === "abort") await expect(result).rejects.toMatchObject({ name: "AbortError" });
+  else if (race === "final") {
+    expect(await result).toEqual({ status: "complete", answer: "Late authoritative final." });
+    expect(finals).toEqual(["Late authoritative final."]);
+  } else {
+    expect(await result).toMatchObject({ status: "retry", lastSequence: 0 });
+    expect(inspections).toBe(2);
+    expect(finals).toEqual([]);
+  }
+  expect(seals).toBe(0);
+  expect(channel.outputWaiters.size).toBe(0);
 });
 
 test("a preemptive retry without a final does not replay earlier tunneled output", async () => {

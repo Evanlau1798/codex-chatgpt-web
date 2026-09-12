@@ -1985,6 +1985,7 @@ export class ChatGptBrowserWorker {
     requireThink = false,
     largeStructuredDirect = false,
     forceStructuredDirect = false,
+    beforeRecoveryInsertion?: (composer: Locator) => Promise<void>,
   ): Promise<void> {
     throwIfPromptAttachmentAborted(abortSignal);
     let mutationStarted = false;
@@ -1995,12 +1996,16 @@ export class ChatGptBrowserWorker {
         // Playwright's multiline fill maps through an input action that ChatGPT's Lexical editor can
         // collapse to the first paragraph on the launcher-owned Electron surface. Clear separately,
         // then transport the complete text through verified CDP edits.
-        mutationStarted = true;
-        await composer.fill("", { signal: abortSignal, timeout: 10_000 });
+        if (!beforeRecoveryInsertion) {
+          mutationStarted = true;
+          await composer.fill("", { signal: abortSignal, timeout: 10_000 });
+        }
         if (requireThink) {
           await setChatGptThinkMode(composer.locator("xpath=ancestor::form[1]"), true, captureDiagnostic, abortSignal);
         }
         await composer.focus();
+        await beforeRecoveryInsertion?.(composer);
+        mutationStarted = true;
         await this.insertPromptText(page, prompt, abortSignal, largeStructuredDirect, forceStructuredDirect);
         await this.assertPromptAttached(page, prompt, abortSignal);
         return;
@@ -2089,6 +2094,7 @@ export class ChatGptBrowserWorker {
     requireThink = false,
     largeStructuredDirect = false,
     forceStructuredDirect = false,
+    beforeRecoveryInsertion?: (composer: Locator) => Promise<void>,
   ): Promise<void> {
     let retryAvailable = compaction;
     for (;;) {
@@ -2104,6 +2110,7 @@ export class ChatGptBrowserWorker {
           requireThink,
           largeStructuredDirect,
           forceStructuredDirect,
+          beforeRecoveryInsertion,
         );
         return;
       } catch (error) {
@@ -3217,6 +3224,7 @@ export class ChatGptBrowserWorker {
       let preemptiveRetryPrompt: string | undefined;
       let preemptiveStop: PreemptiveRetryStopState | undefined;
       let tunneledOutputSequence = 0;
+      let beforeRecoveryInsertion: ((composer: Locator) => Promise<void>) | undefined;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
         let completedRetryPrompt: ChatGptRetryPrompt | undefined;
         let responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
@@ -3257,6 +3265,7 @@ export class ChatGptBrowserWorker {
                 mode.thinkEnabled,
                 !multipartTransport && prepared.transport === "inline",
                 turn.compaction === true && turn.requireRetainedConversation === true,
+                beforeRecoveryInsertion,
               ),
               turn.abortSignal,
               chatGptSuspensionClock,
@@ -3356,6 +3365,7 @@ export class ChatGptBrowserWorker {
         turn.onSubmitted?.();
         retrySubmitted?.();
         retrySubmitted = undefined;
+        beforeRecoveryInsertion = undefined;
           },
           turn.abortSignal,
         );
@@ -3372,6 +3382,59 @@ export class ChatGptBrowserWorker {
             completionFence: turn.completionFence,
             completionAdmission: turn.finalAnswerAdmission,
             retryPromptForAnswer: turn.retryPromptForAnswer,
+            beforeDomFallback: async stoppedMs => {
+              const current = await readChatGptAssistantTurnState(responseTurns);
+              const binding = bindChatGptAssistantTurn(initialResponseTurn, current);
+              if (!binding) throw chatGptWebSurfaceError("ChatGPT lost the stopped response binding", false);
+              const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible();
+              const snapshot = await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running);
+              if (snapshot.stoppedThinkingVisible) {
+                throw chatGptStoppedThinkingError();
+              }
+              if (!snapshot.responsePresent || running
+                || chatGptExternalProgressSuppressesDomHealth(turn.externalProgress?.snapshot(), Date.now())) return "observe";
+              if (snapshot.visibleText.trim()) return undefined;
+              if (stoppedMs < CHATGPT_COMPLETION_ACTION_GRACE_MS) return "observe";
+              const composers = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
+              const composerVisibleCount = await composers.count();
+              const failure = chatGptCompletionEvidenceFailure(
+                "ChatGPT stopped after native tool work without a final answer or usable completion evidence",
+                answerBuffer.deliveredChars() > 0,
+                {
+                  responsePresent: snapshot.responsePresent, bindingPresent: true,
+                  completionActionVisible: snapshot.completionActionVisible,
+                  globalCompletionActionVisible: snapshot.globalCompletionActionVisible,
+                  composerVisibleCount,
+                  composerTextChars: composerVisibleCount === 1 ? [(await composers.first().textContent() ?? "").length] : [],
+                  running, aborted: turn.abortSignal?.aborted === true,
+                },
+              );
+              const retry = failure.readiness.eligible
+                && responsePrompt !== activeCompactionToolResultInstruction()
+                ? await withBrowserTurnAbort(Promise.resolve(turn.retryPromptForError?.(failure.error, responseAttempt)), turn.abortSignal)
+                : undefined;
+              console.warn(`[chatgpt-web] browser turn ${turn.traceId} missing final recovery`
+                + ` decision=${retry ? "same_conversation" : "surface_error"} reason=${failure.readiness.reason} stoppedMs=${stoppedMs} attempt=${responseAttempt}`);
+              if (!retry) throw failure.error;
+              beforeRecoveryInsertion = async composer => {
+                const latest = await readChatGptAssistantTurnState(responseTurns);
+                const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible();
+                const snapshot = await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running);
+                const count = await page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true }).count();
+                const check = chatGptCompletionEvidenceFailure("ChatGPT recovery surface changed before prompt insertion", false, {
+                  responsePresent: snapshot.responsePresent,
+                  bindingPresent: latest.lastId === current.lastId && latest.count === current.count,
+                  completionActionVisible: snapshot.completionActionVisible,
+                  globalCompletionActionVisible: snapshot.globalCompletionActionVisible,
+                  composerVisibleCount: count, composerTextChars: [(await composer.textContent() ?? "").length],
+                  running, aborted: turn.abortSignal?.aborted === true,
+                });
+                if (!check.readiness.eligible || snapshot.visibleText.trim() || snapshot.stoppedThinkingVisible) {
+                  throw chatGptWebSurfaceError("ChatGPT recovery surface changed before prompt insertion", false);
+                }
+              };
+              return typeof retry === "string" ? { text: retry } : retry;
+            },
             takePreemptiveRetry: () => this.takePreemptiveRetry(turn.traceId),
             stopForRetry: async () => {
               const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
