@@ -83,61 +83,59 @@ test("Native2 wait releases the serial MCP channel before the child finishes", a
   }
 }, 15_000);
 
-test("agent wait ownership, deduplication and native results survive direct and gateway routes", async () => {
+test.each(["multi_agent_v1", "multi_agent_v2", "collaboration"].flatMap(namespace =>
+  [false, true].map(gateway => [namespace, gateway] as const),
+))("agent wait ownership, deduplication and native results survive %s (gateway=%s)", async (namespace, gateway) => {
   const root = mkdtempSync(join(tmpdir(), "cgw-wait-routes-"));
   const socket = defaultBrokerEndpoint(root);
   const broker = TurnBroker.forSocket(socket);
   const tokens: string[] = [];
   try {
-    for (const namespace of ["multi_agent_v1", "multi_agent_v2", "collaboration"]) {
-      for (const gateway of [false, true]) {
-        const token = await broker.register({ cwd: root, roots: [root], writableRoots: [],
-          sandboxPolicy: { type: "readOnly", networkAccess: false }, tools: gateway
-            ? [{ name: "exec", freeform: true, description: "Native gateway", parameters: {} }]
-            : [{ namespace, name: "wait_agent", description: "Native wait", parameters: {} }],
-        }, 60_000, "routes", undefined, true);
-        tokens.push(token);
-        const { bindingId } = await callTurnBroker<{ bindingId: string }>(socket, {
-          method: "claim", token, activityId: "activity_1234567890123456",
-        });
-        await callTurnBroker(socket, { method: "activity_complete", token, activityId: "activity_1234567890123456" });
-        const wireName = `${namespace}__wait_agent`;
-        const args = { targets: ["child"], timeout_ms: 30_000 };
-        const start = (arguments_ = args) => callTurnBroker<{ wait_id: string }>(socket, {
-          method: "start_agent_wait", bindingId, wireName, arguments: arguments_,
-        });
-        const receipt = await start();
-        expect(await start()).toEqual(receipt);
-        await expect(start({ ...args, targets: ["other"] })).rejects.toThrow("existing agent wait");
-        await expect(start({ ...args, timeout_ms: 180_000 })).rejects.toThrow("timeout_ms=30000");
-        await expect(callTurnBroker(socket, { method: "read_agent_wait", token: "turn_wrong", waitId: receipt.wait_id }))
-          .rejects.toThrow("invalid");
-        expect(broker.beginCompletionFence(token)).toBeUndefined();
-        const requests = await broker.nextToolBatch(token, AbortSignal.timeout(2_000));
-        expect(requests).toHaveLength(1);
-        const request = requests[0]!;
-        if (gateway) {
-          expect(request.wireName).toBe("exec");
-          const calls: unknown[] = [];
-          const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
-          await new AsyncFunction("tools", "ALL_TOOLS", "text", request.input)(
-            { [wireName]: async (input: unknown) => { calls.push(input); return { native: true }; } },
-            [{ name: wireName }], () => {},
-          );
-          expect(calls).toEqual([args]);
-        } else expect(request.arguments).toEqual(args);
-        const result = { content: [{ type: "text", text: "native error" }], isError: true,
-          structuredContent: { untouched: "metadata" }, _meta: { evidence: 42 } };
-        broker.completeTool(token, request.callId, result);
-        await expect(callTurnBroker(socket, { method: "submit_output", token, outputKind: "final", outputText: "Premature" }))
-          .rejects.toThrow();
-        const ready = await callTurnBroker(socket, { method: "read_agent_wait", token, waitId: receipt.wait_id });
-        expect(ready).toEqual({ operation_status: "ready", wait_id: receipt.wait_id, result });
-        expect(broker.beginCompletionFence(token)).toBeNumber();
-        broker.revoke(token);
-        await expect(callTurnBroker(socket, { method: "read_agent_wait", token, waitId: receipt.wait_id })).rejects.toThrow("revoked");
-      }
-    }
+    const token = await broker.register({ cwd: root, roots: [root], writableRoots: [],
+      sandboxPolicy: { type: "readOnly", networkAccess: false }, tools: gateway
+        ? [{ name: "exec", freeform: true, description: "Native gateway", parameters: {} }]
+        : [{ namespace, name: "wait_agent", description: "Native wait", parameters: {} }],
+    }, 60_000, "routes", undefined, true);
+    tokens.push(token);
+    const { bindingId } = await callTurnBroker<{ bindingId: string }>(socket, {
+      method: "claim", token, activityId: "activity_1234567890123456",
+    });
+    await callTurnBroker(socket, { method: "activity_complete", token, activityId: "activity_1234567890123456" });
+    const wireName = `${namespace}__wait_agent`;
+    const args = { targets: ["child"], timeout_ms: 30_000 };
+    const start = (arguments_ = args) => callTurnBroker<{ wait_id: string }>(socket, {
+      method: "start_agent_wait", bindingId, wireName, arguments: arguments_,
+    });
+    const receipt = await start();
+    expect(await start()).toEqual(receipt);
+    await expect(start({ ...args, targets: ["other"] })).rejects.toThrow("existing agent wait");
+    await expect(start({ ...args, timeout_ms: 180_000 })).rejects.toThrow("timeout_ms=30000");
+    await expect(callTurnBroker(socket, { method: "read_agent_wait", token: "turn_wrong", waitId: receipt.wait_id }))
+      .rejects.toThrow("invalid");
+    expect(broker.beginCompletionFence(token)).toBeUndefined();
+    const requests = await broker.nextToolBatch(token, AbortSignal.timeout(2_000));
+    expect(requests).toHaveLength(1);
+    const request = requests[0]!;
+    if (gateway) {
+      expect(request.wireName).toBe("exec");
+      const calls: unknown[] = [];
+      const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+      await new AsyncFunction("tools", "ALL_TOOLS", "text", request.input)(
+        { [wireName]: async (input: unknown) => { calls.push(input); return { native: true }; } },
+        [{ name: wireName }], () => {},
+      );
+      expect(calls).toEqual([args]);
+    } else expect(request.arguments).toEqual(args);
+    const result = { content: [{ type: "text", text: "native error" }], isError: true,
+      structuredContent: { untouched: "metadata" }, _meta: { evidence: 42 } };
+    broker.completeTool(token, request.callId, result);
+    await expect(callTurnBroker(socket, { method: "submit_output", token, outputKind: "final", outputText: "Premature" }))
+      .rejects.toThrow();
+    const ready = await callTurnBroker(socket, { method: "read_agent_wait", token, waitId: receipt.wait_id });
+    expect(ready).toEqual({ operation_status: "ready", wait_id: receipt.wait_id, result });
+    expect(broker.beginCompletionFence(token)).toBeNumber();
+    broker.revoke(token);
+    await expect(callTurnBroker(socket, { method: "read_agent_wait", token, waitId: receipt.wait_id })).rejects.toThrow("revoked");
   } finally {
     tokens.forEach(token => broker.revoke(token));
     await broker.close();

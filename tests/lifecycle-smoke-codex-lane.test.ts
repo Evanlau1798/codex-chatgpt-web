@@ -72,6 +72,7 @@ test("Codex audits the active steering turn and cleans up before any work after 
         }
         const surface = event => ({ at: new Date().toISOString(), event, detail: { tabId: "owned", traceId: "trace" } });
         mock.module(${modulePath("common.ts")}, () => ({ ...common,
+          serviceBaseUrl: () => "http://127.0.0.1:1",
           waitCreateBudget: async () => {}, waitRootRequestBudget: async () => {},
           waitForEvent: async () => surface("browser.tab_created"), waitSteeringPoint: async () => true,
           events: () => [surface("browser.tab_created"), surface("browser.tab_retained")],
@@ -85,7 +86,8 @@ test("Codex audits the active steering turn and cleans up before any work after 
         const { runCodexLane } = await import(${modulePath("codex-lane.ts")});
         const result = await runCodexLane(${JSON.stringify(directory)});
         console.log(JSON.stringify({ calls, checks: result.checks }));
-      `], { stdout: "pipe", stderr: "pipe" });
+      `], { stdout: "pipe", stderr: "pipe",
+        env: { ...process.env, CODEX_CHATGPT_WEB_HOME: join(directory, "unconfigured-home") } });
       const deadline = setTimeout(() => child.kill(), 5000);
       try {
         const [output, errors, code] = await Promise.all([
