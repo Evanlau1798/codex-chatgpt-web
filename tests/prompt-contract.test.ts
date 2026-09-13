@@ -309,7 +309,8 @@ test("Bigger Context compaction preserves history above the retired inline byte 
   compact.context.systemPrompt = [];
   compact.context.messages = Array.from({ length: 6 }, (_unused, index) => ({
     role: "user" as const,
-    content: `multipart-history-${index + 1}-${String.fromCharCode(97 + index).repeat(160_000)}`,
+    // Two records per stage still exceed the retired cap without a near-megabyte fixture.
+    content: `multipart-history-${index + 1}-${String.fromCharCode(97 + index).repeat(CHATGPT_COMPACTION_PROMPT_JSON_BYTE_BUDGET / 2 + 1)}`,
     timestamp: index + 1,
   }));
 
