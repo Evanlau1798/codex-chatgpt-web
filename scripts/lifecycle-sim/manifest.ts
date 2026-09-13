@@ -9,6 +9,7 @@ export const codexLifecycleTests = [
   "tests/environment-root-continuation.test.ts",
   "tests/environment-steering.test.ts",
   "tests/environment-post-compaction-steering.test.ts",
+  "tests/compaction-continuation-registry.test.ts",
   "tests/trusted-environment-cleanup.test.ts",
   "tests/native-steering-boundary.test.ts",
   "tests/local-compaction-release.test.ts",

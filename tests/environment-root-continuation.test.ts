@@ -129,13 +129,13 @@ test("recovers an ordinary resumed task from its exact current rollout with an e
   });
 });
 
-test("a running resumed root validates midnight refreshes against its current rollout", () => {
+test.each(["function", "custom_tool", "tool_search"])("a running resumed root validates refreshes after %s activity", kind => {
   const { codexHome, request, rolloutPath } = resumedRootFixture();
   const body = request._rawBody as { input: Array<Record<string, unknown>> };
   const owned = { turn_id: rolloutTurnId };
-  body.input.push({ type: "function_call", id: "fc_wait", call_id: "wait", name: "wait_agent", arguments: "{}",
+  body.input.push({ type: `${kind}_call`, id: "fc_wait", call_id: "wait", name: "wait_agent", arguments: "{}",
     internal_chat_message_metadata_passthrough: owned },
-  { type: "function_call_output", id: "fco_wait", call_id: "wait", output: '{"timed_out":true}',
+  { type: kind === "tool_search" ? "tool_search_output" : `${kind}_call_output`, id: "fco_wait", call_id: "wait", output: '{"timed_out":true}',
     internal_chat_message_metadata_passthrough: owned });
   const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
   expect(store.resolve(request).cwd).toBe(root);
@@ -145,6 +145,15 @@ test("a running resumed root validates midnight refreshes against its current ro
   body.input.push(update);
   expect(store.resolve(request).cwd).toBe(root);
   expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
+  for (const index of [1, 2]) {
+    const original = body.input[index]!;
+    for (const patch of [{ id: undefined }, { type: "unknown_native_item" },
+      { internal_chat_message_metadata_passthrough: { turn_id: rolloutParentId } }]) {
+      body.input[index] = { ...original, ...patch };
+      expect(() => store.resolve(request)).toThrow();
+    }
+    body.input[index] = original;
+  }
   for (const patch of [
     { id: undefined }, { internal_chat_message_metadata_passthrough: {} },
     { role: "developer" },

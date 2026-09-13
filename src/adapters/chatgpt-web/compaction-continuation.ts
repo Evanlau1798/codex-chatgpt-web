@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { lstatSync, readFileSync } from "node:fs";
+import { atomicWriteFile } from "../../config";
 import { decodeCompactionSummary, isReadableCompactionSummaryText, SUMMARY_PREFIX } from "../../responses/compaction";
 import type { CodexParsedRequest } from "../../types";
 import type { ChatGptTurnIdentity, ChatGptTurnUserRevision } from "./environment";
@@ -8,14 +10,48 @@ interface CompletedCheckpoint {
   sourceHashes: ReadonlySet<string>;
 }
 
-// Evidence of a checkpoint actually returned by this daemon, not authority inferred from text
-// that happens to look like a summary. A new process must not invent a missing handoff.
+// Only daemon-recorded digests authorize a handoff; replay text alone is never evidence.
 const checkpoints = new Map<string, CompletedCheckpoint>();
 const MAX_CHECKPOINTS = 256;
+let checkpointPath: string | undefined;
+
+/** Production serve startup opts into persistence; isolated library users remain memory-only. */
+export function loadCompactionContinuationState(path: string): void {
+  checkpointPath = path;
+  checkpoints.clear();
+  try {
+    const file = lstatSync(path);
+    if (!file.isFile() || file.size > 128 * 1024) return;
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    if (raw?.version !== 1 || !Array.isArray(raw.checkpoints) || raw.checkpoints.length > MAX_CHECKPOINTS) return;
+    const restored = new Map<string, CompletedCheckpoint>();
+    const hash = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+    for (const entry of raw.checkpoints) {
+      if (!Array.isArray(entry) || entry.length !== 2) return;
+      const [key, value] = entry;
+      if (!hash(key) || restored.has(key) || !hash(value?.summaryHash)
+        || !Array.isArray(value.sourceHashes) || value.sourceHashes.length < 1 || value.sourceHashes.length > 2
+        || !value.sourceHashes.every(hash)) return;
+      restored.set(key, { summaryHash: value.summaryHash, sourceHashes: new Set(value.sourceHashes) });
+    }
+    for (const [key, value] of restored) checkpoints.set(key, value);
+  } catch { /* Missing/corrupt proof remains fail-closed. */ }
+}
+
+function persistCheckpoints(next: ReadonlyMap<string, CompletedCheckpoint>): void {
+  if (!checkpointPath) return;
+  try {
+    atomicWriteFile(checkpointPath, JSON.stringify({ version: 1, checkpoints: [...next].map(([key, value]) => [
+      key, { summaryHash: value.summaryHash, sourceHashes: [...value.sourceHashes] },
+    ]) }));
+  } catch {
+    throw new Error("Cannot acknowledge compaction checkpoint: continuation proof persistence failed");
+  }
+}
 
 function scope(parsed: CodexParsedRequest, identity: ChatGptTurnIdentity): string | undefined {
   if (!identity.threadId || !identity.turnId) return undefined;
-  return JSON.stringify([identity.threadId, identity.turnId, parsed.modelId, parsed.options.reasoning]);
+  return digest([identity.threadId, identity.turnId, parsed.modelId, parsed.options.reasoning]);
 }
 
 function digest(value: unknown): string {
@@ -33,10 +69,14 @@ export function rememberCompactionContinuation(
   summary: string,
 ): void {
   const key = scope(parsed, identity);
-  if (!key || !parsed._compactionRequest || !summary) return;
-  checkpoints.delete(key);
-  checkpoints.set(key, { summaryHash: digest(summary), sourceHashes: new Set(sources.map(sourceDigest)) });
-  while (checkpoints.size > MAX_CHECKPOINTS) checkpoints.delete(checkpoints.keys().next().value!);
+  if (!key || !parsed._compactionRequest || !summary || sources.length < 1 || sources.length > 2) return;
+  const next = new Map(checkpoints);
+  next.delete(key);
+  next.set(key, { summaryHash: digest(summary), sourceHashes: new Set(sources.map(sourceDigest)) });
+  while (next.size > MAX_CHECKPOINTS) next.delete(next.keys().next().value!);
+  persistCheckpoints(next);
+  checkpoints.clear();
+  for (const [scope, checkpoint] of next) checkpoints.set(scope, checkpoint);
 }
 
 export function isAcceptedCompactionContinuation(

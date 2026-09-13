@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { rememberCompactionContinuation, isAcceptedCompactionContinuation } from "../src/adapters/chatgpt-web/compaction-continuation";
 import { encodeCompactionSummary } from "../src/responses/compaction";
 import type { CodexParsedRequest } from "../src/types";
@@ -54,4 +57,59 @@ test("a fresh daemon cannot invent checkpoint authorization from replay text", a
     process.exit(accepts(${JSON.stringify(f.parsed)}, ${JSON.stringify(f.identity)}, ${JSON.stringify(f.source)}) ? 1 : 0);`;
   const child = Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "pipe" });
   expect(await child.exited).toBe(0);
+});
+
+test("an exact daemon checkpoint survives process restart without granting mismatched authority", async () => {
+  const root = mkdtempSync(join(tmpdir(), "compaction-proof-"));
+  const path = join(root, "checkpoints.json");
+  const f = fixture();
+  const module = new URL("../src/adapters/chatgpt-web/compaction-continuation.ts", import.meta.url).href;
+  const probe = async (write: boolean, parsed = f.parsed, identity = f.identity, source = f.source) => {
+    const script = `import { loadCompactionContinuationState, rememberCompactionContinuation, isAcceptedCompactionContinuation } from ${JSON.stringify(module)};
+      loadCompactionContinuationState(${JSON.stringify(path)});
+      const parsed=${JSON.stringify(parsed)}, identity=${JSON.stringify(identity)}, source=${JSON.stringify(source)};
+      if (${write}) rememberCompactionContinuation(parsed, identity, [source], "Checkpoint A");
+      console.log(isAcceptedCompactionContinuation(parsed, identity, source));`;
+    const child = Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "pipe" });
+    const [code, out, err] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    expect(err).toBe("");
+    expect(code).toBe(0);
+    return out.trim() === "true";
+  };
+  try {
+    expect(await probe(false)).toBeFalse();
+    expect(await probe(true)).toBeTrue();
+    expect(await probe(false)).toBeTrue();
+    const snapshot = readFileSync(path, "utf8");
+    for (const secret of ["Checkpoint A", "Current task", f.identity.threadId]) expect(snapshot).not.toContain(secret);
+    expect(await probe(false, { ...f.parsed, modelId: "other" })).toBeFalse();
+    expect(await probe(false, { ...f.parsed, options: { reasoning: "high" } })).toBeFalse();
+    expect(await probe(false, f.parsed, { ...f.identity, turnId: "other" })).toBeFalse();
+    expect(await probe(false, f.parsed, f.identity, { ...f.source, content: "changed" })).toBeFalse();
+    expect(await probe(false, { ...f.parsed, _rawBody: { input: [f.item("Checkpoint B")] } })).toBeFalse();
+    for (const invalid of ["{broken", '{"version":2,"checkpoints":[]}', snapshot.replace(/[a-f0-9]{64}/, "invalid")]) {
+      writeFileSync(path, invalid);
+      expect(await probe(false)).toBeFalse();
+    }
+    unlinkSync(path);
+    expect(await probe(false)).toBeFalse();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}, 15_000);
+
+test("a failed proof write cannot authorize an unacknowledged checkpoint", async () => {
+  const root = mkdtempSync(join(tmpdir(), "compaction-proof-write-"));
+  const f = fixture();
+  const module = new URL("../src/adapters/chatgpt-web/compaction-continuation.ts", import.meta.url).href;
+  const script = `import { loadCompactionContinuationState, rememberCompactionContinuation, isAcceptedCompactionContinuation } from ${JSON.stringify(module)};
+    loadCompactionContinuationState(${JSON.stringify(root)});
+    const parsed=${JSON.stringify(f.parsed)}, identity=${JSON.stringify(f.identity)}, source=${JSON.stringify(f.source)};
+    let failed=false;
+    try { rememberCompactionContinuation(parsed, identity, [source], "Checkpoint A"); } catch { failed=true; }
+    console.log(JSON.stringify({failed,accepted:isAcceptedCompactionContinuation(parsed,identity,source)}));`;
+  try {
+    const child = Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "pipe" });
+    const [code, out] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    expect(code).toBe(0);
+    expect(JSON.parse(out)).toEqual({ failed: true, accepted: false });
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

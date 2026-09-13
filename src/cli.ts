@@ -2,7 +2,7 @@
 import { createInterface } from "node:readline/promises";
 import { Writable } from "node:stream";
 import { existsSync, rmSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { stdin, stdout } from "node:process";
 import { captureSystemBrowserLoginToFile, checkBrowserEngine, loginToChatGpt } from "./browser-login";
 import { defaultConfig, getConfigDir, getConfigPath, loadConfig, loadConfigForSetup } from "./config";
@@ -21,6 +21,7 @@ import { uninstallClaudeIntegration } from "./claude-integration";
 import { runCodexInterruptHook } from "./codex-interrupt-cli";
 import { formatDoctorReport, runDoctor } from "./doctor";
 import { runChatGptMcpMain } from "./adapters/chatgpt-web/mcp-main";
+import { loadCompactionContinuationState } from "./adapters/chatgpt-web/compaction-continuation";
 import { runCommand } from "./process";
 import { reconcileRuntimeIntegrationCredentials } from "./runtime-startup";
 import { startServer } from "./server";
@@ -444,6 +445,7 @@ async function main(): Promise<void> {
     assertNoArgs(args);
     const config = loadConfig();
     reconcileRuntimeIntegrationCredentials(config);
+    loadCompactionContinuationState(join(getConfigDir(), "runtime", "compaction-continuations.json"));
     const server = startServer(config);
     stdout.write(`codex-chatgpt-web ${VERSION} listening on http://${config.host}:${server.port}/v1 (${config.mode})\n`);
     await new Promise<void>(() => {});

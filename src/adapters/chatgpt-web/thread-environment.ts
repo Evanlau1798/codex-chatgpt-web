@@ -96,6 +96,16 @@ function goalContextPart(value: unknown): boolean {
   );
 }
 
+function isNativeToolCall(item: Record<string, unknown>): boolean {
+  return item.type === "function_call" || item.type === "custom_tool_call" || item.type === "tool_search_call";
+}
+
+function isNativeTurnOutput(item: Record<string, unknown>): boolean {
+  return isNativeToolCall(item) || item.type === "reasoning" || item.type === "function_call_output"
+    || item.type === "custom_tool_call_output" || item.type === "tool_search_output"
+    || (item.type === "message" && item.role === "assistant");
+}
+
 function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
   const identity = extractChatGptTurnIdentity(parsed);
   if (!identity.turnId) return false;
@@ -146,12 +156,9 @@ function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
     if (!item || typeof item.id !== "string" || !item.id || itemTurnId(item) !== identity.turnId) return false;
     // Goal output/tool rounds and environment refreshes retain rollout-verified authority.
     // Output before that boundary, unowned replay and new instructions still fail closed.
-    if (goalIndex >= 0 && index > goalIndex) return item.type === "reasoning"
-      || item.type === "function_call" || item.type === "function_call_output"
-      || item.type === "custom_tool_call" || item.type === "custom_tool_call_output"
-      || (item.type === "message" && (item.role === "assistant"
-        || (item.role === "user" && Array.isArray(item.content) && item.content.length > 0
-          && item.content.every(environmentContextPart))));
+    if (goalIndex >= 0 && index > goalIndex) return isNativeTurnOutput(item)
+      || (item.type === "message" && item.role === "user" && Array.isArray(item.content)
+        && item.content.length > 0 && item.content.every(environmentContextPart));
     if (item.type !== "message" || !Array.isArray(item.content) || item.content.length === 0) return false;
     if (item.role === "user") return item.content.every(contextualEnvelopePart);
     return item.role === "developer" && item.content.every(part => {
@@ -197,11 +204,9 @@ function hasOwnedEnvironmentRefresh(parsed: CodexParsedRequest): boolean {
       }
       return true;
     }
-    outputSeen ||= item.type === "function_call" || item.type === "custom_tool_call"
+    outputSeen ||= isNativeToolCall(item)
       || (item.type === "message" && item.role === "assistant");
-    return item.type === "reasoning" || item.type === "function_call" || item.type === "function_call_output"
-      || item.type === "custom_tool_call" || item.type === "custom_tool_call_output"
-      || (item.type === "message" && item.role === "assistant");
+    return isNativeTurnOutput(item);
   }) && refreshSeen;
 }
 
