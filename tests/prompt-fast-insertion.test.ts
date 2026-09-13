@@ -2,16 +2,18 @@ import { expect, test } from "bun:test";
 import { insertChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-insertion";
 import { structuredCompactionHandoffInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
 import { CHATGPT_PROMPT_INSERT_CHUNK_CHARS } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
+import { structuredMarkdownRestorationProbeText } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
 
 type FakeComposer = {
   composer: { focus(): Promise<void>; evaluate(callback: (element: HTMLElement, input: unknown) => unknown, input: unknown): Promise<unknown> };
   document: Document;
   editCommands(): number;
+  commands: string[];
   setText(value: string): void;
   text(): string;
 };
 
-function fakeLexicalComposer(acceptEdit = true, onEdit?: () => void): FakeComposer {
+function fakeLexicalComposer(acceptEdit = true, onEdit?: () => void, rejectLargeText = false): FakeComposer {
   const { createDocument } = require("@mixmark-io/domino") as { createDocument: (html: string) => Document };
   const document = createDocument('<div id="composer"></div>') as Document & {
     createRange(): Range;
@@ -22,6 +24,7 @@ function fakeLexicalComposer(acceptEdit = true, onEdit?: () => void): FakeCompos
   composerElement.appendChild(text);
   let selected = { start: 0, end: 0 };
   let editCommands = 0;
+  const commands: string[] = [];
 
   document.createRange = () => {
     let start = 0;
@@ -35,9 +38,19 @@ function fakeLexicalComposer(acceptEdit = true, onEdit?: () => void): FakeCompos
     } as unknown as Range;
   };
   document.execCommand = (command, _showUi, value = "") => {
-    if (command !== "insertText") return false;
+    if (command !== "insertText" && command !== "insertHTML") return false;
     editCommands += 1;
+    commands.push(command);
     if (!acceptEdit) return false;
+    if (command === "insertText" && rejectLargeText && value.length > 32_000) return false;
+    if (command === "insertHTML") {
+      const fragment = createDocument(`<body>${value}</body>`).body;
+      // This fixture represents the native HTML boundary, not production's escaping logic.
+      expect([...fragment.querySelectorAll("*")].every(node => node.tagName === "DIV" || node.tagName === "BR"))
+        .toBeTrue();
+      expect([...fragment.querySelectorAll("*")].every(node => node.attributes.length === 0)).toBeTrue();
+      value = Array.from(fragment.children, node => node.textContent ?? "").join("\n");
+    }
     text.data = `${text.data.slice(0, selected.start)}${value}${text.data.slice(selected.end)}`;
     selected.start += value.length;
     selected.end = selected.start;
@@ -65,13 +78,14 @@ function fakeLexicalComposer(acceptEdit = true, onEdit?: () => void): FakeCompos
     },
     document,
     editCommands: () => editCommands,
+    commands,
     setText: value => { text.data = value; },
     text: () => text.data,
   };
 }
 
-async function insertWithFakeEditor(prompt: string, forceStructuredDirect = false): Promise<FakeComposer> {
-  const editor = fakeLexicalComposer();
+async function insertWithFakeEditor(prompt: string, forceStructuredDirect = false, rejectLargeText = false): Promise<FakeComposer> {
+  const editor = fakeLexicalComposer(true, undefined, rejectLargeText);
   const view = editor.document.defaultView!;
   const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
   Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: view });
@@ -97,6 +111,37 @@ test("REG-04: uses one exact direct edit for the short generated structured comp
   const editor = await insertWithFakeEditor(prompt, true);
   expect(editor.text()).toBe(prompt);
   expect(editor.editCommands()).toBe(1);
+  expect(editor.commands).toEqual(["insertText"]);
+});
+
+test("inserts the incident-sized structured prompt without an oversized native text edit", async () => {
+  const prompt = structuredMarkdownRestorationProbeText();
+  const editor = await insertWithFakeEditor(prompt, false, true);
+  expect(editor.text()).toBe(prompt);
+  expect(editor.commands).toEqual(["insertHTML"]);
+});
+
+test("keeps HTML-like input, entities, whitespace and empty lines literal in the native fragment", async () => {
+  const prompt = "prefix\n" + (
+    '  literal\t\u00a0\uE000 😀 <img src=x onerror="throw 1"> &amp; &#13; <!--comment-->\n\n'
+    + "</div><script>throw 1</script>\u2028line\u2029next\n"
+  ).repeat(400) + "\n\n";
+  const editor = await insertWithFakeEditor(prompt, false, true);
+  expect(editor.text()).toBe(prompt);
+  expect(editor.commands).toEqual(["insertHTML"]);
+});
+
+test("keeps carriage returns on the existing exact native text path", async () => {
+  const editor = await insertWithFakeEditor(freshHistory);
+  expect(editor.text()).toBe(freshHistory);
+  expect(editor.commands).toEqual(["insertText"]);
+});
+
+test("keeps NUL in an oversized LF prompt on the exact native text path", async () => {
+  const prompt = `prefix\nA\u0000B${"literal ".repeat(5_000)}`;
+  const editor = await insertWithFakeEditor(prompt);
+  expect(editor.text()).toBe(prompt);
+  expect(editor.commands).toEqual(["insertText"]);
 });
 
 test("keeps the direct edit opt-in for callers that own an inline transport", async () => {

@@ -255,10 +255,12 @@ export async function insertChatGptComposerGuardedText(
   composer: Locator,
   text: string,
   abortSignal?: AbortSignal,
+  plainTextBlocks = false,
 ): Promise<void> {
   const options = { signal: abortSignal, timeout: 20_000 };
   await composer.focus(options);
-  const inserted = await composer.evaluate((element, value) => {
+  const inserted = await composer.evaluate((element, input) => {
+    const value = typeof input === "string" ? input : input.text;
     const selection = window.getSelection();
     if (
       document.activeElement !== element
@@ -271,11 +273,16 @@ export async function insertChatGptComposerGuardedText(
     ) {
       return false;
     }
+    if (typeof input !== "string") {
+      // A single escaped text fragment avoids insertText's incremental paragraph creation.
+      const html = value.split("\n").map(line => (
+        `<div>${line.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;") || "<br>"}</div>`
+      )).join("");
+      return document.execCommand("insertHTML", false, html);
+    }
     return document.execCommand("insertText", false, value);
-  }, text, options);
-  if (!inserted) {
-    throw chatGptWebSurfaceError("ChatGPT composer rejected the bounded plain-text edit", false);
-  }
+  }, plainTextBlocks ? { text } : text, options);
+  if (!inserted) throw chatGptWebSurfaceError("ChatGPT composer rejected the bounded plain-text edit", false);
 }
 
 export async function insertChatGptComposerPlainText(

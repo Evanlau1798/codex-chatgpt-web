@@ -46,7 +46,9 @@ export async function insertChatGptPromptText(
     // One exact editor transaction avoids both cumulative Lexical remounts and thousands of
     // delimiter-restoration edits. Full readback remains the acceptance boundary.
     await actions.verify("");
-    await insertChatGptComposerGuardedText(await actions.composer(), text, abortSignal);
+    // HTML parsing changes CR and NUL; retain the exact text path for those inputs.
+    const plainTextBlocks = text.length > DIRECT_INSERT_MIN_CHARS && text.includes("\n") && !/[\r\u0000]/u.test(text);
+    await insertChatGptComposerGuardedText(await actions.composer(), text, abortSignal, plainTextBlocks);
     await actions.verify(text.trimStart());
     await new Promise(resolve => setTimeout(resolve, 0));
     if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("ChatGPT prompt attachment aborted", "AbortError");
