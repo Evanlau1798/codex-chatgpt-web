@@ -13,7 +13,7 @@ import { claudeSessionThreadId } from "../../src/messages/request";
 import { startServer } from "../../src/server";
 import { buildClaudeSmokeSettings } from "../lifecycle-smoke/claude-config";
 import { resolveLifecycleExecutable } from "../lifecycle-smoke/paths";
-import { assertLifecycleEvidence, assertSingleLifecycleEvidence } from "./evidence";
+import { assertClaudeLifecycleEvidence, assertClaudeSubagentNotification } from "./evidence";
 
 const repo = resolve(import.meta.dir, "..", "..");
 const executableArgument = process.argv.find(argument => argument.startsWith("--claude="));
@@ -23,6 +23,7 @@ const configDir = join(root, "config");
 const settingsPath = join(configDir, "settings.json");
 const sessionId = crypto.randomUUID();
 const evidence: string[] = [];
+let subagentId: string | undefined;
 const steeringInstruction = "CLAUDE_LIFECYCLE_STEERING_APPLIED";
 let steeringTurnStarted!: () => void;
 let interruptStarted!: () => void;
@@ -103,13 +104,18 @@ function lifecycleAdapter(): ProviderAdapter {
         return;
       }
       if (latest?.role === "toolResult" && latest.toolCallId === "toolu_lifecycle_agent") {
-        evidence.push("subagent_result");
-        emit({ type: "text_delta", text: "CLAUDE_LIFECYCLE_TOOL_DONE", phase: "final_answer" });
+        subagentId = /^agentId:\s*([A-Za-z0-9_-]{6,128})\b/m.exec(latestText)?.[1];
+        if (!subagentId || !latestText.startsWith("Async agent launched successfully.")) {
+          throw new Error("Claude Agent tool did not acknowledge an async launch");
+        }
+        evidence.push("subagent_launch_ack");
+        emit({ type: "text_delta", text: "CLAUDE_LIFECYCLE_CHILD_PENDING", phase: "final_answer" });
         emit({ type: "done", stopReason: "stop", endTurn: true });
         return;
       }
       if (latestText.includes("[SYSTEM NOTIFICATION - NOT USER INPUT]")) {
-        evidence.push("subagent_notification");
+        assertClaudeSubagentNotification(latestText, subagentId);
+        evidence.push("subagent_result", "subagent_notification");
         emit({ type: "text_delta", text: "CLAUDE_LIFECYCLE_TOOL_DONE", phase: "final_answer" });
         emit({ type: "done", stopReason: "stop", endTurn: true });
         return;
@@ -254,14 +260,7 @@ try {
     throw new Error(`Claude lifecycle server did not return idle: ${JSON.stringify(health)}`);
   }
   evidence.push("idle");
-  assertLifecycleEvidence(evidence, [
-    "request", "tool_call", "tool_result", "subagent_request", "subagent_result",
-    "subagent_notification", "compact", "interrupt", "resume", "steering_active", "steering", "idle",
-  ]);
-  assertSingleLifecycleEvidence(evidence, "steering");
-  assertSingleLifecycleEvidence(evidence, "subagent_request");
-  assertSingleLifecycleEvidence(evidence, "subagent_result");
-  assertSingleLifecycleEvidence(evidence, "subagent_notification");
+  assertClaudeLifecycleEvidence(evidence);
   process.stdout.write(`CLAUDE_DETERMINISTIC_LIFECYCLE_OK ${JSON.stringify(evidence)}\n`);
 } finally {
   await server.stop(true);
