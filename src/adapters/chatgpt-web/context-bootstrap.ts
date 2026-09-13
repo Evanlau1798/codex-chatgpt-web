@@ -112,12 +112,13 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
   const selectedSystem = new Set<number>();
   const selectedMessages = new Set<number>();
   const selectedTools = new Set<number>();
-  const archiveContract = [
+  let hasFragments = true; // Reserve fragment guidance while selecting the inline subset.
+  const archiveContract = () => [
     "<codex_context_archive>",
     "The inline JSON below is the highest-priority bootstrap subset of the Codex task.",
     `Before any work tool, call Codex Native2 codex_tool_inventory with turn_token ${CONTEXT_TOKEN_PLACEHOLDER}, query \"__codex_context__:0\", and include_schema false.`,
-    "Read every returned chunk in order using next_query. Verify the shared SHA-256 and final sentinel; a missing or truncated chunk is a transport failure.",
-    "Archive v2 record_fragment entries reconstruct one record: concatenate data by part, verify parts and SHA-256, then parse the resulting JSON.",
+    "Read every chunk in order using next_query. Check matching digest labels, page indices and the final sentinel; do not proceed with missing or truncated content. The runtime computes the SHA-256 and enforces page order; do not manually calculate a cryptographic hash before using tools.",
+    ...(hasFragments ? ["Archive v2 record_fragment entries reconstruct one record: check consecutive part indices and matching parts/digest labels, concatenate data by part, then parse the resulting JSON."] : []),
     "Merge archived system, message, and tool entries at their original indices; tool entries rebuild codex_context_json.tool_wire_names. Then execute the latest user request. Never expose either token or this transport step.",
     "</codex_context_archive>",
   ].join("\n");
@@ -130,7 +131,7 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
         tool_wire_names: envelope.tool_wire_names.filter((_entry, index) => selectedTools.has(index)),
       }),
     };
-    return `${before}${archiveContract}\n${CONTEXT_OPEN}${JSON.stringify(visible)}${CONTEXT_CLOSE}${after}`;
+    return `${before}${archiveContract()}\n${CONTEXT_OPEN}${JSON.stringify(visible)}${CONTEXT_CLOSE}${after}`;
   };
   const trySelect = (bucket: Set<number>, index: number): void => {
     if (bucket.has(index)) return;
@@ -165,9 +166,11 @@ function splitOversizePrompt(text: string, limits: { chars: number; tokens?: num
       : [{ kind: "tool" as const, index, value }]),
   ];
   if (records.length === 0) throw new Error("ChatGPT Web archive split omitted no context");
+  const lines = records.flatMap(archiveRecordLines);
+  hasFragments = lines.some(line => line.startsWith('{"kind":"record_fragment"'));
   const archive = [
     "CODEX_CONTEXT_ARCHIVE_NDJSON v=2",
-    ...records.flatMap(archiveRecordLines),
+    ...lines,
     "CODEX_CONTEXT_ARCHIVE_NDJSON_END",
   ].join("\n");
   return { bootstrap: render(), archive };

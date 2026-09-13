@@ -121,5 +121,6 @@ export function extractChatGptRootThreadMetadata(parsed: CodexParsedRequest): Ch
 
 function isEnvironmentRequest(metadata: Record<string, unknown>, parsed: CodexParsedRequest): boolean {
   return metadata.request_kind === "turn"
-    || (parsed._compactionRequest === true && metadata.request_kind === "compaction");
+    || ((parsed._compactionRequest === true || parsed._localCompactionRequest === true)
+      && metadata.request_kind === "compaction");
 }

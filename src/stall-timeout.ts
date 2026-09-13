@@ -7,7 +7,15 @@
  */
 export const DEFAULT_STALL_TIMEOUT_SEC = 300;
 
-export class StallTimeoutError extends Error {}
+export class StallTimeoutError extends Error {
+  readonly name = "StallTimeoutError";
+  readonly code = "upstream_stall_timeout";
+  readonly elapsedMs?: number;
+  constructor(message: string, readonly timeoutMs?: number, readonly waitStartedAt?: number) {
+    super(message);
+    if (waitStartedAt !== undefined) this.elapsedMs = Math.max(0, Date.now() - waitStartedAt);
+  }
+}
 
 // Keep a malformed or accidentally enormous configuration within a practical recovery budget.
 export const MAX_STALL_TIMEOUT_SEC = 3_600;
@@ -29,7 +37,10 @@ export function withStallTimeout<T>(
   timeoutMs = DEFAULT_STALL_TIMEOUT_SEC * 1000,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new StallTimeoutError(`Upstream made no progress for ${timeoutMs}ms`)), timeoutMs);
+    const waitStartedAt = Date.now();
+    const timer = setTimeout(() => reject(new StallTimeoutError(
+      `Upstream made no progress for ${timeoutMs}ms`, timeoutMs, waitStartedAt,
+    )), timeoutMs);
     work.then(
       value => { clearTimeout(timer); resolve(value); },
       error => { clearTimeout(timer); reject(error); },

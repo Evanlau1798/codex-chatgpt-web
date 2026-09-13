@@ -894,11 +894,14 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
-  test("a non-retryable browser failure remains replayable without starting another browser turn", async () => {
-    const socketPath = brokerTestEndpoint(`cgw-h4-nonretryable-${process.pid}-${Date.now()}`);
+  test.each([
+    { code: "context_length_exceeded", status: 400, errorType: "invalid_request_error" },
+    { code: "chatgpt_session_expired", status: 401, errorType: "authentication_error" },
+  ])("a non-retryable $code browser failure remains replayable without starting another browser turn", async ({ code, status, errorType }) => {
+    const socketPath = brokerTestEndpoint(`cgw-h4-${code}-${process.pid}-${Date.now()}`);
     const provider: CodexProviderConfig = {
       adapter: "chatgpt-web",
-      baseUrl: "browser://chatgpt-nonretryable-test",
+      baseUrl: `browser://chatgpt-nonretryable-${code}-test`,
       chatgptWeb: { brokerSocketPath: socketPath, localToolsEnabled: false, solAvailable: true, proAvailable: true },
     };
     const worker = ChatGptBrowserWorker.forProvider(provider);
@@ -906,12 +909,7 @@ describe("ChatGPT outer-native harness v4", () => {
     let browserStarts = 0;
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async () => {
       browserStarts += 1;
-      throw new ChatGptWebAdapterError("This task exceeds the model context window.", {
-        status: 400,
-        errorType: "invalid_request_error",
-        code: "context_length_exceeded",
-        retryable: false,
-      });
+      throw new ChatGptWebAdapterError("Nonretryable browser failure", { status, errorType, code, retryable: false });
     };
     try {
       for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -923,7 +921,7 @@ describe("ChatGPT outer-native harness v4", () => {
         );
         expect(events.at(-1)).toMatchObject({
           type: "error",
-          code: "context_length_exceeded",
+          code,
           retryable: false,
         });
       }
@@ -2333,7 +2331,7 @@ describe("ChatGPT outer-native harness v4", () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
-      cwd: process.cwd(),
+      cwd: resolve(import.meta.dir, ".."),
       stderr: "pipe",
     });
     const client = new Client({ name: "codex-chatgpt-web-harness-test", version: "1.0.0" });
@@ -2521,7 +2519,7 @@ describe("ChatGPT outer-native harness v4", () => {
         total: 1,
         tools: [{
           wire_name: "multi_agent_v1__wait_agent",
-          description: expect.stringContaining("default 30-second"),
+          description: expect.stringContaining("asynchronous wait_id"),
           parameters: {
             properties: {
               timeout_ms: { const: 30_000, minimum: 30_000, maximum: 30_000 },
@@ -2549,8 +2547,12 @@ describe("ChatGPT outer-native harness v4", () => {
         wireName: "multi_agent_v1__wait_agent",
         arguments: { targets: ["agent_test"], timeout_ms: 30_000 },
       });
+      const receipt = (await agentWait).structuredContent as { operation_status: string; wait_id: string; next_query: string };
+      expect(receipt.operation_status).toBe("pending");
       broker.completeTool(token, agentWaitRequest!.callId, toolResult({ statuses: {} }));
-      expect((await agentWait).structuredContent).toEqual({ statuses: {} });
+      const waitResult = await call("codex_tool_inventory", { turn_token: token, query: receipt.next_query });
+      expect(waitResult.structuredContent).toEqual({ operation_status: "ready", wait_id: receipt.wait_id,
+        result: toolResult({ statuses: {} }) });
 
       gatewayOnlyEnvironment.tools.push({ namespace: "database", name: "wait", description: "Wait for data", parameters: { type: "object" } });
       broker.updateEnvironment(token, gatewayOnlyEnvironment);
@@ -2584,7 +2586,7 @@ describe("ChatGPT outer-native harness v4", () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
-      cwd: process.cwd(),
+      cwd: resolve(import.meta.dir, ".."),
       stderr: "pipe",
     });
     const client = new Client({ name: "codex-chatgpt-web-direct-tools-test", version: "1.0.0" });
@@ -2699,7 +2701,7 @@ describe("ChatGPT outer-native harness v4", () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
-      cwd: process.cwd(),
+      cwd: resolve(import.meta.dir, ".."),
       stderr: "pipe",
     });
     const client = new Client({ name: "codex-chatgpt-web-turn-isolation-test", version: "1.0.0" });
@@ -2757,7 +2759,7 @@ describe("ChatGPT outer-native harness v4", () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
-      cwd: process.cwd(),
+      cwd: resolve(import.meta.dir, ".."),
       stderr: "pipe",
     });
     const client = new Client({ name: "codex-chatgpt-web-harness-test", version: "1.0.0" });
@@ -2805,7 +2807,7 @@ describe("ChatGPT outer-native harness v4", () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
-      cwd: process.cwd(),
+      cwd: resolve(import.meta.dir, ".."),
       stderr: "pipe",
     });
     const client = new Client({ name: "codex-chatgpt-web-mcp-abort-test", version: "1.0.0" });

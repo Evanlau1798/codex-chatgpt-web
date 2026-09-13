@@ -11,6 +11,14 @@ describe("withStallTimeout", () => {
     );
   });
 
+  test("stall failures preserve the original adapter wait deadline", async () => {
+    const before = Date.now();
+    const error = await withStallTimeout(new Promise<never>(() => {}), 10).catch(error => error);
+    expect(error).toMatchObject({ name: "StallTimeoutError", code: "upstream_stall_timeout", timeoutMs: 10 });
+    expect(error.waitStartedAt).toBeGreaterThanOrEqual(before);
+    expect(error.elapsedMs).toBeGreaterThanOrEqual(10);
+  });
+
   test("returns work completed before the deadline", async () => {
     await expect(withStallTimeout(Promise.resolve("done"), 10)).resolves.toBe("done");
   });

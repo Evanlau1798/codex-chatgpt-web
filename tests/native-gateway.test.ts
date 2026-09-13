@@ -53,6 +53,14 @@ test("structured nested gateway validates availability and fixed wait polling", 
     .toThrow("not available");
 });
 
+test("Native2 raw exec cannot bypass asynchronous wait receipts", async () => {
+  const calls: Array<{ name: string; input: unknown }> = [];
+  await expect(execute(transportBoundRawExecProgram(
+    "await tools.multi_agent_v2__wait_agent({ targets: [], timeout_ms: 30000 });", "exec", true,
+  ), ["multi_agent_v2__wait_agent"], calls)).rejects.toThrow("codex_tool_call");
+  expect(calls).toEqual([]);
+});
+
 test("raw exec proxy blocks recursion and enforces wait_agent polling without hiding other tools", async () => {
   const calls: Array<{ name: string; input: unknown }> = [];
   await expect(execute(transportBoundRawExecProgram(

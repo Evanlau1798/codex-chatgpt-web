@@ -125,6 +125,24 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
   }
 });
 
+test("launcher release validates the owned authentication flag without coercion", async () => {
+  let authenticationBlocked: unknown = true;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0,
+    fetch: () => Response.json({ ok: true, cancelledByUser: false, authenticationBlocked }),
+  });
+  try {
+    const path = descriptorFile(`http://127.0.0.1:${server.port}`);
+    const end = () => notifyLauncherTurn(path, {
+      phase: "end", traceId: "auth_test_trace", helperPid: process.pid, status: "failed",
+    });
+    await expect(end()).resolves.toEqual({ cancelledByUser: false, authenticationBlocked: true });
+    authenticationBlocked = "true";
+    await expect(end()).rejects.toThrow("invalid authentication state");
+    authenticationBlocked = false;
+    await expect(end()).resolves.toEqual({ cancelledByUser: false });
+  } finally { await server.stop(true); }
+});
+
 test("launcher retained-conversation release uses its authenticated lifecycle endpoint", async () => {
   let received: { url?: string; authorization?: string; body?: unknown } = {};
   const server = createServer(async (request, response) => {

@@ -146,9 +146,11 @@ export function chatGptTurnUserRevisionHistory(parsed: CodexParsedRequest): Chat
   return turnUserRevisionHistory(parsed._rawBody);
 }
 
-/** The human instruction summarized by a remote compaction request belongs to an earlier turn. */
+/** The instruction summarized by a compaction request may belong to its source turn. */
 export function extractChatGptCompactionSourceRevision(parsed: CodexParsedRequest): ChatGptTurnUserRevision {
-  if (!parsed._compactionRequest) throw new Error("ChatGPT web compaction source requires a compaction request");
+  if (!parsed._compactionRequest && !parsed._localCompactionRequest) {
+    throw new Error("ChatGPT web compaction source requires a compaction request");
+  }
   const revision = latestChatGptTurnUserRevision(parsed);
   if (!revision) throw new Error("ChatGPT web compaction requires a source user message");
   return revision;

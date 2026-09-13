@@ -51,7 +51,7 @@ export function execGatewayProgram(
   ]);
 }
 
-export function transportBoundRawExecProgram(input: string, blockedExecName: string): string {
+export function transportBoundRawExecProgram(input: string, blockedExecName: string, asyncAgentWait = false): string {
   return [
     "await (async (tools) => {",
     input,
@@ -75,6 +75,7 @@ export function transportBoundRawExecProgram(input: string, blockedExecName: str
     "      exposed = () => { throw new Error(\"Nested raw exec is unavailable inside ChatGPT Web exec\"); };",
     "    } else if (typeof value === \"function\" && typeof name === \"string\" && waitNames.has(name)) {",
     "      exposed = args => {",
+    ...(asyncAgentWait ? ["        throw new Error(\"Use structured codex_tool_call for wait_agent and retrieve its asynchronous receipt; do not replay this exec program\");"] : []),
     "        if (!args || typeof args !== \"object\" || Array.isArray(args) || args.timeout_ms !== pollMs) {",
     "          throw new Error(\"ChatGPT Web wait_agent requires timeout_ms=\" + pollMs + \" so the shared MCP channel remains available to spawned Web agents\");",
     "        }",

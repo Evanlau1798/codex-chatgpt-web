@@ -233,6 +233,32 @@ test("surface recovery diagnostics identify the error that reached the decision 
   expect(warnings[0]).not.toContain("ChatGPT web turn aborted");
 });
 
+test("stall recovery records the initiating phase before browser cancellation", () => {
+  const session = new ChatGptTurnSession({
+    mode: "tools", token: Promise.resolve("turn_test"), browser: Promise.resolve(""),
+    trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(),
+    submission: { phase: "accepted" }, cancel() {},
+  });
+  session.observeCanonicalRequest(completeRequest());
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...values: unknown[]) => warnings.push(values.map(String).join(" "));
+  try {
+    const tracker = new ChatGptSurfaceRecoveryTracker("stall-summary");
+    tracker.recoverableResultCount(new StallTimeoutError("secret prompt must not be logged", 300_000, 1234),
+      session, completeRequest(), 0);
+    tracker.recoverableResultCount(new DOMException("aborted", "AbortError"), session, completeRequest(), 1);
+  } finally { console.warn = originalWarn; }
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]).toContain('errorName="StallTimeoutError"');
+  expect(warnings[0]).toContain('errorCode="upstream_stall_timeout"');
+  expect(warnings[0]).toContain('submissionPhase=accepted');
+  expect(warnings[0]).toContain('waitStartedAt=1234');
+  expect(warnings[0]).toContain('timeoutMs=300000');
+  expect(warnings[0]).toContain('pendingNativeCalls=0');
+  expect(warnings[0]).not.toContain('secret prompt');
+});
+
 test("tool result delivery updates the live browser runtime state", () => {
   let delivered: CodexParsedRequest["context"]["messages"][number] | undefined;
   const session = new ChatGptTurnSession({

@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   auditPrompt, noSkillInstruction, reviewTaskPrompt, rootRequestCooldownMs, steeringText,
 } from "../scripts/lifecycle-smoke/common";
 import { hierarchyPrompt, selfTestHierarchySurfaceClassification } from "../scripts/lifecycle-smoke/codex-v2-scenario";
-import { selfTestV2ActivityNormalization } from "../scripts/lifecycle-smoke/codex-v2-activity";
+import { agentWaitProgressOverlap, selfTestV2ActivityNormalization } from "../scripts/lifecycle-smoke/codex-v2-activity";
 
 test("lifecycle smoke scripts contain no CJK prompt or validation text", () => {
   const root = join(import.meta.dir, "..", "scripts", "lifecycle-smoke");
@@ -61,6 +61,7 @@ test("bounded review rounds do not open unrelated skill surfaces", () => {
 });
 
 test("the hierarchy root follows the transport-safe agent wait contract", () => {
+  expect(hierarchyPrompt).toContain("Use chatgpt-web/high with high reasoning effort for both descendants.");
   expect(hierarchyPrompt).toContain("one blocking read-only wait");
   expect(hierarchyPrompt).toContain("must not call send_input to address the root");
   expect(hierarchyPrompt).toContain("timeout_ms=30000");
@@ -72,6 +73,61 @@ test("the hierarchy root follows the transport-safe agent wait contract", () => 
   expect(hierarchyPrompt).toContain("interrupt=true exactly once");
   expect(hierarchyPrompt).toContain("close_agent exactly once");
   expect(hierarchyPrompt).toContain("completed grandchild");
+});
+
+test("steering accepts native work without DOM visibility and rejects an already completed turn", async () => {
+  const root = join(import.meta.dir, "..", "tmp");
+  mkdirSync(root, { recursive: true });
+  const directory = mkdtempSync(join(root, "steering-boundary-"));
+  const log = join(directory, "launcher.jsonl");
+  const common = join(import.meta.dir, "..", "scripts", "lifecycle-smoke", "common.ts");
+  const work = { at: new Date().toISOString(), event: "runtime.daemon_stdout",
+    detail: { line: "[chatgpt-web] broker trace=owned queued call=call_test tool=exec_command" } };
+  try {
+    for (const completed of [false, true]) {
+      writeFileSync(log, [work, ...(completed ? [{ at: new Date().toISOString(),
+        event: "browser.tab_completed", detail: { traceId: "owned" } }] : [])]
+        .map(value => JSON.stringify(value)).join("\n") + "\n");
+      const child = Bun.spawn([process.execPath, "--eval", `
+        const { waitSteeringPoint } = await import(${JSON.stringify(common)});
+        try { console.log(await waitSteeringPoint(0, "owned", 1000) ? "ready" : "not-ready"); }
+        catch (error) { console.log(error.message); }
+      `], { env: { ...process.env, CODEX_LIFECYCLE_LAUNCHER_LOG: log }, stdout: "pipe", stderr: "pipe" });
+      const deadline = setTimeout(() => child.kill(), 2000);
+      try {
+        const [output, errors] = await Promise.all([
+          new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+        ]);
+        expect(errors).toBe("");
+        expect(output.trim()).toBe(completed ? "Web turn completed before a steering delivery point" : "ready");
+      } finally {
+        clearTimeout(deadline);
+        child.kill();
+        await child.exited;
+      }
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("wait overlap requires child progress inside a completed parent wait interval", () => {
+  const event = (second: number, line: string) => ({ at: `2026-01-01T00:00:0${second}.000Z`,
+    event: "runtime.daemon_stdout", detail: { line: `[chatgpt-web] broker ${line}` } });
+  const start = event(1, "trace=root agent wait receipt");
+  const child = event(2, "trace=child served context chunk=1/2");
+  const end = event(3, "trace=root agent wait ready elapsedMs=2000");
+  const startupEnd = Date.parse(child.at);
+  expect(agentWaitProgressOverlap([start, child, end], "root", "child", startupEnd)).toBe(true);
+  expect(agentWaitProgressOverlap([child, start, end], "root", "child", startupEnd)).toBe(false);
+  expect(agentWaitProgressOverlap([start, child], "root", "child", startupEnd)).toBe(false);
+  expect(agentWaitProgressOverlap([start, child, end], "root", "foreign", startupEnd)).toBe(false);
+  const followUp = [event(4, "trace=root agent wait receipt"),
+    event(5, "trace=child output accepted kind=commentary sequence=2"),
+    event(6, "trace=root agent wait ready elapsedMs=2000")];
+  expect(agentWaitProgressOverlap([start, end, ...followUp], "root", "child", startupEnd)).toBe(false);
+  expect(agentWaitProgressOverlap([start, followUp[1]!, followUp[2]!], "root", "child", startupEnd)).toBe(false);
+  expect(agentWaitProgressOverlap([start, child, end], "root", "child", NaN)).toBe(false);
 });
 
 test("hierarchy surface accounting accepts only the planned interrupt replacement", () => {

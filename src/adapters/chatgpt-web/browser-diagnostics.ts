@@ -62,16 +62,28 @@ function privateDirectory(path: string): void {
   try { chmodSync(path, 0o700); } catch { /* Windows ACLs are managed by the installer. */ }
 }
 
-function pruneBrowserDiagnostics(root: string): void {
-  const traces = readdirSync(root, { withFileTypes: true })
+function pruneBrowserDiagnostics(root: string, current: string): void {
+  const attempts = readdirSync(root, { withFileTypes: true })
     .filter(entry => entry.isDirectory() && /^[A-Za-z0-9_-]{6,128}$/.test(entry.name))
     .map(entry => {
       const path = join(root, entry.name);
-      return { path, modifiedAt: statSync(path).mtimeMs };
+      return { path, traceId: entry.name.replace(/-[a-f0-9]{8}$/, ""), modifiedAt: statSync(path).mtimeMs };
     })
-    .sort((left, right) => right.modifiedAt - left.modifiedAt);
-  for (const trace of traces.slice(CHATGPT_BROWSER_DIAGNOSTIC_TRACE_LIMIT)) {
-    rmSync(trace.path, { recursive: true, force: true });
+    .sort((left, right) => Number(right.path === current) - Number(left.path === current)
+      || right.modifiedAt - left.modifiedAt);
+  const traces = new Map<string, typeof attempts>();
+  for (const attempt of attempts) {
+    const group = traces.get(attempt.traceId) ?? [];
+    group.push(attempt);
+    traces.set(attempt.traceId, group);
+  }
+  // ponytail: ten logical traces, first and latest attempt only; expand only for proven diagnostic needs.
+  let index = 0;
+  for (const group of traces.values()) {
+    const keep = index++ < CHATGPT_BROWSER_DIAGNOSTIC_TRACE_LIMIT ? new Set([group[0], group.at(-1)]) : new Set();
+    for (const attempt of group) {
+      if (!keep.has(attempt)) rmSync(attempt.path, { recursive: true, force: true });
+    }
   }
 }
 
@@ -163,7 +175,7 @@ export class ChatGptBrowserDiagnostics {
     if (this.initialized) return;
     privateDirectory(this.root);
     privateDirectory(this.directory);
-    pruneBrowserDiagnostics(this.root);
+    pruneBrowserDiagnostics(this.root, this.directory);
     this.initialized = true;
   }
 

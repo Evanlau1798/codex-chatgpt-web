@@ -1,4 +1,5 @@
 import type { ChatGptTurnEnvironment } from "./environment";
+import type { AgentWait } from "./turn-broker-agent-wait";
 import type { BrokerToolRequest, BrokerToolResult, BrokerTurnOutputEvent } from "./turn-broker-protocol";
 
 export interface PendingTurn extends ChatGptTurnEnvironment {
@@ -56,6 +57,7 @@ export interface TurnChannel {
   queuedCallIds: string[];
   deliveredCallIds: Set<string>;
   invocations: Map<string, PendingInvocation>;
+  agentWait?: AgentWait;
   waiters: Set<ToolWaiter>;
   activities: Set<string>;
   completedActivities: Set<string>;

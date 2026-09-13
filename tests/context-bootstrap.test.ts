@@ -89,6 +89,8 @@ test("a single oversized serialized text run uses the archive below the total bo
     expect(Math.max(...prepared.text.split(/\r?\n/).map(line => line.length))).toBeLessThanOrEqual(12_288);
     expect(prepared.text).not.toContain("x".repeat(12_289));
     expect(prepared.archiveChars).toBeGreaterThan(20_049);
+    expect(prepared.text).not.toContain("record_fragment entries");
+    expect(prepared.text).toContain("runtime computes the SHA-256");
     prepared.release();
   } finally {
     broker.revoke(turnToken);
@@ -428,6 +430,7 @@ test("a single oversized archive record is transported as valid reconstructable 
 
   try {
     const chunks: string[] = [];
+    expect(prepared.text).toContain("record_fragment entries");
     for (let index = 0; ; index += 1) {
       const result = await client.callTool({
         name: "codex_tool_inventory",

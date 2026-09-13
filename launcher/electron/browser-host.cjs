@@ -687,6 +687,7 @@ class BrowserHost {
     const blockAuthenticationNavigation = (event, url) => {
       if (tab.interactionMode === "manual" || !allowedAuthUrl(url)) return;
       event.preventDefault();
+      tab.authenticationBlocked = true;
       tab.message = "ChatGPT requires a fresh sign-in; finish this turn, then sign in from Setup";
       this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
       this.publishState?.(this.snapshot());
@@ -1672,6 +1673,8 @@ class BrowserHost {
       );
     }
     const cancelledByUser = this.userCancelledTurnOwners.get(traceId) === helperPid;
+    const authenticationBlocked = tab.authenticationBlocked === true;
+    if (authenticationBlocked && status === "completed") status = "failed";
     tab.status = status === "completed" ? "ready" : status === "aborted" ? "aborted" : "error";
     this.syncPowerSaveBlocker();
     tab.message = status === "completed" ? "Task completed" : message || `ChatGPT turn ${status}`;
@@ -1696,7 +1699,7 @@ class BrowserHost {
     this.removeTurnTab(tab, false);
     if (hideAfterTurn && !this.activeTraceId) this.hide();
     this.logger.info("browser.tab_released", { tabId: tab.id, traceId, status: tab.status });
-    return { cancelledByUser };
+    return { cancelledByUser, ...(authenticationBlocked ? { authenticationBlocked: true } : {}) };
   }
 
   beginManualTurn(...args) { return this.manualTurns.begin(...args); }

@@ -24,6 +24,7 @@ import {
   type BrokerToolResult,
 } from "./turn-broker-protocol";
 import { submitTurnOutput } from "./turn-broker-output";
+import { readAgentWait, startAgentWait } from "./turn-broker-agent-wait";
 
 interface DispatchState {
   acceptingExternalOwners(): boolean;
@@ -102,6 +103,11 @@ export async function dispatchTurnBrokerRequest(
   if (request.method === "read_context") {
     if (typeof request.token !== "string" || request.token.length === 0) throw new Error("context token is required");
     return state.contexts.read(request.token, request.index, request.chunkChars, state.channels);
+  }
+  if (request.method === "read_agent_wait") {
+    const channel = request.token ? state.channels.get(request.token) : undefined;
+    if (!channel || channel.completionCommitted) throw new Error("turn token is invalid, expired, or revoked");
+    return readAgentWait(channel, request.waitId);
   }
   if (request.method === "claim") return claim(request, signal, state);
   if (request.method === "activity_complete") {
@@ -187,6 +193,11 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
   assertSafeHarnessRunning(binding.channel);
   if (binding.channel.outputFinalSequence !== undefined) {
     throw new Error("Codex Native work cannot start while the final answer is pending");
+  }
+  if (request.method === "start_agent_wait") {
+    return startAgentWait(binding.channel, request.wireName, request.arguments,
+      tool => invoke({ id: request.id, method: "invoke", bindingId, ...tool }, state) as Promise<BrokerToolResult> | BrokerToolResult,
+      error => state.owner.revoke(binding.token, error));
   }
   if (binding.channel.compactionRequested) {
     const result = binding.channel.compactionResult;

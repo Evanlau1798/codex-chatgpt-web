@@ -37,7 +37,7 @@ test("Enhanced Native prompts bind visible output to the existing Codex tool gat
   expect(compiled).toContain("reasoning");
   expect(compiled).toContain("final");
   expect(compiled).toContain("no inventory lookup is needed");
-  expect(compiled).toContain("After required context verification and reconstruction");
+  expect(compiled).toContain("After reading and merging the required context");
   expect(compiled).toContain("before extended planning");
   expect(compiled).toContain("unless the user requested silence");
   expect(compiled).toContain("first authorized, bounded read");

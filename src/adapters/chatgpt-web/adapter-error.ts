@@ -27,6 +27,12 @@ export class ChatGptWebAdapterError extends Error {
 
 export const CHATGPT_RETAINED_SURFACE_UNAVAILABLE = "The retained ChatGPT conversation is no longer available";
 
+export function chatGptSessionExpiredError(): ChatGptWebAdapterError {
+  return new ChatGptWebAdapterError("The ChatGPT session has expired. Sign in again in Codex Web GPT.", {
+    status: 401, errorType: "authentication_error", code: "chatgpt_session_expired", retryable: false,
+  });
+}
+
 export function chatGptRetainedSurfaceUnavailableError(cause: unknown): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(CHATGPT_RETAINED_SURFACE_UNAVAILABLE, {
     status: 502,

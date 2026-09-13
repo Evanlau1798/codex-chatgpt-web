@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import type { CodexParsedRequest, CodexTool } from "../src/types";
+import { parseRequest } from "../src/responses/parser";
 import { root, currentWire, environmentXml, dangerFullAccessProfileXml } from "./environment-fixture";
 const temporaryRoots: string[] = [];
 afterEach(() => { for (const path of temporaryRoots.splice(0)) rmSync(path, { recursive: true, force: true }); });
@@ -100,7 +101,7 @@ function createRolloutState(databasePath: string, rolloutPath: string): void {
 
 import { extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
 import { rememberCompactionContinuation } from "../src/adapters/chatgpt-web/compaction-continuation";
-import { encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
+import { COMPACT_PROMPT, encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
 function resumedRootFixture(): { codexHome: string; request: CodexParsedRequest; rolloutPath: string } {
   const codexHome = mkdtempSync(join(tmpdir(), "codex-chatgpt-root-resume-"));
   temporaryRoots.push(codexHome);
@@ -282,15 +283,18 @@ test("root rollout lookup authenticates the indexed owner and current sandbox", 
     .toThrow("does not authenticate");
 });
 
-test("compaction authenticates the latest native turn as current or source, never an arbitrary ancestor", () => {
-  const { codexHome, request, rolloutPath } = resumedRootFixture();
-  request._compactionRequest = true;
-  const body = request._rawBody as { client_metadata: Record<string, string>; input: Array<Record<string, unknown>> };
+test.each(["remote", "local"])("%s compaction authenticates the latest native turn as current or source, never an arbitrary ancestor", kind => {
+  const { codexHome, request: original, rolloutPath } = resumedRootFixture();
+  const body = original._rawBody as { client_metadata: Record<string, string>; input: Array<Record<string, unknown>> };
   const metadata = JSON.parse(body.client_metadata["x-codex-turn-metadata"]!);
   metadata.request_kind = "compaction";
   metadata.turn_id = "01a06c66-ffff-75c6-a0df-318f890ef6de";
   body.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
-  body.input.push({ type: "compaction_trigger" });
+  if (kind === "remote") body.input.push({ type: "compaction_trigger" });
+  else body.input.push({ type: "message", role: "user", content: [{ type: "input_text", text: COMPACT_PROMPT }] });
+  const request = parseRequest({ ...body, model: "chatgpt-web/pro" });
+  expect(request._localCompactionRequest).toBe(kind === "local" ? true : undefined);
+  expect(request._compactionRequest).toBe(kind === "remote" ? true : undefined);
   expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
   body.input[0]!.internal_chat_message_metadata_passthrough = { turn_id: "01a06c66-0000-75c6-a0df-318f890ef6de" };
   expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request))

@@ -96,8 +96,45 @@ export async function fetchLifecycleHealth(
 export function lifecycleHealthIsIdle(health: Record<string, unknown>): boolean {
   return health.status === "ok"
     && health.accepting_turns === true
-    && Number(health.active_http_turns ?? 0) === 0
-    && Number(health.active_browser_turns ?? 0) === 0;
+    && health.active_http_turns === 0
+    && health.active_browser_turns === 0;
+}
+
+export async function captureLifecyclePostflight(url: string, fetcher: LifecycleFetch = fetch, timeoutMs = 10_000) {
+  const result = {
+    idle: false,
+    http_status: null as number | null,
+    health: null as Record<string, string | boolean | number | null> | null,
+    error: null as "http_error" | "invalid_health" | "fetch_failed" | "timeout" | null,
+  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetcher(url, { signal: controller.signal });
+    result.http_status = response.status;
+    if (!response.ok) {
+      await response.body?.cancel();
+      result.error = "http_error";
+      return result;
+    }
+    const health = await response.json();
+    if (!health || typeof health !== "object" || Array.isArray(health)) {
+      result.error = "invalid_health";
+      return result;
+    }
+    result.health = {
+      status: health.status === "ok" ? "ok" : "not_ok",
+      accepting_turns: typeof health.accepting_turns === "boolean" ? health.accepting_turns : null,
+      active_http_turns: Number.isSafeInteger(health.active_http_turns) && health.active_http_turns >= 0 ? health.active_http_turns : null,
+      active_browser_turns: Number.isSafeInteger(health.active_browser_turns) && health.active_browser_turns >= 0 ? health.active_browser_turns : null,
+    };
+    result.idle = lifecycleHealthIsIdle(result.health);
+  } catch {
+    result.error = controller.signal.aborted ? "timeout" : result.http_status === null ? "fetch_failed" : "invalid_health";
+  } finally {
+    clearTimeout(timer);
+  }
+  return result;
 }
 
 export async function fetchWithTimeout(

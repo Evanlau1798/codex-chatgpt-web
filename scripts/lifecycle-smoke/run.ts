@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getConfigDir, loadConfig } from "../../src/config";
 import { parseLifecycleSmokeOptions } from "./options";
-import { acquireLifecycleLock, fetchLifecycleHealth, lifecycleHealthIsIdle, lifecycleLockPath, releaseLifecycleLock } from "./run-guard";
+import { acquireLifecycleLock, captureLifecyclePostflight, fetchLifecycleHealth, lifecycleHealthIsIdle, lifecycleLockPath, releaseLifecycleLock } from "./run-guard";
 
 const repo = resolve(import.meta.dir, "..", "..");
 const options = parseLifecycleSmokeOptions(process.argv.slice(2), repo);
@@ -62,13 +62,8 @@ try {
     claudeLane.selfTestClaudeLaneBudget();
     results.push(await claudeLane.runClaudeLane(root));
   }
-  let postflightIdle = false;
-  try {
-    const postflight = await fetchLifecycleHealth(`${serviceBaseUrl}/healthz`);
-    postflightIdle = postflight.ok
-      && lifecycleHealthIsIdle(await postflight.json() as Record<string, unknown>);
-  } catch {}
-  const failed = !postflightIdle || results.some(result => (
+  const postflight = await captureLifecyclePostflight(`${serviceBaseUrl}/healthz`);
+  const failed = !postflight.idle || results.some(result => (
     typeof result === "object" && result !== null && (result as { status?: unknown }).status !== "passed"
   ));
   await save(join(root, "result.json"), {
@@ -79,7 +74,8 @@ try {
       version: health.version,
       pid: health.pid,
     },
-    postflight_idle: postflightIdle,
+    postflight_idle: postflight.idle,
+    postflight,
     results,
   });
   process.stdout.write(`LIFECYCLE_SMOKE_${failed ? "FAILED" : "PASSED"} root=${root}\n`);

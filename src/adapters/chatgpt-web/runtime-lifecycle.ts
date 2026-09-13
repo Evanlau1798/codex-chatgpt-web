@@ -194,6 +194,11 @@ export class ChatGptSurfaceRecoveryTracker {
       console.warn(
         `[chatgpt-web] browser turn ${this.traceId} surface recovery eligible=${decision.eligible}`
         + ` reason=${decision.reason} ${chatGptErrorDiagnosticIdentity(error)} generation=${recoveries}`
+        + ` submissionPhase=${session.runtime.submission?.phase ?? "unavailable"}`
+        + ` pendingNativeCalls=${session.outstanding().length}`
+        + (error instanceof StallTimeoutError
+          ? ` waitStartedAt=${error.waitStartedAt ?? "unavailable"} timeoutMs=${error.timeoutMs ?? "unavailable"} elapsedMs=${error.elapsedMs ?? "unavailable"}`
+          : "")
         + ` finalChars=${session.runtime.text.value().length}`
         + ` canonicalResults=${decision.canonicalResultCount}`
         + ` unresolvedSuperseded=${decision.unresolvedSupersededCount}`

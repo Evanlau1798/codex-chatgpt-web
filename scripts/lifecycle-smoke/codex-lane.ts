@@ -52,7 +52,7 @@ export function childTtlResumePrompt(childId: string): string {
   return `Respond only in English. You must call send_input with target=${childId} to interact again with this exact grandchild that completed normally. Ask whether it remembers the hierarchy evidence and friction. Do not dispatch another subagent. After receiving its reply, summarize steering, both compactions, handoff, hierarchical subagent collaboration, interruption, TTL resume, and any observed gaps.`;
 }
 
-export const codexLifecycleModel = "chatgpt-web/pro";
+export const codexLifecycleModel = "chatgpt-web/high";
 
 export function manualCompactionContinuedSafely(
   values: ReturnType<typeof events>,
@@ -113,16 +113,16 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
         await sleep(250);
       }
     }
-    assert(catalogContainsModel(models, codexLifecycleModel), "Codex Web model catalog did not load the Pro route");
+    assert(catalogContainsModel(models, codexLifecycleModel), "Codex Web model catalog did not load the High route");
     const thread = await run.request("thread/start", { cwd: repo, model: codexLifecycleModel, ephemeral: false, approvalPolicy: "never", sandbox: "read-only" });
     threadId = String(thread.thread.id);
     const responseStateCompactionPath = smokePath(repoTests, "response-state-compaction.test.ts");
     const initialAt = Date.now();
-    const initial = await run.request("turn/start", { threadId, effort: "ultra", input: [{ type: "text", text: `Respond only in English. Explain the Responses API compaction continuation contract using official OpenAI documentation, then inspect ${responseStateCompactionPath} read-only and identify the two tests that most directly cover the compaction replacement boundary. Provide official links plus local file and line evidence. Do not dispatch a subagent, modify files, run tests, or use non-OpenAI websites.` }] });
+    const initial = await run.request("turn/start", { threadId, effort: "high", input: [{ type: "text", text: `Respond only in English. Explain the Responses API compaction continuation contract using official OpenAI documentation, then inspect ${responseStateCompactionPath} read-only and identify the two tests that most directly cover the compaction replacement boundary. Provide official links plus local file and line evidence. Do not dispatch a subagent, modify files, run tests, or use non-OpenAI websites.` }] });
     const created = await waitForEvent(initialAt, "browser.tab_created", 180_000); rootTab = String(created.detail?.tabId); tabs.add(rootTab); const trace = String(created.detail?.traceId);
     const hadCommentary = await waitSteeringPoint(initialAt, trace);
     const steeringAt = Date.now();
-    await run.request("turn/steer", { threadId, expectedTurnId: initial.turn.id, input: [{ type: "text", text: steeringText }] });
+    await run.request("turn/steer", { threadId, expectedTurnId: initial.turn.id, input: [{ type: "text", text: `${steeringText}\n\n${auditPrompt}` }] });
     await completed(run, initial.turn.id, activeTurnSmokeTimeoutMs);
     const initialDone = Date.now(); lastRootCompletionAt = initialDone; const initialText = run.messages(threadId).join("\n").replaceAll("\\_", "_");
     const rootEvents = (since: number) => ownedSurfaceEvents(events(initialAt), [rootTab], [trace])
@@ -159,24 +159,10 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     assert(checks.no_unsubstantiated_skill_failure, "Codex reported an unsupported Skill blocking cause");
     timelines.push(stageTimeline(initialAt, trace, { phase: "initial", request_sent: iso(initialAt), completed: iso(initialDone), ...run.firstClientTimes(initialAt) }));
 
-    await waitRootRequestBudget(lastRootCompletionAt);
-    const auditAt = Date.now();
-    const audit = await run.request("turn/start", {
-      threadId, effort: "ultra", input: [{ type: "text", text: auditPrompt }],
-    });
-    await completed(run, audit.turn.id, activeTurnSmokeTimeoutMs);
-    const auditDone = Date.now(); lastRootCompletionAt = auditDone;
-    const auditText = run.received.flatMap(message => message.method === "item/completed"
-      && message.params?.turnId === audit.turn.id && message.params?.item?.type === "agentMessage"
-      ? [String(message.params.item.text)] : []).join("\n").replaceAll("\\_", "_");
+    const auditText = initialTurnMessages;
     saveLifecycleContentSummary(join(laneRoot, "steering-audit.json"), "steering_audit", auditText);
-    const auditSurface = rootEvents(auditAt).findLast(value => value.event === "browser.tab_created" || value.event === "browser.tab_reused");
-    for (const value of rootEvents(auditAt).filter(value => value.event === "browser.tab_created")) {
-      rootTab = String(value.detail?.tabId); tabs.add(rootTab);
-    }
-    timelines.push(stageTimeline(auditAt, String(auditSurface?.detail?.traceId ?? ""), {
-      phase: "steering_audit", request_sent: iso(auditAt), completed: iso(auditDone), ...run.firstClientTimes(auditAt),
-    }));
+    checks.steering_audit_exact_once = steeringAuditPassed(auditText);
+    assert(checks.steering_audit_exact_once, "Codex active-turn steering audit failed");
 
     await waitRootRequestBudget(lastRootCompletionAt);
     const longAt = Date.now();
@@ -185,7 +171,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     for (let round = 1; round <= 8 && run.compactions(threadId) === 0; round += 1) {
       if (round > 1) await waitRootRequestBudget(lastRootCompletionAt);
       const taskAt = Date.now();
-      const task = await run.request("turn/start", { threadId, effort: "ultra", input: [{ type: "text", text: round === 1 ? reviewTaskPrompt : `Respond only in English. Continue the previous read-only inspection by selecting exactly two uninspected test files from ${repoTests} and their directly corresponding production implementations. Summarize immediately after completing this bounded scope; do not expand into other areas. Do not repeat completed scope or dispatch a subagent. ${noSkillInstruction} Do not modify files, run tests, or access the network.` }] });
+      const task = await run.request("turn/start", { threadId, effort: "high", input: [{ type: "text", text: round === 1 ? reviewTaskPrompt : `Respond only in English. Continue the previous read-only inspection by selecting exactly two uninspected test files from ${repoTests} and their directly corresponding production implementations. Summarize immediately after completing this bounded scope; do not expand into other areas. Do not repeat completed scope or dispatch a subagent. ${noSkillInstruction} Do not modify files, run tests, or access the network.` }] });
       await completed(run, task.turn.id, activeTurnSmokeTimeoutMs); const taskDone = Date.now(); lastRootCompletionAt = taskDone;
       const taskText = run.received.flatMap(message => message.method === "item/completed" && message.params?.turnId === task.turn.id && message.params?.item?.type === "agentMessage" ? [String(message.params.item.text)] : []).join("\n").replaceAll("\\_", "_");
       longToolCalls += run.received.filter(message => message.method === "item/completed" && message.params?.turnId === task.turn.id && ["commandExecution", "mcpToolCall"].includes(message.params?.item?.type)).length;
@@ -201,7 +187,6 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
       events(longAt),
       preAutoCompactRootTab,
     );
-    checks.steering_audit_exact_once = steeringAuditPassed(auditText);
     assert(checks.long_task_used_tools, "Codex long task ended without tool work");
     assert(checks.auto_compact_observed, "Codex did not observe an automatic compact");
 
@@ -270,7 +255,7 @@ export async function runCodexLane(runRoot: string): Promise<LaneResult> {
     await waitCreateBudget();
     await waitRootRequestBudget(lastRootCompletionAt);
     const finalAt = Date.now();
-    const final = await run.request("turn/start", { threadId, effort: "ultra", input: [{ type: "text", text: childTtlResumePrompt(childId) }] });
+    const final = await run.request("turn/start", { threadId, effort: "high", input: [{ type: "text", text: childTtlResumePrompt(childId) }] });
     await completed(run, final.turn.id, activeTurnSmokeTimeoutMs); const finalDone = Date.now();
     const finalMessages = run.messages(threadId).join("\n").replaceAll("\\_", "_");
     saveLifecycleContentSummary(join(laneRoot, "final.json"), "final", finalMessages);

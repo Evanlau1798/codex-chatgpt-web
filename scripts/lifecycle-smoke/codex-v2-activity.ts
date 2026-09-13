@@ -1,5 +1,26 @@
 import type { Rpc } from "./codex-app-server";
 import { assert } from "./common";
+import type { LauncherEvent } from "./launcher-event-reader";
+
+export function agentWaitProgressOverlap(
+  events: LauncherEvent[], parentTrace: string, childTrace: string, startupEnd: number,
+): boolean {
+  if (!parentTrace || !childTrace || parentTrace === childTrace || !Number.isFinite(startupEnd)) return false;
+  let pending = false;
+  let childProgress = false;
+  for (const event of events) {
+    const line = String(event.detail?.line ?? "");
+    const duringStartup = Date.parse(event.at) <= startupEnd;
+    if (line.startsWith(`[chatgpt-web] broker trace=${parentTrace} agent wait receipt`)) {
+      pending = duringStartup; childProgress = false;
+    } else if (line.startsWith(`[chatgpt-web] broker trace=${parentTrace} agent wait ready `)) {
+      if (pending && childProgress) return true;
+      pending = false;
+    } else if (pending && duringStartup && line.startsWith(`[chatgpt-web] broker trace=${childTrace} `)
+      && / served context | output accepted kind=commentary /.test(line)) childProgress = true;
+  }
+  return false;
+}
 
 export type V2Activity = {
   id: string;

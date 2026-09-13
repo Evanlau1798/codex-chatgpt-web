@@ -1,4 +1,4 @@
-import { CHATGPT_WEB_AGENT_WAIT_POLL_MS, CHATGPT_WEB_AGENT_WAIT_RULE } from "./mcp-tool-inventory";
+import { CHATGPT_WEB_AGENT_WAIT_POLL_MS, CHATGPT_WEB_AGENT_WAIT_RULE, CHATGPT_WEB_SYNC_WAIT_RULE } from "./mcp-tool-inventory";
 
 export const GATEWAY_AGENT_WAIT_TOOL_NAMES = [
   "collaboration__wait_agent",
@@ -18,8 +18,8 @@ export function isGatewayAgentWaitTool(name: string): boolean {
   return AGENT_WAIT_TOOLS.has(name);
 }
 
-export function gatewayToolDescription(tool: GatewayToolDescriptor): string {
-  return isGatewayAgentWaitTool(tool.name) ? `${tool.description}\n\n${CHATGPT_WEB_AGENT_WAIT_RULE}` : tool.description;
+export function gatewayToolDescription(tool: GatewayToolDescriptor, native = true): string {
+  return isGatewayAgentWaitTool(tool.name) ? `${tool.description}\n\n${native ? CHATGPT_WEB_AGENT_WAIT_RULE : CHATGPT_WEB_SYNC_WAIT_RULE}` : tool.description;
 }
 
 export function assertGatewayToolArguments(name: string, args: Record<string, unknown>): void {

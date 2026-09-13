@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   acquireLifecycleLock,
+  captureLifecyclePostflight,
   fetchWithTimeout,
   fetchLifecycleHealth,
   lifecycleHealthIsIdle,
@@ -16,8 +17,35 @@ test("lifecycle health must be idle before and after live lanes", () => {
   expect(lifecycleHealthIsIdle({ status: "ok", accepting_turns: true, active_http_turns: 0, active_browser_turns: 0 })).toBeTrue();
   expect(lifecycleHealthIsIdle({ status: "ok", accepting_turns: true, active_http_turns: 1, active_browser_turns: 0 })).toBeFalse();
   const source = readFileSync(join(import.meta.dir, "..", "scripts", "lifecycle-smoke", "run.ts"), "utf8");
-  expect(source.match(/fetchLifecycleHealth/g)?.length).toBeGreaterThanOrEqual(3);
+  expect(source).toContain('captureLifecyclePostflight(`${serviceBaseUrl}/healthz`)');
   expect(source).toContain("postflight_idle");
+});
+
+test("postflight preserves bounded failure evidence without retry or response content", async () => {
+  const healthy = { status: "ok", accepting_turns: true, active_http_turns: 0, active_browser_turns: 0 };
+  const cases = [
+    { fetcher: async () => Response.json({ ...healthy, secret: "PRIVATE" }), expected: { idle: true, http_status: 200, health: healthy, error: null } },
+    { fetcher: async () => Response.json({ ...healthy, active_http_turns: 1 }), expected: { idle: false, health: { active_http_turns: 1 } } },
+    { fetcher: async () => Response.json({ ...healthy, active_browser_turns: 1 }), expected: { idle: false, health: { active_browser_turns: 1 } } },
+    { fetcher: async () => Response.json({ ...healthy, accepting_turns: false }), expected: { idle: false, health: { accepting_turns: false } } },
+    { fetcher: async () => Response.json({ status: "ok", accepting_turns: true }), expected: { idle: false, health: { active_http_turns: null, active_browser_turns: null } } },
+    { fetcher: async () => Response.json({ ...healthy, active_http_turns: "0" }), expected: { idle: false, health: { active_http_turns: null } } },
+    { fetcher: async () => Response.json({ ...healthy, status: "PRIVATE" }), expected: { idle: false, health: { status: "not_ok" } } },
+    { fetcher: async () => new Response("PRIVATE", { status: 503 }), expected: { idle: false, http_status: 503, error: "http_error" } },
+    { fetcher: async () => new Response("PRIVATE", { status: 200 }), expected: { idle: false, http_status: 200, error: "invalid_health" } },
+    { fetcher: async () => Response.json(null), expected: { idle: false, error: "invalid_health" } },
+    { fetcher: async () => { throw new TypeError("PRIVATE"); }, expected: { idle: false, http_status: null, error: "fetch_failed" } },
+  ];
+  for (const { fetcher, expected } of cases) {
+    let requests = 0;
+    const result = await captureLifecyclePostflight("http://127.0.0.1/healthz", async () => {
+      requests++;
+      return fetcher();
+    });
+    expect(result).toMatchObject(expected);
+    expect(requests).toBe(1);
+    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+  }
 });
 
 test("lifecycle lock reclaims only a demonstrably dead owner", () => {
@@ -68,6 +96,8 @@ test("lifecycle health preflight aborts an unresponsive daemon", async () => {
   await expect(fetchLifecycleHealth("http://127.0.0.1/healthz", 10, fetcher)).rejects.toThrow(
     "health preflight timed out",
   );
+  expect(await captureLifecyclePostflight("http://127.0.0.1/healthz", fetcher, 10))
+    .toMatchObject({ idle: false, error: "timeout", http_status: null });
 });
 
 test("every lifecycle HTTP operation can name and bound its timeout", async () => {

@@ -1,7 +1,18 @@
 import { namespacedToolName, type CodexTool } from "../../types";
+import type { ChatGptTurnEnvironment } from "./environment";
+
+export function exactTool(environment: ChatGptTurnEnvironment, name: string): CodexTool | undefined {
+  return environment.tools.find(tool => !tool.namespace && tool.name === name);
+}
+
+export function execGateway(environment: ChatGptTurnEnvironment): CodexTool | undefined {
+  const tool = exactTool(environment, "exec");
+  return tool?.freeform ? tool : undefined;
+}
 
 export const CHATGPT_WEB_AGENT_WAIT_POLL_MS = 30_000;
-export const CHATGPT_WEB_AGENT_WAIT_RULE = "ChatGPT Web transport rule: use Codex's default 30-second wait_agent poll without changing the native arguments. A timeout means the agent is still pending, not complete; repeat with the same target ids until a terminal status is returned.";
+export const CHATGPT_WEB_SYNC_WAIT_RULE = "Use timeout_ms=30000 for wait_agent. A timeout means pending; repeat the same target ids until a native terminal result is returned.";
+export const CHATGPT_WEB_AGENT_WAIT_RULE = "Native2 wait_agent: use structured codex_tool_call with timeout_ms=30000. It returns an asynchronous wait_id, not an agent status. Retrieve that same operation with codex_tool_inventory query=next_query and the same turn_token until operation_status=ready; inspect result for the original native outcome. Do not start another wait while a receipt is pending, busy-poll, or submit final before retrieving the result. A native timeout means pending, not failed or completed; only then start the next wait for the same target ids if needed. Do not embed wait_agent in raw exec.";
 export const CONNECTOR_LONG_POLL_SLICE_MS = 30_000;
 
 const wireName = (tool: CodexTool): string => namespacedToolName(tool.namespace, tool.name);
@@ -24,10 +35,11 @@ export function matchingToolInventory(tools: CodexTool[], query?: string): Codex
     .map(({ tool }) => tool);
 }
 
-export function browserToolDescription(tool: CodexTool): string {
-  if (isAgentWaitTool(tool)) return `${tool.description}\n\n${CHATGPT_WEB_AGENT_WAIT_RULE}`;
+export function browserToolDescription(tool: CodexTool, native = true): string {
+  const waitRule = native ? CHATGPT_WEB_AGENT_WAIT_RULE : CHATGPT_WEB_SYNC_WAIT_RULE;
+  if (isAgentWaitTool(tool)) return `${tool.description}\n\n${waitRule}`;
   if (!tool.namespace && tool.name === "exec") {
-    return `${tool.description}\n\n${CHATGPT_WEB_AGENT_WAIT_RULE} This rule is enforced for wait_agent calls made inside exec; recursive raw exec is unavailable.`;
+    return `${tool.description}\n\n${waitRule} Recursive raw exec is unavailable.`;
   }
   return tool.description;
 }

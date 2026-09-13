@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { activeTurnSmokeTimeoutMs, CodexRun, completed, Rpc } from "./codex-app-server";
 import { assert, detectRestriction, events, iso, repo, repoTests, save } from "./common";
-import { normalizeV2Activities, targetedInterruptRequestActivity, type V2Activity } from "./codex-v2-activity";
+import { agentWaitProgressOverlap, normalizeV2Activities, targetedInterruptRequestActivity, type V2Activity } from "./codex-v2-activity";
 import { lifecycleErrorCategory, saveLifecycleContentSummary, saveRedactedLifecycleJson } from "./artifacts";
 import {
   activeBrowserTraceIds,
@@ -13,11 +13,11 @@ import {
 
 export const hierarchySentinel = "V2_HIERARCHY_SMOKE_DONE";
 
-export const hierarchyPrompt = `Respond only in English. Validate one hierarchical Multi-Agent collaboration flow while remaining read-only: do not modify files, run tests, or use the network. Limit all work to ${repoTests}.
+export const hierarchyPrompt = `Respond only in English. Validate one hierarchical Multi-Agent collaboration flow while remaining read-only: do not modify files, run tests, or use the network. Limit all work to ${repoTests}. Use chatgpt-web/high with high reasoning effort for both descendants.
 
 First read one relevant test file yourself, then dispatch exactly one child. Ask the child to read another relevant test file, wait long enough that adjacent Web session creations are at least 30 seconds apart, and then have the child dispatch exactly one grandchild. After the child successfully creates the grandchild, it must not wait for the grandchild; it must immediately complete its current turn and report the grandchild agent ID plus file evidence so the root obtains that identity through the normal wait result. The grandchild must perform one small read-only probe, provide verifiable file evidence, and report actual friction.
 
-Immediately after spawning the child, the root must call wait_agent for that child with timeout_ms=30000. Treat every nonterminal result as pending and repeat the same wait_agent call until the child's completion result explicitly reports successful grandchild creation and its agent ID. Do not send a message to either descendant before seeing that creation evidence.
+Immediately after spawning the child, the root must call wait_agent for that child with timeout_ms=30000. When Native2 returns a wait receipt, retrieve that same operation through codex_tool_inventory using next_query until operation_status=ready, then inspect result for the native outcome. A receipt is not an agent status or an additional native wait. Treat every native nonterminal result as pending and repeat the same wait_agent call until the child's completion result explicitly reports successful grandchild creation and its agent ID. Apply this receipt retrieval rule to every wait below. Do not send a message to either descendant before seeing that creation evidence.
 
 After obtaining both identities, first ask the grandchild one distinct follow-up question and repeat wait_agent with timeout_ms=30000 until that grandchild follow-up completes normally; the grandchild interaction must complete before the child follow-up. Only then send the child its distinct follow-up. The child follow-up must require it to immediately publish its existing evidence as commentary, must not call send_input to address the root, and then start exactly one blocking read-only wait of at least ten minutes; it must not poll or call write_stdin after that wait starts. After the child delivery is accepted, make exactly six consecutive wait_agent calls for only that child with timeout_ms=30000. Each of the six results must remain nonterminal; a terminal child status fails the scenario and must not trigger a retry follow-up. Immediately after the sixth timeout, call send_input for that child with interrupt=true exactly once. Do not send a seventh pre-interrupt wait or a second child follow-up. Then repeat wait_agent with timeout_ms=30000 until the interrupted child completes. After that targeted interruption is terminal, call close_agent exactly once for the completed grandchild; never close the child in place of its targeted interruption. Finally, confirm that no agent remains running and summarize the root-to-child-to-grandchild identities, two interactions, one targeted interruption, one subtree close, grandchild evidence, and friction at each level.
 
@@ -268,7 +268,7 @@ export async function runV2HierarchyScenario(
   try {
     const turn = await run.request("turn/start", {
       threadId,
-      effort: "ultra",
+      effort: "high",
       input: [{ type: "text", text: hierarchyPrompt }],
     });
     turnId = String(turn.turn.id);
@@ -310,6 +310,8 @@ export async function runV2HierarchyScenario(
       child: descendantTabs[0] ?? "",
       grandchild: descendantTabs[1] ?? "",
     };
+    const childTrace = surfaces.find(value => value.detail?.tabId === agentTabs.child)?.detail?.traceId;
+    const childStartupEnd = Date.parse(grandchildCandidates[0]?.at ?? "");
     const ledger = toolLedger(run, startedAt);
     const activityIds = activity.map(value => value.id);
     const createTimes = creates.map(value => Date.parse(value.at));
@@ -326,7 +328,7 @@ export async function runV2HierarchyScenario(
       await run.request("thread/resume", {
         threadId: grandchildId,
         cwd: repo,
-        model: "chatgpt-web/pro",
+        model: "chatgpt-web/high",
         approvalPolicy: "never",
         sandbox: "read-only",
       }, 60_000);
@@ -353,6 +355,9 @@ export async function runV2HierarchyScenario(
     const descendantCompactEvents = events(descendantCompactAt);
     const checks: Record<string, boolean> = {
       root_completed: finalText.trim().length > 0,
+      child_progress_during_parent_wait: agentWaitProgressOverlap(
+        launcher, rootTrace, String(childTrace ?? ""), childStartupEnd,
+      ),
       exactly_two_spawns: spawned.length === 2,
       hierarchy_root_child_grandchild: childCandidates.length === 1 && grandchildCandidates.length === 1,
       root_interacted_child: deliveryInteractions.some(value => value.agentThreadId === childId),
@@ -392,6 +397,7 @@ export async function runV2HierarchyScenario(
         .test(`${value.message ?? ""} ${JSON.stringify(value.detail ?? {})}`)),
     };
     const problems = problemList(checks);
+    save(join(artifactRoot, "checks.json"), checks);
     saveLifecycleContentSummary(join(artifactRoot, "final.json"), "final", finalText);
     saveRedactedLifecycleJson(join(artifactRoot, "agent-activity.json"), activity);
     saveRedactedLifecycleJson(join(artifactRoot, "tool-ledger.json"), ledger);

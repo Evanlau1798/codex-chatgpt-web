@@ -9,7 +9,7 @@ export interface ContextArchiveChunk {
 const ARCHIVE_READY_RECEIPT = [
   "CODEX_CONTEXT_ARCHIVE_READY complete=true",
   "Resume the task with the bound turn_token from codex_native_turn_binding.",
-  "After verifying and merging the archive, follow the active output contract's startup guidance before extended planning.",
+  "After reading and merging the archive, follow the active output contract's startup guidance before extended planning. This receipt confirms page delivery, not model comprehension or a completed task.",
   "When local instructions or capabilities are required, discover and invoke the exact advertised tool before reporting it unavailable.",
   "Without a returned Native tool error, do not infer or name a blocking, rejection, or safety cause.",
 ].join("\n");

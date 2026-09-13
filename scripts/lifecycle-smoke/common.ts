@@ -154,19 +154,18 @@ export async function cleanupLifecycleResources(...phases: CleanupAction[][]): P
 }
 
 export async function waitSteeringPoint(since: number, traceId: string, deliveryTimeoutMs = 300_000) {
-  await waitForEvent(since, "runtime.daemon_stdout", 300_000, value => JSON.stringify(value).includes(traceId) && JSON.stringify(value).includes("stage=response_visible"));
   const deadline = Date.now() + deliveryTimeoutMs;
   while (Date.now() < deadline) {
     const current = events(since);
+    if (current.some(value => value.event === "browser.tab_completed" && value.detail?.traceId === traceId)) {
+      throw new Error("Web turn completed before a steering delivery point");
+    }
     const ready = current.some(value => {
       const line = JSON.stringify(value);
       return line.includes(traceId)
         && (line.includes("stage=adapter_first_commentary") || line.includes("queued call="));
     });
     if (ready) return true;
-    if (current.some(value => value.event === "browser.tab_completed" && value.detail?.traceId === traceId)) {
-      throw new Error("Web turn completed before a steering delivery point");
-    }
     detectRestriction(current);
     await sleep(500);
   }

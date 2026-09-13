@@ -27,6 +27,7 @@ import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control"
 import { CODEX_OUTPUT_CONTROL_WIRE_NAME, submitNativeOutputControl } from "./native-output-control";
 import { callTurnBroker } from "./turn-broker";
 import { invokeChatGptMcpTool } from "./mcp-invocation";
+import { readNativeAgentWait, startNativeAgentWait } from "./mcp-agent-wait";
 import { brokerMcpResult as asMcpResult, mcpJsonResult as result } from "./mcp-results";
 import { withClaimedTurn, type ClaimedTurn } from "./mcp-turn-activity";
 import {
@@ -51,6 +52,8 @@ import {
   browserToolDescription,
   browserToolParameters,
   CHATGPT_WEB_AGENT_WAIT_POLL_MS,
+  exactTool,
+  execGateway,
   matchingToolInventory,
 } from "./mcp-tool-inventory";
 
@@ -63,15 +66,6 @@ const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 
 function wireName(tool: CodexTool): string {
   return namespacedToolName(tool.namespace, tool.name);
-}
-
-function exactTool(environment: ChatGptTurnEnvironment, name: string): CodexTool | undefined {
-  return environment.tools.find(tool => !tool.namespace && tool.name === name);
-}
-
-function execGateway(environment: ChatGptTurnEnvironment): CodexTool | undefined {
-  const tool = exactTool(environment, "exec");
-  return tool?.freeform ? tool : undefined;
 }
 
 export type { ChatGptMcpContract } from "./mcp-zero-risk";
@@ -337,6 +331,9 @@ export async function runChatGptMcpServer(options: {
     async (input, extra) => {
       const { query, offset, limit, include_schema } = input;
       const requestId = turnReference(contract, input);
+      if (contract === "native" && query?.startsWith("__codex_wait_result__:")) {
+        return readNativeAgentWait(options.brokerSocketPath, requestId, query, extra.signal);
+      }
       const deferredSearch = /^__codex_tool_search__:([\s\S]+)$/.exec(query ?? "");
       const readFile = /^__codex_read_file__:([\s\S]+)$/.exec(query ?? "");
       if (contract === "native" && (deferredSearch || readFile)) {
@@ -384,7 +381,7 @@ export async function runChatGptMcpServer(options: {
           wire_name: wireName(tool),
           name: tool.name,
           namespace: tool.namespace ?? null,
-          description: browserToolDescription(tool),
+          description: browserToolDescription(tool, contract === "native"),
           kind: tool.freeform ? "freeform" : tool.toolSearch ? "tool_search" : "function",
           ...(include_schema ? { parameters: browserToolParameters(tool) } : {}),
         }));
@@ -402,7 +399,7 @@ export async function runChatGptMcpServer(options: {
           const catalog = gatewayToolCatalogPage(response, new Set(excludedNames));
           const nestedPage = catalog.tools.map(tool => ({
             wire_name: tool.name, name: tool.name, namespace: null,
-            description: gatewayToolDescription(tool), kind: "gateway",
+            description: gatewayToolDescription(tool, contract === "native"), kind: "gateway",
             ...(include_schema ? { parameters: { type: "object", additionalProperties: true } } : {}),
           }));
           const tools = [...directPage, ...nestedPage];
@@ -453,6 +450,9 @@ export async function runChatGptMcpServer(options: {
       return withTurn("codex_tool_call", requestId, extra, claimed => {
         const bound = claimed.environment;
         const tool = safeVisibleTools(bound, contract).find(candidate => wireName(candidate) === wire_name);
+        if (contract === "native" && isGatewayAgentWaitTool(wire_name) && input === undefined) {
+          return startNativeAgentWait(options.brokerSocketPath, claimed.bindingId, wire_name, args ?? {}, extra.signal);
+        }
         if (!tool) {
           const gateway = execGateway(bound);
           const hiddenOuterTool = bound.tools.some(candidate => wireName(candidate) === wire_name);
@@ -478,7 +478,7 @@ export async function runChatGptMcpServer(options: {
           if (input === undefined) throw new Error(`Freeform Codex tool ${wire_name} requires input`);
           if (args && Object.keys(args).length > 0) throw new Error(`Freeform Codex tool ${wire_name} does not accept arguments`);
           return invoke(claimed.bindingId, bound, tool, {
-            input: tool === execGateway(bound) ? transportBoundRawExecProgram(input, wireName(tool)) : input,
+            input: tool === execGateway(bound) ? transportBoundRawExecProgram(input, wireName(tool), contract === "native") : input,
           }, extra.signal);
         }
         if (input !== undefined) throw new Error(`Function Codex tool ${wire_name} does not accept freeform input`);
