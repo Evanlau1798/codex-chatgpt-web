@@ -73,6 +73,18 @@ Choose the narrowest profile that covers the changed boundary:
 | Web contract | One short account-bound turn plus allowlisted browser capabilities; `browserIdle` means only that no browser turn remains. |
 | `deep` | A manual `deep` diagnostic for account-bound investigation, never a default gate. |
 
+The offline lifecycle simulator replaces the full live lifecycle suite as the required lifecycle
+release gate. Full live lifecycle is not a CI or release prerequisite, including for shared
+lifecycle changes. Once required local gates pass, continue with authorized CI and release
+preparation without adding a full live run.
+
+If a specific investigation needs the full live suite, use **High, never Pro**. Keep the Codex
+model (`chatgpt-web/high`) and reasoning effort (`high`) aligned for the root task, follow-up turns,
+and descendants; verify the harness configuration before running a legacy checkout. Run only the
+agreed scope, record the actual outcome, then stop. Do not append lanes or repeat account-bound
+runs merely to obtain green results. Preserve failures and investigate demonstrated production
+defects even though this diagnostic suite is optional.
+
 ```sh
 bun run lifecycle:sim --lane=all
 ```
@@ -89,5 +101,5 @@ Before a release-bound push, tag, or publication, run `bun run verify:release` l
 gate runs the full offline verification, starts the freshly built candidate runtime on an isolated
 loopback port, then sends one short account-bound Web request through it. CI intentionally runs only
 `bun run verify` because hosted runners have no login state. An earlier run against another runtime
-is not release evidence. Run the request-heavy `deep` profile only when the changed lifecycle scope
-or a specific investigation requires it, and keep the no-retry rule for 429 or verification limits.
+is not release evidence. This short Web/TTL canary is separate from full live lifecycle; never add
+the request-heavy `deep` profile to this gate. Keep the no-retry rule for 429 or verification limits.
