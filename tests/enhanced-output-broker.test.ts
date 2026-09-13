@@ -12,6 +12,7 @@ const environment = (root: string) => ({
   sandboxPolicy: { type: "dangerFullAccess" as const }, tools: [],
 });
 
+// Await pipe I/O normally: Bun's promise matchers can re-enter its Windows pipe event loop.
 test("turn output is ordered and final delivery is fail closed", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-output-tunnel-"));
   const socket = defaultBrokerEndpoint(root);
@@ -81,20 +82,20 @@ test("final output waits for work settlement and blocks later work until reset",
     const token = await broker.register(environment(root), undefined, "output-final-test", undefined, true);
     const activityId = "activity_1234567890123456";
     await callTurnBroker(socket, { method: "claim", token, activityId });
-    await expect(callTurnBroker(socket, {
+    await assert.rejects(callTurnBroker(socket, {
       method: "submit_output", token, outputKind: "final", outputText: "Too early.",
-    })).rejects.toThrow("work tools are still active");
+    }), /work tools are still active/);
     await callTurnBroker(socket, { method: "activity_complete", token, activityId });
     const submitted = await callTurnBroker<{ sequence: number }>(socket, {
       method: "submit_output", token, outputKind: "final", outputText: "Settled.",
     });
-    await expect(callTurnBroker(socket, {
+    await assert.rejects(callTurnBroker(socket, {
       method: "claim", token, activityId: "activity_abcdefghijklmnop",
-    })).rejects.toThrow("final answer is pending");
+    }), /final answer is pending/);
     await owner.resetOutput(token, submitted.sequence);
-    await expect(callTurnBroker(socket, {
+    expect(await callTurnBroker(socket, {
       method: "claim", token, activityId: "activity_abcdefghijklmnop",
-    })).resolves.toMatchObject({ activityId: "activity_abcdefghijklmnop" });
+    })).toMatchObject({ activityId: "activity_abcdefghijklmnop" });
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
@@ -110,18 +111,18 @@ test("the hidden MCP output control is scoped to output-enabled turns", async ()
     const remote = new RemoteTurnBroker(socket);
     const disabled = await remote.register(environment(root), undefined, "output-disabled-test");
     const enabled = await remote.register(environment(root), undefined, "output-enabled-test", undefined, true);
-    await expect(submitNativeOutputControl(
+    await assert.rejects(submitNativeOutputControl(
       socket, disabled, { kind: "commentary", text: "Denied." }, undefined,
-    )).rejects.toThrow("not enabled");
-    await expect(submitNativeOutputControl(
+    ), /not enabled/);
+    expect(await submitNativeOutputControl(
       socket, enabled, { kind: "final", text: "Accepted." }, undefined,
-    )).resolves.toMatchObject({ accepted: true });
+    )).toMatchObject({ accepted: true });
     expect(await remote.nextOutput(enabled, 0)).toMatchObject({
       kind: "final", text: "Accepted.",
     });
-    await expect(remote.nextOutput(disabled, 0)).rejects.toThrow("not enabled");
-    await expect(remote.resetOutput(disabled, 1)).rejects.toThrow("not enabled");
-    await expect(remote.sealOutput(disabled, 0)).rejects.toThrow("not enabled");
+    await assert.rejects(remote.nextOutput(disabled, 0), /not enabled/);
+    await assert.rejects(remote.resetOutput(disabled, 1), /not enabled/);
+    await assert.rejects(remote.sealOutput(disabled, 0), /not enabled/);
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
@@ -135,13 +136,13 @@ test("final output cannot bypass an unread native context archive", async () => 
   try {
     const token = await broker.register(environment(root), undefined, "output-context-test", undefined, true);
     const contextToken = await broker.registerContext("required context", 60_000, "output-context-test", token);
-    await expect(callTurnBroker(socket, {
+    await assert.rejects(callTurnBroker(socket, {
       method: "submit_output", token, outputKind: "final", outputText: "Too early.",
-    })).rejects.toThrow("context archive");
+    }), /context archive/);
     await callTurnBroker(socket, { method: "read_context", token: contextToken, index: 0, chunkChars: 1_000 });
-    await expect(callTurnBroker(socket, {
+    expect(await callTurnBroker(socket, {
       method: "submit_output", token, outputKind: "final", outputText: "Complete.",
-    })).resolves.toMatchObject({ accepted: true });
+    })).toMatchObject({ accepted: true });
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
