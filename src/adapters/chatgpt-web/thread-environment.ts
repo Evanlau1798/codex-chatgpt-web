@@ -106,11 +106,7 @@ function isNativeTurnOutput(item: Record<string, unknown>): boolean {
     || (item.type === "message" && item.role === "assistant");
 }
 
-function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
-  const identity = extractChatGptTurnIdentity(parsed);
-  if (!identity.turnId) return false;
-  const body = record(parsed._rawBody);
-  const input = Array.isArray(body?.input) ? body.input : [];
+function latestCompactionIndex(input: unknown[]): number {
   let checkpointIndex = -1;
   for (let index = 0; index < input.length; index += 1) {
     const item = record(input[index]);
@@ -121,16 +117,27 @@ function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
       checkpointIndex = index;
     }
   }
+  return checkpointIndex;
+}
+
+function isCurrentInstruction(value: unknown, metadata: Record<string, unknown> | undefined, turnId: string): boolean {
+  const item = record(value);
+  const owner = itemTurnId(item);
+  return isUserOrParentInstruction(item, metadata)
+    && (owner === turnId || (item.type === "agent_message" && owner === undefined));
+}
+
+function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
+  const identity = extractChatGptTurnIdentity(parsed);
+  if (!identity.turnId) return false;
+  const body = record(parsed._rawBody);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const checkpointIndex = latestCompactionIndex(input);
   if (checkpointIndex < 0) return false;
 
   const metadata = codexTurnMetadataFromBody(parsed._rawBody);
   const suffix = input.slice(checkpointIndex + 1);
-  const hasCurrentSteering = suffix.some(value => {
-    const item = record(value);
-    const owner = itemTurnId(item);
-    return isUserOrParentInstruction(item, metadata)
-      && (owner === identity.turnId || (item?.type === "agent_message" && owner === undefined));
-  });
+  const hasCurrentSteering = suffix.some(value => isCurrentInstruction(value, metadata, identity.turnId!));
   const hasNewEnvironment = suffix.some(value => {
     const item = record(value);
     return (item?.type === "message" || item?.type === "agent_message")
@@ -182,20 +189,25 @@ function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
   ));
 }
 
-/** A refresh after native work is a claim to compare with the current rollout, never authority. */
+/** Validate the current native turn segment; ordinary revisions never move its authority boundary. */
 function hasOwnedEnvironmentRefresh(parsed: CodexParsedRequest): boolean {
   const { turnId } = extractChatGptTurnIdentity(parsed);
   const body = record(parsed._rawBody);
   if (!turnId || !Array.isArray(body?.input)) return false;
   const metadata = codexTurnMetadataFromBody(body);
-  const input = body.input;
-  const source = input.findLastIndex(value => isUserOrParentInstruction(record(value), metadata));
-  if (source < 0 || itemTurnId(input[source]) !== turnId || !record(input[source])?.id) return false;
+  const input = body.input.slice(latestCompactionIndex(body.input) + 1);
+  const source = input.findIndex(value => isCurrentInstruction(value, metadata, turnId));
+  if (source < 0 || typeof record(input[source])?.id !== "string" || !record(input[source])?.id) return false;
   let outputSeen = false;
   let refreshSeen = false;
   return input.slice(source + 1).every(value => {
     const item = record(value);
-    if (!item || typeof item.id !== "string" || !item.id || itemTurnId(item) !== turnId) return false;
+    if (!item || typeof item.id !== "string" || !item.id
+      || (itemTurnId(item) !== turnId && !isCurrentInstruction(item, metadata, turnId))) return false;
+    // Later instructions do not revoke earlier claims. Environment attempts remain separate,
+    // well-formed envelopes, and resolve() compares every claim with this turn's native rollout.
+    if (isUserOrParentInstruction(item, metadata)
+      && !/<\/?environment_context\b/i.test(JSON.stringify(item.content ?? ""))) return true;
     if (item.type === "message" && item.role === "user") {
       if (!Array.isArray(item.content) || !item.content.length || !item.content.every(contextualEnvelopePart)) return false;
       if (item.content.some(environmentContextPart)) {

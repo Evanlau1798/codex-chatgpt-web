@@ -178,6 +178,75 @@ test.each(["function", "custom_tool", "tool_search"])("a running resumed root va
   expect(() => store.resolve(request)).toThrow("current turn");
 });
 
+test.each(["ordinary", "v1 compact", "v2 compact"].flatMap(history => ["root", "child"].map(actor => [history, actor] as const)))("%s %s keeps verified refresh authority across later steering and agent results", (history, actor) => {
+  const fixture = resumedRootFixture();
+  const { codexHome, rolloutPath } = fixture;
+  const request = actor === "child" ? environmentlessChild() : fixture.request;
+  if (actor === "child") writeFileSync(rolloutPath, [JSON.stringify(childSessionMeta()), JSON.stringify(childTurnContext())].join("\n") + "\n");
+  const body = request._rawBody as { input: Array<Record<string, unknown>> };
+  const owned = { turn_id: rolloutTurnId };
+  const item = (value: Record<string, unknown>) => ({ ...value, internal_chat_message_metadata_passthrough: owned });
+  const user = (id: string, text: string) => item({ type: "message", role: "user", id,
+    content: [{ type: "input_text", text }] });
+  const instruction = (id: string, text: string): Record<string, unknown> => actor === "root" ? user(id, text)
+    : { type: "agent_message", id, author: "/root", recipient: rolloutAgent, content: [{ type: "input_text", text }] };
+  body.input[0] = instruction("initial_instruction", "Inspect the repository.");
+  if (history !== "ordinary") body.input.unshift(instruction("earlier_revision", "Earlier work in the same native turn."),
+    history === "v2 compact" ? { type: "compaction", encrypted_content: encodeCompactionSummary("Earlier work is complete.") }
+      : { type: "message", role: "user", content: [{ type: "input_text", text: `${SUMMARY_PREFIX}\nEarlier work is complete.` }] });
+  body.input.push(
+    item({ type: "function_call", id: "fc_work", call_id: "work", name: "exec_command", arguments: "{}" }),
+    item({ type: "function_call_output", id: "fco_work", call_id: "work", output: "done" }),
+  );
+  const refresh = user("environment_refresh", `<environment_context><filesystem><workspace_roots><root>${root}</root></workspace_roots>${dangerFullAccessProfileXml}</filesystem></environment_context>`);
+  body.input.push(refresh);
+  const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+  expect(store.resolve(request).cwd).toBe(root);
+  const beforeFollowup = structuredClone(body.input);
+
+  for (const action of ["close_agent", "exec_command", "none"]) {
+    body.input = structuredClone(beforeFollowup);
+    body.input.push(user("completed_notification", '<subagent_notification>{"status":{"completed":"Review complete."}}</subagent_notification>'));
+    if (action !== "none") body.input.push(
+      item({ type: "function_call", id: "fc_followup", call_id: "followup", name: action, arguments: "{}" }),
+      item({ type: "function_call_output", id: "fco_followup", call_id: "followup", output: "done" }),
+    );
+    body.input.push(instruction("steering", "Stop after reporting the current result."));
+    expect(store.resolve(request).cwd).toBe(root);
+    expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
+  }
+  // A second revision and environment update must not invalidate the first verified update.
+  body.input.push({ ...refresh, id: "second_environment_refresh" },
+    item({ type: "tool_search_call", id: "tsc_next", call_id: "next", arguments: {} }),
+    item({ type: "tool_search_output", id: "tso_next", call_id: "next", tools: [] }),
+    instruction("second_steering", "Keep the result concise."));
+  expect(store.resolve(request).cwd).toBe(root);
+  expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
+
+  const valid = structuredClone(body.input);
+  for (const index of [valid.findIndex(value => value.id === "fc_work"), valid.findIndex(value => value.id === "steering"), valid.length - 1]) {
+    const patches: Array<Record<string, unknown>> = [{ id: undefined }, { internal_chat_message_metadata_passthrough: { turn_id: rolloutParentId } }];
+    if (valid[index]?.type === "agent_message") patches.push({ author: "/root/sibling" }, { recipient: "/root/another_child" });
+    else patches.push({ internal_chat_message_metadata_passthrough: {} });
+    for (const patch of patches) {
+      body.input = structuredClone(valid);
+      body.input[index] = { ...body.input[index], ...patch };
+      expect(() => store.resolve(request), `${index}: ${JSON.stringify(patch)}`).toThrow();
+    }
+  }
+  for (const text of ["<environment_context><cwd/></environment_context>", environmentXml.replaceAll(root, join(root, "other")),
+    `<environment_context><cwd>${root}</cwd><sandbox_mode>read-only</sandbox_mode></environment_context>`,
+    `${environmentXml}\nDo something else.`]) {
+    body.input = structuredClone(valid);
+    body.input[body.input.findIndex(value => value.id === "environment_refresh")] = user("environment_refresh", text);
+    expect(() => store.resolve(request)).toThrow();
+  }
+  body.input = valid;
+  writeFileSync(rolloutPath, [JSON.stringify(actor === "child" ? childSessionMeta() : { type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } }),
+    JSON.stringify(childTurnContext(rolloutParentId))].join("\n") + "\n");
+  expect(() => store.resolve(request)).toThrow("current turn");
+});
+
 for (const format of ["v1", "v2"]) test(`${format} context-only continuation requires a matching current rollout, not just a checkpoint`, () => {
   const { codexHome, request, rolloutPath } = resumedRootFixture();
   const body = request._rawBody as { input: Array<Record<string, unknown>> };
