@@ -180,3 +180,66 @@ test("preserves native model availability state inserted before the hook trust t
     expect(upgraded.text).toContain(inserted);
   }
 });
+
+test("preserves a managed Interrupt hook when Codex moves its trust state before the hook", () => {
+  const configPath = "C:\\Users\\test\\.codex\\config.toml";
+  const original = 'model = "gpt-5.6-sol"\n';
+  const installed = installCodexInterruptHookCommand(
+    original,
+    configPath,
+    "C:\\runtime\\codex-interrupt-hook.exe",
+  );
+  const fragment = installed.installed.fragment;
+  const stateTable = `[hooks.state.${JSON.stringify(installed.installed.stateKey)}]`;
+  const stateOffset = fragment.indexOf(stateTable);
+  const endOffset = fragment.indexOf(MANAGED_INTERRUPT_HOOK_END);
+  const literalState = fragment.slice(stateOffset, endOffset)
+    .replace(stateTable, `[hooks.state.'${installed.installed.stateKey}']`);
+  const nativeTables = "\n[tui.model_availability_nux]\ngpt-6-astra = 4\n\n[agents]\nmax_depth = 2\n";
+  const hookPrefix = fragment.slice(0, stateOffset).replace(/\n$/, "");
+  const movedFragment = `${literalState}${nativeTables}${hookPrefix}${fragment.slice(endOffset)}`;
+  const moved = installed.text.replace(fragment, movedFragment);
+
+  expect(moved.indexOf(`[hooks.state.'${installed.installed.stateKey}']`))
+    .toBeLessThan(moved.indexOf("[[hooks.Interrupt]]"));
+  verifyCodexInterruptHook(moved, installed.installed);
+  expect(restoreCodexInterruptHook(moved, installed.installed)).toBe(original + nativeTables);
+});
+
+test("fails closed when the trust state and end marker both move before the hook", () => {
+  const configPath = "C:\\Users\\test\\.codex\\config.toml";
+  const original = 'model = "gpt-5.6-sol"\n';
+  const installed = installCodexInterruptHookCommand(
+    original,
+    configPath,
+    "C:\\runtime\\codex-interrupt-hook.exe",
+  );
+  const fragment = installed.installed.fragment;
+  const stateTable = `[hooks.state.${JSON.stringify(installed.installed.stateKey)}]`;
+  const stateOffset = fragment.indexOf(stateTable);
+  const endOffset = fragment.indexOf(MANAGED_INTERRUPT_HOOK_END);
+  const movedFragment = `${fragment.slice(stateOffset, endOffset)}${fragment.slice(endOffset, endOffset + MANAGED_INTERRUPT_HOOK_END.length)}${fragment.slice(0, stateOffset)}${fragment.slice(endOffset + MANAGED_INTERRUPT_HOOK_END.length)}`;
+  const moved = installed.text.replace(fragment, movedFragment);
+
+  expect(() => verifyCodexInterruptHook(moved, installed.installed))
+    .toThrow("Codex interrupt lifecycle hook markers changed");
+});
+
+test("fails closed when a reverse-layout hook appears inside a TOML multiline string", () => {
+  const configPath = "C:\\Users\\test\\.codex\\config.toml";
+  const original = 'model = "gpt-5.6-sol"\n';
+  const installed = installCodexInterruptHookCommand(
+    original,
+    configPath,
+    "C:\\runtime\\codex-interrupt-hook.exe",
+  );
+  const fragment = installed.installed.fragment;
+  const stateTable = `[hooks.state.${JSON.stringify(installed.installed.stateKey)}]`;
+  const stateOffset = fragment.indexOf(stateTable);
+  const endOffset = fragment.indexOf(MANAGED_INTERRUPT_HOOK_END);
+  const movedFragment = `${fragment.slice(stateOffset, endOffset)}${fragment.slice(0, stateOffset)}${fragment.slice(endOffset)}`;
+  const fake = `notes = '''\n${movedFragment}'''\n`;
+
+  expect(() => verifyCodexInterruptHook(fake, installed.installed))
+    .toThrow("Codex interrupt lifecycle hook changed");
+});
