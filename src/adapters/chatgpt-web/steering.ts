@@ -9,6 +9,7 @@ import { claudeAdditiveSteeringInstruction } from "./tool-result-delivery";
 import { chatGptConversationKey, chatGptTurnSteeringId, type ChatGptSteeringFeed, type ChatGptTurnRuntime, type ChatGptTurnSession, type ChatGptTurnSessions } from "./turn-execution";
 import type { CompletedClaudeSteering } from "./steering-feed";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
+import { chatGptModelSwitchEpoch } from "./conversation-key";
 
 export interface ChatGptRetryPrompt {
   text: string;
@@ -124,8 +125,10 @@ export async function sessionForChatGptRequest(
           .map(turnId => chatGptTurnSteeringId(identity.threadId!, turnId))),
       }
     : undefined;
+  const replaceNativeConversation = Boolean(chatGptModelSwitchEpoch(parsed));
   let session = await sessions.getOrCreateAfterConversationRetirement(
     key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId, signal, manualOwner, nativeIdentity.threadId,
+    replaceNativeConversation,
   );
   const settled = session.settledOutcome();
   const activeClaudeRoot = Boolean(claudeRootThreadId && !settled);
@@ -134,6 +137,7 @@ export async function sessionForChatGptRequest(
     await sessions.retireAndWait(key, replacementConversationKey, signal);
     session = await sessions.getOrCreateAfterConversationRetirement(
       key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId, signal, manualOwner, nativeIdentity.threadId,
+      replaceNativeConversation,
     );
     if (claudeRootThreadId) session.inheritCompletedClaudeSteering(completedClaudeSteering);
     session.updateUserRevision(revision, text);
@@ -145,6 +149,7 @@ export async function sessionForChatGptRequest(
     await sessions.retireAndWait(key, replacementConversationKey, signal);
     session = await sessions.getOrCreateAfterConversationRetirement(
       key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId, signal, manualOwner, nativeIdentity.threadId,
+      replaceNativeConversation,
     );
     session.updateUserRevision(revision, text);
     return session;
@@ -157,6 +162,7 @@ export async function sessionForChatGptRequest(
   await sessions.retireAndWait(key, replacementConversationKey, signal);
   session = await sessions.getOrCreateAfterConversationRetirement(
     key, replacementConversationKey, start, group, steeringId, claudeRootThreadId, traceId, signal, manualOwner, nativeIdentity.threadId,
+    replaceNativeConversation,
   );
   if (claudeRootThreadId) session.inheritCompletedClaudeSteering(completedClaudeSteering);
   session.updateUserRevision(revision, text);

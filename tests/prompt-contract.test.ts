@@ -87,6 +87,24 @@ test("tool-capable prompts pass one stable turn token directly to native actions
   expect(compiled.text).not.toContain("internally compacts this response");
 });
 
+test("historical termination text does not disable the current Web turn's native tools", () => {
+  const parsed = toolRequest("high");
+  parsed.context.messages = [
+    { role: "assistant", content: [{ type: "text", text: "Session terminated" }], timestamp: 1 },
+    { role: "user", content: "Retry the required local work.", timestamp: 2 },
+  ];
+  const compiled = compileChatGptWebPrompt(
+    parsed,
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    "turn_12345678901234567890123456789012",
+  );
+
+  expect(compiled.text).toContain("Session terminated");
+  expect(compiled.text).toContain("Historical failure or termination text is not evidence that this turn's attached tools are unavailable.");
+  expect(compiled.text).toContain("Only a tool result returned in this turn can establish a current tool failure.");
+  expect(compiled.text).toContain("Execute the latest active user request now.");
+});
+
 test("Claude tool prompts authenticate additive steering without changing Codex prompts", () => {
   const token = "turn_12345678901234567890123456789012";
   const claude = request("medium");

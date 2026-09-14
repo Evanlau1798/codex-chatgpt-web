@@ -4,7 +4,13 @@ import { SUMMARY_PREFIX } from "../../responses/compaction";
 import { extractChatGptTurnIdentity } from "./environment";
 import { chatGptTurnExecutionKey } from "./turn-execution-key";
 
-const RETAINED_ENVELOPE_REVISION = 2;
+const RETAINED_ENVELOPE_REVISION = 3;
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
 
 function messageText(item: Record<string, unknown>): string | undefined {
   const content = item.content;
@@ -23,6 +29,32 @@ function compactionEpoch(input: unknown[] | undefined): unknown {
       || record.type === "context_compaction"
       || (record.role === "user" && messageText(record)?.startsWith(`${SUMMARY_PREFIX}\n`));
   }) ?? null;
+}
+
+export function chatGptModelSwitchEpoch(parsed: CodexParsedRequest): { itemId: string; turnId: string } | undefined {
+  const input = record(parsed._rawBody)?.input;
+  if (!Array.isArray(input)) return;
+  const item = input.findLast(value => {
+    const candidate = record(value);
+    if (candidate?.type !== "message" || candidate.role !== "developer"
+      || typeof candidate.id !== "string" || !candidate.id) return false;
+    const metadata = record(candidate.internal_chat_message_metadata_passthrough);
+    const kinds = metadata?.content_item_kinds;
+    if (typeof metadata?.turn_id !== "string" || !metadata.turn_id
+      || typeof metadata.create_time !== "number" || !Number.isFinite(metadata.create_time)
+      || !Array.isArray(kinds) || !Array.isArray(candidate.content)
+      || kinds.length !== candidate.content.length || !kinds.every(kind => typeof kind === "string")) return false;
+    const modelSwitchIndexes = kinds.flatMap((kind, index) => kind === "model_switch.instructions" ? [index] : []);
+    if (modelSwitchIndexes.length !== 1) return false;
+    const part = record(candidate.content[modelSwitchIndexes[0]!]);
+    if ((part?.type !== "input_text" && part?.type !== "text") || typeof part.text !== "string") return false;
+    const text = part.text.trim();
+    return /^<model_switch>[\s\S]*<\/model_switch>$/.test(text)
+      && (text.match(/<\/?model_switch>/g)?.length ?? 0) === 2;
+  });
+  const itemId = record(item)?.id;
+  const turnId = record(record(item)?.internal_chat_message_metadata_passthrough)?.turn_id;
+  return typeof itemId === "string" && typeof turnId === "string" ? { itemId, turnId } : undefined;
 }
 
 export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: string): string | undefined {
@@ -50,6 +82,7 @@ export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: st
     modelId: parsed.modelId,
     reasoning: parsed.options.reasoning,
     compaction: compactionEpoch(raw?.input),
+    modelSwitch: chatGptModelSwitchEpoch(parsed) ?? null,
     claudeHistoryAnchor,
     codexSession,
     // Codex rebuilds its base instructions on each request but binds their lifetime to the stable

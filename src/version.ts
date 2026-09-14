@@ -1,1 +1,3 @@
-export const VERSION = "5.0.6-Enhanced.4";
+import packageMetadata from "../package.json" with { type: "json" };
+
+export const VERSION = packageMetadata.version;

@@ -41,6 +41,32 @@ function setRevision(parsed: CodexParsedRequest, text: string): void {
   }];
 }
 
+function setCanonicalModelSwitch(parsed: CodexParsedRequest, switchTurnId: string, userText: string): void {
+  const body = parsed._rawBody as Record<string, unknown>;
+  body.input = [
+    {
+      type: "message",
+      role: "developer",
+      id: `switch-${switchTurnId}`,
+      content: [
+        { type: "input_text", text: "<model_switch>Use the selected model.</model_switch>" },
+        { type: "input_text", text: "<app-context>Keep the trusted context.</app-context>" },
+      ],
+      internal_chat_message_metadata_passthrough: {
+        turn_id: switchTurnId,
+        create_time: 1,
+        content_item_kinds: ["model_switch.instructions", "generic.developer_instructions"],
+      },
+    },
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: userText }],
+      internal_chat_message_metadata_passthrough: { turn_id: "turn-current" },
+    },
+  ];
+}
+
 test("trusted Codex root and subagent threads retain their Web conversation", () => {
   expect(claudeBrowserTurnOptions(request()).retainConversation).toBeTrue();
   const compact = request();
@@ -225,6 +251,76 @@ test("replacing a settled session releases a retained surface when its conversat
   );
 
   expect(releases).toBe(1);
+  sessions.clear();
+});
+
+test("canonical model switching retires the prior native-thread surface before starting the replacement", async () => {
+  const sessions = new ChatGptTurnSessions();
+  let settleOld!: () => void;
+  const oldSettlement = new Promise<void>(resolve => { settleOld = resolve; });
+  let starts = 0;
+  let cancellations = 0;
+  let releases = 0;
+  const firstRequest = request();
+  setRevision(firstRequest, "initial Web turn");
+  const oldConversationKey = chatGptConversationKey(firstRequest, "provider");
+  const first = await sessionForChatGptRequest(sessions, "old-owner", firstRequest, () => ({
+    mode: "tools" as const,
+    browser: Promise.resolve("old answer"),
+    physicalSettlement: oldSettlement,
+    token: Promise.resolve("old-token"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    conversationKey: oldConversationKey,
+    release: async () => { releases += 1; },
+    cancel: () => { cancellations += 1; },
+  }), "provider");
+  starts += 1;
+  await first.browserOutcome;
+
+  sessions.getOrCreate("unrelated-owner", () => ({
+    mode: "read-only" as const,
+    browser: Promise.resolve("unrelated answer"),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    conversationKey: "unrelated-conversation",
+    nativeIdentity: { threadId: "other-thread", turnId: "other-turn" },
+    cancel() {},
+  }));
+
+  const switchedRequest = request();
+  setCanonicalModelSwitch(switchedRequest, "switch-generation-one", "continue after switching");
+  const switchedConversationKey = chatGptConversationKey(switchedRequest, "provider");
+  expect(switchedConversationKey).not.toBe(oldConversationKey);
+  const replacement = sessionForChatGptRequest(sessions, "new-owner", switchedRequest, () => {
+    starts += 1;
+    return {
+      mode: "tools" as const,
+      browser: Promise.resolve("new answer"),
+      token: Promise.resolve("new-token"),
+      trace: new ChatGptTraceFeed(),
+      text: new ChatGptTextFeed(),
+      conversationKey: switchedConversationKey,
+      cancel() {},
+    };
+  }, "provider");
+
+  await Promise.resolve();
+  expect(starts).toBe(1);
+  expect(cancellations).toBe(1);
+  expect(releases).toBe(0);
+  expect(sessions.find("unrelated-owner")).toBeDefined();
+
+  settleOld();
+  const replacementSession = await replacement;
+  expect(starts).toBe(2);
+  expect(releases).toBe(1);
+  expect(await (replacementSession.runtime.mode === "tools" ? replacementSession.runtime.token : undefined))
+    .toBe("new-token");
+
+  const sameGeneration = structuredClone(switchedRequest);
+  setCanonicalModelSwitch(sameGeneration, "switch-generation-one", "continue in the same Web generation");
+  expect(chatGptConversationKey(sameGeneration, "provider")).toBe(switchedConversationKey);
   sessions.clear();
 });
 

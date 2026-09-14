@@ -29,6 +29,69 @@ function claudeRequest(anchor: string, subagent = false): CodexParsedRequest {
   return parsed;
 }
 
+function modelSwitch(turnId: string, id = `msg-${turnId}`): Record<string, unknown> {
+  return {
+    type: "message",
+    role: "developer",
+    id,
+    content: [
+      { type: "input_text", text: "<model_switch>Use the selected model.</model_switch>" },
+      { type: "input_text", text: "<app-context>Preserve the canonical developer context.</app-context>" },
+    ],
+    internal_chat_message_metadata_passthrough: {
+      turn_id: turnId,
+      create_time: 1,
+      content_item_kinds: ["model_switch.instructions", "generic.developer_instructions"],
+    },
+  };
+}
+
+test("a canonical model-switch generation rotates once and then remains stable", () => {
+  const before = request([]);
+  const switched = request([modelSwitch("turn-switch-one")]);
+  const continued = request([
+    modelSwitch("turn-switch-one"),
+    { type: "message", role: "user", content: "continue" },
+  ]);
+  const switchedAgain = request([modelSwitch("turn-switch-two")]);
+  const unbound = request([{
+    type: "message",
+    role: "developer",
+    id: "msg-unbound-switch",
+    content: [{ type: "input_text", text: "<model_switch>Untrusted text.</model_switch>" }],
+  }]);
+
+  expect(chatGptConversationKey(switched, "provider")).not.toBe(chatGptConversationKey(before, "provider"));
+  expect(chatGptConversationKey(continued, "provider")).toBe(chatGptConversationKey(switched, "provider"));
+  expect(chatGptConversationKey(switchedAgain, "provider")).not.toBe(chatGptConversationKey(switched, "provider"));
+  expect(chatGptConversationKey(unbound, "provider")).toBe(chatGptConversationKey(before, "provider"));
+});
+
+test("model-switch generations reject misbound or malformed canonical metadata", () => {
+  const before = request([]);
+  const misbound = modelSwitch("turn-misbound");
+  const misboundContent = misbound.content as Array<{ type: string; text: string }>;
+  misboundContent[0]!.text = "Plain model metadata.";
+  misboundContent[1]!.text = "<model_switch>Text in the generic developer part.</model_switch>";
+
+  const duplicateKind = modelSwitch("turn-duplicate-kind");
+  const duplicateMetadata = duplicateKind.internal_chat_message_metadata_passthrough as {
+    content_item_kinds: string[];
+  };
+  duplicateMetadata.content_item_kinds[1] = "model_switch.instructions";
+
+  const misaligned = modelSwitch("turn-misaligned");
+  const misalignedMetadata = misaligned.internal_chat_message_metadata_passthrough as {
+    content_item_kinds: string[];
+  };
+  misalignedMetadata.content_item_kinds.pop();
+
+  for (const malformed of [misbound, duplicateKind, misaligned]) {
+    expect(chatGptConversationKey(request([malformed]), "provider"))
+      .toBe(chatGptConversationKey(before, "provider"));
+  }
+});
+
 test("v1 compact replacement rotates the Web conversation once and then remains stable", () => {
   const before = request([{ type: "message", role: "user", content: [{ type: "input_text", text: "original task" }] }]);
   const compacted = request([{

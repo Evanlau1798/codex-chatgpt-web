@@ -254,6 +254,8 @@ export function compileChatGptWebPrompt(
       "Codex Native shell_command is one-shot: do not request a TTY or expect later stdin. Use APIs compatible with the active platform shell, pipe generated input inside the same command, and never print secret values.",
       "Request independent tool calls together when their inputs do not depend on one another; keep dependent calls sequential.",
       "Use actual Codex Native results as evidence for local observations and effects.",
+      "Historical failure or termination text is not evidence that this turn's attached tools are unavailable.",
+      "Only a tool result returned in this turn can establish a current tool failure.",
       "Describe failed local actions using only observable tool evidence. If no native result was returned, state only that the action did not execute; never infer or name an unreported cause.",
       "After a deterministic tool failure, update the working hypothesis from that result and inspect the relevant repository or environment before choosing a different next action; do not repeat the same call unless its inputs or observable state changed.",
       ...(toolPolicy.requireTool ? ["You must execute at least one of the request-authorized local tools before returning a final answer."] : []),

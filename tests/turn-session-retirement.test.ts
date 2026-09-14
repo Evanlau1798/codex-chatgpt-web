@@ -283,6 +283,80 @@ test("a new execution cannot overlap an active owner of the same conversation", 
   expect(replacements).toBe(1);
 });
 
+test("a model-switch replacement retires a settled retained owner of the same native thread", async () => {
+  const sessions = new ChatGptTurnSessions();
+  let released = 0;
+  const old = sessions.getOrCreate("old-execution", () => settledRuntime({
+    conversationKey: "old-conversation",
+    nativeIdentity: { threadId: "thread-switch", turnId: "turn-before-switch" },
+    release: async () => { released += 1; },
+  }));
+  await old.browserOutcome;
+
+  const replacement = await sessions.getOrCreateAfterConversationRetirement(
+    "new-execution",
+    "new-conversation",
+    () => settledRuntime({ conversationKey: "new-conversation" }),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    "thread-switch",
+    true,
+  );
+
+  expect(sessions.find("old-execution")).toBeUndefined();
+  expect(sessions.find("new-execution")).toBe(replacement);
+  expect(released).toBe(1);
+});
+
+test("a model-switch replacement waits for a pending retained owner of the same native thread", async () => {
+  const sessions = new ChatGptTurnSessions();
+  let finishOld!: (answer: string) => void;
+  let finishSettlement!: () => void;
+  let cancelled = 0;
+  const oldBrowser = new Promise<string>(resolve => { finishOld = resolve; });
+  const physicalSettlement = new Promise<void>(resolve => { finishSettlement = resolve; });
+  sessions.getOrCreate("old-execution", () => settledRuntime({
+    browser: oldBrowser,
+    physicalSettlement,
+    conversationKey: "old-conversation",
+    nativeIdentity: { threadId: "thread-switch", turnId: "turn-before-switch" },
+    cancel: () => {
+      cancelled += 1;
+      finishOld("cancelled");
+    },
+  }));
+
+  let starts = 0;
+  const replacement = sessions.getOrCreateAfterConversationRetirement(
+    "new-execution",
+    "new-conversation",
+    () => {
+      starts += 1;
+      return settledRuntime({ conversationKey: "new-conversation" });
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    "thread-switch",
+    true,
+  );
+  await Bun.sleep(0);
+
+  expect(cancelled).toBe(1);
+  expect(starts).toBe(0);
+  finishSettlement();
+  await replacement;
+  expect(starts).toBe(1);
+  expect(sessions.find("old-execution")).toBeUndefined();
+});
+
 test("an overlapping same-key retirement includes the replacement owner", async () => {
   const sessions = new ChatGptTurnSessions();
   let finishRelease!: () => void;

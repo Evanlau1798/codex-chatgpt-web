@@ -50,6 +50,7 @@ export class ChatGptTurnSessions {
     signal?: AbortSignal,
     manualOwner?: { key: string; abortedSteeringIds: ReadonlySet<string> },
     nativeThreadId?: string,
+    replaceNativeConversation = false,
   ): Promise<ChatGptTurnSession> {
     if (manualOwner) {
       for (const [ownedKey, session] of this.entries) {
@@ -69,6 +70,21 @@ export class ChatGptTurnSessions {
         ?? (conversationKey ? this.conversationRetirements.get(conversationKey) : undefined);
       if (pending) {
         await withAbort(pending, signal);
+        continue;
+      }
+      const staleNativeOwner = replaceNativeConversation && nativeThreadId && conversationKey
+        ? [...this.entries].find(([ownedKey, session]) => (
+            ownedKey !== key
+            && session.runtime.nativeIdentity?.threadId === nativeThreadId
+            && session.conversationKey() !== undefined
+            && session.conversationKey() !== conversationKey
+          ))
+        : undefined;
+      if (staleNativeOwner) {
+        const [ownedKey, ownedSession] = staleNativeOwner;
+        if (this.entries.get(ownedKey) !== ownedSession) continue;
+        this.entries.delete(ownedKey);
+        await withAbort(this.beginRetirement(ownedKey, ownedSession), signal);
         continue;
       }
       const activeOwner = (manualOwner || conversationKey)
