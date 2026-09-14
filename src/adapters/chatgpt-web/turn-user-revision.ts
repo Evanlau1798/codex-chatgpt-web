@@ -38,6 +38,27 @@ export function isUserOrParentInstruction(
     && item.author === agentName.slice(0, agentName.lastIndexOf("/"));
 }
 
+export function isCurrentTurnInstruction(
+  item: Record<string, unknown> | undefined,
+  metadata: Record<string, unknown> | undefined,
+  turnId: string,
+): boolean {
+  if (!isUserOrParentInstruction(item, metadata)) return false;
+  const owner = itemTurnId(item);
+  return owner === turnId || (item.type === "agent_message" && owner === undefined);
+}
+
+/** Candidate only: callers must authenticate an untagged server-owned item against canonical rollout. */
+export function isCurrentTurnInstructionCandidate(
+  item: Record<string, unknown> | undefined,
+  metadata: Record<string, unknown> | undefined,
+  turnId: string,
+): boolean {
+  if (!isUserOrParentInstruction(item, metadata)) return false;
+  const owner = itemTurnId(item);
+  return owner === turnId || (owner === undefined && typeof item.id === "string" && !!item.id);
+}
+
 function revision(item: Record<string, unknown>): CurrentTurnUserRevision {
   const turnId = itemTurnId(item);
   const itemId = typeof item.id === "string" && item.id.length > 0 ? item.id : undefined;

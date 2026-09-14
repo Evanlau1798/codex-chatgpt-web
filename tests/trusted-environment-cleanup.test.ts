@@ -7,6 +7,35 @@ import { ChatGptTextFeed, ChatGptTraceFeed } from "../src/adapters/chatgpt-web/t
 import { deferred } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { parseRequest } from "../src/responses/parser";
 
+test("accepted environment keeps an owned pending tool continuation alive", async () => {
+  const sessions = new ChatGptTurnSessions();
+  const browser = deferred<string>();
+  const physical = deferred<void>();
+  const session = sessions.getOrCreate("owned-key", () => ({
+    mode: "tools", token: Promise.resolve("turn_owned"), browser: browser.promise,
+    physicalSettlement: physical.promise, trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(),
+    nativeIdentity: { threadId: "thread-owned", turnId: "turn-owned" },
+    cancel: () => browser.reject(new Error("cancelled")),
+    release: async () => {},
+  }));
+  session.setOutstanding([{ callId: "call-owned", wireName: "apply_patch", freeform: true, arguments: {} }]);
+  const parsed = parseRequest({ model: "chatgpt-web/extra-high", client_metadata: {
+    "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread-owned", turn_id: "turn-owned" }),
+  }, input: [{ type: "custom_tool_call_output", call_id: "call-owned", output: "ok" }] });
+  const store = new ChatGptThreadEnvironmentStore();
+  store.resolve = () => ({
+    cwd: "G:\\repo", roots: ["G:\\repo"], writableRoots: ["G:\\repo"],
+    sandboxPolicy: { type: "dangerFullAccess" }, tools: [],
+  });
+  try {
+    expect((await resolveTrustedCodexEnvironment(store, parsed, "owned-key", sessions)).cwd).toBe("G:\\repo");
+    expect(sessions.find("owned-key")).toBe(session);
+  } finally {
+    browser.resolve("cleanup"); physical.resolve();
+    await sessions.retireAndWait("owned-key");
+  }
+});
+
 test.each(["owned", "wrong turn", "wrong result", "wrong key"])(
   "rejected environment cleans only an owned pending tool continuation: %s", async scenario => {
     const sessions = new ChatGptTurnSessions();

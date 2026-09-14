@@ -4,11 +4,13 @@ import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../type
 import { effectiveChatGptToolPolicy } from "./tool-policy";
 import {
   currentTurnUserRevision,
+  isCurrentTurnInstruction,
   isUserOrParentInstruction,
   itemTurnId,
   priorAbortedTurnIds,
   turnUserRevisionHistory,
 } from "./turn-user-revision";
+import { hasEnvironmentContextAttempt, isPureContextualCodexUserText } from "./contextual-user-message";
 import { isAcceptedCompactionContinuation } from "./compaction-continuation";
 import {
   codexTurnMetadataFromBody,
@@ -84,29 +86,52 @@ export function hasRawChatGptEnvironmentContext(parsed: CodexParsedRequest): boo
   const input = Array.isArray(body?.input) ? body.input : [];
   return input.some(value => {
     const item = record(value);
-    return item?.type === "message" && /<\/?environment_context\b/i.test(rawMessageText(item));
+    return item?.type === "message" && hasEnvironmentContextAttempt(item.content);
+  });
+}
+
+function currentEnvironmentAttempts(parsed: CodexParsedRequest): Array<{ item: Record<string, unknown>; index: number }> {
+  const turnId = extractChatGptTurnIdentity(parsed).turnId;
+  if (!turnId) return [];
+  const body = record(parsed._rawBody);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const metadata = clientTurnMetadata(parsed);
+  const replayPrefixLen = Math.min(parsed._replayPrefixLen ?? 0, input.length);
+  const revisionId = currentTurnUserRevision(parsed._rawBody, turnId)?.itemId;
+  const revisionIndex = revisionId
+    ? input.findLastIndex(value => record(value)?.id === revisionId)
+    : -1;
+  const currentInstructions: number[] = [];
+  for (let index = replayPrefixLen; index < input.length; index += 1) {
+    const item = record(input[index]);
+    if (isCurrentTurnInstruction(item, metadata, turnId) || index === revisionIndex) currentInstructions.push(index);
+  }
+  const structurallyFollowedByCurrentContext = (index: number): boolean => {
+    for (let next = index + 1; next < input.length; next += 1) {
+      const item = record(input[next]);
+      if (!item) return false;
+      if (item.type === "message" && item.role === "developer") continue;
+      return isCurrentTurnInstruction(item, metadata, turnId) || next === revisionIndex;
+    }
+    return false;
+  };
+  return input.flatMap((value, index) => {
+    if (index < replayPrefixLen) return [];
+    const item = record(value);
+    if (!item || item.type !== "message" || !hasEnvironmentContextAttempt(item.content)) return [];
+    const owner = itemTurnId(item);
+    const current = owner === turnId
+      || currentInstructions.some(instruction => instruction < index)
+      || structurallyFollowedByCurrentContext(index);
+    return current ? [{ item, index }] : [];
   });
 }
 
 /** Historical XML is not a current environment update, including in old untagged rollouts. */
 export function hasCurrentChatGptEnvironmentContext(parsed: CodexParsedRequest): boolean {
-  const turnId = extractChatGptTurnIdentity(parsed).turnId;
-  if (!turnId) return hasRawChatGptEnvironmentContext(parsed);
-  const body = record(parsed._rawBody);
-  const input = Array.isArray(body?.input) ? body.input : [];
-  let laterAssistantOutput = false;
-  for (let index = input.length - 1; index >= 0; index -= 1) {
-    const item = record(input[index]);
-    if (!item) continue;
-    if ((item.type === "message" && item.role === "assistant")
-      || item.type === "function_call" || item.type === "reasoning" || item.type === "compaction") {
-      laterAssistantOutput = true;
-    }
-    if (item.type !== "message" || !/<\/?environment_context\b/i.test(rawMessageText(item))) continue;
-    const owner = itemTurnId(item);
-    if (owner === turnId || (owner === undefined && !laterAssistantOutput)) return true;
-  }
-  return false;
+  return extractChatGptTurnIdentity(parsed).turnId
+    ? currentEnvironmentAttempts(parsed).length > 0
+    : hasRawChatGptEnvironmentContext(parsed);
 }
 
 /** Current native instruction, or an exact daemon-proven checkpoint continuation. */
@@ -170,14 +195,47 @@ export function isChatGptCompactionContinuation(parsed: CodexParsedRequest): boo
 export function extractChatGptContinuationEnvironmentClaims(parsed: CodexParsedRequest): ChatGptTurnEnvironment[] {
   const turnId = extractChatGptTurnIdentity(parsed).turnId;
   const body = record(parsed._rawBody);
-  const updates = (Array.isArray(body?.input) ? body.input : []).flatMap(value => {
-    const item = record(value);
-    if (item?.type !== "message" || item.role !== "user" || itemTurnId(item) !== turnId
-      || typeof item.id !== "string" || !item.id) return [];
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const metadata = clientTurnMetadata(parsed);
+  const revisionId = turnId ? currentTurnUserRevision(parsed._rawBody, turnId)?.itemId : undefined;
+  const revisionIndex = revisionId
+    ? input.findLastIndex(value => record(value)?.id === revisionId)
+    : -1;
+  const currentInstructions: number[] = [];
+  for (let index = 0; index < input.length; index += 1) {
+    const item = record(input[index]);
+    if (isCurrentTurnInstruction(item, metadata, turnId ?? "") || index === revisionIndex) currentInstructions.push(index);
+  }
+  const updates = currentEnvironmentAttempts(parsed).flatMap(({ item, index }) => {
+    if (item.role !== "user") {
+      throw new Error("Compaction continuation contains an unowned current native environment claim");
+    }
+    const owner = itemTurnId(item);
+    const afterCurrentInstruction = currentInstructions.some(instruction => instruction < index);
     const parts = typeof item.content === "string" ? [item.content]
       : Array.isArray(item.content) ? item.content.map(part => record(part)?.text) : [];
+    const serverOwnedId = typeof item.id === "string" && !!item.id;
+    const idlessSingleContextRefresh = !serverOwnedId && owner === undefined && parts.length === 1
+      && typeof parts[0] === "string" && isPureContextualCodexUserText(parts[0]);
+    if (!serverOwnedId && !idlessSingleContextRefresh) {
+      throw new Error("Compaction continuation contains an unowned current native environment claim");
+    }
+    const pureContextBundle = parts.length > 1 && parts.every(value => (
+      typeof value === "string" && isPureContextualCodexUserText(value)
+    ));
+    if (owner === undefined && serverOwnedId && !pureContextBundle) {
+      throw new MissingTrustedCodexEnvironmentError("cwd");
+    }
+    if (owner !== undefined && owner !== turnId) {
+      throw new Error("Compaction continuation contains an environment claim owned by another native turn");
+    }
+    if ((afterCurrentInstruction || owner === undefined) && parts.some(value => (
+      typeof value !== "string" || !isPureContextualCodexUserText(value)
+    ))) {
+      throw new Error("Compaction continuation mixes a current native environment refresh with other content");
+    }
     return parts.filter((value): value is string => (
-      typeof value === "string" && /<\/?environment_context\b/i.test(value)
+      typeof value === "string" && hasEnvironmentContextAttempt(value)
     ));
   });
   if (updates.length === 0) throw new Error("Compaction continuation requires a current native environment claim");
@@ -382,7 +440,7 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
     for (let index = activeUserIndex - 1; index > 0; index -= 1) {
       const following = record(input[index + 1]);
       if (following?.type !== "message" || following.role !== "user" || itemTurnId(following) !== turnId
-        || /<\/?environment_context\b/i.test(rawMessageText(following))) break;
+        || hasEnvironmentContextAttempt(following.content)) break;
       const earlier = environmentBeforeUser(input, index, turnId, metadata);
       if (earlier && (metadata?.workspaces === undefined || environmentMatchesCanonicalMetadata(earlier, metadata, true))) return earlier;
     }

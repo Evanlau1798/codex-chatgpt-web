@@ -1,4 +1,5 @@
 import type { CodexParsedRequest } from "../../types";
+import { hasEnvironmentContextAttempt } from "./contextual-user-message";
 import { extractChatGptTurnIdentity } from "./environment-identity";
 import { itemTurnId } from "./turn-user-revision";
 
@@ -13,15 +14,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function messageText(item: Record<string, unknown>): string {
-  if (typeof item.content === "string") return item.content;
-  if (!Array.isArray(item.content)) return "";
-  return item.content.flatMap(part => {
-    const text = record(part)?.text;
-    return typeof text === "string" ? [text] : [];
-  }).join("\n");
-}
-
 /** Claims to locate in native history, never a source of filesystem authority. */
 export function unattributedChatGptEnvironmentMessages(
   parsed: CodexParsedRequest,
@@ -32,7 +24,7 @@ export function unattributedChatGptEnvironmentMessages(
   const messages: ChatGptUnattributedEnvironmentMessage[] = [];
   for (const value of input) {
     const item = record(value);
-    if (item?.type !== "message" || !/<\/?environment_context\b/i.test(messageText(item))) continue;
+    if (item?.type !== "message" || !hasEnvironmentContextAttempt(item.content)) continue;
     const owner = itemTurnId(item);
     if (owner !== undefined && owner !== currentTurnId) continue;
     if (owner !== undefined || item.role !== "user" || typeof item.id !== "string" || !item.id) return undefined;

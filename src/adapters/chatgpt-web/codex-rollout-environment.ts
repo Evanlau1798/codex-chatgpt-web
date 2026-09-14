@@ -25,6 +25,14 @@ import type {
 import type { ChatGptUnattributedEnvironmentMessage } from "./environment-history";
 
 type RolloutIdentity = ChatGptRootThreadMetadata | ChatGptThreadSpawnLineage;
+type CurrentTurnAnchor = {
+  id: string;
+  type: string;
+  role: unknown;
+  content: unknown;
+  author: unknown;
+  recipient: unknown;
+};
 
 const CODEX_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
 const CODEX_ID = new RegExp(`^${CODEX_ID_SOURCE}$`, "i");
@@ -298,6 +306,73 @@ function verifyHistoricalEnvironmentMessages(
   throw new Error("Codex rollout has no current task boundary for environment history");
 }
 
+function verifyCurrentTurnAnchor(
+  fd: number,
+  size: number,
+  turnId: string,
+  anchor: CurrentTurnAnchor,
+): void {
+  let position = 0;
+  let carry = Buffer.alloc(0);
+  let inCurrentTurn = false;
+  let matched = false;
+  let mismatched = false;
+  let currentContext = false;
+  while (position < size) {
+    const length = Math.min(ROLLOUT_READ_CHUNK_BYTES, size - position);
+    const chunk = Buffer.alloc(length);
+    if (readSync(fd, chunk, 0, length, position) !== length) {
+      throw new Error("Codex rollout changed during current-turn anchor lookup");
+    }
+    position += length;
+    const data = Buffer.concat([carry, chunk]);
+    let start = 0;
+    for (let end = data.indexOf(0x0a); end >= 0; end = data.indexOf(0x0a, start)) {
+      const line = data.subarray(start, end);
+      start = end + 1;
+      if (!line.length) continue;
+      if (line.length > MAX_ROLLOUT_JSON_LINE_BYTES) throw new Error("Codex rollout JSONL record exceeds the bounded record size");
+      const item = parseJsonLine(line);
+      const payload = record(item.payload);
+      if (item.type === "event_msg" && payload?.type === "task_started") {
+        inCurrentTurn = payload.turn_id === turnId;
+        matched = false;
+        mismatched = false;
+        currentContext = false;
+        continue;
+      }
+      if (!inCurrentTurn) continue;
+      if (item.type === "response_item" && payload?.id === anchor.id) {
+        const candidate: CurrentTurnAnchor = {
+          id: payload.id as string,
+          type: payload.type as string,
+          role: payload.role,
+          content: payload.content,
+          author: payload.author,
+          recipient: payload.recipient,
+        };
+        if (!isDeepStrictEqual(candidate, anchor)) {
+          mismatched = true;
+          continue;
+        }
+        matched = true;
+        continue;
+      }
+      if (item.type === "turn_context" && payload?.turn_id === turnId) {
+        currentContext = true;
+        continue;
+      }
+    }
+    carry = Buffer.from(data.subarray(start));
+    if (carry.length > MAX_ROLLOUT_JSON_LINE_BYTES) throw new Error("Codex rollout JSONL record exceeds the bounded record size");
+  }
+  if (inCurrentTurn && mismatched) {
+    throw new Error("Current-turn anchor differs from its native Codex record");
+  }
+  if (inCurrentTurn && matched && currentContext) return;
+  throw new Error("Codex rollout has no authenticated current-turn anchor boundary");
+}
+
 function validateMetadataConsistency(
   lineage: RolloutIdentity,
   environment: ChatGptTurnEnvironment,
@@ -329,6 +404,7 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
   compactionSourceTurnId?: string;
   tools?: readonly CodexTool[];
   historicalEnvironmentMessages?: ChatGptUnattributedEnvironmentMessage[];
+  currentTurnAnchor?: CurrentTurnAnchor;
 }): ChatGptTurnEnvironment | undefined {
   const { codexHome, lineage, turnId, tools, compactionSourceTurnId } = options;
   const nativeThreadId = CODEX_ID.test(lineage.threadId);
@@ -344,8 +420,7 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
     ? [indexed.path]
     : scanCanonicalRollouts(codexHome, lineage.threadId);
   if (candidates.length === 0) {
-    if (!("parentThreadId" in lineage)) return undefined;
-    throw new Error("Codex has no canonical rollout for the requested subagent thread");
+    throw new Error(`Codex has no canonical rollout for the requested ${"parentThreadId" in lineage ? "subagent" : "root"} thread`);
   }
 
   const matching: ChatGptTurnEnvironment[] = [];
@@ -368,6 +443,9 @@ export function resolveCurrentCodexRolloutEnvironment(options: {
       validateMetadataConsistency(lineage, environment);
       if (options.historicalEnvironmentMessages) {
         verifyHistoricalEnvironmentMessages(fd, size, turnId, options.historicalEnvironmentMessages);
+      }
+      if (options.currentTurnAnchor) {
+        verifyCurrentTurnAnchor(fd, size, turnId, options.currentTurnAnchor);
       }
       matching.push(environment);
     } finally {

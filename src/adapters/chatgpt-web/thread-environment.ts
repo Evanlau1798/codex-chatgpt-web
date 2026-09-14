@@ -22,8 +22,11 @@ import { effectiveChatGptToolPolicy } from "./tool-policy";
 import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import { unattributedChatGptEnvironmentMessages } from "./environment-history";
 import { isAcceptedCompactionContinuation } from "./compaction-continuation";
+import { isPureContextualCodexUserText } from "./contextual-user-message";
 import { codexTurnMetadataFromBody } from "./environment-identity";
 import {
+  isCurrentTurnInstruction,
+  isCurrentTurnInstructionCandidate,
   isUserOrParentInstruction,
   itemTurnId,
   priorAbortedTurnIds,
@@ -37,6 +40,15 @@ interface StoredThreadEnvironment {
   sandboxPolicy: ChatGptSandboxPolicy;
   updatedAt: number;
 }
+
+type CurrentTurnAnchor = {
+  id: string;
+  type: string;
+  role: unknown;
+  content: unknown;
+  author: unknown;
+  recipient: unknown;
+};
 
 interface StoredThreadEnvironmentFile {
   version: 1;
@@ -66,44 +78,157 @@ function environmentContextPart(value: unknown): boolean {
     );
 }
 
-function contextualEnvelopePart(value: unknown): boolean {
+function singleContextualPart(value: unknown): boolean {
   const part = record(value);
-  if ((part?.type !== "input_text" && part?.type !== "text") || typeof part.text !== "string") return false;
-  const text = part.text.trim();
-  return environmentContextPart(part) || [
-    [/^# agents\.md instructions[\s\S]*<instructions>[\s\S]*<\/instructions>$/i, /<\/?instructions>/gi],
-    [/^<external_([^>]+)>[\s\S]*<\/external_\1>$/i, /<\/?external_[^>]+>/gi],
-    [/^<skill>[\s\S]*<\/skill>$/i, /<\/?skill>/gi],
-    [/^<user_shell_command>[\s\S]*<\/user_shell_command>$/i, /<\/?user_shell_command>/gi],
-    [/^<turn_aborted>[\s\S]*<\/turn_aborted>$/i, /<\/?turn_aborted>/gi],
-    [/^<subagent_notification>[\s\S]*<\/subagent_notification>$/i, /<\/?subagent_notification>/gi],
-    [/^<codex_internal_context source="[a-z][a-z0-9_]*">[\s\S]*<\/codex_internal_context>$/i,
-      /<\/?codex_internal_context(?:\s+source="[a-z][a-z0-9_]*")?>/gi],
-    [/^<goal_context>[\s\S]*<\/goal_context>$/i, /<\/?goal_context>/gi],
-    [/^<recommended_plugins>[\s\S]*<\/recommended_plugins>$/i, /<\/?recommended_plugins>/gi],
-    [/^<hook_prompt hook_run_id="[^"]+">[\s\S]*<\/hook_prompt>$/i,
-      /<\/?hook_prompt(?:\s+hook_run_id="[^"]+")?>/gi],
-  ].some(([whole, tags]) => isSingleEnvelope(text, whole!, tags!));
+  return (part?.type === "input_text" || part?.type === "text") && typeof part.text === "string"
+    && isPureContextualCodexUserText(part.text);
+}
+
+function pureContextualUserMessage(item: Record<string, unknown>): boolean {
+  return item.type === "message" && item.role === "user"
+    && Array.isArray(item.content) && item.content.length > 0
+    && item.content.every(singleContextualPart);
+}
+
+function isPassiveCurrentContextualContinuation(item: Record<string, unknown> | undefined, turnId: string): boolean {
+  const owner = itemTurnId(item);
+  return !!item && typeof item.id === "string" && !!item.id && (owner === undefined || owner === turnId)
+    && pureContextualUserMessage(item)
+    && !(item.content as unknown[]).some(part => environmentContextPart(part) || goalContextPart(part));
+}
+
+function rolloutAnchor(item: Record<string, unknown> | undefined): CurrentTurnAnchor | undefined {
+  if (!item || typeof item.id !== "string" || !item.id || typeof item.type !== "string" || !("content" in item)) return undefined;
+  return {
+    id: item.id,
+    type: item.type,
+    role: item.role,
+    content: item.content,
+    author: item.author,
+    recipient: item.recipient,
+  };
+}
+
+function modelSwitchMessage(item: Record<string, unknown> | undefined, turnId: string): boolean {
+  if (!item || item.type !== "message" || item.role !== "developer" || itemTurnId(item) !== turnId) return false;
+  const parts = typeof item.content === "string" ? [item.content] : Array.isArray(item.content) && item.content.length === 1
+    ? item.content.flatMap(value => {
+      const part = record(value);
+      return (part?.type === "input_text" || part?.type === "text") && typeof part.text === "string" ? [part.text] : [];
+    }) : [];
+  return parts.length === 1
+    && /^<model_switch>[\s\S]*<\/model_switch>$/.test(parts[0]!.trim())
+    && (parts[0]!.match(/<\/?model_switch>/g)?.length ?? 0) === 2;
+}
+
+function currentTurnRolloutAnchor(
+  input: unknown[],
+  checkpointIndex: number,
+  metadata: Record<string, unknown> | undefined,
+  turnId: string,
+  allowGoalAnchor: boolean,
+): CurrentTurnAnchor | undefined {
+  const suffix = input.slice(checkpointIndex + 1).map(record);
+  const invalidTrailingUserAfter = (index: number): boolean => suffix.slice(index + 1).some(item => {
+    if (item?.type !== "message" || item.role !== "user") return false;
+    const owner = itemTurnId(item);
+    return (owner !== undefined && owner !== turnId)
+      || !pureContextualUserMessage(item)
+      || (Array.isArray(item.content) && item.content.some(goalContextPart));
+  });
+  const invalidPassiveTrailingUserAfter = (index: number): boolean => suffix.slice(index + 1).some(item => (
+    item?.type === "message" && item.role === "user" && !isPassiveCurrentContextualContinuation(item, turnId)
+  ));
+  const ordinaryIndex = suffix.findLastIndex(item => (
+    isCurrentTurnInstructionCandidate(item, metadata, turnId) && !hasGoalContextAttempt(item)
+  ));
+  if (ordinaryIndex >= 0) {
+    if (invalidTrailingUserAfter(ordinaryIndex)) return undefined;
+    const ordinaryAnchor = rolloutAnchor(suffix[ordinaryIndex]);
+    if (ordinaryAnchor) return ordinaryAnchor;
+  }
+
+  const modelSwitchIndex = suffix.findLastIndex(item => modelSwitchMessage(item, turnId));
+  if (modelSwitchIndex >= 0 && !invalidPassiveTrailingUserAfter(modelSwitchIndex)) {
+    const modelSwitchAnchor = rolloutAnchor(suffix[modelSwitchIndex]);
+    if (modelSwitchAnchor) return modelSwitchAnchor;
+  }
+
+  const goal = allowGoalAnchor ? goalContinuationBoundary(suffix, metadata, turnId) : undefined;
+  if (goal) {
+    const goalAnchor = rolloutAnchor(suffix[goal.index]);
+    if (goalAnchor) return goalAnchor;
+  }
+
+  const currentUserMessages = suffix.filter(item => {
+    if (item?.type !== "message" || item.role !== "user" || typeof item.id !== "string" || !item.id) return false;
+    const owner = itemTurnId(item);
+    return owner === undefined || owner === turnId;
+  });
+  if (currentUserMessages.length === 0
+    || !currentUserMessages.every(item => isPassiveCurrentContextualContinuation(item, turnId))) return undefined;
+  return rolloutAnchor(currentUserMessages.at(-1));
 }
 
 function goalContextPart(value: unknown): boolean {
   const part = record(value);
   if ((part?.type !== "input_text" && part?.type !== "text") || typeof part.text !== "string") return false;
+  const text = part.text.trim();
   return isSingleEnvelope(
-    part.text.trim(),
+    text,
     /^<codex_internal_context source="goal">[\s\S]*<\/codex_internal_context>$/,
     /<\/?codex_internal_context(?:\s+source="[a-z][a-z0-9_]*")?>/g,
-  );
+  ) || isSingleEnvelope(text, /^<goal_context>[\s\S]*<\/goal_context>$/i, /<\/?goal_context>/gi);
 }
 
-function isNativeToolCall(item: Record<string, unknown>): boolean {
-  return item.type === "function_call" || item.type === "custom_tool_call" || item.type === "tool_search_call";
+function goalContextAttemptPart(value: unknown): boolean {
+  const part = record(value);
+  if ((part?.type !== "input_text" && part?.type !== "text") || typeof part.text !== "string") return false;
+  const text = part.text.trim();
+  return /^<\/?goal_context\b/i.test(text)
+    || /^<codex_internal_context\b(?=[^>]*\bsource\s*=\s*(?:"goal"|'goal'|goal\b))/i.test(text)
+    || /^<\/codex_internal_context\b/i.test(text);
 }
 
-function isNativeTurnOutput(item: Record<string, unknown>): boolean {
-  return isNativeToolCall(item) || item.type === "reasoning" || item.type === "function_call_output"
-    || item.type === "custom_tool_call_output" || item.type === "tool_search_output"
-    || (item.type === "message" && item.role === "assistant");
+function hasGoalContextAttempt(item: Record<string, unknown> | undefined): boolean {
+  return item?.type === "message" && item.role === "user" && Array.isArray(item.content)
+    && item.content.some(goalContextAttemptPart);
+}
+
+function goalContinuationBoundary(
+  suffix: unknown[],
+  metadata: Record<string, unknown> | undefined,
+  turnId: string,
+): { index: number } | undefined {
+  const items = suffix.map(record);
+  const goalIndexes = items.flatMap((item, index) => (
+    item?.type === "message" && item.role === "user" && Array.isArray(item.content)
+      && item.content.some(goalContextPart) ? [index] : []
+  ));
+  if (goalIndexes.length !== 1) return undefined;
+  const goalIndex = goalIndexes[0]!;
+  const goalContextCount = items.reduce((count, item) => count + (
+    item?.type === "message" && item.role === "user" && Array.isArray(item.content)
+      ? item.content.filter(goalContextPart).length : 0
+  ), 0);
+  if (goalContextCount !== 1) return undefined;
+  const validPrefix = items.slice(0, goalIndex + 1).every(item => {
+    if (!item || typeof item.id !== "string" || !item.id || itemTurnId(item) !== turnId) return false;
+    if (item.type !== "message" || !Array.isArray(item.content) || item.content.length === 0) return false;
+    if (item.role === "user") return item.content.every(singleContextualPart);
+    return item.role === "developer" && item.content.every(part => {
+      const content = record(part);
+      return (content?.type === "input_text" || content?.type === "text") && typeof content.text === "string"
+        && !/<\/?(?:environment_context|codex_internal_context)\b/i.test(content.text);
+    });
+  });
+  const validTrailingHistory = items.slice(goalIndex + 1).every(item => {
+    return !!item && typeof item.id === "string" && !!item.id
+      && itemTurnId(item) === turnId
+      && !isCurrentTurnInstruction(item, metadata, turnId)
+      && (item.type !== "message" || item.role !== "user" || pureContextualUserMessage(item));
+  });
+  return validPrefix && validTrailingHistory ? { index: goalIndex } : undefined;
 }
 
 function latestCompactionIndex(input: unknown[]): number {
@@ -120,13 +245,6 @@ function latestCompactionIndex(input: unknown[]): number {
   return checkpointIndex;
 }
 
-function isCurrentInstruction(value: unknown, metadata: Record<string, unknown> | undefined, turnId: string): boolean {
-  const item = record(value);
-  const owner = itemTurnId(item);
-  return isUserOrParentInstruction(item, metadata)
-    && (owner === turnId || (item.type === "agent_message" && owner === undefined));
-}
-
 function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
   const identity = extractChatGptTurnIdentity(parsed);
   if (!identity.turnId) return false;
@@ -137,48 +255,20 @@ function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
 
   const metadata = codexTurnMetadataFromBody(parsed._rawBody);
   const suffix = input.slice(checkpointIndex + 1);
-  const hasCurrentSteering = suffix.some(value => isCurrentInstruction(value, metadata, identity.turnId!));
-  const hasNewEnvironment = suffix.some(value => {
-    const item = record(value);
-    return (item?.type === "message" || item?.type === "agent_message")
-      && /<\/?environment_context\b/i.test(JSON.stringify(item.content ?? ""));
-  });
+  const hasCurrentSteering = suffix.some(value => isCurrentTurnInstruction(record(value), metadata, identity.turnId!));
   const suffixUserMessages = suffix.flatMap(value => {
     const item = record(value);
     return item?.type === "message" && item.role === "user" ? [item] : [];
   });
-  const goalContextCount = suffixUserMessages.reduce((count, item) => count + (
-    Array.isArray(item.content) ? item.content.filter(goalContextPart).length : 0
-  ), 0);
   const currentEnvironmentClaimCount = suffixUserMessages.reduce((count, item) => count + (
     Array.isArray(item.content) ? item.content.filter(environmentContextPart).length : 0
   ), 0);
-  const goalIndex = suffix.findIndex(value => {
-    const item = record(value);
-    return item?.type === "message" && item.role === "user"
-      && Array.isArray(item.content) && item.content.some(goalContextPart);
-  });
-  const hasOnlyCurrentContext = suffix.length > 0 && suffix.every((value, index) => {
-    const item = record(value);
-    if (!item || typeof item.id !== "string" || !item.id || itemTurnId(item) !== identity.turnId) return false;
-    // Goal output/tool rounds and environment refreshes retain rollout-verified authority.
-    // Output before that boundary, unowned replay and new instructions still fail closed.
-    if (goalIndex >= 0 && index > goalIndex) return isNativeTurnOutput(item)
-      || (item.type === "message" && item.role === "user" && Array.isArray(item.content)
-        && item.content.length > 0 && item.content.every(environmentContextPart));
-    if (item.type !== "message" || !Array.isArray(item.content) || item.content.length === 0) return false;
-    if (item.role === "user") return item.content.every(contextualEnvelopePart);
-    return item.role === "developer" && item.content.every(part => {
-      const content = record(part);
-      return (content?.type === "input_text" || content?.type === "text") && typeof content.text === "string"
-        && !/<\/?(?:environment_context|codex_internal_context)\b/i.test(content.text);
-    });
-  });
+  const goalBoundary = goalContinuationBoundary(suffix, metadata, identity.turnId);
   // Goal-driven continuation has no ordinary user revision. Its current, server-owned environment
   // still proceeds only through the canonical rollout comparison in resolve().
-  if (!hasCurrentSteering && currentEnvironmentClaimCount >= 1 && goalContextCount === 1 && hasOnlyCurrentContext
+  if (!hasCurrentSteering && currentEnvironmentClaimCount >= 1 && goalBoundary
     && !extractChatGptThreadSpawnLineage(parsed) && extractChatGptRootThreadMetadata(parsed)) return true;
-  if (!hasCurrentSteering || hasNewEnvironment) return false;
+  if (!hasCurrentSteering) return false;
 
   const aborted = new Set(priorAbortedTurnIds(parsed._rawBody, identity.turnId));
   const sourceBody = { ...body, input: input.slice(0, checkpointIndex) };
@@ -187,39 +277,6 @@ function isAcceptedPostCompactionContext(parsed: CodexParsedRequest): boolean {
     && (source.turnId === undefined || !aborted.has(source.turnId))
     && isAcceptedCompactionContinuation(parsed, identity, source)
   ));
-}
-
-/** Validate the current native turn segment; ordinary revisions never move its authority boundary. */
-function hasOwnedEnvironmentRefresh(parsed: CodexParsedRequest): boolean {
-  const { turnId } = extractChatGptTurnIdentity(parsed);
-  const body = record(parsed._rawBody);
-  if (!turnId || !Array.isArray(body?.input)) return false;
-  const metadata = codexTurnMetadataFromBody(body);
-  const input = body.input.slice(latestCompactionIndex(body.input) + 1);
-  const source = input.findIndex(value => isCurrentInstruction(value, metadata, turnId));
-  if (source < 0 || typeof record(input[source])?.id !== "string" || !record(input[source])?.id) return false;
-  let outputSeen = false;
-  let refreshSeen = false;
-  return input.slice(source + 1).every(value => {
-    const item = record(value);
-    if (!item || typeof item.id !== "string" || !item.id
-      || (itemTurnId(item) !== turnId && !isCurrentInstruction(item, metadata, turnId))) return false;
-    // Later instructions do not revoke earlier claims. Environment attempts remain separate,
-    // well-formed envelopes, and resolve() compares every claim with this turn's native rollout.
-    if (isUserOrParentInstruction(item, metadata)
-      && !/<\/?environment_context\b/i.test(JSON.stringify(item.content ?? ""))) return true;
-    if (item.type === "message" && item.role === "user") {
-      if (!Array.isArray(item.content) || !item.content.length || !item.content.every(contextualEnvelopePart)) return false;
-      if (item.content.some(environmentContextPart)) {
-        if (!outputSeen || !item.content.every(environmentContextPart)) return false;
-        refreshSeen = true;
-      }
-      return true;
-    }
-    outputSeen ||= isNativeToolCall(item)
-      || (item.type === "message" && item.role === "assistant");
-    return isNativeTurnOutput(item);
-  }) && refreshSeen;
 }
 
 function pathIdentity(value: string): string {
@@ -328,95 +385,123 @@ export class ChatGptThreadEnvironmentStore {
 
   resolve(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
     const identity = extractChatGptTurnIdentity(parsed);
+    let directEnvironment: ChatGptTurnEnvironment | undefined;
+    let directError: unknown;
     try {
-      const environment = extractChatGptTurnEnvironment(parsed);
-      if (identity.threadId) this.set(identity.threadId, environment);
-      return environment;
+      directEnvironment = extractChatGptTurnEnvironment(parsed);
     } catch (error) {
-      if (!(error instanceof MissingTrustedCodexEnvironmentError) || !identity.threadId) throw error;
-      const hasCurrentContext = hasCurrentChatGptEnvironmentContext(parsed);
-      const lineage = extractChatGptThreadSpawnLineage(parsed);
-      const currentCompaction = hasCurrentContext && isChatGptCompactionContinuation(parsed);
-      const postCompactionContext = hasCurrentContext && !currentCompaction
-        && isAcceptedPostCompactionContext(parsed);
-      const currentRefresh = hasCurrentContext && !currentCompaction && !postCompactionContext
-        && hasOwnedEnvironmentRefresh(parsed);
-      const historicalMessages = hasCurrentContext && !currentCompaction && !postCompactionContext && !currentRefresh && lineage
-        ? unattributedChatGptEnvironmentMessages(parsed) : undefined;
-      if (hasCurrentContext && !currentCompaction && !postCompactionContext && !currentRefresh && !historicalMessages) throw error;
-      const currentClaims = currentCompaction || postCompactionContext || currentRefresh
-        ? extractChatGptContinuationEnvironmentClaims(parsed) : [];
-      const rolloutIdentity = lineage ?? extractChatGptRootThreadMetadata(parsed);
-      // Automatic compaction has a current turn_context; standalone compaction has only its
-      // source turn_context. Either must be the latest native record, never an arbitrary ancestor.
-      const compactionSourceTurnId = parsed._compactionRequest || parsed._localCompactionRequest
-        ? extractChatGptCompactionSourceRevision(parsed).turnId : undefined;
-      if (rolloutIdentity && identity.turnId) {
-        const rolloutEnvironment = resolveCurrentCodexRolloutEnvironment({
-          codexHome: this.codexHome,
-          ...(this.sqliteHome ? { sqliteHome: this.sqliteHome } : {}),
-          lineage: rolloutIdentity,
-          turnId: identity.turnId,
-          ...(compactionSourceTurnId ? { compactionSourceTurnId } : {}),
-          ...(historicalMessages ? { historicalEnvironmentMessages: historicalMessages } : {}),
-          tools: effectiveChatGptToolPolicy(parsed).tools,
-        });
-        if (rolloutEnvironment) {
-          if (currentClaims.some(claim => !sameAuthority(claim, rolloutEnvironment))) {
-            throw new Error("Compaction continuation environment conflicts with its current Codex rollout");
-          }
-          this.set(rolloutIdentity.threadId, rolloutEnvironment);
-          return rolloutEnvironment;
-        }
-      }
-      // Only a current native rollout can supersede an unrecognized historical envelope. Without
-      // that proof, do not turn arbitrary history or an invalid update into cached authority.
-      if (hasRawChatGptEnvironmentContext(parsed)) throw error;
-      const sameThread = this.get(identity.threadId);
-      if (sameThread) return {
-        cwd: sameThread.cwd,
-        roots: sameThread.roots,
-        writableRoots: sameThread.writableRoots,
-        sandboxPolicy: sameThread.sandboxPolicy,
-        tools: effectiveChatGptToolPolicy(parsed).tools,
-      };
-
-      if (!lineage && identity.parentThreadId && identity.parentThreadId !== identity.threadId
-        && !identity.agentName && !identity.subagentKind
-        && this.inherit(identity.parentThreadId, identity.threadId)) {
-        const inherited = this.get(identity.threadId);
-        if (inherited) return {
-          cwd: inherited.cwd,
-          roots: inherited.roots,
-          writableRoots: inherited.writableRoots,
-          sandboxPolicy: inherited.sandboxPolicy,
-          tools: effectiveChatGptToolPolicy(parsed).tools,
-        };
-      }
-      if (!lineage) throw error;
-      const parent = this.get(lineage.parentThreadId);
-      if (!parent) throw error;
-      if (lineage.sandboxType !== parent.sandboxPolicy.type) {
-        throw new Error("ChatGPT Web subagent sandbox metadata conflicts with its trusted parent thread");
-      }
-      if (lineage.workspaceRoots.length > 0 && !lineage.workspaceRoots.some(root => contains(root, parent.cwd))) {
-        throw new Error("ChatGPT Web subagent workspace metadata does not contain its trusted parent cwd");
-      }
-      if (lineage.workspaceRoots.some(root => !parent.roots.some(parentRoot => (
-        contains(parentRoot, root) || contains(root, parentRoot)
-      )))) {
-        throw new Error("ChatGPT Web subagent workspace metadata conflicts with its trusted parent roots");
-      }
-      const inherited: ChatGptTurnEnvironment = {
-        cwd: parent.cwd,
-        roots: parent.roots,
-        writableRoots: parent.writableRoots,
-        sandboxPolicy: parent.sandboxPolicy,
-        tools: effectiveChatGptToolPolicy(parsed).tools,
-      };
-      this.set(lineage.threadId, inherited);
-      return inherited;
+      directError = error;
     }
+
+    if (directError && !(directError instanceof MissingTrustedCodexEnvironmentError)) throw directError;
+    if (!identity.threadId) {
+      if (directEnvironment) return directEnvironment;
+      throw directError;
+    }
+
+    const hasCurrentContext = hasCurrentChatGptEnvironmentContext(parsed);
+    const lineage = extractChatGptThreadSpawnLineage(parsed);
+    const currentCompaction = isChatGptCompactionContinuation(parsed);
+    const postCompactionContext = !currentCompaction && isAcceptedPostCompactionContext(parsed);
+    const body = record(parsed._rawBody);
+    const input = Array.isArray(body?.input) ? body.input : [];
+    const checkpointIndex = latestCompactionIndex(input);
+    const metadata = codexTurnMetadataFromBody(body);
+    const sourceBeforeCheckpoint = checkpointIndex >= 0
+      ? [...input.slice(0, checkpointIndex)].reverse().find(value => isUserOrParentInstruction(record(value), metadata))
+      : undefined;
+    const crossesForeignCompaction = checkpointIndex >= 0
+      && itemTurnId(sourceBeforeCheckpoint) !== identity.turnId;
+    const hasCurrentInstruction = !!identity.turnId
+      && input.some(value => isCurrentTurnInstruction(record(value), metadata, identity.turnId!));
+    const ordinaryContinuation = hasCurrentInstruction && !crossesForeignCompaction;
+    const rootMetadata = extractChatGptRootThreadMetadata(parsed);
+    const currentTurnAnchor = crossesForeignCompaction && !!identity.turnId && !currentCompaction && !postCompactionContext
+      ? currentTurnRolloutAnchor(input, checkpointIndex, metadata, identity.turnId, !lineage && !!rootMetadata)
+      : undefined;
+    const historicalMessages = !hasCurrentContext && lineage
+      ? unattributedChatGptEnvironmentMessages(parsed) : undefined;
+    const rolloutIdentity = lineage ?? rootMetadata;
+    // Automatic compaction has a current turn_context; standalone compaction has only its
+    // source turn_context. Either must be the latest native record, never an arbitrary ancestor.
+    const compactionSourceTurnId = parsed._compactionRequest || parsed._localCompactionRequest
+      ? extractChatGptCompactionSourceRevision(parsed).turnId : undefined;
+    if (parsed._rawBody !== undefined && rolloutIdentity && identity.turnId) {
+      const rolloutEnvironment = resolveCurrentCodexRolloutEnvironment({
+        codexHome: this.codexHome,
+        ...(this.sqliteHome ? { sqliteHome: this.sqliteHome } : {}),
+        lineage: rolloutIdentity,
+        turnId: identity.turnId,
+        ...(compactionSourceTurnId ? { compactionSourceTurnId } : {}),
+        ...(historicalMessages ? { historicalEnvironmentMessages: historicalMessages } : {}),
+        ...(currentTurnAnchor ? { currentTurnAnchor } : {}),
+        tools: effectiveChatGptToolPolicy(parsed).tools,
+      });
+      if (rolloutEnvironment) {
+        const currentClaims = hasCurrentContext ? extractChatGptContinuationEnvironmentClaims(parsed) : [];
+        if (currentClaims.some(claim => !sameAuthority(claim, rolloutEnvironment))) {
+          throw new Error("Compaction continuation environment conflicts with its current Codex rollout");
+        }
+        if ((hasCurrentContext || crossesForeignCompaction)
+          && !currentCompaction && !postCompactionContext && !ordinaryContinuation
+          && !currentTurnAnchor) throw new MissingTrustedCodexEnvironmentError("cwd");
+        this.set(rolloutIdentity.threadId, rolloutEnvironment);
+        return rolloutEnvironment;
+      }
+    }
+
+    if (directEnvironment) {
+      this.set(identity.threadId, directEnvironment);
+      return directEnvironment;
+    }
+    const missingEnvironment = directError as MissingTrustedCodexEnvironmentError;
+    // Only a current native rollout can supersede an unrecognized historical envelope. Without
+    // that proof, do not turn arbitrary history or an invalid update into cached authority.
+    if (hasRawChatGptEnvironmentContext(parsed)) throw missingEnvironment;
+    const sameThread = this.get(identity.threadId);
+    if (sameThread) return {
+      cwd: sameThread.cwd,
+      roots: sameThread.roots,
+      writableRoots: sameThread.writableRoots,
+      sandboxPolicy: sameThread.sandboxPolicy,
+      tools: effectiveChatGptToolPolicy(parsed).tools,
+    };
+
+    if (!lineage && identity.parentThreadId && identity.parentThreadId !== identity.threadId
+      && !identity.agentName && !identity.subagentKind
+      && this.inherit(identity.parentThreadId, identity.threadId)) {
+      const inherited = this.get(identity.threadId);
+      if (inherited) return {
+        cwd: inherited.cwd,
+        roots: inherited.roots,
+        writableRoots: inherited.writableRoots,
+        sandboxPolicy: inherited.sandboxPolicy,
+        tools: effectiveChatGptToolPolicy(parsed).tools,
+      };
+    }
+    if (!lineage) throw missingEnvironment;
+    const parent = this.get(lineage.parentThreadId);
+    if (!parent) throw missingEnvironment;
+    if (lineage.sandboxType !== parent.sandboxPolicy.type) {
+      throw new Error("ChatGPT Web subagent sandbox metadata conflicts with its trusted parent thread");
+    }
+    if (lineage.workspaceRoots.length > 0 && !lineage.workspaceRoots.some(root => contains(root, parent.cwd))) {
+      throw new Error("ChatGPT Web subagent workspace metadata does not contain its trusted parent cwd");
+    }
+    if (lineage.workspaceRoots.some(root => !parent.roots.some(parentRoot => (
+      contains(parentRoot, root) || contains(root, parentRoot)
+    )))) {
+      throw new Error("ChatGPT Web subagent workspace metadata conflicts with its trusted parent roots");
+    }
+    const inherited: ChatGptTurnEnvironment = {
+      cwd: parent.cwd,
+      roots: parent.roots,
+      writableRoots: parent.writableRoots,
+      sandboxPolicy: parent.sandboxPolicy,
+      tools: effectiveChatGptToolPolicy(parsed).tools,
+    };
+    this.set(lineage.threadId, inherited);
+    return inherited;
   }
 
   inherit(parentThreadId: string, childThreadId: string): boolean {
