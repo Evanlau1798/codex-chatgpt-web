@@ -261,6 +261,45 @@ test("an automatic Goal turn after agent completion recovers from its canonical 
     .toThrow();
 });
 
+test("an automatic Goal turn can follow explicitly owned completed-turn history after a compact checkpoint", () => {
+  const goalThreadId = "01a09103-0000-7000-8000-000000000087";
+  const previousTurnId = "01a09103-0000-7000-8000-000000000088";
+  const goalTurnId = "01a09103-0000-7000-8000-000000000089";
+  const { body, codexHome, root, rollout } = fixture({
+    remember: false,
+    threadId: goalThreadId,
+    turnId: goalTurnId,
+  });
+  const [, source, checkpoint] = body.input;
+  const previousInstruction = {
+    type: "message", role: "user", id: "msg_previous_completed_turn",
+    content: [{ type: "input_text", text: "Finish the previous turn." }],
+    internal_chat_message_metadata_passthrough: { turn_id: previousTurnId },
+  };
+  const previousAssistant = {
+    type: "message", role: "assistant", id: "msg_previous_completed_assistant",
+    content: [{ type: "output_text", text: "Previous turn completed." }],
+    internal_chat_message_metadata_passthrough: { turn_id: previousTurnId },
+  };
+  const goal = {
+    type: "message", role: "user", id: "msg_goal_after_completed_turn",
+    content: [{
+      type: "input_text",
+      text: '<codex_internal_context source="goal">Continue the active goal.</codex_internal_context>',
+    }],
+    internal_chat_message_metadata_passthrough: { turn_id: goalTurnId },
+  };
+  body.input = [source!, checkpoint!, previousInstruction, previousAssistant, goal];
+  appendCanonicalTurn(rollout, goalTurnId, root, [goal]);
+
+  expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(parseRequest(body)).cwd).toBe(root);
+
+  const ambiguous = structuredClone(body);
+  delete ambiguous.input[2]!.internal_chat_message_metadata_passthrough;
+  expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(parseRequest(ambiguous)))
+    .toThrow("ChatGPT web turn is missing cwd in trusted Codex environment context");
+});
+
 test("completed subagent notification after compact Goal keeps exact rollout authority without refresh", () => {
   const goalThreadId = "01a09103-0000-7000-8000-000000000021";
   const goalTurnId = "01a09103-0000-7000-8000-000000000022";

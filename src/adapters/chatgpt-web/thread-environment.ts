@@ -202,19 +202,30 @@ function goalContinuationBoundary(
 ): { index: number } | undefined {
   const items = suffix.map(record);
   const goalIndexes = items.flatMap((item, index) => (
-    item?.type === "message" && item.role === "user" && Array.isArray(item.content)
+    itemTurnId(item) === turnId
+      && item?.type === "message" && item.role === "user" && Array.isArray(item.content)
       && item.content.some(goalContextPart) ? [index] : []
   ));
   if (goalIndexes.length !== 1) return undefined;
   const goalIndex = goalIndexes[0]!;
   const goalContextCount = items.reduce((count, item) => count + (
-    item?.type === "message" && item.role === "user" && Array.isArray(item.content)
+    itemTurnId(item) === turnId
+      && item?.type === "message" && item.role === "user" && Array.isArray(item.content)
       ? item.content.filter(goalContextPart).length : 0
   ), 0);
   if (goalContextCount !== 1) return undefined;
+  let currentPrefixStarted = false;
   const validPrefix = items.slice(0, goalIndex + 1).every(item => {
-    if (!item || typeof item.id !== "string" || !item.id || itemTurnId(item) !== turnId) return false;
-    if (item.type !== "message" || !Array.isArray(item.content) || item.content.length === 0) return false;
+    if (!item) return false;
+    const owner = itemTurnId(item);
+    if (owner !== turnId) {
+      if (currentPrefixStarted) return false;
+      if (owner !== undefined) return true;
+      return item.type !== "message" && item.type !== "agent_message";
+    }
+    currentPrefixStarted = true;
+    if (typeof item.id !== "string" || !item.id
+      || item.type !== "message" || !Array.isArray(item.content) || item.content.length === 0) return false;
     if (item.role === "user") return item.content.every(singleContextualPart);
     return item.role === "developer" && item.content.every(part => {
       const content = record(part);
