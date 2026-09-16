@@ -354,7 +354,7 @@ class BrowserHost {
     this.homeNavigationTimeout = null;
     this.lastTurnSweepAt = Date.now();
     this.powerSaveBlockerId = null;
-    this.turnLeaseSweep = setInterval(() => this.reapExpiredTurnTabs(), TURN_HEARTBEAT_SWEEP_MS);
+    this.turnLeaseSweep = setInterval(() => { void this.reapExpiredTurnTabs(); }, TURN_HEARTBEAT_SWEEP_MS);
     this.turnLeaseSweep.unref?.();
     this.resumeListener = () => this.refreshTurnLeases("system_resume");
     if (powerMonitor && typeof powerMonitor.on === "function") {
@@ -1118,6 +1118,7 @@ class BrowserHost {
   }
 
   reapExpiredTurnTabs(now = Date.now()) {
+    const cancellations = [];
     const lastSweepAt = this.lastTurnSweepAt;
     this.lastTurnSweepAt = now;
     if (sweepGapIndicatesSuspension(lastSweepAt, now, TURN_HEARTBEAT_SWEEP_MS)) {
@@ -1143,15 +1144,43 @@ class BrowserHost {
       const heartbeatExpired = tab.bootstrapReady === true
         && now - (tab.lastHeartbeatAt ?? 0) >= TURN_HEARTBEAT_TIMEOUT_MS;
       if (!bootstrapExpired && !heartbeatExpired) continue;
+      if (tab.expiryCancellation) {
+        cancellations.push(tab.expiryCancellation);
+        continue;
+      }
       const evidence = bootstrapExpired ? "browser_surface_bootstrap_timeout" : "helper_heartbeat_expired";
-      this.logger.warn("browser.orphan_turn_reaped", {
+      const expiredOwner = {
         tabId: tab.id,
         traceId: tab.traceId,
         helperPid: tab.helperPid,
         evidence,
+      };
+      this.logger.warn("browser.orphan_turn_expired", expiredOwner);
+      if (!this.cancelTurn) {
+        this.removeTurnTab(tab, true);
+        this.logger.warn("browser.orphan_turn_reaped", expiredOwner);
+        continue;
+      }
+      const { traceId, helperPid } = tab;
+      tab.expiryCancellation = Promise.resolve().then(async () => {
+        try {
+          await this.cancelTurn(traceId, evidence);
+          if (this.turnTabs.get(tab.id) === tab && tab.traceId === traceId
+            && tab.helperPid === helperPid && tab.status === "running") {
+            this.removeTurnTab(tab, true);
+          }
+          this.logger.warn("browser.orphan_turn_reaped", expiredOwner);
+        } catch (error) {
+          this.logger.warn("browser.orphan_turn_cancel_failed", {
+            tabId: tab.id, traceId, evidence, errorType: error?.name || "Error",
+          });
+        } finally {
+          delete tab.expiryCancellation;
+        }
       });
-      this.removeTurnTab(tab, true);
+      cancellations.push(tab.expiryCancellation);
     }
+    return Promise.all(cancellations);
   }
 
   setBounds(bounds, rendererZoomFactor = 1) {
@@ -2165,10 +2194,11 @@ class BrowserHost {
       throw new Error("Browser helper returned invalid ChatGPT session evidence");
     }
     if (detectCapabilities
-      && (typeof inspected.solAvailable !== "boolean" || typeof inspected.proAvailable !== "boolean")) {
+      && (typeof inspected.solAvailable !== "boolean" || typeof inspected.extraHighAvailable !== "boolean"
+        || typeof inspected.proAvailable !== "boolean")) {
       throw new Error("Browser helper returned incomplete ChatGPT capability evidence");
     }
-    if (detectCapabilities && inspected.proAvailable && !inspected.solAvailable) {
+    if (detectCapabilities && (inspected.proAvailable || inspected.extraHighAvailable) && !inspected.solAvailable) {
       throw new Error("Browser helper returned contradictory ChatGPT capability evidence");
     }
     if (startedIdle) await this.returnToIdle();

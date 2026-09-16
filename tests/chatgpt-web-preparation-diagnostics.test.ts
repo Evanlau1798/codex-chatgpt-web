@@ -89,6 +89,7 @@ test("prompt preparation failures remain authoritative across broker revocation"
       brokerSocketPath: socketPath,
       localToolsEnabled: true,
       solAvailable: true,
+      extraHighAvailable: true,
       proAvailable: true,
       useEnhancedWebSessionMode: true,
     },

@@ -13,6 +13,7 @@ function fixture() {
   const end = main.indexOf("\n  });", start);
   const context = {
     app: {}, setAutostart() { autostarts++; }, updateTrayMenu() {}, logger: { info() {} },
+    languages: require("../electron/languages.json"),
     stateStore: {
       read: () => ({ githubOpened: true, xOpened: true, autoStart: true }),
       update: patch => { writes++; return patch; },

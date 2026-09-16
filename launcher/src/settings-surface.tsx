@@ -1,3 +1,4 @@
+import languages from "../electron/languages.json";
 import { useState, type ReactNode } from "react";
 import { biggerContextSwitchState } from "./context-mode";
 import { Icon } from "./icons";
@@ -358,11 +359,7 @@ function Switch({
 
 function LanguageMenu({ copy, language, onChange }: { copy: Copy; language: Language; onChange: (language: Language) => void }) {
   const [open, setOpen] = useState(false);
-  const options: Array<{ label: string; value: Language }> = [
-    { label: copy.english, value: "en" },
-    { label: copy.chinese, value: "zh-CN" },
-    { label: copy.japanese, value: "ja" },
-  ];
+  const options = (Object.keys(languages) as Language[]).map(value => ({ value, ...languages[value] }));
   const selected = options.find((option) => option.value === language) ?? options[0];
 
   return (

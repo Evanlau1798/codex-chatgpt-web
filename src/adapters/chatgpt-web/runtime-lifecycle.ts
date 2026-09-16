@@ -154,7 +154,9 @@ export function chatGptSurfaceRecoveryDecision(
     && (error.code === "chatgpt_surface_changed"
       || error.code === "chatgpt_connector_unavailable"
       || error.code === "chatgpt_completion_evidence_missing");
-  if (!surfaceFailure && !(error instanceof StallTimeoutError)) {
+  const unpublishedUpstreamFailure = error instanceof ChatGptWebAdapterError
+    && error.code === "upstream_server_error";
+  if (!surfaceFailure && !unpublishedUpstreamFailure && !(error instanceof StallTimeoutError)) {
     return reject("unsupported_error");
   }
   if (surfaceFailure && !error.retryable) return reject("non_retryable");
@@ -162,6 +164,11 @@ export function chatGptSurfaceRecoveryDecision(
   if (parsed._canonicalContextComplete !== true) return reject("canonical_incomplete");
   if (unresolvedSupersededCount > 0) return reject("superseded_results_pending");
   const outstanding = session.outstanding();
+  if (unpublishedUpstreamFailure) {
+    if (outstanding.length === 0) return reject("unsupported_error");
+    if (session.outstandingPublished()) return reject("tool_results_incomplete");
+    return { eligible: true, reason: "eligible", canonicalResultCount, unresolvedSupersededCount };
+  }
   if (outstanding.length === 0) {
     return { eligible: true, reason: "eligible", canonicalResultCount, unresolvedSupersededCount };
   }

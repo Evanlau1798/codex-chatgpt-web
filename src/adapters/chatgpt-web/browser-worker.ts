@@ -45,6 +45,7 @@ import {
 import { CHATGPT_MAX_INPUT_IMAGES, type CompiledChatGptWebPrompt, type ChatGptWebPromptImage } from "./prompt";
 import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import { ChatGptVisibleTraceTracker, type ChatGptVisibleTraceBlock } from "./visible-trace-tracker";
+import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
 import {
   ChatGptCompletionTracker,
   type ChatGptFinalProjectionState,
@@ -364,6 +365,38 @@ export async function throwIfChatGptTerminalErrorAlert(
     "ChatGPT ended the turn with 'Something went wrong'. Retry the turn.",
     { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
   );
+}
+
+export async function chatGptUnavailableProDetail(menu: Locator): Promise<string | undefined> {
+  const rows = menu.getByRole("menuitemradio", { name: "Pro", exact: true }).filter({ visible: true });
+  try {
+    if (await rows.count() !== 1 || await rows.getAttribute("aria-disabled") !== "true") return undefined;
+    await rows.hover({ timeout: 1_500 });
+    return await rows.evaluate(async element => {
+      const deadline = Date.now() + 1_000;
+      do {
+        const ids = element.getAttribute("aria-describedby")?.trim().split(/\s+/).filter(Boolean) ?? [];
+        const tooltips = ids.map(id => document.getElementById(id))
+          .filter((node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "tooltip");
+        const visible = tooltips.filter(node => {
+          for (let current: HTMLElement | null = node; current; current = current.parentElement) {
+            const style = getComputedStyle(current);
+            if (!current.isConnected || current.hidden || current.getAttribute("aria-hidden") === "true"
+              || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+          }
+          return true;
+        });
+        if (visible.length === 1) {
+          const text = visible[0]!.textContent?.replace(/\s+/g, " ").trim();
+          if (text && text.length <= 512) return text;
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } while (Date.now() < deadline);
+      return undefined;
+    }, undefined, { timeout: 1_500 });
+  } catch {
+    return undefined;
+  }
 }
 
 export async function resolveChatGptToolConfirmation(
@@ -967,6 +1000,7 @@ export class ChatGptBrowserWorker {
     temporary: true;
     url: string;
     solAvailable?: boolean;
+    extraHighAvailable?: boolean;
     proAvailable?: boolean;
   }> {
     return this.enqueueMaintenance("session inspection", () => this.inspectSessionExclusive(detectCapabilities));
@@ -1225,9 +1259,13 @@ export class ChatGptBrowserWorker {
       }
       const targetValue = sliderState.min + uiEffortIndex;
       if (targetValue > sliderState.max) {
+        const detail = uiEffortIndex === 4
+          ? await chatGptUnavailableProDetail(page.locator(CHATGPT_EFFORT_MENU_SELECTOR).filter({ visible: true }).last())
+          : undefined;
         throw new ChatGptWebAdapterError(
           `ChatGPT effort slider does not expose item index ${uiEffortIndex}`
-          + ` (min=${sliderState.min}; max=${sliderState.max})`,
+          + ` (min=${sliderState.min}; max=${sliderState.max})`
+          + (detail ? ` ChatGPT: ${detail}` : ""),
           { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: false },
         );
       }
@@ -2220,6 +2258,7 @@ export class ChatGptBrowserWorker {
     temporary: true;
     url: string;
     solAvailable?: boolean;
+    extraHighAvailable?: boolean;
     proAvailable?: boolean;
   }> {
     const page = await this.ensurePage();
@@ -2294,8 +2333,9 @@ export class ChatGptBrowserWorker {
     ownership?: ChatGptMarkdownOwnershipTracker,
     running = false,
   ): Promise<ChatGptResponseDomSnapshot> {
-    const snapshot = await responseTurn.evaluate((element, completionActionSelector) => {
+    const snapshot = await responseTurn.evaluate((element, options) => {
       const root = element as HTMLElement;
+      const completionActionSelector = options.completionActionSelector;
       // Browser turn WebContents are intentionally allowed to run while their Electron view is
       // hidden or has no measured width. Layout geometry is therefore not response visibility:
       // completed Markdown can have width=0 while remaining connected, rendered and readable.
@@ -2715,6 +2755,10 @@ export class ChatGptBrowserWorker {
         } : {}),
       }));
       const stoppedThinkingVisible = (() => {
+        const labels = new Set<string>(options.stoppedThinkingLabels);
+        const isStoppedLabel = (value: string | null): boolean => (
+          labels.has(value?.replace(/\s+/g, " ").trim() ?? "")
+        );
         const isStatus = (candidate: HTMLElement): boolean => {
           if (overlapsRenderedAnswer(candidate) || overlapsCommentary(candidate)
             || candidate.closest("pre, code, blockquote")) return false;
@@ -2723,10 +2767,11 @@ export class ChatGptBrowserWorker {
           }
           return true;
         };
-        if ([...root.querySelectorAll<HTMLElement>('[aria-label="Stopped thinking"]')].some(isStatus)) return true;
+        if ([...root.querySelectorAll<HTMLElement>("[aria-label]")]
+          .some(candidate => isStoppedLabel(candidate.getAttribute("aria-label")) && isStatus(candidate))) return true;
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-          if (node.textContent?.replace(/\s+/g, " ").trim() !== "Stopped thinking") continue;
+          if (!isStoppedLabel(node.textContent)) continue;
           const parent = node.parentElement;
           if (parent && isStatus(parent)) return true;
         }
@@ -2775,7 +2820,10 @@ export class ChatGptBrowserWorker {
         traceBlocks,
         nativeToolCandidates,
       };
-    }, CHATGPT_COMPLETION_ACTION_SELECTOR, { timeout: 2_000 }).catch(() => {
+    }, {
+      completionActionSelector: CHATGPT_COMPLETION_ACTION_SELECTOR,
+      stoppedThinkingLabels: [...CHATGPT_STOPPED_THINKING_LABELS],
+    }, { timeout: 2_000 }).catch(() => {
       if (responseTurn.page().isClosed()) {
         throw chatGptBrowserTabClosedError();
       }

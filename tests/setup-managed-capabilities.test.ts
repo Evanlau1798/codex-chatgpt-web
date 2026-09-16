@@ -15,7 +15,7 @@ const javascript = new Bun.Transpiler({ loader: "ts" }).transformSync(`async fun
   return config;
 }`);
 const probe = new Function(`${javascript}; return probe;`)() as (context: Record<string, unknown>) => Promise<{
-  solAvailable: boolean; proAvailable: boolean;
+  solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean;
 }>;
 
 test.each(["automatic", "manual"])("managed Automatic re-entry refreshes only prior manual capabilities: %s", async prior => {
@@ -23,9 +23,12 @@ test.each(["automatic", "manual"])("managed Automatic re-entry refreshes only pr
   const result = await probe({
     config: { browserHost: "managed-chrome", browserInteractionMode: "automatic" },
     existing: { browserInteractionMode: prior }, options: {}, beforeService: { loaded: false },
-    storedBrowserLoginCapabilities: () => ({ solAvailable: true, proAvailable: true }),
+    storedBrowserLoginCapabilities: () => ({ solAvailable: true, extraHighAvailable: true, proAvailable: true }),
     browserLoginStateExists: () => true,
-    inspectBrowserLoginCapabilities: async () => { calls.push("inspect"); return { solAvailable: true, proAvailable: false }; },
+    inspectBrowserLoginCapabilities: async () => {
+      calls.push("inspect");
+      return { solAvailable: true, extraHighAvailable: false, proAvailable: false };
+    },
     loginToChatGpt: async () => { throw new Error("Verified login must not be replaced"); },
   });
   expect(calls).toEqual(prior === "manual" ? ["inspect"] : []);

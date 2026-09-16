@@ -168,6 +168,18 @@ reasoning 摘要与最终答案会通过现有 Native2 tunnel 返回，ChatGPT �
 更大上下文不会取代 compact，也不会更改非 Web 的 OpenAI／Codex 原生路由。偏好一般单消息传输时
 可关闭此功能；Enhanced 的会话保留、steering 与 handoff compact 均维持独立。
 
+### 三个上下文开关分别改变什么
+
+**增强型 Web 会话模式**会在工具回合、steering 与压缩之间保留同一个任务绑定的 ChatGPT 对话。
+它只改变会话连续性，不会扩大上下文窗口，也不会关闭压缩；它与 **Bigger Context** 互斥。
+Bigger Context 会把一个大型 Codex 回合拆成两条或三条暂存消息，再发送一条最终执行消息。每条都
+是真实的 ChatGPT 请求，可能消耗账户额度。它会把向 Codex 公布的上下文和压缩阈值扩大三倍，但
+ChatGPT 的消息、模型、编辑器、传输与服务限制仍然有效。
+
+**No Context Window** 只会从 Codex 读取的模型目录中移除 ChatGPT Web 的上下文窗口与自动压缩
+阈值。它不会创造无限上下文、绕过 ChatGPT 限制、停止 Token 计量，也不会让过大的浏览器提示变成
+有效请求；这类提示仍会安全失败。只有在其他流程明确负责压缩时才应启用。
+
 ## Claude Code
 
 在启动器中选择 **安装到 Claude Code**，即可配置本地 `/v1/messages` gateway、所选 Web 模型

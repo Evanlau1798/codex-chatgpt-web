@@ -770,6 +770,8 @@ test("launcher adopts a healthy native managed tunnel without spawning a foregro
   fs.writeFileSync(binaryPath, "binary");
   fs.writeFileSync(runtimeKeyFile, "runtime-key");
   fs.writeFileSync(path.join(profileDir, "codex-chatgpt-web.yaml"), "profile");
+  const healthUrlFile = path.join(root, "health-url");
+  fs.writeFileSync(healthUrlFile, health.baseUrl);
   const supervisor = new RuntimeSupervisor({
     app: { getVersion: () => "0.2.0", isPackaged: false },
     logger: { info() {}, warn() {}, error() {} },
@@ -791,12 +793,13 @@ test("launcher adopts a healthy native managed tunnel without spawning a foregro
     return { code: 0, output: "{}" };
   };
   supervisor.runTunnelCommand = async () => ({ code: 0,
-    output: JSON.stringify({ local: { effective_health: { base_url: health.baseUrl } } }) });
+    output: JSON.stringify({ aliases: [{ alias: "codex-chatgpt-web", health_url_file: healthUrlFile }] }) });
   supervisor.startTunnelMonitor = () => { monitors += 1; };
   try {
     await supervisor.startTunnel({
       mode: "full",
       tunnel: {
+        alias: "codex-chatgpt-web",
         binaryPath,
         runtimeKeyFile,
         profileDir,
@@ -831,11 +834,13 @@ for (const existingReady of [true, false]) {
     let connected = existingReady;
     let monitoring = false;
     const config = { mode: "full", tunnel: { alias: "owned-test" } };
+    const healthUrlFile = path.join(root, "health-url");
+    fs.writeFileSync(healthUrlFile, health.baseUrl);
     supervisor.assertTunnelClientReady = () => {};
     supervisor.readTunnelHealth = async () => ({ ready: connected, statusKnown: true,
       state: connected ? "ready" : "stopped", processRunning: connected, pid: null });
     supervisor.runTunnelCommand = async () => ({ code: 0,
-      output: JSON.stringify({ local: { effective_health: { base_url: health.baseUrl } } }) });
+      output: JSON.stringify({ aliases: [{ alias: "owned-test", health_url_file: healthUrlFile }] }) });
     supervisor.runTunnelConnectCommand = async () => { connected = true; return { code: 0 }; };
     supervisor.runTunnelStopCommand = async () => { connected = false; return { code: 0 }; };
     supervisor.waitForTunnelStopped = async () => { assert.equal(connected, false); };

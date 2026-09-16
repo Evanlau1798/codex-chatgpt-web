@@ -1,3 +1,4 @@
+const languages = require("./languages.json");
 const fs = require("node:fs");
 const { runtimePreferenceState, manualMcpSetupState } = require("./runtime-setup-state.cjs");
 const net = require("node:net");
@@ -13,6 +14,7 @@ const {
   nativeImage,
   nativeTheme,
   screen,
+  session,
   shell,
   Tray,
 } = require("electron");
@@ -62,6 +64,10 @@ const ALLOWED_EXTERNAL_URLS = new Set([GITHUB_URL, X_URL, CONNECTORS_URL, TUNNEL
 const PACKAGED_RENDERER_URL = pathToFileURL(path.join(__dirname, "..", "dist", "index.html")).href;
 const APP_ICON_PATH = path.join(__dirname, "..", "assets", "icon.png");
 
+const launchEnvironment = {
+  CODEX_CHATGPT_WEB_HOME: process.env.CODEX_CHATGPT_WEB_HOME,
+  CODEX_HOME: process.env.CODEX_HOME,
+};
 process.env.CODEX_CHATGPT_WEB_HOME = CORE_HOME;
 process.env.CODEX_HOME = LAUNCHER_PROFILE.codexHome;
 app.setName(LAUNCHER_PROFILE.displayName);
@@ -80,6 +86,7 @@ installProcessDiagnosticGuards({
 let mainWindow = null;
 let mainWindowReadyToShow = false;
 let mainWindowShowRequested = false;
+let startupFailed = false;
 let browserHost = null;
 let runtimeHost = null;
 let browserControl = null;
@@ -126,6 +133,7 @@ function stopCatalogVerificationMonitor() {
 
 function startCatalogVerificationMonitor({ logger, stateStore }) {
   stopCatalogVerificationMonitor();
+  let reportedFailure = null;
   const check = async () => {
     const current = stateStore.read();
     if (current.coreSetupComplete !== true
@@ -140,7 +148,30 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
       const config = runtimeSupervisor.readConfig();
       const health = await runtimeSupervisor.proxyHealthPayload(config);
       if (!Number.isInteger(health?.successful_model_catalog_requests)
-        || health.successful_model_catalog_requests < 1) return;
+        || health.successful_model_catalog_requests < 1) {
+        const result = health?.last_model_catalog_result;
+        if (!result || !Number.isInteger(result.status) || result.status < 400 || result.status > 599
+          || !Number.isInteger(result.request) || result.request < 1 || lastOperation?.status === "running") return;
+        const identity = `${health.pid}:${result.request}:${result.at}`;
+        if (identity === reportedFailure) return;
+        reportedFailure = identity;
+        const reason = typeof result.failure?.code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(result.failure.code)
+          ? result.failure.code
+          : ["config", "request", "transport", "upstream", "catalog"].includes(result.failure?.stage)
+            ? result.failure.stage
+            : "catalog";
+        const state = stateStore.update({ codexRestartRequired: false });
+        send("launcher:state-changed", state);
+        logger.warn("codex.model_catalog_failed", { status: result.status, reason, request: result.request });
+        publishOperation({
+          name: "catalog-verification",
+          status: "failed",
+          message: nativeCopyFor(current.language).catalogFailure
+            .replace("{status}", String(result.status))
+            .replace("{reason}", reason),
+        });
+        return;
+      }
       const state = stateStore.update({
         codexCatalogVerified: true,
         codexRestartRequired: false,
@@ -206,6 +237,11 @@ const NATIVE_COPY = Object.freeze({
     removeTitle: "Remove Codex Web GPT",
     removeMessage: "Remove the ChatGPT Web models from Codex and restore the previous model route?",
     removeDetail: "The launcher's ChatGPT login profile will be preserved. Codex must be restarted once.",
+    retry: "Retry",
+    startupTitle: "Codex Web GPT could not start",
+    startupDetail: "Retry starts the launcher again without changing your saved settings or ChatGPT profile.",
+    startupCleanupFailed: "Startup cleanup failed",
+    catalogFailure: "Codex reached the launcher, but loading its model catalog failed (HTTP {status}; {reason}). Check Activity for details and export a safe log if it persists.",
   }),
   "zh-CN": Object.freeze({
     openLauncher: "打开 Codex Web GPT",
@@ -216,6 +252,26 @@ const NATIVE_COPY = Object.freeze({
     removeTitle: "移除 Codex Web GPT",
     removeMessage: "从 Codex 中移除 ChatGPT Web 模型并恢复此前的模型路由？",
     removeDetail: "启动器中的 ChatGPT 登录 profile 会保留。Codex 需要重启一次。",
+    retry: "重试",
+    startupTitle: "Codex Web GPT 无法启动",
+    startupDetail: "重试会重新启动应用，不会更改已保存的设置或 ChatGPT 登录配置。",
+    startupCleanupFailed: "启动清理失败",
+    catalogFailure: "Codex 已连接到启动器，但模型列表加载失败（HTTP {status}；{reason}）。请查看“活动”了解详情；若问题持续，请导出安全日志。",
+  }),
+  "zh-TW": Object.freeze({
+    openLauncher: "開啟 Codex Web GPT",
+    quit: "結束",
+    exportDiagnostics: "匯出隱私安全診斷",
+    cancel: "取消",
+    remove: "移除",
+    removeTitle: "移除 Codex Web GPT",
+    removeMessage: "從 Codex 中移除 ChatGPT Web 模型並還原先前的模型路由？",
+    removeDetail: "啟動器中的 ChatGPT 登入設定檔會保留。Codex 需要重新啟動一次。",
+    retry: "重試",
+    startupTitle: "Codex Web GPT 無法啟動",
+    startupDetail: "重試會重新啟動應用程式，不會變更已儲存的設定或 ChatGPT 登入設定檔。",
+    startupCleanupFailed: "啟動清理失敗",
+    catalogFailure: "Codex 已連線到啟動器，但模型清單載入失敗（HTTP {status}；{reason}）。請查看「活動」了解詳情；若問題持續，請匯出安全日誌。",
   }),
   ja: Object.freeze({
     openLauncher: "Codex Web GPT を開く",
@@ -226,6 +282,26 @@ const NATIVE_COPY = Object.freeze({
     removeTitle: "Codex Web GPT を削除",
     removeMessage: "Codex から ChatGPT Web モデルを削除し、以前のモデルルートを復元しますか？",
     removeDetail: "ランチャーの ChatGPT ログインプロファイルは保持されます。Codex を一度再起動する必要があります。",
+    retry: "再試行",
+    startupTitle: "Codex Web GPT を起動できませんでした",
+    startupDetail: "保存済みの設定と ChatGPT プロファイルを変更せずに、ランチャーを再起動します。",
+    startupCleanupFailed: "起動後のクリーンアップに失敗しました",
+    catalogFailure: "Codex はランチャーに接続しましたが、モデル一覧を読み込めませんでした（HTTP {status}、{reason}）。「アクティビティ」で詳細を確認し、問題が続く場合は安全なログをエクスポートしてください。",
+  }),
+  ko: Object.freeze({
+    openLauncher: "Codex Web GPT 열기",
+    quit: "종료",
+    exportDiagnostics: "개인정보가 보호된 진단 정보 내보내기",
+    cancel: "취소",
+    remove: "제거",
+    removeTitle: "Codex Web GPT 제거",
+    removeMessage: "Codex에서 ChatGPT Web 모델을 제거하고 이전 모델 경로를 복원할까요?",
+    removeDetail: "런처의 ChatGPT 로그인 프로필은 유지됩니다. Codex를 한 번 다시 시작해야 합니다.",
+    retry: "다시 시도",
+    startupTitle: "Codex Web GPT를 시작할 수 없습니다",
+    startupDetail: "저장된 설정이나 ChatGPT 프로필을 변경하지 않고 런처를 다시 시작합니다.",
+    startupCleanupFailed: "시작 정리에 실패했습니다",
+    catalogFailure: "Codex가 런처에 연결했지만 모델 목록을 불러오지 못했습니다(HTTP {status}; {reason}). 활동에서 세부 정보를 확인하고 문제가 계속되면 안전한 로그를 내보내 주세요.",
   }),
 });
 
@@ -260,7 +336,7 @@ function createTray(logger, language) {
 function showMainWindow() {
   // A second-instance request can arrive while the hidden launcher prepares its runtime.
   mainWindowShowRequested = true;
-  if (!mainWindowReadyToShow || !mainWindow || mainWindow.isDestroyed()) return;
+  if ((!mainWindowReadyToShow && !startupFailed) || !mainWindow || mainWindow.isDestroyed()) return;
   mainWindowShowRequested = false;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
@@ -398,8 +474,8 @@ async function loadRenderer(window) {
 }
 
 function validateLanguage(value) {
-  if (value !== "en" && value !== "zh-CN" && value !== "ja") {
-    throw new Error("Language must be en, zh-CN, or ja");
+  if (typeof value !== "string" || !Object.hasOwn(languages, value)) {
+    throw new Error(`Language must be one of: ${Object.keys(languages).join(", ")}`);
   }
   return value;
 }
@@ -752,6 +828,7 @@ function registerIpc({ logger, stateStore }) {
     const manual = stateStore.read().browserInteractionMode === "manual";
     const browser = manual ? { authenticated: true } : await browserHost.probeAuthentication();
     if (!manual && !browser.authenticated) {
+      if (browser.status === "error") throw new Error(browser.message);
       throw new Error(
         IS_DEV_PROFILE
           ? "Sign in to the isolated DEV ChatGPT profile before configuring the harness"
@@ -938,6 +1015,7 @@ async function start() {
     return;
   }
   app.on("second-instance", () => showMainWindow());
+  app.on("activate", () => showMainWindow());
 
   await waitForPackagedRuntimeSource({ app, resourcesPath: process.resourcesPath });
   let installedRuntimeRoot = null;
@@ -1007,6 +1085,7 @@ async function start() {
     logger,
     getBrowserHost: () => browserHost,
     getPreferences: () => stateStore.read(),
+    resolveProxy: url => session.fromPartition(LAUNCHER_PROFILE.browserPartition).resolveProxy(url),
   }).start();
   runtimeSupervisor = new RuntimeSupervisor({
     app,
@@ -1043,7 +1122,7 @@ async function start() {
     descriptorPath: BROWSER_DESCRIPTOR_PATH,
     cdpPort,
     control: browserControl.descriptor(),
-    cancelTurn: IS_DEV_PROFILE ? undefined : traceId => runtimeSupervisor.cancelBrowserTurn(traceId),
+    cancelTurn: IS_DEV_PROFILE ? undefined : (traceId, reason) => runtimeSupervisor.cancelBrowserTurn(traceId, reason),
     getConnectorName: () => runtimeHost.browserConnectorName(),
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
@@ -1289,7 +1368,6 @@ async function start() {
     publishOperation({ name: "runtime-start", status: "failed", message });
   });
 
-  app.on("activate", () => showMainWindow());
   app.on("before-quit", (event) => {
     if (exitCommitted) return;
     event.preventDefault();
@@ -1299,13 +1377,45 @@ async function start() {
   process.once("SIGTERM", () => { void requestQuit(); });
 }
 
-void start().catch((error) => {
+void start().catch(async (error) => {
+  startupFailed = true;
   const message = error instanceof Error ? error.message : String(error);
   try {
     fs.appendFileSync(path.join(app.getPath("logs"), "launcher-fatal.log"), `${new Date().toISOString()} ${error?.stack || error}\n`);
   } catch {}
   try {
-    dialog.showErrorBox("Codex Web GPT could not start", message);
-  } catch {}
-  app.exit(1);
+    const cleanupErrors = [];
+    try { browserHost?.destroy(); } catch (caught) { cleanupErrors.push(String(caught)); }
+    try { await browserControl?.close(); } catch (caught) { cleanupErrors.push(String(caught)); }
+    if (process.argv.includes("--launcher-smoke-test")) return;
+    await app.whenReady();
+    quitting = true;
+    showMainWindow();
+    const copy = nativeCopyFor(createStateStore(path.join(app.getPath("userData"), "launcher-state.json")).read().language);
+    const options = {
+      type: "error",
+      title: copy.startupTitle,
+      message,
+      detail: [
+        copy.startupDetail,
+        ...cleanupErrors.map(detail => `${copy.startupCleanupFailed}: ${detail}`),
+      ].join("\n"),
+      buttons: [copy.retry, copy.quit],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    };
+    const result = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    if (result.response === 0) {
+      for (const [key, value] of Object.entries(launchEnvironment)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      app.relaunch({ args: process.argv.slice(1).filter(argument => argument !== "--hidden") });
+    }
+  } finally {
+    app.exit(1);
+  }
 });

@@ -2,6 +2,35 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { BrowserControlServer } = require("../electron/control-server.cjs");
 
+test("native proxy resolution requires owner auth, restricts targets, and works without browser automation", async () => {
+  const resolved = [];
+  const server = await new BrowserControlServer({
+    logger: { info() {}, warn() {}, error() {} },
+    getBrowserHost: () => { throw new Error("proxy resolution must not inspect browser contents"); },
+    getPreferences: () => { throw new Error("proxy resolution must not depend on integration mode"); },
+    resolveProxy: async url => { resolved.push(url); return "PROXY 127.0.0.1:7897"; },
+  }).start();
+  const { endpoint, token } = server.descriptor();
+  const send = (url, authorization = `Bearer ${token}`) => fetch(`${endpoint}/v1/network/resolve-proxy`, {
+    method: "POST", headers: { authorization, "content-type": "application/json" }, body: JSON.stringify({ url }),
+  });
+  try {
+    const url = "https://chatgpt.com/backend-api/codex/models?client_version=0.153.4";
+    assert.equal((await send(url, "Bearer wrong")).status, 401);
+    for (const target of ["http://chatgpt.com/backend-api/codex/models", "https://example.com/", "https://secret@chatgpt.com/backend-api/codex/models", "https://chatgpt.com/backend-api/me"]) {
+      assert.equal((await send(target)).status, 400);
+    }
+    const response = await send(url);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { proxy: "PROXY 127.0.0.1:7897" });
+    assert.deepEqual(resolved, [url]);
+    server.resolveProxy = async () => { throw new Error("private PAC address"); };
+    const failure = await send(url);
+    assert.equal(failure.status, 400);
+    assert.deepEqual(await failure.json(), { error: "System proxy resolution failed" });
+  } finally { await server.close(); }
+});
+
 test("browser control server authenticates and owns turn visibility", async () => {
   const calls = [];
   const logs = [];

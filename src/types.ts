@@ -312,6 +312,7 @@ export interface CodexProviderConfig {
     /** Account capability proven by the authenticated browser probe. */
     solAvailable?: boolean;
     /** Account capability proven by the authenticated browser probe. */
+    extraHighAvailable?: boolean;
     proAvailable?: boolean;
     /** Opt into retained Web sessions, handoff compaction, steering, and archive transport. */
     useEnhancedWebSessionMode?: boolean;

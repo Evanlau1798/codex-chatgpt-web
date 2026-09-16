@@ -1,3 +1,4 @@
+import languages from "../electron/languages.json";
 import { AnimatePresence, motion } from "motion/react";
 import {
   useCallback,
@@ -250,27 +251,16 @@ function Onboarding({
 
           {isLanguage ? (
             <div className="welcome-options" role="radiogroup" aria-label={localized.chooseLanguage}>
-              <WelcomeOption
-                active={selectedLanguage === "en"}
-                detail={localized.english}
-                label={localized.english}
-                marker="EN"
-                onClick={() => setSelectedLanguage("en")}
-              />
-              <WelcomeOption
-                active={selectedLanguage === "zh-CN"}
-                detail={localized.chinese}
-                label={localized.chinese}
-                marker="简"
-                onClick={() => setSelectedLanguage("zh-CN")}
-              />
-              <WelcomeOption
-                active={selectedLanguage === "ja"}
-                detail={localized.japanese}
-                label={localized.japanese}
-                marker="日"
-                onClick={() => setSelectedLanguage("ja")}
-              />
+              {languageOptions.map(option => (
+                <WelcomeOption
+                  key={option.value}
+                  active={selectedLanguage === option.value}
+                  detail={option.label}
+                  label={option.label}
+                  marker={option.marker}
+                  onClick={() => setSelectedLanguage(option.value)}
+                />
+              ))}
             </div>
           ) : isInteraction ? (
             <InteractionModePicker
@@ -1797,9 +1787,11 @@ function formatTime(value: string, language: Language): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? value
-    : date.toLocaleTimeString(language === "ja" ? "ja-JP" : language === "zh-CN" ? "zh-CN" : "en", {
+    : date.toLocaleTimeString(languages[language].locale, {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
       });
 }
+
+const languageOptions = (Object.keys(languages) as Language[]).map(value => ({ value, ...languages[value] }));

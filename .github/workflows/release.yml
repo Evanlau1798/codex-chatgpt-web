@@ -202,7 +202,9 @@ jobs:
           test "sha256:$local_manifest_digest" = "$remote_manifest_digest"
 
           release_flags=(--latest)
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+          version="${GITHUB_REF_NAME#v}"
+          upstream_version="${version%%-Enhanced.*}"
+          if [[ "$upstream_version" == *-* ]]; then
             release_flags=(--prerelease --latest=false)
           fi
           gh release edit "$GITHUB_REF_NAME" \

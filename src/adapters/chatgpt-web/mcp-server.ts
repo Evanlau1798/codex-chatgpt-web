@@ -30,6 +30,7 @@ import { invokeChatGptMcpTool } from "./mcp-invocation";
 import { readNativeAgentWait, startNativeAgentWait } from "./mcp-agent-wait";
 import { brokerMcpResult as asMcpResult, mcpJsonResult as result } from "./mcp-results";
 import { withClaimedTurn, type ClaimedTurn } from "./mcp-turn-activity";
+import { observeMcpToolCalls } from "./mcp-observation";
 import {
   afterSafeStart,
   registerZeroRiskLifecycleTools,
@@ -63,6 +64,10 @@ export { CHATGPT_WEB_AGENT_WAIT_POLL_MS, boundedConnectorToolArguments, matching
 const turnTokenSchema = z.string().min(20).max(256);
 const contextTokenSchema = z.string().min(20).max(256);
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
+const BRIDGE_TOOL_NAMES = new Set([
+  "codex_read_context", "codex_turn_start", "codex_exec", "codex_write_stdin",
+  "codex_apply_patch", "codex_view_image", "codex_tool_inventory", "codex_tool_call", "codex_turn_complete",
+]);
 
 function wireName(tool: CodexTool): string {
   return namespacedToolName(tool.namespace, tool.name);
@@ -148,6 +153,9 @@ export async function runChatGptMcpServer(options: {
       yieldTimeMs?: number;
       maxOutputTokens?: number;
       tty?: boolean;
+      sandboxPermissions?: "use_default" | "require_escalated";
+      justification?: string;
+      prefixRule?: string[];
     },
     signal?: AbortSignal,
   ) => {
@@ -158,15 +166,28 @@ export async function runChatGptMcpServer(options: {
       ...(command.yieldTimeMs !== undefined ? { yield_time_ms: command.yieldTimeMs } : {}),
       ...(command.maxOutputTokens !== undefined ? { max_output_tokens: command.maxOutputTokens } : {}),
       ...(command.tty !== undefined ? { tty: command.tty } : {}),
+      ...(command.sandboxPermissions !== undefined ? { sandbox_permissions: command.sandboxPermissions } : {}),
+      ...(command.justification !== undefined ? { justification: command.justification } : {}),
+      ...(command.prefixRule !== undefined ? { prefix_rule: command.prefixRule } : {}),
     };
     const shellCommandArguments = {
       command: command.cmd,
       ...(command.workdir ? { workdir: command.workdir } : {}),
       ...(command.yieldTimeMs !== undefined ? { timeout_ms: command.yieldTimeMs } : {}),
+      ...(command.sandboxPermissions !== undefined ? { sandbox_permissions: command.sandboxPermissions } : {}),
+      ...(command.justification !== undefined ? { justification: command.justification } : {}),
+      ...(command.prefixRule !== undefined ? { prefix_rule: command.prefixRule } : {}),
     };
     const tool = exactTool(bound, "exec_command") ?? exactTool(bound, "shell_command");
     if (tool) {
       if (tool.name === "shell_command" && command.tty === true) throw new Error(ONE_SHOT_SHELL_TTY_ERROR);
+      for (const key of ["sandbox_permissions", "justification", "prefix_rule"] as const) {
+        if (!(key in execCommandArguments)) continue;
+        const properties = tool.parameters.properties;
+        if (!properties || typeof properties !== "object" || !Object.hasOwn(properties, key)) {
+          throw new Error(`The current native ${tool.name} tool does not support ${key}`);
+        }
+      }
       return invoke(claimed.bindingId, bound, tool, {
         arguments: tool.name === "exec_command" ? execCommandArguments : shellCommandArguments,
       }, signal);
@@ -217,17 +238,23 @@ export async function runChatGptMcpServer(options: {
         yield_time_ms: z.number().int().min(250).max(30_000).optional(),
         max_output_tokens: z.number().int().min(1).max(1_000_000).optional(),
         tty: z.boolean().optional(),
+        sandbox_permissions: z.enum(["use_default", "require_escalated"]).optional(),
+        justification: z.string().optional(),
+        prefix_rule: z.array(z.string()).optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     async (input, extra) => {
-      const { cmd, workdir, yield_time_ms, max_output_tokens, tty } = input;
+      const { cmd, workdir, yield_time_ms, max_output_tokens, tty, sandbox_permissions, justification, prefix_rule } = input;
       return withTurn("codex_exec", turnReference(contract, input), extra, claimed => invokeNativeCommand(claimed, {
           cmd,
           ...(workdir ? { workdir } : {}),
           ...(yield_time_ms !== undefined ? { yieldTimeMs: yield_time_ms } : {}),
           ...(max_output_tokens !== undefined ? { maxOutputTokens: max_output_tokens } : {}),
           ...(tty !== undefined ? { tty } : {}),
+          ...(sandbox_permissions !== undefined ? { sandboxPermissions: sandbox_permissions } : {}),
+          ...(justification !== undefined ? { justification } : {}),
+          ...(prefix_rule !== undefined ? { prefixRule: prefix_rule } : {}),
         }, extra.signal));
     },
   );
@@ -493,5 +520,5 @@ export async function runChatGptMcpServer(options: {
     },
   );
 
-  await server.connect(new StdioServerTransport());
+  await server.connect(observeMcpToolCalls(new StdioServerTransport(), BRIDGE_TOOL_NAMES));
 }

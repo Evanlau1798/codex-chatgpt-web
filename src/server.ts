@@ -28,7 +28,7 @@ import {
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
 import { forwardNativeCodexRequest } from "./native-passthrough";
-import { modelsRequest, nativeAuxiliaryEndpoint, nativeAuxiliaryRequest, nativeSearchRequest } from "./native-routes";
+import { modelCatalogFailure, modelsRequest, nativeAuxiliaryEndpoint, nativeAuxiliaryRequest, nativeSearchRequest, type ModelCatalogFailure } from "./native-routes";
 import { COMPACT_PROMPT } from "./responses/compaction";
 import { handleCompactRequest } from "./responses/compact-handler";
 import { parseRequest } from "./responses/parser";
@@ -308,6 +308,10 @@ export function startServer(
   let shutdownPromise: Promise<void> | undefined;
   let successfulModelCatalogRequests = 0;
   let lastSuccessfulModelCatalogRequestAt: string | null = null;
+  let modelCatalogRequests = 0;
+  let lastModelCatalogResult: {
+    request: number; at: string; status: number; failure?: ModelCatalogFailure;
+  } | null = null;
   const httpTurns = new HttpTurnCounter();
   const activity = () => ({
     active_http_turns: httpTurns.count(),
@@ -332,6 +336,8 @@ export function startServer(
           accepting_turns: !draining,
           successful_model_catalog_requests: successfulModelCatalogRequests,
           last_successful_model_catalog_request_at: lastSuccessfulModelCatalogRequestAt,
+          model_catalog_requests: modelCatalogRequests,
+          last_model_catalog_result: lastModelCatalogResult,
           ...activity(),
         });
       }
@@ -378,6 +384,14 @@ export function startServer(
         }
         if (isClaudeGatewayModelsRequest(req)) return claudeGatewayModelsResponse(config);
         return httpTurns.track(async signal => {
+          const request = ++modelCatalogRequests;
+          const started = Date.now();
+          const recordResult = (response: Response, failure?: ModelCatalogFailure): Response => {
+            const result = { request, at: new Date().toISOString(), status: response.status, ...(failure ? { failure } : {}) };
+            if (!lastModelCatalogResult || request > lastModelCatalogResult.request) lastModelCatalogResult = result;
+            if (!response.ok) console.warn(`[codex-chatgpt-web] model_catalog_failed ${JSON.stringify({ ...result, elapsedMs: Date.now() - started })}`);
+            return response;
+          };
           let catalogConfig: AppConfig;
           try {
             catalogConfig = {
@@ -385,23 +399,25 @@ export function startServer(
               subagentProtocol: readCodexSubagentProtocol(config.subagentProtocol),
             };
           } catch (error) {
-            return formatErrorResponse(
+            return recordResult(formatErrorResponse(
               500,
               "server_error",
               `Could not resolve the installed subagent protocol: ${error instanceof Error ? error.message : String(error)}`,
-            );
+            ), modelCatalogFailure("config", error));
           }
+          let failure: ModelCatalogFailure | undefined;
           const response = await modelsRequest(
             new Request(req, { signal }),
             catalogConfig,
             dependencies.fetchUpstream,
             readCodexModelContextOverride,
+            value => { failure = value; },
           );
           if (response.ok) {
             successfulModelCatalogRequests += 1;
             lastSuccessfulModelCatalogRequestAt = new Date().toISOString();
           }
-          return response;
+          return recordResult(response, failure);
         }, req.signal, undefined, url.pathname);
       }
       if (req.method === "GET" && url.pathname === "/v1/responses") {

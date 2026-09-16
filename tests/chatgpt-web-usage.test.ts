@@ -5,7 +5,7 @@ import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { chatGptUsageInputForRound, estimateChatGptWebInputTokens, estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
 import type { CodexParsedRequest } from "../src/types";
 
-const capabilities = { localToolsEnabled: false, solAvailable: true, proAvailable: true };
+const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true };
 
 function request(text: string): CodexParsedRequest {
   return {

@@ -85,6 +85,7 @@ export function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): bo
     brokerSocketPath: before.brokerSocketPath,
     headed: before.headed,
     solAvailable: before.solAvailable,
+    extraHighAvailable: before.extraHighAvailable,
     proAvailable: before.proAvailable,
     experimentalBiggerContext: before.experimentalBiggerContext,
     experimentalNoAutoCompact: before.experimentalNoAutoCompact,
@@ -113,6 +114,7 @@ export function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): bo
     brokerSocketPath: after.brokerSocketPath,
     headed: after.headed,
     solAvailable: after.solAvailable,
+    extraHighAvailable: after.extraHighAvailable,
     proAvailable: after.proAvailable,
     experimentalBiggerContext: after.experimentalBiggerContext,
     experimentalNoAutoCompact: after.experimentalNoAutoCompact,
@@ -187,7 +189,7 @@ async function inspectLauncherCapabilities(
   existing: AppConfig | undefined,
   refreshAccountCapabilities: boolean,
   expectedProfile: "production" | "development",
-): Promise<{ solAvailable: boolean; proAvailable: boolean }> {
+): Promise<{ solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean }> {
   const detectCapabilities = launcherCapabilityProbeRequired(
     existing,
     refreshAccountCapabilities,
@@ -199,6 +201,7 @@ async function inspectLauncherCapabilities(
   });
   return {
     solAvailable: detectCapabilities ? inspected.solAvailable === true : existing!.solAvailable,
+    extraHighAvailable: detectCapabilities ? inspected.extraHighAvailable === true : existing!.extraHighAvailable === true,
     proAvailable: detectCapabilities ? inspected.proAvailable === true : existing!.proAvailable,
   };
 }
@@ -250,6 +253,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
 
   let loginCreated = false;
   let solAvailable: boolean | undefined = config.solAvailable;
+  let extraHighAvailable: boolean | undefined = config.extraHighAvailable;
   let proAvailable: boolean | undefined = config.proAvailable;
   if (config.browserInteractionMode === "manual") {
     // The generic manual route is independent of account capabilities and never inspects the DOM.
@@ -262,16 +266,19 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       "production",
     );
     solAvailable = capabilities.solAvailable;
+    extraHighAvailable = capabilities.extraHighAvailable;
     proAvailable = capabilities.proAvailable;
   } else {
     const stored = storedBrowserLoginCapabilities(config);
     solAvailable = stored.solAvailable;
+    extraHighAvailable = stored.extraHighAvailable;
     proAvailable = stored.proAvailable;
     const loginRequired = options.forceLogin || !browserLoginStateExists(config);
     const capabilityProbeRequired = !loginRequired
       && (options.refreshAccountCapabilities === true
         || existing?.browserInteractionMode === "manual"
         || solAvailable === undefined
+        || extraHighAvailable === undefined
         || proAvailable === undefined);
     if (beforeService.loaded && (loginRequired || capabilityProbeRequired) && !options.restartService) {
       throw new Error(
@@ -283,15 +290,18 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     if (loginRequired) {
       const login = await loginToChatGpt(config);
       solAvailable = login.solAvailable;
+      extraHighAvailable = login.extraHighAvailable;
       proAvailable = login.proAvailable;
       loginCreated = true;
     } else if (capabilityProbeRequired) {
       const inspected = await inspectBrowserLoginCapabilities(config);
       solAvailable = inspected.solAvailable;
+      extraHighAvailable = inspected.extraHighAvailable;
       proAvailable = inspected.proAvailable;
     }
   }
   config.solAvailable = solAvailable === true;
+  config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
   config.proAvailable = config.solAvailable && proAvailable === true;
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
   const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config) || explicitTunnelChange || options.forceLogin));
@@ -412,6 +422,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
       DEV_LAUNCHER_PROFILE,
     );
     config.solAvailable = capabilities.solAvailable;
+    config.extraHighAvailable = capabilities.solAvailable && capabilities.extraHighAvailable;
     config.proAvailable = capabilities.solAvailable && capabilities.proAvailable;
   }
 

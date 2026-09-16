@@ -3,7 +3,7 @@ import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import type { CodexParsedRequest } from "../src/types";
 
-const capabilities = { localToolsEnabled: false, solAvailable: true, proAvailable: true };
+const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true };
 
 function parsed(): CodexParsedRequest {
   return {

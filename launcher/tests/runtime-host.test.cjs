@@ -273,7 +273,7 @@ test("launcher update transaction upgrades its owned full runtime with saved con
     appName: "Codex Native2",
     releaseVersion: "1.1.1",
     solAvailable: true,
-    proAvailable: false,
+    extraHighAvailable: false, proAvailable: false,
   });
   fixture.host.bridgeStatus = async () => ({ installed: true, active: true, errors: [] });
 

@@ -45,6 +45,7 @@ export class ChatGptTurnSession {
   readonly browserOutcome: Promise<ChatGptBrowserOutcome>;
   readonly physicalSettlement: Promise<void>;
   private readonly outstandingById = new Map<string, BrokerToolRequest>();
+  private outstandingBatchPublished = false;
   private readonly deliveredResultIds = new Set<string>();
   private outstandingReasoning: string[] = [];
   private finalReasoning: string[] = [];
@@ -133,6 +134,7 @@ export class ChatGptTurnSession {
       this.outstandingById.set(request.callId, request);
       this.outstandingGenerationById.set(request.callId, this.canonicalGeneration);
     }
+    this.outstandingBatchPublished = false;
     this.setOutstandingEvents(reasoning, prelude);
     return this.runtime.externalProgress?.recordToolBatch(requests.length);
   }
@@ -146,6 +148,13 @@ export class ChatGptTurnSession {
     return this.outstandingById.has(callId);
   }
 
+  markOutstandingPublished(): void {
+    if (this.outstandingById.size === 0) throw new Error("cannot publish an empty ChatGPT tool batch");
+    this.outstandingBatchPublished = true;
+  }
+
+  outstandingPublished(): boolean { return this.outstandingBatchPublished; }
+
   markResultDelivered(callId: string, result?: CodexToolResultMessage): void {
     if (!this.outstandingById.delete(callId)) throw new Error(`ChatGPT bridge tool result does not match an outstanding call: ${callId}`);
     this.outstandingGenerationById.delete(callId);
@@ -153,6 +162,7 @@ export class ChatGptTurnSession {
     this.runtime.externalProgress?.recordToolResult();
     this.runtime.onToolResultDelivered?.(result);
     if (this.outstandingById.size === 0) {
+      this.outstandingBatchPublished = false;
       this.outstandingReasoning = [];
       this.outstandingPrelude = [];
     }
@@ -247,6 +257,7 @@ export class ChatGptTurnSession {
       this.runtime.externalProgress?.recordToolResult();
     }
     this.outstandingById.clear();
+    this.outstandingBatchPublished = false;
     this.outstandingGenerationById.clear();
     this.outstandingReasoning = [];
     this.outstandingPrelude = [];

@@ -132,7 +132,7 @@ test("Claude tool prompts authenticate additive steering without changing Codex 
 test("Pro preserves the same native Codex delegation contract as Extra High", () => {
 
   const token = "turn_12345678901234567890123456789012";
-  const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true };
+  const capabilities = { localToolsEnabled: true, solAvailable: true, proAvailable: true, extraHighAvailable: true };
   const pro = compileChatGptWebPrompt(toolRequest("max"), capabilities, token);
   const extraHigh = compileChatGptWebPrompt(toolRequest("xhigh"), capabilities, token);
 
@@ -612,7 +612,7 @@ test("requires ChatGPT-native rich results to include a safe Markdown answer for
 test("describes one-shot cross-platform shell limits without exposing secret values", () => {
   const compiled = compileChatGptWebPrompt(
     toolRequest("xhigh"),
-    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true, extraHighAvailable: true },
     "turn_12345678901234567890123456789012",
   );
 

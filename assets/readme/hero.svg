@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="300" viewBox="0 0 960 300" role="img" aria-labelledby="title desc">
+  <title id="title">ChatGPT Web for Codex</title>
+  <desc id="desc">Switch to web models. Stay in Codex. Your ChatGPT plan. Your workflow. Maximum capabilities.</desc>
+  <defs>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#ffffff"/><stop offset="1" stop-color="#bdbdbd"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="110%" r="85%">
+      <stop stop-color="#3a3a3a" stop-opacity=".65"/><stop offset="1" stop-color="#111111" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x=".5" y=".5" width="959" height="299" rx="18" fill="#111111" stroke="#363636"/>
+  <rect x="1" y="1" width="958" height="298" rx="18" fill="url(#glow)"/>
+  <g text-anchor="middle" font-family="Arial, Helvetica, sans-serif">
+    <text x="480" y="43" font-size="13" font-weight="700" letter-spacing="3" fill="#bcbcbc">CHATGPT WEB FOR CODEX</text>
+    <text x="480" y="124" font-size="74" font-weight="800" letter-spacing="-2.5" fill="#f5f5f5">Switch to web models.</text>
+    <text x="480" y="203" font-size="74" font-weight="800" letter-spacing="-2.5" fill="url(#accent)">Stay in Codex.</text>
+    <text x="480" y="259" font-size="22" fill="#c9c9c9">Your ChatGPT plan. Your workflow. Maximum capabilities.</text>
+  </g>
+</svg>

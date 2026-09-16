@@ -18,7 +18,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
   const efforts = manual
     ? ["low"]
     : config.solAvailable
-    ? ["low", "medium", "high", "xhigh", ...(config.proAvailable ? ["max"] : [])]
+    ? ["low", "medium", "high", ...(config.extraHighAvailable ? ["xhigh"] : []), ...(config.proAvailable ? ["max"] : [])]
     : ["low", "medium"];
   return {
     adapter: "chatgpt-web",
@@ -46,6 +46,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       headed: config.headed,
       localToolsEnabled: config.mode === "full",
       solAvailable: manual ? false : config.solAvailable,
+      extraHighAvailable: manual ? false : config.extraHighAvailable === true,
       proAvailable: manual ? false : config.proAvailable,
       useEnhancedWebSessionMode: config.useEnhancedWebSessionMode,
       useEnhancedOutputTunnel: config.useEnhancedOutputTunnel,

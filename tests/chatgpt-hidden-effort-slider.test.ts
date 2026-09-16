@@ -63,18 +63,18 @@ function picker(options: { failFirst?: boolean; staleExpanded?: boolean; missing
 
 test("a visible owner hydrates its hidden semantic input without selecting the stale sibling", async () => {
   const f = picker();
-  await expect(detectChatGptAccountCapabilities(f.page as never)).resolves.toEqual({ solAvailable: true, proAvailable: true });
+  await expect(detectChatGptAccountCapabilities(f.page as never)).resolves.toEqual({ solAvailable: true, extraHighAvailable: true, proAvailable: true });
 });
 
 test("capability detection retries once when the effort picker ignores its first activation", async () => {
   const f = picker({ failFirst: true });
-  await expect(detectChatGptAccountCapabilities(f.page as never)).resolves.toEqual({ solAvailable: true, proAvailable: true });
+  await expect(detectChatGptAccountCapabilities(f.page as never)).resolves.toEqual({ solAvailable: true, extraHighAvailable: true, proAvailable: true });
   expect(f.presses()).toBe(2);
 });
 
 test("capability detection resets a hidden picker with stale expanded state", async () => {
   const f = picker({ staleExpanded: true });
-  await expect(detectChatGptAccountCapabilities(f.page as never)).resolves.toEqual({ solAvailable: true, proAvailable: true });
+  await expect(detectChatGptAccountCapabilities(f.page as never)).resolves.toEqual({ solAvailable: true, extraHighAvailable: true, proAvailable: true });
   expect(f.presses()).toBe(1);
   expect(f.escapes()).toBe(2);
 });

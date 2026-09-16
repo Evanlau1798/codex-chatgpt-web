@@ -118,6 +118,38 @@ test("tool surface recovery requires one complete unstreamed batch and runs only
     .toMatchObject({ eligible: false, reason: "final_streamed" });
 });
 
+test("upstream failure rebuilds only an unpublished pending tool batch", () => {
+  const createSession = () => new ChatGptTurnSession({
+    mode: "tools" as const,
+    token: Promise.resolve("turn_unpublished"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    cancel: () => {},
+  });
+  const failure = new ChatGptWebAdapterError("upstream failed after the pending call was observed", {
+    status: 502,
+    errorType: "server_error",
+    code: "upstream_server_error",
+    retryable: false,
+    retireSession: true,
+  });
+  const request = completeRequest();
+
+  const unpublished = createSession();
+  unpublished.setOutstanding([{ callId: "call_unpublished", wireName: "exec_command", freeform: false, arguments: {} }]);
+  expect(chatGptSurfaceRecoveryDecision(failure, unpublished, request, 0))
+    .toMatchObject({ eligible: true, reason: "eligible", canonicalResultCount: 0 });
+
+  const published = createSession();
+  published.setOutstanding([{ callId: "call_published", wireName: "exec_command", freeform: false, arguments: {} }]);
+  published.markOutstandingPublished();
+  expect(chatGptSurfaceRecoveryDecision(failure, published, request, 0))
+    .toMatchObject({ eligible: false, reason: "tool_results_incomplete" });
+  expect(chatGptSurfaceRecoveryDecision(failure, unpublished, request, 1))
+    .toMatchObject({ eligible: false, reason: "already_recovered" });
+});
+
 test("surface recovery waits for superseded calls to receive canonical results", () => {
   const session = new ChatGptTurnSession({
     mode: "tools",

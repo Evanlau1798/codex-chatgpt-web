@@ -7,7 +7,7 @@ import {
 } from "../src/adapters/chatgpt-web/native-compaction-control";
 import type { CodexParsedRequest } from "../src/types";
 
-const capabilities = { localToolsEnabled: true, solAvailable: false, proAvailable: false };
+const capabilities = { localToolsEnabled: true, solAvailable: false, extraHighAvailable: false, proAvailable: false };
 const requestId = "request_12345678901234567890123456789012";
 
 function request(compaction = false): CodexParsedRequest {

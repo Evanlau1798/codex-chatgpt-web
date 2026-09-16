@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "baseline": "1ebf7f5d23bf785539337f4a0310b85dbeeb551e",
+  "semanticBaseline": "e85e3693fdb4e3e033348c08df0298c20fcdb612",
+  "upstream": "2f5f0b9e6526415973ff104840c3b78e972792f9",
+  "upstreamTag": {
+    "name": "v5.0.7",
+    "object": "3b4a9f7638baa2a99402b36881b04b365683d7c2",
+    "commit": "973c287edf53c37d3d9fa2356010d635a6ccf25b"
+  },
+  "automaticMergeTree": "db7f3e51e762b521b6efa200fb3cb4ed5592b155",
+  "mergeCommand": "git -c rerere.enabled=false merge --strategy=ort --no-ff --no-commit 2f5f0b9e6526415973ff104840c3b78e972792f9",
+  "evidence": {
+    "path": ".github/upstream-audit/v5.0.7-evidence.tar.gz",
+    "sha256": "57ac784456ad71877cd009ffd69125aa063e4536dd04ba7ea1dad102af336eaf"
+  },
+  "resolutions": [
+    {
+      "area": "fork architecture",
+      "classification": "adapted",
+      "summary": "Preserved the fork's split runtime, setup, server, prompt, lifecycle, localization, and launcher modules while importing the v5.0.7 behavior into their owning files."
+    },
+    {
+      "area": "account capabilities",
+      "classification": "integrated",
+      "summary": "Extra High is observed and persisted independently from Pro and fails closed for legacy observations."
+    },
+    {
+      "area": "browser lifecycle",
+      "classification": "integrated",
+      "summary": "Lease expiry cancels daemon ownership before removing a browser surface and preserves bounded failure diagnostics."
+    },
+    {
+      "area": "native transport",
+      "classification": "integrated",
+      "summary": "Native Codex requests use the launcher-owned system proxy resolver; model catalog failures are recorded without request content."
+    },
+    {
+      "area": "MCP bridge",
+      "classification": "integrated",
+      "summary": "Added content-free MCP call observations and preserved native command approval arguments only when the advertised tool supports them."
+    },
+    {
+      "area": "compaction",
+      "classification": "integrated",
+      "summary": "Trimming preserves the newest cumulative checkpoint and explicitly marks omitted history."
+    },
+    {
+      "area": "documentation and localization",
+      "classification": "adapted",
+      "summary": "Kept Enhanced documentation, added Korean and Traditional Chinese launcher language support, and clarified all context controls."
+    },
+    {
+      "area": "upstream monolith boundaries",
+      "classification": "not-applicable",
+      "summary": "Upstream file-boundary changes were not copied where the fork already owns equivalent split production primitives."
+    }
+  ],
+  "issues": {
+    "37": "Documented that No Context Window changes Codex catalog thresholds only and does not bypass ChatGPT limits.",
+    "38": "Added one fresh-surface recovery only when an upstream error occurs with a pending tool batch that has not been published to Codex; published or ambiguous calls remain fail closed."
+  }
+}

@@ -143,6 +143,21 @@ Enhanced の自動ツールターンでは、**Web Agent 出力を MCP Tunnel �
 ない場合は、同じページで完了済みの応答を検証して prompt の再送は行いません。Enhanced を無効に
 するか Zero Risk を選ぶと、設定値を保持したままこの転送経路を無効にします。
 
+### コンテキスト設定の違い
+
+**Enhanced Web セッションモード**は、ツールラウンド、steering、compaction をまたいで 1 つの
+タスク紐付き ChatGPT 会話を保持します。変更するのは会話の連続性だけで、コンテキストウィンドウを
+拡大したり compaction を無効にしたりはしません。**Bigger Context** とは同時に有効化できません。
+Bigger Context は大きな Codex ターンを 2～3 件のステージングメッセージと 1 件の最終実行
+メッセージに分割します。各メッセージは実際の ChatGPT リクエストで、利用枠を消費する場合が
+あります。Codex に公開するコンテキストと compaction しきい値は 3 倍になりますが、ChatGPT の
+メッセージ、モデル、コンポーザー、転送、サービス上限は残ります。
+
+**No Context Window** は、Codex が読むモデルカタログから ChatGPT Web のコンテキストウィンドウと
+自動 compaction しきい値だけを取り除きます。無制限のコンテキストを作る機能ではなく、ChatGPT の
+上限、Token 計測、サイズ超過時の fail-closed 動作は変わりません。別の仕組みが compaction を
+意図的に管理する場合だけ使用してください。
+
 ## Full ハーネス
 
 Full モードは、公式の [OpenAI tunnel-client](https://github.com/openai/tunnel-client) を通じて、

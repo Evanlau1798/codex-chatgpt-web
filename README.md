@@ -190,6 +190,21 @@ Bigger Context does not replace compaction and does not change native OpenAI/Cod
 it if you prefer the normal single-message transport; Enhanced session retention, steering, and
 handoff compact remain independent.
 
+### Context controls: what each switch actually changes
+
+**Enhanced Web session mode** keeps one task-bound ChatGPT conversation across tool rounds,
+steering, and compaction. It changes conversation continuity only: it neither enlarges the context
+window nor disables compaction. **Bigger Context** is mutually exclusive with Enhanced mode. It
+splits one large Codex turn into two or three staging messages plus one final execution message;
+each message is a real ChatGPT request that can consume account allowance. It triples the context
+and compaction thresholds advertised to Codex, while ChatGPT's own message, model, composer,
+transport, and service limits remain in force.
+
+**No Context Window** removes only those routed context-window and automatic-compaction thresholds
+from the model catalog that Codex reads. It does not create unlimited context, bypass ChatGPT
+limits, stop token accounting, or turn an oversized browser prompt into a valid request. Such a
+prompt still fails closed. Use it only when another workflow deliberately owns compaction.
+
 ## Claude Code
 
 Choose **Install into Claude Code** in the launcher to configure the local `/v1/messages` gateway,

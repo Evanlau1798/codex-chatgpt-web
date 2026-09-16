@@ -72,6 +72,8 @@ export interface AppConfig {
   brokerSocketPath: string;
   headed: boolean;
   solAvailable: boolean;
+  /** Observed Extra High slider capability. Missing legacy values fail closed. */
+  extraHighAvailable?: boolean;
   proAvailable: boolean;
   experimentalBiggerContext: boolean;
   /** Hide routed context limits from Codex and reject routed compact requests. */

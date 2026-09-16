@@ -19,7 +19,7 @@ test.each([
 ] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s, direct=%s, required=%s, reused=%s)", async (owned, tools, multipart, transport, direct, requiredRetained, reused) => {
   const diagnostics = mkdtempSync(join(tmpdir(), "compaction-observation-"));
   const finalResponse = new Error("fixture reached final response observation");
-  const capabilities = { localToolsEnabled: tools, solAvailable: true, proAvailable: true };
+  const capabilities = { localToolsEnabled: tools, solAvailable: true, extraHighAvailable: true, proAvailable: true };
   const progress = tools ? new ChatGptExternalTurnProgress() : undefined;
   const recoveryCallbacks: unknown[] = [];
   const actions: string[] = [];

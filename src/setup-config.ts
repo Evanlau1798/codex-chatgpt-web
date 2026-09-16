@@ -50,6 +50,7 @@ export function launcherCapabilityProbeRequired(
     || existing?.browserInteractionMode === "manual"
     || existing?.browserHost !== "launcher"
     || typeof existing.solAvailable !== "boolean"
+    || typeof existing.extraHighAvailable !== "boolean"
     || typeof existing.proAvailable !== "boolean";
 }
 

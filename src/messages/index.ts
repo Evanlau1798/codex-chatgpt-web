@@ -50,6 +50,7 @@ function capabilities(config: AppConfig) {
   return {
     localToolsEnabled: config.mode === "full",
     solAvailable: config.solAvailable,
+    extraHighAvailable: config.extraHighAvailable === true,
     proAvailable: config.proAvailable,
   };
 }

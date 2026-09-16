@@ -117,7 +117,7 @@ async function runFixture(options: {
     runStage: async (_trace: string, _name: string, _timeout: number, action: (s: AbortSignal) => unknown) => action(controller.signal),
     prepareTemporaryChatSurface: async () => {},
     selectModelAndEffort: async (_page: unknown, model: string, effort: string) => resolveChatGptWebModelMode(
-      model, effort, { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+      model, effort, { localToolsEnabled: true, solAvailable: true, proAvailable: true, extraHighAvailable: true },
     ),
     attachPromptWithCompactionRetry: async (...args: any[]) => {
       const bindConnector = args[2];
@@ -170,7 +170,7 @@ async function runFixture(options: {
   });
   const turn: BrowserTurn = {
     traceId: "boole_fallback_fixture", modelId: "gpt-5.6-sol", reasoning: "xhigh",
-    capabilities: { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    capabilities: { localToolsEnabled: true, solAvailable: true, proAvailable: true, extraHighAvailable: true },
     nativeConnector: true, externalProgress: progress, abortSignal: controller.signal,
     prepare: async () => ({ text: "Review the candidate.", images: [], transport: "native2-archive",
       release: () => { actions.push("release"); } }),

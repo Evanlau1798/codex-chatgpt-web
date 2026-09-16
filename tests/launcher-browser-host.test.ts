@@ -213,7 +213,7 @@ test("launcher session verification uses the authenticated control channel inste
       authenticated: true,
       temporary: true,
       solAvailable: true,
-      proAvailable: true,
+      extraHighAvailable: true, proAvailable: true,
       url: "https://chatgpt.com/?temporary-chat=true",
     }));
   });
@@ -230,7 +230,7 @@ test("launcher session verification uses the authenticated control channel inste
       temporary: true,
       composer: true,
       solAvailable: true,
-      proAvailable: true,
+      extraHighAvailable: true, proAvailable: true,
       url: "https://chatgpt.com/?temporary-chat=true",
     });
   } finally {

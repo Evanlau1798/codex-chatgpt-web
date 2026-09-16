@@ -141,7 +141,12 @@ describe("Codex Multi-Agent V2 plaintext transport", () => {
   });
 
   test("preserves the plaintext marker through the full server mapping", async () => {
-    const config = { ...defaultConfig("full"), proAvailable: true, useEnhancedWebSessionMode: true };
+    const config = {
+      ...defaultConfig("full"),
+      extraHighAvailable: true,
+      proAvailable: true,
+      useEnhancedWebSessionMode: true,
+    };
     const response = await responseRequest(new Request("http://127.0.0.1:17841/v1/responses", {
       method: "POST",
       headers: { "content-type": "application/json" },

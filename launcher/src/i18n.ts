@@ -1,6 +1,8 @@
 import type { Language } from "./types";
 import { zeroRiskCopy } from "./zero-risk-copy";
 import { ja } from "./i18n-ja";
+import { ko } from "./i18n-ko";
+import { zhTW } from "./i18n-zh-tw";
 const en = {
   product: "Codex Web GPT",
   devBadge: "DEV",
@@ -18,9 +20,9 @@ const en = {
   devSettingsTitle: "DEV profile settings",
   devKeepRunningBody: "Keep the isolated browser session and DEV MCP tunnel available when this window closes.",
   biggerContext: "Bigger Context (experimental)",
-  biggerContextBody: "Available only when Enhanced Web session mode is off. Keeps small turns as one message, then expands large context to two or three staging messages plus one final execution message. It triples the model context and compaction thresholds; restart Codex after changing it. Extra requests may increase rate limits or temporary cooldowns. Disabled by default.",
+  biggerContextBody: "Available only when Enhanced Web session mode is off. A large Codex turn is sent as two or three staging messages and one final execution message; every message is a real ChatGPT request and may consume account allowance. It triples the context and compaction thresholds advertised to Codex, but ChatGPT message, model, composer, and service limits still apply. This is not unlimited context. Restart Codex after changing it.",
   noAutoCompact: "No Context Window (experimental)",
-  noAutoCompactBody: "Experimental. Removes the routed ChatGPT Web context-window and automatic-compaction thresholds advertised to Codex, so Codex does not auto-compact these routes. ChatGPT Web still enforces its own message, composer, model, and service limits. Token usage remains accurate and oversized browser prompts still fail closed. Restart Codex after changing it. Disabled by default.",
+  noAutoCompactBody: "Removes only the ChatGPT Web context-window and automatic-compaction thresholds advertised to Codex. It does not create an unlimited context window: ChatGPT message, model, composer, transport, and service limits still apply, token usage remains measured, and oversized prompts fail closed. Restart Codex after changing it. Disabled by default.",
   tagline: "ChatGPT Web inside the native Codex harness",
   chooseLanguage: "Choose your language",
   chooseLanguageHint: "You can change this later in Settings.",
@@ -125,6 +127,16 @@ const en = {
   connectorName: "Connector name",
   verifyRuntime: "Verify runtime",
   checkingChatGptConnector: "Checking ChatGPT connector",
+  checkingLocalRuntime: "Checking local runtime",
+  doctorConfigValid: "Configuration is valid ({path})",
+  doctorBrowserReady: "Embedded launcher browser is authenticated and reachable (pid {pid})",
+  doctorManualBrowserReady: "Embedded launcher browser is reachable for Zero Risk (pid {pid})",
+  doctorCodexInstalled: "Codex native model route is installed",
+  doctorRuntimeOwned: "Launcher owns the background runtime",
+  doctorChromeFound: "Chrome executable found: {path}",
+  doctorLoginVerified: "ChatGPT login state has authenticated browser evidence",
+  doctorMacServiceLoaded: "macOS background service is loaded",
+  doctorMacTunnelRunning: "macOS tunnel service is installed, loaded, and running",
   doctorProxyHealthy: "Responses proxy is healthy on {endpoint}",
   doctorTunnelBinaryInstalled: "Pinned openai/tunnel-client binary is installed",
   doctorTunnelKeyStored: "Tunnel runtime key is stored privately",
@@ -144,7 +156,7 @@ const en = {
   bridgeRoute: "Codex bridge",
   bridgeRouteBody: "Route Codex through this launcher. Turning it off restores your previous model route without deleting setup or saved credentials. Restart Codex after changing it.",
   enhancedWebSessionMode: "Enhanced Web session mode",
-  enhancedWebSessionModeBody: "Enabled by default on new installs. Adds retained conversations, steering, handoff compaction, and large-context archive transport for ChatGPT Web models. Changing this restarts the local runtime.",
+  enhancedWebSessionModeBody: "Keeps one task-bound ChatGPT conversation across tool rounds, steering, and compaction for ChatGPT Web routes. It does not enlarge the context window or disable compaction, and it cannot be enabled together with Bigger Context. Enabled by default on new installs; changing it restarts the local runtime.",
   enhancedOutputTunnel: "Tunnel Web agent output",
   enhancedOutputTunnelBody: "Send Enhanced Automatic commentary, visible reasoning summaries, and final answers through the private Native2 tunnel. Tool cards remain visible in ChatGPT. Restart Codex after changing it.",
   ...zeroRiskCopy.en,
@@ -196,9 +208,9 @@ const zh: Record<keyof typeof en, string> = {
   devSettingsTitle: "DEV 配置设置",
   devKeepRunningBody: "窗口关闭后保持隔离的浏览器会话和 DEV MCP Tunnel 可用。",
   biggerContext: "更大上下文（实验性）",
-  biggerContextBody: "仅可在增强型 Web 会话模式关闭时使用。较小回合仍作为一条消息发送；较大的上下文会扩展为两条或三条暂存消息，再发送一条最终执行消息。模型上下文和压缩阈值将扩大三倍；更改后请重启 Codex。额外请求可能提高触发速率限制或临时冷却的概率。默认关闭。",
+  biggerContextBody: "仅可在增强型 Web 会话模式关闭时使用。较大的 Codex 回合会拆成两条或三条暂存消息和一条最终执行消息；每条都是真实的 ChatGPT 请求，可能消耗账户额度。它会把向 Codex 公布的上下文和压缩阈值扩大三倍，但 ChatGPT 的消息、模型、编辑器与服务限制仍然有效。这不是无限上下文。更改后请重启 Codex。",
   noAutoCompact: "No Context Window（实验性）",
-  noAutoCompactBody: "实验性功能。从 Codex 隐藏路由 ChatGPT Web 模型的上下文窗口与自动压缩阈值，因此 Codex 不会自动压缩这些路由。ChatGPT Web 本身的消息、编辑器、模型与服务限制仍然有效。Token 用量仍会如实计算，过大的浏览器提示仍会安全失败。更改后请重启 Codex。默认关闭。",
+  noAutoCompactBody: "仅移除向 Codex 公布的 ChatGPT Web 上下文窗口与自动压缩阈值。这不会产生无限上下文：ChatGPT 的消息、模型、编辑器、传输与服务限制仍然有效，Token 用量仍会计量，过大的提示会安全失败。更改后请重启 Codex。默认关闭。",
   tagline: "在原生 Codex Harness 中运行 ChatGPT Web",
   chooseLanguage: "选择语言",
   chooseLanguageHint: "稍后可以在设置中更改。",
@@ -303,6 +315,16 @@ const zh: Record<keyof typeof en, string> = {
   connectorName: "连接器名称",
   verifyRuntime: "验证运行时",
   checkingChatGptConnector: "正在检查 ChatGPT 连接器",
+  checkingLocalRuntime: "正在检查本地运行时",
+  doctorConfigValid: "配置有效（{path}）",
+  doctorBrowserReady: "内嵌浏览器已登录且可访问（进程 {pid}）",
+  doctorManualBrowserReady: "Zero Risk 内嵌浏览器可访问（进程 {pid}）",
+  doctorCodexInstalled: "已安装 Codex 原生模型路由",
+  doctorRuntimeOwned: "启动器正在管理后台运行时",
+  doctorChromeFound: "已找到 Chrome 可执行文件：{path}",
+  doctorLoginVerified: "已通过浏览器验证 ChatGPT 登录状态",
+  doctorMacServiceLoaded: "已加载 macOS 后台服务",
+  doctorMacTunnelRunning: "macOS 隧道服务已安装、加载并运行",
   doctorProxyHealthy: "Responses 代理在 {endpoint} 上运行正常",
   doctorTunnelBinaryInstalled: "已安装固定版本的 openai/tunnel-client 二进制文件",
   doctorTunnelKeyStored: "隧道运行时密钥已安全存储",
@@ -322,7 +344,7 @@ const zh: Record<keyof typeof en, string> = {
   bridgeRoute: "Codex Bridge",
   bridgeRouteBody: "让 Codex 通过此启动器路由。关闭后会恢复此前的模型路由，但不会删除设置或已保存的凭据。更改后请重启 Codex。",
   enhancedWebSessionMode: "增強型 Web 工作階段模式",
-  enhancedWebSessionModeBody: "新安裝預設啟用。為 ChatGPT Web 模型加入對話保留、steering、handoff 壓縮與大型上下文封存傳輸。變更此設定會重新啟動本機執行階段。",
+  enhancedWebSessionModeBody: "为 ChatGPT Web 路由在工具回合、steering 与压缩之间保留同一个任务绑定会话。它不会扩大上下文窗口或关闭压缩，也不能与 Bigger Context 同时启用。新安装默认启用；更改后会重启本地运行时。",
   enhancedOutputTunnel: "透過 MCP Tunnel 傳送 Web Agent 輸出",
   enhancedOutputTunnelBody: "將 Enhanced Automatic 的 commentary、可見 reasoning 摘要與最終答案透過私有 Native2 Tunnel 傳送；ChatGPT 中的工具卡仍會顯示。變更後請重啟 Codex。",
   ...zeroRiskCopy["zh-CN"],
@@ -360,7 +382,9 @@ const zh: Record<keyof typeof en, string> = {
 export type Copy = typeof en;
 export function copyFor(language: Language): Copy {
   if (language === "zh-CN") return zh as Copy;
+  if (language === "zh-TW") return { ...en, ...zhTW } as Copy;
   if (language === "ja") return ja as Copy;
+  if (language === "ko") return { ...en, ...ko } as Copy;
   return en;
 }
 
@@ -372,6 +396,27 @@ export function localizeRuntimeMessage(
 ): string {
   if (language === "en") return message;
   if (checkId === undefined && message === "Checking ChatGPT connector") return copy.checkingChatGptConnector;
+  if (checkId === undefined && message === "Checking local runtime") return copy.checkingLocalRuntime;
+  if (checkId === "config") {
+    const match = /^Configuration is valid \((.+)\)$/s.exec(message);
+    if (match) return copy.doctorConfigValid.replace("{path}", () => match[1]!);
+  }
+  if (checkId === "browser-host") {
+    const match = /^Embedded launcher browser is (authenticated and reachable|reachable for Zero Risk) \(pid (\d+)\)$/.exec(message);
+    if (match) return (match[1] === "reachable for Zero Risk" ? copy.doctorManualBrowserReady : copy.doctorBrowserReady)
+      .replace("{pid}", () => match[2]!);
+  }
+  if (checkId === "codex" && message === "Codex native model route is installed") return copy.doctorCodexInstalled;
+  if (checkId === "service" && message === "Launcher owns the background runtime") return copy.doctorRuntimeOwned;
+  if (checkId === "service" && message === "macOS background service is loaded") return copy.doctorMacServiceLoaded;
+  if (checkId === "chrome") {
+    const match = /^Chrome executable found: (.+)$/s.exec(message);
+    if (match) return copy.doctorChromeFound.replace("{path}", () => match[1]!);
+  }
+  if (checkId === "login" && message === "ChatGPT login state has authenticated browser evidence") return copy.doctorLoginVerified;
+  if (checkId === "tunnel-service" && message === "macOS tunnel service is installed, loaded, and running") {
+    return copy.doctorMacTunnelRunning;
+  }
   if (checkId === "proxy") {
     const match = /^Responses proxy is healthy on (127\.0\.0\.1:\d+)$/.exec(message);
     if (match) return copy.doctorProxyHealthy.replace("{endpoint}", () => match[1]!);

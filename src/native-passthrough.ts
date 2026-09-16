@@ -3,6 +3,7 @@ import { safeDiagnosticIdentifier, safeErrorMetadata } from "./http-stream-diagn
 import { tolerateCompletedNativeSseReset } from "./native-sse-stream";
 import { BRIDGE_COMPACTION_PREFIX, compactionItemToText } from "./responses/compaction";
 import { BRIDGE_REASONING_PREFIX } from "./responses/reasoning-envelope";
+import { fetchNativeCodex } from "./native-network";
 
 const CODEX_BACKEND = "https://chatgpt.com/backend-api/codex";
 const FIRST_PARTY_CODEX_ORIGINATORS = new Set([
@@ -244,7 +245,7 @@ function endToEndHeaders(source: Headers): Headers {
 export async function forwardNativeCodexRequest(
   request: Request,
   endpoint: NativeCodexEndpoint,
-  fetchUpstream: NativeFetch = fetch,
+  fetchUpstream: NativeFetch = fetchNativeCodex,
   decodedBody?: unknown,
   reportDiagnostic: NativePassthroughReporter = reportNativePassthroughDiagnostic,
   now: () => number = () => performance.now(),

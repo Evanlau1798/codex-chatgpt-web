@@ -21,7 +21,7 @@ test("serves the account-scoped Claude gateway model catalog without proxying up
 });
 
 test("advertises the routed Claude model context window used by client preflight", async () => {
-  const config = { ...defaultConfig("full"), proAvailable: true, useEnhancedWebSessionMode: true };
+  const config = { ...defaultConfig("full"), extraHighAvailable: true, proAvailable: true, useEnhancedWebSessionMode: true };
   const body = await claudeGatewayModelsResponse(config).json() as { data: Array<Record<string, unknown>> };
 
   expect(body.data.find(model => model.id === "claude-chatgpt-web-extra-high")).toEqual({
@@ -38,6 +38,7 @@ test("proxies official /models auth and query, then appends the fixed ChatGPT We
   let upstream: Request | undefined;
   const config = defaultConfig("full");
   config.subagentProtocol = "native";
+  config.extraHighAvailable = true;
   config.proAvailable = true;
   const response = await modelsRequest(request, config, async input => {
     upstream = input;

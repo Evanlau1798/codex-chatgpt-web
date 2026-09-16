@@ -53,6 +53,7 @@ describe("native /models augmentation", () => {
     const nativeSnapshot = structuredClone(native);
     const config = defaultConfig("full");
     config.subagentProtocol = "native";
+    config.extraHighAvailable = true;
     config.proAvailable = true;
     const result = augmentNativeModelCatalog(native, config);
     const models = result.models as Array<Record<string, unknown>>;
@@ -132,6 +133,7 @@ describe("native /models augmentation", () => {
   test("keeps native Sol selectable in the bounded Compatibility V1 registry", () => {
     const config = defaultConfig("full");
     config.subagentProtocol = "compatibility-v1";
+    config.extraHighAvailable = true;
     config.proAvailable = true;
     const models = augmentNativeModelCatalog(source(), config).models as Array<Record<string, unknown>>;
     const parent = models.find(model => model.slug === "gpt-5.6-sol")!;
@@ -208,6 +210,7 @@ describe("native /models augmentation", () => {
     const config = defaultConfig("browser-only");
     config.subagentProtocol = "native";
     config.proAvailable = false;
+    config.extraHighAvailable = true;
     const polluted = source();
     (polluted.models as unknown[]).push(
       { slug: "chatgpt-web/gpt-5.6-sol", display_name: "legacy generic route" },
@@ -229,6 +232,7 @@ describe("native /models augmentation", () => {
       autoCompactTokenLimit: model.auto_compact_token_limit,
     }))).toEqual([
       { contextWindow: 41_000, effectiveContextWindowPercent: 78, autoCompactTokenLimit: 32_000 },
+      { contextWindow: 90_000, effectiveContextWindowPercent: 89, autoCompactTokenLimit: 80_000 },
       { contextWindow: 90_000, effectiveContextWindowPercent: 89, autoCompactTokenLimit: 80_000 },
       { contextWindow: 90_000, effectiveContextWindowPercent: 89, autoCompactTokenLimit: 80_000 },
     ]);

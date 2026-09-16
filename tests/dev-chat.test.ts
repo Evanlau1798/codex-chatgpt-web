@@ -122,7 +122,7 @@ test("Bigger Context triples the DEV compaction window and fails closed for Luna
     purpose: "dev-harness" as const,
     useEnhancedWebSessionMode: false,
     solAvailable: true,
-    proAvailable: true,
+    extraHighAvailable: true, proAvailable: true,
   };
   const factory = (): ProviderAdapter => ({
     name: "dev-bigger-context-test",
@@ -151,7 +151,7 @@ test("Bigger Context triples the DEV compaction window and fails closed for Luna
   const luna = new DevChatDriver({
     ...biggerConfig,
     solAvailable: false,
-    proAvailable: false,
+    extraHighAvailable: false, proAvailable: false,
   }, store, factory, root, { biggerContext: true });
   expect(() => luna.open("luna-window", "chatgpt-web/luna")).toThrow("unavailable for Luna");
   expect(() => luna.open("think-window", "chatgpt-web/think")).toThrow("unavailable for Luna");
@@ -164,7 +164,7 @@ test("browser-only DEV driver runs real turns without advertising simulated tool
     ...defaultConfig("browser-only"),
     purpose: "dev-harness" as const,
     solAvailable: true,
-    proAvailable: true,
+    extraHighAvailable: true, proAvailable: true,
   };
   const factory = (): ProviderAdapter => ({
     name: "dev-browser-only-test",

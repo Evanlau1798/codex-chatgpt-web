@@ -107,6 +107,7 @@ test("compacts ChatGPT Web v1 through a dedicated read-only browser summarizatio
 
 test("compacts a Pro task with Pro effort", async () => {
   const config = defaultConfig("full");
+  config.extraHighAvailable = true;
   config.proAvailable = true;
   const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
     method: "POST",

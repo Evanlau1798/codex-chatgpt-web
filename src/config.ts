@@ -117,6 +117,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     brokerSocketPath: defaultBrokerEndpoint(home),
     headed: true,
     solAvailable: true,
+    extraHighAvailable: false,
     proAvailable: false,
     experimentalBiggerContext: false,
     experimentalNoAutoCompact: false,
@@ -408,6 +409,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.solAvailable !== undefined && typeof parsed.solAvailable !== "boolean") {
     throw new Error(`Invalid solAvailable in ${path}`);
   }
+  if (parsed.extraHighAvailable !== undefined && typeof parsed.extraHighAvailable !== "boolean") {
+    throw new Error(`Invalid extraHighAvailable in ${path}`);
+  }
   if (parsed.experimentalBiggerContext !== undefined
     && typeof parsed.experimentalBiggerContext !== "boolean") {
     throw new Error(`Invalid experimentalBiggerContext in ${path}`);
@@ -424,6 +428,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`Invalid stallTimeoutSec in ${path}`);
   }
   const solAvailable = parsed.solAvailable !== false;
+  const extraHighAvailable = parsed.extraHighAvailable === true;
   const proAvailable = parsed.proAvailable === true;
   const useEnhancedWebSessionMode = parsed.useEnhancedWebSessionMode ?? (parsed.useNewCompactMode === true);
   const requestedBiggerContext = parsed.experimentalBiggerContext === true;
@@ -435,8 +440,8 @@ function parseConfig(value: unknown, path: string): AppConfig {
     useEnhancedWebSessionMode,
     requestedBiggerContext,
   );
-  if (proAvailable && !solAvailable) {
-    throw new Error(`Invalid ChatGPT account capabilities in ${path}: Pro requires Sol`);
+  if ((extraHighAvailable || proAvailable) && !solAvailable) {
+    throw new Error(`Invalid ChatGPT account capabilities in ${path}: Extra High and Pro require Sol`);
   }
   const { useNewCompactMode, ...canonical } = parsed;
   return {
@@ -449,6 +454,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     browserInteractionMode,
     subagentProtocol,
     solAvailable,
+    extraHighAvailable,
     proAvailable,
     experimentalBiggerContext,
     experimentalNoAutoCompact: parsed.experimentalNoAutoCompact === true,

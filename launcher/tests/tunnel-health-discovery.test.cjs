@@ -23,15 +23,19 @@ test("fresh tunnel recovery rediscovers official loopback diagnostics before MCP
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cgw-tunnel-health-discovery-"));
   const runtime = supervisor(root);
   const commands = [];
+  const healthUrlFile = path.join(root, "health-url");
+  fs.writeFileSync(healthUrlFile, "http://127.0.0.1:43127");
   runtime.runTunnelCommand = async (_config, args) => {
     commands.push(args);
-    return { code: 0, output: JSON.stringify({ local: { health: { base_url: "http://127.0.0.1:43127" } } }) };
+    return { code: 0, output: JSON.stringify({ aliases: [
+      { alias: "codex-chatgpt-web", health_url_file: healthUrlFile },
+    ] }) };
   };
   runtime.probeTunnelMcpTransport = async () => ({ observed: true, ok: true, fatal: false, detail: "healthy" });
   try {
     await runtime.waitForTunnelMcpTransport(config(root), 25);
     assert.equal(runtime.tunnelHealthBaseUrl, "http://127.0.0.1:43127");
-    assert.deepEqual(commands, [["runtimes", "status", "codex-chatgpt-web", "--json"]]);
+    assert.deepEqual(commands, [["runtimes", "list", "--json"]]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -40,9 +44,13 @@ test("fresh tunnel recovery rediscovers official loopback diagnostics before MCP
 test("official tunnel health discovery rejects non-loopback endpoints", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cgw-tunnel-health-nonlocal-"));
   const runtime = supervisor(root);
+  const healthUrlFile = path.join(root, "health-url");
+  fs.writeFileSync(healthUrlFile, "https://example.com/healthz");
   runtime.runTunnelCommand = async () => ({
     code: 0,
-    output: JSON.stringify({ health_url: "https://example.com/healthz" }),
+    output: JSON.stringify({ aliases: [
+      { alias: "codex-chatgpt-web", health_url_file: healthUrlFile },
+    ] }),
   });
   try {
     await assert.rejects(runtime.discoverTunnelHealthBaseUrl(config(root)), /no verified loopback endpoint/);

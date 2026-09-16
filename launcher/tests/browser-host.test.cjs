@@ -331,9 +331,10 @@ test("session inspection delegates navigation and capability detection to the sh
         value: {
           authenticated: true,
           temporary: true,
-          url: "https://chatgpt.com/?temporary-chat=true",
-          solAvailable: true,
-          proAvailable: true,
+           url: "https://chatgpt.com/?temporary-chat=true",
+           solAvailable: true,
+           extraHighAvailable: true,
+           proAvailable: true,
         },
       };
     },
@@ -344,9 +345,10 @@ test("session inspection delegates navigation and capability detection to the sh
   assert.deepEqual(inspected, {
     authenticated: true,
     temporary: true,
-    url: "https://chatgpt.com/?temporary-chat=true",
-    solAvailable: true,
-    proAvailable: true,
+     url: "https://chatgpt.com/?temporary-chat=true",
+     solAvailable: true,
+     extraHighAvailable: true,
+     proAvailable: true,
   });
   assert.equal(calls.length, 2);
   assert.equal(calls[0].operation, "refresh");
@@ -1438,7 +1440,7 @@ test("a live turn heartbeat refreshes its lease and rejects another helper", () 
   );
 });
 
-test("an uninitialized browser surface is reaped instead of remaining as a gray orphan tab", () => {
+test("an uninitialized browser surface cancels runtime ownership before reaping the gray orphan tab", async () => {
   const closed = [];
   const warnings = [];
   const tab = {
@@ -1466,21 +1468,26 @@ test("an uninitialized browser surface is reaped instead of remaining as a gray 
     snapshot: () => ({ tabs: [] }),
     publishState() {},
     writeDescriptor() {},
+    cancelTurn: async (traceId, reason) => closed.push(`cancel:${traceId}:${reason}`),
     logger: { warn: (event, detail) => warnings.push([event, detail]) },
   });
 
-  BrowserHost.prototype.reapExpiredTurnTabs.call(fixture, 101);
+  await BrowserHost.prototype.reapExpiredTurnTabs.call(fixture, 101);
 
   assert.equal(fixture.turnTabs.size, 0);
   assert.equal(fixture.selectedTabId, "home");
   assert.equal(fixture.closedTurnOwners.get(tab.traceId), tab.helperPid);
-  assert.deepEqual(closed, ["view", "contents"]);
-  assert.deepEqual(warnings, [["browser.orphan_turn_reaped", {
+  assert.deepEqual(closed, ["cancel:trace_orphan:browser_surface_bootstrap_timeout", "view", "contents"]);
+  const detail = {
     tabId: tab.id,
     traceId: tab.traceId,
     helperPid: tab.helperPid,
     evidence: "browser_surface_bootstrap_timeout",
-  }]]);
+  };
+  assert.deepEqual(warnings, [
+    ["browser.orphan_turn_expired", detail],
+    ["browser.orphan_turn_reaped", detail],
+  ]);
 });
 
 test("removing the final turn tab hides an uninitialized idle host instead of exposing gray content", () => {

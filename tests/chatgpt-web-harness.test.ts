@@ -2360,7 +2360,7 @@ describe("ChatGPT outer-native harness v4", () => {
       // ChatGPT caches the complete tools/list contract under a connector identity.
       // An intentional hash change therefore requires an explicit connector refresh or identity migration.
       expect(createHash("sha256").update(canonicalJson(publicConnectorAbi)).digest("hex"))
-        .toBe("28b2ed2e0333df5e23918b820f164dd6001016672a17e9528a6268e862b6dd33");
+        .toBe("9791763b8cd6b41a87d463e8ce11cbf4e4ad12bd5bfb05ba5b187c5cb9d8d2fd");
       for (const tool of listed.tools) {
         const properties = tool.inputSchema.properties as Record<string, unknown>;
         expect(properties[tool.name === "codex_read_context" ? "context_token" : "turn_token"])
@@ -2571,6 +2571,62 @@ describe("ChatGPT outer-native harness v4", () => {
       await broker.close();
     }
   }, 30_000);
+
+  test("dedicated commands preserve native approval requests and reject unsupported permission fields", async () => {
+    const socketPath = brokerTestEndpoint(`cgw-permissions-${process.pid}-${Date.now()}`);
+    const broker = TurnBroker.forSocket(socketPath);
+    const environment = extractChatGptTurnEnvironment(parsed(environmentXml));
+    const permissions = {
+      sandbox_permissions: "require_escalated",
+      justification: "May this fixture command run outside the sandbox?",
+      prefix_rule: ["pwd"],
+    };
+    const transport = new StdioClientTransport({
+      command: process.execPath, args: ["src/cli.ts", "mcp", "--broker-socket", socketPath],
+      cwd: process.cwd(), stderr: "pipe",
+    });
+    const client = new Client({ name: "native-permissions-test", version: "1" });
+    try {
+      await client.connect(transport);
+      for (const name of ["exec_command", "shell_command"]) {
+        environment.tools = [{ name, description: "Native command", parameters: {
+          type: "object", properties: {
+            sandbox_permissions: { type: "string", enum: ["use_default", "require_escalated"] },
+            justification: { type: "string" }, prefix_rule: { type: "array", items: { type: "string" } },
+          },
+        } }];
+        const token = await broker.register(environment, 60_000);
+        try {
+          const pending = client.callTool({ name: "codex_exec", arguments: { turn_token: token, cmd: "pwd", ...permissions } });
+          const [request] = await broker.nextToolBatch(token);
+          const expected = name === "exec_command" ? { cmd: "pwd", ...permissions } : { command: "pwd", ...permissions };
+          broker.completeTool(token, request!.callId, { content: [{ type: "text", text: "Native approval denied" }], isError: true });
+          const response = await pending;
+          expect(request).toMatchObject({ wireName: name, arguments: expected });
+          expect(response.isError).toBe(true);
+          expect(response.content).toEqual([{ type: "text", text: "Native approval denied" }]);
+        } finally { broker.revoke(token); }
+      }
+      environment.tools = [{ name: "exec_command", description: "No escalation in this turn", parameters: {
+        type: "object", properties: { cmd: { type: "string" } }, additionalProperties: false,
+      } }];
+      const token = await broker.register(environment, 60_000);
+      try {
+        const refused = await client.callTool({ name: "codex_exec", arguments: { turn_token: token, cmd: "pwd", ...permissions } });
+        expect(refused.isError).toBe(true);
+        expect(JSON.stringify(refused.content)).toContain("does not support sandbox_permissions");
+        const ordinary = client.callTool({ name: "codex_exec", arguments: { turn_token: token, cmd: "pwd" } });
+        const batch = await broker.nextToolBatch(token);
+        for (const request of batch) broker.completeTool(token, request.callId, toolResult({ output: "fixture", exit_code: 0 }));
+        await ordinary;
+        expect(batch).toHaveLength(1);
+        expect(batch[0]!.arguments).toEqual({ cmd: "pwd" });
+      } finally { broker.revoke(token); }
+    } finally {
+      await client.close();
+      await broker.close();
+    }
+  }, 15_000);
 
   test("routes every dedicated direct-token bridge to its exact top-level Codex tool", async () => {
     const socketPath = brokerTestEndpoint(`cgw-h4-mcp-direct-${process.pid}-${Date.now()}`);

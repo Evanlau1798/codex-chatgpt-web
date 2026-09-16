@@ -1,3 +1,4 @@
+const languages = require("./languages.json");
 const fs = require("node:fs");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { readJsonFile } = require("./json-file.cjs");
@@ -55,7 +56,7 @@ function readState(filePath) {
       state.codexSetupComplete = true;
       state.claudeSetupComplete = true;
     }
-    if (state.language !== null && state.language !== "en" && state.language !== "zh-CN" && state.language !== "ja") {
+    if (state.language !== null && (typeof state.language !== "string" || !Object.hasOwn(languages, state.language))) {
       state.language = DEFAULT_STATE.language;
     }
     for (const key of [

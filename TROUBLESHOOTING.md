@@ -113,6 +113,11 @@ Browser-only mode needs no connector. Full harness mode requires all of the foll
 Do not rename or refresh an old **Codex Native** connector. ChatGPT caches the public MCP contract by
 connector identity, so create **Codex Native2** as a new connector.
 
+After updating, if `codex_exec` still does not expose `sandbox_permissions`, `justification`, and
+`prefix_rule`, recreate the current mode's connector so ChatGPT loads the updated tool schema.
+These fields only forward a permission request to Codex; its sandbox and approval policy still
+decide whether the command can run. Ordinary commands do not require these optional fields.
+
 ### ChatGPT shows `Error creating connector`
 
 1. Confirm that the Tunnel ID and the regular API key used by the launcher were created under the
@@ -231,7 +236,8 @@ safe log**. A useful report contains:
 - Codex Desktop and/or CLI version;
 - OS and architecture;
 - ChatGPT account tier;
-- Browser-only or Full harness mode and the exact selected model;
+- Browser-only, Full harness (automatic), or Zero Risk mode and the exact selected model;
+- For Zero Risk, the ChatGPT model/effort and the last completed step: copying, pasting, sending in ChatGPT, confirming Sent, or the first MCP call;
 - exact reproduction steps and complete final error;
 - whether it reproduces in a fresh Codex task; and
 - a safe log captured immediately after that reproduction.

@@ -297,6 +297,7 @@ export function createChatGptWebAdapter(
                   emitToolBatch(outstanding, estimateChatGptWebUsage(runtimeUsageInput(parsed, session),
                     { reasoning, toolRequests: outstanding }, turnCapabilities, experimentalBiggerContext,
                     automaticUsagePromptOptions), emit);
+                  session.markOutstandingPublished();
                   return;
                 }
               } else {
@@ -434,6 +435,7 @@ export function createChatGptWebAdapter(
                   experimentalBiggerContext, automaticUsagePromptOptions),
                 emit,
               );
+              session.markOutstandingPublished();
               return;
             }
           } finally {

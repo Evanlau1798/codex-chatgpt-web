@@ -207,6 +207,7 @@ test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", 
     storageStatePath: join(root, "browser", "storage-state.json"),
     brokerSocketPath: defaultBrokerEndpoint(root),
     headed: true,
+    extraHighAvailable: true,
     proAvailable: true,
     autoApproveToolCalls: false,
     controlToken: "config-migration-control-token-0123456789abcdef",
@@ -272,5 +273,5 @@ test("Luna-only provider configuration exposes only the Luna backend", () => {
   expect(provider.models).toEqual(["gpt-5.6-luna"]);
   expect(provider.defaultModel).toBe("gpt-5.6-luna");
   expect(provider.modelReasoningEfforts).toEqual({ "gpt-5.6-luna": ["low", "medium"] });
-  expect(provider.chatgptWeb).toMatchObject({ solAvailable: false, proAvailable: false });
+  expect(provider.chatgptWeb).toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
 });

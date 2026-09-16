@@ -72,6 +72,7 @@ export function provider(name: string): CodexProviderConfig {
       brokerSocketPath: defaultBrokerEndpoint(join(root, name)),
       localToolsEnabled: true,
       solAvailable: false,
+      extraHighAvailable: false,
       proAvailable: false,
       experimentalBiggerContext: false,
     },

@@ -199,3 +199,132 @@ test("session reminders expose dismissal and a real storage-clearing logout", ()
   assert.match(preloadSource, /logoutChatGpt:[\s\S]*?launcher:browser-logout/);
   assert.match(browserHostSource, /session\.clearStorageData\(\)/);
 });
+
+test("setup preserves session-check failures and never installs without verified authentication", async () => {
+  const vm = require("node:vm");
+  const source = electronMain.slice(
+    electronMain.indexOf("  const setupIntegration = async"),
+    electronMain.indexOf('handle("launcher:setup-mcp",'),
+  );
+  for (const dev of [false, true]) {
+    let setup;
+    let installs = 0;
+    let browser = { authenticated: false, status: "error", message: "ChatGPT session verification failed (HTTP 503)." };
+    const state = { browserInteractionMode: "automatic", coreSetupComplete: false, codexSetupComplete: false };
+    const run = async () => { installs++; return { mode: "browser-only", stdout: "" }; };
+    vm.runInNewContext(source, {
+      handle: (name, handler) => { if (name === "launcher:setup-codex") setup = handler; }, IS_DEV_PROFILE: dev,
+      stateStore: { read: () => state, update() {} },
+      browserHost: { probeAuthentication: async () => browser, returnToIdle: async () => {} },
+      runtimeHost: { setupCore: run, setupDevCore: run, runtimeConfigSnapshot: () => ({ config: {} }) },
+      smokePassedThisSession: true, smokePassedForCurrentVersion: () => true,
+      send() {}, startCatalogVerificationMonitor() {}, logger: { warn() {} },
+    });
+    await assert.rejects(setup, error => error.message === browser.message);
+    assert.equal(installs, 0);
+    browser = { authenticated: false, status: "signed-out", message: "Sign in to ChatGPT" };
+    await assert.rejects(setup, /Sign in to/);
+    assert.equal(installs, 0);
+    browser = { authenticated: true, status: "ready", message: "ChatGPT is ready" };
+    assert.equal((await setup()).ok, true);
+    assert.equal(installs, 1);
+  }
+});
+
+test("startup failure stays visible on another launch and Retry exits the failed instance", async () => {
+  const vm = require("node:vm");
+  const source = electronMain.slice(electronMain.indexOf("function showMainWindow()"), electronMain.indexOf("async function openWebUrl"))
+    + electronMain.slice(electronMain.indexOf("void start().catch("));
+  const events = [];
+  let visible = false;
+  let answer;
+  const dialogOpened = new Promise(resolve => {
+    answer = { opened: resolve };
+  });
+  const window = { isDestroyed: () => false, isMinimized: () => false,
+    show: () => { visible = true; }, focus() {}, };
+  const sandbox = {
+    mainWindow: window, mainWindowReadyToShow: false, mainWindowShowRequested: false,
+    startupFailed: false, quitting: false,
+    browserHost: { destroy: () => events.push("destroy") },
+    browserControl: { close: async () => events.push("control closed") },
+    start: async () => { throw new Error("Browser idle document did not commit within 10000ms"); },
+    app: { getPath: () => "/unused", whenReady: async () => {},
+      relaunch: options => events.push(["relaunch", options.args]), exit: code => events.push(["exit", code]) },
+    fs: { appendFileSync() {} }, path,
+    createStateStore: () => ({ read: () => ({ language: "ko" }) }),
+    nativeCopyFor: language => {
+      assert.equal(language, "ko");
+      return { startupTitle: "시작 오류", startupDetail: "다시 시작", startupCleanupFailed: "정리 실패", retry: "다시 시도", quit: "종료" };
+    },
+    launchEnvironment: { CODEX_CHATGPT_WEB_HOME: undefined, CODEX_HOME: "original-codex-home" },
+    process: { argv: ["launcher", "--hidden"], env: { CODEX_CHATGPT_WEB_HOME: "dev-home", CODEX_HOME: "dev-codex-home" } },
+    dialog: {
+      showMessageBox: (owner, options) => {
+        assert.equal(options.title, "시작 오류");
+        assert.deepEqual(Array.from(options.buttons), ["다시 시도", "종료"]);
+        events.push(["dialog", owner === window, options.message]);
+        answer.opened();
+        return new Promise(resolve => { answer.resolve = resolve; });
+      },
+    },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(source, sandbox);
+  await dialogOpened;
+  assert.equal(visible, true, "the failed startup must expose its error owner without renderer readiness");
+  assert.deepEqual(events.slice(0, 2), ["destroy", "control closed"]);
+  visible = false;
+  sandbox.showMainWindow();
+  assert.equal(visible, true, "a second launch must restore the existing startup error window");
+  assert.equal(events.some(event => Array.isArray(event) && event[0] === "exit"), false);
+  answer.resolve({ response: 0 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(events.at(-2)[0], "relaunch");
+  assert.deepEqual(Array.from(events.at(-2)[1]), []);
+  assert.deepEqual(events.at(-1), ["exit", 1]);
+  assert.deepEqual(sandbox.process.env, { CODEX_HOME: "original-codex-home" });
+});
+
+test("catalog verification reports a failed request instead of requesting another restart, then recovers", async () => {
+  const vm = require("node:vm");
+  const start = electronMain.indexOf("function startCatalogVerificationMonitor(");
+  const end = electronMain.indexOf("\nfunction ", start + 1);
+  const source = electronMain.slice(start, end);
+  const state = { coreSetupComplete: true, codexSetupComplete: true, codexCatalogVerified: false, codexRestartRequired: true, language: "en" };
+  const operations = [];
+  const events = [];
+  let tick;
+  let payload = { pid: 10, successful_model_catalog_requests: 0, model_catalog_requests: 0, last_model_catalog_result: null };
+  vm.runInNewContext(source + "\nstartCatalogVerificationMonitor({ logger, stateStore });", {
+    catalogVerificationInFlight: false, catalogVerificationTimer: null, lastOperation: null,
+    stopCatalogVerificationMonitor() {},
+    runtimeSupervisor: { readConfig: () => ({}), proxyHealthPayload: async () => payload },
+    stateStore: { read: () => state, update: patch => Object.assign(state, patch) },
+    setInterval: callback => { tick = callback; return { unref() {} }; },
+    logger: { info: (...args) => events.push(args), warn: (...args) => events.push(args), debug() {} },
+    send() {}, publishOperation: op => operations.push(op),
+    nativeCopyFor: () => ({ catalogFailure: "Catalog failed (HTTP {status}; {reason})." }),
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(operations.length, 0);
+  assert.equal(state.codexRestartRequired, true);
+  payload = { ...payload, model_catalog_requests: 1, last_model_catalog_result: {
+    request: 1, at: "2026-09-16T10:00:00Z", status: 502, failure: { stage: "transport", code: "UnsupportedProxyProtocol" },
+  } };
+  await tick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(state.codexCatalogVerified, false);
+  assert.equal(state.codexRestartRequired, false);
+  assert.equal(operations[0]?.status, "failed");
+  assert.match(operations[0].message, /502.*UnsupportedProxyProtocol/);
+  await tick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(operations.length, 1, "polling must not repeat the same failure");
+  payload = { ...payload, successful_model_catalog_requests: 1, last_successful_model_catalog_request_at: "2026-09-16T10:01:00Z" };
+  await tick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(state.codexCatalogVerified, true);
+  assert.equal(state.codexRestartRequired, false);
+  assert.ok(events.some(([event]) => event === "codex.model_catalog_verified"));
+});
