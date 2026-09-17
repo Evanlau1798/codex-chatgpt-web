@@ -19,6 +19,9 @@ test("current connector verification uses reserved inventory semantics without a
     expect(probe.prompt).toContain("codex_tool_inventory");
     expect(probe.prompt).toContain(probe.query);
     expect(probe.prompt).toContain("current turn_token");
+    expect(probe.prompt).toContain("Do not send progress updates");
+    expect(probe.prompt).toContain("Do not call any other work tool");
+    expect(probe.prompt).not.toContain("Do not call any other tool.");
     expect(probe.prompt).not.toContain(`turn_${probe.nonce}`);
     expect(probe.prompt).not.toContain("codex_contract_probe exactly once");
     expect(recordConnectorContractProbeQuery(probe.query, "native")).toBeTrue();

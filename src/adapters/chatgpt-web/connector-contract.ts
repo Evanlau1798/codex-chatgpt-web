@@ -93,14 +93,16 @@ export async function verifyCurrentConnectorContract(
       ].join(" ")
     : reference
       ? [
+          "Do not send progress updates for this connector verification.",
           "Call codex_tool_inventory exactly once with",
           JSON.stringify({ turn_token: reference, query, include_schema: false }),
-          "Do not call any other tool. After the tool succeeds, reply briefly.",
+          "Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
         ].join(" ")
       : [
+          "Do not send progress updates for this connector verification.",
           "Call codex_tool_inventory exactly once using the current turn_token from codex_native_turn_binding, with",
           JSON.stringify({ query, include_schema: false }),
-          "Do not call any other tool. After the tool succeeds, reply briefly.",
+          "Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
         ].join(" ");
   discardConnectorContractProbeEvidence(nonce);
   try {
