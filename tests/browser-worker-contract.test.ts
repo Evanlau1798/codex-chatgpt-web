@@ -352,9 +352,12 @@ test("connector verification proves the current schema with an actual connector 
     workerSource.indexOf("private async inspectSessionExclusive"),
   );
   expect(verifier).toContain("verifyCurrentConnectorContract(");
+  expect(verifier).toContain("broker.register(");
+  expect(verifier).toContain("broker.registerSafe(");
+  expect(verifier).toContain("broker.revoke(");
   expect(verifier).toContain("nativeConnector: true");
-  expect(verifier).toContain("connectorContractVerification: true");
-  expect(workerSource).toContain("this.config.autoApproveToolCalls || turn.connectorContractVerification === true");
+  expect(verifier).not.toContain("connectorContractVerification: true");
+  expect(workerSource).not.toContain("turn.connectorContractVerification");
 });
 
 test("a stalled post-submit DOM probe is bounded before same-page launcher recovery", async () => {

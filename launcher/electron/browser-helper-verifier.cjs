@@ -47,7 +47,7 @@ async function stopChild(child) {
   }
 }
 
-async function runBrowserHelperOperation({ helper, descriptorPath, appName, operation, payload = {}, logger }) {
+async function runBrowserHelperOperation({ helper, descriptorPath, appName, brokerSocketPath, operation, payload = {}, logger }) {
   if (!helper || typeof helper.executable !== "string" || typeof helper.script !== "string") {
     throw new Error("Browser helper verification command is invalid");
   }
@@ -118,7 +118,11 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, oper
           ...payload,
           type: operation,
           id,
-          config: { appName, browserHostDescriptorPath: descriptorPath },
+          config: {
+            appName,
+            browserHostDescriptorPath: descriptorPath,
+            ...(brokerSocketPath ? { brokerSocketPath } : {}),
+          },
         }).catch(error => finish(error instanceof Error ? error : new Error(String(error))));
         return;
       }
@@ -175,6 +179,9 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, oper
 }
 
 async function verifyConnectorWithBrowserHelper(options) {
+  if (typeof options.brokerSocketPath !== "string" || !options.brokerSocketPath.trim()) {
+    throw new Error("Browser helper connector verification broker is unavailable");
+  }
   const message = await runBrowserHelperOperation({ ...options, operation: "verify" });
   if (message.text !== options.appName) {
     throw new Error("Browser helper verified a different ChatGPT connector");

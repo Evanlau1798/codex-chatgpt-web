@@ -20,10 +20,10 @@ import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapte
 import { ChatGptExternalTurnProgress, ChatGptMirroredTurnProgress, chatGptExternalProgressIsLive } from "../src/adapters/chatgpt-web/turn-progress";
 import { CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, chatGptMcpInvocationTimeout } from "../src/adapters/chatgpt-web/mcp-server";
 import {
-  CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL,
   NATIVE2_CONTRACT_REVISION,
   NATIVE2_PUBLIC_CONTRACT_HASH,
   consumeConnectorContractProbeEvidence,
+  discardConnectorContractProbeEvidence,
 } from "../src/adapters/chatgpt-web/connector-contract";
 import { defaultBrokerEndpoint } from "../src/config";
 import { estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
@@ -2348,7 +2348,6 @@ describe("ChatGPT outer-native harness v4", () => {
       const listed = await client.listTools();
       expect(listed.tools.map(tool => tool.name).sort()).toEqual([
         "codex_apply_patch",
-        CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL,
         "codex_exec",
         "codex_read_context",
         "codex_tool_call",
@@ -2364,17 +2363,12 @@ describe("ChatGPT outer-native harness v4", () => {
           outputSchema: tool.outputSchema ?? null,
           annotations: tool.annotations ?? null,
         }));
-      // ChatGPT caches the complete tools/list contract under a connector identity.
-      // An intentional hash change therefore requires refreshing the same current-generation connector.
+      // ChatGPT caches the complete tools/list contract under a connector identity, so the
+      // current Native2 generation must stay byte-for-byte compatible across Enhanced updates.
       expect(createHash("sha256").update(canonicalJson(publicConnectorAbi)).digest("hex"))
         .toBe(NATIVE2_PUBLIC_CONTRACT_HASH);
       for (const tool of listed.tools) {
         const properties = tool.inputSchema.properties as Record<string, unknown>;
-        if (tool.name === CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL) {
-          expect(properties.contract_revision).toEqual({ const: NATIVE2_CONTRACT_REVISION, type: "string" });
-          expect(properties.nonce).toEqual({ type: "string", pattern: "^[a-f0-9]{32}$" });
-          continue;
-        }
         expect(properties[tool.name === "codex_read_context" ? "context_token" : "turn_token"])
           .toEqual({ type: "string", minLength: 20, maxLength: 256 });
         expect(properties).not.toHaveProperty("binding_id");
@@ -2387,11 +2381,51 @@ describe("ChatGPT outer-native harness v4", () => {
         openWorldHint: false,
       });
       const probeNonce = "0123456789abcdef0123456789abcdef";
-      expect((await call(CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL, {
-        contract_revision: NATIVE2_CONTRACT_REVISION,
-        nonce: probeNonce,
-      })).structuredContent).toEqual({ verified: true });
+      expect((await call("codex_tool_inventory", {
+        turn_token: token,
+        query: `__codex_contract_probe__:${NATIVE2_CONTRACT_REVISION}:${probeNonce}`,
+        include_schema: false,
+      })).structuredContent).toEqual({ tools: [], total: 0, next_offset: null });
       expect(consumeConnectorContractProbeEvidence(probeNonce, NATIVE2_CONTRACT_REVISION)).toBeTrue();
+      const retiredToken = await broker.register(gatewayOnlyEnvironment, 60_000, "retained-contract-regression");
+      broker.revoke(retiredToken);
+      const retiredProbeNonce = "33333333333333333333333333333333";
+      discardConnectorContractProbeEvidence(retiredProbeNonce);
+      const retiredProbe = await call("codex_tool_inventory", {
+        turn_token: retiredToken,
+        query: `__codex_contract_probe__:${NATIVE2_CONTRACT_REVISION}:${retiredProbeNonce}`,
+        include_schema: false,
+      });
+      expect(retiredProbe.isError).toBe(true);
+      expect(consumeConnectorContractProbeEvidence(retiredProbeNonce, NATIVE2_CONTRACT_REVISION)).toBeFalse();
+
+      const permissionCall = call("codex_tool_call", {
+        turn_token: token,
+        wire_name: "exec_command",
+        arguments: {
+          cmd: "pwd",
+          sandbox_permissions: "require_escalated",
+          justification: "gateway-only schema must not claim support",
+          prefix_rule: ["pwd"],
+        },
+      });
+      const permissionWait = new AbortController();
+      const firstPermissionOutcome = await Promise.race([
+        permissionCall.then(response => ({ response })),
+        broker.nextToolBatch(token, permissionWait.signal).then(batch => ({ batch })),
+      ]);
+      let permissionResponse;
+      if ("response" in firstPermissionOutcome) {
+        permissionWait.abort();
+        permissionResponse = firstPermissionOutcome.response;
+      } else {
+        for (const request of firstPermissionOutcome.batch) {
+          broker.completeTool(token, request.callId, toolResult({ output: "unexpected gateway execution" }));
+        }
+        permissionResponse = await permissionCall;
+      }
+      expect(permissionResponse.isError).toBe(true);
+      expect(JSON.stringify(permissionResponse.content)).toContain("sandbox_permissions");
       expect(listed.tools.find(tool => tool.name === "codex_exec")?.annotations).toMatchObject({
         readOnlyHint: false,
         destructiveHint: true,
@@ -2590,7 +2624,7 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   }, 30_000);
 
-  test("dedicated commands preserve native approval requests and reject unsupported permission fields", async () => {
+  test("dynamic command tools preserve native approval requests while codex_exec keeps the stable public schema", async () => {
     const socketPath = brokerTestEndpoint(`cgw-permissions-${process.pid}-${Date.now()}`);
     const broker = TurnBroker.forSocket(socketPath);
     const environment = extractChatGptTurnEnvironment(parsed(environmentXml));
@@ -2606,18 +2640,38 @@ describe("ChatGPT outer-native harness v4", () => {
     const client = new Client({ name: "native-permissions-test", version: "1" });
     try {
       await client.connect(transport);
+      const publicExec = (await client.listTools()).tools.find(tool => tool.name === "codex_exec")!;
+      expect(publicExec.inputSchema.properties).not.toHaveProperty("sandbox_permissions");
+      expect(publicExec.inputSchema.properties).not.toHaveProperty("justification");
+      expect(publicExec.inputSchema.properties).not.toHaveProperty("prefix_rule");
       for (const name of ["exec_command", "shell_command"]) {
         environment.tools = [{ name, description: "Native command", parameters: {
           type: "object", properties: {
+            [name === "exec_command" ? "cmd" : "command"]: { type: "string" },
             sandbox_permissions: { type: "string", enum: ["use_default", "require_escalated"] },
             justification: { type: "string" }, prefix_rule: { type: "array", items: { type: "string" } },
-          },
+          }, additionalProperties: false,
         } }];
         const token = await broker.register(environment, 60_000);
         try {
-          const pending = client.callTool({ name: "codex_exec", arguments: { turn_token: token, cmd: "pwd", ...permissions } });
-          const [request] = await broker.nextToolBatch(token);
+          const inventory = await client.callTool({ name: "codex_tool_inventory", arguments: {
+            turn_token: token, query: name, include_schema: true,
+          } });
+          expect(inventory.structuredContent).toMatchObject({
+            total: 1,
+            tools: [{
+              wire_name: name,
+              parameters: { properties: {
+                sandbox_permissions: { type: "string", enum: ["use_default", "require_escalated"] },
+                justification: { type: "string" }, prefix_rule: { type: "array", items: { type: "string" } },
+              } },
+            }],
+          });
           const expected = name === "exec_command" ? { cmd: "pwd", ...permissions } : { command: "pwd", ...permissions };
+          const pending = client.callTool({ name: "codex_tool_call", arguments: {
+            turn_token: token, wire_name: name, arguments: expected,
+          } });
+          const [request] = await broker.nextToolBatch(token);
           broker.completeTool(token, request!.callId, { content: [{ type: "text", text: "Native approval denied" }], isError: true });
           const response = await pending;
           expect(request).toMatchObject({ wireName: name, arguments: expected });
@@ -2630,9 +2684,13 @@ describe("ChatGPT outer-native harness v4", () => {
       } }];
       const token = await broker.register(environment, 60_000);
       try {
-        const refused = await client.callTool({ name: "codex_exec", arguments: { turn_token: token, cmd: "pwd", ...permissions } });
+        const refused = await client.callTool({ name: "codex_tool_call", arguments: {
+          turn_token: token,
+          wire_name: "exec_command",
+          arguments: { cmd: "pwd", ...permissions },
+        } });
         expect(refused.isError).toBe(true);
-        expect(JSON.stringify(refused.content)).toContain("does not support sandbox_permissions");
+        expect(JSON.stringify(refused.content)).toContain("sandbox_permissions");
         const ordinary = client.callTool({ name: "codex_exec", arguments: { turn_token: token, cmd: "pwd" } });
         const batch = await broker.nextToolBatch(token);
         for (const request of batch) broker.completeTool(token, request.callId, toolResult({ output: "fixture", exit_code: 0 }));

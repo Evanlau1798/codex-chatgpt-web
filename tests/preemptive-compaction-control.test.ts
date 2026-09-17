@@ -62,7 +62,7 @@ test("only uncommitted completion-evidence decisions enter generic browser error
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   const catchStart = source.indexOf("} catch (error) {", source.indexOf("const finalOptions ="));
   const decisionFailure = source.indexOf("error instanceof ChatGptFinalAnswerDecisionError", catchStart);
-  const genericRetry = source.indexOf("retryPromptForError?.", catchStart);
+  const genericRetry = source.indexOf("const retryPrompt = await chatGptBrowserErrorRetryPrompt", catchStart);
   expect(catchStart).toBeGreaterThan(-1);
   expect(decisionFailure).toBeGreaterThan(catchStart);
   expect(genericRetry).toBeGreaterThan(decisionFailure);

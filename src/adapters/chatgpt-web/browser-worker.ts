@@ -61,7 +61,8 @@ import {
   prepareChatGptFinalAnswer,
   recoverableFinalAnswerDecisionError,
 } from "./final-answer-gate";
-import { withAbort as withBrowserTurnAbort } from "./runtime-lifecycle";
+import { brokerSocketPath, withAbort as withBrowserTurnAbort } from "./runtime-lifecycle";
+import { RemoteTurnBroker } from "./turn-broker";
 import { activeCompactionToolResultInstruction } from "./native-compaction-control";
 import { ChatGptTurnLatencyDiagnostics } from "./turn-latency";
 import {
@@ -166,7 +167,7 @@ import {
   chatGptPromptAttachmentTimeoutMs,
 } from "./prompt-attachment-budget";
 import { chatGptCompletionEvidenceFailure } from "./same-surface-readiness";
-import { chatGptTerminalErrorRetryPrompt } from "./same-surface-recovery";
+import { chatGptBrowserErrorRetryPrompt } from "./same-surface-recovery";
 import {
   ChatGptLunaCheckpointStream,
   type CapturedChatGptLunaCheckpoint,
@@ -530,8 +531,6 @@ export interface BrowserTurn {
   capabilities: ChatGptWebCapabilities;
   /** Attach the Native2 connector for bridge control without granting outer Codex work capability. */
   nativeConnector?: boolean;
-  /** Explicit connector-schema probes may approve only the connector's one-shot use confirmation. */
-  connectorContractVerification?: boolean;
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   retainConversation?: boolean;
@@ -593,6 +592,7 @@ interface ChatGptSubmissionBaseline {
 
 export interface ResolvedBrowserConfig {
   appName: string;
+  brokerSocketPath?: string;
   browserHost: "managed-chrome" | "launcher";
   browserHostDescriptorPath?: string;
   browserHelperScriptPath?: string;
@@ -789,6 +789,7 @@ export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBro
   }
   return {
     appName,
+    brokerSocketPath: brokerSocketPath(provider),
     browserHost,
     ...(browserHostDescriptorPath ? { browserHostDescriptorPath: resolve(expandUserPath(browserHostDescriptorPath)) } : {}),
     ...(resolvedBrowserHelperScriptPath ? { browserHelperScriptPath: resolvedBrowserHelperScriptPath } : {}),
@@ -2270,18 +2271,38 @@ export class ChatGptBrowserWorker {
       const modelId = account.solAvailable ? CHATGPT_WEB_MODEL_ID : CHATGPT_WEB_LUNA_MODEL_ID;
       const reasoning = account.solAvailable ? "high" : "low";
       const contract = this.config.appName === ZERO_RISK_CHATGPT_CONNECTOR_NAME ? "safe" as const : "native" as const;
-      await verifyCurrentConnectorContract(this.config.appName, contract, async probe => {
-        await this.runBrowserTurn({
-          traceId: `${traceId}_contract`,
-          modelId,
-          reasoning,
-          capabilities,
-          nativeConnector: true,
-          connectorContractVerification: true,
-          prepare: async () => ({ text: probe.prompt, images: [], release: () => {} }),
-          onTextDelta: () => {},
-        }, undefined, page);
-      });
+      if (!this.config.brokerSocketPath) {
+        throw new Error("Connector verification requires the active runtime broker socket");
+      }
+      const broker = new RemoteTurnBroker(this.config.brokerSocketPath);
+      const cwd = process.cwd();
+      const environment = {
+        cwd,
+        roots: [cwd],
+        writableRoots: [],
+        sandboxPolicy: { type: "readOnly" as const, networkAccess: false },
+        tools: [],
+      };
+      const surfaceNonce = `verify_${randomUUID().replaceAll("-", "")}`;
+      const reference = contract === "safe"
+        ? await broker.registerSafe(environment, surfaceNonce, 60_000, `${traceId}_contract`)
+        : await broker.register(environment, 60_000, `${traceId}_contract`);
+      try {
+        if (contract === "safe") await broker.confirmSafeTurnSent(reference, surfaceNonce);
+        await verifyCurrentConnectorContract(this.config.appName, contract, async probe => {
+          await this.runBrowserTurn({
+            traceId: `${traceId}_contract`,
+            modelId,
+            reasoning,
+            capabilities,
+            nativeConnector: true,
+            prepare: async () => ({ text: probe.prompt, images: [], release: () => {} }),
+            onTextDelta: () => {},
+          }, undefined, page);
+        }, reference);
+      } finally {
+        await broker.revoke(reference);
+      }
       await captureDiagnostic("connector-contract-verified");
       await this.clearChatGptComposerState(page);
       await captureDiagnostic("connector-verification-cleared");
@@ -3542,7 +3563,7 @@ export class ChatGptBrowserWorker {
               await throwIfChatGptRateLimitDialog(page);
               if (await resolveChatGptToolConfirmation(
                 page, this.config.appName,
-                this.config.autoApproveToolCalls || turn.connectorContractVerification === true,
+                this.config.autoApproveToolCalls,
                 turn.abortSignal,
                 CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS, () => diagnostics.capture(page, "tool-confirmation-visible"),
               )) turn.onProgress?.();
@@ -3752,7 +3773,7 @@ export class ChatGptBrowserWorker {
         if ((turn.nativeConnector === true || mode.localTools) && await resolveChatGptToolConfirmation(
           page,
           this.config.appName,
-          this.config.autoApproveToolCalls || turn.connectorContractVerification === true,
+          this.config.autoApproveToolCalls,
           turn.abortSignal,
           CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS,
           () => diagnostics.capture(page, "tool-confirmation-visible"),
@@ -4070,10 +4091,13 @@ export class ChatGptBrowserWorker {
           const failure = error instanceof Error ? error : new Error(String(error));
           if (failure instanceof ChatGptWebAdapterError && failure.retireSession) throw failure;
           if (turn.tunneledOutput) throw error;
-          const retryPrompt = chatGptTerminalErrorRetryPrompt(
-            failure, responseAttempt, answerBuffer.value(), turn.compaction === true,
-          )
-            ?? await turn.retryPromptForError?.(failure, responseAttempt);
+          const retryPrompt = await chatGptBrowserErrorRetryPrompt({
+            error: failure,
+            attempt: responseAttempt,
+            emittedText: answerBuffer.value(),
+            compaction: turn.compaction === true,
+            ...(turn.retryPromptForError ? { sessionRetry: turn.retryPromptForError } : {}),
+          });
           if (!retryPrompt) throw error;
           if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry browser failures");
           const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();

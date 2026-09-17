@@ -7,12 +7,12 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import {
-  CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL,
   NATIVE2_CONTRACT_REVISION,
   NATIVE2_PUBLIC_CONTRACT_HASH,
   ZERO_RISK_CONTRACT_REVISION,
   ZERO_RISK_PUBLIC_CONTRACT_HASH,
   consumeConnectorContractProbeEvidence,
+  discardConnectorContractProbeEvidence,
 } from "../src/adapters/chatgpt-web/connector-contract";
 import { defaultBrokerEndpoint } from "../src/config";
 
@@ -65,7 +65,7 @@ for (const mode of ["manual", "automatic"] as const) {
         await client.connect(transport);
         const listed = await client.listTools();
         const tools = listed.tools.map(tool => tool.name);
-        expect(tools).toContain(CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL);
+        expect(tools).not.toContain("codex_contract_probe");
         expect(tools.includes("codex_turn_start")).toBe(mode === "manual");
         expect(tools.includes("codex_turn_complete")).toBe(mode === "manual");
         const contract = mode === "manual" ? "safe" : "native";
@@ -84,15 +84,6 @@ for (const mode of ["manual", "automatic"] as const) {
         ]);
         expect(serialized).toContain('"--contract"');
         expect(serialized).toContain(`"${contract}"`);
-        const probeRevision = mode === "manual" ? ZERO_RISK_CONTRACT_REVISION : NATIVE2_CONTRACT_REVISION;
-        const probeNonce = mode === "manual"
-          ? "11111111111111111111111111111111"
-          : "22222222222222222222222222222222";
-        expect((await client.callTool({
-          name: CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL,
-          arguments: { contract_revision: probeRevision, nonce: probeNonce },
-        })).structuredContent).toEqual({ verified: true });
-        expect(consumeConnectorContractProbeEvidence(probeNonce, probeRevision)).toBeTrue();
         if (mode === "manual") {
           const nonce = "surface_nonce_launcher_contract";
           const requestId = await broker.registerSafe({
@@ -100,9 +91,25 @@ for (const mode of ["manual", "automatic"] as const) {
             sandboxPolicy: { type: "dangerFullAccess" }, tools: [],
           }, nonce, 5_000, "safe-launcher-contract");
           broker.confirmSafeTurnSent(requestId, nonce);
+          const unstartedProbeNonce = "22222222222222222222222222222222";
+          discardConnectorContractProbeEvidence(unstartedProbeNonce);
+          const unstartedProbe = await client.callTool({ name: "codex_tool_inventory", arguments: {
+            request_id: requestId,
+            query: `__codex_contract_probe__:${ZERO_RISK_CONTRACT_REVISION}:${unstartedProbeNonce}`,
+            include_schema: false,
+          } });
+          expect(unstartedProbe.isError).toBe(true);
+          expect(consumeConnectorContractProbeEvidence(unstartedProbeNonce, ZERO_RISK_CONTRACT_REVISION)).toBeFalse();
           expect((await client.callTool({ name: "codex_turn_start", arguments: { request_id: requestId } }))
             .structuredContent).toMatchObject({ started: true });
           await broker.waitForSafeStart(requestId);
+          const probeNonce = "11111111111111111111111111111111";
+          expect((await client.callTool({ name: "codex_tool_inventory", arguments: {
+            request_id: requestId,
+            query: `__codex_contract_probe__:${ZERO_RISK_CONTRACT_REVISION}:${probeNonce}`,
+            include_schema: false,
+          } })).structuredContent).toEqual({ tools: [], total: 0, next_offset: null });
+          expect(consumeConnectorContractProbeEvidence(probeNonce, ZERO_RISK_CONTRACT_REVISION)).toBeTrue();
           expect((await client.callTool({ name: "codex_turn_complete", arguments: {
             request_id: requestId, final_answer: "Launcher contract verified",
           } })).structuredContent).toMatchObject({ completed: true });

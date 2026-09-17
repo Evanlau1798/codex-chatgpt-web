@@ -261,10 +261,19 @@ function maintenanceWorker(message: MaintenanceMessage): ChatGptBrowserWorker {
   if (!appName || appName.length > 80 || !browserHostDescriptorPath) {
     throw new Error("Browser helper maintenance config is invalid");
   }
+  const brokerSocketPath = message.type === "verify" ? message.config.brokerSocketPath?.trim() : undefined;
+  if (message.type === "verify" && !brokerSocketPath) {
+    throw new Error("Browser helper connector verification broker is unavailable");
+  }
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: "https://chatgpt.com",
-    chatgptWeb: { appName, browserHost: "launcher", browserHostDescriptorPath },
+    chatgptWeb: {
+      appName,
+      browserHost: "launcher",
+      browserHostDescriptorPath,
+      ...(brokerSocketPath ? { brokerSocketPath } : {}),
+    },
   };
   return ChatGptBrowserWorker.forProvider(provider);
 }

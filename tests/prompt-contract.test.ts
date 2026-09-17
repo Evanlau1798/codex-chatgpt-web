@@ -73,6 +73,11 @@ test("tool-capable prompts pass one stable turn token directly to native actions
   expect(transportOnly).toContain("tool_search");
   expect(transportOnly).toContain("codex_tool_call");
   expect(transportOnly).toContain("same Web conversation");
+  expect(transportOnly).toContain("sandbox_permissions");
+  expect(transportOnly).toContain("justification");
+  expect(transportOnly).toContain("prefix_rule");
+  expect(transportOnly).toContain("inventory the actual exec_command or shell_command");
+  expect(transportOnly).toContain("use codex_tool_call instead of codex_exec");
   expect(transportOnly).toContain("Exact outer client tool wire names for this turn are stored in codex_context_json.tool_wire_names.");
   expect(compiled.text).toContain('"tool_wire_names":["Read","Glob","multi_agent_v1__spawn_agent"]');
   expect(transportOnly).toContain("Never emulate a stateful or persistent tool with codex_exec");

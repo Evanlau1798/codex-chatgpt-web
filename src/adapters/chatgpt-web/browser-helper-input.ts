@@ -32,7 +32,7 @@ export interface BrowserHelperRunMessage {
 }
 
 type MaintenanceMessage =
-  | { type: "verify"; id: string; config: { appName: string; browserHostDescriptorPath: string } }
+  | { type: "verify"; id: string; config: { appName: string; browserHostDescriptorPath: string; brokerSocketPath: string } }
   | { type: "inspect"; id: string; config: { appName: string; browserHostDescriptorPath: string }; detectCapabilities: boolean }
   | { type: "smoke"; id: string; config: { appName: string; browserHostDescriptorPath: string } };
 

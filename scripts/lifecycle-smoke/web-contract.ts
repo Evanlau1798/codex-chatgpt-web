@@ -21,6 +21,7 @@ import {
   deriveWebContractCapabilities,
   requestWebContractTurn,
   runWebContractTurns,
+  webContractRequestTools,
   WEB_CONTRACT_PROBE_TIMEOUT_MS,
   WEB_CONTRACT_TURN_TIMEOUT_MS,
   webContractBrowserIsIdle,
@@ -126,7 +127,6 @@ const heartbeat = setInterval(() => {
 heartbeat.unref?.();
 try {
   await connection.page.goto(CHATGPT_TEMPORARY_CHAT_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
-  account = await detectChatGptAccountCapabilities(connection.page);
   sessionUrl = connection.page.url();
   if (!isTemporaryChatGptUrl(sessionUrl)) throw new Error("Web contract smoke requires Temporary Chat");
   process.stdout.write("WEB_CONTRACT_MARKDOWN_PROBE_STARTED\n");
@@ -134,6 +134,10 @@ try {
     WEB_CONTRACT_PROBE_TIMEOUT_MS,
     signal => runMarkdownRestorationProbe(connection.page, config.appName, signal),
   );
+  // The Markdown probe exercises a fully hydrated composer for several seconds. Detect account
+  // capabilities afterwards so a late-arriving effort control cannot be misclassified as Luna-only
+  // from the initial Temporary Chat bootstrap.
+  account = await detectChatGptAccountCapabilities(connection.page);
   // The Markdown probe selects exactly config.appName on this leased surface and verifies that
   // connector state survives the full restoration pass before cleaning the composer.
   connectorVerified = true;
@@ -192,7 +196,7 @@ await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_C
         item(turnId, `msg_web_contract_environment_${turn}`, environment),
         item(turnId, `msg_web_contract_prompt_${turn}`, `${probe.prompt}\n\n${taskPrompt}`),
       ],
-      tools: [],
+      tools: webContractRequestTools(),
       ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
     };
     const result = await requestWebContractTurn(fetch, new Request(`${baseUrl}/v1/responses`, {

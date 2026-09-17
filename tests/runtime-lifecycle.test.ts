@@ -118,7 +118,7 @@ test("tool surface recovery requires one complete unstreamed batch and runs only
     .toMatchObject({ eligible: false, reason: "final_streamed" });
 });
 
-test("upstream failure rebuilds only an unpublished pending tool batch", () => {
+test("upstream failure rebuilds from canonical state without replaying published tool effects", () => {
   const createSession = () => new ChatGptTurnSession({
     mode: "tools" as const,
     token: Promise.resolve("turn_unpublished"),
@@ -128,6 +128,13 @@ test("upstream failure rebuilds only an unpublished pending tool batch", () => {
     cancel: () => {},
   });
   const failure = new ChatGptWebAdapterError("upstream failed after the pending call was observed", {
+    status: 502,
+    errorType: "server_error",
+    code: "upstream_server_error",
+    retryable: true,
+    retireSession: true,
+  });
+  const nonRetryableFailure = new ChatGptWebAdapterError("upstream failed without a safe retry", {
     status: 502,
     errorType: "server_error",
     code: "upstream_server_error",
@@ -146,6 +153,18 @@ test("upstream failure rebuilds only an unpublished pending tool batch", () => {
   published.markOutstandingPublished();
   expect(chatGptSurfaceRecoveryDecision(failure, published, request, 0))
     .toMatchObject({ eligible: false, reason: "tool_results_incomplete" });
+  expect(chatGptSurfaceRecoveryDecision(
+    failure,
+    published,
+    completeRequest(["call_published"], ["call_published"]),
+    0,
+  )).toMatchObject({ eligible: true, reason: "eligible", canonicalResultCount: 1 });
+
+  const settled = createSession();
+  expect(chatGptSurfaceRecoveryDecision(failure, settled, request, 0))
+    .toMatchObject({ eligible: true, reason: "eligible", canonicalResultCount: 0 });
+  expect(chatGptSurfaceRecoveryDecision(nonRetryableFailure, settled, request, 0))
+    .toMatchObject({ eligible: false, reason: "non_retryable", canonicalResultCount: 0 });
   expect(chatGptSurfaceRecoveryDecision(failure, unpublished, request, 1))
     .toMatchObject({ eligible: false, reason: "already_recovered" });
 });
@@ -328,8 +347,16 @@ test("same-surface recovery requires complete canonical state and no pending eff
   });
   session.observeCanonicalRequest(completeRequest());
   const failure = chatGptCompletionEvidenceError("completion evidence disappeared", false);
+  const upstreamFailure = new ChatGptWebAdapterError("upstream failed", {
+    status: 502,
+    errorType: "server_error",
+    code: "upstream_server_error",
+    retryable: true,
+  });
 
   expect(chatGptSameSurfaceRecoveryDecision(failure, session, 1, true))
+    .toMatchObject({ eligible: true, reason: "eligible" });
+  expect(chatGptSameSurfaceRecoveryDecision(upstreamFailure, session, 1, true))
     .toMatchObject({ eligible: true, reason: "eligible" });
   expect(chatGptSameSurfaceRecoveryDecision(failure, session, 1, false))
     .toMatchObject({ eligible: false, reason: "mode_disabled" });
@@ -338,6 +365,8 @@ test("same-surface recovery requires complete canonical state and no pending eff
 
   session.setOutstanding([{ callId: "call_pending", wireName: "exec_command", freeform: false, arguments: {} }]);
   expect(chatGptSameSurfaceRecoveryDecision(failure, session, 1, true))
+    .toMatchObject({ eligible: false, reason: "tool_results_pending" });
+  expect(chatGptSameSurfaceRecoveryDecision(upstreamFailure, session, 1, true))
     .toMatchObject({ eligible: false, reason: "tool_results_pending" });
 });
 

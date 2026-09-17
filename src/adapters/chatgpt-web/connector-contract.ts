@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChatGptMcpContract } from "./mcp-zero-risk";
 
-export const CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL = "codex_contract_probe";
 export const NATIVE2_CONTRACT_REVISION = "native2-enhanced-2026-09-17-1";
 export const ZERO_RISK_CONTRACT_REVISION = "zero-risk-2026-09-17-1";
-export const NATIVE2_PUBLIC_CONTRACT_HASH = "dd7a1278dd77dfeafb2b3be5db9304e1342b49bc41ce419f4502c80be1a5f968";
-export const ZERO_RISK_PUBLIC_CONTRACT_HASH = "c229b7d611dff0af244576b0071707b29084747ee43343a08d514d6e4e21b7b6";
+export const NATIVE2_PUBLIC_CONTRACT_HASH = "28b2ed2e0333df5e23918b820f164dd6001016672a17e9528a6268e862b6dd33";
+export const ZERO_RISK_PUBLIC_CONTRACT_HASH = "0c21b46d44ec5ade78a4059d2ecdb6686fafadafc454d39ec5d595687cf05bd6";
 
 const NONCE_PATTERN = /^[a-f0-9]{32}$/;
+const PROBE_QUERY_PATTERN = /^__codex_contract_probe__:([^:]+):([a-f0-9]{32})$/;
 const PROBE_DIR = join(tmpdir(), "codex-chatgpt-web-contract-probes");
 
 function assertNonce(nonce: string): void {
@@ -24,6 +24,11 @@ function evidencePath(nonce: string): string {
 
 export function connectorContractRevision(contract: ChatGptMcpContract): string {
   return contract === "safe" ? ZERO_RISK_CONTRACT_REVISION : NATIVE2_CONTRACT_REVISION;
+}
+
+export function connectorContractProbeQuery(contractRevision: string, nonce: string): string {
+  assertNonce(nonce);
+  return `__codex_contract_probe__:${contractRevision}:${nonce}`;
 }
 
 export function recordConnectorContractProbeEvidence(nonce: string, contractRevision: string): void {
@@ -47,9 +52,22 @@ export function consumeConnectorContractProbeEvidence(nonce: string, expectedRev
   }
 }
 
+export function recordConnectorContractProbeQuery(query: string, contract: ChatGptMcpContract): boolean {
+  const match = PROBE_QUERY_PATTERN.exec(query.trim());
+  if (!match || match[1] !== connectorContractRevision(contract)) return false;
+  recordConnectorContractProbeEvidence(match[2]!, match[1]);
+  return true;
+}
+
+export function isConnectorContractProbeQuery(query: string, contract: ChatGptMcpContract): boolean {
+  const match = PROBE_QUERY_PATTERN.exec(query.trim());
+  return !!match && match[1] === connectorContractRevision(contract);
+}
+
 export interface ConnectorContractProbe {
   contractRevision: string;
   nonce: string;
+  query: string;
   prompt: string;
 }
 
@@ -57,20 +75,39 @@ export async function verifyCurrentConnectorContract(
   appName: string,
   contract: ChatGptMcpContract,
   runProbe: (probe: ConnectorContractProbe) => Promise<void>,
+  reference?: string,
 ): Promise<void> {
   const contractRevision = connectorContractRevision(contract);
   const nonce = randomUUID().replaceAll("-", "");
-  const prompt = [
-    `Call ${CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL} exactly once with`,
-    JSON.stringify({ contract_revision: contractRevision, nonce }),
-    "Do not call any other tool. After the tool succeeds, reply briefly.",
-  ].join(" ");
+  const query = connectorContractProbeQuery(contractRevision, nonce);
+  if (contract === "safe" && !reference) {
+    throw new Error("Zero Risk connector contract verification requires a live request id");
+  }
+  const prompt = contract === "safe"
+    ? [
+        "Call codex_turn_start exactly once with",
+        JSON.stringify({ request_id: reference }),
+        "Then call codex_tool_inventory exactly once with",
+        JSON.stringify({ request_id: reference, query, include_schema: false }),
+        "Do not call any other tool. After the inventory call succeeds, reply briefly.",
+      ].join(" ")
+    : reference
+      ? [
+          "Call codex_tool_inventory exactly once with",
+          JSON.stringify({ turn_token: reference, query, include_schema: false }),
+          "Do not call any other tool. After the tool succeeds, reply briefly.",
+        ].join(" ")
+      : [
+          "Call codex_tool_inventory exactly once using the current turn_token from codex_native_turn_binding, with",
+          JSON.stringify({ query, include_schema: false }),
+          "Do not call any other tool. After the tool succeeds, reply briefly.",
+        ].join(" ");
   discardConnectorContractProbeEvidence(nonce);
   try {
-    await runProbe({ contractRevision, nonce, prompt });
+    await runProbe({ contractRevision, nonce, query, prompt });
     if (!consumeConnectorContractProbeEvidence(nonce, contractRevision)) {
       throw new Error(
-        `${appName} exists, but ChatGPT is exposing a stale connector schema. Recreate ${appName} against the same tunnel.`,
+        `${appName} did not execute the current runtime contract probe.`,
       );
     }
   } finally {

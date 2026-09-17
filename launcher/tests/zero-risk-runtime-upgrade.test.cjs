@@ -4,7 +4,7 @@ const path = require("node:path");
 const { RuntimeHost } = require("../electron/runtime.cjs");
 const { validateConfig } = require("../electron/runtime-supervisor.cjs");
 
-function fixture(mode, mutation) {
+function fixture(mode, mutation, appVersion) {
   const profileName = mode === "manual" ? "codex-chatgpt-web-zero-risk" : "codex-chatgpt-web";
   const tunnel = {
     tunnelId: "tunnel_0123456789abcdef0123456789abcdef", alias: profileName, profileName,
@@ -19,7 +19,7 @@ function fixture(mode, mutation) {
   };
   mutation?.(config, slot);
   const host = new RuntimeHost({
-    app: { getPath: () => process.cwd(), getVersion: () => config.releaseVersion },
+    app: { getPath: () => process.cwd(), getVersion: () => appVersion ?? config.releaseVersion },
     logger: { info() {}, warn() {}, error() {} },
     sourceRoot: process.cwd(), browserDescriptorPath: path.join(process.cwd(), "browser.json"),
     getBrowserInteractionMode: () => mode,
@@ -55,6 +55,17 @@ for (const mode of ["automatic", "manual"]) {
     const { host, calls } = fixture(mode);
     assert.deepEqual(await host.upgradeManagedRuntime(), { updated: false });
     assert.deepEqual(calls, []);
+  });
+  test(`release upgrade from Enhanced.5 preserves the current ${mode} connector identity`, async () => {
+    const { host, calls } = fixture(mode, config => {
+      config.releaseVersion = "5.0.6-Enhanced.5";
+    }, "5.0.8-Enhanced.1");
+    const result = await host.upgradeManagedRuntime();
+    assert.equal(result.updated, true);
+    assert.equal(result.connectorMigrated, false);
+    assert.equal(result.fromVersion, "5.0.6-Enhanced.5");
+    assert.equal(result.toVersion, "5.0.8-Enhanced.1");
+    assert.equal(calls[0].args.includes("--app-name"), false);
   });
   test(`validated ${mode} legacy profile reaches the same-version migration`, async () => {
     const { host, calls, config } = fixture(mode);

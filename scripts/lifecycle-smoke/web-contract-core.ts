@@ -2,6 +2,15 @@ export const WEB_CONTRACT_COOLDOWN_MS = 2 * 60_000;
 export const WEB_CONTRACT_PROBE_TIMEOUT_MS = 5 * 60_000;
 export const WEB_CONTRACT_TURN_TIMEOUT_MS = 3 * 60_000;
 
+export function webContractRequestTools(): Record<string, unknown>[] {
+  return [{
+    type: "function",
+    name: "web_contract_native_binding_canary",
+    description: "Release canary marker used only to establish the bound Native2 transport. Do not call this function.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  }];
+}
+
 const capabilityKeys = [
   "authenticated",
   "temporary",

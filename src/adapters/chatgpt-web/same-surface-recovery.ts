@@ -7,6 +7,7 @@ import {
 import { chatGptTurnSessions } from "./turn-execution";
 
 type ErrorRetry = NonNullable<BrowserTurn["retryPromptForError"]>;
+type ErrorRetryResult = Awaited<ReturnType<ErrorRetry>>;
 
 export function chatGptTerminalErrorRetryPrompt(
   error: Error,
@@ -21,6 +22,32 @@ export function chatGptTerminalErrorRetryPrompt(
   return compaction
     ? "Retry the immediately preceding Codex history-compaction checkpoint. This is not a normal task turn. Do not continue or execute the task. Summarize only the supplied task context and return only the checkpoint summary."
     : "Continue the current response from the completed Codex Native2 tool results above. Do not repeat completed tool calls. Complete only the remaining work, then return the requested answer.";
+}
+
+export async function chatGptBrowserErrorRetryPrompt(options: {
+  error: Error;
+  attempt: number;
+  emittedText: string;
+  compaction: boolean;
+  sessionRetry?: ErrorRetry;
+}): Promise<ErrorRetryResult> {
+  if (options.compaction) {
+    return chatGptTerminalErrorRetryPrompt(
+      options.error,
+      options.attempt,
+      options.emittedText,
+      true,
+    );
+  }
+  if (options.sessionRetry) {
+    return options.sessionRetry(options.error, options.attempt);
+  }
+  return chatGptTerminalErrorRetryPrompt(
+    options.error,
+    options.attempt,
+    options.emittedText,
+    false,
+  );
 }
 
 export function createChatGptSameSurfaceRetry(options: {

@@ -119,8 +119,10 @@ export function chatGptSameSurfaceRecoveryDecision(
   if (session.runtime.compactionRequested) return reject("compaction_requested");
   if (attempt > 1) return reject("already_recovered");
   if (signal?.aborted) return reject("aborted");
-  if (!(error instanceof ChatGptWebAdapterError)
-    || error.code !== "chatgpt_completion_evidence_missing") return reject("unsupported_error");
+  const supportedFailure = error instanceof ChatGptWebAdapterError
+    && (error.code === "chatgpt_completion_evidence_missing"
+      || error.code === "upstream_server_error");
+  if (!supportedFailure) return reject("unsupported_error");
   if (!error.retryable) return reject("non_retryable");
   if (session.runtime.text.value().length > 0) return reject("final_streamed");
   const canonical = session.canonicalCallDiagnostics();
@@ -154,20 +156,28 @@ export function chatGptSurfaceRecoveryDecision(
     && (error.code === "chatgpt_surface_changed"
       || error.code === "chatgpt_connector_unavailable"
       || error.code === "chatgpt_completion_evidence_missing");
-  const unpublishedUpstreamFailure = error instanceof ChatGptWebAdapterError
+  const upstreamFailure = error instanceof ChatGptWebAdapterError
     && error.code === "upstream_server_error";
-  if (!surfaceFailure && !unpublishedUpstreamFailure && !(error instanceof StallTimeoutError)) {
+  if (!surfaceFailure && !upstreamFailure && !(error instanceof StallTimeoutError)) {
     return reject("unsupported_error");
   }
-  if (surfaceFailure && !error.retryable) return reject("non_retryable");
+  if (error instanceof ChatGptWebAdapterError && !error.retryable) return reject("non_retryable");
   if (session.runtime.text.value().length > 0) return reject("final_streamed");
   if (parsed._canonicalContextComplete !== true) return reject("canonical_incomplete");
   if (unresolvedSupersededCount > 0) return reject("superseded_results_pending");
   const outstanding = session.outstanding();
-  if (unpublishedUpstreamFailure) {
-    if (outstanding.length === 0) return reject("unsupported_error");
-    if (session.outstandingPublished()) return reject("tool_results_incomplete");
-    return { eligible: true, reason: "eligible", canonicalResultCount, unresolvedSupersededCount };
+  if (upstreamFailure) {
+    if (outstanding.length === 0 || !session.outstandingPublished()) {
+      return { eligible: true, reason: "eligible", canonicalResultCount, unresolvedSupersededCount };
+    }
+    const results = codexToolResultsById(parsed, session);
+    if (results.size !== outstanding.length) return reject("tool_results_incomplete");
+    return {
+      eligible: true,
+      reason: "eligible",
+      canonicalResultCount: results.size,
+      unresolvedSupersededCount,
+    };
   }
   if (outstanding.length === 0) {
     return { eligible: true, reason: "eligible", canonicalResultCount, unresolvedSupersededCount };

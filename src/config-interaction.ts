@@ -4,8 +4,8 @@ export type BrowserInteractionMode = "automatic" | "manual";
 export type SubagentProtocol = "compatibility-v1" | "native";
 
 /**
- * Keep the connector generation aligned with upstream. ChatGPT can cache a connector's public MCP
- * contract, so stale current-generation schemas are repaired by recreating the same identity.
+ * Keep the connector generation aligned with upstream. Within one generation the public MCP ABI is
+ * frozen so ordinary Enhanced upgrades keep using the existing connector without recreation.
  */
 export const CHATGPT_CONNECTOR_NAME = "Codex Native2";
 export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;

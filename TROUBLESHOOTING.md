@@ -113,10 +113,13 @@ Browser-only mode needs no connector. Full harness mode requires all of the foll
 Do not rename or refresh an old **Codex Native** connector. ChatGPT caches the public MCP contract by
 connector identity, so create **Codex Native2** as a new connector.
 
-After updating, if `codex_exec` still does not expose `sandbox_permissions`, `justification`, and
-`prefix_rule`, recreate the current mode's connector so ChatGPT loads the updated tool schema.
-These fields only forward a permission request to Codex; its sandbox and approval policy still
-decide whether the command can run. Ordinary commands do not require these optional fields.
+If **Codex Native2** or **Codex Zero Risk** already worked with `v5.0.6-Enhanced.5`, upgrading within
+the current Native2 generation does **not** require deleting, recreating, refreshing, or renaming the
+connector. Their public MCP contract is kept compatible with that release. `codex_exec` deliberately
+retains its stable command schema; when current Codex exposes permission-aware fields such as
+`sandbox_permissions`, `justification`, or `prefix_rule`, the bridge discovers the actual outer
+`exec_command`/`shell_command` schema through `codex_tool_inventory` and invokes it through
+`codex_tool_call`. Codex's own sandbox and approval policy still decides whether the command can run.
 
 ### ChatGPT shows `Error creating connector`
 

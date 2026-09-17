@@ -1,10 +1,14 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { Locator } from "playwright-core";
+import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
 import {
   throwIfChatGptTerminalErrorAlert,
 } from "../src/adapters/chatgpt-web/browser-worker";
-import { chatGptTerminalErrorRetryPrompt } from "../src/adapters/chatgpt-web/same-surface-recovery";
+import {
+  chatGptBrowserErrorRetryPrompt,
+  chatGptTerminalErrorRetryPrompt,
+} from "../src/adapters/chatgpt-web/same-surface-recovery";
 
 function terminalErrorScope() {
   let visible = true;
@@ -55,6 +59,46 @@ test("a terminal ChatGPT error continues once without pressing the Web retry but
   expect(chatGptTerminalErrorRetryPrompt(failure!, 1, "partial answer")).toBeUndefined();
 });
 
+test("an Enhanced session retry decision is authoritative over the generic upstream retry", async () => {
+  const failure = new ChatGptWebAdapterError(
+    "upstream failed",
+    { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
+  );
+  let sessionChecks = 0;
+  expect(await chatGptBrowserErrorRetryPrompt({
+    error: failure,
+    attempt: 1,
+    emittedText: "",
+    compaction: false,
+    sessionRetry: async () => { sessionChecks += 1; return undefined; },
+  })).toBeUndefined();
+  expect(sessionChecks).toBe(1);
+
+  expect(await chatGptBrowserErrorRetryPrompt({
+    error: failure,
+    attempt: 1,
+    emittedText: "",
+    compaction: false,
+  })).toContain("Do not repeat completed tool calls");
+});
+
+test("compaction terminal recovery never falls through to a task-session retry", async () => {
+  const failure = new ChatGptWebAdapterError(
+    "upstream failed",
+    { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
+  );
+  let sessionChecks = 0;
+  const retry = await chatGptBrowserErrorRetryPrompt({
+    error: failure,
+    attempt: 1,
+    emittedText: "",
+    compaction: true,
+    sessionRetry: async () => { sessionChecks += 1; return "wrong task retry"; },
+  });
+  expect(retry).toContain("history-compaction checkpoint");
+  expect(sessionChecks).toBe(0);
+});
+
 test("a localized short current-response error button fails the turn", async () => {
   const hidden = { last: () => ({ isVisible: async () => false }) };
   const visible = { last: () => ({ isVisible: async () => true }) };
@@ -75,7 +119,8 @@ test("a visible completed answer wins over a stale terminal error banner", async
 test("terminal recovery is integrated as a same-conversation continuation", () => {
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
 
-  expect(source).toContain("failure, responseAttempt, answerBuffer.value(), turn.compaction === true,");
+  expect(source).toContain("const retryPrompt = await chatGptBrowserErrorRetryPrompt({");
+  expect(source).toContain("...(turn.retryPromptForError ? { sessionRetry: turn.retryPromptForError } : {}),");
   expect(source).not.toContain("terminalErrorRetryUsed");
   expect(source).toContain('(candidate.innerText ?? candidate.textContent ?? "").trim().length');
   expect(source).toContain('(root.innerText ?? root.textContent ?? "").trim().length');

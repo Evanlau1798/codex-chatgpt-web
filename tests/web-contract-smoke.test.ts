@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
+import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
+import { parseRequest } from "../src/responses/parser";
 import {
   assertWebContractCooldown,
   assertWebContractRuntimeVersion,
@@ -8,6 +11,7 @@ import {
   requestWebContractTurn,
   runWebContractTurns,
   responseHasFinalProjection,
+  webContractRequestTools,
   WEB_CONTRACT_COOLDOWN_MS,
   WEB_CONTRACT_PROBE_TIMEOUT_MS,
   WEB_CONTRACT_TURN_TIMEOUT_MS,
@@ -21,6 +25,22 @@ import {
 } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
 
 describe("lightweight Web contract smoke", () => {
+  test("makes contract turns tool-capable so Native2 receives a bound turn token", () => {
+    const turnToken = "turn_12345678901234567890123456789012";
+    const parsed = parseRequest({
+      model: CHATGPT_WEB_MODEL_ID,
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Probe the connector." }] }],
+      tools: webContractRequestTools(),
+    });
+    const compiled = compileChatGptWebPrompt(
+      parsed,
+      { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+      turnToken,
+    );
+    expect(compiled.text).toContain("<codex_native_turn_binding>");
+    expect(compiled.text).toContain(turnToken);
+  });
+
   test("appends exactly one message to the completed response on the same retained surface", async () => {
     const requests: unknown[] = [];
     let observations = 0;
@@ -75,9 +95,11 @@ describe("lightweight Web contract smoke", () => {
     const cooldownAt = script.indexOf("writeFileSync(lastRunPath");
     const leaseAt = script.indexOf('phase: "start"');
     const probeAt = script.indexOf("runMarkdownRestorationProbe(");
+    const capabilityAt = script.indexOf("account = await detectChatGptAccountCapabilities(connection.page)");
     expect(cooldownAt).toBeGreaterThan(-1);
     expect(leaseAt).toBeGreaterThan(cooldownAt);
     expect(probeAt).toBeGreaterThan(leaseAt);
+    expect(capabilityAt).toBeGreaterThan(probeAt);
     expect(script).not.toContain("verifyLauncherBrowserConnector");
     expect(script).not.toContain("inspectLauncherBrowserHost");
     expect(script).toContain("detectChatGptAccountCapabilities(connection.page)");
@@ -86,6 +108,8 @@ describe("lightweight Web contract smoke", () => {
     expect(script).toContain("connectorVerified = true");
     expect(script).toContain("verifyCurrentConnectorContract(");
     expect(script).toContain("contractProbeTurns += 1");
+    expect(script).toContain("tools: webContractRequestTools()");
+    expect(script).not.toContain("tools: [],");
     expect(script).toContain("authenticated: true");
     expect(script).toContain("composer: true");
     expect(script).toContain('config.browserInteractionMode !== "automatic"');

@@ -31,11 +31,7 @@ import { readNativeAgentWait, startNativeAgentWait } from "./mcp-agent-wait";
 import { brokerMcpResult as asMcpResult, mcpJsonResult as result } from "./mcp-results";
 import { withClaimedTurn, type ClaimedTurn } from "./mcp-turn-activity";
 import { observeMcpToolCalls } from "./mcp-observation";
-import {
-  CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL,
-  connectorContractRevision,
-  recordConnectorContractProbeEvidence,
-} from "./connector-contract";
+import { isConnectorContractProbeQuery, recordConnectorContractProbeQuery } from "./connector-contract";
 import {
   afterSafeStart,
   registerZeroRiskLifecycleTools,
@@ -70,7 +66,7 @@ const turnTokenSchema = z.string().min(20).max(256);
 const contextTokenSchema = z.string().min(20).max(256);
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 const BRIDGE_TOOL_NAMES = new Set([
-  CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL, "codex_read_context", "codex_turn_start", "codex_exec", "codex_write_stdin",
+  "codex_read_context", "codex_turn_start", "codex_exec", "codex_write_stdin",
   "codex_apply_patch", "codex_view_image", "codex_tool_inventory", "codex_tool_call", "codex_turn_complete",
 ]);
 
@@ -88,24 +84,6 @@ export async function runChatGptMcpServer(options: {
   const server = new McpServer(
     { name: contract === "safe" ? "codex-safe" : "codex-native", version: VERSION },
     contract === "safe" ? { instructions: ZERO_RISK_MCP_INSTRUCTIONS } : undefined,
-  );
-  const contractRevision = connectorContractRevision(contract);
-  server.registerTool(
-    CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL,
-    {
-      title: "Verify the current connector contract",
-      description: "Verify that ChatGPT loaded the current public connector schema. This tool is used by launcher and release verification.",
-      inputSchema: {
-        contract_revision: z.literal(contractRevision),
-        nonce: z.string().regex(/^[a-f0-9]{32}$/),
-      },
-      outputSchema: { verified: z.literal(true) },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    },
-    async ({ contract_revision, nonce }) => {
-      recordConnectorContractProbeEvidence(nonce, contract_revision);
-      return result({ verified: true });
-    },
   );
   if (contract === "safe") registerZeroRiskLifecycleTools(server, options.brokerSocketPath);
 
@@ -176,9 +154,6 @@ export async function runChatGptMcpServer(options: {
       yieldTimeMs?: number;
       maxOutputTokens?: number;
       tty?: boolean;
-      sandboxPermissions?: "use_default" | "require_escalated";
-      justification?: string;
-      prefixRule?: string[];
     },
     signal?: AbortSignal,
   ) => {
@@ -189,28 +164,15 @@ export async function runChatGptMcpServer(options: {
       ...(command.yieldTimeMs !== undefined ? { yield_time_ms: command.yieldTimeMs } : {}),
       ...(command.maxOutputTokens !== undefined ? { max_output_tokens: command.maxOutputTokens } : {}),
       ...(command.tty !== undefined ? { tty: command.tty } : {}),
-      ...(command.sandboxPermissions !== undefined ? { sandbox_permissions: command.sandboxPermissions } : {}),
-      ...(command.justification !== undefined ? { justification: command.justification } : {}),
-      ...(command.prefixRule !== undefined ? { prefix_rule: command.prefixRule } : {}),
     };
     const shellCommandArguments = {
       command: command.cmd,
       ...(command.workdir ? { workdir: command.workdir } : {}),
       ...(command.yieldTimeMs !== undefined ? { timeout_ms: command.yieldTimeMs } : {}),
-      ...(command.sandboxPermissions !== undefined ? { sandbox_permissions: command.sandboxPermissions } : {}),
-      ...(command.justification !== undefined ? { justification: command.justification } : {}),
-      ...(command.prefixRule !== undefined ? { prefix_rule: command.prefixRule } : {}),
     };
     const tool = exactTool(bound, "exec_command") ?? exactTool(bound, "shell_command");
     if (tool) {
       if (tool.name === "shell_command" && command.tty === true) throw new Error(ONE_SHOT_SHELL_TTY_ERROR);
-      for (const key of ["sandbox_permissions", "justification", "prefix_rule"] as const) {
-        if (!(key in execCommandArguments)) continue;
-        const properties = tool.parameters.properties;
-        if (!properties || typeof properties !== "object" || !Object.hasOwn(properties, key)) {
-          throw new Error(`The current native ${tool.name} tool does not support ${key}`);
-        }
-      }
       return invoke(claimed.bindingId, bound, tool, {
         arguments: tool.name === "exec_command" ? execCommandArguments : shellCommandArguments,
       }, signal);
@@ -261,23 +223,17 @@ export async function runChatGptMcpServer(options: {
         yield_time_ms: z.number().int().min(250).max(30_000).optional(),
         max_output_tokens: z.number().int().min(1).max(1_000_000).optional(),
         tty: z.boolean().optional(),
-        sandbox_permissions: z.enum(["use_default", "require_escalated"]).optional(),
-        justification: z.string().optional(),
-        prefix_rule: z.array(z.string()).optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
     async (input, extra) => {
-      const { cmd, workdir, yield_time_ms, max_output_tokens, tty, sandbox_permissions, justification, prefix_rule } = input;
+      const { cmd, workdir, yield_time_ms, max_output_tokens, tty } = input;
       return withTurn("codex_exec", turnReference(contract, input), extra, claimed => invokeNativeCommand(claimed, {
           cmd,
           ...(workdir ? { workdir } : {}),
           ...(yield_time_ms !== undefined ? { yieldTimeMs: yield_time_ms } : {}),
           ...(max_output_tokens !== undefined ? { maxOutputTokens: max_output_tokens } : {}),
           ...(tty !== undefined ? { tty } : {}),
-          ...(sandbox_permissions !== undefined ? { sandboxPermissions: sandbox_permissions } : {}),
-          ...(justification !== undefined ? { justification } : {}),
-          ...(prefix_rule !== undefined ? { prefixRule: prefix_rule } : {}),
         }, extra.signal));
     },
   );
@@ -381,6 +337,14 @@ export async function runChatGptMcpServer(options: {
     async (input, extra) => {
       const { query, offset, limit, include_schema } = input;
       const requestId = turnReference(contract, input);
+      if (query && isConnectorContractProbeQuery(query, contract)) {
+        return withTurn("codex_tool_inventory", requestId, extra, () => {
+          if (!recordConnectorContractProbeQuery(query, contract)) {
+            throw new Error("Connector contract probe changed during validation");
+          }
+          return result({ tools: [], total: 0, next_offset: null });
+        });
+      }
       if (contract === "native" && query?.startsWith("__codex_wait_result__:")) {
         return readNativeAgentWait(options.brokerSocketPath, requestId, query, extra.signal);
       }
@@ -516,6 +480,13 @@ export async function runChatGptMcpServer(options: {
             throw new Error(`ChatGPT Web wait_agent requires structured arguments and timeout_ms=${CHATGPT_WEB_AGENT_WAIT_POLL_MS}`);
           }
           const invocationArguments = args ?? {};
+          if (wire_name === "exec_command" || wire_name === "shell_command") {
+            for (const key of ["sandbox_permissions", "justification", "prefix_rule"] as const) {
+              if (Object.hasOwn(invocationArguments, key)) {
+                throw new Error(`The current nested ${wire_name} tool did not advertise support for ${key}`);
+              }
+            }
+          }
           assertGatewayToolArguments(wire_name, invocationArguments);
           const toolArguments = boundedConnectorToolArguments(wire_name, invocationArguments);
           return invoke(claimed.bindingId, bound, gateway, {
@@ -533,6 +504,15 @@ export async function runChatGptMcpServer(options: {
         }
         if (input !== undefined) throw new Error(`Function Codex tool ${wire_name} does not accept freeform input`);
         const invocationArguments = args ?? {};
+        if (!tool.namespace && (tool.name === "exec_command" || tool.name === "shell_command")) {
+          const properties = tool.parameters.properties;
+          for (const key of ["sandbox_permissions", "justification", "prefix_rule"] as const) {
+            if (!Object.hasOwn(invocationArguments, key)) continue;
+            if (!properties || typeof properties !== "object" || Array.isArray(properties) || !Object.hasOwn(properties, key)) {
+              throw new Error(`The current native ${tool.name} tool does not support ${key}`);
+            }
+          }
+        }
         assertBrowserToolArguments(tool, invocationArguments);
         const toolArguments = boundedConnectorToolArguments(tool, invocationArguments);
         if (tool.name === "Bash" && typeof toolArguments.command === "string") {

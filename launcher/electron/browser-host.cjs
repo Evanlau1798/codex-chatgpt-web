@@ -295,6 +295,7 @@ class BrowserHost {
     cdpPort,
     control,
     cancelTurn,
+    getBrokerSocketPath,
     getConnectorName,
     getBrowserInteractionMode = () => "automatic",
     helper,
@@ -315,6 +316,7 @@ class BrowserHost {
     this.cdpPort = cdpPort;
     this.control = control;
     this.cancelTurn = cancelTurn;
+    this.getBrokerSocketPath = getBrokerSocketPath;
     this.getConnectorName = getConnectorName;
     this.getBrowserInteractionMode = getBrowserInteractionMode;
     this.helper = helper;
@@ -2147,10 +2149,16 @@ class BrowserHost {
     this.setState({ status: "testing", message: "Checking ChatGPT connector" });
     await this.refreshChatGptHomeDocument();
     try {
+      const brokerSocketPath = typeof this.getBrokerSocketPath === "function"
+        ? this.getBrokerSocketPath()
+        : undefined;
       const result = await this.verifyConnectorWithBrowserHelper({
         helper: this.helper,
         descriptorPath: this.descriptorPath,
         appName: connectorName,
+        ...(typeof brokerSocketPath === "string" && brokerSocketPath.trim()
+          ? { brokerSocketPath: brokerSocketPath.trim() }
+          : {}),
         logger: this.logger,
       });
       this.logger.info("connector.verified", { status: "completed" });

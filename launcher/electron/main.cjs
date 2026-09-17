@@ -1133,6 +1133,7 @@ async function start() {
     cdpPort,
     control: browserControl.descriptor(),
     cancelTurn: IS_DEV_PROFILE ? undefined : (traceId, reason) => runtimeSupervisor.cancelBrowserTurn(traceId, reason),
+    getBrokerSocketPath: () => runtimeHost.runtimeConfigSnapshot().config.brokerSocketPath,
     getConnectorName: () => runtimeHost.browserConnectorName(),
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },

@@ -19,6 +19,7 @@ test("launcher verification delegates exact connector selection to the browser h
       if (message.type !== "verify") return;
       if (message.config.appName !== "Codex Native2") process.exit(2);
       if (message.config.browserHostDescriptorPath !== "/runtime/launcher-browser.json") process.exit(3);
+      if (message.config.brokerSocketPath !== "/runtime/broker.sock") process.exit(4);
       send({ type: "result", id: message.id, text: message.config.appName });
     });
   `);
@@ -27,6 +28,7 @@ test("launcher verification delegates exact connector selection to the browser h
     helper: { executable: process.execPath, script },
     descriptorPath: "/runtime/launcher-browser.json",
     appName: "Codex Native2",
+    brokerSocketPath: "/runtime/broker.sock",
     logger: { info() {} },
   });
 
@@ -54,6 +56,7 @@ test("launcher verification consumes a helper input EOF after the result", async
     helper: { executable: process.execPath, script },
     descriptorPath: "/runtime/launcher-browser.json",
     appName: "Codex Native2",
+    brokerSocketPath: "/runtime/broker.sock",
     logger: { info() {} },
   });
 
@@ -89,6 +92,7 @@ test("launcher verification preserves the helper error class and correlation id"
       helper: { executable: process.execPath, script },
       descriptorPath: "/runtime/launcher-browser.json",
       appName: "Codex Native2",
+      brokerSocketPath: "/runtime/broker.sock",
       logger: { info: (event, detail) => logs.push({ event, detail }) },
     }),
     (error) => {

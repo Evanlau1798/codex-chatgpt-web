@@ -74,11 +74,14 @@ The ChatGPT connector name is also the public MCP ABI generation identity. Enhan
 upstream connector generation: while upstream uses `Codex Native2`, production remains
 `Codex Native2`, repository DEV remains `Codex Native2 DEV`, and the retired `Codex Native`
 identity is never selected or refreshed in place. Enhanced runtime extensions do not independently
-increment that generation. Browser verification requires the exact current identity and executes a
-versioned read-only contract probe; a missing or stale current-generation schema fails closed with
-same-name connector recreation guidance. Public `tools/list` fingerprints are release-tested for
-both Native2 and Zero Risk. A later connector-generation rename is considered only after upstream
-formally changes its identity and Enhanced reviews that contract.
+increment that generation. Within one upstream connector generation, Enhanced freezes the public
+Native2 and Zero Risk `tools/list` ABI; new runtime capabilities must use existing dynamic tools or
+reserved internal semantics rather than changing tool names, descriptions, schemas, annotations, or
+connector identity. Browser verification requires the exact current identity and executes a
+versioned read-only contract probe through the existing inventory tool without adding a public tool.
+Public `tools/list` fingerprints are release-tested against the established generation baselines.
+A public ABI or connector-identity migration is considered only after upstream formally changes its
+connector generation and Enhanced completes an explicit compatibility review.
 Repository DEV mode uses `Codex Native2 DEV` so the same ChatGPT account can keep both production
 and development connectors installed without renaming, refreshing, or deleting either one.
 

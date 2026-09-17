@@ -352,10 +352,10 @@ test("tunneled browser turns use content-free completion diagnostics", () => {
 test("tunnel observation failures fail closed instead of retrying an ambiguous output epoch", () => {
   const source = readFileSync(join(import.meta.dir, "..", "src/adapters/chatgpt-web/browser-worker.ts"), "utf8");
   const tunnel = source.indexOf("runChatGptTunneledOutputTurn({");
-  const genericRetry = source.indexOf("const retryPrompt = chatGptTerminalErrorRetryPrompt", tunnel);
-  const failClosed = source.lastIndexOf("if (turn.tunneledOutput) throw error", genericRetry);
+  const retryResolution = source.indexOf("const retryPrompt = await chatGptBrowserErrorRetryPrompt", tunnel);
+  const failClosed = source.lastIndexOf("if (turn.tunneledOutput) throw error", retryResolution);
   expect(failClosed).toBeGreaterThan(tunnel);
-  expect(failClosed).toBeLessThan(genericRetry);
+  expect(failClosed).toBeLessThan(retryResolution);
 });
 
 test("production wiring requires Enhanced mode before enabling tunneled output", () => {
