@@ -32,6 +32,7 @@ const repo = resolve(import.meta.dir, "..", "..");
 const artifactDir = join(repo, "tmp", "lifecycle-smoke", "web-contract");
 const lastRunPath = join(artifactDir, ".last-run");
 const resultPath = join(artifactDir, "latest.json");
+const externalConnectorContractVerified = process.argv.includes("--external-connector-contract-verified");
 
 function lastRunAt(): number | undefined {
   try {
@@ -168,7 +169,7 @@ const item = (turnId: string, id: string, text: string) => ({
   internal_chat_message_metadata_passthrough: { turn_id: turnId },
 });
 const existingSurfaces = new Set(Object.keys(readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath).surfaceTargets));
-let contractProbeTurns = 0;
+let contractProbeTurns = externalConnectorContractVerified ? 2 : 0;
 await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_CONTRACT_TURN_TIMEOUT_MS, async signal => {
   const turnId = `turn_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
   const metadata = {
@@ -179,10 +180,14 @@ await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_C
     workspaces: { [repo]: {} },
   };
   let payload: Record<string, unknown> | undefined;
-  await verifyCurrentConnectorContract(config.appName, "native", async probe => {
-    const taskPrompt = turn === 0
-      ? "After the probe succeeds, reply briefly. Verification: **bold**, `code`, and _emphasis_."
+  const taskPrompt = turn === 0
+    ? externalConnectorContractVerified
+      ? "Reply briefly. Verification: **bold**, `code`, and _emphasis_."
+      : "After the probe succeeds, reply briefly. Verification: **bold**, `code`, and _emphasis_."
+    : externalConnectorContractVerified
+      ? "Reply briefly to confirm this retained follow-up completed."
       : "After the probe succeeds, reply briefly to confirm this retained follow-up completed.";
+  const requestTurn = async (promptText: string): Promise<void> => {
     const body = {
       model: "chatgpt-web/medium",
       stream: false,
@@ -194,9 +199,9 @@ await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_C
       },
       input: [
         item(turnId, `msg_web_contract_environment_${turn}`, environment),
-        item(turnId, `msg_web_contract_prompt_${turn}`, `${probe.prompt}\n\n${taskPrompt}`),
+        item(turnId, `msg_web_contract_prompt_${turn}`, promptText),
       ],
-      tools: webContractRequestTools(),
+      tools: externalConnectorContractVerified ? [] : webContractRequestTools(),
       ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
     };
     const result = await requestWebContractTurn(fetch, new Request(`${baseUrl}/v1/responses`, {
@@ -208,9 +213,16 @@ await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_C
     }
     if (!result.response.ok) throw new Error(`Web contract turn failed: HTTP ${result.response.status}`);
     payload = await result.response.json() as Record<string, unknown>;
-    contractProbeTurns += 1;
-  });
-  if (!payload) throw new Error("Web contract connector probe returned no response payload");
+  };
+  if (externalConnectorContractVerified) {
+    await requestTurn(taskPrompt);
+  } else {
+    await verifyCurrentConnectorContract(config.appName, "native", async probe => {
+      await requestTurn(`${probe.prompt}\n\n${taskPrompt}`);
+      contractProbeTurns += 1;
+    });
+  }
+  if (!payload) throw new Error("Web contract turn returned no response payload");
   return payload;
 }), async () => {
   if (!await waitForBrowserIdle(baseUrl)) throw new Error("Web contract turn did not settle before reuse inspection");

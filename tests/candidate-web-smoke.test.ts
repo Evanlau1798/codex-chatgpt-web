@@ -35,10 +35,18 @@ test("candidate Web smoke isolates the built daemon while preserving the launche
 
 test("candidate Web smoke drains before shutdown and bounds the live subprocess", () => {
   const script = readFileSync(new URL("../scripts/smoke-candidate-web.ts", import.meta.url), "utf8");
+  const connectorVerifyAt = script.indexOf("await verifyLiveConnectorContract(current)");
+  const candidateRunAt = script.indexOf("await runWebContract(env)");
   const drainAt = script.indexOf('control(baseUrl, "drain"');
   const shutdownAt = script.indexOf('control(baseUrl, "shutdown"');
+  expect(connectorVerifyAt).toBeGreaterThan(-1);
+  expect(candidateRunAt).toBeGreaterThan(connectorVerifyAt);
   expect(drainAt).toBeGreaterThan(-1);
   expect(shutdownAt).toBeGreaterThan(drainAt);
+  expect(script).toContain("new RemoteTurnBroker(current.brokerSocketPath)");
+  expect(script).toContain("requireRetainedConversation: round === 1");
+  expect(script).toContain('"--external-connector-contract-verified"');
+  expect(script).not.toContain("WEB_CONTRACT_EXTERNAL_CONNECTOR_CONTRACT");
   expect(script).toContain("WEB_CONTRACT_PROBE_TIMEOUT_MS + 2 * WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000");
   expect(script).toContain("if (timer) clearTimeout(timer)");
   expect(script).toContain("if (!await waitForExit(smoke");

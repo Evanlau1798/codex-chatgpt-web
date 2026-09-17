@@ -1,7 +1,15 @@
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { type AppConfig, defaultBrokerEndpoint, loadConfig } from "../src/config";
+import { providerConfig } from "../src/provider-config";
+import { chatGptAdapterRuntimeConfig } from "../src/adapters/chatgpt-web/adapter-runtime-config";
+import { closeChatGptBrowserWorkers, ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
+import { verifyCurrentConnectorContract } from "../src/adapters/chatgpt-web/connector-contract";
+import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
+import { RemoteTurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { releaseLauncherRetainedConversation } from "../src/launcher-browser-host";
 import { VERSION } from "../src/version";
 import {
   WEB_CONTRACT_PROBE_TIMEOUT_MS,
@@ -30,6 +38,56 @@ export function candidateWebConfig(
     brokerSocketPath: defaultBrokerEndpoint(home),
     experimentalNoAutoCompact: true,
   };
+}
+
+export async function verifyLiveConnectorContract(current: AppConfig): Promise<void> {
+  if (current.mode !== "full" || current.browserInteractionMode !== "automatic"
+    || current.browserHost !== "launcher" || !current.browserHostDescriptorPath) {
+    throw new Error("Live connector contract verification requires the Automatic Full launcher runtime");
+  }
+  const provider = providerConfig(current);
+  const worker = ChatGptBrowserWorker.forProvider(provider);
+  const broker = new RemoteTurnBroker(current.brokerSocketPath);
+  const capabilities = {
+    ...chatGptAdapterRuntimeConfig(provider).configuredCapabilities,
+    localToolsEnabled: false,
+  };
+  const conversationKey = createHash("sha256")
+    .update(`release-connector-contract:${randomUUID()}`)
+    .digest("hex");
+  try {
+    for (let round = 0; round < 2; round += 1) {
+      const traceId = `release_connector_contract_${randomUUID().replaceAll("-", "")}_${round}`;
+      const reference = await broker.register({
+        cwd: repo,
+        roots: [repo],
+        writableRoots: [],
+        sandboxPolicy: { type: "readOnly", networkAccess: false },
+        tools: [],
+      }, WEB_CONTRACT_TURN_TIMEOUT_MS, traceId);
+      try {
+        await verifyCurrentConnectorContract(current.appName, "native", async probe => {
+          await worker.run({
+            traceId,
+            modelId: CHATGPT_WEB_MODEL_ID,
+            reasoning: "medium",
+            capabilities,
+            nativeConnector: true,
+            prepare: async () => ({ text: probe.prompt, images: [], release: () => {} }),
+            retainConversation: round === 0,
+            requireRetainedConversation: round === 1,
+            conversationKey,
+            onTextDelta: () => {},
+          });
+        }, reference);
+      } finally {
+        await broker.revoke(reference).catch(() => {});
+      }
+    }
+  } finally {
+    await releaseLauncherRetainedConversation(current.browserHostDescriptorPath, conversationKey).catch(() => {});
+    await closeChatGptBrowserWorkers();
+  }
 }
 
 async function waitForHealth(baseUrl: string, pid: number): Promise<void> {
@@ -103,7 +161,12 @@ async function stopCandidate(child: Bun.Subprocess, baseUrl: string, token: stri
 }
 
 async function runWebContract(env: Record<string, string | undefined>): Promise<void> {
-  const smoke = Bun.spawn([process.execPath, "run", join(repo, "scripts", "lifecycle-smoke", "web-contract.ts")], {
+  const smoke = Bun.spawn([
+    process.execPath,
+    "run",
+    join(repo, "scripts", "lifecycle-smoke", "web-contract.ts"),
+    "--external-connector-contract-verified",
+  ], {
     cwd: repo,
     env,
     stdin: "ignore",
@@ -134,6 +197,7 @@ async function main(): Promise<void> {
     || !current.useEnhancedWebSessionMode) {
     throw new Error("Candidate Web smoke requires the Enhanced full-mode launcher browser host");
   }
+  await verifyLiveConnectorContract(current);
 
   mkdirSync(join(repo, "tmp"), { recursive: true });
   const root = mkdtempSync(join(repo, "tmp", "candidate-web-"));

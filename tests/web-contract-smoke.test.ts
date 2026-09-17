@@ -108,8 +108,10 @@ describe("lightweight Web contract smoke", () => {
     expect(script).toContain("connectorVerified = true");
     expect(script).toContain("verifyCurrentConnectorContract(");
     expect(script).toContain("contractProbeTurns += 1");
-    expect(script).toContain("tools: webContractRequestTools()");
-    expect(script).not.toContain("tools: [],");
+    expect(script).toContain('process.argv.includes("--external-connector-contract-verified")');
+    expect(script).not.toContain("WEB_CONTRACT_EXTERNAL_CONNECTOR_CONTRACT");
+    expect(script).toContain("tools: externalConnectorContractVerified ? [] : webContractRequestTools()");
+    expect(script).toContain("let contractProbeTurns = externalConnectorContractVerified ? 2 : 0");
     expect(script).toContain("authenticated: true");
     expect(script).toContain("composer: true");
     expect(script).toContain('config.browserInteractionMode !== "automatic"');
