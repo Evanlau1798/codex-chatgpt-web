@@ -345,6 +345,18 @@ test("Luna turns without a retained conversation never send connector identity a
   expect(runExclusive.slice(connectorIdentity - 420, connectorIdentity)).toContain("const nativeConnector = turn.nativeConnector === true || localTools");
 });
 
+test("connector verification proves the current schema with an actual connector tool call", () => {
+  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const verifier = workerSource.slice(
+    workerSource.indexOf("private async verifyConnectorExclusive"),
+    workerSource.indexOf("private async inspectSessionExclusive"),
+  );
+  expect(verifier).toContain("verifyCurrentConnectorContract(");
+  expect(verifier).toContain("nativeConnector: true");
+  expect(verifier).toContain("connectorContractVerification: true");
+  expect(workerSource).toContain("this.config.autoApproveToolCalls || turn.connectorContractVerification === true");
+});
+
 test("a stalled post-submit DOM probe is bounded before same-page launcher recovery", async () => {
   expect(CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS).toBe(5_000);
   expect(MAX_CHATGPT_BROWSER_PAGE_REBINDS).toBe(2);
@@ -2007,7 +2019,8 @@ test("visible DOM trace emits one complete commentary paragraph before the next 
 
 test("response DOM separates streaming commentary from the final Markdown answer", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  expect(workerSource).toContain('const allMarkdownRoots = [...root.querySelectorAll<HTMLElement>(".markdown")]');
+  expect(workerSource).toContain("const answerRootSelector = '.markdown, [data-message-author-role=\"assistant\"] .puik-root.not-markdown > [class*=\"_DilResponseRoot\"]'");
+  expect(workerSource).toContain("const allMarkdownRoots = [...root.querySelectorAll<HTMLElement>(answerRootSelector)]");
   expect(workerSource).toContain("const selectChatGptAnswerRoots = (");
   expect(workerSource).toContain('candidate.closest("[data-streaming-response-status]") !== null');
   expect(workerSource).toContain("const streamingStatusContainers = [...root.querySelectorAll<HTMLElement>");

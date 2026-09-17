@@ -427,6 +427,8 @@ class RuntimeHost {
 
   setBiggerContext(...args) { return setupOperations.setBiggerContext.apply(this, args); }
 
+  setSkillAttachments(...args) { return setupOperations.setSkillAttachments.apply(this, args); }
+
   setExperimentalNoAutoCompact(...args) { return setupOperations.setExperimentalNoAutoCompact.apply(this, args); }
 
   upgradeManagedRuntime(...args) { return setupOperations.upgradeManagedRuntime.apply(this, args); }

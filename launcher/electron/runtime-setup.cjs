@@ -206,6 +206,32 @@ module.exports = {
     return { ...result, mode, enabled: enabled === true };
   },
 
+  async setSkillAttachments(enabled) {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Initialize the runtime before changing Skills as files");
+    if (current.config?.browserInteractionMode === "manual") {
+      throw new Error("Skills as files is unavailable in Zero Risk mode");
+    }
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      enabled === true ? "--skill-attachments" : "--inline-skills",
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const run = development ? this.runDevSetup.bind(this) : this.runSetup.bind(this);
+    const result = await run("skill-attachments", args, {
+      message: enabled ? "Enabling Skills as files" : "Disabling Skills as files",
+      successMessage: enabled ? "Skills as files enabled" : "Inline skills restored",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    });
+    return { ...result, mode: current.mode, enabled: enabled === true };
+  },
+
   async setExperimentalNoAutoCompact(enabled) {
     const current = this.runtimeConfigSnapshot();
     if (!current.configured) {

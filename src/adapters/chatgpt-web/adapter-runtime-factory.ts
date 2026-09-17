@@ -37,6 +37,7 @@ interface ChatGptRuntimeFactoryOptions {
   useEnhancedWebSessionMode: boolean;
   useEnhancedOutputTunnel: boolean;
   experimentalBiggerContext: boolean;
+  experimentalSkillAttachments: boolean;
   configuredCapabilities: ChatGptWebCapabilities;
   executionNamespace: string;
   lunaCheckpointStore: ChatGptLunaCheckpointStore;
@@ -55,6 +56,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     useEnhancedWebSessionMode,
     useEnhancedOutputTunnel,
     experimentalBiggerContext,
+    experimentalSkillAttachments,
     configuredCapabilities,
     executionNamespace,
     lunaCheckpointStore,
@@ -74,7 +76,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     const captureLunaCheckpoint = parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !parsed._compactionRequest && Boolean(identity.threadId && identity.turnId);
     const checkpointInput = captureLunaCheckpoint ? lunaCheckpointStore.apply(parsed) : { parsed, applied: false };
     const experimentalMultipartParts = experimentalBiggerContext
-      ? resolveBiggerContextMultipartParts(checkpointInput.parsed, turnCapabilities)
+      ? resolveBiggerContextMultipartParts(checkpointInput.parsed, turnCapabilities, experimentalSkillAttachments)
       : undefined;
     const tunneledOutput = shouldUseEnhancedOutputTunnel(parsed, {
       requested: nativeControlConnector && useEnhancedOutputTunnel,
@@ -86,6 +88,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     });
     const compileOptions = {
       captureLunaCheckpoint,
+      ...(experimentalSkillAttachments ? { experimentalSkillAttachments: true } : {}),
       nativeControlConnector,
       ...(tunneledOutput ? { useEnhancedOutputTunnel: true } : {}),
       ...(experimentalMultipartParts === undefined ? {} : { experimentalMultipartParts }),

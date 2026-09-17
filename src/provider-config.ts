@@ -53,6 +53,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       experimentalBiggerContext: manual ? false : effectiveExperimentalBiggerContext(
         config.useEnhancedWebSessionMode, config.experimentalBiggerContext,
       ),
+      experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
       ...(config.experimentalNoAutoCompact ? { experimentalNoAutoCompact: true } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,

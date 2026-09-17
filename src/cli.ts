@@ -174,6 +174,9 @@ async function setupCommand(args: string[]): Promise<void> {
   if (runtimeKeyFile) options.runtimeKeyFile = runtimeKeyFile;
   options.forceLogin = takeFlag(args, "--login");
   options.autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
+  const skillAttachments = takeFlag(args, "--skill-attachments");
+  const inlineSkills = takeFlag(args, "--inline-skills");
+  if (skillAttachments && inlineSkills) throw new Error("Choose --skill-attachments or --inline-skills");
   const enhancedSession = takeFlag(args, "--enhanced-session");
   const standardSession = takeFlag(args, "--standard-session");
   if (enhancedSession && standardSession) {
@@ -186,6 +189,7 @@ async function setupCommand(args: string[]): Promise<void> {
     throw new Error("Choose at most one context mode: --bigger-context or --standard-context");
   }
   if (biggerContext || standardContext) options.experimentalBiggerContext = biggerContext;
+  if (skillAttachments || inlineSkills) options.experimentalSkillAttachments = skillAttachments;
   const noAutoCompact = takeFlag(args, "--no-auto-compact");
   const autoCompact = takeFlag(args, "--auto-compact");
   if (noAutoCompact && autoCompact) {

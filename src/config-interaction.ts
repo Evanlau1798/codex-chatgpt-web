@@ -4,8 +4,8 @@ export type BrowserInteractionMode = "automatic" | "manual";
 export type SubagentProtocol = "compatibility-v1" | "native";
 
 /**
- * ChatGPT caches a connector's public MCP contract by connector identity. The direct turn-token
- * contract therefore has a new identity instead of mutating the retired connector in place.
+ * Keep the connector generation aligned with upstream. ChatGPT can cache a connector's public MCP
+ * contract, so stale current-generation schemas are repaired by recreating the same identity.
  */
 export const CHATGPT_CONNECTOR_NAME = "Codex Native2";
 export const DEV_CHATGPT_CONNECTOR_NAME = `${CHATGPT_CONNECTOR_NAME} DEV`;
@@ -76,6 +76,7 @@ export interface AppConfig {
   extraHighAvailable?: boolean;
   proAvailable: boolean;
   experimentalBiggerContext: boolean;
+  experimentalSkillAttachments: boolean;
   /** Hide routed context limits from Codex and reject routed compact requests. */
   experimentalNoAutoCompact: boolean;
   /** Explicitly install the additional Pro-sized model row while Zero Risk is active. */

@@ -1,3 +1,4 @@
+import { skillFileTokens } from "./skill-attachments";
 import { estimateTokens } from "../../lib/token-estimate";
 import {
   CHATGPT_WEB_BACKEND_MODEL,
@@ -50,7 +51,7 @@ export function estimateChatGptWebInputTokens(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
   options: Pick<CompileChatGptWebPromptOptions,
-    "nativeControlConnector" | "useEnhancedOutputTunnel" | "experimentalMultipartParts"> = {},
+    "nativeControlConnector" | "useEnhancedOutputTunnel" | "experimentalMultipartParts" | "experimentalSkillAttachments"> = {},
 ): number {
   const manual = isChatGptWebZeroRiskBackendModel(parsed.modelId);
   const mode = manual
@@ -83,6 +84,7 @@ export function estimateChatGptWebInputTokens(
 export function resolveBiggerContextMultipartParts(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
+  experimentalSkillAttachments = false,
 ): ChatGptWebMultipartPartCount | undefined {
   if (isChatGptWebZeroRiskBackendModel(parsed.modelId)) {
     throw new Error("Bigger Context is unavailable for ChatGPT Zero Risk");
@@ -101,7 +103,7 @@ export function resolveBiggerContextMultipartParts(
     parsed,
     capabilities,
     mode.localTools && effectiveChatGptToolPolicy(parsed).tools.length > 0 ? ESTIMATE_TURN_TOKEN : undefined,
-    { experimentalMultipartParts: parts },
+    { experimentalMultipartParts: parts, experimentalSkillAttachments },
   );
   const inline = compile();
   const inputTokens = estimateCompiledChatGptWebInputTokens(inline, parsed.modelId);
@@ -122,7 +124,7 @@ export function resolveBiggerContextMultipartParts(
         CHATGPT_WEB_BACKEND_MODEL,
         effort,
         capabilities,
-        final ? estimateChatGptWebImageTokens(compiled) : 0,
+        final ? estimateChatGptWebImageTokens(compiled) + skillFileTokens(compiled.skillFiles, parsed.modelId) : 0,
       );
       if (estimateTokens(text, parsed.modelId) > budget) return false;
     }
@@ -165,12 +167,12 @@ export function estimateChatGptWebUsage(
   capabilities: ChatGptWebCapabilities,
   experimentalBiggerContext = false,
   promptOptions: Pick<CompileChatGptWebPromptOptions,
-    "nativeControlConnector" | "useEnhancedOutputTunnel"> = {},
+    "nativeControlConnector" | "useEnhancedOutputTunnel" | "experimentalSkillAttachments"> = {},
 ): CodexUsage {
   const inputTokens = estimateChatGptWebInputTokens(parsed, capabilities, {
     ...promptOptions,
     experimentalMultipartParts: experimentalBiggerContext
-      ? resolveBiggerContextMultipartParts(parsed, capabilities)
+      ? resolveBiggerContextMultipartParts(parsed, capabilities, promptOptions.experimentalSkillAttachments)
       : undefined,
   });
   const outputTokens = conservativeTextTokens(roundEvidenceText(evidence), parsed.modelId);

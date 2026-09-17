@@ -84,6 +84,8 @@ describe("lightweight Web contract smoke", () => {
     expect(script).toContain("runMarkdownRestorationProbe(");
     expect(script).toContain("runMarkdownRestorationProbe(connection.page, config.appName, signal)");
     expect(script).toContain("connectorVerified = true");
+    expect(script).toContain("verifyCurrentConnectorContract(");
+    expect(script).toContain("contractProbeTurns += 1");
     expect(script).toContain("authenticated: true");
     expect(script).toContain("composer: true");
     expect(script).toContain('config.browserInteractionMode !== "automatic"');
@@ -164,6 +166,8 @@ describe("lightweight Web contract smoke", () => {
       composer: true,
       effort: true,
       connector: true,
+      connectorContract: true,
+      retainedConnectorContract: true,
       markdownRestoration: true,
       submitted: true,
       finalProjection: true,
@@ -179,6 +183,8 @@ describe("lightweight Web contract smoke", () => {
       composer: true,
       effort: true,
       connector: true,
+      connectorContract: true,
+      retainedConnectorContract: true,
       markdownRestoration: true,
       submitted: true,
       finalProjection: true,
@@ -192,6 +198,8 @@ describe("lightweight Web contract smoke", () => {
     expect(deriveWebContractCapabilities({
       session: { authenticated: true, temporary: true, composer: true, solAvailable: true },
       connectorVerified: false,
+      connectorContractVerified: true,
+      retainedConnectorContractVerified: false,
       markdownRestoration: true,
       responseAccepted: true,
       finalProjection: false,
@@ -202,6 +210,8 @@ describe("lightweight Web contract smoke", () => {
       composer: true,
       effort: true,
       connector: false,
+      connectorContract: true,
+      retainedConnectorContract: false,
       markdownRestoration: true,
       submitted: true,
       finalProjection: false,

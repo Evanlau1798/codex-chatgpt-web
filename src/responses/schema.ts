@@ -34,6 +34,9 @@ const toolOutputContentBlockSchema = z.union([
 const toolOutputSchema = z.union([z.string(), z.array(toolOutputContentBlockSchema)]);
 
 const userMessageItemSchema = z.object({
+  internal_chat_message_metadata_passthrough: z.object({
+    content_item_kinds: z.array(z.string()).optional(),
+  }).optional(),
   type: z.literal("message").optional(),
   role: z.union([z.literal("user"), z.literal("developer")]),
   content: z.union([z.string(), z.array(inputContentBlockSchema)]).optional(),

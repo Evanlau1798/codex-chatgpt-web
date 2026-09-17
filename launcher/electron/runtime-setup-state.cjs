@@ -10,6 +10,8 @@ function runtimePreferenceState(config) {
     useEnhancedOutputTunnel: config.useEnhancedOutputTunnel !== false,
     experimentalBiggerContext: config.browserInteractionMode !== "manual"
       && config.experimentalBiggerContext === true,
+    experimentalSkillAttachments: config.browserInteractionMode !== "manual"
+      && config.experimentalSkillAttachments === true,
     experimentalNoAutoCompact: config.experimentalNoAutoCompact === true,
   };
 }

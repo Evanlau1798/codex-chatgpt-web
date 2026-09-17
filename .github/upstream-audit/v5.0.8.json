@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "baseline": "1d875d7150190eff74241fae49ec5312b20bf5c6",
+  "semanticBaseline": "2f5f0b9e6526415973ff104840c3b78e972792f9",
+  "upstream": "e0904bc82001f06e06e7f85f564ce760c92bfd79",
+  "automaticMergeTree": "dd8d3b3b2f64ce98e58b388830ff7d0ca83bf6bf",
+  "mergeCommand": "git -c rerere.enabled=false merge --strategy=ort --no-ff --no-commit e0904bc82001f06e06e7f85f564ce760c92bfd79",
+  "evidence": {
+    "path": ".github/upstream-audit/v5.0.8-evidence.tar.gz",
+    "sha256": "893fea73a3ab17cf7ef1d0f86f98e011ae25eb4d7b7e6245b8c27bc0b3bedab1"
+  },
+  "resolutions": [
+    {
+      "area": "fork architecture",
+      "classification": "adapted",
+      "summary": "Integrated v5.0.8 into the fork's split launcher settings, runtime setup, browser helper, prompt, and localization modules."
+    },
+    {
+      "area": "Skills as files",
+      "classification": "integrated",
+      "summary": "Selected Codex skills can be uploaded as validated in-memory UTF-8 attachments with explicit helper negotiation, attachment limits, and token accounting."
+    },
+    {
+      "area": "DIL response renderer",
+      "classification": "integrated",
+      "summary": "Assistant-owned DIL response roots share the existing Markdown projection, ownership, trace, and completion proof."
+    },
+    {
+      "area": "connector identity",
+      "classification": "adapted",
+      "summary": "Kept the upstream-aligned Codex Native2 connector generation while integrating the updated MCP schema; only Codex Native remains a legacy identity."
+    },
+    {
+      "area": "release metadata and documentation",
+      "classification": "adapted",
+      "summary": "Published the Enhanced version as 5.0.8-Enhanced.1, retained fork links, and restored maintained upstream development documentation."
+    },
+    {
+      "area": "Windows context-test timeout",
+      "classification": "not-applicable",
+      "summary": "The upstream long mixed-density test no longer exists in the fork's split test layout; equivalent context tests pass under the isolated root runner."
+    }
+  ]
+}

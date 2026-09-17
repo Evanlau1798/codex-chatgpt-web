@@ -19,6 +19,12 @@ import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions, chatGptCompacti
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { ChatGptExternalTurnProgress, ChatGptMirroredTurnProgress, chatGptExternalProgressIsLive } from "../src/adapters/chatgpt-web/turn-progress";
 import { CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, chatGptMcpInvocationTimeout } from "../src/adapters/chatgpt-web/mcp-server";
+import {
+  CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL,
+  NATIVE2_CONTRACT_REVISION,
+  NATIVE2_PUBLIC_CONTRACT_HASH,
+  consumeConnectorContractProbeEvidence,
+} from "../src/adapters/chatgpt-web/connector-contract";
 import { defaultBrokerEndpoint } from "../src/config";
 import { estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
 import { claudeConversationResumeRequest } from "../src/adapters/chatgpt-web/steering";
@@ -2342,6 +2348,7 @@ describe("ChatGPT outer-native harness v4", () => {
       const listed = await client.listTools();
       expect(listed.tools.map(tool => tool.name).sort()).toEqual([
         "codex_apply_patch",
+        CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL,
         "codex_exec",
         "codex_read_context",
         "codex_tool_call",
@@ -2350,19 +2357,24 @@ describe("ChatGPT outer-native harness v4", () => {
         "codex_write_stdin",
       ]);
       const publicConnectorAbi = listed.tools.map(tool => ({
-        name: tool.name,
-        title: tool.title ?? null,
-        description: tool.description ?? null,
-        inputSchema: tool.inputSchema,
-        outputSchema: tool.outputSchema ?? null,
-        annotations: tool.annotations ?? null,
-      }));
+          name: tool.name,
+          title: tool.title ?? null,
+          description: tool.description ?? null,
+          inputSchema: tool.inputSchema,
+          outputSchema: tool.outputSchema ?? null,
+          annotations: tool.annotations ?? null,
+        }));
       // ChatGPT caches the complete tools/list contract under a connector identity.
-      // An intentional hash change therefore requires an explicit connector refresh or identity migration.
+      // An intentional hash change therefore requires refreshing the same current-generation connector.
       expect(createHash("sha256").update(canonicalJson(publicConnectorAbi)).digest("hex"))
-        .toBe("9791763b8cd6b41a87d463e8ce11cbf4e4ad12bd5bfb05ba5b187c5cb9d8d2fd");
+        .toBe(NATIVE2_PUBLIC_CONTRACT_HASH);
       for (const tool of listed.tools) {
         const properties = tool.inputSchema.properties as Record<string, unknown>;
+        if (tool.name === CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL) {
+          expect(properties.contract_revision).toEqual({ const: NATIVE2_CONTRACT_REVISION, type: "string" });
+          expect(properties.nonce).toEqual({ type: "string", pattern: "^[a-f0-9]{32}$" });
+          continue;
+        }
         expect(properties[tool.name === "codex_read_context" ? "context_token" : "turn_token"])
           .toEqual({ type: "string", minLength: 20, maxLength: 256 });
         expect(properties).not.toHaveProperty("binding_id");
@@ -2374,6 +2386,12 @@ describe("ChatGPT outer-native harness v4", () => {
         idempotentHint: true,
         openWorldHint: false,
       });
+      const probeNonce = "0123456789abcdef0123456789abcdef";
+      expect((await call(CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL, {
+        contract_revision: NATIVE2_CONTRACT_REVISION,
+        nonce: probeNonce,
+      })).structuredContent).toEqual({ verified: true });
+      expect(consumeConnectorContractProbeEvidence(probeNonce, NATIVE2_CONTRACT_REVISION)).toBeTrue();
       expect(listed.tools.find(tool => tool.name === "codex_exec")?.annotations).toMatchObject({
         readOnlyHint: false,
         destructiveHint: true,

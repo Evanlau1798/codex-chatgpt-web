@@ -64,6 +64,7 @@ export function createChatGptWebAdapter(
     useEnhancedWebSessionMode,
     useEnhancedOutputTunnel,
     experimentalBiggerContext,
+    experimentalSkillAttachments,
     configuredCapabilities,
     executionNamespace,
   } = runtimeConfig;
@@ -78,6 +79,7 @@ export function createChatGptWebAdapter(
     useEnhancedWebSessionMode,
     useEnhancedOutputTunnel,
     experimentalBiggerContext,
+    experimentalSkillAttachments,
     configuredCapabilities,
     executionNamespace,
     lunaCheckpointStore,

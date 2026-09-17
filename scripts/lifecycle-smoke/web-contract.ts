@@ -7,6 +7,7 @@ import {
   isTemporaryChatGptUrl,
 } from "../../src/chatgpt-session";
 import { loadConfig } from "../../src/config";
+import { verifyCurrentConnectorContract } from "../../src/adapters/chatgpt-web/connector-contract";
 import { VERSION } from "../../src/version";
 import {
   connectLauncherBrowserHost,
@@ -163,6 +164,7 @@ const item = (turnId: string, id: string, text: string) => ({
   internal_chat_message_metadata_passthrough: { turn_id: turnId },
 });
 const existingSurfaces = new Set(Object.keys(readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath).surfaceTargets));
+let contractProbeTurns = 0;
 await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_CONTRACT_TURN_TIMEOUT_MS, async signal => {
   const turnId = `turn_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
   const metadata = {
@@ -172,33 +174,40 @@ await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_C
     sandbox: "none",
     workspaces: { [repo]: {} },
   };
-  const body = {
-    model: "chatgpt-web/medium",
-    stream: false,
-    reasoning: { effort: "medium" },
-    prompt_cache_key: threadId,
-    client_metadata: {
-      thread_id: threadId,
-      "x-codex-turn-metadata": JSON.stringify(metadata),
-    },
-    input: [
-      item(turnId, `msg_web_contract_environment_${turn}`, environment),
-      item(turnId, `msg_web_contract_prompt_${turn}`, turn === 0
-        ? "Reply briefly to confirm this turn completed.\n\nVerification: **bold**, `code`, and _emphasis_."
-        : "Reply briefly to confirm this follow-up message completed in the same conversation."),
-    ],
-    tools: [],
-    ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
-  };
-  const result = await requestWebContractTurn(fetch, new Request(`${baseUrl}/v1/responses`, {
-    method: "POST", headers: { "content-type": "application/json" }, signal, body: JSON.stringify(body),
-  }));
-  if (result.status === "account-blocked") {
-    save({ status: "account-blocked", runtimeVersion: VERSION, httpStatus: 429, at: new Date(now).toISOString() });
-    throw new Error("WEB_CONTRACT_ACCOUNT_BLOCKED: ChatGPT returned a rate or verification limit; no retry was attempted");
-  }
-  if (!result.response.ok) throw new Error(`Web contract turn failed: HTTP ${result.response.status}`);
-  return await result.response.json() as Record<string, unknown>;
+  let payload: Record<string, unknown> | undefined;
+  await verifyCurrentConnectorContract(config.appName, "native", async probe => {
+    const taskPrompt = turn === 0
+      ? "After the probe succeeds, reply briefly. Verification: **bold**, `code`, and _emphasis_."
+      : "After the probe succeeds, reply briefly to confirm this retained follow-up completed.";
+    const body = {
+      model: "chatgpt-web/medium",
+      stream: false,
+      reasoning: { effort: "medium" },
+      prompt_cache_key: threadId,
+      client_metadata: {
+        thread_id: threadId,
+        "x-codex-turn-metadata": JSON.stringify(metadata),
+      },
+      input: [
+        item(turnId, `msg_web_contract_environment_${turn}`, environment),
+        item(turnId, `msg_web_contract_prompt_${turn}`, `${probe.prompt}\n\n${taskPrompt}`),
+      ],
+      tools: [],
+      ...(previousResponseId ? { previous_response_id: previousResponseId } : {}),
+    };
+    const result = await requestWebContractTurn(fetch, new Request(`${baseUrl}/v1/responses`, {
+      method: "POST", headers: { "content-type": "application/json" }, signal, body: JSON.stringify(body),
+    }));
+    if (result.status === "account-blocked") {
+      save({ status: "account-blocked", runtimeVersion: VERSION, httpStatus: 429, at: new Date(now).toISOString() });
+      throw new Error("WEB_CONTRACT_ACCOUNT_BLOCKED: ChatGPT returned a rate or verification limit; no retry was attempted");
+    }
+    if (!result.response.ok) throw new Error(`Web contract turn failed: HTTP ${result.response.status}`);
+    payload = await result.response.json() as Record<string, unknown>;
+    contractProbeTurns += 1;
+  });
+  if (!payload) throw new Error("Web contract connector probe returned no response payload");
+  return payload;
 }), async () => {
   if (!await waitForBrowserIdle(baseUrl)) throw new Error("Web contract turn did not settle before reuse inspection");
   const surfaces = Object.keys(readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!).surfaceTargets)
@@ -215,6 +224,8 @@ assertWebContractRuntimeVersion(await health(baseUrl), VERSION, runtimePid);
 const capture = deriveWebContractCapabilities({
   session,
   connectorVerified,
+  connectorContractVerified: contractProbeTurns >= 1,
+  retainedConnectorContractVerified: contractProbeTurns === 2,
   markdownRestoration,
   responseAccepted: true,
   finalProjection,

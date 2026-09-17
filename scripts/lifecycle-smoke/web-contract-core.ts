@@ -8,6 +8,8 @@ const capabilityKeys = [
   "composer",
   "effort",
   "connector",
+  "connectorContract",
+  "retainedConnectorContract",
   "markdownRestoration",
   "submitted",
   "finalProjection",
@@ -56,6 +58,8 @@ export function captureWebContract(source: Record<string, unknown>): WebContract
 export function deriveWebContractCapabilities(evidence: {
   session: { authenticated: boolean; temporary: boolean; composer: boolean; solAvailable?: boolean };
   connectorVerified: boolean;
+  connectorContractVerified: boolean;
+  retainedConnectorContractVerified: boolean;
   markdownRestoration: boolean;
   responseAccepted: boolean;
   finalProjection: boolean;
@@ -67,6 +71,8 @@ export function deriveWebContractCapabilities(evidence: {
     composer: evidence.session.composer,
     effort: evidence.session.solAvailable === true,
     connector: evidence.connectorVerified,
+    connectorContract: evidence.connectorContractVerified,
+    retainedConnectorContract: evidence.retainedConnectorContractVerified,
     markdownRestoration: evidence.markdownRestoration,
     submitted: evidence.responseAccepted,
     finalProjection: evidence.finalProjection,

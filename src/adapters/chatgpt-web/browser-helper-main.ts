@@ -1,3 +1,4 @@
+import { validateSkillFiles } from "./skill-attachments";
 import { createInterface } from "node:readline";
 import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
@@ -375,7 +376,13 @@ input.on("line", line => {
       writeProtocol({ type: "error", id: message.id, message: "Browser helper selected prompt is invalid" });
       preparedSelectionWaiters.get(message.id)?.();
     } else {
-      preparedSelectionWaiters.get(message.id)?.(prepared);
+      try {
+        validateSkillFiles(prepared.skillFiles);
+        preparedSelectionWaiters.get(message.id)?.(prepared);
+      } catch (error) {
+        writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
+        preparedSelectionWaiters.get(message.id)?.();
+      }
     }
     preparedSelectionWaiters.delete(message.id);
   } else if (message.type === "answer_retry") {
@@ -435,4 +442,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "answer-before-completion", "tunneled-output-v1"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "answer-before-completion", "tunneled-output-v1", "skill-attachments"] });

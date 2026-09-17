@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { bridgeToResponsesSSE } from "../src/bridge";
 import { defaultConfig } from "../src/config";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
@@ -16,16 +15,17 @@ const codexArg = process.argv.slice(2).find(argument => argument !== "--v1" && a
 const codex = resolve(codexArg ?? "/Applications/ChatGPT.app/Contents/Resources/codex");
 if (!existsSync(codex)) throw new Error(`Codex executable is missing: ${codex}`);
 
-const bundled = spawnSync(codex, ["debug", "models", "--bundled"], {
-  encoding: "utf8",
-  stdio: ["ignore", "pipe", "pipe"],
+const bundled = Bun.spawnSync([codex, "debug", "models", "--bundled"], {
+  stdin: "ignore",
+  stdout: "pipe",
+  stderr: "pipe",
   timeout: 15_000,
 });
-if (bundled.status !== 0) {
-  throw new Error(`Could not read bundled Codex models: ${bundled.error?.message || bundled.stderr}`);
+if (bundled.exitCode !== 0) {
+  throw new Error(`Could not read bundled Codex models: ${bundled.stderr.toString()}`);
 }
 
-const sourceCatalog = JSON.parse(bundled.stdout) as { models?: unknown[] };
+const sourceCatalog = JSON.parse(bundled.stdout.toString()) as { models?: unknown[] };
 const catalogConfig = defaultConfig("browser-only");
 catalogConfig.solAvailable = true;
 catalogConfig.proAvailable = true;

@@ -16,6 +16,7 @@ export interface LauncherState {
   useEnhancedWebSessionMode: boolean;
   useEnhancedOutputTunnel: boolean;
   experimentalBiggerContext: boolean;
+  experimentalSkillAttachments: boolean;
   experimentalNoAutoCompact: boolean;
   keepRunningOnClose: boolean;
   showBrowserDuringTurns: boolean;
@@ -158,6 +159,7 @@ export interface LauncherApi {
   setUseEnhancedWebSessionMode(enabled: boolean): Promise<LauncherState>;
   setUseEnhancedOutputTunnel(enabled: boolean): Promise<LauncherState>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
+  setSkillAttachments(enabled: boolean): Promise<LauncherState>;
   setExperimentalNoAutoCompact(enabled: boolean): Promise<LauncherState>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCodex(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;
@@ -170,7 +172,6 @@ export interface LauncherApi {
   }): Promise<{ ok: boolean; stdout: string }>;
   setMcpStep(step: number): Promise<LauncherState>;
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
-  setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{
     state: LauncherState;

@@ -112,6 +112,17 @@ export function SettingsSurface({
       setBusy(false);
     }
   };
+  const setSkillAttachments = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      updateState(await api!.setSkillAttachments(enabled));
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const setExperimentalNoAutoCompact = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
@@ -268,6 +279,14 @@ export function SettingsSurface({
             checked={biggerContextState.checked}
             disabled={biggerContextState.disabled}
             onChange={(enabled) => void setBiggerContext(enabled)}
+          />
+        </SettingRow>
+        <SettingRow body={snapshot.state.browserInteractionMode === "manual"
+          ? copy.manualSkillAttachmentsUnavailable : copy.skillAttachmentsBody} label={copy.skillAttachments}>
+          <Switch
+            checked={snapshot.state.experimentalSkillAttachments}
+            disabled={busy || snapshot.state.browserInteractionMode === "manual" || !snapshot.state.coreSetupComplete}
+            onChange={(enabled) => void setSkillAttachments(enabled)}
           />
         </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>

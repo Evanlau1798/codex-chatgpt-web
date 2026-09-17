@@ -12,10 +12,18 @@ export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
   useEnhancedWebSessionMode: boolean;
   useEnhancedOutputTunnel: boolean;
   experimentalBiggerContext: boolean;
+  experimentalSkillAttachments: boolean;
   configuredCapabilities: ChatGptWebCapabilities;
   executionNamespace: string;
 } {
   const useEnhancedWebSessionMode = provider.chatgptWeb?.useEnhancedWebSessionMode === true;
+  const skillAttachments = provider.chatgptWeb?.experimentalSkillAttachments;
+  if (skillAttachments !== undefined && typeof skillAttachments !== "boolean") {
+    throw new Error("ChatGPT skill attachments preference must be a boolean");
+  }
+  if (skillAttachments && provider.chatgptWeb?.browserInteractionMode === "manual") {
+    throw new Error("Skills as files is unavailable in Zero Risk mode");
+  }
   return {
     timeoutMs: provider.chatgptWeb?.turnTimeoutMs,
     useEnhancedWebSessionMode,
@@ -24,6 +32,7 @@ export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
       useEnhancedWebSessionMode,
       provider.chatgptWeb?.experimentalBiggerContext === true,
     ),
+    experimentalSkillAttachments: skillAttachments === true,
     configuredCapabilities: {
       localToolsEnabled: provider.chatgptWeb?.localToolsEnabled === true,
       solAvailable: provider.chatgptWeb?.solAvailable !== false,
@@ -39,16 +48,18 @@ export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
 
 export function chatGptAutomaticUsagePromptOptions(
   config: Pick<ReturnType<typeof chatGptAdapterRuntimeConfig>,
-    "useEnhancedWebSessionMode" | "useEnhancedOutputTunnel" | "configuredCapabilities">,
+    "useEnhancedWebSessionMode" | "useEnhancedOutputTunnel" | "configuredCapabilities" | "experimentalSkillAttachments">,
   manualInteraction: boolean,
-): Pick<CompileChatGptWebPromptOptions, "nativeControlConnector" | "useEnhancedOutputTunnel"> {
-  return !manualInteraction && config.useEnhancedWebSessionMode
-    && config.configuredCapabilities.localToolsEnabled
-    ? {
+): Pick<CompileChatGptWebPromptOptions,
+  "nativeControlConnector" | "useEnhancedOutputTunnel" | "experimentalSkillAttachments"> {
+  if (manualInteraction) return {};
+  return {
+    ...(config.experimentalSkillAttachments ? { experimentalSkillAttachments: true } : {}),
+    ...(config.useEnhancedWebSessionMode && config.configuredCapabilities.localToolsEnabled ? {
         nativeControlConnector: true,
         ...(config.useEnhancedOutputTunnel ? { useEnhancedOutputTunnel: true } : {}),
-      }
-    : {};
+      } : {}),
+  };
 }
 
 export function retainedConversationRelease(

@@ -357,6 +357,9 @@ export async function runDevCommand(args: string[]): Promise<void> {
     }
     const biggerContext = takeFlag(args, "--bigger-context");
     const standardContext = takeFlag(args, "--standard-context");
+    const skillAttachments = takeFlag(args, "--skill-attachments");
+    const inlineSkills = takeFlag(args, "--inline-skills");
+    if (skillAttachments && inlineSkills) throw new Error("Choose --skill-attachments or --inline-skills");
     if (biggerContext && standardContext) {
       throw new Error("Choose at most one context mode: --bigger-context or --standard-context");
     }
@@ -384,6 +387,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
         : {}),
       ...(enhancedSession || standardSession ? { useEnhancedWebSessionMode: enhancedSession } : {}),
       ...(biggerContext || standardContext ? { experimentalBiggerContext: biggerContext } : {}),
+      ...(skillAttachments || inlineSkills ? { experimentalSkillAttachments: skillAttachments } : {}),
       ...(noAutoCompact || autoCompact ? { experimentalNoAutoCompact: noAutoCompact } : {}),
       ...(tunnelId ? { tunnelId } : {}),
       ...(runtimeKeyFile ? { runtimeKeyFile } : {}),

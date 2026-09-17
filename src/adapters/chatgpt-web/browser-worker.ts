@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { validateSkillFiles } from "./skill-attachments";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright-core";
 import {
   atomicWriteFile,
@@ -12,6 +13,7 @@ import {
   isLegacyChatGptConnectorName,
   legacyChatGptConnectorMigrationMessage,
   LEGACY_CHATGPT_CONNECTOR_NAMES,
+  ZERO_RISK_CHATGPT_CONNECTOR_NAME,
 } from "../../config";
 import type { CodexProviderConfig } from "../../types";
 import { parseDataUrl } from "../image";
@@ -195,6 +197,7 @@ import {
   settleAbortedChatGptMutation,
 } from "../../browser-mutation";
 import { ensureChatGptPersonalizedConnectorAccess } from "./personalization";
+import { verifyCurrentConnectorContract } from "./connector-contract";
 
 export { MAX_CHATGPT_BROWSER_TABS } from "./concurrency";
 export {
@@ -527,6 +530,8 @@ export interface BrowserTurn {
   capabilities: ChatGptWebCapabilities;
   /** Attach the Native2 connector for bridge control without granting outer Codex work capability. */
   nativeConnector?: boolean;
+  /** Explicit connector-schema probes may approve only the connector's one-shot use confirmation. */
+  connectorContractVerification?: boolean;
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   retainConversation?: boolean;
@@ -829,10 +834,27 @@ export function chatGptImageFilePayloads(images: ChatGptWebPromptImage[]): Array
   });
 }
 
+function assertChatGptPromptAttachments(prompt: CompiledChatGptWebPrompt): void {
+  if (prompt.images.length + (prompt.skillFiles?.length ?? 0) > CHATGPT_MAX_INPUT_IMAGES) {
+    throw new ChatGptWebAdapterError(
+      "Selected skills and images exceed ChatGPT's 10 attachments per message; disable Skills as files or reduce attachments.",
+      { status: 400, errorType: "invalid_request_error", code: "too_many_attachments", retryable: false },
+    );
+  }
+  validateSkillFiles(prompt.skillFiles);
+}
+
 export function chatGptPromptFilePayloads(
   prompt: CompiledChatGptWebPrompt,
 ): Array<{ name: string; mimeType: string; buffer: Buffer }> {
-  return chatGptImageFilePayloads(prompt.images);
+  assertChatGptPromptAttachments(prompt);
+  const files = [...chatGptImageFilePayloads(prompt.images), ...(prompt.skillFiles ?? []).map(file => ({
+    name: file.name, mimeType: "text/plain", buffer: Buffer.from(file.text, "utf8"),
+  }))];
+  if (files.reduce((sum, file) => sum + file.buffer.length, 0) > 50_000_000) {
+    throw new Error("ChatGPT web attachments exceed the 50 MB per-turn limit");
+  }
+  return files;
 }
 
 export class ChatGptBrowserWorker {
@@ -2243,6 +2265,24 @@ export class ChatGptBrowserWorker {
       // reload here can discard the first catalog's exact mismatch evidence and report a generic
       // menu failure instead of identifying the connector the account actually exposes.
       await this.selectConnector(page, captureDiagnostic);
+      const account = await detectChatGptAccountCapabilities(page);
+      const capabilities: ChatGptWebCapabilities = { ...account, localToolsEnabled: false };
+      const modelId = account.solAvailable ? CHATGPT_WEB_MODEL_ID : CHATGPT_WEB_LUNA_MODEL_ID;
+      const reasoning = account.solAvailable ? "high" : "low";
+      const contract = this.config.appName === ZERO_RISK_CHATGPT_CONNECTOR_NAME ? "safe" as const : "native" as const;
+      await verifyCurrentConnectorContract(this.config.appName, contract, async probe => {
+        await this.runBrowserTurn({
+          traceId: `${traceId}_contract`,
+          modelId,
+          reasoning,
+          capabilities,
+          nativeConnector: true,
+          connectorContractVerification: true,
+          prepare: async () => ({ text: probe.prompt, images: [], release: () => {} }),
+          onTextDelta: () => {},
+        }, undefined, page);
+      });
+      await captureDiagnostic("connector-contract-verified");
       await this.clearChatGptComposerState(page);
       await captureDiagnostic("connector-verification-cleared");
       await captureDiagnostic("connector-verification-succeeded");
@@ -2354,13 +2394,16 @@ export class ChatGptBrowserWorker {
         return false;
       };
 
-      // ChatGPT uses the same Markdown renderer for intermediate commentary and for the final
+      // ChatGPT's DIL renderer has no .markdown class (#538). Its build-specific CSS module still
+      // lives under the assistant-owned PUIK response root.
+      const answerRootSelector = '.markdown, [data-message-author-role="assistant"] .puik-root.not-markdown > [class*="_DilResponseRoot"]';
+      // ChatGPT uses the same content renderer for intermediate commentary and for the final
       // answer. Older responses nested commentary in the streaming-status container. Pro can also
       // render a completed commentary Markdown root immediately before that live status container.
       // Final-answer Markdown follows the live status instead, so DOM order remains the semantic
       // boundary without relying on localized labels such as "Pro thinking".
-      const allMarkdownRoots = [...root.querySelectorAll<HTMLElement>(".markdown")]
-        .filter(candidate => !candidate.parentElement?.closest(".markdown"))
+      const allMarkdownRoots = [...root.querySelectorAll<HTMLElement>(answerRootSelector)]
+        .filter(candidate => !candidate.parentElement?.closest(answerRootSelector))
         .filter(renderedInDom);
       const streamingStatusContainers = [...root.querySelectorAll<HTMLElement>("[data-streaming-response-status]")]
         .filter(renderedInDom);
@@ -2396,7 +2439,7 @@ export class ChatGptBrowserWorker {
       const classified = selectChatGptAnswerRoots(allMarkdownRoots, streamingStatusContainers);
       const commentaryRoots = classified.commentaryRoots;
       const renderedRoots = classified.answerRoots;
-      const runtimeWindow = window as typeof window & {
+      const runtimeWindow = globalThis as typeof globalThis & {
         __codexMarkdownRootIds?: WeakMap<HTMLElement, string>;
         __codexMarkdownRootSequence?: number;
         __codexFinalProjectionStates?: WeakMap<HTMLElement, {
@@ -2641,7 +2684,8 @@ export class ChatGptBrowserWorker {
         ? completionActions.find(candidate => !rendered.contains(candidate)
           && Boolean(rendered.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING))
         : completionActions.at(-1);
-      const plainTextFallback = renderedRoots.length === 0 && completionAction ? (() => {
+      const structuredResponsePresent = root.querySelector(".markdown, .puik-root.not-markdown") !== null;
+      const plainTextFallback = renderedRoots.length === 0 && !structuredResponsePresent && completionAction ? (() => {
         const blocks = new Set(["ADDRESS", "ARTICLE", "BLOCKQUOTE", "DIV", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "P", "PRE", "TR"]);
         const collect = (node: Node): string => {
           if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
@@ -2812,7 +2856,8 @@ export class ChatGptBrowserWorker {
         plainTextFallback,
         markdownSegments,
         markdownRoots,
-        completionActionVisible: completionAction !== undefined,
+        completionActionVisible: completionAction !== undefined
+          && (renderedRoots.length > 0 || plainTextFallback.length > 0),
         globalCompletionActionVisible: [...document.querySelectorAll<HTMLElement>(completionActionSelector)]
           .some(renderedInDom),
         stoppedThinkingVisible,
@@ -3020,6 +3065,7 @@ export class ChatGptBrowserWorker {
     let diagnosticPage: Page | undefined;
     try {
       if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
+      assertChatGptPromptAttachments(prepared);
       const multipartTransport = prepareChatGptWebMultipartTransport(
         prepared,
         turn.modelId,
@@ -3495,7 +3541,9 @@ export class ChatGptBrowserWorker {
               await throwIfChatGptSessionFailureAlert(page);
               await throwIfChatGptRateLimitDialog(page);
               if (await resolveChatGptToolConfirmation(
-                page, this.config.appName, this.config.autoApproveToolCalls, turn.abortSignal,
+                page, this.config.appName,
+                this.config.autoApproveToolCalls || turn.connectorContractVerification === true,
+                turn.abortSignal,
                 CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS, () => diagnostics.capture(page, "tool-confirmation-visible"),
               )) turn.onProgress?.();
               let current: ChatGptAssistantTurnState;
@@ -3704,7 +3752,7 @@ export class ChatGptBrowserWorker {
         if ((turn.nativeConnector === true || mode.localTools) && await resolveChatGptToolConfirmation(
           page,
           this.config.appName,
-          this.config.autoApproveToolCalls,
+          this.config.autoApproveToolCalls || turn.connectorContractVerification === true,
           turn.abortSignal,
           CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS,
           () => diagnostics.capture(page, "tool-confirmation-visible"),

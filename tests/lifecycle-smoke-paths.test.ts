@@ -27,7 +27,12 @@ test("Windows lifecycle commands prefer native executables over command shims", 
 });
 
 test("Codex process probes use Bun's native spawn path consistently", () => {
-  for (const name of ["smoke-codex-cancel.ts", "smoke-codex-interrupt.ts"]) {
+  for (const name of [
+    "smoke-codex-cancel.ts",
+    "smoke-codex-interrupt.ts",
+    "smoke-codex-subagents.ts",
+    "smoke-codex-web-subagents.ts",
+  ]) {
     const source = readFileSync(join(import.meta.dir, "..", "scripts", name), "utf8");
     expect(source).toContain("Bun.spawnSync");
     expect(source).not.toContain('from "node:child_process"');

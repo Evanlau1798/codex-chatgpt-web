@@ -32,6 +32,11 @@ import { brokerMcpResult as asMcpResult, mcpJsonResult as result } from "./mcp-r
 import { withClaimedTurn, type ClaimedTurn } from "./mcp-turn-activity";
 import { observeMcpToolCalls } from "./mcp-observation";
 import {
+  CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL,
+  connectorContractRevision,
+  recordConnectorContractProbeEvidence,
+} from "./connector-contract";
+import {
   afterSafeStart,
   registerZeroRiskLifecycleTools,
   safeVisibleTools,
@@ -65,7 +70,7 @@ const turnTokenSchema = z.string().min(20).max(256);
 const contextTokenSchema = z.string().min(20).max(256);
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 const BRIDGE_TOOL_NAMES = new Set([
-  "codex_read_context", "codex_turn_start", "codex_exec", "codex_write_stdin",
+  CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL, "codex_read_context", "codex_turn_start", "codex_exec", "codex_write_stdin",
   "codex_apply_patch", "codex_view_image", "codex_tool_inventory", "codex_tool_call", "codex_turn_complete",
 ]);
 
@@ -83,6 +88,24 @@ export async function runChatGptMcpServer(options: {
   const server = new McpServer(
     { name: contract === "safe" ? "codex-safe" : "codex-native", version: VERSION },
     contract === "safe" ? { instructions: ZERO_RISK_MCP_INSTRUCTIONS } : undefined,
+  );
+  const contractRevision = connectorContractRevision(contract);
+  server.registerTool(
+    CHATGPT_CONNECTOR_CONTRACT_PROBE_TOOL,
+    {
+      title: "Verify the current connector contract",
+      description: "Verify that ChatGPT loaded the current public connector schema. This tool is used by launcher and release verification.",
+      inputSchema: {
+        contract_revision: z.literal(contractRevision),
+        nonce: z.string().regex(/^[a-f0-9]{32}$/),
+      },
+      outputSchema: { verified: z.literal(true) },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ contract_revision, nonce }) => {
+      recordConnectorContractProbeEvidence(nonce, contract_revision);
+      return result({ verified: true });
+    },
   );
   if (contract === "safe") registerZeroRiskLifecycleTools(server, options.brokerSocketPath);
 

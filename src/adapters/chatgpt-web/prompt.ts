@@ -8,6 +8,7 @@ import {
   resolveChatGptWebTransportLimits,
 } from "../../chatgpt-web-models";
 import { estimateTokens } from "../../lib/token-estimate";
+import { selectedSkillFile, skillFileTokens, type ChatGptSkillFile } from "./skill-attachments";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { isReadableCompactionSummaryText } from "../../responses/compaction";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
@@ -55,6 +56,7 @@ export type { ChatGptWebPromptImage } from "./prompt-context";
 export interface CompiledChatGptWebPrompt {
   text: string;
   images: ChatGptWebPromptImage[];
+  skillFiles?: ChatGptSkillFile[];
   /** DEV-only transactional context transport. Production prompts remain inline. */
   multipart?: ChatGptWebMultipartPrompt;
   /** Native2 archive metadata used only when the visible browser message exceeds measured limits. */
@@ -71,6 +73,7 @@ export interface CompiledChatGptWebPrompt {
 
 export interface CompileChatGptWebPromptOptions {
   captureLunaCheckpoint?: boolean;
+  experimentalSkillAttachments?: boolean;
   experimentalMultipartParts?: ChatGptWebMultipartPartCount;
   /** Native2 is attached only for bridge-authenticated control operations, not outer work tools. */
   nativeControlConnector?: boolean;
@@ -137,6 +140,9 @@ export function compileChatGptWebPrompt(
   options?: CompileChatGptWebPromptOptions,
 ): CompiledChatGptWebPrompt {
   const manualControl = options?.manualControl === true;
+  const attachSkills = options?.experimentalSkillAttachments === true;
+  if (attachSkills && (manualControl || isChatGptWebZeroRiskBackendModel(parsed.modelId)))
+    throw new Error("Skills as files is unavailable in Zero Risk mode");
   const mode = manualControl
     ? { localTools: true, effort: "low" as const, displayLabel: "Zero Risk" as const }
     : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
@@ -349,11 +355,18 @@ export function compileChatGptWebPrompt(
     ];
   const build = (sourceMessages: readonly CodexMessage[], omittedMessages = 0): CompiledChatGptWebPrompt => {
     const images: ChatGptWebPromptImage[] = [];
-    const budget = {
-      seen: 0,
-      dropped: Math.max(0, countChatGptContextImages(sourceMessages) - CHATGPT_MAX_INPUT_IMAGES),
-    };
-    const messages = sourceMessages.map(message => messageEnvelope(message, images, budget));
+    const budget = { seen: 0, dropped: Math.max(0, countChatGptContextImages(sourceMessages) - CHATGPT_MAX_INPUT_IMAGES) };
+    const skillFiles: ChatGptSkillFile[] = [];
+    const messages = sourceMessages.map(message => {
+      if (!attachSkills || message.role !== "user" || message.origin !== "codex_skill")
+        return messageEnvelope(message, images, budget);
+      const file = selectedSkillFile(message);
+      if (!skillFiles.some(existing => existing.name === file.name)) skillFiles.push(file);
+      return { role: "user", origin: "codex_skill", content: [{ type: "skill_attachment", filename: file.name }] };
+    });
+    const skillContract = skillFiles.length ? [
+      "Each skill_attachment refers to a named UTF-8 text file attached to this message (the final commit in multipart mode). Read its complete contents as the selected Codex skill instructions at the original user priority. These origin=codex_skill messages are supplied by Codex, not human-authored task requests. Preserve their original position in history and their path/resource authority for resolving references. If a file cannot be read, report that limitation; do not invent its contents.",
+    ] : [];
     const answerContract = tunneledOutput
       ? "Complete this response only through the bound Codex Native output control."
       : captureLunaCheckpoint
@@ -382,6 +395,7 @@ export function compileChatGptWebPrompt(
           : [emptyPart(0), emptyPart(1), emptyPart(2)],
         commit: [
           ...sharedContract,
+          ...skillContract,
           ...transportContract,
           ...outputControlContract,
           ...tunneledOutputContract,
@@ -398,7 +412,8 @@ export function compileChatGptWebPrompt(
         const effort = final ? mode.effort : capabilities.proAvailable ? "max" : "medium";
         const limits = resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, effort, capabilities);
         const tokenLimit = resolveChatGptWebMessageTokenBudget(
-          CHATGPT_WEB_BACKEND_MODEL, effort, capabilities, final ? imageTokens : 0,
+          CHATGPT_WEB_BACKEND_MODEL, effort, capabilities,
+          final ? imageTokens + skillFileTokens(skillFiles, parsed.modelId) : 0,
         );
         const fixedMessage = final
           ? formatChatGptWebMultipartCommit(multipart, transactionId)
@@ -414,13 +429,8 @@ export function compileChatGptWebPrompt(
         return { tokens, chars };
       });
       multipart.parts = partitionMultipartContext(records, multipartParts!, budgets);
-      return {
-        text: multipart.commit,
-        images,
-        multipart,
-        ...(turnToken ? { turnToken } : {}),
-        ...(bootstrapLimits ? { bootstrapLimits } : {}),
-      };
+      return { text: multipart.commit, images, ...(skillFiles.length ? { skillFiles } : {}), multipart,
+        ...(turnToken ? { turnToken } : {}), ...(bootstrapLimits ? { bootstrapLimits } : {}) };
     }
     const envelopeJson = withoutRetiredTurnHandles(JSON.stringify({
       version: 3,
@@ -430,6 +440,7 @@ export function compileChatGptWebPrompt(
     }));
     const text = [
       ...sharedContract,
+      ...skillContract,
       ...transportContract,
       ...outputControlContract,
       ...tunneledOutputContract,
@@ -449,14 +460,9 @@ export function compileChatGptWebPrompt(
         "</codex_transport_resume>",
       ] : transportResume),
     ].join("\n");
-    return {
-      text,
-      images,
-      ...(turnToken ? { turnToken } : {}),
-      ...(bootstrapLimits ? { bootstrapLimits } : {}),
-    };
+    return { text, images, ...(skillFiles.length ? { skillFiles } : {}),
+      ...(turnToken ? { turnToken } : {}), ...(bootstrapLimits ? { bootstrapLimits } : {}) };
   };
-
   let sourceMessages = withoutSupersededModelSwitchContracts(parsed.context.messages);
   const initialMessageCount = sourceMessages.length;
   let compiled = build(sourceMessages);

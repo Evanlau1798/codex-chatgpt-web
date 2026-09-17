@@ -120,6 +120,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     extraHighAvailable: false,
     proAvailable: false,
     experimentalBiggerContext: false,
+    experimentalSkillAttachments: false,
     experimentalNoAutoCompact: false,
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
@@ -416,6 +417,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && typeof parsed.experimentalBiggerContext !== "boolean") {
     throw new Error(`Invalid experimentalBiggerContext in ${path}`);
   }
+  if (parsed.experimentalSkillAttachments !== undefined
+    && typeof parsed.experimentalSkillAttachments !== "boolean") {
+    throw new Error(`Invalid experimentalSkillAttachments in ${path}`);
+  }
   if (parsed.experimentalNoAutoCompact !== undefined
     && typeof parsed.experimentalNoAutoCompact !== "boolean") {
     throw new Error(`Invalid experimentalNoAutoCompact in ${path}`);
@@ -432,9 +437,13 @@ function parseConfig(value: unknown, path: string): AppConfig {
   const proAvailable = parsed.proAvailable === true;
   const useEnhancedWebSessionMode = parsed.useEnhancedWebSessionMode ?? (parsed.useNewCompactMode === true);
   const requestedBiggerContext = parsed.experimentalBiggerContext === true;
+  const experimentalSkillAttachments = parsed.experimentalSkillAttachments === true;
   const zeroRiskProEnabled = parsed.zeroRiskProEnabled === true;
   if (browserInteractionMode === "manual" && requestedBiggerContext) {
     throw new Error(`Zero Risk does not support Bigger Context in ${path}`);
+  }
+  if (browserInteractionMode === "manual" && experimentalSkillAttachments) {
+    throw new Error(`Zero Risk does not support Skills as files in ${path}`);
   }
   const experimentalBiggerContext = effectiveExperimentalBiggerContext(
     useEnhancedWebSessionMode,
@@ -457,6 +466,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     extraHighAvailable,
     proAvailable,
     experimentalBiggerContext,
+    experimentalSkillAttachments,
     experimentalNoAutoCompact: parsed.experimentalNoAutoCompact === true,
     zeroRiskProEnabled,
   } as AppConfig;

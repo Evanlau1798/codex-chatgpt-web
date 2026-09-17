@@ -752,6 +752,15 @@ function registerIpc({ logger, stateStore }) {
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
     return state;
   });
+  handle("launcher:skill-attachments", async (_event, enabled) => {
+    if (browserHost.activeTraceId || browserHost.currentOperation()) {
+      throw new Error("Finish or cancel active ChatGPT turns before changing Skills as files");
+    }
+    const result = await runtimeHost.setSkillAttachments(enabled === true);
+    const state = stateStore.update({ experimentalSkillAttachments: result.enabled });
+    send("launcher:state-changed", state);
+    return state;
+  });
   handle("launcher:zero-risk-pro", async (_event, enabled) => {
     const browserOperation = browserHost.currentOperation();
     if (browserHost.activeTraceId || browserOperation) {
@@ -783,6 +792,7 @@ function registerIpc({ logger, stateStore }) {
     const state = stateStore.update({
       browserInteractionMode: mode,
       experimentalBiggerContext: mode === "manual" ? false : current.experimentalBiggerContext,
+      experimentalSkillAttachments: mode === "manual" ? false : current.experimentalSkillAttachments,
       codexRestartRequired: !IS_DEV_PROFILE,
     });
     send("launcher:state-changed", state);
@@ -909,7 +919,7 @@ function registerIpc({ logger, stateStore }) {
       mcpGuideStep: 2,
       codexRestartRequired: IS_DEV_PROFILE ? false : true,
       browserInteractionMode: interactionMode,
-      ...(interactionMode === "manual" ? { experimentalBiggerContext: false } : {}),
+      ...(interactionMode === "manual" ? { experimentalBiggerContext: false, experimentalSkillAttachments: false } : {}),
       ...result.setupState,
     });
     if (interactionModeChange) send("launcher:browser-state", browserHost.snapshot());
@@ -1216,6 +1226,7 @@ async function start() {
       codexRestartRequired: false,
       autoStart: false,
       experimentalBiggerContext: config?.experimentalBiggerContext === true,
+      experimentalSkillAttachments: config?.experimentalSkillAttachments === true,
       experimentalNoAutoCompact: config?.experimentalNoAutoCompact === true,
     });
     send("launcher:state-changed", state);
@@ -1243,6 +1254,7 @@ async function start() {
         codexCatalogVerified: false,
         codexRestartRequired: true,
         experimentalBiggerContext: runtimeHost.runtimeConfigSnapshot().config?.experimentalBiggerContext === true,
+        experimentalSkillAttachments: runtimeHost.runtimeConfigSnapshot().config?.experimentalSkillAttachments === true,
         experimentalNoAutoCompact: runtimeHost.runtimeConfigSnapshot().config?.experimentalNoAutoCompact === true,
         ...(upgrade.mode === "full" ? {
           mcpRuntimeInstalled: true,
@@ -1289,6 +1301,9 @@ async function start() {
       const current = stateStore.read();
       const patch = {
         mcpRuntimeInstalled: config.mode === "full",
+        experimentalBiggerContext: config.experimentalBiggerContext === true,
+        experimentalSkillAttachments: config.experimentalSkillAttachments === true,
+        experimentalNoAutoCompact: config.experimentalNoAutoCompact === true,
         ...(config.mode === "browser-only" ? {
           mcpSetupComplete: false,
           mcpGuideStep: 0,

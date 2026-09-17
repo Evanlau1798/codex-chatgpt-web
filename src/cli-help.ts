@@ -53,6 +53,8 @@ Setup options:
   --standard-session           Disable Enhanced Web session mode
   --bigger-context             Enable experimental adaptive context (Enhanced mode must be off)
   --standard-context           Disable experimental multi-message context
+  --skill-attachments          Experimental selected skills as text attachments
+  --inline-skills              Keep selected skills inline (default)
   --no-auto-compact            Disable Codex auto compact for routed Web models (experimental)
   --auto-compact               Restore Codex auto compact for routed Web models
   --acknowledge-unofficial     Accept the one-time unofficial-browser-automation notice

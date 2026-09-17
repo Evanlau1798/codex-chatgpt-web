@@ -9,7 +9,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
 import { loadConfig } from "../src/config";
 import { augmentNativeModelCatalog } from "../src/model-catalog";
 
@@ -28,13 +27,14 @@ if (!runtimeConfig.solAvailable) {
   throw new Error("Live Web subagent smoke requires the authenticated Sol model surface");
 }
 
-const bundled = spawnSync(codex, ["debug", "models", "--bundled"], {
-  encoding: "utf8",
-  stdio: ["ignore", "pipe", "pipe"],
+const bundled = Bun.spawnSync([codex, "debug", "models", "--bundled"], {
+  stdin: "ignore",
+  stdout: "pipe",
+  stderr: "pipe",
   timeout: 15_000,
 });
-if (bundled.status !== 0) {
-  throw new Error(`Could not read bundled Codex models: ${bundled.error?.message || bundled.stderr}`);
+if (bundled.exitCode !== 0) {
+  throw new Error(`Could not read bundled Codex models: ${bundled.stderr.toString()}`);
 }
 
 const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-live-subagents-"));
@@ -45,7 +45,7 @@ const catalogConfig = structuredClone(runtimeConfig);
 catalogConfig.subagentProtocol = "compatibility-v1";
 writeFileSync(
   catalogPath,
-  `${JSON.stringify(augmentNativeModelCatalog(JSON.parse(bundled.stdout), catalogConfig))}\n`,
+  `${JSON.stringify(augmentNativeModelCatalog(JSON.parse(bundled.stdout.toString()), catalogConfig))}\n`,
 );
 
 const bridgeBaseUrl = `http://${runtimeConfig.host}:${runtimeConfig.port}/v1`;

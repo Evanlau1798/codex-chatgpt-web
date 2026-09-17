@@ -5,6 +5,7 @@ import {
   resolveChatGptWebTransportLimits,
 } from "../../chatgpt-web-models";
 import { estimateTokens } from "../../lib/token-estimate";
+import { skillFileTokens } from "./skill-attachments";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import {
   compiledChatGptWebMaxMessageChars,
@@ -192,7 +193,7 @@ export function prepareChatGptWebMultipartTransport(
       stagingEffort: stagingMode.effort,
       maxStageMessageTokens,
       maxStageChars,
-      finalMessageTokens: estimateTokens(finalPrompt, modelId),
+      finalMessageTokens: estimateTokens(finalPrompt, modelId) + skillFileTokens(prepared.skillFiles, modelId),
       finalMessageChars: finalPrompt.length,
       finalImageTokens: estimateChatGptWebImageTokens(prepared),
     },

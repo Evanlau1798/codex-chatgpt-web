@@ -70,12 +70,15 @@ probe. The DEV launcher supervisor owns only the isolated MCP tunnel. Browser di
 state, thread authority, checkpoints, and named chat state live
 under `~/.codex-chatgpt-web-dev` by default.
 
-The ChatGPT connector name is also the public MCP ABI identity. The direct turn-token contract uses
-`Codex Native2`; the retired `Codex Native` identity is never selected or refreshed in place. Setup
-migrates known legacy local configuration to the new name, clears prior verification state, and
-requires the user to create the new connector. Browser verification accepts the exact new identity,
-reports a specific migration error when only the legacy identity is visible, and never falls back to
-the legacy connector. Future public schema changes require another explicit connector identity.
+The ChatGPT connector name is also the public MCP ABI generation identity. Enhanced follows the
+upstream connector generation: while upstream uses `Codex Native2`, production remains
+`Codex Native2`, repository DEV remains `Codex Native2 DEV`, and the retired `Codex Native`
+identity is never selected or refreshed in place. Enhanced runtime extensions do not independently
+increment that generation. Browser verification requires the exact current identity and executes a
+versioned read-only contract probe; a missing or stale current-generation schema fails closed with
+same-name connector recreation guidance. Public `tools/list` fingerprints are release-tested for
+both Native2 and Zero Risk. A later connector-generation rename is considered only after upstream
+formally changes its identity and Enhanced reviews that contract.
 Repository DEV mode uses `Codex Native2 DEV` so the same ChatGPT account can keep both production
 and development connectors installed without renaming, refreshing, or deleting either one.
 

@@ -297,6 +297,7 @@ export class LauncherBrowserHelperClient {
               return;
             }
             pending.prepared = prepared;
+            if (prepared.skillFiles?.length && !this.helperFeatures.has("skill-attachments")) throw new Error("Launcher browser helper does not support skill attachments; update or restart the launcher");
             return Promise.resolve(pending.turn.onPreparedSelected?.(message.reused))
               .then(() => {
                 if (this.pending.get(message.id) !== pending) return;
@@ -306,6 +307,7 @@ export class LauncherBrowserHelperClient {
                   prepared: {
                     text: prepared.text,
                     images: prepared.images,
+                    ...(prepared.skillFiles ? { skillFiles: prepared.skillFiles } : {}),
                     ...(prepared.multipart ? { multipart: prepared.multipart } : {}),
                     ...(prepared.modelInputText ? { modelInputText: prepared.modelInputText } : {}),
                     ...(prepared.transport ? { transport: prepared.transport } : {}),
@@ -439,14 +441,12 @@ export class LauncherBrowserHelperClient {
     pending.prepared?.release();
     this.pending.delete(id);
   }
-
   private finishWithError(id: string, error: Error, expected?: PendingTurn): void {
     const pending = this.pending.get(id);
     if (!pending || (expected && pending !== expected)) return;
     this.finish(id);
     pending.reject(error);
   }
-
   private abortWithLocalFailure(id: string, error: Error, expected?: PendingTurn): void {
     const pending = this.pending.get(id);
     if (!pending || (expected && pending !== expected) || pending.localFailure) return;
