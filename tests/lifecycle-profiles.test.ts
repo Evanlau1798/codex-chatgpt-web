@@ -141,8 +141,8 @@ test("release builds rerun the deterministic lifecycle gate at the tag SHA", () 
   const build = workflow.match(/\r?\n  build:\r?\n([\s\S]*?)\r?\n  publish:/)?.[1];
   expect(workflow).toContain("lifecycle-gate:");
   expect(workflow).toContain("bun run lifecycle:sim --lane=all");
-  expect(workflow).toContain("@openai/codex@latest");
-  expect(workflow).toContain("@anthropic-ai/claude-code@latest");
+  expect(workflow).toContain("@openai/codex@0.153.3");
+  expect(workflow).toContain("@anthropic-ai/claude-code@2.1.260");
   expect(workflow).toMatch(/build:\s+needs: lifecycle-gate/);
   expect(build).toContain("fetch-depth: 0");
 });
