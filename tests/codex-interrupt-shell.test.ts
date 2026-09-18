@@ -19,7 +19,7 @@ test.skipIf(process.platform !== "win32")("Interrupt hook reaches the exact auth
     { runtimeCommand: [process.execPath, join(import.meta.dir, "../src/cli.ts")] },
     root,
   );
-  const run = async (shell: "cmd" | "powershell", payload: string) => {
+  const run = async (shell: "cmd" | "powershell", payload: string, keepStdinOpen = false) => {
     const child = spawn(shell === "cmd" ? process.env.COMSPEC || "C:\\Windows\\System32\\cmd.exe"
       : join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
       shell === "cmd" ? ["/d", "/s", "/c", `"${command}"`] : ["-NoProfile", "-NonInteractive", "-Command", command],
@@ -28,15 +28,18 @@ test.skipIf(process.platform !== "win32")("Interrupt hook reaches the exact auth
     let error = "";
     child.stdout.on("data", chunk => { output += chunk; });
     child.stderr.on("data", chunk => { error += chunk; });
-    child.stdin.end(payload);
+    if (keepStdinOpen) child.stdin.write(`${payload}\n`);
+    else child.stdin.end(payload);
     const timer = setTimeout(() => child.kill(), 10_000);
     const status = await new Promise<number | null>((resolve, reject) => {
       child.once("error", reject);
       child.once("close", resolve);
     }).finally(() => clearTimeout(timer));
+    child.stdin.destroy();
     return { shell, status, output, error };
   };
   try {
+    expect(await run("cmd", input, true)).toEqual({ shell: "cmd", status: 0, output: "", error: "" });
     for (const shell of ["cmd", "powershell"] as const) {
       const { status, output, error } = await run(shell, input);
       expect({ shell, status, output, error }).toEqual({ shell, status: 0, output: "", error: "" });
@@ -53,6 +56,7 @@ test.skipIf(process.platform !== "win32")("Interrupt hook reaches the exact auth
       });
     }
     expect(requests).toEqual([
+      { authorization: `Bearer ${token}`, body: { threadId: "thread_test", turnId: "turn_test" } },
       { authorization: `Bearer ${token}`, body: { threadId: "thread_test", turnId: "turn_test" } },
       { authorization: `Bearer ${token}`, body: { threadId: "thread_test", turnId: "turn_test" } },
     ]);

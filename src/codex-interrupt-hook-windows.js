@@ -107,7 +107,7 @@
 
   try {
     if (WScript.Arguments.length !== 1) throw new Error("invalid arguments");
-    var raw = WScript.StdIn.ReadAll();
+    var raw = WScript.StdIn.ReadLine();
     if (unescape(encodeURIComponent(raw)).length > 32768) throw new Error("payload too large");
     var payload = parseJson(raw);
     if (typeof payload.session_id !== "string" || typeof payload.turn_id !== "string") {
