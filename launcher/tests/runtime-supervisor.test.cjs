@@ -697,7 +697,7 @@ test("tunnel readiness accepts the official tmux status without inventing a PID"
     });
     assert.equal(health.ready, true);
     assert.equal(health.pid, null);
-    await supervisor.waitForTunnel({ tunnel: { alias: "codex-chatgpt-web" } }, 1);
+    await supervisor.waitForTunnel({ tunnel: { alias: "codex-chatgpt-web" } }, 1_000);
     assert.equal(supervisor.tunnel?.managed, true);
     assert.equal(supervisor.tunnel?.pid, null);
   } finally {
