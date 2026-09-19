@@ -64,9 +64,10 @@ function fixture(overrides = {}) {
 
 test("launcher validates Automatic Web account-safety settings", () => {
   const descriptorPath = path.join(os.tmpdir(), "launcher-browser-account-safety.json");
-  for (const [maxBrowserTabs, automaticWebSessionLimitMinutes] of [[1, 1], [6, 10_080]]) {
+  for (const [maxBrowserTabs, automaticWebSessionLimitCount, automaticWebSessionLimitMinutes]
+    of [[1, 1, 1], [6, 10_000, 10_080]]) {
     assert.doesNotThrow(() => validateConfig(
-      configFor(descriptorPath, { maxBrowserTabs, automaticWebSessionLimitMinutes }),
+      configFor(descriptorPath, { maxBrowserTabs, automaticWebSessionLimitCount, automaticWebSessionLimitMinutes }),
       descriptorPath,
     ));
   }
@@ -79,6 +80,12 @@ test("launcher validates Automatic Web account-safety settings", () => {
       /automaticWebSessionLimitMinutes/,
     );
   }
+  for (const automaticWebSessionLimitCount of [0, 10_001, 1.5]) {
+    assert.throws(
+      () => validateConfig(configFor(descriptorPath, { automaticWebSessionLimitCount }), descriptorPath),
+      /automaticWebSessionLimitCount/,
+    );
+  }
 });
 
 test("launcher defaults proactive safety off with a 300 minute first-enable value", () => {
@@ -86,6 +93,7 @@ test("launcher defaults proactive safety off with a 300 minute first-enable valu
   const standard = runtimePreferenceState(validateConfig(configFor(descriptorPath), descriptorPath));
   assert.equal(standard.maxBrowserTabs, 5);
   assert.equal(standard.automaticWebSessionLimitEnabled, false);
+  assert.equal(standard.automaticWebSessionLimitCount, 50);
   assert.equal(standard.automaticWebSessionLimitMinutes, 300);
 
   const enhanced = runtimePreferenceState(validateConfig(
@@ -101,19 +109,23 @@ test("launcher applies account-safety settings in one runtime restart and can di
 
   assert.deepEqual(await item.host.setAccountSafetySettings({
     maxBrowserTabs: 2,
+    automaticWebSessionLimitCount: 40,
     automaticWebSessionLimitMinutes: 300,
-  }), { maxBrowserTabs: 2, automaticWebSessionLimitMinutes: 300 });
+  }), { maxBrowserTabs: 2, automaticWebSessionLimitCount: 40, automaticWebSessionLimitMinutes: 300 });
   let saved = JSON.parse(fs.readFileSync(item.configPath, "utf8"));
   assert.equal(saved.maxBrowserTabs, 2);
+  assert.equal(saved.automaticWebSessionLimitCount, 40);
   assert.equal(saved.automaticWebSessionLimitMinutes, 300);
   assert.deepEqual(item.calls, ["stop", "start"]);
 
   assert.deepEqual(await item.host.setAccountSafetySettings({ maxBrowserTabs: 4 }), {
     maxBrowserTabs: 4,
+    automaticWebSessionLimitCount: undefined,
     automaticWebSessionLimitMinutes: undefined,
   });
   saved = JSON.parse(fs.readFileSync(item.configPath, "utf8"));
   assert.equal(saved.maxBrowserTabs, 4);
+  assert.equal(saved.automaticWebSessionLimitCount, undefined);
   assert.equal(saved.automaticWebSessionLimitMinutes, undefined);
   assert.deepEqual(item.calls, ["stop", "start", "stop", "start"]);
 });
@@ -140,6 +152,7 @@ test("launcher exposes Automatic-only account safety through renderer and IPC", 
   const preload = fs.readFileSync(path.join(root, "electron", "preload.cjs"), "utf8");
 
   assert.match(types, /maxBrowserTabs: number/);
+  assert.match(types, /automaticWebSessionLimitCount: number/);
   assert.match(types, /automaticWebSessionLimitMinutes: number/);
   assert.match(preload, /setAccountSafetySettings:.*launcher:account-safety-settings/);
   assert.match(preload, /accountSafetyStatus:.*launcher:account-safety-status/);
@@ -147,6 +160,13 @@ test("launcher exposes Automatic-only account safety through renderer and IPC", 
   assert.match(main, /runtimeHost\.resumeAutomaticWeb\(\)/);
   assert.match(main, /runtimeHost\.acknowledgeAccountSafetyStop\(\)/);
   assert.match(settings, /snapshot\.state\.browserInteractionMode === "automatic" \? <>/);
-  assert.match(settings, /accountSafety\?\.state === "PAUSED"/);
+  assert.match(settings, /account-safety-card/);
+  assert.match(settings, /label=\{copy\.accountSafetyLimitToggle\}/);
+  assert.match(settings, /aria-label=\{label\}/);
+  assert.match(settings, /<strong>\{copy\.accountSafetyUsageMeter\}<\/strong>/);
+  assert.match(settings, /copy\.accountSafetySessionsUsed[\s\S]*copy\.accountSafetyResetIn/);
+  assert.match(settings, /used_sessions/);
+  assert.match(settings, /session_limit/);
+  assert.match(settings, /accountSafety\?\.state === "PAUSED" && accountSafety\.reason === "rate_limit"/);
   assert.match(settings, /accountSafety\?\.state === "HARD_STOP"/);
 });

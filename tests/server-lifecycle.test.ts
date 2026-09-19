@@ -608,8 +608,10 @@ test.serial("authenticated account-safety control exposes status and recovery ac
   const previousSafetyHome = process.env.CODEX_CHATGPT_WEB_HOME;
   process.env.CODEX_CHATGPT_WEB_HOME = safetyHome;
   const config = { ...defaultConfig("browser-only"), port: 0 } as ReturnType<typeof defaultConfig> & {
+    automaticWebSessionLimitCount?: number;
     automaticWebSessionLimitMinutes?: number;
   };
+  config.automaticWebSessionLimitCount = 40;
   config.automaticWebSessionLimitMinutes = 300;
   const server = startServer(config);
   try {
@@ -620,7 +622,7 @@ test.serial("authenticated account-safety control exposes status and recovery ac
     expect(status.status).toBe(200);
     expect(await status.json()).toMatchObject({
       status: "ok",
-      account_safety: { state: "NORMAL", limit_minutes: 300 },
+      account_safety: { state: "NORMAL", limit_minutes: 300, used_sessions: 0, session_limit: 40 },
     });
 
     chatGptAccountSafety().trigger("rate_limit", []);

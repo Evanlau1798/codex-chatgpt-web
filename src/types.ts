@@ -307,7 +307,9 @@ export interface CodexProviderConfig {
     stallTimeoutSec?: number;
     /** Optional Automatic Web concurrency ceiling. */
     maxBrowserTabs?: number;
-    /** Optional local Automatic Web usage-window ceiling in minutes. */
+    /** Optional maximum number of logical Web sessions admitted in one local usage window. */
+    automaticWebSessionLimitCount?: number;
+    /** Optional local Automatic Web usage-window duration in minutes. */
     automaticWebSessionLimitMinutes?: number;
     /** Experimental no-context mode disables compaction and scales browser waits for its full prompt. */
     experimentalNoAutoCompact?: boolean;

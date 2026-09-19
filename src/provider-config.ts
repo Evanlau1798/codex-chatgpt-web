@@ -56,6 +56,9 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
       ...(manual || config.maxBrowserTabs === undefined ? {} : { maxBrowserTabs: config.maxBrowserTabs }),
+      ...(manual || config.automaticWebSessionLimitCount === undefined
+        ? {}
+        : { automaticWebSessionLimitCount: config.automaticWebSessionLimitCount }),
       ...(manual || config.automaticWebSessionLimitMinutes === undefined
         ? {}
         : { automaticWebSessionLimitMinutes: config.automaticWebSessionLimitMinutes }),

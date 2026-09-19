@@ -85,7 +85,9 @@ export interface AppConfig {
   stallTimeoutSec?: number;
   /** Optional launcher-owned ceiling for concurrent Automatic Web browser turns. */
   maxBrowserTabs?: number;
-  /** Optional local wall-clock budget for one continuous Automatic Web usage window. */
+  /** Optional local ceiling for logical Automatic Web sessions in one usage window. */
+  automaticWebSessionLimitCount?: number;
+  /** Optional duration for one local Automatic Web usage window. */
   automaticWebSessionLimitMinutes?: number;
   autoApproveToolCalls: boolean;
   controlToken: string;

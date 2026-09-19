@@ -17,6 +17,7 @@ export interface LauncherState {
   useEnhancedOutputTunnel: boolean;
   maxBrowserTabs: number;
   automaticWebSessionLimitEnabled: boolean;
+  automaticWebSessionLimitCount: number;
   automaticWebSessionLimitMinutes: number;
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
@@ -139,6 +140,8 @@ export interface AccountSafetyStatus {
   window_started_at?: string;
   remaining_ms?: number;
   limit_minutes?: number;
+  used_sessions: number;
+  session_limit?: number;
 }
 
 export interface LauncherApi {
@@ -170,6 +173,7 @@ export interface LauncherApi {
   setUseEnhancedWebSessionMode(enabled: boolean): Promise<LauncherState>;
   setAccountSafetySettings(input: {
     maxBrowserTabs: number;
+    automaticWebSessionLimitCount?: number;
     automaticWebSessionLimitMinutes?: number;
   }): Promise<LauncherState>;
   accountSafetyStatus(): Promise<AccountSafetyStatus>;

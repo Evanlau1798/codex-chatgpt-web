@@ -723,6 +723,8 @@ function registerIpc({ logger, stateStore }) {
     const state = stateStore.update({
       maxBrowserTabs: result.maxBrowserTabs,
       automaticWebSessionLimitEnabled: result.automaticWebSessionLimitMinutes !== undefined,
+      automaticWebSessionLimitCount: result.automaticWebSessionLimitCount
+        ?? current.automaticWebSessionLimitCount,
       automaticWebSessionLimitMinutes: result.automaticWebSessionLimitMinutes
         ?? current.automaticWebSessionLimitMinutes,
     });

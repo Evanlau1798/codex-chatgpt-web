@@ -33,6 +33,7 @@ import { submittedBrowserFailure, submittedStallFailure } from "./submitted-turn
 import { ChatGptLunaCheckpointStore } from "./rolling-checkpoint";
 import {
   CHATGPT_ACCOUNT_SAFETY_DRAIN_PROMPT,
+  DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT,
   ChatGptAccountSafety,
   chatGptAccountSafety,
 } from "./account-safety";
@@ -95,7 +96,13 @@ export function createChatGptWebAdapter(
   const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
   const accountSafety = dependencies.accountSafety ?? chatGptAccountSafety();
   const automaticWebSessionLimitMinutes = provider.chatgptWeb?.automaticWebSessionLimitMinutes;
+  const automaticWebSessionLimitCount = automaticWebSessionLimitMinutes === undefined
+    ? undefined
+    : provider.chatgptWeb?.automaticWebSessionLimitCount ?? DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT;
   const activeSafetyTraceIds = () => accountSafety.activeTraceIds(chatGptTurnSessions.activeTraceIds());
+  const automaticSessionId = (parsed: CodexParsedRequest, traceId: string) => useEnhancedWebSessionMode
+    ? chatGptConversationKey(parsed, executionNamespace) ?? traceId
+    : traceId;
   const queueSafetySteering = (traceIds: readonly string[]) => {
     for (const targetTraceId of traceIds) {
       if (chatGptTurnSessions.steerSafetyTrace(targetTraceId, CHATGPT_ACCOUNT_SAFETY_DRAIN_PROMPT)) {
@@ -112,9 +119,11 @@ export function createChatGptWebAdapter(
         : undefined;
     if (reason) queueSafetySteering(accountSafety.trigger(reason, activeSafetyTraceIds()));
   };
-  const requireAutomaticAdmission = (targetTraceId: string) => {
+  const requireAutomaticAdmission = (parsed: CodexParsedRequest, targetTraceId: string) => {
     const admission = accountSafety.admit(
       targetTraceId,
+      automaticSessionId(parsed, targetTraceId),
+      automaticWebSessionLimitCount,
       automaticWebSessionLimitMinutes,
       activeSafetyTraceIds(),
     );
@@ -134,7 +143,7 @@ export function createChatGptWebAdapter(
     );
   };
   const guardedAutomaticStartRuntime: typeof automaticStartRuntime = (...args) => {
-    requireAutomaticAdmission(args[2]);
+    requireAutomaticAdmission(args[0], args[2]);
     return automaticStartRuntime(...args);
   };
   const automaticUsagePromptOptions = chatGptAutomaticUsagePromptOptions(runtimeConfig, manualInteraction);
@@ -181,6 +190,7 @@ export function createChatGptWebAdapter(
         emit({ type: "heartbeat" });
         if (!manualInteraction) {
           queueSafetySteering(accountSafety.tick(
+            automaticWebSessionLimitCount,
             automaticWebSessionLimitMinutes,
             activeSafetyTraceIds(),
           ));
@@ -205,13 +215,13 @@ export function createChatGptWebAdapter(
         ? chatGptTurnSessions.find(compactionSourceExecutionKey)?.traceId ?? traceId
         : traceId;
       if (!manualInteraction) {
-        requireAutomaticAdmission(admissionTraceId);
+        requireAutomaticAdmission(parsed, admissionTraceId);
         accountSafety.retainTrace(admissionTraceId);
         retainedSafetyTraceId = admissionTraceId;
       }
       const startRuntimeForTurn = !manualInteraction && parsed._compactionRequest
         ? (...args: Parameters<typeof automaticStartRuntime>) => {
-            requireAutomaticAdmission(admissionTraceId);
+            requireAutomaticAdmission(parsed, admissionTraceId);
             return automaticStartRuntime(...args);
           }
         : startRuntime;
@@ -264,7 +274,7 @@ export function createChatGptWebAdapter(
             worker, parsed, broker, executionNamespace, capabilities: turnCapabilities,
             responseExecutionKey, nativeConnectorAvailable: configuredCapabilities.localToolsEnabled,
             abortSignal: incoming.abortSignal, timeoutMs,
-            requireAutomaticAdmission: () => requireAutomaticAdmission(admissionTraceId), emit,
+            requireAutomaticAdmission: () => requireAutomaticAdmission(parsed, admissionTraceId), emit,
             startFallback: async (fallbackTraceId, signal, onCompactionProgress, retainOwnershipUntil) => {
               const runtime = startRuntimeForTurn(parsed, undefined, fallbackTraceId, turnCapabilities, { onCompactionProgress });
               const settlement = runtime.physicalSettlement ?? runtime.browser.then(() => undefined, () => undefined);
@@ -588,7 +598,7 @@ export function createChatGptWebAdapter(
         clearInterval(heartbeat);
         if (!manualInteraction) {
           if (retainedSafetyTraceId) accountSafety.releaseTrace(retainedSafetyTraceId);
-          accountSafety.status(automaticWebSessionLimitMinutes, activeSafetyTraceIds());
+          accountSafety.status(automaticWebSessionLimitCount, automaticWebSessionLimitMinutes, activeSafetyTraceIds());
         }
       }
     },

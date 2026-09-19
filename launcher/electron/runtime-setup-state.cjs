@@ -12,6 +12,9 @@ function runtimePreferenceState(config) {
       ? config.maxBrowserTabs
       : config.useEnhancedWebSessionMode === true ? 6 : 5,
     automaticWebSessionLimitEnabled: Number.isInteger(config.automaticWebSessionLimitMinutes),
+    automaticWebSessionLimitCount: Number.isInteger(config.automaticWebSessionLimitCount)
+      ? config.automaticWebSessionLimitCount
+      : 50,
     automaticWebSessionLimitMinutes: Number.isInteger(config.automaticWebSessionLimitMinutes)
       ? config.automaticWebSessionLimitMinutes
       : 300,

@@ -1,5 +1,5 @@
 import { chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
-import { chatGptAccountSafety } from "./adapters/chatgpt-web/account-safety";
+import { DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT, chatGptAccountSafety } from "./adapters/chatgpt-web/account-safety";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
@@ -356,7 +356,10 @@ export function startServer(
           if (url.pathname === "/admin/account-safety-resume") accountSafety.resume();
           else if (url.pathname === "/admin/account-safety-acknowledge") accountSafety.acknowledgeHardStop();
           else if (url.pathname !== "/admin/account-safety-status") return new Response("Not Found", { status: 404 });
-          const safety = accountSafety.status(config.automaticWebSessionLimitMinutes, activeTraceIds);
+          const sessionLimit = config.automaticWebSessionLimitMinutes === undefined
+            ? undefined
+            : config.automaticWebSessionLimitCount ?? DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT;
+          const safety = accountSafety.status(sessionLimit, config.automaticWebSessionLimitMinutes, activeTraceIds);
           return Response.json({
             status: "ok",
             account_safety: {
@@ -365,6 +368,8 @@ export function startServer(
               ...(safety.windowStartedAt !== undefined ? { window_started_at: new Date(safety.windowStartedAt).toISOString() } : {}),
               ...(safety.remainingMs !== undefined ? { remaining_ms: safety.remainingMs } : {}),
               ...(safety.limitMinutes !== undefined ? { limit_minutes: safety.limitMinutes } : {}),
+              used_sessions: safety.usedSessions,
+              ...(safety.sessionLimit !== undefined ? { session_limit: safety.sessionLimit } : {}),
             },
           });
         } catch (error) {

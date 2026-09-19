@@ -398,7 +398,13 @@ test("duration drain maps enhanced compaction back to the captured source trace"
     retainTrace(traceId: string) { retained.add(traceId); },
     releaseTrace(traceId: string) { retained.delete(traceId); },
     activeTraceIds(traceIds: readonly string[]) { return [...new Set([...traceIds, ...retained])]; },
-    admit(traceId: string, _limitMinutes: number | undefined, activeTraceIds: readonly string[]) {
+    admit(
+      traceId: string,
+      _sessionId: string,
+      _limitCount: number | undefined,
+      _limitMinutes: number | undefined,
+      activeTraceIds: readonly string[],
+    ) {
       admissions.push({ traceId, activeTraceIds: [...activeTraceIds] });
       const allowed = admissions.length === 1 && traceId === "captured-source";
       return {
@@ -499,8 +505,8 @@ test("a ChatGPT rate-limit failure pauses Automatic Web even without a proactive
     await createChatGptWebAdapter({
       adapter: "chatgpt-web", baseUrl: "browser://safety-rate", chatgptWeb: { localToolsEnabled: false },
     }, { worker, accountSafety: safety } as never).runTurn!(parsed, { headers: new Headers() }, () => {});
-    expect(safety.status(undefined, []).state).toBe("PAUSED");
-    expect(safety.status(undefined, []).reason).toBe("rate_limit");
+    expect(safety.status(undefined, undefined, []).state).toBe("PAUSED");
+    expect(safety.status(undefined, undefined, []).reason).toBe("rate_limit");
   } finally {
     chatGptTurnSessions.clear();
     rmSync(root, { recursive: true, force: true });
@@ -537,7 +543,7 @@ test("Enhanced compaction rate limits update account safety", async () => {
       adapter: "chatgpt-web", baseUrl: "browser://safety-compact-rate",
       chatgptWeb: { localToolsEnabled: true, useEnhancedWebSessionMode: true },
     }, { worker, accountSafety: safety } as never).runTurn!(parsed, { headers: new Headers() }, event => events.push(event));
-    expect(safety.status(undefined, [])).toMatchObject({ state: "PAUSED", reason: "rate_limit" });
+    expect(safety.status(undefined, undefined, [])).toMatchObject({ state: "PAUSED", reason: "rate_limit" });
     expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "rate_limit_exceeded", status: 429 }));
   } finally {
     chatGptTurnSessions.clear();

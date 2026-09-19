@@ -436,6 +436,12 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && (!Number.isInteger(parsed.maxBrowserTabs) || parsed.maxBrowserTabs < 1 || parsed.maxBrowserTabs > 6)) {
     throw new Error(`Invalid maxBrowserTabs in ${path}`);
   }
+  if (parsed.automaticWebSessionLimitCount !== undefined
+    && (!Number.isInteger(parsed.automaticWebSessionLimitCount)
+      || parsed.automaticWebSessionLimitCount < 1
+      || parsed.automaticWebSessionLimitCount > 10_000)) {
+    throw new Error(`Invalid automaticWebSessionLimitCount in ${path}`);
+  }
   if (parsed.automaticWebSessionLimitMinutes !== undefined
     && (!Number.isInteger(parsed.automaticWebSessionLimitMinutes)
       || parsed.automaticWebSessionLimitMinutes < 1

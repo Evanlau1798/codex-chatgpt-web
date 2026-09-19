@@ -282,9 +282,16 @@ module.exports = {
   async setAccountSafetySettings(input) {
     if (!input || typeof input !== "object") throw new Error("Account safety settings are invalid");
     const maxBrowserTabs = input.maxBrowserTabs;
+    const automaticWebSessionLimitCount = input.automaticWebSessionLimitCount;
     const automaticWebSessionLimitMinutes = input.automaticWebSessionLimitMinutes;
     if (!Number.isInteger(maxBrowserTabs) || maxBrowserTabs < 1 || maxBrowserTabs > 6) {
       throw new Error("Maximum concurrent Web turns must be an integer from 1 to 6");
+    }
+    if (automaticWebSessionLimitCount !== undefined
+      && (!Number.isInteger(automaticWebSessionLimitCount)
+        || automaticWebSessionLimitCount < 1
+        || automaticWebSessionLimitCount > 10_000)) {
+      throw new Error("Automatic Web session count limit must be an integer from 1 to 10000");
     }
     if (automaticWebSessionLimitMinutes !== undefined
       && (!Number.isInteger(automaticWebSessionLimitMinutes)
@@ -299,8 +306,9 @@ module.exports = {
       throw new Error("Install the launcher-owned runtime before changing account safety settings");
     }
     if (current.config.maxBrowserTabs === maxBrowserTabs
+      && current.config.automaticWebSessionLimitCount === automaticWebSessionLimitCount
       && current.config.automaticWebSessionLimitMinutes === automaticWebSessionLimitMinutes) {
-      return { maxBrowserTabs, automaticWebSessionLimitMinutes };
+      return { maxBrowserTabs, automaticWebSessionLimitCount, automaticWebSessionLimitMinutes };
     }
     if (typeof this.supervisor.configPath !== "string" || !path.isAbsolute(this.supervisor.configPath)) {
       throw new Error("Launcher runtime supervisor has no absolute configuration path");
@@ -312,14 +320,19 @@ module.exports = {
       await this.supervisor.stopForSetup();
       try {
         const next = { ...current.config, maxBrowserTabs };
-        if (automaticWebSessionLimitMinutes === undefined) delete next.automaticWebSessionLimitMinutes;
-        else next.automaticWebSessionLimitMinutes = automaticWebSessionLimitMinutes;
+        if (automaticWebSessionLimitMinutes === undefined) {
+          delete next.automaticWebSessionLimitCount;
+          delete next.automaticWebSessionLimitMinutes;
+        } else {
+          next.automaticWebSessionLimitCount = automaticWebSessionLimitCount;
+          next.automaticWebSessionLimitMinutes = automaticWebSessionLimitMinutes;
+        }
         writePrivateFileAtomic(this.supervisor.configPath, `${JSON.stringify(next, null, 2)}\n`);
         const runtime = await this.supervisor.startIfConfigured();
         if (runtime.status !== "ready") {
           throw new Error(`Local runtime is ${runtime.status}${runtime.detail ? `: ${runtime.detail}` : ""}`);
         }
-        return { maxBrowserTabs, automaticWebSessionLimitMinutes };
+        return { maxBrowserTabs, automaticWebSessionLimitCount, automaticWebSessionLimitMinutes };
       } catch (error) {
         let recoveryError;
         try {

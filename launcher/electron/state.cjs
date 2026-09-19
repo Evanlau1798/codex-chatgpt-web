@@ -18,6 +18,7 @@ const DEFAULT_STATE = Object.freeze({
   useEnhancedOutputTunnel: true,
   maxBrowserTabs: 6,
   automaticWebSessionLimitEnabled: false,
+  automaticWebSessionLimitCount: 50,
   automaticWebSessionLimitMinutes: 300,
   experimentalBiggerContext: false,
   experimentalSkillAttachments: false,
@@ -89,6 +90,11 @@ function readState(filePath) {
     }
     if (!Number.isInteger(state.maxBrowserTabs) || state.maxBrowserTabs < 1 || state.maxBrowserTabs > 6) {
       state.maxBrowserTabs = DEFAULT_STATE.maxBrowserTabs;
+    }
+    if (!Number.isInteger(state.automaticWebSessionLimitCount)
+      || state.automaticWebSessionLimitCount < 1
+      || state.automaticWebSessionLimitCount > 10_000) {
+      state.automaticWebSessionLimitCount = DEFAULT_STATE.automaticWebSessionLimitCount;
     }
     if (!Number.isInteger(state.automaticWebSessionLimitMinutes)
       || state.automaticWebSessionLimitMinutes < 1

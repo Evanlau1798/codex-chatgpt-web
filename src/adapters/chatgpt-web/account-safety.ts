@@ -5,6 +5,7 @@ import { getConfigDir } from "../../config";
 
 export type ChatGptAccountSafetyState = "NORMAL" | "DRAINING" | "PAUSED" | "HARD_STOP";
 export type ChatGptAccountSafetyReason = "duration_limit" | "rate_limit" | "account_security";
+export const DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT = 50;
 
 export const CHATGPT_ACCOUNT_SAFETY_DRAIN_PROMPT =
   "The local Automatic Web safety budget has been reached. Do not start new work, spawn new agents, or expand scope. "
@@ -16,6 +17,9 @@ interface PersistedSafetyState {
   state: ChatGptAccountSafetyState;
   reason?: ChatGptAccountSafetyReason;
   windowStartedAt?: number;
+  sessionUsages?: Array<{ id: string; usedAt: number }>;
+  /** Legacy fixed-window state written by the first local implementation. */
+  sessionIds?: string[];
   capturedTraceIds?: string[];
   steeredTraceIds?: string[];
 }
@@ -34,6 +38,16 @@ function validPersistedSafetyState(value: unknown): PersistedSafetyState | undef
     && new Set(ids).size === ids.length;
   if (parsed.capturedTraceIds !== undefined && !validIds(parsed.capturedTraceIds)) return undefined;
   if (parsed.steeredTraceIds !== undefined && !validIds(parsed.steeredTraceIds)) return undefined;
+  if (parsed.sessionIds !== undefined && (!validIds(parsed.sessionIds) || parsed.sessionIds.length > 10_000)) return undefined;
+  const validSessionUsages = (usages: unknown): usages is Array<{ id: string; usedAt: number }> => Array.isArray(usages)
+    && usages.length <= 10_000
+    && usages.every(usage => usage && typeof usage === "object" && !Array.isArray(usage)
+      && typeof (usage as { id?: unknown }).id === "string" && (usage as { id: string }).id.length > 0
+      && Number.isSafeInteger((usage as { usedAt?: unknown }).usedAt) && (usage as { usedAt: number }).usedAt >= 0)
+    && new Set(usages.map(usage => usage.id)).size === usages.length;
+  if (parsed.sessionUsages !== undefined && !validSessionUsages(parsed.sessionUsages)) return undefined;
+  if (parsed.sessionIds !== undefined && parsed.sessionUsages !== undefined) return undefined;
+  if ((parsed.sessionIds?.length || parsed.sessionUsages?.length) && parsed.windowStartedAt === undefined) return undefined;
 
   if (parsed.state === "NORMAL") {
     if (parsed.reason !== undefined || parsed.capturedTraceIds !== undefined || parsed.steeredTraceIds !== undefined) return undefined;
@@ -54,6 +68,8 @@ export interface ChatGptAccountSafetyStatus {
   windowStartedAt?: number;
   remainingMs?: number;
   limitMinutes?: number;
+  usedSessions: number;
+  sessionLimit?: number;
   capturedTraceIds: string[];
 }
 
@@ -83,15 +99,23 @@ export class ChatGptAccountSafety {
         state: targetState(this.data.reason ?? "duration_limit"),
         reason: this.data.reason ?? "duration_limit",
         ...(this.data.windowStartedAt !== undefined ? { windowStartedAt: this.data.windowStartedAt } : {}),
+        ...(this.data.sessionUsages !== undefined ? { sessionUsages: this.data.sessionUsages } : {}),
       };
       this.persist();
     }
   }
 
-  status(limitMinutes: number | undefined, activeTraceIds: readonly string[], now = Date.now()): ChatGptAccountSafetyStatus {
-    this.clearDurationWindowIfDisabled(limitMinutes);
+  status(
+    limitCount: number | undefined,
+    limitMinutes: number | undefined,
+    activeTraceIds: readonly string[],
+    now = Date.now(),
+  ): ChatGptAccountSafetyStatus {
+    this.syncUsageWindow(limitCount, limitMinutes, now);
     this.finishDrainIfIdle(activeTraceIds);
-    const remainingMs = limitMinutes !== undefined && this.data.windowStartedAt !== undefined
+    this.syncUsageWindow(limitCount, limitMinutes, now);
+    const enabled = limitCount !== undefined && limitMinutes !== undefined;
+    const remainingMs = enabled && this.data.windowStartedAt !== undefined
       ? Math.max(0, this.data.windowStartedAt + limitMinutes * 60_000 - now)
       : undefined;
     return {
@@ -100,43 +124,59 @@ export class ChatGptAccountSafety {
       ...(this.data.windowStartedAt !== undefined ? { windowStartedAt: this.data.windowStartedAt } : {}),
       ...(remainingMs !== undefined ? { remainingMs } : {}),
       ...(limitMinutes !== undefined ? { limitMinutes } : {}),
+      usedSessions: this.data.sessionUsages?.length ?? 0,
+      ...(limitCount !== undefined ? { sessionLimit: limitCount } : {}),
       capturedTraceIds: [...(this.data.capturedTraceIds ?? [])],
     };
   }
 
   admit(
     traceId: string,
+    sessionId: string,
+    limitCount: number | undefined,
     limitMinutes: number | undefined,
     activeTraceIds: readonly string[],
     now = Date.now(),
   ): ChatGptAccountSafetyAdmission {
-    this.clearDurationWindowIfDisabled(limitMinutes);
+    this.syncUsageWindow(limitCount, limitMinutes, now);
     this.finishDrainIfIdle(activeTraceIds);
+    this.syncUsageWindow(limitCount, limitMinutes, now);
     if (this.data.state === "PAUSED" || this.data.state === "HARD_STOP") {
-      return { allowed: false, status: this.status(limitMinutes, activeTraceIds, now), steeringTraceIds: [] };
+      return { allowed: false, status: this.status(limitCount, limitMinutes, activeTraceIds, now), steeringTraceIds: [] };
     }
     if (this.data.state === "DRAINING") {
       return {
         allowed: this.data.capturedTraceIds?.includes(traceId) === true,
-        status: this.status(limitMinutes, activeTraceIds, now),
+        status: this.status(limitCount, limitMinutes, activeTraceIds, now),
         steeringTraceIds: this.pendingSteering(),
       };
     }
-    if (limitMinutes === undefined) {
-      return { allowed: true, status: this.status(undefined, activeTraceIds, now), steeringTraceIds: [] };
+    if (limitCount === undefined || limitMinutes === undefined) {
+      return { allowed: true, status: this.status(undefined, undefined, activeTraceIds, now), steeringTraceIds: [] };
     }
-    if (this.data.windowStartedAt === undefined) {
-      this.data.windowStartedAt = now;
-      this.persist();
-      return { allowed: true, status: this.status(limitMinutes, activeTraceIds, now), steeringTraceIds: [] };
+    const sessions = new Set((this.data.sessionUsages ?? []).map(usage => usage.id));
+    if (sessions.has(sessionId)) {
+      return { allowed: true, status: this.status(limitCount, limitMinutes, activeTraceIds, now), steeringTraceIds: [] };
     }
-    if (now < this.data.windowStartedAt + limitMinutes * 60_000) {
-      return { allowed: true, status: this.status(limitMinutes, activeTraceIds, now), steeringTraceIds: [] };
+    if (sessions.size >= limitCount) {
+      this.beginDrain("duration_limit", activeTraceIds);
+      return {
+        allowed: false,
+        status: this.status(limitCount, limitMinutes, activeTraceIds, now),
+        steeringTraceIds: this.pendingSteering(),
+      };
     }
-    this.beginDrain("duration_limit", activeTraceIds);
+    sessions.add(sessionId);
+    this.data.sessionUsages = [...(this.data.sessionUsages ?? []), { id: sessionId, usedAt: now }];
+    this.data.windowStartedAt ??= now;
+    this.persist();
+    if (sessions.size < limitCount) {
+      return { allowed: true, status: this.status(limitCount, limitMinutes, activeTraceIds, now), steeringTraceIds: [] };
+    }
+    this.beginDrain("duration_limit", [...activeTraceIds, traceId]);
     return {
-      allowed: this.data.capturedTraceIds?.includes(traceId) === true,
-      status: this.status(limitMinutes, activeTraceIds, now),
+      allowed: true,
+      status: this.status(limitCount, limitMinutes, [...activeTraceIds, traceId], now),
       steeringTraceIds: this.pendingSteering(),
     };
   }
@@ -155,18 +195,17 @@ export class ChatGptAccountSafety {
     return this.pendingSteering();
   }
 
-  tick(limitMinutes: number | undefined, activeTraceIds: readonly string[], now = Date.now()): string[] {
-    this.clearDurationWindowIfDisabled(limitMinutes);
+  tick(
+    limitCount: number | undefined,
+    limitMinutes: number | undefined,
+    activeTraceIds: readonly string[],
+    now = Date.now(),
+  ): string[] {
+    this.syncUsageWindow(limitCount, limitMinutes, now);
     this.finishDrainIfIdle(activeTraceIds);
+    this.syncUsageWindow(limitCount, limitMinutes, now);
     if (this.data.state === "DRAINING") return this.pendingSteering();
-    if (this.data.state !== "NORMAL"
-      || limitMinutes === undefined
-      || this.data.windowStartedAt === undefined
-      || now < this.data.windowStartedAt + limitMinutes * 60_000) {
-      return [];
-    }
-    this.beginDrain("duration_limit", activeTraceIds);
-    return this.pendingSteering();
+    return [];
   }
 
   markSteeringQueued(traceId: string): void {
@@ -182,6 +221,7 @@ export class ChatGptAccountSafety {
     if (this.data.state === "HARD_STOP") throw new Error("Account safety hard stop requires acknowledgement");
     if (this.data.state === "DRAINING") throw new Error("Account safety is still draining active work");
     if (this.data.state !== "PAUSED") throw new Error("Account safety pause is not active");
+    if (this.data.reason === "duration_limit") throw new Error("Automatic Web rolling session limit is still active");
     this.data = { version: 1, state: "NORMAL" };
     this.persist();
   }
@@ -206,10 +246,34 @@ export class ChatGptAccountSafety {
     return [...new Set([...traceIds, ...this.traceRefs.keys()])];
   }
 
-  private clearDurationWindowIfDisabled(limitMinutes: number | undefined): void {
-    if (limitMinutes !== undefined || this.data.windowStartedAt === undefined) return;
-    delete this.data.windowStartedAt;
-    this.persist();
+  private syncUsageWindow(limitCount: number | undefined, limitMinutes: number | undefined, now: number): void {
+    const enabled = limitCount !== undefined && limitMinutes !== undefined;
+    if (!enabled) {
+      if (this.data.state === "PAUSED" && this.data.reason === "duration_limit") {
+        this.data = { version: 1, state: "NORMAL" };
+        this.persist();
+        return;
+      }
+      if (this.data.windowStartedAt === undefined && this.data.sessionUsages === undefined) return;
+      delete this.data.windowStartedAt;
+      delete this.data.sessionUsages;
+      this.persist();
+      return;
+    }
+    if (this.data.state === "DRAINING" && this.data.reason === "duration_limit") return;
+    const usages = this.data.sessionUsages ?? [];
+    const cutoff = now - limitMinutes * 60_000;
+    const activeUsages = usages.filter(usage => usage.usedAt > cutoff);
+    const windowStartedAt = activeUsages[0]?.usedAt;
+    let changed = activeUsages.length !== usages.length || this.data.windowStartedAt !== windowStartedAt;
+    if (this.data.state === "PAUSED" && this.data.reason === "duration_limit" && activeUsages.length < limitCount) {
+      this.data = { version: 1, state: "NORMAL" };
+      changed = true;
+    }
+    this.data.sessionUsages = activeUsages;
+    if (windowStartedAt === undefined) delete this.data.windowStartedAt;
+    else this.data.windowStartedAt = windowStartedAt;
+    if (changed) this.persist();
   }
 
   private beginDrain(reason: ChatGptAccountSafetyReason, activeTraceIds: readonly string[]): void {
@@ -218,18 +282,21 @@ export class ChatGptAccountSafety {
       ? new Set(this.data.steeredTraceIds ?? [])
       : undefined;
     const windowStartedAt = this.data.windowStartedAt;
+    const sessionUsages = this.data.sessionUsages;
     this.data = capturedTraceIds.length === 0
       ? {
           version: 1,
           state: targetState(reason),
           reason,
           ...(windowStartedAt !== undefined ? { windowStartedAt } : {}),
+          ...(sessionUsages !== undefined ? { sessionUsages } : {}),
         }
       : {
           version: 1,
           state: "DRAINING",
           reason,
           ...(windowStartedAt !== undefined ? { windowStartedAt } : {}),
+          ...(sessionUsages !== undefined ? { sessionUsages } : {}),
           capturedTraceIds,
           steeredTraceIds: alreadySteered
             ? capturedTraceIds.filter(traceId => alreadySteered.has(traceId))
@@ -247,6 +314,7 @@ export class ChatGptAccountSafety {
       state: targetState(this.data.reason ?? "duration_limit"),
       reason: this.data.reason ?? "duration_limit",
       ...(this.data.windowStartedAt !== undefined ? { windowStartedAt: this.data.windowStartedAt } : {}),
+      ...(this.data.sessionUsages !== undefined ? { sessionUsages: this.data.sessionUsages } : {}),
     };
     this.persist();
   }
@@ -262,7 +330,12 @@ export class ChatGptAccountSafety {
     try {
       const parsed = validPersistedSafetyState(JSON.parse(readFileSync(this.path, "utf8")));
       if (!parsed) throw new Error("invalid account-safety state");
-      return parsed;
+      if (!parsed.sessionIds) return parsed;
+      const { sessionIds, ...state } = parsed;
+      return {
+        ...state,
+        sessionUsages: sessionIds.map(id => ({ id, usedAt: parsed.windowStartedAt! })),
+      };
     } catch (error) {
       console.warn(`[chatgpt-web] invalid account-safety state; Automatic Web is blocked until acknowledgement: ${error instanceof Error ? error.message : String(error)}`);
       return { version: 1, state: "HARD_STOP" };

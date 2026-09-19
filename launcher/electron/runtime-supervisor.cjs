@@ -212,6 +212,12 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     && (!Number.isInteger(config.maxBrowserTabs) || config.maxBrowserTabs < 1 || config.maxBrowserTabs > 6)) {
     throw new Error("Runtime configuration has an invalid maxBrowserTabs");
   }
+  if (config.automaticWebSessionLimitCount !== undefined
+    && (!Number.isInteger(config.automaticWebSessionLimitCount)
+      || config.automaticWebSessionLimitCount < 1
+      || config.automaticWebSessionLimitCount > 10_000)) {
+    throw new Error("Runtime configuration has an invalid automaticWebSessionLimitCount");
+  }
   if (config.automaticWebSessionLimitMinutes !== undefined
     && (!Number.isInteger(config.automaticWebSessionLimitMinutes)
       || config.automaticWebSessionLimitMinutes < 1

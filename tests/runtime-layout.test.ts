@@ -119,9 +119,21 @@ test("runtime config validates Automatic Web account-safety boundaries", () => {
   const path = join(root, "config.json");
   const base = defaultConfig("browser-only");
 
-  for (const [maxBrowserTabs, automaticWebSessionLimitMinutes] of [[1, 1], [6, 10_080]] as const) {
-    writeFileSync(path, `${JSON.stringify({ ...base, maxBrowserTabs, automaticWebSessionLimitMinutes })}\n`);
-    expect(loadConfig()).toMatchObject({ maxBrowserTabs, automaticWebSessionLimitMinutes });
+  for (const [maxBrowserTabs, automaticWebSessionLimitCount, automaticWebSessionLimitMinutes] of [
+    [1, 1, 1],
+    [6, 10_000, 10_080],
+  ] as const) {
+    writeFileSync(path, `${JSON.stringify({
+      ...base,
+      maxBrowserTabs,
+      automaticWebSessionLimitCount,
+      automaticWebSessionLimitMinutes,
+    })}\n`);
+    expect(loadConfig()).toMatchObject({
+      maxBrowserTabs,
+      automaticWebSessionLimitCount,
+      automaticWebSessionLimitMinutes,
+    });
   }
 
   for (const maxBrowserTabs of [0, 7, 1.5]) {
@@ -131,6 +143,10 @@ test("runtime config validates Automatic Web account-safety boundaries", () => {
   for (const automaticWebSessionLimitMinutes of [0, 10_081, 1.5]) {
     writeFileSync(path, `${JSON.stringify({ ...base, automaticWebSessionLimitMinutes })}\n`);
     expect(() => loadConfig()).toThrow("Invalid automaticWebSessionLimitMinutes");
+  }
+  for (const automaticWebSessionLimitCount of [0, 10_001, 1.5]) {
+    writeFileSync(path, `${JSON.stringify({ ...base, automaticWebSessionLimitCount })}\n`);
+    expect(() => loadConfig()).toThrow("Invalid automaticWebSessionLimitCount");
   }
 });
 
@@ -286,17 +302,21 @@ test("launcher browser ownership is explicit in provider configuration", () => {
 test("automatic Web account-safety settings reach the browser provider", () => {
   const config = defaultConfig("browser-only") as ReturnType<typeof defaultConfig> & {
     maxBrowserTabs?: number;
+    automaticWebSessionLimitCount?: number;
     automaticWebSessionLimitMinutes?: number;
   };
   config.maxBrowserTabs = 3;
+  config.automaticWebSessionLimitCount = 40;
   config.automaticWebSessionLimitMinutes = 300;
   expect(providerConfig(config).chatgptWeb).toMatchObject({
     maxBrowserTabs: 3,
+    automaticWebSessionLimitCount: 40,
     automaticWebSessionLimitMinutes: 300,
   });
 
   config.browserInteractionMode = "manual";
   config.appName = config.manualAppName;
+  expect(providerConfig(config).chatgptWeb).not.toHaveProperty("automaticWebSessionLimitCount");
   expect(providerConfig(config).chatgptWeb).not.toHaveProperty("automaticWebSessionLimitMinutes");
 });
 
