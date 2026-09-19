@@ -48,6 +48,8 @@ export function SettingsSurface({
   const [sessionLimitCount, setSessionLimitCount] = useState(snapshot.state.automaticWebSessionLimitCount);
   const [sessionLimitHours, setSessionLimitHours] = useState(snapshot.state.automaticWebSessionLimitMinutes / 60);
   const [accountSafety, setAccountSafety] = useState<AccountSafetyStatus | null>(null);
+  const [accountSafetySaveRetry, setAccountSafetySaveRetry] = useState(0);
+  const [resetUsageStage, setResetUsageStage] = useState<"idle" | "confirm" | "complete">("idle");
 
   useEffect(() => {
     setMaxBrowserTabs(snapshot.state.maxBrowserTabs);
@@ -155,6 +157,7 @@ export function SettingsSurface({
       }));
       setAccountSafety(await api!.accountSafetyStatus());
     } catch (cause) {
+      setAccountSafetySaveRetry((retry) => retry + 1);
       setError(messageOf(cause));
     } finally {
       setBusy(false);
@@ -168,6 +171,23 @@ export function SettingsSurface({
         ? await api!.resumeAutomaticWeb()
         : await api!.acknowledgeAccountSafetyStop());
     } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const resetAccountSafetyUsage = async () => {
+    if (resetUsageStage !== "confirm") {
+      setResetUsageStage("confirm");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      setAccountSafety(await api!.resetAutomaticWebUsage());
+      setResetUsageStage("complete");
+    } catch (cause) {
+      setResetUsageStage("idle");
       setError(messageOf(cause));
     } finally {
       setBusy(false);
@@ -251,6 +271,40 @@ export function SettingsSurface({
         && sessionLimitHours >= 0.25
         && sessionLimitHours <= 168
         && Number.isInteger(sessionLimitHours * 60)));
+  const accountSafetySettingsChanged = maxBrowserTabs !== snapshot.state.maxBrowserTabs
+    || sessionLimitEnabled !== snapshot.state.automaticWebSessionLimitEnabled
+    || (sessionLimitEnabled && (
+      sessionLimitCount !== snapshot.state.automaticWebSessionLimitCount
+      || Math.round(sessionLimitHours * 60) !== snapshot.state.automaticWebSessionLimitMinutes
+    ));
+  useEffect(() => {
+    if (snapshot.state.browserInteractionMode !== "automatic"
+      || snapshot.state.coreSetupComplete !== true
+      || busy
+      || !accountSafetySettingsValid
+      || !accountSafetySettingsChanged) return;
+    const timer = window.setTimeout(() => void applyAccountSafetySettings(), 3_000);
+    return () => window.clearTimeout(timer);
+  }, [
+    maxBrowserTabs,
+    sessionLimitEnabled,
+    sessionLimitCount,
+    sessionLimitHours,
+    accountSafetySettingsValid,
+    accountSafetySettingsChanged,
+    accountSafetySaveRetry,
+    busy,
+    snapshot.state.browserInteractionMode,
+    snapshot.state.coreSetupComplete,
+  ]);
+  useEffect(() => {
+    if (resetUsageStage === "idle") return;
+    const timer = window.setTimeout(
+      () => setResetUsageStage("idle"),
+      resetUsageStage === "confirm" ? 5_000 : 1_800,
+    );
+    return () => window.clearTimeout(timer);
+  }, [resetUsageStage]);
   const accountSafetyStateLabel = accountSafety ? ({
     NORMAL: copy.accountSafetyStateNormal,
     DRAINING: copy.accountSafetyStateDraining,
@@ -264,11 +318,18 @@ export function SettingsSurface({
   } as const)[accountSafety.reason] : null;
   const sessionCapacity = accountSafety?.session_limit ?? sessionLimitCount;
   const usedSessions = accountSafety?.used_sessions ?? 0;
-  const usagePercent = sessionLimitEnabled && sessionCapacity > 0
-    ? Math.min(100, (usedSessions / sessionCapacity) * 100)
+  const remainingSessions = Math.max(0, sessionCapacity - usedSessions);
+  const remainingPercent = sessionLimitEnabled && sessionCapacity > 0
+    ? Math.min(100, (remainingSessions / sessionCapacity) * 100)
     : 0;
   const resetRemainingMs = accountSafety?.remaining_ms
     ?? (sessionLimitEnabled ? Math.round(sessionLimitHours * 60 * 60_000) : undefined);
+  const accountSafetyMeterText = sessionLimitEnabled && resetRemainingMs !== undefined
+    ? `${copy.accountSafetySessionsRemaining
+      .replace("{remaining}", String(remainingSessions))
+      .replace("{limit}", String(sessionCapacity))} · ${copy.accountSafetyResetIn
+      .replace("{time}", formatSafetyResetTime(resetRemainingMs, copy))}`
+    : copy.accountSafetyDisabled;
   const uninstallIntegration = async () => {
     setBusy(true);
     setError(null);
@@ -287,8 +348,12 @@ export function SettingsSurface({
 
   return (
     <ContentSurface narrow title={devProfile ? copy.devSettingsTitle : copy.settingsTitle}>
-      <SectionHeading label={copy.enhancedFeatureSettings} />
-      <div className="settings-list">
+      <div className="settings-card enhanced-feature-card">
+        <header className="settings-card-header">
+          <div><strong>{copy.enhancedFeatureSettings}</strong></div>
+        </header>
+        <div className="settings-card-divider" />
+        <div className="settings-list">
         <SettingRow body={copy.enhancedWebSessionModeBody} label={copy.enhancedWebSessionMode}>
           <Switch
             checked={snapshot.state.useEnhancedWebSessionMode}
@@ -328,11 +393,12 @@ export function SettingsSurface({
               .catch((cause) => setError(messageOf(cause)))}
           />
         </SettingRow>
+        </div>
       </div>
 
       {snapshot.state.browserInteractionMode === "automatic" ? <>
-        <div className="account-safety-card">
-          <header className="account-safety-card-header">
+        <div className="settings-card account-safety-card">
+          <header className="settings-card-header account-safety-card-header">
             <div>
               <strong>{copy.accountSafety}</strong>
               <p>{copy.accountSafetySummary}</p>
@@ -351,7 +417,7 @@ export function SettingsSurface({
             </div>
           </header>
 
-          <div className="account-safety-divider" />
+          <div className="settings-card-divider" />
           <div className="account-safety-grid">
             <label className="account-safety-field">
               <strong>{copy.automaticWebSessionLimit}</strong>
@@ -406,28 +472,22 @@ export function SettingsSurface({
             </label>
           </div>
 
-          <div className="account-safety-divider" />
+          <div className="settings-card-divider" />
           <div className="account-safety-meter">
             <div className="account-safety-meter-labels">
               <strong>{copy.accountSafetyUsageMeter}</strong>
-              <span>
-                {copy.accountSafetySessionsUsed
-                  .replace("{used}", String(usedSessions))
-                  .replace("{limit}", String(sessionCapacity))}
-                {` · ${sessionLimitEnabled && resetRemainingMs !== undefined
-                  ? copy.accountSafetyResetIn.replace("{time}", formatSafetyResetTime(resetRemainingMs, copy))
-                  : copy.accountSafetyDisabled}`}
-              </span>
+              <span>{accountSafetyMeterText}</span>
             </div>
             <div
               aria-label={copy.accountSafetyUsageMeter}
               aria-valuemax={sessionCapacity}
               aria-valuemin={0}
-              aria-valuenow={Math.min(usedSessions, sessionCapacity)}
-              className="account-safety-progress"
+              aria-valuenow={sessionLimitEnabled ? remainingSessions : 0}
+              aria-valuetext={accountSafetyMeterText}
+              className={`account-safety-progress${sessionLimitEnabled && remainingPercent < 20 ? " is-low" : ""}${resetUsageStage === "complete" ? " is-resetting" : ""}`}
               role="progressbar"
             >
-              <span style={{ width: `${usagePercent}%` }} />
+              <span style={{ width: `${remainingPercent}%` }} />
             </div>
             <div className="account-safety-card-footer">
               <div className="account-safety-live-state">
@@ -435,12 +495,20 @@ export function SettingsSurface({
                 {accountSafetyReason ? <small>{accountSafetyReason}</small> : null}
               </div>
               <div className="account-safety-actions">
-                <button
-                  className="account-safety-action"
-                  disabled={busy || snapshot.state.coreSetupComplete !== true || !accountSafetySettingsValid}
-                  onClick={() => void applyAccountSafetySettings()}
-                  type="button"
-                >{copy.applyAccountSafety}</button>
+                <span className="account-safety-reset">
+                  <button
+                    aria-describedby="account-safety-reset-hint"
+                    className={`account-safety-action account-safety-reset-action${resetUsageStage === "confirm" ? " is-confirm" : ""}${resetUsageStage === "complete" ? " is-complete" : ""}`}
+                    disabled={busy || usedSessions === 0 || accountSafety?.state === "DRAINING" || accountSafety?.state === "HARD_STOP"}
+                    onClick={() => void resetAccountSafetyUsage()}
+                    type="button"
+                  >{resetUsageStage === "confirm"
+                      ? copy.confirmAccountSafetyReset
+                      : resetUsageStage === "complete"
+                        ? copy.accountSafetyResetComplete
+                        : copy.resetAccountSafetyUsage}</button>
+                  <span id="account-safety-reset-hint" role="tooltip">{copy.accountSafetyResetHint}</span>
+                </span>
                 {accountSafety?.state === "PAUSED" && accountSafety.reason === "rate_limit" ? (
                   <button
                     className="account-safety-action"
@@ -463,7 +531,7 @@ export function SettingsSurface({
         </div>
       </> : null}
 
-      <SectionHeading label={copy.general} />
+      <SectionHeading label={copy.general} spaced />
       <div className="settings-list">
         {!devProfile ? <SettingRow body={copy.launchAtLoginBody} label={copy.launchAtLogin}>
           <Switch

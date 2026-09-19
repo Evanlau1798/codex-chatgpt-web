@@ -13,7 +13,7 @@ const i18nJaSource = fs.readFileSync(path.join(launcherRoot, "src", "i18n-ja.ts"
 
 test("settings keep upstream controls in General and fork controls in Enhanced Feature Settings", () => {
   const general = settingsSource.indexOf("<SectionHeading label={copy.general}");
-  const enhanced = settingsSource.indexOf("<SectionHeading label={copy.enhancedFeatureSettings}");
+  const enhanced = settingsSource.indexOf('<div className="settings-card enhanced-feature-card">');
   const diagnostics = settingsSource.indexOf("<SectionHeading label={copy.diagnostics}");
 
   assert.ok(enhanced >= 0, "Enhanced settings section must exist");

@@ -625,6 +625,16 @@ test.serial("authenticated account-safety control exposes status and recovery ac
       account_safety: { state: "NORMAL", limit_minutes: 300, used_sessions: 0, session_limit: 40 },
     });
 
+    chatGptAccountSafety().admit("trace-a", "session-a", 40, 300, [], Date.now());
+    const reset = await fetch(`http://127.0.0.1:${server.port}/admin/account-safety-reset-usage`, {
+      method: "POST", headers,
+    });
+    expect(reset.status).toBe(200);
+    expect(await reset.json()).toMatchObject({
+      status: "ok",
+      account_safety: { state: "NORMAL", used_sessions: 0, session_limit: 40 },
+    });
+
     chatGptAccountSafety().trigger("rate_limit", []);
     const resumed = await fetch(`http://127.0.0.1:${server.port}/admin/account-safety-resume`, {
       method: "POST", headers,

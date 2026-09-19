@@ -358,7 +358,15 @@ module.exports = {
   async accountSafetyStatus() {
     const current = this.runtimeConfigSnapshot();
     if (!current.configured || current.owner !== "launcher") throw new Error("Launcher runtime is not configured");
+    await this.supervisor.waitForProxy(current.config, 5_000);
     const result = await this.supervisor.control(current.config, "account-safety-status");
+    return result.account_safety;
+  },
+
+  async resetAutomaticWebUsage() {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured || current.owner !== "launcher") throw new Error("Launcher runtime is not configured");
+    const result = await this.supervisor.control(current.config, "account-safety-reset-usage");
     return result.account_safety;
   },
 

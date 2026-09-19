@@ -232,6 +232,17 @@ export class ChatGptAccountSafety {
     this.persist();
   }
 
+  resetUsage(): void {
+    if (this.data.state === "DRAINING") throw new Error("Account safety is still draining active work");
+    if (this.data.state === "HARD_STOP") throw new Error("Account safety hard stop requires acknowledgement");
+    delete this.data.windowStartedAt;
+    delete this.data.sessionUsages;
+    if (this.data.state === "PAUSED" && this.data.reason === "duration_limit") {
+      this.data = { version: 1, state: "NORMAL" };
+    }
+    this.persist();
+  }
+
   retainTrace(traceId: string): void {
     this.traceRefs.set(traceId, (this.traceRefs.get(traceId) ?? 0) + 1);
   }

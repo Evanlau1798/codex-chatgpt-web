@@ -1958,7 +1958,53 @@ code {
   color: var(--color-text-primary);
 }
 
-.account-safety-card {
+.account-safety-reset {
+  position: relative;
+  display: inline-flex;
+}
+
+.account-safety-reset > span {
+  position: absolute;
+  z-index: 250;
+  right: 0;
+  bottom: calc(100% + 8px);
+  visibility: hidden;
+  width: min(290px, calc(100vw - 56px));
+  padding: 9px 10px;
+  border: 1px solid var(--color-border-heavy);
+  border-radius: var(--radius-sm);
+  background: var(--color-background-elevated);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 38%);
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition:
+    opacity var(--duration-micro) ease,
+    transform var(--duration-micro) var(--ease-enter),
+    visibility var(--duration-micro) ease;
+}
+
+.account-safety-reset:hover > span,
+.account-safety-reset:focus-within > span {
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.account-safety-reset-action.is-confirm {
+  border-color: var(--red-300);
+  color: var(--color-text-primary);
+}
+
+.account-safety-reset-action.is-complete {
+  border-color: var(--green-300);
+  color: var(--color-text-primary);
+}
+
+.settings-card {
   margin-top: 28px;
   padding: 26px 28px 24px;
   border: 1px solid var(--color-border);
@@ -1966,25 +2012,33 @@ code {
   background: rgb(24 24 24 / 34%);
 }
 
-.account-safety-card-header {
+.enhanced-feature-card {
+  margin-top: 0;
+}
+
+.enhanced-feature-card .setting-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-card-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 28px;
 }
 
-.account-safety-card-header > div:first-child {
+.settings-card-header > div:first-child {
   min-width: 0;
 }
 
-.account-safety-card-header strong {
+.settings-card-header strong {
   color: var(--color-text-primary);
   font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.015em;
 }
 
-.account-safety-card-header p {
+.settings-card-header p {
   max-width: 560px;
   margin: 7px 0 0;
   color: var(--color-text-tertiary);
@@ -2057,7 +2111,7 @@ code {
   transform: translateY(0);
 }
 
-.account-safety-divider {
+.settings-card-divider {
   height: 0;
   margin: 24px 0;
   border-top: 1px dashed var(--color-border-heavy);
@@ -2154,6 +2208,7 @@ code {
 }
 
 .account-safety-progress {
+  position: relative;
   width: 100%;
   height: 14px;
   margin-top: 12px;
@@ -2168,6 +2223,28 @@ code {
   border-radius: inherit;
   background: var(--green-300);
   transition: width var(--duration-panel) var(--ease-enter);
+}
+
+.account-safety-progress.is-low > span {
+  background: var(--red-300);
+}
+
+.account-safety-progress.is-low {
+  box-shadow: inset 0 0 0 1px var(--red-300);
+}
+
+.account-safety-progress.is-resetting::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(100deg, transparent 15%, rgb(255 255 255 / 58%) 50%, transparent 85%);
+  content: "";
+  transform: translateX(-110%);
+  animation: accountSafetyResetSweep 800ms var(--ease-enter);
+}
+
+@keyframes accountSafetyResetSweep {
+  to { transform: translateX(110%); }
 }
 
 .account-safety-card-footer {
@@ -2882,7 +2959,7 @@ code {
     padding: 10px 0;
   }
 
-  .account-safety-card {
+  .settings-card {
     padding: 18px;
   }
 

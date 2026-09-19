@@ -732,6 +732,7 @@ function registerIpc({ logger, stateStore }) {
     return state;
   });
   handle("launcher:account-safety-status", async () => runtimeHost.accountSafetyStatus());
+  handle("launcher:account-safety-reset-usage", async () => runtimeHost.resetAutomaticWebUsage());
   handle("launcher:account-safety-resume", async () => runtimeHost.resumeAutomaticWeb());
   handle("launcher:account-safety-acknowledge", async () => runtimeHost.acknowledgeAccountSafetyStop());
   handle("launcher:bigger-context", async (_event, enabled) => {

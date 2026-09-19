@@ -47,6 +47,7 @@ function fixture(overrides = {}) {
     readSetupConfig: read,
     stopForSetup: async () => { calls.push("stop"); return { status: "stopped" }; },
     startIfConfigured: async () => { calls.push("start"); return { status: "ready" }; },
+    waitForProxy: async () => { calls.push("wait-for-proxy"); },
     control: async (_config, action) => {
       calls.push(action);
       return { account_safety: { state: action.includes("acknowledge") ? "NORMAL" : "PAUSED" } };
@@ -135,10 +136,13 @@ test("launcher account-safety recovery uses the authenticated runtime control ch
   t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
 
   assert.deepEqual(await item.host.accountSafetyStatus(), { state: "PAUSED" });
+  assert.deepEqual(await item.host.resetAutomaticWebUsage(), { state: "PAUSED" });
   assert.deepEqual(await item.host.resumeAutomaticWeb(), { state: "PAUSED" });
   assert.deepEqual(await item.host.acknowledgeAccountSafetyStop(), { state: "NORMAL" });
   assert.deepEqual(item.calls, [
+    "wait-for-proxy",
     "account-safety-status",
+    "account-safety-reset-usage",
     "account-safety-resume",
     "account-safety-acknowledge",
   ]);
@@ -150,13 +154,16 @@ test("launcher exposes Automatic-only account safety through renderer and IPC", 
   const types = fs.readFileSync(path.join(root, "src", "types.ts"), "utf8");
   const main = fs.readFileSync(path.join(root, "electron", "main.cjs"), "utf8");
   const preload = fs.readFileSync(path.join(root, "electron", "preload.cjs"), "utf8");
+  const styles = fs.readFileSync(path.join(root, "src", "styles.css"), "utf8");
 
   assert.match(types, /maxBrowserTabs: number/);
   assert.match(types, /automaticWebSessionLimitCount: number/);
   assert.match(types, /automaticWebSessionLimitMinutes: number/);
   assert.match(preload, /setAccountSafetySettings:.*launcher:account-safety-settings/);
   assert.match(preload, /accountSafetyStatus:.*launcher:account-safety-status/);
+  assert.match(preload, /resetAutomaticWebUsage:.*launcher:account-safety-reset-usage/);
   assert.match(main, /runtimeHost\.setAccountSafetySettings\(input\)/);
+  assert.match(main, /runtimeHost\.resetAutomaticWebUsage\(\)/);
   assert.match(main, /runtimeHost\.resumeAutomaticWeb\(\)/);
   assert.match(main, /runtimeHost\.acknowledgeAccountSafetyStop\(\)/);
   assert.match(settings, /snapshot\.state\.browserInteractionMode === "automatic" \? <>/);
@@ -164,7 +171,25 @@ test("launcher exposes Automatic-only account safety through renderer and IPC", 
   assert.match(settings, /label=\{copy\.accountSafetyLimitToggle\}/);
   assert.match(settings, /aria-label=\{label\}/);
   assert.match(settings, /<strong>\{copy\.accountSafetyUsageMeter\}<\/strong>/);
-  assert.match(settings, /copy\.accountSafetySessionsUsed[\s\S]*copy\.accountSafetyResetIn/);
+  assert.match(settings, /const remainingSessions = Math\.max\(0, sessionCapacity - usedSessions\)/);
+  assert.match(settings, /copy\.accountSafetySessionsRemaining[\s\S]*copy\.accountSafetyResetIn/);
+  assert.match(settings, /aria-valuenow=\{sessionLimitEnabled \? remainingSessions : 0\}/);
+  assert.match(settings, /sessionLimitEnabled && remainingPercent < 20 \? " is-low" : ""/);
+  assert.match(styles, /\.account-safety-progress\.is-low > span[\s\S]*var\(--red-300\)/);
+  assert.match(settings, /window\.setTimeout\([\s\S]*applyAccountSafetySettings[\s\S]*3_000\)/);
+  assert.match(settings, /setAccountSafetySaveRetry\(\(retry\) => retry \+ 1\)/);
+  assert.match(settings, /accountSafetySaveRetry,[\s\S]*snapshot\.state\.browserInteractionMode/);
+  assert.doesNotMatch(settings, /copy\.applyAccountSafety/);
+  assert.match(settings, /copy\.resetAccountSafetyUsage/);
+  assert.match(settings, /copy\.confirmAccountSafetyReset/);
+  assert.match(settings, /copy\.accountSafetyResetHint/);
+  assert.match(settings, /api!\.resetAutomaticWebUsage\(\)/);
+  assert.match(settings, /resetUsageStage === "confirm"/);
+  assert.match(styles, /\.account-safety-progress\.is-resetting::after/);
+  assert.match(settings, /aria-valuetext=\{accountSafetyMeterText\}/);
+  assert.match(styles, /\.account-safety-progress\.is-low \{[\s\S]*box-shadow:[^;]*var\(--red-300\)/);
+  assert.match(settings, /className="settings-card enhanced-feature-card"/);
+  assert.match(settings, /<SectionHeading label=\{copy\.general\} spaced \/>/);
   assert.match(settings, /used_sessions/);
   assert.match(settings, /session_limit/);
   assert.match(settings, /accountSafety\?\.state === "PAUSED" && accountSafety\.reason === "rate_limit"/);

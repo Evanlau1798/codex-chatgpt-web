@@ -413,6 +413,8 @@ class RuntimeHost {
 
   accountSafetyStatus(...args) { return integrationOperations.accountSafetyStatus.apply(this, args); }
 
+  resetAutomaticWebUsage(...args) { return integrationOperations.resetAutomaticWebUsage.apply(this, args); }
+
   resumeAutomaticWeb(...args) { return integrationOperations.resumeAutomaticWeb.apply(this, args); }
 
   acknowledgeAccountSafetyStop(...args) { return integrationOperations.acknowledgeAccountSafetyStop.apply(this, args); }

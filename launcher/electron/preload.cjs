@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   setUseEnhancedWebSessionMode: (enabled) => ipcRenderer.invoke("launcher:enhanced-web-session-mode", enabled),
   setAccountSafetySettings: (input) => ipcRenderer.invoke("launcher:account-safety-settings", input),
   accountSafetyStatus: () => ipcRenderer.invoke("launcher:account-safety-status"),
+  resetAutomaticWebUsage: () => ipcRenderer.invoke("launcher:account-safety-reset-usage"),
   resumeAutomaticWeb: () => ipcRenderer.invoke("launcher:account-safety-resume"),
   acknowledgeAccountSafetyStop: () => ipcRenderer.invoke("launcher:account-safety-acknowledge"),
   setUseEnhancedOutputTunnel: (enabled) => ipcRenderer.invoke("launcher:enhanced-output-tunnel", enabled),

@@ -353,7 +353,8 @@ export function startServer(
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
         const activeTraceIds = accountSafety.activeTraceIds(chatGptTurnSessions.activeTraceIds());
         try {
-          if (url.pathname === "/admin/account-safety-resume") accountSafety.resume();
+          if (url.pathname === "/admin/account-safety-reset-usage") accountSafety.resetUsage();
+          else if (url.pathname === "/admin/account-safety-resume") accountSafety.resume();
           else if (url.pathname === "/admin/account-safety-acknowledge") accountSafety.acknowledgeHardStop();
           else if (url.pathname !== "/admin/account-safety-status") return new Response("Not Found", { status: 404 });
           const sessionLimit = config.automaticWebSessionLimitMinutes === undefined

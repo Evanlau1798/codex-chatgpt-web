@@ -274,6 +274,58 @@ test("resume refuses a rate-limit drain in progress", () => {
   } finally { rate.cleanup(); }
 });
 
+test("reset usage clears the local meter without bypassing protection states", () => {
+  const normal = fixture();
+  const durationLimited = fixture();
+  const rateLimited = fixture();
+  const draining = fixture();
+  const hardStopped = fixture();
+  try {
+    normal.manager.admit("trace-a", "session-a", 3, 300, [], 1_000);
+    normal.manager.admit("trace-b", "session-b", 3, 300, [], 2_000);
+    normal.manager.resetUsage();
+    expect(normal.manager.status(3, 300, [], 2_001)).toMatchObject({
+      state: "NORMAL",
+      usedSessions: 0,
+    });
+    expect(normal.manager.status(3, 300, [], 2_001).windowStartedAt).toBeUndefined();
+
+    durationLimited.manager.admit("trace-a", "session-a", 1, 300, [], 1_000);
+    expect(durationLimited.manager.status(1, 300, [], 2_000)).toMatchObject({
+      state: "PAUSED",
+      reason: "duration_limit",
+    });
+    durationLimited.manager.resetUsage();
+    expect(durationLimited.manager.status(1, 300, [], 2_001)).toMatchObject({
+      state: "NORMAL",
+      usedSessions: 0,
+    });
+
+    rateLimited.manager.admit("trace-a", "session-a", 3, 300, [], 1_000);
+    rateLimited.manager.trigger("rate_limit", []);
+    rateLimited.manager.resetUsage();
+    expect(rateLimited.manager.status(3, 300, [], 2_000)).toMatchObject({
+      state: "PAUSED",
+      reason: "rate_limit",
+      usedSessions: 0,
+    });
+
+    draining.manager.admit("trace-a", "session-a", 3, 300, [], 1_000);
+    draining.manager.trigger("rate_limit", ["trace-a"]);
+    expect(() => draining.manager.resetUsage()).toThrow("draining");
+    expect(draining.manager.status(3, 300, ["trace-a"], 2_000).usedSessions).toBe(1);
+
+    hardStopped.manager.trigger("account_security", []);
+    expect(() => hardStopped.manager.resetUsage()).toThrow("hard stop");
+  } finally {
+    normal.cleanup();
+    durationLimited.cleanup();
+    rateLimited.cleanup();
+    draining.cleanup();
+    hardStopped.cleanup();
+  }
+});
+
 test("logical trace retention keeps a drain open across registry gaps", () => {
   const { manager, cleanup } = fixture();
   const logical = manager as ChatGptAccountSafety & {

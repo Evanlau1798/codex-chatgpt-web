@@ -177,6 +177,7 @@ export interface LauncherApi {
     automaticWebSessionLimitMinutes?: number;
   }): Promise<LauncherState>;
   accountSafetyStatus(): Promise<AccountSafetyStatus>;
+  resetAutomaticWebUsage(): Promise<AccountSafetyStatus>;
   resumeAutomaticWeb(): Promise<AccountSafetyStatus>;
   acknowledgeAccountSafetyStop(): Promise<AccountSafetyStatus>;
   setUseEnhancedOutputTunnel(enabled: boolean): Promise<LauncherState>;
