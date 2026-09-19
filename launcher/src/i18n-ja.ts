@@ -162,7 +162,7 @@ export const ja: Record<keyof Copy, string> = {
   enhancedOutputTunnelBody: "Enhanced Automatic の commentary、表示可能な reasoning 要約、最終回答を非公開の Native2 Tunnel 経由で転送します。ツールカードは ChatGPT に表示されたままです。変更後は Codex を再起動してください。",
   accountSafety: "アカウント安全保護",
   accountSafetySummary: "ローリング時間枠内の Automatic Web セッション数を制限します。",
-  accountSafetyBody: "これはランチャーのローカル保護であり、ChatGPT のクォータ情報ではありません。設定した時間枠内の一意な Automatic Web セッションを数え、上限に達すると新規セッションを停止し、実行中の作業には安全な終了を依頼します。",
+  accountSafetyBody: "これはランチャーのローカル保護であり、ChatGPT のクォータ情報ではありません。設定した時間枠内の一意な Automatic Web セッションを数え、上限に達すると新規セッションを停止します。既存のセッションは通常どおり続行し、ChatGPT のレート制限またはアカウント安全警告が発生した場合にのみ、安全な終了を依頼します。",
   accountSafetyHelpLabel: "アカウント安全保護について",
   accountSafetyLimitToggle: "セッション使用量制限を有効にする",
   maximumConcurrentWebTurns: "最大同時実行数",

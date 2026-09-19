@@ -18,7 +18,7 @@ const DEFAULT_STATE = Object.freeze({
   useEnhancedOutputTunnel: true,
   maxBrowserTabs: 6,
   automaticWebSessionLimitEnabled: false,
-  automaticWebSessionLimitCount: 50,
+  automaticWebSessionLimitCount: 15,
   automaticWebSessionLimitMinutes: 300,
   experimentalBiggerContext: false,
   experimentalSkillAttachments: false,

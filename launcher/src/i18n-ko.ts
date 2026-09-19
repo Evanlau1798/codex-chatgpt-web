@@ -197,7 +197,7 @@ export const ko = {
   enhancedOutputTunnelBody: "Enhanced Automatic의 commentary, 표시되는 reasoning 요약 및 최종 답변을 비공개 Native2 Tunnel로 전송합니다. ChatGPT에는 도구 카드가 계속 표시됩니다. 변경 후 Codex를 다시 시작하세요.",
   accountSafety: "계정 안전 보호",
   accountSafetySummary: "롤링 시간 창 안의 Automatic Web 세션 수를 제한합니다.",
-  accountSafetyBody: "이 기능은 런처의 로컬 보호이며 ChatGPT 할당량 원격 측정이 아닙니다. 설정한 시간 창에서 고유 Automatic Web 세션을 세고, 한도에 도달하면 새 세션을 막으며 이미 실행 중인 작업에는 안전하게 마무리하도록 요청합니다. ChatGPT 속도 제한과 계정 안전 경고는 별도의 보호 상태를 계속 트리거합니다.",
+  accountSafetyBody: "이 기능은 런처의 로컬 보호이며 ChatGPT 할당량 원격 측정이 아닙니다. 설정한 시간 창에서 고유 Automatic Web 세션을 세고, 한도에 도달하면 새 세션을 막습니다. 기존 세션은 정상적으로 계속되며 ChatGPT 속도 제한 또는 계정 안전 경고가 발생한 경우에만 실행 중인 작업에 안전하게 마무리하도록 요청합니다.",
   accountSafetyHelpLabel: "계정 안전 보호 정보",
   accountSafetyLimitToggle: "세션 사용량 제한 사용",
   maximumConcurrentWebTurns: "최대 동시 실행 수",

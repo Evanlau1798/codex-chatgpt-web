@@ -130,10 +130,13 @@ export function createChatGptWebAdapter(
     queueSafetySteering(admission.steeringTraceIds);
     if (admission.allowed) return;
     const hardStop = admission.status.state === "HARD_STOP";
+    const rollingLimit = admission.status.reason === "duration_limit";
     throw new ChatGptAccountSafetyAdmissionError(
       hardStop
         ? "Automatic ChatGPT Web is stopped because ChatGPT reported an account-safety warning. Acknowledge the warning in the launcher before resuming."
-        : "Automatic ChatGPT Web is paused by the local account-safety guard. Resume it in the launcher before starting new work.",
+        : rollingLimit
+          ? "Automatic ChatGPT Web reached the rolling session limit. Wait for the usage window to reset or use Reset usage in the launcher before starting a new session."
+          : "Automatic ChatGPT Web is paused by the local account-safety guard. Resume it in the launcher before starting new work.",
       {
         status: hardStop ? 403 : 429,
         errorType: hardStop ? "authentication_error" : "rate_limit_error",

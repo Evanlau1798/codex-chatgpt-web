@@ -197,7 +197,7 @@ export const zhTW = {
   enhancedOutputTunnelBody: "將 Enhanced Automatic 的 commentary、可見 reasoning 摘要與最終答案透過私有 Native2 Tunnel 傳送；ChatGPT 中的工具卡仍會顯示。變更後請重新啟動 Codex。",
   accountSafety: "帳戶安全保護",
   accountSafetySummary: "限制滾動時間視窗內的 Automatic Web 工作階段數量。",
-  accountSafetyBody: "這是啟動器的本機保護，不是 ChatGPT 配額遙測。它會統計時間視窗內的唯一 Automatic Web 工作階段；達到上限後停止接受新工作階段，並要求已在執行的工作安全收尾。ChatGPT 的速率限制與帳戶安全警告仍會觸發獨立保護狀態。",
+  accountSafetyBody: "這是啟動器的本機保護，不是 ChatGPT 配額遙測。它會統計時間視窗內的唯一 Automatic Web 工作階段，並在達到上限後停止接受新工作階段；現有工作階段會繼續正常執行。ChatGPT 的速率限制與帳戶安全警告會要求正在執行的工作安全收尾。",
   accountSafetyHelpLabel: "關於帳戶安全保護",
   accountSafetyLimitToggle: "啟用工作階段用量限制",
   maximumConcurrentWebTurns: "最大並發數",

@@ -14,7 +14,7 @@ function runtimePreferenceState(config) {
     automaticWebSessionLimitEnabled: Number.isInteger(config.automaticWebSessionLimitMinutes),
     automaticWebSessionLimitCount: Number.isInteger(config.automaticWebSessionLimitCount)
       ? config.automaticWebSessionLimitCount
-      : 50,
+      : 15,
     automaticWebSessionLimitMinutes: Number.isInteger(config.automaticWebSessionLimitMinutes)
       ? config.automaticWebSessionLimitMinutes
       : 300,

@@ -94,8 +94,15 @@ test("launcher defaults proactive safety off with a 300 minute first-enable valu
   const standard = runtimePreferenceState(validateConfig(configFor(descriptorPath), descriptorPath));
   assert.equal(standard.maxBrowserTabs, 5);
   assert.equal(standard.automaticWebSessionLimitEnabled, false);
-  assert.equal(standard.automaticWebSessionLimitCount, 50);
+  assert.equal(standard.automaticWebSessionLimitCount, 15);
   assert.equal(standard.automaticWebSessionLimitMinutes, 300);
+
+  const explicit = runtimePreferenceState(validateConfig(configFor(descriptorPath, {
+    automaticWebSessionLimitCount: 50,
+    automaticWebSessionLimitMinutes: 300,
+  }), descriptorPath));
+  assert.equal(explicit.automaticWebSessionLimitEnabled, true);
+  assert.equal(explicit.automaticWebSessionLimitCount, 50);
 
   const enhanced = runtimePreferenceState(validateConfig(
     configFor(descriptorPath, { useEnhancedWebSessionMode: true }),

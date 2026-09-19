@@ -330,6 +330,139 @@ test("Automatic Web rejects new work while account safety is paused", async () =
   }
 });
 
+test("rolling session-limit rejection points to window reset instead of Resume", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-safety-session-limit-"));
+  const safety = new ChatGptAccountSafety(join(root, "state.json"));
+  safety.admit("seed-trace", "seed-session", 1, 300, [], Date.now());
+  safety.status(1, 300, []);
+  let workerRuns = 0;
+  const worker = {
+    async run(): Promise<string> { workerRuns += 1; return "must not run"; },
+    requestPreemptiveRetry: () => false,
+  };
+  const parsed: CodexParsedRequest = {
+    modelId: CHATGPT_WEB_MODEL_ID,
+    stream: false,
+    context: { messages: [{ role: "user", content: "new session", timestamp: 1 }] },
+    options: { reasoning: "high" },
+    _rawBody: {
+      prompt_cache_key: "safety-session-limit-thread",
+      client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "safety-session-limit-thread", turn_id: "safety-session-limit-turn" }) },
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "new session" }],
+        internal_chat_message_metadata_passthrough: { turn_id: "safety-session-limit-turn" } }],
+    },
+  };
+  const events: AdapterEvent[] = [];
+  try {
+    await createChatGptWebAdapter({
+      adapter: "chatgpt-web",
+      baseUrl: "browser://safety-session-limit",
+      chatgptWeb: {
+        localToolsEnabled: false,
+        automaticWebSessionLimitCount: 1,
+        automaticWebSessionLimitMinutes: 300,
+      },
+    }, { worker, accountSafety: safety } as never).runTurn!(
+      parsed,
+      { headers: new Headers() },
+      event => events.push(event),
+    );
+    expect(workerRuns).toBe(0);
+    const failure = events.find(event => event.type === "error");
+    expect(failure).toMatchObject({ type: "error", code: "chatgpt_account_safety_paused", retryable: false });
+    expect(failure && "message" in failure ? failure.message : "").toContain("Reset usage");
+    expect(failure && "message" in failure ? failure.message : "").not.toContain("Resume");
+  } finally {
+    chatGptTurnSessions.clear();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Automatic Web derives rolling session identity from Standard and Enhanced modes", async () => {
+  const admissions: Array<{ mode: "standard" | "enhanced"; traceId: string; sessionId: string }> = [];
+  let mode: "standard" | "enhanced" = "standard";
+  const safety = {
+    retainTrace() {},
+    releaseTrace() {},
+    activeTraceIds(traceIds: readonly string[]) { return [...traceIds]; },
+    admit(traceId: string, sessionId: string) {
+      admissions.push({ mode, traceId, sessionId });
+      return {
+        allowed: true,
+        status: { state: "NORMAL", usedSessions: 0, capturedTraceIds: [] },
+        steeringTraceIds: [],
+      };
+    },
+    markSteeringQueued() {},
+    status() { return { state: "NORMAL", usedSessions: 0, capturedTraceIds: [] }; },
+    tick() { return []; },
+    trigger() { return []; },
+  };
+  const worker = {
+    async run(turn: BrowserTurn): Promise<string> {
+      const prepared = await turn.prepare();
+      prepared.release();
+      turn.onTextDelta("identity answer");
+      return "identity answer";
+    },
+    requestPreemptiveRetry: () => false,
+  };
+  const parsed = (turnId: string): CodexParsedRequest => ({
+    modelId: CHATGPT_WEB_MODEL_ID,
+    stream: false,
+    context: { messages: [{ role: "user", content: turnId, timestamp: 1 }] },
+    options: { reasoning: "high" },
+    _rawBody: {
+      prompt_cache_key: "rolling-identity-session",
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({ thread_id: "rolling-identity-thread", turn_id: turnId }),
+      },
+      input: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: turnId }],
+        internal_chat_message_metadata_passthrough: { turn_id: turnId },
+      }],
+    },
+  });
+  const run = async (enhanced: boolean, turnId: string) => {
+    mode = enhanced ? "enhanced" : "standard";
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web",
+      baseUrl: `browser://rolling-identity-${mode}`,
+      chatgptWeb: { localToolsEnabled: false, useEnhancedWebSessionMode: enhanced },
+    };
+    await createChatGptWebAdapter(provider, { worker, accountSafety: safety } as never).runTurn!(
+      parsed(turnId),
+      { headers: new Headers() },
+      () => {},
+    );
+    chatGptTurnSessions.clear();
+  };
+
+  try {
+    await run(false, "standard-turn-a");
+    await run(false, "standard-turn-b");
+    await run(true, "enhanced-turn-a");
+    await run(true, "enhanced-turn-b");
+
+    const unique = (targetMode: "standard" | "enhanced") => [
+      ...new Map(admissions.filter(item => item.mode === targetMode)
+        .map(item => [`${item.traceId}:${item.sessionId}`, item])).values(),
+    ];
+    const standard = unique("standard");
+    expect(standard).toHaveLength(2);
+    expect(standard.every(item => item.sessionId === item.traceId)).toBe(true);
+    const enhanced = unique("enhanced");
+    expect(enhanced).toHaveLength(2);
+    expect(new Set(enhanced.map(item => item.traceId)).size).toBe(2);
+    expect(new Set(enhanced.map(item => item.sessionId)).size).toBe(1);
+    expect(enhanced.every(item => item.sessionId !== item.traceId)).toBe(true);
+  } finally {
+    chatGptTurnSessions.clear();
+  }
+});
+
 test("Automatic Web rechecks account safety immediately before runtime start", async () => {
   let admissions = 0;
   let workerRuns = 0;

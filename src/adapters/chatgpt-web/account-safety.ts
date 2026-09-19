@@ -5,7 +5,7 @@ import { getConfigDir } from "../../config";
 
 export type ChatGptAccountSafetyState = "NORMAL" | "DRAINING" | "PAUSED" | "HARD_STOP";
 export type ChatGptAccountSafetyReason = "duration_limit" | "rate_limit" | "account_security";
-export const DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT = 50;
+export const DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT = 15;
 
 export const CHATGPT_ACCOUNT_SAFETY_DRAIN_PROMPT =
   "The local Automatic Web safety budget has been reached. Do not start new work, spawn new agents, or expand scope. "
@@ -141,7 +141,7 @@ export class ChatGptAccountSafety {
     this.syncUsageWindow(limitCount, limitMinutes, now);
     this.finishDrainIfIdle(activeTraceIds);
     this.syncUsageWindow(limitCount, limitMinutes, now);
-    if (this.data.state === "PAUSED" || this.data.state === "HARD_STOP") {
+    if (this.data.state === "HARD_STOP") {
       return { allowed: false, status: this.status(limitCount, limitMinutes, activeTraceIds, now), steeringTraceIds: [] };
     }
     if (this.data.state === "DRAINING") {
@@ -151,6 +151,9 @@ export class ChatGptAccountSafety {
         steeringTraceIds: this.pendingSteering(),
       };
     }
+    if (this.data.state === "PAUSED" && this.data.reason !== "duration_limit") {
+      return { allowed: false, status: this.status(limitCount, limitMinutes, activeTraceIds, now), steeringTraceIds: [] };
+    }
     if (limitCount === undefined || limitMinutes === undefined) {
       return { allowed: true, status: this.status(undefined, undefined, activeTraceIds, now), steeringTraceIds: [] };
     }
@@ -158,26 +161,26 @@ export class ChatGptAccountSafety {
     if (sessions.has(sessionId)) {
       return { allowed: true, status: this.status(limitCount, limitMinutes, activeTraceIds, now), steeringTraceIds: [] };
     }
+    if (this.data.state === "PAUSED") {
+      return { allowed: false, status: this.status(limitCount, limitMinutes, activeTraceIds, now), steeringTraceIds: [] };
+    }
     if (sessions.size >= limitCount) {
-      this.beginDrain("duration_limit", activeTraceIds);
+      this.pauseForSessionLimit();
       return {
         allowed: false,
         status: this.status(limitCount, limitMinutes, activeTraceIds, now),
-        steeringTraceIds: this.pendingSteering(),
+        steeringTraceIds: [],
       };
     }
     sessions.add(sessionId);
     this.data.sessionUsages = [...(this.data.sessionUsages ?? []), { id: sessionId, usedAt: now }];
     this.data.windowStartedAt ??= now;
-    this.persist();
-    if (sessions.size < limitCount) {
-      return { allowed: true, status: this.status(limitCount, limitMinutes, activeTraceIds, now), steeringTraceIds: [] };
-    }
-    this.beginDrain("duration_limit", [...activeTraceIds, traceId]);
+    if (sessions.size >= limitCount) this.pauseForSessionLimit();
+    else this.persist();
     return {
       allowed: true,
-      status: this.status(limitCount, limitMinutes, [...activeTraceIds, traceId], now),
-      steeringTraceIds: this.pendingSteering(),
+      status: this.status(limitCount, limitMinutes, activeTraceIds, now),
+      steeringTraceIds: [],
     };
   }
 
@@ -187,8 +190,12 @@ export class ChatGptAccountSafety {
       this.beginDrain(reason, activeTraceIds);
       return this.pendingSteering();
     }
-    if (this.data.state === "PAUSED") return [];
     if (this.data.state === "DRAINING") {
+      return this.pendingSteering();
+    }
+    if (this.data.state === "PAUSED") {
+      if (reason !== "rate_limit" || this.data.reason !== "duration_limit") return [];
+      this.beginDrain(reason, activeTraceIds);
       return this.pendingSteering();
     }
     this.beginDrain(reason, activeTraceIds);
@@ -313,6 +320,17 @@ export class ChatGptAccountSafety {
             ? capturedTraceIds.filter(traceId => alreadySteered.has(traceId))
             : [],
         };
+    this.persist();
+  }
+
+  private pauseForSessionLimit(): void {
+    this.data = {
+      version: 1,
+      state: "PAUSED",
+      reason: "duration_limit",
+      ...(this.data.windowStartedAt !== undefined ? { windowStartedAt: this.data.windowStartedAt } : {}),
+      ...(this.data.sessionUsages !== undefined ? { sessionUsages: this.data.sessionUsages } : {}),
+    };
     this.persist();
   }
 

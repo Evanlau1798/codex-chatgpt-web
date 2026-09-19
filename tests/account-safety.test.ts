@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CHATGPT_ACCOUNT_SAFETY_DRAIN_PROMPT,
+  DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT,
   ChatGptAccountSafety,
 } from "../src/adapters/chatgpt-web/account-safety";
 
@@ -17,6 +18,10 @@ function fixture() {
   };
 }
 
+test("Automatic Web session limit defaults to fifteen", () => {
+  expect(DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT).toBe(15);
+});
+
 test("disabled proactive limit leaves the usage window unopened", () => {
   const { manager, cleanup } = fixture();
   try {
@@ -27,7 +32,7 @@ test("disabled proactive limit leaves the usage window unopened", () => {
   } finally { cleanup(); }
 });
 
-test("session-window budget counts unique sessions and drains when the limit is exhausted", () => {
+test("session-window budget pauses new admissions without draining active work", () => {
   const { manager, cleanup } = fixture();
   const budget = manager as unknown as {
     admit: (
@@ -56,12 +61,15 @@ test("session-window budget counts unique sessions and drains when the limit is 
 
     const second = budget.admit("trace-c", "session-b", 2, 300, ["trace-a", "trace-b"], 3_000);
     expect(second.allowed).toBe(true);
-    expect(second.status).toMatchObject({ usedSessions: 2, sessionLimit: 2 });
-    expect(budget.tick(2, 300, ["trace-a", "trace-b", "trace-c"], 3_001)).toEqual([
-      "trace-a",
-      "trace-b",
-      "trace-c",
-    ]);
+    expect(second.status).toMatchObject({
+      state: "PAUSED",
+      reason: "duration_limit",
+      usedSessions: 2,
+      sessionLimit: 2,
+      capturedTraceIds: [],
+    });
+    expect(second.steeringTraceIds).toEqual([]);
+    expect(budget.tick(2, 300, ["trace-a", "trace-b", "trace-c"], 3_001)).toEqual([]);
   } finally { cleanup(); }
 });
 
@@ -119,23 +127,21 @@ test("session-window budget retains newer sessions when the oldest session leave
   } finally { cleanup(); }
 });
 
-test("session quota blocks new sessions while captured work can finish", () => {
+test("session quota allows counted sessions to finish while blocking new sessions", () => {
   const { manager, cleanup } = fixture();
   try {
     expect(manager.admit("trace-a", "session-a", 2, 300, [], 1_000).allowed).toBe(true);
     const exhausted = manager.admit("trace-b", "session-b", 2, 300, ["trace-a"], 2_000);
     expect(exhausted.allowed).toBe(true);
     expect(exhausted.status).toMatchObject({
-      state: "DRAINING",
+      state: "PAUSED",
       reason: "duration_limit",
       windowStartedAt: 1_000,
       usedSessions: 2,
       sessionLimit: 2,
-      capturedTraceIds: ["trace-a", "trace-b"],
+      capturedTraceIds: [],
     });
-    expect(exhausted.steeringTraceIds).toEqual(["trace-a", "trace-b"]);
-    manager.markSteeringQueued("trace-a");
-    manager.markSteeringQueued("trace-b");
+    expect(exhausted.steeringTraceIds).toEqual([]);
 
     const continuation = manager.admit("trace-a", "session-a", 2, 300, ["trace-a", "trace-b"], 2_010);
     expect(continuation.allowed).toBe(true);
@@ -176,6 +182,45 @@ test("account security upgrades an existing drain and preserves one steering per
     expect(manager.trigger("account_security", ["trace-a", "trace-b", "trace-c"])).toEqual([]);
     expect(manager.status(undefined, undefined, [])).toMatchObject({ state: "HARD_STOP", reason: "account_security" });
     expect(manager.admit("trace-new", "session-new", undefined, undefined, []).allowed).toBe(false);
+  } finally { cleanup(); }
+});
+
+test("reactive rate limits upgrade a rolling session-limit pause into draining", () => {
+  const { manager, cleanup } = fixture();
+  try {
+    expect(manager.admit("trace-a", "session-a", 1, 300, [], 1_000).allowed).toBe(true);
+    expect(manager.status(1, 300, ["trace-a"], 1_001)).toMatchObject({
+      state: "PAUSED",
+      reason: "duration_limit",
+      capturedTraceIds: [],
+    });
+
+    expect(manager.trigger("rate_limit", ["trace-a"])).toEqual(["trace-a"]);
+    expect(manager.status(1, 300, ["trace-a"], 1_002)).toMatchObject({
+      state: "DRAINING",
+      reason: "rate_limit",
+      capturedTraceIds: ["trace-a"],
+    });
+  } finally { cleanup(); }
+});
+
+test("account security upgrades a rolling session-limit pause into a hard-stop drain", () => {
+  const { manager, cleanup } = fixture();
+  try {
+    expect(manager.admit("trace-a", "session-a", 1, 300, [], 1_000).allowed).toBe(true);
+    expect(manager.trigger("account_security", ["trace-a"])).toEqual(["trace-a"]);
+    expect(manager.status(1, 300, ["trace-a"], 1_001)).toMatchObject({
+      state: "DRAINING",
+      reason: "account_security",
+      capturedTraceIds: ["trace-a"],
+    });
+    manager.markSteeringQueued("trace-a");
+    expect(manager.trigger("account_security", ["trace-a"])).toEqual([]);
+    expect(manager.status(1, 300, [], 1_002)).toMatchObject({
+      state: "HARD_STOP",
+      reason: "account_security",
+      capturedTraceIds: [],
+    });
   } finally { cleanup(); }
 });
 
@@ -360,6 +405,38 @@ test("persisted rate-limit draining state normalizes to pause after restart", ()
       state: "PAUSED",
       reason: "rate_limit",
       windowStartedAt: now,
+    });
+  } finally { cleanup(); }
+});
+
+test("legacy duration-limit draining state normalizes without steering after restart", () => {
+  const { path, manager, cleanup } = fixture();
+  try {
+    manager.admit("seed-trace", "seed-session", 1, 300, [], 500);
+    writeFileSync(path, `${JSON.stringify({
+      version: 1,
+      state: "DRAINING",
+      reason: "duration_limit",
+      windowStartedAt: 1_000,
+      sessionUsages: [{ id: "session-a", usedAt: 1_000 }],
+      capturedTraceIds: ["trace-a"],
+      steeredTraceIds: [],
+    })}\n`, "utf8");
+
+    const restarted = new ChatGptAccountSafety(path);
+    expect(restarted.status(1, 300, ["trace-a"], 2_000)).toMatchObject({
+      state: "PAUSED",
+      reason: "duration_limit",
+      usedSessions: 1,
+      capturedTraceIds: [],
+    });
+    expect(restarted.admit("trace-a", "session-a", 1, 300, ["trace-a"], 2_001)).toMatchObject({
+      allowed: true,
+      steeringTraceIds: [],
+    });
+    expect(restarted.admit("trace-b", "session-b", 1, 300, ["trace-a"], 2_002)).toMatchObject({
+      allowed: false,
+      steeringTraceIds: [],
     });
   } finally { cleanup(); }
 });
