@@ -118,6 +118,15 @@ class RuntimeHost {
     return this.lifecycleOperation || this.active || (stuckChild ? "previous runtime process shutdown" : null);
   }
 
+  async serializeRuntimeLifecycle(operation) {
+    const previous = this.runtimeLifecycleOperation ?? Promise.resolve();
+    let release;
+    this.runtimeLifecycleOperation = new Promise(resolve => { release = resolve; });
+    await previous;
+    try { return await operation(); }
+    finally { release(); }
+  }
+
   browserInteractionMode() {
     const mode = this.getBrowserInteractionMode();
     if (mode !== "automatic" && mode !== "manual") throw new Error("Launcher browser interaction mode is invalid");
@@ -405,21 +414,37 @@ class RuntimeHost {
 
   restoreBridgeRoute(...args) { return integrationOperations.restoreBridgeRoute.apply(this, args); }
 
-  setBridgeEnabled(...args) { return integrationOperations.setBridgeEnabled.apply(this, args); }
+  setBridgeEnabled(...args) {
+    return this.serializeRuntimeLifecycle(() => integrationOperations.setBridgeEnabled.apply(this, args));
+  }
 
-  setUseEnhancedWebSessionMode(...args) { return integrationOperations.setUseEnhancedWebSessionMode.apply(this, args); }
+  setUseEnhancedWebSessionMode(...args) {
+    return this.serializeRuntimeLifecycle(() => integrationOperations.setUseEnhancedWebSessionMode.apply(this, args));
+  }
 
-  setAccountSafetySettings(...args) { return integrationOperations.setAccountSafetySettings.apply(this, args); }
+  setAccountSafetySettings(...args) {
+    return this.serializeRuntimeLifecycle(() => integrationOperations.setAccountSafetySettings.apply(this, args));
+  }
 
-  accountSafetyStatus(...args) { return integrationOperations.accountSafetyStatus.apply(this, args); }
+  accountSafetyStatus(...args) {
+    return this.serializeRuntimeLifecycle(() => integrationOperations.accountSafetyStatus.apply(this, args));
+  }
 
-  resetAutomaticWebUsage(...args) { return integrationOperations.resetAutomaticWebUsage.apply(this, args); }
+  resetAutomaticWebUsage(...args) {
+    return this.serializeRuntimeLifecycle(() => integrationOperations.resetAutomaticWebUsage.apply(this, args));
+  }
 
-  resumeAutomaticWeb(...args) { return integrationOperations.resumeAutomaticWeb.apply(this, args); }
+  resumeAutomaticWeb(...args) {
+    return this.serializeRuntimeLifecycle(() => integrationOperations.resumeAutomaticWeb.apply(this, args));
+  }
 
-  acknowledgeAccountSafetyStop(...args) { return integrationOperations.acknowledgeAccountSafetyStop.apply(this, args); }
+  acknowledgeAccountSafetyStop(...args) {
+    return this.serializeRuntimeLifecycle(() => integrationOperations.acknowledgeAccountSafetyStop.apply(this, args));
+  }
 
-  setUseEnhancedOutputTunnel(...args) { return integrationOperations.setUseEnhancedOutputTunnel.apply(this, args); }
+  setUseEnhancedOutputTunnel(...args) {
+    return this.serializeRuntimeLifecycle(() => integrationOperations.setUseEnhancedOutputTunnel.apply(this, args));
+  }
 
   mcpConnectorName(...args) { return integrationOperations.mcpConnectorName.apply(this, args); }
 
@@ -429,7 +454,9 @@ class RuntimeHost {
 
   cancelActiveTurns(...args) { return integrationOperations.cancelActiveTurns.apply(this, args); }
 
-  uninstallIntegration(...args) { return integrationOperations.uninstallIntegration.apply(this, args); }
+  uninstallIntegration(...args) {
+    return this.serializeRuntimeLifecycle(() => integrationOperations.uninstallIntegration.apply(this, args));
+  }
 
   setupCore(...args) { return setupOperations.setupCore.apply(this, args); }
 
@@ -453,7 +480,9 @@ class RuntimeHost {
 
   runDevSetup(...args) { return setupOperations.runDevSetup.apply(this, args); }
 
-  runSetup(...args) { return setupOperations.runSetup.apply(this, args); }
+  runSetup(...args) {
+    return this.serializeRuntimeLifecycle(() => setupOperations.runSetup.apply(this, args));
+  }
 }
 
 module.exports = { CURRENT_CONNECTOR_NAME, RuntimeHost };

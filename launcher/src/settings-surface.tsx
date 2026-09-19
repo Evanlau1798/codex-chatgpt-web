@@ -68,6 +68,7 @@ export function SettingsSurface({
       setAccountSafety(null);
       return;
     }
+    if (busy) return;
     let cancelled = false;
     const refresh = async () => {
       try {
@@ -83,7 +84,11 @@ export function SettingsSurface({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [snapshot.state.browserInteractionMode, snapshot.state.coreSetupComplete]);
+  }, [
+    snapshot.state.browserInteractionMode,
+    snapshot.state.coreSetupComplete,
+    busy,
+  ]);
 
   const updateLanguage = async (next: Language) => {
     try {

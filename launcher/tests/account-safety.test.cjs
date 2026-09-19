@@ -60,7 +60,7 @@ function fixture(overrides = {}) {
     browserDescriptorPath: descriptorPath,
     supervisor,
   });
-  return { calls, configPath, host, root };
+  return { calls, configPath, host, root, supervisor };
 }
 
 test("launcher validates Automatic Web account-safety settings", () => {
@@ -131,6 +131,100 @@ test("launcher applies account-safety settings in one runtime restart and can di
   assert.deepEqual(item.calls, ["stop", "start", "stop", "start"]);
 });
 
+test("launcher serializes account-safety polling before a settings restart", async (t) => {
+  const item = fixture();
+  t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
+  let releaseStatus;
+  const statusBlocked = new Promise(resolve => { releaseStatus = resolve; });
+  item.supervisor.waitForProxy = async () => {
+    item.calls.push("wait-for-proxy");
+    await statusBlocked;
+  };
+
+  const status = item.host.accountSafetyStatus();
+  await new Promise(resolve => setImmediate(resolve));
+  const settings = item.host.setAccountSafetySettings({ maxBrowserTabs: 2 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(item.calls, ["wait-for-proxy"]);
+
+  releaseStatus();
+  assert.deepEqual(await status, { state: "PAUSED" });
+  assert.deepEqual(await settings, {
+    maxBrowserTabs: 2,
+    automaticWebSessionLimitCount: undefined,
+    automaticWebSessionLimitMinutes: undefined,
+  });
+  assert.deepEqual(item.calls, ["wait-for-proxy", "account-safety-status", "stop", "start"]);
+});
+
+test("launcher delays account-safety polling until a settings restart finishes", async (t) => {
+  const item = fixture();
+  t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
+  let releaseStop;
+  const stopBlocked = new Promise(resolve => { releaseStop = resolve; });
+  item.supervisor.stopForSetup = async () => {
+    item.calls.push("stop");
+    await stopBlocked;
+    return { status: "stopped" };
+  };
+
+  const settings = item.host.setAccountSafetySettings({ maxBrowserTabs: 2 });
+  await new Promise(resolve => setImmediate(resolve));
+  const status = item.host.accountSafetyStatus();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(item.calls, ["stop"]);
+
+  releaseStop();
+  await settings;
+  assert.deepEqual(await status, { state: "PAUSED" });
+  assert.deepEqual(item.calls, ["stop", "start", "wait-for-proxy", "account-safety-status"]);
+});
+
+test("launcher delays account-safety polling for every Settings restart path", async (t) => {
+  for (const [label, restart] of [
+    ["Enhanced Web session", host => host.setUseEnhancedWebSessionMode(true)],
+    ["Enhanced output tunnel", host => host.setUseEnhancedOutputTunnel(false)],
+  ]) {
+    await t.test(label, async (t) => {
+      const item = fixture();
+      t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
+      let releaseStop;
+      const stopBlocked = new Promise(resolve => { releaseStop = resolve; });
+      item.supervisor.stopForSetup = async () => {
+        item.calls.push("stop");
+        await stopBlocked;
+        return { status: "stopped" };
+      };
+
+      const setting = restart(item.host);
+      await new Promise(resolve => setImmediate(resolve));
+      const status = item.host.accountSafetyStatus();
+      await new Promise(resolve => setImmediate(resolve));
+      try {
+        assert.deepEqual(item.calls, ["stop"]);
+      } finally {
+        releaseStop();
+      }
+      await setting;
+      await status;
+      assert.deepEqual(item.calls, ["stop", "start", "wait-for-proxy", "account-safety-status"]);
+    });
+  }
+});
+
+test("launcher releases runtime serialization after a failed account-safety poll", async (t) => {
+  const item = fixture();
+  t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
+  item.supervisor.waitForProxy = async () => {
+    item.calls.push("wait-for-proxy");
+    throw new Error("synthetic status failure");
+  };
+
+  await assert.rejects(item.host.accountSafetyStatus(), /synthetic status failure/);
+  await item.host.setAccountSafetySettings({ maxBrowserTabs: 2 });
+  assert.deepEqual(item.calls, ["wait-for-proxy", "stop", "start"]);
+});
+
 test("launcher account-safety recovery uses the authenticated runtime control channel", async (t) => {
   const item = fixture();
   t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
@@ -184,6 +278,8 @@ test("launcher exposes Automatic-only account safety through renderer and IPC", 
   assert.match(settings, /copy\.confirmAccountSafetyReset/);
   assert.match(settings, /copy\.accountSafetyResetHint/);
   assert.match(settings, /api!\.resetAutomaticWebUsage\(\)/);
+  assert.match(settings, /if \(busy\) return;[\s\S]*api!\.accountSafetyStatus\(\)/);
+  assert.match(settings, /snapshot\.state\.coreSetupComplete,\s*busy,\s*\]\);/);
   assert.match(settings, /resetUsageStage === "confirm"/);
   assert.match(styles, /\.account-safety-progress\.is-resetting::after/);
   assert.match(settings, /aria-valuetext=\{accountSafetyMeterText\}/);
