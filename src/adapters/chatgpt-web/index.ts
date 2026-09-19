@@ -32,6 +32,11 @@ import { chatGptAgentLifecycleOptions } from "./agent-session-lifecycle";
 import { submittedBrowserFailure, submittedStallFailure } from "./submitted-turn";
 import { ChatGptLunaCheckpointStore } from "./rolling-checkpoint";
 import {
+  CHATGPT_ACCOUNT_SAFETY_DRAIN_PROMPT,
+  ChatGptAccountSafety,
+  chatGptAccountSafety,
+} from "./account-safety";
+import {
   createZeroRiskRuntimeStarter,
   launcherZeroRiskManualControl,
   type ChatGptZeroRiskManualControl,
@@ -47,12 +52,15 @@ export function chatGptWebTraceId(provider: CodexProviderConfig, parsed: CodexPa
 
 export const CHATGPT_WEB_ADAPTER_HEARTBEAT_MS = 10_000;
 
+class ChatGptAccountSafetyAdmissionError extends ChatGptWebAdapterError {}
+
 export function createChatGptWebAdapter(
   provider: CodexProviderConfig,
   dependencies: {
     broker?: TurnBrokerOwner;
     worker?: ChatGptRuntimeWorker;
     zeroRiskManualControl?: ChatGptZeroRiskManualControl;
+    accountSafety?: ChatGptAccountSafety;
   } = {},
 ): ProviderAdapter {
   const worker = dependencies.worker ?? ChatGptBrowserWorker.forProvider(provider);
@@ -85,6 +93,50 @@ export function createChatGptWebAdapter(
     lunaCheckpointStore,
   });
   const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
+  const accountSafety = dependencies.accountSafety ?? chatGptAccountSafety();
+  const automaticWebSessionLimitMinutes = provider.chatgptWeb?.automaticWebSessionLimitMinutes;
+  const activeSafetyTraceIds = () => accountSafety.activeTraceIds(chatGptTurnSessions.activeTraceIds());
+  const queueSafetySteering = (traceIds: readonly string[]) => {
+    for (const targetTraceId of traceIds) {
+      if (chatGptTurnSessions.steerSafetyTrace(targetTraceId, CHATGPT_ACCOUNT_SAFETY_DRAIN_PROMPT)) {
+        accountSafety.markSteeringQueued(targetTraceId);
+      }
+    }
+  };
+  const applyAutomaticSafetyFailure = (error: ChatGptWebAdapterError) => {
+    if (manualInteraction) return;
+    const reason = error.code === "rate_limit_exceeded"
+      ? "rate_limit"
+      : error.code === "chatgpt_account_safety_stop"
+        ? "account_security"
+        : undefined;
+    if (reason) queueSafetySteering(accountSafety.trigger(reason, activeSafetyTraceIds()));
+  };
+  const requireAutomaticAdmission = (targetTraceId: string) => {
+    const admission = accountSafety.admit(
+      targetTraceId,
+      automaticWebSessionLimitMinutes,
+      activeSafetyTraceIds(),
+    );
+    queueSafetySteering(admission.steeringTraceIds);
+    if (admission.allowed) return;
+    const hardStop = admission.status.state === "HARD_STOP";
+    throw new ChatGptAccountSafetyAdmissionError(
+      hardStop
+        ? "Automatic ChatGPT Web is stopped because ChatGPT reported an account-safety warning. Acknowledge the warning in the launcher before resuming."
+        : "Automatic ChatGPT Web is paused by the local account-safety guard. Resume it in the launcher before starting new work.",
+      {
+        status: hardStop ? 403 : 429,
+        errorType: hardStop ? "authentication_error" : "rate_limit_error",
+        code: hardStop ? "chatgpt_account_safety_stop" : "chatgpt_account_safety_paused",
+        retryable: false,
+      },
+    );
+  };
+  const guardedAutomaticStartRuntime: typeof automaticStartRuntime = (...args) => {
+    requireAutomaticAdmission(args[2]);
+    return automaticStartRuntime(...args);
+  };
   const automaticUsagePromptOptions = chatGptAutomaticUsagePromptOptions(runtimeConfig, manualInteraction);
   const startRuntime = manualInteraction
     ? createZeroRiskRuntimeStarter({
@@ -95,7 +147,7 @@ export function createChatGptWebAdapter(
         control: dependencies.zeroRiskManualControl ?? launcherZeroRiskManualControl,
         timeoutMs,
       })
-    : automaticStartRuntime;
+    : guardedAutomaticStartRuntime;
   return {
     name: "chatgpt-web",
     async runTurn(parsed, incoming, emit) {
@@ -125,11 +177,17 @@ export function createChatGptWebAdapter(
           traceId, "full", parsed, error,
         );
       }
-      const heartbeat = setInterval(
-        () => emit({ type: "heartbeat" }),
-        CHATGPT_WEB_ADAPTER_HEARTBEAT_MS,
-      );
+      const heartbeat = setInterval(() => {
+        emit({ type: "heartbeat" });
+        if (!manualInteraction) {
+          queueSafetySteering(accountSafety.tick(
+            automaticWebSessionLimitMinutes,
+            activeSafetyTraceIds(),
+          ));
+        }
+      }, CHATGPT_WEB_ADAPTER_HEARTBEAT_MS);
       emit({ type: "heartbeat" });
+      let retainedSafetyTraceId: string | undefined;
       try {
       const manualRequest = isChatGptWebZeroRiskBackendModel(parsed.modelId);
       if (manualRequest !== manualInteraction) {
@@ -140,6 +198,23 @@ export function createChatGptWebAdapter(
           { status: 409, errorType: "invalid_request_error", code: "browser_interaction_mode_mismatch", retryable: false },
         );
       }
+      const compactionSourceExecutionKey = parsed._compactionRequest
+        ? `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`
+        : undefined;
+      const admissionTraceId = !manualInteraction && compactionSourceExecutionKey
+        ? chatGptTurnSessions.find(compactionSourceExecutionKey)?.traceId ?? traceId
+        : traceId;
+      if (!manualInteraction) {
+        requireAutomaticAdmission(admissionTraceId);
+        accountSafety.retainTrace(admissionTraceId);
+        retainedSafetyTraceId = admissionTraceId;
+      }
+      const startRuntimeForTurn = !manualInteraction && parsed._compactionRequest
+        ? (...args: Parameters<typeof automaticStartRuntime>) => {
+            requireAutomaticAdmission(admissionTraceId);
+            return automaticStartRuntime(...args);
+          }
+        : startRuntime;
       const toolPolicy = effectiveChatGptToolPolicy(parsed); const turnCapabilities = manualRequest
         ? configuredCapabilities
         : parsed._compactionRequest
@@ -172,13 +247,13 @@ export function createChatGptWebAdapter(
         environment = await resolveTrustedCodexEnvironment(environmentStore, parsed, executionKey);
       }
       if (parsed._compactionRequest) {
-        const responseExecutionKey = `${executionNamespace}:${chatGptCompactionSourceExecutionKey(parsed)}`;
+        const responseExecutionKey = compactionSourceExecutionKey!;
         if (manualRequest) {
           const executionKey = `${executionNamespace}:${chatGptTurnExecutionKey(parsed)}`;
           await runManualCompaction({ parsed, executionKey, sourceKey: responseExecutionKey, traceId,
             timeoutMs, abortSignal: incoming.abortSignal, capabilities: turnCapabilities, emit,
             start: signal => sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
-              () => { signal.throwIfAborted(); return startRuntime(parsed, environment, traceId, turnCapabilities); },
+              () => { signal.throwIfAborted(); return startRuntimeForTurn(parsed, environment, traceId, turnCapabilities); },
               // Let prior physical cleanup settle, then check cancellation before creating a checkpoint.
               executionNamespace, useEnhancedWebSessionMode, traceId),
           });
@@ -188,9 +263,10 @@ export function createChatGptWebAdapter(
           const enhancedCompaction = await runEnhancedCompaction({
             worker, parsed, broker, executionNamespace, capabilities: turnCapabilities,
             responseExecutionKey, nativeConnectorAvailable: configuredCapabilities.localToolsEnabled,
-            abortSignal: incoming.abortSignal, timeoutMs, emit,
+            abortSignal: incoming.abortSignal, timeoutMs,
+            requireAutomaticAdmission: () => requireAutomaticAdmission(admissionTraceId), emit,
             startFallback: async (fallbackTraceId, signal, onCompactionProgress, retainOwnershipUntil) => {
-              const runtime = startRuntime(parsed, undefined, fallbackTraceId, turnCapabilities, { onCompactionProgress });
+              const runtime = startRuntimeForTurn(parsed, undefined, fallbackTraceId, turnCapabilities, { onCompactionProgress });
               const settlement = runtime.physicalSettlement ?? runtime.browser.then(() => undefined, () => undefined);
               retainOwnershipUntil(settlement);
               try {
@@ -212,7 +288,7 @@ export function createChatGptWebAdapter(
       }
       await chatGptTurnSessions.waitForRetirement(executionKey, incoming.abortSignal);
       let session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
-        () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
+        () => startRuntimeForTurn(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
       if (session.runtime.mode === "tools" && !environment) {
         environment = await resolveTrustedCodexEnvironment(environmentStore, parsed, executionKey);
       }
@@ -453,7 +529,7 @@ export function createChatGptWebAdapter(
           );
           await chatGptTurnSessions.retireAndWait(executionKey, incoming.abortSignal);
           session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
-            () => startRuntime(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
+            () => startRuntimeForTurn(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
           await session.runExclusive(async () => { session.observeCanonicalRequest(parsed); });
         }
         if (useEnhancedWebSessionMode && parsed._localCompactionRequest) { const key = chatGptConversationKey(parsed, executionNamespace); if (key) await chatGptTurnSessions.retireConversationAndWait(key); }
@@ -462,6 +538,7 @@ export function createChatGptWebAdapter(
         const handledError = error instanceof ChatGptWebAdapterError && error.retryable
           ? chatGptWebTurnRetryPolicy.recordRetryableFailure(retryKey, error)
           : error;
+        if (handledError instanceof ChatGptWebAdapterError) applyAutomaticSafetyFailure(handledError);
         if (!(error instanceof ChatGptWebAdapterError && error.retryable)) {
           chatGptWebTurnRetryPolicy.clear(retryKey);
         }
@@ -491,8 +568,28 @@ export function createChatGptWebAdapter(
         chatGptWebTurnRetryPolicy.clear(retryKey);
         throw error;
       }
+      } catch (error) {
+        if (error instanceof ChatGptWebAdapterError) applyAutomaticSafetyFailure(error);
+        if (error instanceof ChatGptAccountSafetyAdmissionError
+          || (error instanceof ChatGptWebAdapterError
+            && (error.code === "rate_limit_exceeded" || error.code === "chatgpt_account_safety_stop"))) {
+          emit({
+            type: "error",
+            message: error.message,
+            status: error.status,
+            errorType: error.errorType,
+            code: error.code,
+            retryable: error.retryable,
+          });
+          return;
+        }
+        throw error;
       } finally {
         clearInterval(heartbeat);
+        if (!manualInteraction) {
+          if (retainedSafetyTraceId) accountSafety.releaseTrace(retainedSafetyTraceId);
+          accountSafety.status(automaticWebSessionLimitMinutes, activeSafetyTraceIds());
+        }
       }
     },
   };

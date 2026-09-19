@@ -208,6 +208,16 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
   } else if (config.useEnhancedWebSessionMode === undefined) {
     config = { ...config, useEnhancedWebSessionMode: false };
   }
+  if (config.maxBrowserTabs !== undefined
+    && (!Number.isInteger(config.maxBrowserTabs) || config.maxBrowserTabs < 1 || config.maxBrowserTabs > 6)) {
+    throw new Error("Runtime configuration has an invalid maxBrowserTabs");
+  }
+  if (config.automaticWebSessionLimitMinutes !== undefined
+    && (!Number.isInteger(config.automaticWebSessionLimitMinutes)
+      || config.automaticWebSessionLimitMinutes < 1
+      || config.automaticWebSessionLimitMinutes > 10_080)) {
+    throw new Error("Runtime configuration has an invalid automaticWebSessionLimitMinutes");
+  }
   if (config.useEnhancedOutputTunnel === undefined) config = { ...config, useEnhancedOutputTunnel: true };
   if (config.mode !== "browser-only" && config.mode !== "full") {
     throw new Error("Runtime configuration has an invalid mode");

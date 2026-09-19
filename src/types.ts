@@ -305,6 +305,10 @@ export interface CodexProviderConfig {
      * genuinely unresponsive upstream for longer. Defaults to DEFAULT_STALL_TIMEOUT_SEC.
      */
     stallTimeoutSec?: number;
+    /** Optional Automatic Web concurrency ceiling. */
+    maxBrowserTabs?: number;
+    /** Optional local Automatic Web usage-window ceiling in minutes. */
+    automaticWebSessionLimitMinutes?: number;
     /** Experimental no-context mode disables compaction and scales browser waits for its full prompt. */
     experimentalNoAutoCompact?: boolean;
     /** Keep the single controlled browser visible. */

@@ -399,13 +399,14 @@ input.on("line", line => {
     if (resolve) {
       answerRetryWaiters.delete(message.id);
       const prompt = typeof message.prompt === "string" && message.prompt ? message.prompt : undefined;
-      resolve(prompt && (message.acknowledge || message.replaceCandidate)
+      resolve(prompt && (message.acknowledge || message.replaceCandidate || message.allowLunaCheckpointRetry)
         ? {
             text: prompt,
             ...(message.acknowledge
               ? { onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "retry_submitted" }) }
               : {}),
             ...(message.replaceCandidate ? { replaceCandidate: true } : {}),
+            ...(message.allowLunaCheckpointRetry ? { allowLunaCheckpointRetry: true } : {}),
           }
         : prompt);
     }
@@ -451,4 +452,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "answer-before-completion", "tunneled-output-v1", "skill-attachments"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "answer-before-completion", "luna-safety-retry-v1", "tunneled-output-v1", "skill-attachments"] });

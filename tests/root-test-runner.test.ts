@@ -32,8 +32,20 @@ test("root test isolation retries only bounded Bun runtime crashes", () => {
   expect(shouldRetryBunCrash(1, 1)).toBe(false);
 });
 
-test("macOS root tests use a portable Unix socket root", () => {
-  const environment = { TMPDIR: "/var/folders/long", KEEP: "yes" };
-  expect(rootTestEnvironment("darwin", environment)).toEqual({ TMPDIR: "/tmp", KEEP: "yes" });
-  expect(rootTestEnvironment("linux", environment)).toBe(environment);
+test("root tests isolate persistent state and macOS uses a portable Unix socket root", () => {
+  const environment = {
+    TMPDIR: "/var/folders/long",
+    KEEP: "yes",
+    CODEX_CHATGPT_WEB_HOME: "/real/user/home",
+  };
+  expect(rootTestEnvironment("darwin", environment, "/tmp/test-home")).toEqual({
+    TMPDIR: "/tmp",
+    KEEP: "yes",
+    CODEX_CHATGPT_WEB_HOME: "/tmp/test-home",
+  });
+  expect(rootTestEnvironment("linux", environment, "/tmp/test-home")).toEqual({
+    TMPDIR: "/var/folders/long",
+    KEEP: "yes",
+    CODEX_CHATGPT_WEB_HOME: "/tmp/test-home",
+  });
 });

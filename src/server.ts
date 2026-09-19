@@ -1,4 +1,5 @@
 import { chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
+import { chatGptAccountSafety } from "./adapters/chatgpt-web/account-safety";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
@@ -313,6 +314,7 @@ export function startServer(
     request: number; at: string; status: number; failure?: ModelCatalogFailure;
   } | null = null;
   const httpTurns = new HttpTurnCounter();
+  const accountSafety = chatGptAccountSafety();
   const activity = () => ({
     active_http_turns: httpTurns.count(),
     active_browser_turns: chatGptTurnSessions.activeCount() + (turnBroker?.externalOwnerActiveCount() ?? 0),
@@ -346,6 +348,28 @@ export function startServer(
         draining = url.pathname === "/admin/drain";
         turnBroker?.setExternalOwnersAccepted(!draining);
         return Response.json({ status: "ok", accepting_turns: !draining, ...activity() });
+      }
+      if (req.method === "POST" && url.pathname.startsWith("/admin/account-safety-")) {
+        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
+        const activeTraceIds = accountSafety.activeTraceIds(chatGptTurnSessions.activeTraceIds());
+        try {
+          if (url.pathname === "/admin/account-safety-resume") accountSafety.resume();
+          else if (url.pathname === "/admin/account-safety-acknowledge") accountSafety.acknowledgeHardStop();
+          else if (url.pathname !== "/admin/account-safety-status") return new Response("Not Found", { status: 404 });
+          const safety = accountSafety.status(config.automaticWebSessionLimitMinutes, activeTraceIds);
+          return Response.json({
+            status: "ok",
+            account_safety: {
+              state: safety.state,
+              ...(safety.reason ? { reason: safety.reason } : {}),
+              ...(safety.windowStartedAt !== undefined ? { window_started_at: new Date(safety.windowStartedAt).toISOString() } : {}),
+              ...(safety.remainingMs !== undefined ? { remaining_ms: safety.remainingMs } : {}),
+              ...(safety.limitMinutes !== undefined ? { limit_minutes: safety.limitMinutes } : {}),
+            },
+          });
+        } catch (error) {
+          return Response.json({ status: "refused", message: error instanceof Error ? error.message : String(error) }, { status: 409 });
+        }
       }
       if (req.method === "POST" && url.pathname === "/admin/drain-if-idle") {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });

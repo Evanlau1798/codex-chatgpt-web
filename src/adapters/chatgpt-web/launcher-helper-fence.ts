@@ -14,6 +14,9 @@ export function assertLauncherHelperFenceFeatures(turn: BrowserTurn, features: S
   if ((turn.retryPromptForAnswer || turn.finalAnswerAdmission) && !features.has("answer-before-completion")) {
     throw new Error("Launcher browser helper does not select answer retries before committing completion; update or restart the launcher");
   }
+  if (turn.captureLunaCheckpoint && turn.retryPromptForAnswer && !features.has("luna-safety-retry-v1")) {
+    throw new Error("Launcher browser helper does not support Luna safety retries; update or restart the launcher");
+  }
   if (turn.onMultipartStageAcknowledged && !features.has("multipart-stage-ack")) {
     throw new Error("Launcher browser helper does not support multipart acknowledgement forwarding; update or restart the launcher");
   }
@@ -108,6 +111,7 @@ export function handleLauncherHelperAnswer(
         type: "answer_retry", id: message.id, prompt: retry.text,
         ...(retry.onSubmitted ? { acknowledge: true } : {}),
         ...(retry.replaceCandidate ? { replaceCandidate: true } : {}),
+        ...(retry.allowLunaCheckpointRetry ? { allowLunaCheckpointRetry: true } : {}),
       });
     })
     .catch(error => { if (active()) fail(errorOf(error)); });

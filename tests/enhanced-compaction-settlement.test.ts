@@ -10,7 +10,7 @@ import type { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import type { CodexParsedRequest } from "../src/types";
 import type { AdapterEvent } from "../src/types";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
-import { chatGptRetainedSurfaceUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
+import { ChatGptWebAdapterError, chatGptRetainedSurfaceUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
 import { CompactionTransactionStore } from "../src/adapters/chatgpt-web/compaction-transaction";
 
 function fixture(active = false, tools = false) {
@@ -167,6 +167,33 @@ test("operator cancellation during source lookup does not start a fallback", asy
   await cancelAllStructuredCompactions(new Error("operator cancelled"));
   expect((await run).message).toContain("operator cancelled");
   expect(fallbackCalls).toBe(0);
+});
+
+test("enhanced compact preserves structured account-safety failures from retained start", async () => {
+  const f = fixture();
+  await f.source.browserOutcome;
+  f.release.resolve();
+  const safetyError = new ChatGptWebAdapterError("account safety stop", {
+    status: 403,
+    errorType: "authentication_error",
+    code: "chatgpt_account_safety_stop",
+    retryable: false,
+  });
+  const broker = {
+    beginCompactionTransaction: async () => ({ token: "control", handoffId: "handoff" }),
+    waitForCompactionHandoff: async () => "unexpected handoff",
+    abortCompactionTransaction() {},
+  } as unknown as TurnBroker;
+
+  try {
+    const failure = await runEnhancedCompaction({
+      ...f.options,
+      broker,
+      requireAutomaticAdmission: () => { throw safetyError; },
+    }).catch(error => error);
+    expect(failure).toBe(safetyError);
+    expect(failure).toMatchObject({ status: 403, code: "chatgpt_account_safety_stop", retryable: false });
+  } finally { await f.cleanup(); }
 });
 
 test("retained handoff cancellation waits for the handoff worker to settle", async () => {

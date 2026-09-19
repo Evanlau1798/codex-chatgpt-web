@@ -26,6 +26,7 @@ interface ChatGptTurnRuntimeBase {
   /** Exact bounded request used to prepare this browser turn and report Codex usage. */
   usageInput?: CodexParsedRequest;
   steering?: ChatGptSteeringFeed;
+  safetySteering?: (instruction: string) => boolean;
   onToolResultDelivered?: (result?: CodexToolResultMessage) => void;
   externalProgress?: ChatGptExternalTurnProgress;
   submission?: { phase: "prepared" | "send_activated" | "accepted" };

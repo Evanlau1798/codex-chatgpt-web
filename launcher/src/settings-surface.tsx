@@ -1,5 +1,5 @@
 import languages from "../electron/languages.json";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { biggerContextSwitchState } from "./context-mode";
 import { Icon } from "./icons";
 import type { Copy } from "./i18n";
@@ -12,6 +12,7 @@ import {
   SectionHeading,
 } from "./app-shared";
 import type {
+  AccountSafetyStatus,
   BrowserInteractionMode,
   DoctorReport,
   Language,
@@ -42,6 +43,42 @@ export function SettingsSurface({
   const [busy, setBusy] = useState(false);
   const [turnsCancelled, setTurnsCancelled] = useState(false);
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
+  const [maxBrowserTabs, setMaxBrowserTabs] = useState(snapshot.state.maxBrowserTabs);
+  const [sessionLimitEnabled, setSessionLimitEnabled] = useState(snapshot.state.automaticWebSessionLimitEnabled);
+  const [sessionLimitMinutes, setSessionLimitMinutes] = useState(snapshot.state.automaticWebSessionLimitMinutes);
+  const [accountSafety, setAccountSafety] = useState<AccountSafetyStatus | null>(null);
+
+  useEffect(() => {
+    setMaxBrowserTabs(snapshot.state.maxBrowserTabs);
+    setSessionLimitEnabled(snapshot.state.automaticWebSessionLimitEnabled);
+    setSessionLimitMinutes(snapshot.state.automaticWebSessionLimitMinutes);
+  }, [
+    snapshot.state.maxBrowserTabs,
+    snapshot.state.automaticWebSessionLimitEnabled,
+    snapshot.state.automaticWebSessionLimitMinutes,
+  ]);
+
+  useEffect(() => {
+    if (snapshot.state.browserInteractionMode !== "automatic" || snapshot.state.coreSetupComplete !== true) {
+      setAccountSafety(null);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const status = await api!.accountSafetyStatus();
+        if (!cancelled) setAccountSafety(status);
+      } catch {
+        if (!cancelled) setAccountSafety(null);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 5_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [snapshot.state.browserInteractionMode, snapshot.state.coreSetupComplete]);
 
   const updateLanguage = async (next: Language) => {
     try {
@@ -100,6 +137,34 @@ export function SettingsSurface({
     try { updateState(await api!.setUseEnhancedOutputTunnel(enabled)); }
     catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
+  };
+  const applyAccountSafetySettings = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      updateState(await api!.setAccountSafetySettings({
+        maxBrowserTabs,
+        ...(sessionLimitEnabled ? { automaticWebSessionLimitMinutes: sessionLimitMinutes } : {}),
+      }));
+      setAccountSafety(await api!.accountSafetyStatus());
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const recoverAccountSafety = async (action: "resume" | "acknowledge") => {
+    setBusy(true);
+    setError(null);
+    try {
+      setAccountSafety(action === "resume"
+        ? await api!.resumeAutomaticWeb()
+        : await api!.acknowledgeAccountSafetyStop());
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
   };
   const setBiggerContext = async (enabled: boolean) => {
     setBusy(true);
@@ -168,6 +233,22 @@ export function SettingsSurface({
     useEnhancedWebSessionMode: snapshot.state.useEnhancedWebSessionMode,
     experimentalBiggerContext: snapshot.state.experimentalBiggerContext,
   });
+  const accountSafetySettingsValid = Number.isInteger(maxBrowserTabs)
+    && maxBrowserTabs >= 1
+    && maxBrowserTabs <= 6
+    && (!sessionLimitEnabled
+      || (Number.isInteger(sessionLimitMinutes) && sessionLimitMinutes >= 1 && sessionLimitMinutes <= 10_080));
+  const accountSafetyStateLabel = accountSafety ? ({
+    NORMAL: copy.accountSafetyStateNormal,
+    DRAINING: copy.accountSafetyStateDraining,
+    PAUSED: copy.accountSafetyStatePaused,
+    HARD_STOP: copy.accountSafetyStateHardStop,
+  } as const)[accountSafety.state] : copy.notConfigured;
+  const accountSafetyReason = accountSafety?.reason ? ({
+    duration_limit: copy.accountSafetyReasonDuration,
+    rate_limit: copy.accountSafetyReasonRate,
+    account_security: copy.accountSafetyReasonSecurity,
+  } as const)[accountSafety.reason] : null;
   const uninstallIntegration = async () => {
     setBusy(true);
     setError(null);
@@ -228,6 +309,84 @@ export function SettingsSurface({
           />
         </SettingRow>
       </div>
+
+      {snapshot.state.browserInteractionMode === "automatic" ? <>
+        <SectionHeading label={copy.accountSafety} spaced />
+        <p className="settings-section-copy">{copy.accountSafetyBody}</p>
+        <div className="settings-list">
+          <SettingRow body={copy.maximumConcurrentWebTurnsBody} label={copy.maximumConcurrentWebTurns}>
+            <input
+              aria-label={copy.maximumConcurrentWebTurns}
+              className="account-safety-number"
+              disabled={busy || snapshot.state.coreSetupComplete !== true}
+              max={6}
+              min={1}
+              onChange={(event) => setMaxBrowserTabs(Number(event.target.value))}
+              step={1}
+              type="number"
+              value={maxBrowserTabs}
+            />
+          </SettingRow>
+          <SettingRow body={copy.automaticWebSessionLimitBody} label={copy.automaticWebSessionLimit}>
+            <div className="account-safety-limit-control">
+              <Switch
+                checked={sessionLimitEnabled}
+                disabled={busy || snapshot.state.coreSetupComplete !== true}
+                onChange={setSessionLimitEnabled}
+              />
+              <input
+                aria-label={copy.automaticWebSessionLimit}
+                className="account-safety-number is-wide"
+                disabled={busy || !sessionLimitEnabled || snapshot.state.coreSetupComplete !== true}
+                max={10_080}
+                min={1}
+                onChange={(event) => setSessionLimitMinutes(Number(event.target.value))}
+                step={1}
+                type="number"
+                value={sessionLimitMinutes}
+              />
+            </div>
+          </SettingRow>
+          <SettingRow body={accountSafetyReason ?? copy.accountSafetyBody} label={copy.accountSafetyStatus}>
+            <div className="account-safety-live">
+              <strong>{accountSafetyStateLabel}</strong>
+              {accountSafety?.window_started_at ? (
+                <small>{copy.accountSafetyWindowStarted}: {new Date(accountSafety.window_started_at).toLocaleString(language)}</small>
+              ) : null}
+              {accountSafety?.remaining_ms !== undefined ? (
+                <small>{copy.accountSafetyRemaining}: {copy.accountSafetyMinutes.replace(
+                  "{minutes}",
+                  String(Math.max(0, Math.ceil(accountSafety.remaining_ms / 60_000))),
+                )}</small>
+              ) : null}
+            </div>
+          </SettingRow>
+        </div>
+        <div className="account-safety-actions">
+          <button
+            className="account-safety-action"
+            disabled={busy || snapshot.state.coreSetupComplete !== true || !accountSafetySettingsValid}
+            onClick={() => void applyAccountSafetySettings()}
+            type="button"
+          >{copy.applyAccountSafety}</button>
+          {accountSafety?.state === "PAUSED" ? (
+            <button
+              className="account-safety-action"
+              disabled={busy}
+              onClick={() => void recoverAccountSafety("resume")}
+              type="button"
+            >{copy.resumeAutomaticWeb}</button>
+          ) : null}
+          {accountSafety?.state === "HARD_STOP" ? (
+            <button
+              className="account-safety-action"
+              disabled={busy}
+              onClick={() => void recoverAccountSafety("acknowledge")}
+              type="button"
+            >{copy.acknowledgeAccountSafetyStop}</button>
+          ) : null}
+        </div>
+      </> : null}
 
       <SectionHeading label={copy.general} />
       <div className="settings-list">

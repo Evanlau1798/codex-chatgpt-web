@@ -15,6 +15,9 @@ export interface LauncherState {
   bridgeEnabled: boolean;
   useEnhancedWebSessionMode: boolean;
   useEnhancedOutputTunnel: boolean;
+  maxBrowserTabs: number;
+  automaticWebSessionLimitEnabled: boolean;
+  automaticWebSessionLimitMinutes: number;
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
   experimentalNoAutoCompact: boolean;
@@ -130,6 +133,14 @@ export interface LauncherSnapshot {
   update: UpdateState;
 }
 
+export interface AccountSafetyStatus {
+  state: "NORMAL" | "DRAINING" | "PAUSED" | "HARD_STOP";
+  reason?: "duration_limit" | "rate_limit" | "account_security";
+  window_started_at?: string;
+  remaining_ms?: number;
+  limit_minutes?: number;
+}
+
 export interface LauncherApi {
   snapshot(): Promise<LauncherSnapshot>;
   setLanguage(language: Language): Promise<LauncherState>;
@@ -157,6 +168,13 @@ export interface LauncherApi {
   cancelTurns(): Promise<{ stdout: string }>;
   setBridgeEnabled(enabled: boolean): Promise<LauncherState>;
   setUseEnhancedWebSessionMode(enabled: boolean): Promise<LauncherState>;
+  setAccountSafetySettings(input: {
+    maxBrowserTabs: number;
+    automaticWebSessionLimitMinutes?: number;
+  }): Promise<LauncherState>;
+  accountSafetyStatus(): Promise<AccountSafetyStatus>;
+  resumeAutomaticWeb(): Promise<AccountSafetyStatus>;
+  acknowledgeAccountSafetyStop(): Promise<AccountSafetyStatus>;
   setUseEnhancedOutputTunnel(enabled: boolean): Promise<LauncherState>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;

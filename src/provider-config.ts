@@ -55,6 +55,10 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       ),
       experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
+      ...(manual || config.maxBrowserTabs === undefined ? {} : { maxBrowserTabs: config.maxBrowserTabs }),
+      ...(manual || config.automaticWebSessionLimitMinutes === undefined
+        ? {}
+        : { automaticWebSessionLimitMinutes: config.automaticWebSessionLimitMinutes }),
       ...(config.experimentalNoAutoCompact ? { experimentalNoAutoCompact: true } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,
     },

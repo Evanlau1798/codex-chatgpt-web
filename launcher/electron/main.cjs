@@ -717,6 +717,21 @@ function registerIpc({ logger, stateStore }) {
     send("launcher:state-changed", state);
     return state;
   });
+  handle("launcher:account-safety-settings", async (_event, input) => {
+    const current = stateStore.read();
+    const result = await runtimeHost.setAccountSafetySettings(input);
+    const state = stateStore.update({
+      maxBrowserTabs: result.maxBrowserTabs,
+      automaticWebSessionLimitEnabled: result.automaticWebSessionLimitMinutes !== undefined,
+      automaticWebSessionLimitMinutes: result.automaticWebSessionLimitMinutes
+        ?? current.automaticWebSessionLimitMinutes,
+    });
+    send("launcher:state-changed", state);
+    return state;
+  });
+  handle("launcher:account-safety-status", async () => runtimeHost.accountSafetyStatus());
+  handle("launcher:account-safety-resume", async () => runtimeHost.resumeAutomaticWeb());
+  handle("launcher:account-safety-acknowledge", async () => runtimeHost.acknowledgeAccountSafetyStop());
   handle("launcher:bigger-context", async (_event, enabled) => {
     const result = await runtimeHost.setBiggerContext(enabled === true);
     const state = stateStore.update({

@@ -409,6 +409,14 @@ class RuntimeHost {
 
   setUseEnhancedWebSessionMode(...args) { return integrationOperations.setUseEnhancedWebSessionMode.apply(this, args); }
 
+  setAccountSafetySettings(...args) { return integrationOperations.setAccountSafetySettings.apply(this, args); }
+
+  accountSafetyStatus(...args) { return integrationOperations.accountSafetyStatus.apply(this, args); }
+
+  resumeAutomaticWeb(...args) { return integrationOperations.resumeAutomaticWeb.apply(this, args); }
+
+  acknowledgeAccountSafetyStop(...args) { return integrationOperations.acknowledgeAccountSafetyStop.apply(this, args); }
+
   setUseEnhancedOutputTunnel(...args) { return integrationOperations.setUseEnhancedOutputTunnel.apply(this, args); }
 
   mcpConnectorName(...args) { return integrationOperations.mcpConnectorName.apply(this, args); }

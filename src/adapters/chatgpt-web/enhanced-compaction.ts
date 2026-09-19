@@ -31,6 +31,7 @@ interface EnhancedCompactionOptions {
   nativeConnectorAvailable: boolean;
   abortSignal?: AbortSignal;
   timeoutMs?: number;
+  requireAutomaticAdmission?: (traceId: string) => void;
   startFallback: (traceId: string, signal: AbortSignal, onProgress: () => void, retainOwnershipUntil: (settlement: Promise<void>) => void) => Promise<string>;
   emit: (event: AdapterEvent) => void;
 }
@@ -40,7 +41,7 @@ export async function runEnhancedCompaction(
 ): Promise<"completed" | "rebuild"> {
   const {
     worker, parsed, broker, executionNamespace, capabilities, responseExecutionKey,
-    nativeConnectorAvailable, abortSignal, timeoutMs, startFallback, emit,
+    nativeConnectorAvailable, abortSignal, timeoutMs, requireAutomaticAdmission, startFallback, emit,
   } = options;
   if (!nativeConnectorAvailable) {
     throw new ChatGptWebAdapterError(
@@ -126,6 +127,7 @@ export async function runEnhancedCompaction(
       }
       raw ??= await requestRetainedCompactionHandoff(
         worker, parsed, source, broker, capabilities, traceId, operationSignal, handoffTimeoutMs,
+        requireAutomaticAdmission,
       );
       const canonical = canonicalizeCompactionHandoff(parsed, raw);
       if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");
@@ -175,6 +177,10 @@ export async function runEnhancedCompaction(
     return "completed";
   } catch (error) {
     if (abortSignal?.aborted) throw error;
+    if (error instanceof ChatGptWebAdapterError
+      && ["rate_limit_exceeded", "chatgpt_account_safety_stop", "chatgpt_account_safety_paused"].includes(error.code ?? "")) {
+      throw error;
+    }
     throw new ChatGptWebAdapterError(
       error instanceof Error ? error.message : String(error),
       { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_failed", retryable: false, cause: error },

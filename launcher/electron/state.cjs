@@ -16,6 +16,9 @@ const DEFAULT_STATE = Object.freeze({
   bridgeEnabled: true,
   useEnhancedWebSessionMode: true,
   useEnhancedOutputTunnel: true,
+  maxBrowserTabs: 6,
+  automaticWebSessionLimitEnabled: false,
+  automaticWebSessionLimitMinutes: 300,
   experimentalBiggerContext: false,
   experimentalSkillAttachments: false,
   experimentalNoAutoCompact: false,
@@ -68,6 +71,7 @@ function readState(filePath) {
       "bridgeEnabled",
       "useEnhancedWebSessionMode",
       "useEnhancedOutputTunnel",
+      "automaticWebSessionLimitEnabled",
       "experimentalBiggerContext",
       "experimentalSkillAttachments",
       "experimentalNoAutoCompact",
@@ -82,6 +86,14 @@ function readState(filePath) {
       "sidebarOpen",
     ]) {
       if (typeof state[key] !== "boolean") state[key] = DEFAULT_STATE[key];
+    }
+    if (!Number.isInteger(state.maxBrowserTabs) || state.maxBrowserTabs < 1 || state.maxBrowserTabs > 6) {
+      state.maxBrowserTabs = DEFAULT_STATE.maxBrowserTabs;
+    }
+    if (!Number.isInteger(state.automaticWebSessionLimitMinutes)
+      || state.automaticWebSessionLimitMinutes < 1
+      || state.automaticWebSessionLimitMinutes > 10_080) {
+      state.automaticWebSessionLimitMinutes = DEFAULT_STATE.automaticWebSessionLimitMinutes;
     }
     if (state.browserInteractionMode !== "automatic" && state.browserInteractionMode !== "manual") {
       state.browserInteractionMode = DEFAULT_STATE.browserInteractionMode;

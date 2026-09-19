@@ -111,6 +111,29 @@ test("runtime config validates the experimental no-auto-compact flag", () => {
   expect(() => loadConfig()).toThrow("Invalid experimentalNoAutoCompact");
 });
 
+test("runtime config validates Automatic Web account-safety boundaries", () => {
+  const root = join(tmpdir(), `codex-chatgpt-web-account-safety-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const path = join(root, "config.json");
+  const base = defaultConfig("browser-only");
+
+  for (const [maxBrowserTabs, automaticWebSessionLimitMinutes] of [[1, 1], [6, 10_080]] as const) {
+    writeFileSync(path, `${JSON.stringify({ ...base, maxBrowserTabs, automaticWebSessionLimitMinutes })}\n`);
+    expect(loadConfig()).toMatchObject({ maxBrowserTabs, automaticWebSessionLimitMinutes });
+  }
+
+  for (const maxBrowserTabs of [0, 7, 1.5]) {
+    writeFileSync(path, `${JSON.stringify({ ...base, maxBrowserTabs })}\n`);
+    expect(() => loadConfig()).toThrow("Invalid maxBrowserTabs");
+  }
+  for (const automaticWebSessionLimitMinutes of [0, 10_081, 1.5]) {
+    writeFileSync(path, `${JSON.stringify({ ...base, automaticWebSessionLimitMinutes })}\n`);
+    expect(() => loadConfig()).toThrow("Invalid automaticWebSessionLimitMinutes");
+  }
+});
+
 test("enhanced Web session mode migrates the legacy key and rejects conflicting values", () => {
   const root = join(tmpdir(), `codex-chatgpt-web-enhanced-mode-${process.pid}-${Date.now()}`);
   roots.push(root);
@@ -258,6 +281,23 @@ test("launcher browser ownership is explicit in provider configuration", () => {
     solAvailable: true,
     stallTimeoutSec: 900,
   });
+});
+
+test("automatic Web account-safety settings reach the browser provider", () => {
+  const config = defaultConfig("browser-only") as ReturnType<typeof defaultConfig> & {
+    maxBrowserTabs?: number;
+    automaticWebSessionLimitMinutes?: number;
+  };
+  config.maxBrowserTabs = 3;
+  config.automaticWebSessionLimitMinutes = 300;
+  expect(providerConfig(config).chatgptWeb).toMatchObject({
+    maxBrowserTabs: 3,
+    automaticWebSessionLimitMinutes: 300,
+  });
+
+  config.browserInteractionMode = "manual";
+  config.appName = config.manualAppName;
+  expect(providerConfig(config).chatgptWeb).not.toHaveProperty("automaticWebSessionLimitMinutes");
 });
 
 test("experimental no-auto-compact reaches browser wait policy", () => {

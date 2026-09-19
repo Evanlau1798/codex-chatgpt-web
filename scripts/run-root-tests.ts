@@ -1,4 +1,5 @@
-import { readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 
 const projectRoot = resolve(import.meta.dir, "..");
@@ -18,28 +19,37 @@ export function shouldRetryBunCrash(exitCode: number, attempt: number): boolean 
 export function rootTestEnvironment(
   platform = process.platform,
   environment: Record<string, string | undefined> = process.env,
+  testHome?: string,
 ): Record<string, string | undefined> {
-  return platform === "darwin" ? { ...environment, TMPDIR: "/tmp" } : environment;
+  const isolatedHome = testHome ?? mkdtempSync(join(tmpdir(), "codex-chatgpt-web-root-test-"));
+  const isolated = { ...environment, CODEX_CHATGPT_WEB_HOME: isolatedHome };
+  return platform === "darwin" ? { ...isolated, TMPDIR: "/tmp" } : isolated;
 }
 
 async function runFile(file: string): Promise<void> {
   const displayPath = relative(projectRoot, file);
   for (let attempt = 1; ; attempt += 1) {
     process.stdout.write(`\n[root-tests] ${displayPath}${attempt > 1 ? ` (runtime retry ${attempt - 1})` : ""}\n`);
-    const child = Bun.spawn([
-      process.execPath,
-      "test",
-      "--no-orphans",
-      "--path-ignore-patterns=tmp",
-      displayPath,
-    ], {
-      cwd: projectRoot,
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-      env: rootTestEnvironment(),
-    });
-    const exitCode = await child.exited;
+    const testHome = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-root-test-"));
+    let exitCode: number;
+    try {
+      const child = Bun.spawn([
+        process.execPath,
+        "test",
+        "--no-orphans",
+        "--path-ignore-patterns=tmp",
+        displayPath,
+      ], {
+        cwd: projectRoot,
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+        env: rootTestEnvironment(process.platform, process.env, testHome),
+      });
+      exitCode = await child.exited;
+    } finally {
+      rmSync(testHome, { recursive: true, force: true });
+    }
     if (exitCode === 0) return;
     if (!shouldRetryBunCrash(exitCode, attempt)) {
       throw new Error(`Root test file failed (${exitCode}): ${displayPath}`);

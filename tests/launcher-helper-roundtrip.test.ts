@@ -33,6 +33,12 @@ test("daemon streams browser lifecycle through the real helper process", async (
       turn.onReasoningSummary("Reading project");
       turn.onReasoningSummary(" files", true);
       turn.onTextDelta("done");
+      const safetyRetry = await turn.retryPromptForAnswer?.("initial Luna answer", 1);
+      if (typeof safetyRetry === "string"
+        || safetyRetry?.text !== "finish safely"
+        || safetyRetry.allowLunaCheckpointRetry !== true) {
+        throw new Error("Luna safety retry allowance was lost across helper IPC");
+      }
       if (turn.captureLunaCheckpoint) turn.onLunaCheckpoint({
         answerHash: "a".repeat(64),
         checkpoint: {
@@ -104,6 +110,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
       onSubmitted: () => { submitted = true; },
       onReasoningSummary: (text, continuation) => reasoning.push({ text, continuation: continuation === true }),
       onTextDelta: text => deltas.push(text),
+      retryPromptForAnswer: () => ({ text: "finish safely", allowLunaCheckpointRetry: true }),
       captureLunaCheckpoint: true,
       onLunaCheckpoint: checkpoint => checkpoints.push(checkpoint),
     });

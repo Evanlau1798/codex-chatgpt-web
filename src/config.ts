@@ -432,6 +432,16 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && (!Number.isFinite(parsed.stallTimeoutSec) || parsed.stallTimeoutSec <= 0)) {
     throw new Error(`Invalid stallTimeoutSec in ${path}`);
   }
+  if (parsed.maxBrowserTabs !== undefined
+    && (!Number.isInteger(parsed.maxBrowserTabs) || parsed.maxBrowserTabs < 1 || parsed.maxBrowserTabs > 6)) {
+    throw new Error(`Invalid maxBrowserTabs in ${path}`);
+  }
+  if (parsed.automaticWebSessionLimitMinutes !== undefined
+    && (!Number.isInteger(parsed.automaticWebSessionLimitMinutes)
+      || parsed.automaticWebSessionLimitMinutes < 1
+      || parsed.automaticWebSessionLimitMinutes > 10_080)) {
+    throw new Error(`Invalid automaticWebSessionLimitMinutes in ${path}`);
+  }
   const solAvailable = parsed.solAvailable !== false;
   const extraHighAvailable = parsed.extraHighAvailable === true;
   const proAvailable = parsed.proAvailable === true;

@@ -738,6 +738,80 @@ test("launcher helper preserves structured replacement retries for completion ev
   }]);
 });
 
+test("launcher helper preserves the Luna safety retry allowance across the process boundary", async () => {
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
+    storageStatePath: "/durable/unused-state.json", chromeExecutablePath: "/durable/chrome",
+    turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
+  });
+  const sent: unknown[] = [];
+  const internal = client as unknown as {
+    child?: unknown;
+    pending: Map<string, { turn: BrowserTurn; resolve: (value: string) => void; reject: (error: Error) => void }>;
+    handleLine(child: unknown, line: string): void;
+    send(message: unknown): Promise<void>;
+  };
+  const child = {};
+  internal.child = child;
+  internal.send = async message => { sent.push(message); };
+  internal.pending.set("luna-safety-retry-123", {
+    turn: {
+      traceId: "luna-safety-retry-123", modelId: "gpt-5.6-luna",
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
+      prepare: async () => ({ text: "inspect", images: [], release() {} }), onTextDelta() {},
+      retryPromptForAnswer: () => ({ text: "finish safely", allowLunaCheckpointRetry: true }),
+    },
+    resolve() {}, reject() {},
+  });
+
+  internal.handleLine(child, JSON.stringify({
+    type: "event", id: "luna-safety-retry-123", event: "answer", text: "initial answer", attempt: 1,
+  }));
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  expect(sent).toEqual([{
+    type: "answer_retry", id: "luna-safety-retry-123",
+    prompt: "finish safely", allowLunaCheckpointRetry: true,
+  }]);
+});
+
+test("Luna safety retries require an explicitly compatible launcher helper", async () => {
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
+    storageStatePath: "/durable/unused-state.json", chromeExecutablePath: "/durable/chrome",
+    turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
+  });
+  const internal = client as unknown as {
+    child: unknown;
+    helperFeatures: Set<string>;
+    ensureChild(): Promise<void>;
+    handleLine(child: unknown, line: string): void;
+    send(message: unknown): Promise<void>;
+  };
+  const child = {};
+  internal.child = child;
+  internal.helperFeatures = new Set(["answer-before-completion"]);
+  internal.ensureChild = async () => {};
+  const sent: unknown[] = [];
+  internal.send = async message => {
+    sent.push(message);
+    const frame = message as { type?: string; id?: string };
+    if (frame.type === "run" && frame.id) queueMicrotask(() => internal.handleLine(child, JSON.stringify({
+      type: "result", id: frame.id, text: "old helper accepted the turn",
+    })));
+  };
+
+  await expect(client.run({
+    traceId: "luna-old-helper-123", modelId: "gpt-5.6-luna", reasoning: "medium",
+    capabilities: { localToolsEnabled: false, solAvailable: false, proAvailable: false },
+    prepare: async () => ({ text: "inspect", images: [], release() {} }),
+    onTextDelta() {},
+    captureLunaCheckpoint: true,
+    retryPromptForAnswer: () => ({ text: "finish safely", allowLunaCheckpointRetry: true }),
+  })).rejects.toThrow("does not support Luna safety retries");
+  expect(sent).toEqual([]);
+});
+
 test("launcher helper preserves retry submission acknowledgement across the process boundary", async () => {
   const client = new LauncherBrowserHelperClient({
     appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",

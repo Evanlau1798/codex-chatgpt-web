@@ -113,8 +113,15 @@ test.each([false, true])("activation failure retains structured error classifica
   const f = fixture("none");
   let visible = false;
   const locator = f.page.locator;
-  const dialog = {
+  const dialogText = "Too many requests. You're making requests too quickly.";
+  const hiddenDialog = {
     filter() { return this; }, last() { return this; },
+    isVisible: async () => false,
+    getByRole: () => ({ last: () => ({ isVisible: async () => false, press: async () => {} }) }),
+  };
+  const dialog = {
+    filter({ hasText }: { hasText?: RegExp }) { return hasText?.test(dialogText) === false ? hiddenDialog : this; },
+    last() { return this; },
     isVisible: async () => visible,
     getByRole: () => ({ last: () => ({ isVisible: async () => visible, press: async () => { visible = false; } }) }),
   };

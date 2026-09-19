@@ -77,7 +77,7 @@ test("the daemon prefers the browser helper that shipped beside its own entrypoi
 
   // Belt and braces: negotiate the frame, and never treat an unrecognised frame as a run.
   expect(client).toContain("this.helperFeatures,");
-  expect(helper).toContain('"answer-before-completion", "tunneled-output-v1"');
+  expect(helper).toContain('"answer-before-completion", "luna-safety-retry-v1", "tunneled-output-v1"');
   expect(helper).toMatch(/message\.type === "run"/);
   expect(helper).toContain("Browser helper received an unsupported message type");
 

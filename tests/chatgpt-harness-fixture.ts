@@ -10,6 +10,7 @@ import type { CodexParsedRequest, CodexTool } from "../src/types";
 
 export const tempRoot = join(tmpdir(), `codex-chatgpt-web-harness-${process.pid}-${Date.now()}`);
 mkdirSync(tempRoot, { recursive: true });
+process.env.CODEX_CHATGPT_WEB_HOME = join(tempRoot, "home");
 afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
 
 export const tools: CodexTool[] = [

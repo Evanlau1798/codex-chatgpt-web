@@ -83,6 +83,10 @@ export interface AppConfig {
   zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */
   stallTimeoutSec?: number;
+  /** Optional launcher-owned ceiling for concurrent Automatic Web browser turns. */
+  maxBrowserTabs?: number;
+  /** Optional local wall-clock budget for one continuous Automatic Web usage window. */
+  automaticWebSessionLimitMinutes?: number;
   autoApproveToolCalls: boolean;
   controlToken: string;
   runtimeCommand: string[];

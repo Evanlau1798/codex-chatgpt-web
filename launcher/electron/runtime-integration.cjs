@@ -279,6 +279,90 @@ module.exports = {
     }
   },
 
+  async setAccountSafetySettings(input) {
+    if (!input || typeof input !== "object") throw new Error("Account safety settings are invalid");
+    const maxBrowserTabs = input.maxBrowserTabs;
+    const automaticWebSessionLimitMinutes = input.automaticWebSessionLimitMinutes;
+    if (!Number.isInteger(maxBrowserTabs) || maxBrowserTabs < 1 || maxBrowserTabs > 6) {
+      throw new Error("Maximum concurrent Web turns must be an integer from 1 to 6");
+    }
+    if (automaticWebSessionLimitMinutes !== undefined
+      && (!Number.isInteger(automaticWebSessionLimitMinutes)
+        || automaticWebSessionLimitMinutes < 1
+        || automaticWebSessionLimitMinutes > 10_080)) {
+      throw new Error("Automatic Web session limit must be an integer from 1 to 10080 minutes");
+    }
+    const name = "account-safety-settings-change";
+    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured || current.owner !== "launcher") {
+      throw new Error("Install the launcher-owned runtime before changing account safety settings");
+    }
+    if (current.config.maxBrowserTabs === maxBrowserTabs
+      && current.config.automaticWebSessionLimitMinutes === automaticWebSessionLimitMinutes) {
+      return { maxBrowserTabs, automaticWebSessionLimitMinutes };
+    }
+    if (typeof this.supervisor.configPath !== "string" || !path.isAbsolute(this.supervisor.configPath)) {
+      throw new Error("Launcher runtime supervisor has no absolute configuration path");
+    }
+
+    this.lifecycleOperation = name;
+    const previous = fs.readFileSync(this.supervisor.configPath, "utf8");
+    try {
+      await this.supervisor.stopForSetup();
+      try {
+        const next = { ...current.config, maxBrowserTabs };
+        if (automaticWebSessionLimitMinutes === undefined) delete next.automaticWebSessionLimitMinutes;
+        else next.automaticWebSessionLimitMinutes = automaticWebSessionLimitMinutes;
+        writePrivateFileAtomic(this.supervisor.configPath, `${JSON.stringify(next, null, 2)}\n`);
+        const runtime = await this.supervisor.startIfConfigured();
+        if (runtime.status !== "ready") {
+          throw new Error(`Local runtime is ${runtime.status}${runtime.detail ? `: ${runtime.detail}` : ""}`);
+        }
+        return { maxBrowserTabs, automaticWebSessionLimitMinutes };
+      } catch (error) {
+        let recoveryError;
+        try {
+          writePrivateFileAtomic(this.supervisor.configPath, previous);
+          const runtime = await this.supervisor.startIfConfigured();
+          if (runtime.status !== "ready") {
+            throw new Error(`runtime recovery returned ${runtime.status}${runtime.detail ? `: ${runtime.detail}` : ""}`);
+          }
+        } catch (caught) {
+          recoveryError = caught;
+        }
+        if (!recoveryError) throw error;
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}; restoring the previous account safety settings also failed:`
+          + ` ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
+        );
+      }
+    } finally {
+      this.lifecycleOperation = null;
+    }
+  },
+
+  async accountSafetyStatus() {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured || current.owner !== "launcher") throw new Error("Launcher runtime is not configured");
+    const result = await this.supervisor.control(current.config, "account-safety-status");
+    return result.account_safety;
+  },
+
+  async resumeAutomaticWeb() {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured || current.owner !== "launcher") throw new Error("Launcher runtime is not configured");
+    const result = await this.supervisor.control(current.config, "account-safety-resume");
+    return result.account_safety;
+  },
+
+  async acknowledgeAccountSafetyStop() {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured || current.owner !== "launcher") throw new Error("Launcher runtime is not configured");
+    const result = await this.supervisor.control(current.config, "account-safety-acknowledge");
+    return result.account_safety;
+  },
+
   setUseEnhancedOutputTunnel(enabled) {
     return setRuntimeBooleanSetting(this, "useEnhancedOutputTunnel", enabled, {
       name: "enhanced-output-tunnel-change", label: "Enhanced output tunneling",

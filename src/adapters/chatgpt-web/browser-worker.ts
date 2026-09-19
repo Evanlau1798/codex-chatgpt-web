@@ -293,6 +293,23 @@ const chatGptRateLimitDialog = (page: Page): Locator => page.locator('[role="dia
   .last();
 
 export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
+  const accountSafetyAlert = page.locator('[role="dialog"]')
+    .filter({
+      hasText: /Suspicious activity detected|偵測到可疑活動|检测到可疑活动|不審なアクティビティが検出されました|의심스러운 활동이 감지되었습니다/i,
+    })
+    .last();
+  if (await accountSafetyAlert.isVisible().catch(() => false)) {
+    throw new ChatGptWebAdapterError(
+      "ChatGPT reported suspicious activity. Automatic Web is stopped until you acknowledge the account-safety warning.",
+      {
+        status: 403,
+        errorType: "authentication_error",
+        code: "chatgpt_account_safety_stop",
+        retryable: false,
+        retireSession: true,
+      },
+    );
+  }
   const dialog = chatGptRateLimitDialog(page);
   if (!await dialog.isVisible().catch(() => false)) return;
 
@@ -800,9 +817,10 @@ export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBro
     headed: configured.headed !== false,
     autoApproveToolCalls: configured.autoApproveToolCalls === true,
     experimentalNoAutoCompact: configured.experimentalNoAutoCompact === true,
-    maxBrowserTabs: configured.useEnhancedWebSessionMode === true
-      ? MAX_CHATGPT_BROWSER_TABS
-      : ORIGINAL_CHATGPT_BROWSER_TABS,
+    maxBrowserTabs: Math.min(
+      configured.maxBrowserTabs ?? MAX_CHATGPT_BROWSER_TABS,
+      configured.useEnhancedWebSessionMode === true ? MAX_CHATGPT_BROWSER_TABS : ORIGINAL_CHATGPT_BROWSER_TABS,
+    ),
   };
 }
 
@@ -4118,7 +4136,9 @@ export class ChatGptBrowserWorker {
           if (deliverable) turn.onTextDelta(deliverable);
           break;
         }
-        if (turn.captureLunaCheckpoint) throw new Error("ChatGPT Luna checkpoint turns cannot retry their final answer");
+        if (turn.captureLunaCheckpoint && retryPrompt.allowLunaCheckpointRetry !== true) {
+          throw new Error("ChatGPT Luna checkpoint turns cannot retry their final answer");
+        }
         responsePrompt = retryPrompt.text;
         answerBuffer.retryReplacement();
         retrySubmitted = retryPrompt.onSubmitted;

@@ -16,6 +16,8 @@ export interface ChatGptRetryPrompt {
   onSubmitted?: () => void;
   /** Discard an uncommitted candidate from the failed response instead of concatenating it. */
   replaceCandidate?: boolean;
+  /** Internal account-safety continuation selected before a Luna checkpoint is finalized. */
+  allowLunaCheckpointRetry?: boolean;
 }
 type AnswerRetryValue = string | ChatGptRetryPrompt | undefined;
 type AnswerRetry = (answer: string, attempt: number) => AnswerRetryValue | Promise<AnswerRetryValue>;

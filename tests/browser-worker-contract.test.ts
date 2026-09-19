@@ -501,6 +501,16 @@ test("enhanced Web session mode alone raises browser concurrency from five to si
   }).maxBrowserTabs).toBe(6);
 });
 
+test("configured Automatic Web concurrency respects Standard and Enhanced ceilings", () => {
+  const provider = { adapter: "chatgpt-web" as const, baseUrl: "browser://chatgpt" };
+  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 3 } }).maxBrowserTabs).toBe(3);
+  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 6 } }).maxBrowserTabs).toBe(5);
+  expect(resolveBrowserConfig({
+    ...provider,
+    chatgptWeb: { maxBrowserTabs: 6, useEnhancedWebSessionMode: true },
+  }).maxBrowserTabs).toBe(6);
+});
+
 test("active composer resolution waits for exactly one visible editor", async () => {
   const composer = { id: "active" };
   const counts = [2, 1];
@@ -1335,6 +1345,7 @@ test("Luna-only browser turns verify selector absence instead of opening an effo
   const mode = await selectModelAndEffort.call({
     activeComposer: async () => composer,
   }, {
+    getByText: () => hiddenDialog,
     locator: () => hiddenDialog,
   }, "gpt-5.6-luna", "low", {
     localToolsEnabled: true,
@@ -1394,6 +1405,35 @@ test("the known ChatGPT rate-limit dialog is acknowledged and returns a structur
     retireSession: true,
   });
   expect(fixture.pressed).toEqual(["Enter"]);
+});
+
+test("a suspicious-activity protection dialog returns a structured hard stop", async () => {
+  const fixture = dialogPage("Suspicious activity detected. Please try again later.");
+
+  await expect(throwIfChatGptRateLimitDialog(fixture.page)).rejects.toMatchObject({
+    name: "ChatGptWebAdapterError",
+    status: 403,
+    code: "chatgpt_account_safety_stop",
+    retryable: false,
+    retireSession: true,
+  });
+});
+
+test("localized suspicious-activity protection dialogs return the same hard stop", async () => {
+  for (const text of [
+    "偵測到可疑活動。請稍後再試。",
+    "检测到可疑活动。请稍后再试。",
+    "不審なアクティビティが検出されました。しばらくしてからもう一度お試しください。",
+    "의심스러운 활동이 감지되었습니다. 나중에 다시 시도해 주세요.",
+  ]) {
+    const fixture = dialogPage(text);
+    await expect(throwIfChatGptRateLimitDialog(fixture.page)).rejects.toMatchObject({
+      status: 403,
+      code: "chatgpt_account_safety_stop",
+      retryable: false,
+      retireSession: true,
+    });
+  }
 });
 
 test("the Traditional Chinese ChatGPT rate-limit dialog returns the same structured 429", async () => {
@@ -1574,6 +1614,7 @@ test("effort menu waiting stops when ChatGPT reports an expired session", async 
   const selection = selectModelAndEffort.call({
     activeComposer: async () => composer,
   }, {
+    getByText: () => hiddenDialog,
     locator: (selector: string) => {
       if (selector.includes('[role="alert"]')) return sessionAlert;
       if (selector.includes('[role="menu"]') || selector.includes("composer-intelligence-picker-content")) return effortMenu;

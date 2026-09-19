@@ -37,7 +37,7 @@ type MaintenanceMessage =
   | { type: "smoke"; id: string; config: { appName: string; browserHostDescriptorPath: string } };
 
 export type BrowserHelperInputMessage = BrowserHelperRunMessage | MaintenanceMessage
-  | { type: "answer_retry"; id: string; prompt?: string; acknowledge?: boolean; replaceCandidate?: boolean }
+  | { type: "answer_retry"; id: string; prompt?: string; acknowledge?: boolean; replaceCandidate?: boolean; allowLunaCheckpointRetry?: boolean }
   | { type: "prepared_selected_ack"; id: string; prepared: CompiledChatGptWebPrompt }
   | { type: "send_activated_ack"; id: string }
   | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision: number | null }

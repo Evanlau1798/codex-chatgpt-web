@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildResponseJSON } from "../src/bridge";
 import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
+import { ChatGptAccountSafety } from "../src/adapters/chatgpt-web/account-safety";
 import { ChatGptCompletionTracker, chatGptImageFilePayloads, chatGptPromptFilePayloads, chatGptTurnIsComplete } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_TURN_REVISION_CONFLICT_MESSAGE, extractChatGptTurnEnvironment, extractChatGptTurnIdentity, extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
@@ -14,7 +15,6 @@ import { CHATGPT_WEB_ADAPTER_HEARTBEAT_MS, chatGptWebExecutionNamespace, chatGpt
 import { chatGptHtmlToMarkdown, ChatGptMarkdownBuffer } from "../src/adapters/chatgpt-web/markdown";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt, withoutSupersededModelSwitchContracts } from "../src/adapters/chatgpt-web/prompt";
-import { MAX_CHATGPT_WEB_TURN_RETRIES } from "../src/adapters/chatgpt-web/retry-policy";
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions, chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { ChatGptExternalTurnProgress, ChatGptMirroredTurnProgress, chatGptExternalProgressIsLive } from "../src/adapters/chatgpt-web/turn-progress";
@@ -857,8 +857,10 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
-  test("caps automatic rate-limit browser sends at three retries for one native turn", async () => {
+  test("a rate-limit browser failure pauses Automatic Web without retrying the native turn", async () => {
     const socketPath = brokerTestEndpoint(`cgw-h4-retry-budget-${process.pid}-${Date.now()}`);
+    const safetyPath = join(tempRoot, `account-safety-rate-limit-${process.pid}-${Date.now()}.json`);
+    const accountSafety = new ChatGptAccountSafety(safetyPath);
     const provider: CodexProviderConfig = {
       adapter: "chatgpt-web",
       baseUrl: `browser://chatgpt-retry-budget-${Date.now()}`,
@@ -873,29 +875,35 @@ describe("ChatGPT outer-native harness v4", () => {
         status: 429,
         errorType: "rate_limit_error",
         code: "rate_limit_exceeded",
-        retryable: true,
+        retryable: false,
       });
     };
     try {
-      for (let attempt = 0; attempt < MAX_CHATGPT_WEB_TURN_RETRIES + 2; attempt += 1) {
-        const events: AdapterEvent[] = [];
-        await createChatGptWebAdapter(provider).runTurn!(
-          rawWireRequest(environmentXml),
-          { headers: new Headers() },
-          event => events.push(event),
-        );
-        const error = events.at(-1);
-        expect(error).toMatchObject({ type: "error", code: "rate_limit_exceeded" });
-        expect((error as Extract<AdapterEvent, { type: "error" }>).retryable)
-          .toBe(attempt < MAX_CHATGPT_WEB_TURN_RETRIES);
-        if (attempt === MAX_CHATGPT_WEB_TURN_RETRIES) {
-          expect((error as Extract<AdapterEvent, { type: "error" }>).message)
-            .toContain("Try again in a few minutes.");
-        }
-      }
-      expect(browserStarts).toBe(MAX_CHATGPT_WEB_TURN_RETRIES + 1);
+      const adapter = createChatGptWebAdapter(provider, { accountSafety });
+      const firstEvents: AdapterEvent[] = [];
+      await adapter.runTurn!(
+        rawWireRequest(environmentXml),
+        { headers: new Headers() },
+        event => firstEvents.push(event),
+      );
+      expect(firstEvents.at(-1)).toMatchObject({ type: "error", code: "rate_limit_exceeded", retryable: false });
+      expect(browserStarts).toBe(1);
+
+      const blockedEvents: AdapterEvent[] = [];
+      await adapter.runTurn!(
+        rawWireRequest(environmentXml),
+        { headers: new Headers() },
+        event => blockedEvents.push(event),
+      );
+      expect(blockedEvents.at(-1)).toMatchObject({
+        type: "error",
+        code: "chatgpt_account_safety_paused",
+        retryable: false,
+      });
+      expect(browserStarts).toBe(1);
     } finally {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      rmSync(safetyPath, { force: true });
       await TurnBroker.forSocket(socketPath).close();
     }
   });

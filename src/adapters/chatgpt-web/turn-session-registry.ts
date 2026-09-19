@@ -412,6 +412,36 @@ export class ChatGptTurnSessions {
     return active;
   }
 
+  activeTraceIds(): string[] {
+    this.prune();
+    return [...new Set([...this.entries.values()]
+      .filter(session => session.isActive() && session.traceId)
+      .map(session => session.traceId!))];
+  }
+
+  steerTrace(traceId: string, instruction: string): boolean {
+    this.prune();
+    const target = [...this.entries.values()].find(session => (
+      session.traceId === traceId
+      && session.isActive()
+      && session.runtime.steering !== undefined
+      && session.canAcceptSteering()
+    ));
+    return target?.queueSteering(instruction) === true;
+  }
+
+  steerSafetyTrace(traceId: string, instruction: string): boolean {
+    this.prune();
+    const target = [...this.entries.values()].find(session => (
+      session.traceId === traceId && session.isActive()
+    ));
+    if (!target) return false;
+    if (target.runtime.steering !== undefined && target.canAcceptSteering()) {
+      return target.queueSteering(instruction);
+    }
+    return target.runtime.safetySteering?.(instruction) === true;
+  }
+
   private prune(): void {
     const cutoff = Date.now() - this.ttlMs;
     for (const [key, session] of this.entries) {

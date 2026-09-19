@@ -4,6 +4,7 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatGptWebTraceId } from "../src/adapters/chatgpt-web";
+import { chatGptAccountSafety } from "../src/adapters/chatgpt-web/account-safety";
 import { runStructuredCompactionOnce } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { callTurnBroker, closeTurnBrokers, RemoteTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
@@ -599,6 +600,40 @@ test("authenticated cancel-all aborts fresh structured compaction work", async (
     expect(aborted).toBeTrue();
   } finally {
     await server.stop(true);
+  }
+});
+
+test.serial("authenticated account-safety control exposes status and recovery actions", async () => {
+  const safetyHome = mkdtempSync(join(tmpdir(), "cgw-server-safety-"));
+  const previousSafetyHome = process.env.CODEX_CHATGPT_WEB_HOME;
+  process.env.CODEX_CHATGPT_WEB_HOME = safetyHome;
+  const config = { ...defaultConfig("browser-only"), port: 0 } as ReturnType<typeof defaultConfig> & {
+    automaticWebSessionLimitMinutes?: number;
+  };
+  config.automaticWebSessionLimitMinutes = 300;
+  const server = startServer(config);
+  try {
+    const headers = { authorization: `Bearer ${config.controlToken}` };
+    const status = await fetch(`http://127.0.0.1:${server.port}/admin/account-safety-status`, {
+      method: "POST", headers,
+    });
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({
+      status: "ok",
+      account_safety: { state: "NORMAL", limit_minutes: 300 },
+    });
+
+    chatGptAccountSafety().trigger("rate_limit", []);
+    const resumed = await fetch(`http://127.0.0.1:${server.port}/admin/account-safety-resume`, {
+      method: "POST", headers,
+    });
+    expect(resumed.status).toBe(200);
+    expect(await resumed.json()).toMatchObject({ status: "ok", account_safety: { state: "NORMAL" } });
+  } finally {
+    await server.stop(true);
+    if (previousSafetyHome === undefined) delete process.env.CODEX_CHATGPT_WEB_HOME;
+    else process.env.CODEX_CHATGPT_WEB_HOME = previousSafetyHome;
+    rmSync(safetyHome, { recursive: true, force: true });
   }
 });
 

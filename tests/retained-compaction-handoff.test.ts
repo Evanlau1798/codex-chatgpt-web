@@ -43,6 +43,34 @@ test("structured handoff ignores browser text and uses only the control result",
   expect(turn?.compaction).toBeTrue();
 });
 
+test("retained handoff rechecks automatic admission immediately before browser start", async () => {
+  let runs = 0;
+  let blocked: unknown;
+  const worker = { run: async () => {
+    runs += 1;
+    return "unexpected browser start";
+  } };
+  const broker = {
+    beginCompactionTransaction: async () => ({ token: "control", handoffId: "handoff" }),
+    waitForCompactionHandoff: async () => "unexpected checkpoint",
+    abortCompactionTransaction() {},
+  } as unknown as TurnBroker;
+
+  try {
+    await requestRetainedCompactionHandoff(
+      worker as never, parsed, source(), broker,
+      { localToolsEnabled: true, solAvailable: true, proAvailable: true }, "trace_blocked",
+      undefined, undefined,
+      targetTraceId => { throw new Error(`blocked ${targetTraceId}`); },
+    );
+  } catch (error) {
+    blocked = error;
+  }
+
+  expect(runs).toBe(0);
+  expect(blocked).toMatchObject({ message: "blocked trace_blocked" });
+});
+
 test("handoff deadline aborts and cleans up a cooperating browser", async () => {
   let cleaned = false;
   const worker = { run: (turn: BrowserTurn) => new Promise<string>((_resolve, reject) => {

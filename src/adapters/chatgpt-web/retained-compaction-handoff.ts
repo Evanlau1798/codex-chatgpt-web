@@ -26,6 +26,7 @@ export async function requestRetainedCompactionHandoff(
   traceId: string,
   signal?: AbortSignal,
   timeoutMs = MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+  requireAutomaticAdmission?: (traceId: string) => void,
 ): Promise<string> {
   const conversationKey = source.conversationKey();
   if (!conversationKey) throw new RetainedCompactionSourceUnavailableError();
@@ -57,6 +58,7 @@ export async function requestRetainedCompactionHandoff(
     );
     const instruction = structuredCompactionHandoffInstruction(transaction);
     const prepare = async () => ({ text: instruction, images: [], release: () => {} });
+    requireAutomaticAdmission?.(traceId);
     browser = worker.run({
       traceId,
       modelId: parsed.modelId,

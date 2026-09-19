@@ -8,6 +8,13 @@ function runtimePreferenceState(config) {
     zeroRiskProEnabled: config.zeroRiskProEnabled === true,
     useEnhancedWebSessionMode: config.useEnhancedWebSessionMode === true,
     useEnhancedOutputTunnel: config.useEnhancedOutputTunnel !== false,
+    maxBrowserTabs: Number.isInteger(config.maxBrowserTabs)
+      ? config.maxBrowserTabs
+      : config.useEnhancedWebSessionMode === true ? 6 : 5,
+    automaticWebSessionLimitEnabled: Number.isInteger(config.automaticWebSessionLimitMinutes),
+    automaticWebSessionLimitMinutes: Number.isInteger(config.automaticWebSessionLimitMinutes)
+      ? config.automaticWebSessionLimitMinutes
+      : 300,
     experimentalBiggerContext: config.browserInteractionMode !== "manual"
       && config.experimentalBiggerContext === true,
     experimentalSkillAttachments: config.browserInteractionMode !== "manual"

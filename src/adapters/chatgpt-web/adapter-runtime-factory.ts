@@ -115,10 +115,12 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     const trace = new ChatGptTraceFeed();
     const text = new ChatGptTextFeed();
     const externalProgress = new ChatGptExternalTurnProgress();
-    const steering = captureLunaCheckpoint || !useEnhancedWebSessionMode ? undefined : new ChatGptSteeringFeed();
-    const finalAnswerAdmission = steering ? {
-      seal: () => steering.sealCompletion(),
-      reopen: () => steering.reopenCompletion(),
+    const steering = captureLunaCheckpoint ? undefined : new ChatGptSteeringFeed();
+    const lunaSafetySteering = captureLunaCheckpoint ? new ChatGptSteeringFeed() : undefined;
+    const finalAnswerAdmissionFeed = steering ?? lunaSafetySteering;
+    const finalAnswerAdmission = finalAnswerAdmissionFeed ? {
+      seal: () => finalAnswerAdmissionFeed.sealCompletion(),
+      reopen: () => finalAnswerAdmissionFeed.reopenCompletion(),
     } : undefined;
     let activeToken: string | undefined;
     let browserOwnerSettled = false;
@@ -149,7 +151,22 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     }
     const releaseRetainedConversation = retainedConversationRelease(provider, conversationKey);
     const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
-    const taskAnswerRetry = parsed._compactionRequest || !steering ? evidenceRetry : browserSteeringRetry(steering, traceId, evidenceRetry, () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined, isClaudeClientSession(checkpointInput.parsed));
+    const takeBrokerSteering = useEnhancedWebSessionMode
+      ? () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined
+      : undefined;
+    const lunaSafetyRetry = lunaSafetySteering
+      ? async (answer: string, attempt: number) => {
+          const pending = lunaSafetySteering.peek();
+          if (!pending) return evidenceRetry?.(answer, attempt);
+          lunaSafetySteering.take(pending.count);
+          return { text: pending.text, allowLunaCheckpointRetry: true };
+        }
+      : undefined;
+    const taskAnswerRetry = parsed._compactionRequest
+      ? evidenceRetry
+      : steering
+        ? browserSteeringRetry(steering, traceId, evidenceRetry, takeBrokerSteering, isClaudeClientSession(checkpointInput.parsed))
+        : lunaSafetyRetry ?? evidenceRetry;
     const retryPromptForAnswer = taskAnswerRetry ? (answer: string, attempt: number) => (
       chatGptTurnSessions.find(runtimeExecutionKey)?.runtime.compactionRequested
         ? undefined : taskAnswerRetry(answer, attempt)
@@ -204,6 +221,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         trace,
         text, conversationKey,
         ...(steering ? { steering } : {}),
+        ...(lunaSafetySteering ? { safetySteering: (instruction: string) => lunaSafetySteering.push(instruction) } : {}),
         usageInput: checkpointInput.parsed,
         submission,
         cancel: () => browserAbort.abort(),
@@ -303,6 +321,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       text, conversationKey,
       externalProgress,
       ...(steering ? { steering } : {}),
+      ...(lunaSafetySteering ? { safetySteering: (instruction: string) => lunaSafetySteering.push(instruction) } : {}),
       usageInput: checkpointInput.parsed,
       submission,
       onToolResultDelivered: result => {
