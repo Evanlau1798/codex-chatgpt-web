@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -6,6 +6,9 @@ import { defaultBrokerEndpoint } from "../src/config";
 import { VERSION } from "../src/version";
 
 const require = createRequire(import.meta.url);
+const { renameAtomicFile } = require("../launcher/electron/atomic-file.cjs") as {
+  renameAtomicFile: (source: string, destination: string) => void;
+};
 const { validateRuntimeBundle } = require("../launcher/electron/runtime-install.cjs") as {
   validateRuntimeBundle: (
     runtimeRoot: string,
@@ -19,7 +22,7 @@ const root = join(homedir(), `.codex-chatgpt-web-release-smoke-${process.pid}-${
 const firstLocation = join(root, "first-location");
 const runtimeRoot = join(root, "relocated-runtime");
 cpSync(sourceBundle, firstLocation, { recursive: true, verbatimSymlinks: true });
-renameSync(firstLocation, runtimeRoot);
+renameAtomicFile(firstLocation, runtimeRoot);
 validateRuntimeBundle(runtimeRoot, {
   version: VERSION,
   platform: process.platform,
