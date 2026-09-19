@@ -17,6 +17,8 @@ const config = defaultConfig("browser-only");
 const catalog = augmentNativeModelCatalog(JSON.parse(bundled.stdout.toString()), config);
 writeFileSync(join(root, "models.json"), JSON.stringify(catalog));
 let compactCalls = 0;
+let legacyCompactCalls = 0;
+let v2CompactCalls = 0;
 const inputs: unknown[][] = [];
 const marker = "PRESERVE_ORIGINAL_USER_REQUEST";
 const answer = "Original work remains available.";
@@ -25,15 +27,26 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
   if (path === "/v1/models") return Response.json(catalog);
   if (path === "/v1/responses/compact") {
     compactCalls++;
+    legacyCompactCalls++;
     return compactRequest(request, config, () => ({ name: "oversized-summary", async runTurn(_p, _s, emit) {
       emit({ type: "text_delta", text: "checkpoint ".repeat(85_000), phase: "final_answer" });
       emit({ type: "done", stopReason: "stop", endTurn: true });
     } }));
   }
   if (path === "/v1/responses") {
-    const body = await request.clone().json() as { input: unknown[] };
+    const body = await request.clone().json() as { input: Array<{ type?: string }> };
     inputs.push(body.input);
-    return responseRequest(request, config, () => ({ name: "scripted-answer", async runTurn(_p, _s, emit) {
+    const compacting = body.input.some(item => item?.type === "compaction_trigger");
+    if (compacting) {
+      compactCalls++;
+      v2CompactCalls++;
+    }
+    return responseRequest(request, config, () => ({ name: compacting ? "oversized-summary" : "scripted-answer", async runTurn(_p, _s, emit) {
+      if (compacting) {
+        emit({ type: "error", message: "Compaction summary exceeded the fixture budget", status: 400,
+          errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false });
+        return;
+      }
       emit({ type: "text_delta", text: answer, phase: "final_answer" });
       emit({ type: "done", stopReason: "stop", endTurn: true,
         usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110, estimated: true } });
@@ -113,6 +126,8 @@ try {
   const since = messages.length;
   await rpc("thread/compact/start", { threadId: thread.id });
   await wait(value => value.method === "turn/completed", since);
+  assert.equal(v2CompactCalls, 1, "Compaction must use the Responses compaction_trigger path");
+  assert.equal(legacyCompactCalls, 0, "Compaction must not fall back to the legacy compact endpoint");
   assert.equal(compactCalls, 1, "Oversized compaction must not retry");
   assert(messages.slice(since).some(value => value.method === "error"), "Client must expose the compact failure");
   await turn("Continue the original work.");

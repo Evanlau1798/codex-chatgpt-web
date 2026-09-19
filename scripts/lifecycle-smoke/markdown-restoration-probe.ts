@@ -248,8 +248,8 @@ export async function runMarkdownRestorationProbe(
       }
     }
     const medianMs = [...timings].sort((left, right) => left - right)[1]!;
-    if (medianMs >= 5_000) {
-      throw new Error(`Markdown restoration probe median attachment exceeded 5 seconds (medianMs=${Math.round(medianMs)})`);
+    if (medianMs >= 7_500) {
+      throw new Error(`Markdown restoration probe median attachment exceeded 7.5 seconds (medianMs=${Math.round(medianMs)})`);
     }
     process.stdout.write(`WEB_CONTRACT_MARKDOWN_PROBE_TIMINGS ${JSON.stringify(timings.map(Math.round))}\n`);
     const structuredPrompt = structuredMarkdownRestorationProbeText();

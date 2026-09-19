@@ -1788,17 +1788,31 @@ test("ownership persistence failure stops every still-live launcher child", asyn
   const exited = child => new Promise(resolve => {
     if (child.exitCode !== null || child.signalCode !== null) return resolve(true);
     child.once("exit", () => resolve(true));
-    // Windows taskkill may complete before Node delivers both child exit events. Keep this bounded,
-    // but allow the same five-second process-event budget used by launcher cleanup tests.
-    setTimeout(() => resolve(false), 5_000);
   });
+  const boundedExit = async exitPromise => {
+    let timer;
+    try {
+      return await Promise.race([
+        exitPromise,
+        new Promise(resolve => {
+          timer = setTimeout(() => resolve(false), 5_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const daemonExited = exited(daemon);
   const tunnelExited = exited(tunnel);
   supervisor.writeState = () => { throw new Error("disk unavailable"); };
   try {
     assert.equal(supervisor.tryWriteState("degraded", "daemon exited"), false);
-    assert.equal(await daemonExited, true);
-    assert.equal(await tunnelExited, true);
+    const [daemonStopped, tunnelStopped] = await Promise.all([
+      boundedExit(daemonExited),
+      boundedExit(tunnelExited),
+    ]);
+    assert.equal(daemonStopped, true);
+    assert.equal(tunnelStopped, true);
     assert.equal(supervisor.stopping, true);
   } finally {
     await supervisor.stopChild("daemon").catch(() => {});

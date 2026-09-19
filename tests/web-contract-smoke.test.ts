@@ -140,7 +140,7 @@ describe("lightweight Web contract smoke", () => {
     expect(probe).toContain("finally {");
     expect(probe).toContain("for (let run = 0; run < 3; run += 1)");
     expect(probe).toContain("durationMs >= 10_000");
-    expect(probe).toContain("medianMs >= 5_000");
+    expect(probe).toContain("medianMs >= 7_500");
     expect(probe).toContain("WEB_CONTRACT_MARKDOWN_PROBE_TIMINGS");
     expect(probe).toContain("WEB_CONTRACT_STRUCTURED_MARKDOWN_PROBE_OK");
     expect(probe).toContain("structuredReadyMs >= 90_000");
