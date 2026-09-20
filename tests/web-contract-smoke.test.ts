@@ -146,7 +146,7 @@ describe("lightweight Web contract smoke", () => {
     expect(probe).toContain("structuredReadyMs >= 90_000");
     const structuredAt = probe.indexOf("const structuredPrompt = structuredMarkdownRestorationProbeText()");
     const structuredInsertAt = probe.indexOf("await insertChatGptPromptText(structuredPrompt, abortSignal");
-    const structuredReadbackAt = probe.indexOf("await waitForText(composer, expected, abortSignal)");
+    const structuredReadbackAt = probe.indexOf("await waitForText(composer, expected, abortSignal)", structuredInsertAt);
     const structuredSendReadyAt = probe.indexOf("composer = await waitForSendEnabled(page, abortSignal)", structuredInsertAt);
     const structuredConnectorAt = probe.indexOf("JSON.stringify(await connectorState(composer)) !== JSON.stringify(structuredConnectors)");
     const structuredNoTurnAt = probe.indexOf("Structured Markdown restoration probe unexpectedly submitted a turn");
@@ -164,8 +164,11 @@ describe("lightweight Web contract smoke", () => {
     expect(probe).toContain("clearChatGptComposerInput(composer)");
     expect(probe.indexOf("await clearChatGptComposerInput(composer)"))
       .toBeLessThan(probe.indexOf("composer = await selectConnector(page, appName)"));
-    expect(probe.indexOf("await composer.focus()"))
-      .toBeLessThan(probe.indexOf("await insertChatGptComposerPlainText(composer, chunk, abortSignal)"));
+    const plainInsertAt = probe.indexOf("await insertChatGptPromptText(prompt, abortSignal");
+    expect(plainInsertAt).toBeGreaterThan(probe.indexOf("await composer.focus()"));
+    expect(plainInsertAt).toBeLessThan(structuredAt);
+    expect(probe).not.toContain("insertChatGptComposerPlainText");
+    expect(probe).not.toContain("guardChatGptPromptChunkBoundary");
     expect(probe).not.toContain("page.keyboard.insertText(chunk)");
     expect(probe).toContain("CHATGPT_USER_TURN_SELECTOR");
     expect(probe).toContain('pressSequentially("@codex"');

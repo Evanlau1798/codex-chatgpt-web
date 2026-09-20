@@ -360,6 +360,62 @@ test("connector verification proves the current schema with an actual connector 
   expect(workerSource).not.toContain("turn.connectorContractVerification");
 });
 
+test("launcher prompt attachment timeout retries once after rebinding the same surface", async () => {
+  const retryPromptAttachment = (ChatGptBrowserWorker.prototype as unknown as {
+    retryPromptAttachmentAfterRebind(
+      action: () => Promise<void>,
+      rebind?: (cause: Error) => Promise<void>,
+    ): Promise<void>;
+  }).retryPromptAttachmentAfterRebind;
+  const events: string[] = [];
+  let attempts = 0;
+
+  await retryPromptAttachment.call({}, async () => {
+    events.push(`attach:${++attempts}`);
+    if (attempts === 1) {
+      throw new ChatGptWebAdapterError("ChatGPT browser stage timed out: prompt_attachment", {
+        status: 502,
+        errorType: "server_error",
+        code: "chatgpt_surface_changed",
+        retryable: true,
+        retireSession: true,
+      });
+    }
+  }, async () => { events.push("rebind"); });
+
+  expect(events).toEqual(["attach:1", "rebind", "attach:2"]);
+});
+
+test("launcher prompt attachment recovery does not replay other failures or loop", async () => {
+  const retryPromptAttachment = (ChatGptBrowserWorker.prototype as unknown as {
+    retryPromptAttachmentAfterRebind(
+      action: () => Promise<void>,
+      rebind?: (cause: Error) => Promise<void>,
+    ): Promise<void>;
+  }).retryPromptAttachmentAfterRebind;
+  const timeout = () => new ChatGptWebAdapterError("ChatGPT browser stage timed out: prompt_attachment", {
+    status: 502,
+    errorType: "server_error",
+    code: "chatgpt_surface_changed",
+    retryable: true,
+    retireSession: true,
+  });
+  let attempts = 0;
+  let rebinds = 0;
+
+  await expect(retryPromptAttachment.call({}, async () => {
+    attempts += 1;
+    throw timeout();
+  }, async () => { rebinds += 1; })).rejects.toThrow("prompt_attachment");
+  expect({ attempts, rebinds }).toEqual({ attempts: 2, rebinds: 1 });
+
+  const unrelated = new Error("composer rejected input");
+  await expect(retryPromptAttachment.call({}, async () => { throw unrelated; }, async () => {
+    rebinds += 1;
+  })).rejects.toBe(unrelated);
+  expect(rebinds).toBe(1);
+});
+
 test("a stalled post-submit DOM probe is bounded before same-page launcher recovery", async () => {
   expect(CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS).toBe(5_000);
   expect(MAX_CHATGPT_BROWSER_PAGE_REBINDS).toBe(2);

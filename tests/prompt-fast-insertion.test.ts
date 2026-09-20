@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { insertChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-insertion";
 import { structuredCompactionHandoffInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
 import { CHATGPT_PROMPT_INSERT_CHUNK_CHARS } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
-import { structuredMarkdownRestorationProbeText } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
+import {
+  markdownRestorationProbeText,
+  structuredMarkdownRestorationProbeText,
+} from "../scripts/lifecycle-smoke/markdown-restoration-probe";
 
 type FakeComposer = {
   composer: { focus(): Promise<void>; evaluate(callback: (element: HTMLElement, input: unknown) => unknown, input: unknown): Promise<unknown> };
@@ -116,6 +119,13 @@ test("REG-04: uses one exact direct edit for the short generated structured comp
 
 test("inserts the incident-sized structured prompt without an oversized native text edit", async () => {
   const prompt = structuredMarkdownRestorationProbeText();
+  const editor = await insertWithFakeEditor(prompt, false, true);
+  expect(editor.text()).toBe(prompt);
+  expect(editor.commands).toEqual(["insertHTML"]);
+});
+
+test("inserts incident-sized single-line Markdown through one escaped native fragment", async () => {
+  const prompt = markdownRestorationProbeText();
   const editor = await insertWithFakeEditor(prompt, false, true);
   expect(editor.text()).toBe(prompt);
   expect(editor.commands).toEqual(["insertHTML"]);

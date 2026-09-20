@@ -39,6 +39,7 @@ async function main(): Promise<void> {
     await run(["run", "test"]);
     await run(["run", "launcher:typecheck"]);
     await run(["run", "launcher:test"]);
+    if (liveWeb) await run(["run", "lifecycle:sim", "--lane=all"]);
     await run(["run", "launcher:build"]);
     await run(["run", "scripts/build-runtime-bundle.ts", runtimeBundle]);
     await run([

@@ -1145,6 +1145,22 @@ export class ChatGptBrowserWorker {
     }
   }
 
+  private async retryPromptAttachmentAfterRebind(
+    action: () => Promise<void>,
+    rebind?: (cause: Error) => Promise<void>,
+  ): Promise<void> {
+    try {
+      await action();
+    } catch (error) {
+      if (!rebind
+        || !(error instanceof ChatGptWebAdapterError)
+        || error.code !== "chatgpt_surface_changed"
+        || error.message !== "ChatGPT browser stage timed out: prompt_attachment") throw error;
+      await rebind(error);
+      await action();
+    }
+  }
+
   private async ensurePage(): Promise<Page> {
     if (this.page && !this.page.isClosed()) return this.page;
     if (this.config.browserHost === "launcher") {
@@ -3163,7 +3179,7 @@ export class ChatGptBrowserWorker {
           : callerSignal ?? turn.abortSignal;
         if (rebindSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
         console.warn(
-          `[chatgpt-web] browser turn ${turn.traceId} is rebinding its launcher page after a stalled DOM probe:`
+          `[chatgpt-web] browser turn ${turn.traceId} is rebinding its launcher page after a stalled browser operation:`
           + ` ${redactChatGptUiDiagnostic(cause.message)}`,
         );
         const previousConnection = turnConnection;
@@ -3205,7 +3221,7 @@ export class ChatGptBrowserWorker {
         page = connection.page;
         diagnosticPage = page;
         console.warn(
-          `[chatgpt-web] browser turn ${turn.traceId} rebound its existing launcher page after a stalled DOM probe`,
+          `[chatgpt-web] browser turn ${turn.traceId} rebound its existing launcher page after a stalled browser operation`,
         );
       };
       const toolTurnObservationRecovery = launcherSurfaceId !== undefined && this.config.browserHostDescriptorPath !== undefined
@@ -3366,9 +3382,9 @@ export class ChatGptBrowserWorker {
         let responseTurnBinding: ChatGptAssistantTurnBinding | undefined;
         const completionTracker = new ChatGptCompletionTracker();
         let initialToolBatchRevision = 0;
-        const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
+        let userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
         const initialUserTurnCount = await userTurns.count();
-        const submissionBaseline: ChatGptSubmissionBaseline = {
+        let submissionBaseline: ChatGptSubmissionBaseline = {
           userTurns,
           responseTurns,
           initialUserTurnCount,
@@ -3379,29 +3395,49 @@ export class ChatGptBrowserWorker {
         try {
         for (;;) {
           try {
-            await this.runStage(
-              turn.traceId,
-              "prompt_attachment",
-              chatGptPromptAttachmentTimeoutMs(responsePrompt.length, this.config.experimentalNoAutoCompact),
-              stageSignal => this.attachPromptWithCompactionRetry(
-                page,
-                responsePrompt,
-                // Connector access persists in this bound conversation without another mention.
-                (turn.nativeConnector === true || mode.localTools) && !(reuseConversation || responseAttempt > 1),
-                turn.compaction === true,
-                submissionBaseline,
-                checkpoint => diagnostics.capture(page, checkpoint),
-                stageSignal,
-                catalogRefreshAvailable,
-                connectorAttemptBudget,
-                mode.thinkEnabled,
-                !multipartTransport && prepared.transport === "inline",
-                turn.compaction === true && turn.requireRetainedConversation === true,
-                beforeRecoveryInsertion,
+            await this.retryPromptAttachmentAfterRebind(
+              () => this.runStage(
+                turn.traceId,
+                "prompt_attachment",
+                chatGptPromptAttachmentTimeoutMs(responsePrompt.length, this.config.experimentalNoAutoCompact),
+                stageSignal => this.attachPromptWithCompactionRetry(
+                  page,
+                  responsePrompt,
+                  // Connector access persists in this bound conversation without another mention.
+                  (turn.nativeConnector === true || mode.localTools) && !(reuseConversation || responseAttempt > 1),
+                  turn.compaction === true,
+                  submissionBaseline,
+                  checkpoint => diagnostics.capture(page, checkpoint),
+                  stageSignal,
+                  catalogRefreshAvailable,
+                  connectorAttemptBudget,
+                  mode.thinkEnabled,
+                  !multipartTransport && prepared.transport === "inline",
+                  turn.compaction === true && turn.requireRetainedConversation === true,
+                  beforeRecoveryInsertion,
+                ),
+                turn.abortSignal,
+                chatGptSuspensionClock,
+                true,
               ),
-              turn.abortSignal,
-              chatGptSuspensionClock,
-              true,
+              launcherSurfaceId && this.config.browserHostDescriptorPath
+                ? async cause => {
+                  await diagnostics.capture(page, "prompt-attachment-timeout");
+                  await rebindLauncherPage(1, cause, turn.abortSignal);
+                  responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
+                  responseTurn = responseTurns.nth(initialResponseTurn.count);
+                  userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
+                  submissionBaseline = {
+                    userTurns,
+                    responseTurns,
+                    initialUserTurnCount,
+                    initialResponseTurnCount: initialResponseTurn.count,
+                    initialTurnIdentities,
+                  };
+                  connectorAttemptBudget.triggerAttempts = 0;
+                  await diagnostics.capture(page, "prompt-attachment-page-rebound");
+                }
+                : undefined,
             );
             break;
           } catch (error) {

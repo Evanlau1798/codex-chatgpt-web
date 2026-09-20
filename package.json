@@ -42,7 +42,7 @@
     "smoke:interrupt": "bun run scripts/smoke-codex-interrupt.ts",
     "smoke:subagents": "bun run scripts/smoke-codex-subagents.ts --v1 && bun run scripts/smoke-codex-subagents.ts --v2",
     "smoke:subagents:live": "bun run scripts/smoke-codex-web-subagents.ts",
-    "lifecycle:sim": "bun run scripts/lifecycle-sim/run.ts",
+    "lifecycle:sim": "bun run scripts/lifecycle-sim/entry.ts",
     "smoke:lifecycle": "bun run lifecycle:sim --lane=all",
     "smoke:lifecycle:web": "bun run scripts/lifecycle-smoke/web-contract.ts",
     "smoke:lifecycle:deep": "bun run scripts/lifecycle-smoke/run.ts --live",

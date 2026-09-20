@@ -11,7 +11,6 @@ import {
 
 const BOUNDARY_LOOKBACK_CHARS = 4_096;
 const WHITESPACE = /\s/u;
-const STRUCTURED_PROMPT = /[\r\n\u2028\u2029]/u;
 const DIRECT_INSERT_MIN_CHARS = CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 2;
 
 function promptInsertChunkEnd(text: string, offset: number): number {
@@ -40,14 +39,13 @@ export async function insertChatGptPromptText(
   },
   options?: { largeStructuredDirect?: boolean; forceStructuredDirect?: boolean },
 ): Promise<void> {
-  if ((options?.forceStructuredDirect === true
-      || (options?.largeStructuredDirect === true && text.length > DIRECT_INSERT_MIN_CHARS))
-    && STRUCTURED_PROMPT.test(text)) {
+  if (options?.forceStructuredDirect === true
+    || (options?.largeStructuredDirect === true && text.length > DIRECT_INSERT_MIN_CHARS)) {
     // One exact editor transaction avoids both cumulative Lexical remounts and thousands of
     // delimiter-restoration edits. Full readback remains the acceptance boundary.
     await actions.verify("");
     // HTML parsing changes CR and NUL; retain the exact text path for those inputs.
-    const plainTextBlocks = text.length > DIRECT_INSERT_MIN_CHARS && text.includes("\n") && !/[\r\u0000]/u.test(text);
+    const plainTextBlocks = text.length > DIRECT_INSERT_MIN_CHARS && !/[\r\u0000]/u.test(text);
     await insertChatGptComposerGuardedText(await actions.composer(), text, abortSignal, plainTextBlocks);
     await actions.verify(text.trimStart());
     await new Promise(resolve => setTimeout(resolve, 0));

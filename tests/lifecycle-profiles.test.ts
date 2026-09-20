@@ -13,10 +13,16 @@ test("default lifecycle commands stay offline and deep live smoke remains explic
   const pkg = JSON.parse(readFileSync(resolve(repo, "package.json"), "utf8")) as {
     scripts: Record<string, string>;
   };
-  expect(pkg.scripts["lifecycle:sim"]).toContain("scripts/lifecycle-sim/run.ts");
+  expect(pkg.scripts["lifecycle:sim"]).toContain("scripts/lifecycle-sim/entry.ts");
   expect(pkg.scripts["smoke:lifecycle:web"]).toContain("web-contract.ts");
   expect(pkg.scripts["smoke:lifecycle:deep"]).toContain("lifecycle-smoke/run.ts --live");
   expect(pkg.scripts["smoke:lifecycle"]).toBe("bun run lifecycle:sim --lane=all");
+
+  const entry = readFileSync(resolve(repo, "scripts", "lifecycle-sim", "entry.ts"), "utf8");
+  expect(entry).toContain('version: "0.155.1"');
+  expect(entry).toContain('version: "2.1.260"');
+  expect(entry).toContain('"runtime-cache"');
+  expect(entry).toContain("resolveLifecycleClientArgs");
 });
 
 test("the local release gate runs verification before the account-bound Web smoke", () => {
@@ -32,7 +38,9 @@ test("the local release gate runs verification before the account-bound Web smok
   expect(verify).toContain('if (showOutput || exitCode !== 0)');
   expect(verify).toContain("export async function run(");
   expect(verify).toContain("if (import.meta.main)");
+  expect(verify).toContain('if (liveWeb) await run(["run", "lifecycle:sim", "--lane=all"]);');
   expect(verify).toContain('"scripts/smoke-candidate-web.ts", runtimeBundle');
+  expect(verify.indexOf('"lifecycle:sim"')).toBeLessThan(verify.indexOf('"scripts/smoke-candidate-web.ts"'));
 
   for (const workflowName of ["ci.yml", "release.yml"]) {
     const workflow = readFileSync(resolve(repo, ".github", "workflows", workflowName), "utf8");
@@ -52,8 +60,8 @@ test("CI runs deterministic lifecycle simulation and never calls a live profile"
   expect(workflow).toContain("bun run scripts/smoke-codex-cancel.ts");
   expect(workflow).toContain("bun run scripts/smoke-codex-interrupt.ts");
   expect(workflow).toContain("@openai/codex@latest");
-  expect(workflow).toContain("@openai/codex@0.153.4");
-  expect(workflow).toContain("@anthropic-ai/claude-code@2.1.260");
+  expect(workflow).not.toContain("Install pinned native lifecycle clients");
+  expect(workflow).not.toContain("@openai/codex@0.155.1");
   expect(workflow).toContain("turn-broker-lifecycle.test.ts");
 });
 
@@ -141,8 +149,8 @@ test("release builds rerun the deterministic lifecycle gate at the tag SHA", () 
   const build = workflow.match(/\r?\n  build:\r?\n([\s\S]*?)\r?\n  publish:/)?.[1];
   expect(workflow).toContain("lifecycle-gate:");
   expect(workflow).toContain("bun run lifecycle:sim --lane=all");
-  expect(workflow).toContain("@openai/codex@0.153.4");
-  expect(workflow).toContain("@anthropic-ai/claude-code@2.1.260");
+  expect(workflow).not.toContain("Install pinned native lifecycle clients");
+  expect(workflow).not.toContain("@openai/codex@0.155.1");
   expect(workflow).toMatch(/build:\s+needs: lifecycle-gate/);
   expect(build).toContain("fetch-depth: 0");
 });

@@ -6,10 +6,7 @@ import {
 } from "../../src/chatgpt-session";
 import {
   clearChatGptComposerInput,
-  guardChatGptPromptChunkBoundary,
-  insertChatGptComposerPlainText,
   reanchorChatGptComposerCaret,
-  restoreChatGptPromptChunkBoundary,
 } from "../../src/adapters/chatgpt-web/prompt-caret";
 import {
   CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
@@ -204,23 +201,22 @@ export async function runMarkdownRestorationProbe(
       }
       const startedAt = performance.now();
       await composer.focus();
-      for (let offset = 0; offset < prompt.length; offset += CHATGPT_PROMPT_INSERT_CHUNK_CHARS) {
-        if (abortSignal?.aborted) throw abortSignal.reason;
-        const original = prompt.slice(offset, offset + CHATGPT_PROMPT_INSERT_CHUNK_CHARS);
-        const boundary = guardChatGptPromptChunkBoundary(prompt, original, offset);
-        const chunk = boundary?.text ?? original;
-        await insertChatGptComposerPlainText(composer, chunk, abortSignal);
-        composer = await activeComposer(page);
-        await waitForText(composer, `${prompt.slice(0, offset)}${chunk}`, abortSignal);
-        if (boundary && !await restoreChatGptPromptChunkBoundary(
-          composer,
-          boundary.replacement,
-          abortSignal,
-        )) throw new Error("Markdown restoration probe could not restore a chunk boundary");
-        if (!await reanchorChatGptComposerCaret(composer)) {
-          throw new Error("Markdown restoration probe could not re-anchor the composer");
-        }
-      }
+      await insertChatGptPromptText(prompt, abortSignal, {
+        composer: async () => {
+          composer = await activeComposer(page);
+          return composer;
+        },
+        verify: async expected => {
+          composer = await activeComposer(page);
+          await waitForText(composer, expected, abortSignal);
+        },
+        reanchor: async () => {
+          composer = await activeComposer(page);
+          if (!await reanchorChatGptComposerCaret(composer)) {
+            throw new Error("Markdown restoration probe could not re-anchor the composer");
+          }
+        },
+      }, { largeStructuredDirect: true });
       composer = await activeComposer(page);
       await waitForText(composer, prompt, abortSignal);
       const durationMs = performance.now() - startedAt;
