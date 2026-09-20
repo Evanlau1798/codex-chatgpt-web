@@ -22,6 +22,15 @@ export function managedAgentMaxDepthLine(value: number): string {
   return `max_depth = ${value} # Managed by codex-chatgpt-web: allows nested routed Web subagents in Compatibility V1.`;
 }
 
+export function matchesManagedAssignmentLine(
+  rawLine: string | undefined,
+  managedLine: string,
+): boolean {
+  const markerIndex = managedLine.indexOf(" # Managed by codex-chatgpt-web:");
+  const nativeLine = markerIndex < 0 ? managedLine : managedLine.slice(0, markerIndex);
+  return rawLine === managedLine || rawLine === nativeLine;
+}
+
 export interface PreviousAssignment {
   present: boolean;
   rawLine?: string;

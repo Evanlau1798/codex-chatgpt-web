@@ -59,12 +59,12 @@ for (const mode of ["automatic", "manual"]) {
   test(`release upgrade from Enhanced.5 preserves the current ${mode} connector identity`, async () => {
     const { host, calls } = fixture(mode, config => {
       config.releaseVersion = "5.0.6-Enhanced.5";
-    }, "5.0.8-Enhanced.2");
+    }, "5.0.8-Enhanced.3");
     const result = await host.upgradeManagedRuntime();
     assert.equal(result.updated, true);
     assert.equal(result.connectorMigrated, false);
     assert.equal(result.fromVersion, "5.0.6-Enhanced.5");
-    assert.equal(result.toVersion, "5.0.8-Enhanced.2");
+    assert.equal(result.toVersion, "5.0.8-Enhanced.3");
     assert.equal(calls[0].args.includes("--app-name"), false);
   });
   test(`validated ${mode} legacy profile reaches the same-version migration`, async () => {

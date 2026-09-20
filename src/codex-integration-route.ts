@@ -7,6 +7,7 @@ import {
   MANAGED_MULTI_AGENT_LINE,
   MANAGED_REMOTE_COMPACTION_LINE,
   managedAgentMaxDepthLine,
+  matchesManagedAssignmentLine,
 } from "./codex-integration-shared";
 import type {
   CodexIntegrationJournal,
@@ -78,7 +79,7 @@ function restoreOwnedManagedFeatures(text: string, journal: ManagedRouteJournal)
     const evidence = compatibilityV1Evidence(journal);
     if (evidence) {
       const depth = findAgentMaxDepthAssignment(splitLines(restored));
-      if (depth.rawLine === managedAgentMaxDepthLine(evidence.installedAgentMaxDepth)
+      if (matchesManagedAssignmentLine(depth.rawLine, managedAgentMaxDepthLine(evidence.installedAgentMaxDepth))
         && depth.value === String(evidence.installedAgentMaxDepth)) {
         restored = restoreCompatibilityV1AgentDepth(
           restored,
@@ -88,11 +89,16 @@ function restoreOwnedManagedFeatures(text: string, journal: ManagedRouteJournal)
       }
       const multiAgentV2 = findMultiAgentV2Assignment(splitLines(restored));
       const managedV2Line = managedMultiAgentV2AssignmentLine(evidence.previousMultiAgentV2);
-      if (multiAgentV2.rawLine === managedV2Line && multiAgentV2.value === "false") {
+      const stillManagedV2 = evidence.previousMultiAgentV2.inlineTable
+        ? multiAgentV2.rawLine === managedV2Line
+        : matchesManagedAssignmentLine(multiAgentV2.rawLine, managedV2Line);
+      if (stillManagedV2
+        && multiAgentV2.value === "false") {
         restored = restoreMultiAgentV2Feature(restored, evidence.previousMultiAgentV2);
       }
       const multiAgent = findFeatureAssignment(splitLines(restored), "multi_agent");
-      if (multiAgent.rawLine === MANAGED_MULTI_AGENT_LINE && multiAgent.value === "true") {
+      if (matchesManagedAssignmentLine(multiAgent.rawLine, MANAGED_MULTI_AGENT_LINE)
+        && multiAgent.value === "true") {
         restored = restoreBooleanFeature(
           restored,
           "multi_agent",
@@ -106,13 +112,17 @@ function restoreOwnedManagedFeatures(text: string, journal: ManagedRouteJournal)
   if (journal.version === 6) {
     const current = findMultiAgentV2Assignment(splitLines(restored));
     const managedLine = managedMultiAgentV2AssignmentLine(journal.previousMultiAgentV2);
-    if (current.rawLine === managedLine && current.value === "false") {
+    const stillManaged = journal.previousMultiAgentV2.inlineTable
+      ? current.rawLine === managedLine
+      : matchesManagedAssignmentLine(current.rawLine, managedLine);
+    if (stillManaged && current.value === "false") {
       restored = restoreMultiAgentV2Feature(restored, journal.previousMultiAgentV2);
     }
   }
   if (journal.version === 5 || journal.version === 6) {
     const multiAgent = findFeatureAssignment(splitLines(restored), "multi_agent");
-    if (multiAgent.rawLine === MANAGED_MULTI_AGENT_LINE && multiAgent.value === "true") {
+    if (matchesManagedAssignmentLine(multiAgent.rawLine, MANAGED_MULTI_AGENT_LINE)
+      && multiAgent.value === "true") {
       restored = restoreBooleanFeature(
         restored,
         "multi_agent",
@@ -122,7 +132,8 @@ function restoreOwnedManagedFeatures(text: string, journal: ManagedRouteJournal)
       );
     }
     const compaction = findFeatureAssignment(splitLines(restored), "remote_compaction_v2");
-    if (compaction.rawLine === MANAGED_REMOTE_COMPACTION_LINE && compaction.value === "false") {
+    if (matchesManagedAssignmentLine(compaction.rawLine, MANAGED_REMOTE_COMPACTION_LINE)
+      && compaction.value === "false") {
       restored = restoreBooleanFeature(
         restored,
         "remote_compaction_v2",

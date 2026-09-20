@@ -5,6 +5,7 @@ import {
   MANAGED_REMOTE_COMPACTION_LINE,
   MIN_COMPATIBILITY_V1_AGENT_DEPTH,
   managedAgentMaxDepthLine,
+  matchesManagedAssignmentLine,
 } from "./codex-integration-shared";
 import type {
   LegacyCodexIntegrationJournalV5,
@@ -252,7 +253,7 @@ function verifyInstalledBooleanFeature(
   managedLine: string,
 ): void {
   const current = findFeatureAssignment(splitLines(text), key);
-  if (current.value !== expectedValue || current.rawLine !== managedLine) {
+  if (current.value !== expectedValue || !matchesManagedAssignmentLine(current.rawLine, managedLine)) {
     throw new Error(
       `Codex [features].${key} changed after setup; refusing to overwrite the user's newer value`,
     );
@@ -278,7 +279,7 @@ function verifyInstalledMultiAgentV2Feature(
     const current = findMultiAgentV2Assignment(splitLines(text));
     if (current.tableName !== "features"
       || current.value !== "false"
-      || current.rawLine !== MANAGED_MULTI_AGENT_V2_LINE) {
+      || !matchesManagedAssignmentLine(current.rawLine, MANAGED_MULTI_AGENT_V2_LINE)) {
       throw new Error(
         "Codex [features].multi_agent_v2 changed after setup; refusing to overwrite the user's newer value",
       );
@@ -292,7 +293,8 @@ function verifyInstalledMultiAgentV2Feature(
     );
   }
   const current = findBooleanAssignmentInTable(lines, "features.multi_agent_v2", "enabled");
-  if (current.value !== "false" || current.rawLine !== MANAGED_MULTI_AGENT_V2_TABLE_LINE) {
+  if (current.value !== "false"
+    || !matchesManagedAssignmentLine(current.rawLine, MANAGED_MULTI_AGENT_V2_TABLE_LINE)) {
     throw new Error(
       "Codex [features.multi_agent_v2].enabled changed after setup; refusing to overwrite the user's newer value",
     );
@@ -402,7 +404,7 @@ export function verifyCompatibilityV1Features(
   verifyInstalledMultiAgentV2Feature(text, previousMultiAgentV2);
   const depth = findAgentMaxDepthAssignment(splitLines(text));
   if (depth.value !== String(installedAgentMaxDepth)
-    || depth.rawLine !== managedAgentMaxDepthLine(installedAgentMaxDepth)) {
+    || !matchesManagedAssignmentLine(depth.rawLine, managedAgentMaxDepthLine(installedAgentMaxDepth))) {
     throw new Error(
       "Codex [agents].max_depth changed after Compatibility V1 setup; refusing to overwrite the user's newer value",
     );
@@ -468,7 +470,7 @@ export function restoreCompatibilityV1AgentDepth(
 function verifyCompatibilityV1AgentDepth(text: string, installedAgentMaxDepth: number): void {
   const depth = findAgentMaxDepthAssignment(splitLines(text));
   if (depth.value !== String(installedAgentMaxDepth)
-    || depth.rawLine !== managedAgentMaxDepthLine(installedAgentMaxDepth)) {
+    || !matchesManagedAssignmentLine(depth.rawLine, managedAgentMaxDepthLine(installedAgentMaxDepth))) {
     throw new Error(
       "Codex [agents].max_depth changed after Compatibility V1 setup; refusing to overwrite the user's newer value",
     );

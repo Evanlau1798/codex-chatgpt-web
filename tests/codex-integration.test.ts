@@ -20,6 +20,10 @@ import {
 import { defaultConfig, loadConfig, saveConfig } from "../src/config";
 import { shouldRunFileSymlinkTests } from "./support/symlink-capability.cjs";
 import {
+  MANAGED_INTERRUPT_HOOK_END,
+  MANAGED_INTERRUPT_HOOK_START,
+} from "../src/codex-interrupt-hook";
+import {
   CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
   MANAGED_COMMENT,
   MANAGED_MULTI_AGENT_LINE,
@@ -406,6 +410,61 @@ describe("reversible native Codex route integration", () => {
     expect(readFileSync(configPath, "utf8")).toContain("multi_agent_v2 = true # native choice");
     uninstallCodexIntegration();
     expect(readFileSync(configPath, "utf8")).toBe(original);
+  });
+
+  test("Compatibility V1 treats an inline table comment as user-owned", () => {
+    const { codexHome } = fixture();
+    const configPath = join(codexHome, "config.toml");
+    writeFileSync(
+      configPath,
+      '[features]\nmulti_agent_v2 = { enabled = true } # Managed by codex-chatgpt-web: user note\n',
+    );
+    installCodexIntegration(compatibilityV1Config("browser-only"));
+    const managed = readFileSync(configPath, "utf8");
+    writeFileSync(
+      configPath,
+      managed.replace(" } # Managed by codex-chatgpt-web: user note", " }"),
+    );
+
+    expect(inspectCodexIntegration().errors).toContain(
+      "Codex [features].multi_agent_v2 changed after setup; refusing to overwrite the user's newer value",
+    );
+  });
+
+  test("accepts Codex native formatting of unchanged Compatibility V1 ownership", () => {
+    const { codexHome } = fixture();
+    const configPath = join(codexHome, "config.toml");
+    const original = 'model = "gpt-5.6-sol"\n\n[features]\njs_repl = false\n';
+    writeFileSync(configPath, original);
+    installCodexIntegration(compatibilityV1Config("browser-only"));
+    const rewritten = readFileSync(configPath, "utf8")
+      .replace(MANAGED_MULTI_AGENT_LINE, "multi_agent = true")
+      .replace(MANAGED_MULTI_AGENT_V2_LINE, "multi_agent_v2 = false")
+      .replace(managedAgentMaxDepthLine(2), "max_depth = 2")
+      .replace(
+        `${MANAGED_INTERRUPT_HOOK_START}\n[[hooks.Interrupt]]\n\n[[hooks.Interrupt.hooks]]`,
+        `[[hooks.Interrupt]]\n[[hooks.Interrupt.hooks]]\n${MANAGED_INTERRUPT_HOOK_START}`,
+      )
+      .replace(`${MANAGED_INTERRUPT_HOOK_END}\n`, "");
+    writeFileSync(configPath, rewritten);
+
+    expect(inspectCodexIntegration()).toMatchObject({ installed: true, active: true, errors: [] });
+    writeFileSync(configPath, rewritten.replace("multi_agent = true", "multi_agent = true # user edit"));
+    expect(inspectCodexIntegration().errors).toContain(
+      "Codex [features].multi_agent changed after setup; refusing to overwrite the user's newer value",
+    );
+    writeFileSync(configPath, rewritten);
+    expect(uninstallCodexIntegration()).toEqual({ changed: true });
+    const restored = Bun.TOML.parse(readFileSync(configPath, "utf8")) as {
+      model?: string;
+      features?: Record<string, unknown>;
+      agents?: Record<string, unknown>;
+      hooks?: Record<string, unknown>;
+    };
+    expect(restored.model).toBe("gpt-5.6-sol");
+    expect(restored.features).toEqual({ js_repl: false });
+    expect(restored.agents).toBeUndefined();
+    expect(restored.hooks).toBeUndefined();
   });
 
   test("Compatibility V1 refuses to overwrite a newer agent depth edit", () => {

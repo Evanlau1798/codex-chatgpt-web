@@ -168,6 +168,18 @@ function normalizeTomlLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
 }
 
+function nativeRewrittenHookPrefix(text: string): string | undefined {
+  const lines = normalizeTomlLineEndings(text).split("\n");
+  const marker = lines.indexOf(MANAGED_INTERRUPT_HOOK_START);
+  if (marker < 0) return undefined;
+  lines.splice(marker, 1);
+  const compact = lines.filter(line => line.length > 0);
+  const hooks = compact.indexOf("[[hooks.Interrupt.hooks]]");
+  if (hooks < 0) return undefined;
+  compact.splice(hooks + 1, 0, MANAGED_INTERRUPT_HOOK_START);
+  return compact.join("\n");
+}
+
 function locateCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): Array<{
   start: number; end: number; replacement: string;
 }> {
@@ -189,6 +201,8 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   const hookPrefixVariants = [hookPrefix];
   const withoutBlankLine = hookPrefix.replace(/(?:\r\n|\n|\r)$/, "");
   if (withoutBlankLine !== hookPrefix) hookPrefixVariants.push(withoutBlankLine);
+  const nativePrefix = nativeRewrittenHookPrefix(hookPrefix);
+  if (nativePrefix) hookPrefixVariants.push(nativePrefix);
   const stateSuffixPattern = stateSuffixVariants.map(hookTextPattern).join("|");
   const hookPrefixPattern = hookPrefixVariants.map(hookTextPattern).join("|");
   // Native config may insert unrelated tables before the hook trust table and normalizes CRLF to LF.
@@ -240,12 +254,13 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
     throw new Error("Codex interrupt lifecycle hook order changed after setup; refusing to overwrite it");
   }
   const endMarker = text.indexOf(MANAGED_INTERRUPT_HOOK_END);
-  if (managedMarkerCount(text) !== 1 || endMarker < 0
-    || (endMarker >= first && endMarker < ownedEnd)
-    || text.split(MANAGED_INTERRUPT_HOOK_END).length !== 2) {
+  const endMarkerMissing = endMarker < 0;
+  if (managedMarkerCount(text) !== 1
+    || (!endMarkerMissing && ((endMarker >= first && endMarker < ownedEnd)
+      || text.split(MANAGED_INTERRUPT_HOOK_END).length !== 2))) {
     throw new Error("Codex interrupt lifecycle hook markers changed after setup; refusing to overwrite them");
   }
-  const markerMovedBeforeHook = endMarker < first;
+  const markerMovedBeforeHook = !endMarkerMissing && endMarker < first;
   if (markerMovedBeforeHook && stateBeforeHook) {
     throw new Error("Codex interrupt lifecycle hook markers changed after setup; refusing to overwrite them");
   }
@@ -265,7 +280,7 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   if (codexInterruptHookHash(installed.command) !== installed.trustedHash) {
     throw new Error("Codex interrupt lifecycle hook journal hash is invalid");
   }
-  const trailingConfig = markerMovedBeforeHook ? "" : text.slice(ownedEnd, endMarker);
+  const trailingConfig = markerMovedBeforeHook || endMarkerMissing ? "" : text.slice(ownedEnd, endMarker);
   const insertedConfig = [interstitialConfig, trailingConfig];
   for (const fragment of insertedConfig) {
     const firstAssignment = fragment.split(/\r\n|\n|\r/)
@@ -311,9 +326,11 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   } catch {
     throw new Error("Codex interrupt lifecycle hook changed after setup; refusing to overwrite it");
   }
-  const end = endMarker + MANAGED_INTERRUPT_HOOK_END.length;
+  const end = endMarkerMissing ? ownedEnd : endMarker + MANAGED_INTERRUPT_HOOK_END.length;
   const trailing = installed.fragment.slice(marker + MANAGED_INTERRUPT_HOOK_END.length);
-  const trailingLength = new RegExp("^" + hookTextPattern(trailing)).exec(text.slice(end))?.[0].length ?? 0;
+  const trailingLength = endMarkerMissing
+    ? 0
+    : new RegExp("^" + hookTextPattern(trailing)).exec(text.slice(end))?.[0].length ?? 0;
   if (markerMovedBeforeHook) {
     return [
       { start: first, end: ownedEnd, replacement: interstitialConfig },
