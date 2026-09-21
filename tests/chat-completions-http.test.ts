@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { defaultConfig } from "../src/config";
 import { startServer } from "../src/server";
-import { chatCompletionApiKey, chatCompletionRequestGuard, publicChatError } from "../src/chat-completions/http";
+import { chatCompletionApiKey, chatCompletionRequestGuard, chatCompletionRequest, publicChatError } from "../src/chat-completions/http";
 import { ChatCompletionError } from "../src/chat-completions/contract";
 import type { ChatCompletionExecutor } from "../src/chat-completions/runtime";
 
@@ -120,4 +120,21 @@ test("malformed function output is an error after headers, never a fake final an
     expect(response.status).toBe(200); const text = await response.text();
     expect(text).toContain("model_protocol_error"); expect(text).not.toContain("[DONE]");
   } finally { await server.stop(true); }
+});
+
+test("a stalled SSE consumer has bounded buffering and cancels the original executor", async () => {
+  let didAbort = false;
+  let sent = 0;
+  const response = await chatCompletionRequest(new Request("http://127.0.0.1/v1/chat/completions", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body({ stream: true })),
+  }), defaultConfig(), new AbortController().signal, async (_i, _c, signal, onText) => {
+    for (; sent < 100000; sent++) {
+      if (signal.aborted) { didAbort = true; signal.throwIfAborted(); }
+      onText("a");
+    }
+    return { answer: "a".repeat(sent) };
+  });
+  // No body reads were made during production; frame overhead is bounded, not only text units.
+  expect(didAbort).toBeTrue(); expect(sent).toBeLessThan(100000);
+  await expect(response.text()).rejects.toThrow("bounded stream queue");
 });

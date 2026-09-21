@@ -7,6 +7,7 @@ import { chatCompletionRoutes, createChatCompletionExecutor, prepareChatCompleti
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]", "::1", "::ffff:127.0.0.1"]);
 const ROUTES = new Set(["/v1/models", "/v1/chat/completions"]);
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
+const MAX_STREAM_QUEUE_BYTES = 4 * 1024 * 1024;
 
 /** This key is listener-scoped admission, not an account credential or native capability. */
 export function chatCompletionApiKey(config: AppConfig, value = process.env.CODEX_CHATGPT_WEB_API_KEY): string | undefined {
@@ -129,9 +130,19 @@ export async function chatCompletionRequest(req: Request, config: AppConfig, sig
   const encoder = new TextEncoder();
   let running: Promise<void> | undefined;
   let cancelled = false;
+  let transportFailed = false;
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
-      const send = (data: unknown) => { if (!cancelled && !combined.aborted) controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`)); };
+      const enqueue = (bytes: Uint8Array) => {
+        if (cancelled || transportFailed || combined.aborted) return;
+        if ((controller.desiredSize ?? 0) < bytes.byteLength) {
+          // Stop producing rather than buffering unbounded SSE overhead for a stalled consumer.
+          const error = new ChatCompletionError("Response consumer exceeded the bounded stream queue", 502, "stream_consumer_stalled");
+          transportFailed = true; abort.abort(error); controller.error(error); return;
+        }
+        controller.enqueue(bytes);
+      };
+      const send = (data: unknown) => enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
       const chunk = (delta: Record<string, unknown>, finish_reason: string | null = null) => send({ ...identity,
         object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] });
       running = (async () => {
@@ -149,14 +160,14 @@ export async function chatCompletionRequest(req: Request, config: AppConfig, sig
           if (finalText.length > emitted.length) chunk({ content: finalText.slice(emitted.length) });
           if (result.tool_calls?.length) chunk({ tool_calls: result.tool_calls.map((call, index) => ({ index, ...call })) });
           chunk({}, result.finishReason);
-          if (!cancelled && !combined.aborted) controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          enqueue(encoder.encode("data: [DONE]\n\n"));
         } catch (error) {
           // An SDK-visible error is terminal, never followed by success finish_reason or [DONE].
           if (!cancelled && !combined.aborted) send(publicChatError(error).body);
-        } finally { if (!cancelled) controller.close(); }
+        } finally { if (!cancelled && !transportFailed) controller.close(); }
       })();
     },
     async cancel() { cancelled = true; abort.abort(new DOMException("Client stream cancelled", "AbortError")); await running; },
-  });
+  }, new ByteLengthQueuingStrategy({ highWaterMark: MAX_STREAM_QUEUE_BYTES }));
   return new Response(body, { headers: { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no" } });
 }
