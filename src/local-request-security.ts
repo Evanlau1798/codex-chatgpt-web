@@ -1,4 +1,4 @@
-const DATA_ROUTES = new Set(["/v1/responses", "/v1/messages", "/v1/responses/compact"]);
+const DATA_ROUTES = new Set(["/v1/responses", "/v1/messages", "/v1/responses/compact", "/v1/chat/completions"]);
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
 function jsonMediaType(value: string | null): boolean {

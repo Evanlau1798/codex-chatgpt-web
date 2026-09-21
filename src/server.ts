@@ -1,3 +1,6 @@
+import { chatCompletionApiKey, isChatCompletionKey, chatCompletionRequestGuard, chatCompletionErrorResponse, chatCompletionModels, chatCompletionRequest } from "./chat-completions/http";
+import { activeChatCompletionTurns } from "./chat-completions/runtime";
+import { ChatCompletionError } from "./chat-completions/contract";
 import { chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT, chatGptAccountSafety } from "./adapters/chatgpt-web/account-safety";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
@@ -296,6 +299,7 @@ export function startServer(
   if (config.purpose === "dev-harness") {
     throw new Error("DEV harness configuration cannot start a Responses listener");
   }
+  const generalApiKey = chatCompletionApiKey(config);
   const startedAt = Date.now();
   const turnBroker = config.mode === "full" ? TurnBroker.forSocket(config.brokerSocketPath) : undefined;
   if (config.mode === "full") {
@@ -317,7 +321,7 @@ export function startServer(
   const accountSafety = chatGptAccountSafety();
   const activity = () => ({
     active_http_turns: httpTurns.count(),
-    active_browser_turns: chatGptTurnSessions.activeCount() + (turnBroker?.externalOwnerActiveCount() ?? 0),
+    active_browser_turns: chatGptTurnSessions.activeCount() + (turnBroker?.externalOwnerActiveCount() ?? 0) + activeChatCompletionTurns(),
   });
   const server = Bun.serve({
     hostname: config.host,
@@ -325,6 +329,13 @@ export function startServer(
     idleTimeout: 0,
     async fetch(req) {
       const url = new URL(req.url);
+      const generalRejection = chatCompletionRequestGuard(req, url.pathname, generalApiKey, server.port!, server.requestIP(req)?.address);
+      if (generalRejection) return generalRejection;
+      if (isChatCompletionKey(req, generalApiKey)) {
+        if (draining) return chatCompletionErrorResponse(new ChatCompletionError("Service is draining", 503, "service_draining"));
+        if (url.pathname === "/v1/models") return chatCompletionModels(config);
+        return httpTurns.track(signal => chatCompletionRequest(req, config, signal, dependencies.chatCompletionExecutor), req.signal, process.platform, "/v1/chat/completions");
+      }
       const securityRejection = enforceLocalDataRequestSecurity(req, url.pathname, server.port!); if (securityRejection) return securityRejection;
       if (req.method === "GET" && url.pathname === "/healthz") {
         return Response.json({
