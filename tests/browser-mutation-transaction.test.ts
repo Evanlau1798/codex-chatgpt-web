@@ -79,7 +79,8 @@ test("a cancelled mutating stage bounds cleanup that never settles", async () =>
     Bun.sleep(CHATGPT_BROWSER_MUTATION_CLEANUP_MS + 1_000).then(() => "cleanup-timeout" as const),
   ]);
   expect(outcome).not.toBe("cleanup-timeout");
-  expect(outcome).toMatchObject({ name: "AbortError" });
+  expect(outcome).toBeInstanceOf(ChatGptPersistentBrowserStateError);
+  expect(outcome.errors[0]).toMatchObject({ name: "AbortError" });
 }, 7_000);
 
 test("aborted personalization restores the original semantic mode", async () => {

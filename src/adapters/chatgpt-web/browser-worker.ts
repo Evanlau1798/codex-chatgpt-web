@@ -1,3 +1,4 @@
+import { ChatGptPromptOperation } from "./prompt-operation";
 import { chatGptPromptCodeUnitEquivalent, chatGptPromptTextEquivalent, chatGptPromptEquivalentPrefixLength, readChatGptPromptText } from "./prompt-text";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -1056,7 +1057,7 @@ export class ChatGptBrowserWorker {
     traceId: string,
     stage: string,
     timeoutMs: number,
-    action: (abortSignal: AbortSignal) => Promise<T>,
+    action: (abortSignal: AbortSignal, remainingMs: () => number) => Promise<T>,
     ownerSignal?: AbortSignal,
     suspensionClock: Pick<typeof chatGptSuspensionClock, "suspendedMs"> = chatGptSuspensionClock,
     awaitAbortedActionSettlement = false,
@@ -1064,6 +1065,8 @@ export class ChatGptBrowserWorker {
     chatGptSuspensionClock.start();
     const startedAt = performance.now();
     const suspendedAtStart = suspensionClock.suspendedMs();
+    const remainingMs = () => remainingStageBudgetMs(timeoutMs,
+      performance.now() - startedAt, suspensionClock.suspendedMs() - suspendedAtStart);
     console.info(`[chatgpt-web] browser turn ${traceId} stage=${stage} started`);
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1073,40 +1076,40 @@ export class ChatGptBrowserWorker {
       if (ownerSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       const timeout = new Promise<never>((_, rejectTimeout) => {
         const fireOrRearm = () => {
-          const remaining = remainingStageBudgetMs(
-            timeoutMs,
-            performance.now() - startedAt,
-            suspensionClock.suspendedMs() - suspendedAtStart,
-          );
+          const remaining = remainingMs();
           if (remaining > 0) {
             timer = setTimeout(fireOrRearm, remaining);
             return;
           }
           const message = `ChatGPT browser stage timed out: ${stage}`;
-          rejectTimeout(stage === "prompt_attachment" || stage === "send"
-            ? chatGptWebSurfaceError(message, false)
-            : new Error(message));
-          controller.abort();
+          const failure = stage === "prompt_attachment" || stage === "send"
+            ? chatGptWebSurfaceError(message, false) : new Error(message);
+          rejectTimeout(failure);
+          controller.abort(failure);
         };
         timer = setTimeout(fireOrRearm, timeoutMs);
       });
       const ownerAbort = ownerSignal
         ? new Promise<never>((_, rejectAbort) => {
             onOwnerAbort = () => {
-              rejectAbort(new DOMException("ChatGPT web turn aborted", "AbortError"));
-              controller.abort();
+              const reason = ownerSignal.reason ?? new DOMException("ChatGPT web turn aborted", "AbortError");
+              rejectAbort(reason);
+              controller.abort(reason);
             };
             ownerSignal.addEventListener("abort", onOwnerAbort, { once: true });
           })
         : undefined;
-      actionPromise = action(controller.signal);
+      actionPromise = action(controller.signal, remainingMs);
       const value = await Promise.race([actionPromise, timeout, ...(ownerAbort ? [ownerAbort] : [])]);
+      if (controller.signal.aborted) throw controller.signal.reason;
       console.info(`[chatgpt-web] browser turn ${traceId} stage=${stage} completed durationMs=${Math.round(performance.now() - startedAt)}`);
       return value;
     } catch (error) {
       let surfacedError = error;
       if (controller.signal.aborted && awaitAbortedActionSettlement && actionPromise) {
+        const settlementAt = performance.now();
         surfacedError = await settleAbortedChatGptMutation(actionPromise, surfacedError);
+        console.info(`[chatgpt-web] browser turn ${traceId} stage=${stage} mutationSettlementMs=${Math.round(performance.now() - settlementAt)} isolated=${surfacedError instanceof ChatGptPersistentBrowserStateError}`);
       }
       console.error(`[chatgpt-web] browser turn ${traceId} stage=${stage} failed durationMs=${Math.round(performance.now() - startedAt)}: ${surfacedError instanceof Error ? surfacedError.message : String(surfacedError)}`);
       throw surfacedError;
@@ -1328,16 +1331,20 @@ export class ChatGptBrowserWorker {
     }
   }
 
-  private async activeComposer(page: Page, timeoutMs = 30_000, signal?: AbortSignal): Promise<Locator> {
+  private async activeComposer(
+    page: Page, timeoutMs = 30_000, signal?: AbortSignal, operation?: ChatGptPromptOperation,
+  ): Promise<Locator> {
+    const parent = operation ?? new ChatGptPromptOperation(signal);
+    const op = parent.budget(timeoutMs);
+    op.check();
     const composers = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
-    const deadline = Date.now() + timeoutMs;
     let count = 0;
-    while (Date.now() < deadline) {
-      throwIfPromptAttachmentAborted(signal);
-      count = await withBrowserTurnAbort(composers.count(), signal);
+    while (op.timeLeft() > 0) {
+      count = await op.read(() => composers.count(), timeoutMs);
       if (count === 1) return composers.first();
-      await withBrowserTurnAbort(new Promise(resolveSleep => setTimeout(resolveSleep, 50)), signal);
+      await op.poll(50);
     }
+    parent.check();
     throw new Error(`ChatGPT did not expose exactly one visible composer (visibleComposers=${count})`);
   }
 
@@ -1721,30 +1728,29 @@ export class ChatGptBrowserWorker {
     });
   }
 
-  private async attachedPromptText(page: Page): Promise<string> {
-    const composer = await this.activeComposer(page);
-    return composer.evaluate(readChatGptPromptText, undefined, { timeout: 20_000 });
+  private async attachedPromptText(
+    page: Page, signal?: AbortSignal, operation?: ChatGptPromptOperation,
+  ): Promise<string> {
+    const op = operation ?? new ChatGptPromptOperation(signal);
+    const composer = await this.activeComposer(page, 30_000, signal, op);
+    return op.read(options => composer.evaluate(readChatGptPromptText, undefined, options));
   }
 
   private async assertPromptAttached(
-    page: Page,
-    prompt: string,
-    abortSignal?: AbortSignal,
+    page: Page, prompt: string, abortSignal?: AbortSignal, operation?: ChatGptPromptOperation,
   ): Promise<void> {
-    const deadline = Date.now() + 10_000;
+    const parent = operation ?? new ChatGptPromptOperation(abortSignal);
+    const op = parent.budget(10_000);
     let observed = "";
-    while (Date.now() < deadline) {
-      throwIfPromptAttachmentAborted(abortSignal);
-      observed = await this.attachedPromptText(page);
-      throwIfPromptAttachmentAborted(abortSignal);
+    while (op.timeLeft() > 0) {
+      observed = await this.attachedPromptText(page, abortSignal, op);
+      op.check();
       if (this.promptTextEquivalent(prompt, observed)) return;
-      await new Promise(resolveSleep => setTimeout(resolveSleep, 50));
+      await op.poll(50);
     }
-    throwIfPromptAttachmentAborted(abortSignal);
+    parent.check();
     throw chatGptPromptAttachmentMismatch(
-      "ChatGPT composer did not preserve the complete prompt",
-      prompt,
-      observed,
+      "ChatGPT composer did not preserve the complete prompt", prompt, observed,
       this.promptEquivalentPrefixLength(prompt, observed),
     );
   }
@@ -1809,14 +1815,15 @@ export class ChatGptBrowserWorker {
 
   private async clearChatGptComposerState(page: Page): Promise<void> {
     await runChatGptMutationCleanup(async signal => {
-      await page.locator("body").press("Escape", { signal, timeout: 5_000 });
-      const composer = await this.activeComposer(page, 5_000, signal);
-      await clearChatGptComposerInput(composer, signal);
+      const op = new ChatGptPromptOperation(signal).budget(5_000);
+      await page.locator("body").press("Escape", op.options(5_000));
+      const composer = await this.activeComposer(page, 5_000, signal, op);
+      await clearChatGptComposerInput(composer, signal, op);
       await withBrowserTurnAbort(settleChatGptUi(), signal);
       const text = await composer.evaluate(
         element => element.textContent?.trim() ?? "",
         undefined,
-        { signal, timeout: 5_000 },
+        op.options(5_000),
       );
       if (text.length > 0 || await this.connectorIsSelected(composer, signal)) {
         throw new Error("ChatGPT connector cleanup did not produce an empty composer");
@@ -1844,7 +1851,10 @@ export class ChatGptBrowserWorker {
     catalogRefreshAvailable = false,
     attemptBudget: ChatGptConnectorAttemptBudget = { triggerAttempts: 0 },
     abortSignal?: AbortSignal,
+    operation?: ChatGptPromptOperation,
   ): Promise<Locator> {
+    const op = operation ?? new ChatGptPromptOperation(abortSignal);
+    op.check();
     const capture = async (checkpoint: string): Promise<void> => {
       throwIfPromptAttachmentAborted(abortSignal);
       await withBrowserTurnAbort(captureDiagnostic?.(checkpoint) ?? Promise.resolve(), abortSignal);
@@ -1858,20 +1868,20 @@ export class ChatGptBrowserWorker {
       page,
       capture,
       async personalizationSignal => {
+        const proof = new ChatGptPromptOperation(personalizationSignal, () => op.timeLeft(), op.now);
         let proofResult = false;
         let proofError: unknown;
         try {
-          const composer = await this.activeComposer(page, 30_000, personalizationSignal);
-          await composer.fill("", { signal: personalizationSignal, timeout: 10_000 });
-          await composer.focus({ signal: personalizationSignal, timeout: 10_000 });
+          const composer = await this.activeComposer(page, 30_000, personalizationSignal, proof);
+          await composer.fill("", proof.options(10_000));
+          await composer.focus(proof.options(10_000));
           await withBrowserTurnAbort(settleChatGptUi(), personalizationSignal);
           await composer.pressSequentially(CHATGPT_CONNECTOR_MENTION_QUERY, {
             delay: 25,
-            signal: personalizationSignal,
-            timeout: 10_000,
+            ...proof.options(10_000),
           });
           try {
-            await appResult.waitFor({ state: "visible", timeout: 2_500, signal: personalizationSignal });
+            await appResult.waitFor({ state: "visible", ...proof.options(2_500) });
             proofResult = true;
           } catch (error) {
             if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
@@ -1879,7 +1889,7 @@ export class ChatGptBrowserWorker {
               text: element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
                 ? element.value : element.textContent ?? "",
               focused: element === document.activeElement,
-            }), undefined, { timeout: 10_000, signal: personalizationSignal });
+            }), undefined, proof.options(10_000));
             if (mention.text !== CHATGPT_CONNECTOR_MENTION_QUERY) {
               throw new ChatGptPromptAttachmentIntegrityError(
                 `ChatGPT did not preserve the connector mention (expectedChars=${CHATGPT_CONNECTOR_MENTION_QUERY.length}, actualChars=${mention.text.length}, focused=${mention.focused})`,
@@ -1906,20 +1916,20 @@ export class ChatGptBrowserWorker {
       },
       abortSignal,
     );
-    let composer = await this.activeComposer(page, 30_000, abortSignal);
+    let composer = await this.activeComposer(page, 30_000, abortSignal, op);
     try {
-      await composer.fill("", { signal: abortSignal, timeout: 10_000 });
+      await composer.fill("", op.options(10_000));
       if (await this.connectorIsSelected(composer, abortSignal)) {
         await capture("connector-already-selected");
         return composer;
       }
 
       const activateConnectorChoice = async (control: Locator): Promise<Locator> => {
-        await control.press("Enter", { signal: abortSignal, timeout: 10_000 });
+        await control.press("Enter", op.options(10_000));
         await capture("connector-choice-activated");
-        const selectedComposer = await this.activeComposer(page, 30_000, abortSignal);
+        const selectedComposer = await this.activeComposer(page, 30_000, abortSignal, op);
         const selectedConnector = this.selectedConnectorControl(selectedComposer);
-        await selectedConnector.waitFor({ state: "visible", timeout: 10_000, signal: abortSignal });
+        await selectedConnector.waitFor({ state: "visible", ...op.options(10_000) });
         if (!await this.connectorIsSelected(selectedComposer, abortSignal)) {
           throw new Error(`ChatGPT composer did not select ${JSON.stringify(this.config.appName)} connector`);
         }
@@ -1932,17 +1942,17 @@ export class ChatGptBrowserWorker {
       let mentionFailure: string | undefined;
       while (attemptBudget.triggerAttempts < MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS) {
         attemptBudget.triggerAttempts += 1;
-        composer = await this.activeComposer(page, 30_000, abortSignal);
-        await composer.fill("", { signal: abortSignal, timeout: 10_000 });
-        await composer.focus({ signal: abortSignal, timeout: 10_000 });
+        composer = await this.activeComposer(page, 30_000, abortSignal, op);
+        await composer.fill("", op.options(10_000));
+        await composer.focus(op.options(10_000));
         await withBrowserTurnAbort(settleChatGptUi(), abortSignal);
-        await composer.pressSequentially(CHATGPT_CONNECTOR_MENTION_QUERY, { delay: 25, signal: abortSignal, timeout: 10_000 });
+        await composer.pressSequentially(CHATGPT_CONNECTOR_MENTION_QUERY, { delay: 25, ...op.options(10_000) });
         if (!firstMenuCaptured) {
           firstMenuCaptured = true;
           await capture("connector-mention-triggered");
         }
         try {
-          await appResult.waitFor({ state: "visible", timeout: 2_500, signal: abortSignal });
+          await appResult.waitFor({ state: "visible", ...op.options(2_500) });
           await capture("connector-menu-visible");
           mentionMenuVisible = true;
           break;
@@ -2000,7 +2010,7 @@ export class ChatGptBrowserWorker {
       }
       const rowHighlighted = async () => await appResult.getAttribute(
         "data-highlighted",
-        { signal: abortSignal, timeout: 10_000 },
+        op.options(10_000),
       ) !== null;
       if (!await rowHighlighted()) {
         const visibleRowCount = await withBrowserTurnAbort(
@@ -2008,7 +2018,7 @@ export class ChatGptBrowserWorker {
           abortSignal,
         );
         for (let step = 0; step < visibleRowCount && !await rowHighlighted(); step += 1) {
-          await composer.press("ArrowDown", { signal: abortSignal, timeout: 10_000 });
+          await composer.press("ArrowDown", op.options(10_000));
         }
       }
       if (!await rowHighlighted()) {
@@ -2039,29 +2049,32 @@ export class ChatGptBrowserWorker {
     largeStructuredDirect = false,
     forceStructuredDirect = false,
     beforeRecoveryInsertion?: (composer: Locator) => Promise<void>,
-    diagnosticContext?: { traceId: string; stage: string },
+    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation },
   ): Promise<void> {
-    throwIfPromptAttachmentAborted(abortSignal);
+    const op = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
+    op.check();
     let mutationStarted = false;
     try {
       if (forceStructuredDirect) await captureDiagnostic?.("retained-compaction-direct-insertion");
       if (!localTools) {
-        const composer = await this.activeComposer(page, 30_000, abortSignal);
+        const composer = await this.activeComposer(page, 30_000, abortSignal, op);
         // Playwright's multiline fill maps through an input action that ChatGPT's Lexical editor can
         // collapse to the first paragraph on the launcher-owned Electron surface. Clear separately,
         // then transport the complete text through verified CDP edits.
         if (!beforeRecoveryInsertion) {
           mutationStarted = true;
-          await composer.fill("", { signal: abortSignal, timeout: 10_000 });
+          await op.mutate(options => composer.fill("", options), 10_000);
         }
         if (requireThink) {
           await setChatGptThinkMode(composer.locator("xpath=ancestor::form[1]"), true, captureDiagnostic, abortSignal);
         }
-        await composer.focus();
+        await op.mutate(options => composer.focus(options));
+        op.check();
         await beforeRecoveryInsertion?.(composer);
+        op.check();
         mutationStarted = true;
         await this.insertPromptText(page, prompt, abortSignal, largeStructuredDirect, forceStructuredDirect, diagnosticContext);
-        await this.assertPromptAttached(page, prompt, abortSignal);
+        await this.assertPromptAttached(page, prompt, abortSignal, op);
         return;
       }
       const selectedComposer = await this.selectConnector(
@@ -2070,15 +2083,16 @@ export class ChatGptBrowserWorker {
         catalogRefreshAvailable,
         connectorAttemptBudget,
         abortSignal,
+        op,
       );
       mutationStarted = true;
       if (requireThink) {
         await setChatGptThinkMode(selectedComposer.locator("xpath=ancestor::form[1]"), true, captureDiagnostic, abortSignal);
       }
-      await selectedComposer.focus();
-      await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
+      await op.mutate(options => selectedComposer.focus(options));
+      await op.mutate(() => page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY));
       await this.insertPromptText(page, ` ${prompt}`, abortSignal, largeStructuredDirect, forceStructuredDirect, diagnosticContext);
-      await this.assertPromptAttached(page, prompt, abortSignal);
+      await this.assertPromptAttached(page, prompt, abortSignal, op);
     } catch (error) {
       if (!mutationStarted || error instanceof ChatGptPersistentBrowserStateError) throw error;
       try { await this.clearChatGptComposerState(page); }
@@ -2096,8 +2110,10 @@ export class ChatGptBrowserWorker {
     page: Page,
     baseline: ChatGptSubmissionBaseline,
     abortSignal?: AbortSignal,
+    operation?: ChatGptPromptOperation,
   ): Promise<void> {
-    throwIfPromptAttachmentAborted(abortSignal);
+    const op = operation ?? new ChatGptPromptOperation(abortSignal);
+    op.check();
     const before = await this.currentSubmissionEvidence(
       page,
       baseline.userTurns,
@@ -2110,10 +2126,10 @@ export class ChatGptBrowserWorker {
       );
     }
 
-    const composer = await this.activeComposer(page);
-    await composer.fill("");
-    await composer.focus();
-    await settleChatGptUi();
+    const composer = await this.activeComposer(page, 30_000, abortSignal, op);
+    await op.mutate(options => composer.fill("", options));
+    await op.mutate(options => composer.focus(options));
+    await op.poll(CHATGPT_UI_SETTLE_MS);
     throwIfPromptAttachmentAborted(abortSignal);
 
     const after = await this.currentSubmissionEvidence(
@@ -2127,7 +2143,7 @@ export class ChatGptBrowserWorker {
         `ChatGPT exposed ${after} while resetting a failed compaction prompt; refusing a duplicate submission`,
       );
     }
-    const observed = await this.attachedPromptText(page);
+    const observed = await this.attachedPromptText(page, abortSignal, op);
     if (observed.length > 0) {
       throw new ChatGptPromptAttachmentIntegrityError(
         `ChatGPT composer could not reset cleanly for compaction retry (actualChars=${observed.length})`,
@@ -2149,7 +2165,7 @@ export class ChatGptBrowserWorker {
     largeStructuredDirect = false,
     forceStructuredDirect = false,
     beforeRecoveryInsertion?: (composer: Locator) => Promise<void>,
-    diagnosticContext?: { traceId: string; stage: string },
+    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation },
   ): Promise<void> {
     let retryAvailable = compaction;
     for (;;) {
@@ -2184,22 +2200,23 @@ export class ChatGptBrowserWorker {
           );
         }
         await captureDiagnostic?.("prompt-attachment-integrity-retry");
-        await this.resetCompactionComposerForRetry(page, baseline, abortSignal);
+        await this.resetCompactionComposerForRetry(page, baseline, abortSignal, diagnosticContext?.operation);
         connectorAttemptBudget.triggerAttempts = 0;
       }
     }
   }
 
-  private async reanchorPromptCaret(page: Page, abortSignal?: AbortSignal): Promise<void> {
-    throwIfPromptAttachmentAborted(abortSignal);
-    const composer = await this.activeComposer(page);
+  private async reanchorPromptCaret(page: Page, abortSignal?: AbortSignal, operation?: ChatGptPromptOperation): Promise<void> {
+    const op = operation ?? new ChatGptPromptOperation(abortSignal);
+    op.check();
+    const composer = await this.activeComposer(page, 30_000, abortSignal, op);
     let anchored = false;
     try {
-      anchored = await reanchorChatGptComposerCaret(composer);
+      anchored = await reanchorChatGptComposerCaret(composer, 2, abortSignal, op);
     } catch (error) {
       throwIfPromptAttachmentAborted(abortSignal);
-      const detail = error instanceof Error ? error.message : String(error);
-      throw chatGptWebSurfaceError(`ChatGPT composer caret re-anchor failed: ${detail}`, false);
+      if (error instanceof ChatGptWebAdapterError || error instanceof ChatGptPersistentBrowserStateError) throw error;
+      throw chatGptWebSurfaceError("ChatGPT composer caret re-anchor failed", false);
     }
     throwIfPromptAttachmentAborted(abortSignal);
     if (!anchored) {
@@ -2216,38 +2233,35 @@ export class ChatGptBrowserWorker {
     abortSignal?: AbortSignal,
     largeStructuredDirect = false,
     forceStructuredDirect = false,
-    diagnosticContext?: { traceId: string; stage: string },
+    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation },
   ): Promise<void> {
+    const op = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
     await insertChatGptPromptText(text, abortSignal, {
-      composer: () => this.activeComposer(page),
-      verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal),
-      reanchor: () => this.reanchorPromptCaret(page, abortSignal),
+      composer: () => this.activeComposer(page, 30_000, abortSignal, op),
+      verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal, op),
+      reanchor: () => this.reanchorPromptCaret(page, abortSignal, op),
       onProgress: snapshot => console.info(
         `[chatgpt-web] browser turn ${diagnosticContext?.traceId ?? "unscoped"}`
         + ` stage=${diagnosticContext?.stage ?? "prompt_attachment"} composer=${JSON.stringify(snapshot)}`,
       ),
-    }, { largeStructuredDirect, forceStructuredDirect });
+    }, { largeStructuredDirect, forceStructuredDirect }, op);
   }
 
   private async waitForPromptChunkAttached(
-    page: Page,
-    expected: string,
-    abortSignal?: AbortSignal,
+    page: Page, expected: string, abortSignal?: AbortSignal, operation?: ChatGptPromptOperation,
   ): Promise<void> {
-    const deadline = Date.now() + 20_000;
+    const parent = operation ?? new ChatGptPromptOperation(abortSignal);
+    const op = parent.budget(20_000);
     let observed = "";
-    do {
-      throwIfPromptAttachmentAborted(abortSignal);
-      observed = await this.attachedPromptText(page);
-      throwIfPromptAttachmentAborted(abortSignal);
+    while (op.timeLeft() > 0) {
+      observed = await this.attachedPromptText(page, abortSignal, op);
+      op.check();
       if (this.promptTextEquivalent(expected, observed)) return;
-      await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
-    } while (Date.now() < deadline);
-    throwIfPromptAttachmentAborted(abortSignal);
+      await op.poll(100);
+    }
+    parent.check();
     throw chatGptPromptAttachmentMismatch(
-      "ChatGPT composer did not commit the expected prompt text",
-      expected,
-      observed,
+      "ChatGPT composer did not commit the expected prompt text", expected, observed,
       this.promptEquivalentPrefixLength(expected, observed),
     );
   }
@@ -3252,14 +3266,15 @@ export class ChatGptBrowserWorker {
             turn.traceId,
             `multipart_stage_${index + 1}_attachment`,
             chatGptPromptAttachmentTimeoutMs(stage.text.length, this.config.experimentalNoAutoCompact),
-            stageSignal => this.attachPrompt(
+            (stageSignal, remainingMs) => this.attachPrompt(
               page,
               stage.text,
               false,
               checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
               false, connectorAttemptBudget, false, false, false, undefined,
-              { traceId: turn.traceId, stage: `multipart_stage_${index + 1}_attachment` },
+              { traceId: turn.traceId, stage: `multipart_stage_${index + 1}_attachment`,
+                operation: new ChatGptPromptOperation(stageSignal, remainingMs) },
             ),
             turn.abortSignal,
             chatGptSuspensionClock,
@@ -3371,7 +3386,7 @@ export class ChatGptBrowserWorker {
                 turn.traceId,
                 "prompt_attachment",
                 chatGptPromptAttachmentTimeoutMs(responsePrompt.length, this.config.experimentalNoAutoCompact),
-                stageSignal => this.attachPromptWithCompactionRetry(
+                (stageSignal, remainingMs) => this.attachPromptWithCompactionRetry(
                   page,
                   responsePrompt,
                   // Connector access persists in this bound conversation without another mention.
@@ -3386,7 +3401,8 @@ export class ChatGptBrowserWorker {
                   !multipartTransport && prepared.transport === "inline",
                   turn.compaction === true && turn.requireRetainedConversation === true,
                   beforeRecoveryInsertion,
-                  { traceId: turn.traceId, stage: "prompt_attachment" },
+                  { traceId: turn.traceId, stage: "prompt_attachment",
+                    operation: new ChatGptPromptOperation(stageSignal, remainingMs) },
                 ),
                 turn.abortSignal,
                 chatGptSuspensionClock,

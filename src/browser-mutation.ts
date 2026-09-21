@@ -18,12 +18,21 @@ export async function runChatGptMutationCleanup<T>(
   action: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CHATGPT_BROWSER_MUTATION_CLEANUP_MS);
-  timer.unref?.();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const failure = new ChatGptPersistentBrowserStateError(
+        [new ChatGptBrowserMutationDeadlineError()],
+        "ChatGPT browser cleanup did not settle before its deadline",
+      );
+      reject(failure);
+      controller.abort(failure);
+    }, CHATGPT_BROWSER_MUTATION_CLEANUP_MS);
+  });
   try {
-    return await action(controller.signal);
+    return await Promise.race([action(controller.signal), expiry]);
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -38,6 +47,10 @@ export async function settleAbortedChatGptMutation<T>(
     );
   } catch (error) {
     if (error instanceof ChatGptPersistentBrowserStateError) return error;
+    if (error instanceof ChatGptBrowserMutationDeadlineError) {
+      return new ChatGptPersistentBrowserStateError([primaryError, error],
+        "ChatGPT cancelled mutation did not settle before the cleanup deadline");
+    }
   }
   return primaryError;
 }

@@ -1,3 +1,4 @@
+import { ChatGptPromptOperation } from "./prompt-operation";
 import { chatGptPromptMismatchDetails } from "./prompt-text";
 import { chatGptNativeEditValue, type ChatGptPromptInsertionMetrics } from "./prompt-insertion-metrics";
 import type { Locator } from "playwright-core";
@@ -63,16 +64,19 @@ async function restoreChatGptPromptMarkdownRanges(
   count: number,
   abortSignal?: AbortSignal,
   metrics?: ChatGptPromptInsertionMetrics,
+  operation?: ChatGptPromptOperation,
 ): Promise<MarkdownRestorationEvidence> {
-  const options = { signal: abortSignal, timeout: 20_000 };
+  const op = operation ?? new ChatGptPromptOperation(abortSignal);
+  op.check();
   let remaining = count;
   let batches = 0;
   const markers = replacements.map(replacement => replacement.marker);
   while (remaining > 0) {
     if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
-    metrics?.restorationBatch();
-    metrics?.editStarted();
-    const editResult = await composer.evaluate((element, input) => {
+    const editResult = await op.mutate(options => {
+      metrics?.restorationBatch();
+      metrics?.editStarted();
+      return composer.evaluate((element, input) => {
       let attempts = 0; let accepted = 0;
       const result = <T>(result: T) => ({ result, attempts, accepted });
       const edit = (command: string, value: string) => {
@@ -118,13 +122,14 @@ async function restoreChatGptPromptMarkdownRanges(
       selection.addRange(range);
       return result(edit("insertText", restoredText) ? markerCount : 0);
     }, { replacements, maxChars: MARKDOWN_RESTORATION_RANGE_CHARS }, options);
+    });
     const restored = chatGptNativeEditValue(editResult, metrics);
     batches += 1;
     if (!Number.isSafeInteger(restored) || restored <= 0 || restored > remaining) {
       return { ok: false, strategy: "range", initialMarkers: count, remainingMarkers: remaining, batches };
     }
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const observedRemaining = await composer.evaluate((element, values) => {
+    await op.poll(0);
+    const observedRemaining = await op.read(options => composer.evaluate((element, values) => {
       const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
       const markerSet = new Set(values);
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
@@ -135,7 +140,7 @@ async function restoreChatGptPromptMarkdownRanges(
         for (const value of node.data) if (markerSet.has(value)) found += 1;
       }
       return found;
-    }, markers, options);
+    }, markers, options));
     if (!Number.isSafeInteger(observedRemaining)
       || observedRemaining < 0
       || remaining - observedRemaining !== restored) {
@@ -153,10 +158,12 @@ async function restoreChatGptPromptMarkdownExactly(
   count: number,
   abortSignal?: AbortSignal,
   metrics?: ChatGptPromptInsertionMetrics,
+  operation?: ChatGptPromptOperation,
 ): Promise<MarkdownRestorationEvidence> {
-  const options = { signal: abortSignal, timeout: 20_000 };
+  const op = operation ?? new ChatGptPromptOperation(abortSignal);
+  op.check();
   const markers = replacements.map(replacement => replacement.marker);
-  const countMarkers = () => composer.evaluate((element, values) => {
+  const countMarkers = () => op.read(options => composer.evaluate((element, values) => {
     const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
     const markerSet = new Set(values);
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
@@ -167,15 +174,16 @@ async function restoreChatGptPromptMarkdownExactly(
       for (const value of node.data) if (markerSet.has(value)) found += 1;
     }
     return found;
-  }, markers, options);
+  }, markers, options));
   let remaining = count;
   let batches = 0;
   while (remaining > 0) {
     if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
-    await composer.focus(options);
-    metrics?.restorationBatch();
-    metrics?.editStarted();
-    const editResult = await composer.evaluate(async (element, input) => {
+    await op.mutate(options => composer.focus(options));
+    const editResult = await op.mutate(options => {
+      metrics?.restorationBatch();
+      metrics?.editStarted();
+      return composer.evaluate(async (element, input) => {
       let attempts = 0; let accepted = 0;
       const result = <T>(result: T) => ({ result, attempts, accepted });
       const edit = (command: string, value: string) => {
@@ -234,13 +242,14 @@ async function restoreChatGptPromptMarkdownExactly(
       }
       return result(edited);
     }, { replacements, batchSize: MARKDOWN_RESTORATION_BATCH_SIZE }, options);
+    });
     const restored = chatGptNativeEditValue(editResult, metrics);
     batches += 1;
     if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
     if (!Number.isSafeInteger(restored) || restored <= 0 || restored > remaining) {
       return { ok: false, strategy: "exact", initialMarkers: count, remainingMarkers: remaining, batches };
     }
-    await new Promise(resolve => setTimeout(resolve, 0));
+    await op.poll(0);
     if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
     const observedRemaining = await countMarkers();
     if (!Number.isSafeInteger(observedRemaining)
@@ -260,10 +269,11 @@ export async function restoreChatGptPromptMarkdown(
   guarded: ChatGptPromptMarkdownGuard,
   abortSignal?: AbortSignal,
   metrics?: ChatGptPromptInsertionMetrics,
+  operation?: ChatGptPromptOperation,
 ): Promise<void> {
   const restoration = STRUCTURED_MARKDOWN.test(text)
-    ? await restoreChatGptPromptMarkdownExactly(composer, guarded.replacements, guarded.count, abortSignal, metrics)
-    : await restoreChatGptPromptMarkdownRanges(composer, guarded.replacements, guarded.count, abortSignal, metrics);
+    ? await restoreChatGptPromptMarkdownExactly(composer, guarded.replacements, guarded.count, abortSignal, metrics, operation)
+    : await restoreChatGptPromptMarkdownRanges(composer, guarded.replacements, guarded.count, abortSignal, metrics, operation);
   if (!restoration.ok) throw chatGptWebSurfaceError(
     `ChatGPT composer could not preserve literal Markdown in a bounded edit (strategy=${restoration.strategy}, initialMarkers=${restoration.initialMarkers}, remainingMarkers=${restoration.remainingMarkers}, batches=${restoration.batches})`,
     false,
@@ -276,11 +286,14 @@ export async function insertChatGptComposerGuardedText(
   abortSignal?: AbortSignal,
   plainTextBlocks = false,
   metrics?: ChatGptPromptInsertionMetrics,
+  operation?: ChatGptPromptOperation,
 ): Promise<void> {
-  const options = { signal: abortSignal, timeout: 20_000 };
-  await composer.focus(options);
-  metrics?.editStarted();
-  const editResult = await composer.evaluate((element, input) => {
+  const op = operation ?? new ChatGptPromptOperation(abortSignal);
+  op.check();
+  await op.mutate(options => composer.focus(options));
+  const editResult = await op.mutate(options => {
+    metrics?.editStarted();
+    return composer.evaluate((element, input) => {
     let attempts = 0; let accepted = 0;
     const result = <T>(result: T) => ({ result, attempts, accepted });
     const edit = (command: string, value: string) => {
@@ -309,6 +322,7 @@ export async function insertChatGptComposerGuardedText(
     }
     return result(edit("insertText", value));
   }, plainTextBlocks ? { text } : text, options);
+  });
   const inserted = chatGptNativeEditValue(editResult, metrics);
   if (!inserted) throw chatGptWebSurfaceError("ChatGPT composer rejected the bounded plain-text edit", false);
 }
@@ -317,29 +331,33 @@ export async function insertChatGptComposerPlainText(
   composer: Locator,
   text: string,
   abortSignal?: AbortSignal,
+  operation?: ChatGptPromptOperation,
 ): Promise<void> {
+  const op = operation ?? new ChatGptPromptOperation(abortSignal);
+  op.check();
   const guarded = guardChatGptPromptMarkdown(text);
-  await insertChatGptComposerGuardedText(composer, guarded?.text ?? text, abortSignal);
+  await insertChatGptComposerGuardedText(composer, guarded?.text ?? text, abortSignal, false, undefined, op);
   if (guarded) {
-    await restoreChatGptPromptMarkdown(composer, text, guarded, abortSignal);
+    await restoreChatGptPromptMarkdown(composer, text, guarded, abortSignal, undefined, op);
   }
 }
 
 export async function clearChatGptComposerInput(
   composer: Locator,
   abortSignal?: AbortSignal,
+  operation?: ChatGptPromptOperation,
 ): Promise<void> {
-  const options = { signal: abortSignal, timeout: 5_000 };
-  await composer.fill("", options);
-  const hasText = await composer.evaluate(
+  const op = (operation ?? new ChatGptPromptOperation(abortSignal)).budget(5_000);
+  await op.mutate(options => composer.fill("", options));
+  const hasText = await op.read(options => composer.evaluate(
     element => (element.textContent?.trim().length ?? 0) > 0,
     undefined,
     options,
-  );
+  ));
   if (!hasText) return;
-  await composer.focus(options);
-  await composer.press(CHATGPT_COMPOSER_SELECT_ALL_KEY, options);
-  await composer.press("Backspace", options);
+  await op.mutate(options => composer.focus(options));
+  await op.mutate(options => composer.press(CHATGPT_COMPOSER_SELECT_ALL_KEY, options));
+  await op.mutate(options => composer.press("Backspace", options));
 }
 
 export function guardChatGptPromptChunkBoundary(
@@ -363,11 +381,14 @@ export async function restoreChatGptPromptChunkBoundary(
   replacement: ChatGptPromptBoundaryReplacement,
   abortSignal?: AbortSignal,
   metrics?: ChatGptPromptInsertionMetrics,
+  operation?: ChatGptPromptOperation,
 ): Promise<boolean> {
-  const options = { signal: abortSignal, timeout: 20_000 };
-  await composer.focus(options);
-  metrics?.editStarted();
-  const editResult = await composer.evaluate((element, input) => {
+  const op = operation ?? new ChatGptPromptOperation(abortSignal);
+  op.check();
+  await op.mutate(options => composer.focus(options));
+  const editResult = await op.mutate(options => {
+    metrics?.editStarted();
+    return composer.evaluate((element, input) => {
     let attempts = 0; let accepted = 0;
     const result = <T>(result: T) => ({ result, attempts, accepted });
     const edit = (command: string, value: string) => {
@@ -394,11 +415,12 @@ export async function restoreChatGptPromptChunkBoundary(
     selection.addRange(range);
     return result(edit("insertText", input.value));
   }, replacement, options);
+  });
   const restored = chatGptNativeEditValue(editResult, metrics);
   if (!restored) return false;
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await op.poll(0);
   if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
-  return await composer.evaluate((element, marker) => {
+  return await op.read(options => composer.evaluate((element, marker) => {
     const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -406,7 +428,7 @@ export async function restoreChatGptPromptChunkBoundary(
       if (!text.parentElement?.closest(ignoredSelector) && text.data.includes(marker)) return false;
     }
     return true;
-  }, replacement.marker, options);
+  }, replacement.marker, options));
 }
 
 export function chatGptPromptAttachmentMismatch(
@@ -433,10 +455,13 @@ export function chatGptCaretAtLogicalEnd(evidence: ChatGptCaretEvidence): boolea
 export async function reanchorChatGptComposerCaret(
   composer: Locator,
   attempts = 2,
+  abortSignal?: AbortSignal,
+  operation?: ChatGptPromptOperation,
 ): Promise<boolean> {
+  const op = (operation ?? new ChatGptPromptOperation(abortSignal)).budget(20_000);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    await composer.focus();
-    const evidence = await composer.evaluate(async element => {
+    await op.mutate(options => composer.focus(options));
+    const evidence = await op.mutate(options => composer.evaluate(async element => {
       const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
       const editableRootNodes = [...element.childNodes].filter(node => (
         node.nodeType === Node.TEXT_NODE
@@ -506,7 +531,13 @@ export async function reanchorChatGptComposerCaret(
       selection.removeAllRanges();
       selection.addRange(range);
 
-      await new Promise<void>(resolveFrame => requestAnimationFrame(() => resolveFrame()));
+      await new Promise<void>(resolveFrame => {
+        // Hidden documents can suspend rAF. The timer only wakes the evidence read below.
+        let frame = 0;
+        const finish = () => { clearTimeout(timer); cancelAnimationFrame(frame); resolveFrame(); };
+        const timer = setTimeout(finish, 100);
+        frame = requestAnimationFrame(finish);
+      });
       const anchorNode = selection.anchorNode;
       const focusNode = selection.focusNode;
       const anchorInsideComposer = anchorNode !== null && element.contains(anchorNode);
@@ -526,7 +557,7 @@ export async function reanchorChatGptComposerCaret(
         focusInsideComposer,
         trailingEditableText,
       };
-    }, undefined, { timeout: 20_000 });
+    }, undefined, options));
     if (chatGptCaretAtLogicalEnd(evidence)) return true;
   }
   return false;

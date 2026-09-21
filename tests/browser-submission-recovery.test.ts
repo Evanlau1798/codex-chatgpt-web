@@ -10,6 +10,7 @@ import {
   ChatGptBrowserObservationTimeoutError,
   observeChatGptTurnIdentityAfterSend,
 } from "../src/adapters/chatgpt-web/browser-observation";
+import { ChatGptPromptOperation } from "../src/adapters/chatgpt-web/prompt-operation";
 import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
@@ -466,7 +467,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
   expect(end).toBeGreaterThan(start);
   const progress = new ChatGptExternalTurnProgress();
   const dependencies = {
-    first, next, initial, events, connectorAttemptBudget: { remaining: 3 },
+    first, next, initial, events, ChatGptPromptOperation, connectorAttemptBudget: { remaining: 3 },
     turn: {
       traceId: `production-${lane}-rebind`, externalProgress: progress,
       onSendActivated: () => { events.push("activated"); },

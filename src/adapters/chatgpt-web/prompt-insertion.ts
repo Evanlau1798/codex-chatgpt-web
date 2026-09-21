@@ -1,3 +1,4 @@
+import { ChatGptPromptOperation } from "./prompt-operation";
 import { ChatGptPromptInsertionMetrics, type ChatGptPromptInsertionSnapshot } from "./prompt-insertion-metrics";
 import type { Locator } from "playwright-core";
 import { chatGptWebSurfaceError } from "./adapter-error";
@@ -24,8 +25,11 @@ export async function insertChatGptPromptText(
     onProgress?(snapshot: ChatGptPromptInsertionSnapshot): void;
   },
   options?: ChatGptPromptInsertionOptions,
+  operation?: ChatGptPromptOperation,
 ): Promise<void> {
+  const op = operation ?? new ChatGptPromptOperation(abortSignal);
   const checkAborted = (): void => {
+    op.check();
     if (abortSignal?.aborted) {
       throw abortSignal.reason ?? new DOMException("ChatGPT prompt attachment aborted", "AbortError");
     }
@@ -49,7 +53,7 @@ export async function insertChatGptPromptText(
 
   checkAborted();
   const plan = planChatGptPromptInsertion(text, options);
-  const metrics = new ChatGptPromptInsertionMetrics(plan, actions.onProgress);
+  const metrics = new ChatGptPromptInsertionMetrics(plan, actions.onProgress, op.now);
   try {
     if (plan.strategy !== "guarded-chunked") {
       // One exact editor transaction avoids both cumulative Lexical remounts and thousands of
@@ -59,7 +63,7 @@ export async function insertChatGptPromptText(
       const plainTextBlocks = plan.strategy === "direct-html";
       await metrics.run("insert", async () => {
         metrics.chunk();
-        await withComposer(composer => insertChatGptComposerGuardedText(composer, text, abortSignal, plainTextBlocks, metrics));
+        await withComposer(composer => insertChatGptComposerGuardedText(composer, text, abortSignal, plainTextBlocks, metrics, op));
         metrics.inserted(text.length);
       });
       await verify(text.trimStart());
@@ -79,12 +83,12 @@ export async function insertChatGptPromptText(
       const chunk = boundary?.text ?? original;
       await metrics.run("insert", async () => {
         metrics.chunk();
-        await withComposer(composer => insertChatGptComposerGuardedText(composer, chunk, abortSignal, false, metrics));
+        await withComposer(composer => insertChatGptComposerGuardedText(composer, chunk, abortSignal, false, metrics, op));
         metrics.inserted(end);
       });
       await verify(`${insertionText.slice(0, offset)}${chunk}`.trimStart());
       if (boundary) {
-        if (!await metrics.run("boundary_restore", () => withComposer(composer => restoreChatGptPromptChunkBoundary(composer, boundary.replacement, abortSignal, metrics)))) {
+        if (!await metrics.run("boundary_restore", () => withComposer(composer => restoreChatGptPromptChunkBoundary(composer, boundary.replacement, abortSignal, metrics, op)))) {
           throw chatGptWebSurfaceError("ChatGPT composer could not restore a prompt chunk boundary", false);
         }
         await verify(insertionText.slice(0, end).trimStart());
@@ -93,7 +97,7 @@ export async function insertChatGptPromptText(
       offset = end;
     }
     if (markdown) {
-      await metrics.run("markdown_restore", () => withComposer(composer => restoreChatGptPromptMarkdown(composer, text, markdown, abortSignal, metrics)));
+      await metrics.run("markdown_restore", () => withComposer(composer => restoreChatGptPromptMarkdown(composer, text, markdown, abortSignal, metrics, op)));
       await verify(text.trimStart(), true);
       await reanchor();
     }
