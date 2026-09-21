@@ -413,20 +413,11 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.extraHighAvailable !== undefined && typeof parsed.extraHighAvailable !== "boolean") {
     throw new Error(`Invalid extraHighAvailable in ${path}`);
   }
-  if (parsed.experimentalBiggerContext !== undefined
-    && typeof parsed.experimentalBiggerContext !== "boolean") {
-    throw new Error(`Invalid experimentalBiggerContext in ${path}`);
-  }
-  if (parsed.experimentalSkillAttachments !== undefined
-    && typeof parsed.experimentalSkillAttachments !== "boolean") {
-    throw new Error(`Invalid experimentalSkillAttachments in ${path}`);
-  }
-  if (parsed.experimentalComposerPlainText !== undefined && typeof parsed.experimentalComposerPlainText !== "boolean") {
-    throw new Error(`Invalid experimentalComposerPlainText in ${path}`);
-  }
-  if (parsed.experimentalNoAutoCompact !== undefined
-    && typeof parsed.experimentalNoAutoCompact !== "boolean") {
-    throw new Error(`Invalid experimentalNoAutoCompact in ${path}`);
+  for (const feature of ["experimentalBiggerContext", "experimentalSkillAttachments",
+    "experimentalComposerPlainText", "experimentalNoAutoCompact"] as const) {
+    if (parsed[feature] !== undefined && typeof parsed[feature] !== "boolean") {
+      throw new Error(`Invalid ${feature} in ${path}`);
+    }
   }
   if (parsed.zeroRiskProEnabled !== undefined && typeof parsed.zeroRiskProEnabled !== "boolean") {
     throw new Error(`Invalid zeroRiskProEnabled in ${path}`);
