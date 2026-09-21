@@ -6,7 +6,7 @@ First-phase implementation covers **A (diagnostics/contracts), B (cancellation/d
 
 **C2 is BLOCKED on actual incident evidence.** The supplied pack contains synthetic text/DOM shapes, not the failing ChatGPT Lexical state or the original #43 prompt. No LF, NBSP, writer, or extractor correction is inferred from that pack. The lack of this evidence does not block A/B/C1/E.
 
-**Second-phase work remains deferred:** a new/default writer, workload-based timeout-policy tuning, Chat Completions/general-client integration. No plugin host, #40 account/profile pool, token/proxy rotation, account guard weakening, or API route was added. No automatic merge or release is part of this work.
+**Phase-one scope did not include second-phase work.** The candidate writer/budget and general-client API are now delivered separately in orders 08–11 below; neither changes the default writer or promotes a release. No plugin host, #40 account/profile pool, token/proxy rotation, account guard weakening, or API route was added. No automatic merge or release is part of this work.
 
 ## Submission order
 
@@ -130,3 +130,116 @@ The probe writes `tmp/composer-reliability/fixture-result.json` and `.md`, inclu
 - [ ] Leave C2 and reporter-platform reproduction unconfirmed until their own evidence exists. Do not close #42–#44, switch the default writer, raise the global budget, or mark release-ready solely because A/B/C1/E offline checks pass.
 
 Rollback the stacked changes in reverse submission order. There is no persistent settings/schema migration in this series. Reverting C1 restores the older retry behavior, so do not repeatedly replay an unchanged known integrity-failing request as a workaround.
+
+
+## Second-phase candidate delivery — orders 08–11
+
+The selected second-phase implementation is delivered as two independent opt-ins:
+`experimentalComposerPlainText` for the large guarded writer, and a listener-scoped
+`CODEX_CHATGPT_WEB_API_KEY` for the general-client Chat Completions API. Both are
+absent/off by default. No merge, release, default promotion, account manager,
+credential pool, plugin runtime or upstream context-partitioning change is included.
+
+| Order | Branch | Scope |
+|---|---|---|
+| 08 | `codex/08-composer-candidate` | Large guarded text uses existing one-shot native text edit; one shared plan, hard/stall budget and compaction repair deadline |
+| 09 | `codex/09-chat-completions-contract` | Strict text/function Chat Completions parsing, role/history pairing, schema/output validation and visible token cap |
+| 10 | `codex/10-chat-completions-local-api` | Scoped loopback admission, JSON/SSE routes, existing worker/queue/safety reuse, cancellation and bounded buffering |
+| 11 | `codex/11-phase-two-verification` | Real unmodified pi offline probe, supported configuration, measured evidence and Windows handoff |
+
+Review and merge in order after 07. Confirm each next PR's base when a predecessor
+is merged. Candidate/API setup and rollback are in [composer-candidate.md](composer-candidate.md)
+and [chat-completions.md](chat-completions.md). They may be enabled independently.
+
+### Measured scope, not speculative replacement
+
+The writer candidate changes **only >32000-unit inputs that previously selected
+`guarded-chunked`**, such as large multipart stages. It keeps already-direct inline
+HTML/text paths unchanged. An exploratory same-size inline comparison found HTML
+about 272ms versus plain text about 6.6 seconds; overriding that path was rejected.
+All old readbacks and fresh pre-Send proof remain. There is no automatic alternate
+writer retry or normalization that accepts added/removed LF.
+
+Measurements below used an isolated clean worktree at
+`de1d767a94511d549ddd28a9ae3e576690ad57d5`, Bun 1.4.0, Linux standalone Chromium
+144.0.7559.96, synthetic-only contenteditable. A subsequent order-08 commit only
+consolidates identical boolean validation to keep `config.ts` below its existing
+500-line architectural gate; it does not change the measured writer or budget.
+Repeated probes record three warm-up rounds separately from the thirty measured
+rounds. Short/direct comparisons alternate baseline/candidate order. No other
+heavy verification was running during these measurements.
+
+| Case | Baseline | Candidate | Meaning |
+|---|---|---|---|
+| Full default + large fixture set | Earlier phase-one large lane retained a dense failure | 22 cases, 0 failures, 0 false acceptances | Offline shapes only; no live Lexical claim |
+| Short `c01`, 30 measured per variant | p50 87ms; p95 97ms | p50 89ms; p95 111ms | +14ms p95, below the planned max(10%, 50ms) degradation bound |
+| Existing direct boundary 32001, 30 per variant | p50 87ms; p95 98ms | p50 88ms; p95 97ms | Direct path kept; no measured threshold regression |
+| Guarded 330K dense Markdown | Failed at 90,110ms in `markdown_restore` | 30/30 succeeded; p50 6513.5ms, p95 6900ms | Candidate avoids restoration with one native edit; no percentage speedup computed against a failed baseline |
+
+The remeasured guarded failure had 21 chunks and 37,984 delimiters. Its last
+returned evidence was 29,225 confirmed native edits, 229 restoration batches,
+8,800 remaining markers and `nativeEditCountsComplete=false`. A verified guarded
+prefix of 330,000 units is not a verified final payload. The baseline failure and
+its nonzero exit remain in the local evidence instead of being hidden by the
+candidate passing. Earlier phase-one measurements above are separate runs.
+
+The candidate keeps finite 60/90-second hard ceilings and a 20-second no-verified-
+progress bound, shortened by parent awake-time remaining budget. Verified prefix
+or marker progress counts; polling, edits alone and unrelated heartbeat do not.
+The existing safe compaction repair consumes the same original deadline. Physical
+mutation settlement/cleanup still precedes reuse or uncertain-surface retirement.
+
+### General-client authority and pi evidence
+
+`/v1/models` and `/v1/chat/completions` are the only routes available to the general
+key. The key cannot access native, admin, launcher, compact or health routes.
+Requests use standard JSON or Chat Completions SSE, never renamed Responses events.
+Function arguments are validated without repair/coercion; tools execute in pi and
+return by exact call ID. Unsupported semantic fields and malformed output fail
+explicitly. Streaming tool JSON is withheld until the completed bound output is
+validated. Visible-output `max_tokens` uses `o200k_base`; provider usage and hidden
+reasoning budgets are not invented. Stream queues have a 4 MiB byte cap.
+
+The API reuses the actual browser worker, shared admission slots, account guard and
+cancellation/cleanup. It creates no native environment, broker capability, MCP
+connector or retained session pool. Each POST supplies full client-owned history
+for a fresh Temporary Chat. Distinct HTTP attempts are not falsely deduplicated by
+prompt text. The documented pi configuration disables automatic retries.
+
+The explicit `scripts/check-chat-completions-pi.ts` uses real unmodified pi 0.86.1
+(package `@earendil-works/pi-coding-agent`) and Node 22.20.0. Production HTTP,
+compiler, runtime and validators are exercised against a scripted model worker;
+pi performs only a read and a write inside a disposable inert directory. It also
+checks an SDK-visible SSE error and an RPC abort that settles the original runtime.
+This is **real-client/offline-model** evidence, not Windows or ChatGPT inference.
+The safe report records exact commit, runtime, client and tracked-worktree state.
+
+### Validation ledger and remaining gates
+
+| Gate | Recorded result / limitation |
+|---|---|
+| W focused | 16 candidate tests, including actual worker call/plan/budget propagation and no compaction deadline refill; passed |
+| W architectural regression | Initial full root run exposed `config.ts` at 502 lines (limit 500); identical feature checks consolidated, unchanged gate then passed |
+| API focused | 59 tests / 181 assertions across production contract/runtime/HTTP passed after numeric and bounded-SSE fixes |
+| Full TypeScript | Passed against real installed frozen dependencies |
+| Launcher | 506 tests, typecheck and renderer build passed |
+| Codex/Claude offline lifecycle | `ALL_DETERMINISTIC_LIFECYCLE_LANES_OK`; final 270-test lane passed, no actual ChatGPT inference |
+| Full root suite / final heads | Consult each PR's exact-head CI and final verification comment; the initial line-limit failure is not relabeled a pass |
+| G4 offline candidate | The measured synthetic cases above pass; original guarded failure retained separately |
+| G-API-0/1/2 offline | Standard pi configuration, protocol/tool pairing, route/authority isolation, safety, limits and cancellation covered |
+| G-API-PI Windows live | NOT_RUN: maintainer's installed candidate, unmodified pi and actual ChatGPT model/tool rounds required |
+| G3b / C2 original LF root cause | BLOCKED: original failed Lexical state and incident prompt still unavailable |
+| G4 Windows / G6 promotion | NOT_RUN: installed launcher/helper, real composer and multipart/native ownership checks required; no release authorized |
+
+Before promotion, drain active work and verify the installed Windows candidate
+with a minimal, inert test directory and the existing account-safety rules. Confirm
+both actual model/tool rounds, exact arguments/results, fresh chats, no native
+capability for the API key, cancellation settlement, candidate multipart ACK order
+and unchanged existing Codex/Claude use. A rate-limit/security signal stops testing;
+there is no account switching, extra profile copy or automatic retry to obtain green.
+A normal successful request is not proof of the original #43/#44 failure path.
+
+Offline code delivery does not mark Windows/live, original incident reproduction,
+or release promotion complete. Disabling the two opt-ins and restarting only after
+drain restores the existing entry points/writer; no persistent data migration is
+required. Preserve integrity and no-resend protections during any rollback.
