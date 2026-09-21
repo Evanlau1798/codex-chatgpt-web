@@ -1,5 +1,6 @@
 import type { Locator } from "playwright-core";
 import { chatGptWebSurfaceError } from "./adapter-error";
+import { CHATGPT_PROMPT_MARKDOWN_DELIMITERS as MARKDOWN_SHORTCUT_DELIMITERS } from "./prompt-insertion-plan";
 
 export interface ChatGptCaretEvidence {
   collapsed: boolean;
@@ -10,7 +11,6 @@ export interface ChatGptCaretEvidence {
 
 const ZERO_WIDTH_TEXT = /[\u200B\u200C\u200D\uFEFF]/g;
 const RESTORATION_WHITESPACE = /[^\S\r\n\u2028\u2029]/u;
-const MARKDOWN_SHORTCUT_DELIMITERS = ["`", "*", "_", "~", "=", "[", ")"] as const;
 const MARKDOWN_RESTORATION_RANGE_CHARS = 8_192;
 const MARKDOWN_RESTORATION_BATCH_SIZE = 128;
 const STRUCTURED_MARKDOWN = /[\r\n\u2028\u2029]/u;

@@ -1,6 +1,10 @@
 import type { Locator } from "playwright-core";
 import { chatGptWebSurfaceError } from "./adapter-error";
-import { CHATGPT_PROMPT_INSERT_CHUNK_CHARS } from "./prompt-attachment-budget";
+import {
+  chatGptPromptInsertChunkEnd,
+  planChatGptPromptInsertion,
+  type ChatGptPromptInsertionOptions,
+} from "./prompt-insertion-plan";
 import {
   guardChatGptPromptMarkdown,
   guardChatGptPromptChunkBoundary,
@@ -8,26 +12,6 @@ import {
   restoreChatGptPromptMarkdown,
   restoreChatGptPromptChunkBoundary,
 } from "./prompt-caret";
-
-const BOUNDARY_LOOKBACK_CHARS = 4_096;
-const WHITESPACE = /\s/u;
-const DIRECT_INSERT_MIN_CHARS = CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 2;
-
-function promptInsertChunkEnd(text: string, offset: number): number {
-  const hardEnd = Math.min(offset + CHATGPT_PROMPT_INSERT_CHUNK_CHARS, text.length);
-  if (hardEnd >= text.length) return hardEnd;
-  for (let candidate = hardEnd; candidate >= Math.max(offset + 1, hardEnd - BOUNDARY_LOOKBACK_CHARS); candidate -= 1) {
-    if (!WHITESPACE.test(text[candidate] ?? "")) continue;
-    let start = candidate;
-    while (start > offset && WHITESPACE.test(text[start - 1] ?? "")) start -= 1;
-    if (start > offset) return start;
-  }
-  const previous = text.charCodeAt(hardEnd - 1);
-  const next = text.charCodeAt(hardEnd);
-  return previous >= 0xD800 && previous <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF
-    ? hardEnd - 1
-    : hardEnd;
-}
 
 export async function insertChatGptPromptText(
   text: string,
@@ -37,15 +21,15 @@ export async function insertChatGptPromptText(
     verify(expected: string): Promise<void>;
     reanchor(): Promise<void>;
   },
-  options?: { largeStructuredDirect?: boolean; forceStructuredDirect?: boolean },
+  options?: ChatGptPromptInsertionOptions,
 ): Promise<void> {
-  if (options?.forceStructuredDirect === true
-    || (options?.largeStructuredDirect === true && text.length > DIRECT_INSERT_MIN_CHARS)) {
+  const plan = planChatGptPromptInsertion(text, options);
+  if (plan.strategy !== "guarded-chunked") {
     // One exact editor transaction avoids both cumulative Lexical remounts and thousands of
     // delimiter-restoration edits. Full readback remains the acceptance boundary.
     await actions.verify("");
     // HTML parsing changes CR and NUL; retain the exact text path for those inputs.
-    const plainTextBlocks = text.length > DIRECT_INSERT_MIN_CHARS && !/[\r\u0000]/u.test(text);
+    const plainTextBlocks = plan.strategy === "direct-html";
     await insertChatGptComposerGuardedText(await actions.composer(), text, abortSignal, plainTextBlocks);
     await actions.verify(text.trimStart());
     await new Promise(resolve => setTimeout(resolve, 0));
@@ -58,7 +42,7 @@ export async function insertChatGptPromptText(
   const insertionText = markdown?.text ?? text;
   for (let offset = 0; offset < insertionText.length;) {
     if (abortSignal?.aborted) throw new DOMException("ChatGPT prompt attachment aborted", "AbortError");
-    const end = promptInsertChunkEnd(insertionText, offset);
+    const end = chatGptPromptInsertChunkEnd(insertionText, offset);
     const original = insertionText.slice(offset, end);
     const boundary = guardChatGptPromptChunkBoundary(insertionText, original, offset);
     const chunk = boundary?.text ?? original;
