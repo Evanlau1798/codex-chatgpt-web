@@ -20,8 +20,8 @@ test("classifies an exact composer readback mismatch as a recoverable pre-submit
   expect(error.message).toContain("expectedChars=6");
   expect(error.message).toContain("actualChars=6");
   expect(error.message).toContain("commonPrefixChars=3");
-  expect(error.message).toContain("expectedCodePoints=U+0064,U+0065,U+0066");
-  expect(error.message).toContain("actualCodePoints=U+0078,U+0065,U+0066");
+  expect(error.message).toContain("commonSuffixChars=2");
+  expect(error.message).not.toContain("CodePoints");
 });
 
 test("reports a caller-supplied equivalent prefix while preserving recoverable surface classification", () => {

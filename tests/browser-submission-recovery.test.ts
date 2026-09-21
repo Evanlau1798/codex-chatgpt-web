@@ -466,7 +466,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
   expect(end).toBeGreaterThan(start);
   const progress = new ChatGptExternalTurnProgress();
   const dependencies = {
-    first, next, initial, events,
+    first, next, initial, events, connectorAttemptBudget: { remaining: 3 },
     turn: {
       traceId: `production-${lane}-rebind`, externalProgress: progress,
       onSendActivated: () => { events.push("activated"); },

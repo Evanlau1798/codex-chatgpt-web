@@ -256,3 +256,45 @@ test("fails closed when the editor rejects an oversized structured edit", async 
     Object.assign(globalThis, previous);
   }
 });
+
+
+test("production edit counters distinguish exact marker edits from restoration batches", async () => {
+  const prompt = "header\n" + "*word* ".repeat(200) + "tail";
+  const editor = fakeLexicalComposer();
+  const snapshots: import("../src/adapters/chatgpt-web/prompt-insertion-metrics").ChatGptPromptInsertionSnapshot[] = [];
+  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
+  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: editor.document.defaultView });
+  try {
+    await insertChatGptPromptText(prompt, undefined, {
+      composer: async () => editor.composer as never,
+      verify: async expected => expect(editor.text()).toBe(expected),
+      reanchor: async () => {}, onProgress: snapshot => snapshots.push(snapshot),
+    });
+    const summary = snapshots.at(-1)!;
+    expect(summary.event).toBe("summary");
+    expect(summary.nativeEditAttempts).toBe(editor.editCommands());
+    expect(summary.nativeEditAccepted).toBe(401);
+    expect(summary.nativeEditCountsComplete).toBeTrue();
+    expect(summary.restorationBatches).toBe(4);
+    expect(summary.remainingMarkers).toBe(0);
+    expect(summary.verifiedUtf16Units).toBe(prompt.length);
+    expect(snapshots.length).toBeLessThan(20); // no per-marker logging
+    expect(JSON.stringify(snapshots)).not.toContain("word");
+  } finally { Object.assign(globalThis, previous); }
+});
+
+test("rejected native edits remain counted without false verification progress", async () => {
+  const editor = fakeLexicalComposer(false);
+  const snapshots: import("../src/adapters/chatgpt-web/prompt-insertion-metrics").ChatGptPromptInsertionSnapshot[] = [];
+  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
+  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: editor.document.defaultView });
+  try {
+    await expect(insertChatGptPromptText("private fixture", undefined, {
+      composer: async () => editor.composer as never, verify: async () => {}, reanchor: async () => {},
+      onProgress: snapshot => snapshots.push(snapshot),
+    }, { forceStructuredDirect: true })).rejects.toThrow("rejected");
+    expect(snapshots.at(-1)).toMatchObject({ nativeEditAttempts: 1, nativeEditAccepted: 0,
+      verifiedUtf16Units: 0, insertedUtf16Units: 0, nativeEditCountsComplete: true });
+    expect(JSON.stringify(snapshots)).not.toContain("private fixture");
+  } finally { Object.assign(globalThis, previous); }
+});

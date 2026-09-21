@@ -1,3 +1,4 @@
+import { chatGptPromptCodeUnitEquivalent, chatGptPromptTextEquivalent, chatGptPromptEquivalentPrefixLength, readChatGptPromptText } from "./prompt-text";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -912,45 +913,15 @@ export class ChatGptBrowserWorker {
     observed: string,
     index: number,
   ): boolean {
-    const expectedUnit = expected[index];
-    const observedUnit = observed[index];
-
-    if (expectedUnit === observedUnit) return true;
-    if (expectedUnit !== " " || observedUnit !== "\u00A0") return false;
-
-    return expected[index - 1] === " " || expected[index + 1] === " ";
+    return chatGptPromptCodeUnitEquivalent(expected, observed, index);
   }
 
-  private promptTextEquivalent(
-    expected: string,
-    observed: string,
-  ): boolean {
-    if (expected.length !== observed.length) return false;
-
-    for (let index = 0; index < expected.length; index += 1) {
-      if (!this.promptCodeUnitEquivalent(expected, observed, index)) {
-        return false;
-      }
-    }
-
-    return true;
+  private promptTextEquivalent(expected: string, observed: string): boolean {
+    return chatGptPromptTextEquivalent(expected, observed);
   }
 
-  private promptEquivalentPrefixLength(
-    expected: string,
-    observed: string,
-  ): number {
-    const length = Math.min(expected.length, observed.length);
-
-    let index = 0;
-    while (
-      index < length
-      && this.promptCodeUnitEquivalent(expected, observed, index)
-    ) {
-      index += 1;
-    }
-
-    return index;
+  private promptEquivalentPrefixLength(expected: string, observed: string): number {
+    return chatGptPromptEquivalentPrefixLength(expected, observed);
   }
 
   run(turn: BrowserTurn): Promise<string> {
@@ -1752,17 +1723,7 @@ export class ChatGptBrowserWorker {
 
   private async attachedPromptText(page: Page): Promise<string> {
     const composer = await this.activeComposer(page);
-    return composer.evaluate(element => {
-      const clone = element.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll(
-        '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]',
-      )
-        .forEach(part => part.remove());
-      return [...clone.childNodes]
-        .map(child => child.textContent ?? "")
-        .join("\n")
-        .trimStart();
-    }, undefined, { timeout: 20_000 });
+    return composer.evaluate(readChatGptPromptText, undefined, { timeout: 20_000 });
   }
 
   private async assertPromptAttached(
@@ -2078,6 +2039,7 @@ export class ChatGptBrowserWorker {
     largeStructuredDirect = false,
     forceStructuredDirect = false,
     beforeRecoveryInsertion?: (composer: Locator) => Promise<void>,
+    diagnosticContext?: { traceId: string; stage: string },
   ): Promise<void> {
     throwIfPromptAttachmentAborted(abortSignal);
     let mutationStarted = false;
@@ -2098,7 +2060,7 @@ export class ChatGptBrowserWorker {
         await composer.focus();
         await beforeRecoveryInsertion?.(composer);
         mutationStarted = true;
-        await this.insertPromptText(page, prompt, abortSignal, largeStructuredDirect, forceStructuredDirect);
+        await this.insertPromptText(page, prompt, abortSignal, largeStructuredDirect, forceStructuredDirect, diagnosticContext);
         await this.assertPromptAttached(page, prompt, abortSignal);
         return;
       }
@@ -2115,7 +2077,7 @@ export class ChatGptBrowserWorker {
       }
       await selectedComposer.focus();
       await page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY);
-      await this.insertPromptText(page, ` ${prompt}`, abortSignal, largeStructuredDirect, forceStructuredDirect);
+      await this.insertPromptText(page, ` ${prompt}`, abortSignal, largeStructuredDirect, forceStructuredDirect, diagnosticContext);
       await this.assertPromptAttached(page, prompt, abortSignal);
     } catch (error) {
       if (!mutationStarted || error instanceof ChatGptPersistentBrowserStateError) throw error;
@@ -2187,6 +2149,7 @@ export class ChatGptBrowserWorker {
     largeStructuredDirect = false,
     forceStructuredDirect = false,
     beforeRecoveryInsertion?: (composer: Locator) => Promise<void>,
+    diagnosticContext?: { traceId: string; stage: string },
   ): Promise<void> {
     let retryAvailable = compaction;
     for (;;) {
@@ -2203,6 +2166,7 @@ export class ChatGptBrowserWorker {
           largeStructuredDirect,
           forceStructuredDirect,
           beforeRecoveryInsertion,
+          diagnosticContext,
         );
         return;
       } catch (error) {
@@ -2252,11 +2216,16 @@ export class ChatGptBrowserWorker {
     abortSignal?: AbortSignal,
     largeStructuredDirect = false,
     forceStructuredDirect = false,
+    diagnosticContext?: { traceId: string; stage: string },
   ): Promise<void> {
     await insertChatGptPromptText(text, abortSignal, {
       composer: () => this.activeComposer(page),
       verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal),
       reanchor: () => this.reanchorPromptCaret(page, abortSignal),
+      onProgress: snapshot => console.info(
+        `[chatgpt-web] browser turn ${diagnosticContext?.traceId ?? "unscoped"}`
+        + ` stage=${diagnosticContext?.stage ?? "prompt_attachment"} composer=${JSON.stringify(snapshot)}`,
+      ),
     }, { largeStructuredDirect, forceStructuredDirect });
   }
 
@@ -2276,7 +2245,7 @@ export class ChatGptBrowserWorker {
     } while (Date.now() < deadline);
     throwIfPromptAttachmentAborted(abortSignal);
     throw chatGptPromptAttachmentMismatch(
-      "ChatGPT composer did not commit a complete prompt insertion chunk",
+      "ChatGPT composer did not commit the expected prompt text",
       expected,
       observed,
       this.promptEquivalentPrefixLength(expected, observed),
@@ -3289,6 +3258,8 @@ export class ChatGptBrowserWorker {
               false,
               checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
+              false, connectorAttemptBudget, false, false, false, undefined,
+              { traceId: turn.traceId, stage: `multipart_stage_${index + 1}_attachment` },
             ),
             turn.abortSignal,
             chatGptSuspensionClock,
@@ -3415,6 +3386,7 @@ export class ChatGptBrowserWorker {
                   !multipartTransport && prepared.transport === "inline",
                   turn.compaction === true && turn.requireRetainedConversation === true,
                   beforeRecoveryInsertion,
+                  { traceId: turn.traceId, stage: "prompt_attachment" },
                 ),
                 turn.abortSignal,
                 chatGptSuspensionClock,

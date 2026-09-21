@@ -1,3 +1,5 @@
+import { chatGptPromptMismatchDetails } from "./prompt-text";
+import { chatGptNativeEditValue, type ChatGptPromptInsertionMetrics } from "./prompt-insertion-metrics";
 import type { Locator } from "playwright-core";
 import { chatGptWebSurfaceError } from "./adapter-error";
 import { CHATGPT_PROMPT_MARKDOWN_DELIMITERS as MARKDOWN_SHORTCUT_DELIMITERS } from "./prompt-insertion-plan";
@@ -14,12 +16,6 @@ const RESTORATION_WHITESPACE = /[^\S\r\n\u2028\u2029]/u;
 const MARKDOWN_RESTORATION_RANGE_CHARS = 8_192;
 const MARKDOWN_RESTORATION_BATCH_SIZE = 128;
 const STRUCTURED_MARKDOWN = /[\r\n\u2028\u2029]/u;
-
-function codePointWindow(value: string, offset: number): string {
-  return Array.from(value.slice(offset), char => (
-    `U+${char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`
-  )).slice(0, 6).join(",");
-}
 
 type ChatGptPromptBoundaryReplacement = { marker: string; value: string };
 type MarkdownReplacement = ChatGptPromptBoundaryReplacement & { count: number };
@@ -66,6 +62,7 @@ async function restoreChatGptPromptMarkdownRanges(
   replacements: MarkdownReplacement[],
   count: number,
   abortSignal?: AbortSignal,
+  metrics?: ChatGptPromptInsertionMetrics,
 ): Promise<MarkdownRestorationEvidence> {
   const options = { signal: abortSignal, timeout: 20_000 };
   let remaining = count;
@@ -73,7 +70,15 @@ async function restoreChatGptPromptMarkdownRanges(
   const markers = replacements.map(replacement => replacement.marker);
   while (remaining > 0) {
     if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
-    const restored = await composer.evaluate((element, input) => {
+    metrics?.restorationBatch();
+    metrics?.editStarted();
+    const editResult = await composer.evaluate((element, input) => {
+      let attempts = 0; let accepted = 0;
+      const result = <T>(result: T) => ({ result, attempts, accepted });
+      const edit = (command: string, value: string) => {
+        attempts += 1; const ok = document.execCommand(command, false, value);
+        if (ok) accepted += 1; return ok;
+      };
       const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
       const values = new Map(input.replacements.map(replacement => [replacement.marker, replacement.value]));
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
@@ -89,7 +94,7 @@ async function restoreChatGptPromptMarkdownRanges(
         }
       }
       const selection = window.getSelection();
-      if (!candidate || !selection) return 0;
+      if (!candidate || !selection) return result(0);
       let end = candidate.right + 1;
       while (end < candidate.node.data.length && /\s/u.test(candidate.node.data[end] ?? "")) end += 1;
       if (end < candidate.node.data.length) {
@@ -111,8 +116,9 @@ async function restoreChatGptPromptMarkdownRanges(
       range.setEnd(candidate.node, end);
       selection.removeAllRanges();
       selection.addRange(range);
-      return document.execCommand("insertText", false, restoredText) ? markerCount : 0;
+      return result(edit("insertText", restoredText) ? markerCount : 0);
     }, { replacements, maxChars: MARKDOWN_RESTORATION_RANGE_CHARS }, options);
+    const restored = chatGptNativeEditValue(editResult, metrics);
     batches += 1;
     if (!Number.isSafeInteger(restored) || restored <= 0 || restored > remaining) {
       return { ok: false, strategy: "range", initialMarkers: count, remainingMarkers: remaining, batches };
@@ -136,6 +142,7 @@ async function restoreChatGptPromptMarkdownRanges(
       return { ok: false, strategy: "range", initialMarkers: count, remainingMarkers: observedRemaining, batches };
     }
     remaining = observedRemaining;
+    metrics?.markers(remaining);
   }
   return { ok: true, strategy: "range", initialMarkers: count, remainingMarkers: 0, batches };
 }
@@ -145,6 +152,7 @@ async function restoreChatGptPromptMarkdownExactly(
   replacements: MarkdownReplacement[],
   count: number,
   abortSignal?: AbortSignal,
+  metrics?: ChatGptPromptInsertionMetrics,
 ): Promise<MarkdownRestorationEvidence> {
   const options = { signal: abortSignal, timeout: 20_000 };
   const markers = replacements.map(replacement => replacement.marker);
@@ -165,10 +173,18 @@ async function restoreChatGptPromptMarkdownExactly(
   while (remaining > 0) {
     if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
     await composer.focus(options);
-    const restored = await composer.evaluate(async (element, input) => {
+    metrics?.restorationBatch();
+    metrics?.editStarted();
+    const editResult = await composer.evaluate(async (element, input) => {
+      let attempts = 0; let accepted = 0;
+      const result = <T>(result: T) => ({ result, attempts, accepted });
+      const edit = (command: string, value: string) => {
+        attempts += 1; const ok = document.execCommand(command, false, value);
+        if (ok) accepted += 1; return ok;
+      };
       const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
       const selection = window.getSelection();
-      if (!selection) return 0;
+      if (!selection) return result(0);
       const values = new Map(input.replacements.map(replacement => [replacement.marker, replacement.value]));
       const rightmostText = (node: Node): Text | undefined => {
         if (node.nodeType === 1 && (node as Element).matches(ignoredSelector)) return undefined;
@@ -210,14 +226,15 @@ async function restoreChatGptPromptMarkdownExactly(
         range.setEnd(position, match.offset + 1);
         selection.removeAllRanges();
         selection.addRange(range);
-        if (!document.execCommand("insertText", false, match.value)) return -1;
+        if (!edit("insertText", match.value)) return result(-1);
         edited += 1;
         before = match.offset;
         await Promise.resolve();
         if (!element.contains(position)) break;
       }
-      return edited;
+      return result(edited);
     }, { replacements, batchSize: MARKDOWN_RESTORATION_BATCH_SIZE }, options);
+    const restored = chatGptNativeEditValue(editResult, metrics);
     batches += 1;
     if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
     if (!Number.isSafeInteger(restored) || restored <= 0 || restored > remaining) {
@@ -232,6 +249,7 @@ async function restoreChatGptPromptMarkdownExactly(
       return { ok: false, strategy: "exact", initialMarkers: count, remainingMarkers: observedRemaining, batches };
     }
     remaining = observedRemaining;
+    metrics?.markers(remaining);
   }
   return { ok: true, strategy: "exact", initialMarkers: count, remainingMarkers: 0, batches };
 }
@@ -241,10 +259,11 @@ export async function restoreChatGptPromptMarkdown(
   text: string,
   guarded: ChatGptPromptMarkdownGuard,
   abortSignal?: AbortSignal,
+  metrics?: ChatGptPromptInsertionMetrics,
 ): Promise<void> {
   const restoration = STRUCTURED_MARKDOWN.test(text)
-    ? await restoreChatGptPromptMarkdownExactly(composer, guarded.replacements, guarded.count, abortSignal)
-    : await restoreChatGptPromptMarkdownRanges(composer, guarded.replacements, guarded.count, abortSignal);
+    ? await restoreChatGptPromptMarkdownExactly(composer, guarded.replacements, guarded.count, abortSignal, metrics)
+    : await restoreChatGptPromptMarkdownRanges(composer, guarded.replacements, guarded.count, abortSignal, metrics);
   if (!restoration.ok) throw chatGptWebSurfaceError(
     `ChatGPT composer could not preserve literal Markdown in a bounded edit (strategy=${restoration.strategy}, initialMarkers=${restoration.initialMarkers}, remainingMarkers=${restoration.remainingMarkers}, batches=${restoration.batches})`,
     false,
@@ -256,10 +275,18 @@ export async function insertChatGptComposerGuardedText(
   text: string,
   abortSignal?: AbortSignal,
   plainTextBlocks = false,
+  metrics?: ChatGptPromptInsertionMetrics,
 ): Promise<void> {
   const options = { signal: abortSignal, timeout: 20_000 };
   await composer.focus(options);
-  const inserted = await composer.evaluate((element, input) => {
+  metrics?.editStarted();
+  const editResult = await composer.evaluate((element, input) => {
+    let attempts = 0; let accepted = 0;
+    const result = <T>(result: T) => ({ result, attempts, accepted });
+    const edit = (command: string, value: string) => {
+      attempts += 1; const ok = document.execCommand(command, false, value);
+      if (ok) accepted += 1; return ok;
+    };
     const value = typeof input === "string" ? input : input.text;
     const selection = window.getSelection();
     if (
@@ -271,17 +298,18 @@ export async function insertChatGptComposerGuardedText(
       || !element.contains(selection.anchorNode)
       || !element.contains(selection.focusNode)
     ) {
-      return false;
+      return result(false);
     }
     if (typeof input !== "string") {
       // A single escaped text fragment avoids insertText's incremental paragraph creation.
       const html = value.split("\n").map(line => (
         `<div>${line.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;") || "<br>"}</div>`
       )).join("");
-      return document.execCommand("insertHTML", false, html);
+      return result(edit("insertHTML", html));
     }
-    return document.execCommand("insertText", false, value);
+    return result(edit("insertText", value));
   }, plainTextBlocks ? { text } : text, options);
+  const inserted = chatGptNativeEditValue(editResult, metrics);
   if (!inserted) throw chatGptWebSurfaceError("ChatGPT composer rejected the bounded plain-text edit", false);
 }
 
@@ -334,10 +362,18 @@ export async function restoreChatGptPromptChunkBoundary(
   composer: Locator,
   replacement: ChatGptPromptBoundaryReplacement,
   abortSignal?: AbortSignal,
+  metrics?: ChatGptPromptInsertionMetrics,
 ): Promise<boolean> {
   const options = { signal: abortSignal, timeout: 20_000 };
   await composer.focus(options);
-  const restored = await composer.evaluate((element, input) => {
+  metrics?.editStarted();
+  const editResult = await composer.evaluate((element, input) => {
+    let attempts = 0; let accepted = 0;
+    const result = <T>(result: T) => ({ result, attempts, accepted });
+    const edit = (command: string, value: string) => {
+      attempts += 1; const ok = document.execCommand(command, false, value);
+      if (ok) accepted += 1; return ok;
+    };
     const ignoredSelector = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]';
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     let match: { node: Text; offset: number } | undefined;
@@ -346,18 +382,19 @@ export async function restoreChatGptPromptChunkBoundary(
       if (text.parentElement?.closest(ignoredSelector)) continue;
       const offset = text.data.indexOf(input.marker);
       if (offset < 0) continue;
-      if (match || text.data.indexOf(input.marker, offset + input.marker.length) >= 0) return false;
+      if (match || text.data.indexOf(input.marker, offset + input.marker.length) >= 0) return result(false);
       match = { node: text, offset };
     }
     const selection = window.getSelection();
-    if (!match || !selection) return false;
+    if (!match || !selection) return result(false);
     const range = document.createRange();
     range.setStart(match.node, match.offset);
     range.setEnd(match.node, match.offset + input.marker.length);
     selection.removeAllRanges();
     selection.addRange(range);
-    return document.execCommand("insertText", false, input.value);
+    return result(edit("insertText", input.value));
   }, replacement, options);
+  const restored = chatGptNativeEditValue(editResult, metrics);
   if (!restored) return false;
   await new Promise(resolve => setTimeout(resolve, 0));
   if (abortSignal?.aborted) throw abortSignal.reason ?? new DOMException("Prompt attachment aborted", "AbortError");
@@ -378,15 +415,11 @@ export function chatGptPromptAttachmentMismatch(
   observed: string,
   equivalentPrefix?: number,
 ): Error {
-  let commonPrefix = equivalentPrefix ?? 0;
-  if (equivalentPrefix === undefined) {
-    while (commonPrefix < expected.length && expected[commonPrefix] === observed[commonPrefix]) {
-      commonPrefix += 1;
-    }
-  }
+  const details = chatGptPromptMismatchDetails(expected, observed);
+  // Keep the existing caller's equivalent-prefix diagnostic without exporting reversible text.
+  if (equivalentPrefix !== undefined) details.commonPrefixChars = equivalentPrefix;
   return chatGptWebSurfaceError(
-    `${message} (expectedChars=${expected.length}, actualChars=${observed.length}, commonPrefixChars=${commonPrefix}, expectedCodePoints=${codePointWindow(expected, commonPrefix)}, actualCodePoints=${codePointWindow(observed, commonPrefix)})`,
-    false,
+    `${message} (${Object.entries(details).map(([key, value]) => `${key}=${value}`).join(", ")})`, false,
   );
 }
 
