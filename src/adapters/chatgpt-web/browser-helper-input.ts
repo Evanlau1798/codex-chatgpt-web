@@ -13,6 +13,8 @@ export interface BrowserHelperRunMessage {
     turnTimeoutMs: number;
     autoApproveToolCalls: boolean;
     experimentalNoAutoCompact?: boolean;
+    /** Candidate only: replace large guarded insertions; preserve existing direct inline routes. */
+    experimentalComposerPlainText?: boolean;
   };
   turn: {
     traceId: string;

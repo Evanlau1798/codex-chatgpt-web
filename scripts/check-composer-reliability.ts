@@ -1,3 +1,4 @@
+import { ChatGptCandidateAttachmentBudget } from "../src/adapters/chatgpt-web/prompt-candidate-budget";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { chromium } from "playwright-core";
@@ -13,13 +14,19 @@ import type { ChatGptPromptInsertionSnapshot } from "../src/adapters/chatgpt-web
 /** Explicit offline Chromium fixture. No profile, account, remote URL, broker, or Send operation. */
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  if (args.some(arg => !arg.startsWith("--chromium=") && arg !== "--large")) {
-    throw new Error("Only --chromium=<installed executable> and optional --large are supported");
+  if (args.some(arg => !arg.startsWith("--chromium=") && arg !== "--large" && arg !== "--candidate" && arg !== "--compare" && !arg.startsWith("--repeat=") && !arg.startsWith("--case="))) {
+    throw new Error("Only --chromium=<installed executable> and optional --large, --candidate or --compare, --repeat=1..30, --case=<id> are supported");
   }
   const executable = args.find(arg => arg.startsWith("--chromium="))?.slice("--chromium=".length);
   if (!executable || !existsSync(executable)) {
     throw new Error("Supply --chromium=<installed Chromium/Chrome executable>; this probe never installs a browser");
   }
+  const candidate = args.includes("--candidate");
+  const compare = args.includes("--compare");
+  if (compare && candidate) throw new Error("Choose candidate or comparison mode, not both");
+  const repetitions = Number(args.find(arg => arg.startsWith("--repeat="))?.slice(9) ?? 1);
+  if (!Number.isSafeInteger(repetitions) || repetitions < 1 || repetitions > 30) throw new Error("Repeat must be 1..30");
+  const onlyCase = args.find(arg => arg.startsWith("--case="))?.slice(7);
   const root = resolve(import.meta.dir, "..");
   const sha = Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: root });
   if (sha.exitCode !== 0) throw new Error("Cannot identify the candidate commit");
@@ -39,7 +46,17 @@ async function main(): Promise<void> {
   let failures = 0;
   let falseAcceptances = 0;
   try {
-    for (const fixture of cases) {
+    const selected = cases.filter(fixture => !onlyCase || fixture.id === onlyCase);
+    if (!selected.length) throw new Error("Unknown fixture case");
+    const warmups = compare || repetitions > 1 ? 3 : 0;
+    const scheduled = Array.from({ length: repetitions + warmups }, (_, trial) => {
+      const variants = compare ? (trial % 2 ? [true, false] : [false, true]) : [candidate];
+      return variants.flatMap(candidateMode => selected.map(source => ({
+        fixture: { ...source, options: { ...source.options, ...(candidateMode ? { candidatePlainText: true } : {}) } },
+        candidateMode, trial, warmup: trial < warmups,
+      })));
+    }).flat();
+    for (const { fixture, candidateMode, trial, warmup } of scheduled) {
       const context = await browser.newContext();
       await context.route("**/*", route => route.abort());
       const page = await context.newPage();
@@ -53,10 +70,13 @@ async function main(): Promise<void> {
       });
       const composer = page.locator("#prompt-textarea");
       const started = performance.now();
-      const op = new ChatGptPromptOperation().budget(chatGptPromptAttachmentTimeoutMs(fixture.text.length, false));
+      const parent = new ChatGptPromptOperation().budget(chatGptPromptAttachmentTimeoutMs(fixture.text.length, false));
+      const plan = planChatGptPromptInsertion(fixture.text, fixture.options);
+      const budget = candidateMode ? new ChatGptCandidateAttachmentBudget(plan, parent.now) : undefined;
+      const op = budget ? new ChatGptPromptOperation(undefined, () => Math.min(parent.timeLeft(), budget.remainingMs()), parent.now) : parent;
       let summary: ChatGptPromptInsertionSnapshot | undefined;
       let readbacks = 0;
-      const row: Record<string, unknown> = { id: fixture.id, strategy: planChatGptPromptInsertion(fixture.text, fixture.options).strategy };
+      const row: Record<string, unknown> = { id: fixture.id, candidate: candidateMode, trial, warmup, strategy: planChatGptPromptInsertion(fixture.text, fixture.options).strategy };
       try {
         await insertChatGptPromptText(fixture.text, undefined, {
           composer: async () => composer,
@@ -70,8 +90,8 @@ async function main(): Promise<void> {
           reanchor: async () => {
             if (!await reanchorChatGptComposerCaret(composer, 2, undefined, op)) throw new Error("Offline fixture caret failed");
           },
-          onProgress: value => { if (value.event === "summary") summary = value; },
-        }, fixture.options, op);
+          onProgress: value => { budget?.observe(value); if (value.event === "summary") summary = value; },
+        }, fixture.options, op, plan);
         // Expected text is the independent fixture literal under the existing trimStart contract.
         const expected = fixture.text.trimStart();
         const observed = await composer.evaluate(readChatGptPromptText);
@@ -135,7 +155,7 @@ async function main(): Promise<void> {
       runnerTracked: Bun.spawnSync(["git", "ls-files", "--error-unmatch", "scripts/check-composer-reliability.ts"], { cwd: root }).exitCode === 0,
       browser: browser.version(), representation: "standalone-contenteditable-not-ChatGPT-Lexical",
       provenance: "synthetic-only", largeLane: args.includes("--large"),
-      cases: results.length, failures, falseAcceptances, results };
+      candidate, compare, repetitions, cases: results.length, failures, falseAcceptances, results };
     const output = join(root, "tmp", "composer-reliability");
     mkdirSync(output, { recursive: true, mode: 0o700 });
     writeFileSync(join(output, "fixture-result.json"), `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });

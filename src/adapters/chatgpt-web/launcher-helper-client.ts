@@ -93,6 +93,7 @@ export class LauncherBrowserHelperClient {
             turnTimeoutMs: this.config.turnTimeoutMs,
             autoApproveToolCalls: this.config.autoApproveToolCalls,
             experimentalNoAutoCompact: this.config.experimentalNoAutoCompact,
+            experimentalComposerPlainText: this.config.experimentalComposerPlainText,
           },
           turn: {
             traceId: turn.traceId,

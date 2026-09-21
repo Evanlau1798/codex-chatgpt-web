@@ -120,6 +120,7 @@ async function run(message: RunMessage): Promise<void> {
       turnTimeoutMs: message.config.turnTimeoutMs,
       autoApproveToolCalls: message.config.autoApproveToolCalls,
       experimentalNoAutoCompact: message.config.experimentalNoAutoCompact === true,
+      experimentalComposerPlainText: message.config.experimentalComposerPlainText === true,
     },
   };
   const abortController = new AbortController();

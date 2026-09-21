@@ -421,6 +421,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && typeof parsed.experimentalSkillAttachments !== "boolean") {
     throw new Error(`Invalid experimentalSkillAttachments in ${path}`);
   }
+  if (parsed.experimentalComposerPlainText !== undefined && typeof parsed.experimentalComposerPlainText !== "boolean") {
+    throw new Error(`Invalid experimentalComposerPlainText in ${path}`);
+  }
   if (parsed.experimentalNoAutoCompact !== undefined
     && typeof parsed.experimentalNoAutoCompact !== "boolean") {
     throw new Error(`Invalid experimentalNoAutoCompact in ${path}`);
@@ -484,6 +487,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     experimentalBiggerContext,
     experimentalSkillAttachments,
     experimentalNoAutoCompact: parsed.experimentalNoAutoCompact === true,
+    ...(parsed.experimentalComposerPlainText === true ? { experimentalComposerPlainText: true } : {}),
     zeroRiskProEnabled,
   } as AppConfig;
 }

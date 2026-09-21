@@ -10,6 +10,8 @@ const WHITESPACE = /\s/u;
 export interface ChatGptPromptInsertionOptions {
   largeStructuredDirect?: boolean;
   forceStructuredDirect?: boolean;
+  /** Explicit pre-release opt-in, never inferred from payload or an API request. */
+  candidatePlainText?: boolean;
 }
 
 export type ChatGptPromptInsertionStrategy = "guarded-chunked" | "direct-text" | "direct-html";
@@ -52,11 +54,15 @@ export function planChatGptPromptInsertion(
     }
   }
   maxLineUnits = Math.max(maxLineUnits, lineUnits);
-  const direct = options?.forceStructuredDirect === true
+  const legacyDirect = options?.forceStructuredDirect === true
     || (options?.largeStructuredDirect === true && text.length > DIRECT_INSERT_MIN_CHARS);
+  // Preserve the fast, already-direct inline route. The candidate replaces only large guarded
+  // work; a plain-text override of direct HTML measured substantially slower in dense fixtures.
+  const candidate = options?.candidatePlainText === true && !legacyDirect && text.length > DIRECT_INSERT_MIN_CHARS;
+  const direct = candidate || legacyDirect;
   const strategy: ChatGptPromptInsertionStrategy = !direct
     ? "guarded-chunked"
-    : text.length > DIRECT_INSERT_MIN_CHARS && !hasCR && !hasNul
+    : !candidate && text.length > DIRECT_INSERT_MIN_CHARS && !hasCR && !hasNul
       ? "direct-html"
       : "direct-text";
   return Object.freeze({

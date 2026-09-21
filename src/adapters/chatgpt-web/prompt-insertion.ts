@@ -6,6 +6,7 @@ import {
   chatGptPromptInsertChunkEnd,
   planChatGptPromptInsertion,
   type ChatGptPromptInsertionOptions,
+  type ChatGptPromptInsertionPlan,
 } from "./prompt-insertion-plan";
 import {
   guardChatGptPromptMarkdown,
@@ -26,6 +27,7 @@ export async function insertChatGptPromptText(
   },
   options?: ChatGptPromptInsertionOptions,
   operation?: ChatGptPromptOperation,
+  selectedPlan?: ChatGptPromptInsertionPlan,
 ): Promise<void> {
   const op = operation ?? new ChatGptPromptOperation(abortSignal);
   const checkAborted = (): void => {
@@ -52,7 +54,7 @@ export async function insertChatGptPromptText(
   const reanchor = () => metrics.run("reanchor", () => checked(() => actions.reanchor()));
 
   checkAborted();
-  const plan = planChatGptPromptInsertion(text, options);
+  const plan = selectedPlan ?? planChatGptPromptInsertion(text, options);
   const metrics = new ChatGptPromptInsertionMetrics(plan, actions.onProgress, op.now);
   try {
     if (plan.strategy !== "guarded-chunked") {
