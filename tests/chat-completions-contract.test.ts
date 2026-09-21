@@ -92,3 +92,24 @@ test("escaped invalid Unicode in generated arguments is rejected after parsing",
   const input = parseChatCompletion({ ...request(), tools: [tool] });
   expect(() => decodeChatCompletion(input, '{"content":null,"tool_calls":[{"name":"read","arguments":{"path":"\\ud800"}}]}')).toThrow();
 });
+
+for (const literal of ["1e999", "-1e999", "9007199254740993"]) {
+  test(`rejects non-representable numeric arguments before serialization: ${literal}`, () => {
+    const numericTool = { type: "function", function: { name: "numeric", parameters: { type: "object" } } };
+    const input = parseChatCompletion({ ...request(), tools: [numericTool] });
+    expect(() => decodeChatCompletion(input,
+      `{"content":null,"tool_calls":[{"name":"numeric","arguments":{"value":${literal}}}]}`)).toThrow();
+    expect(() => parseChatCompletion({ ...request(), messages: [
+      { role: "assistant", content: null, tool_calls: [{ ...call, function: { name: "numeric", arguments: `{"value":${literal}}` } }] },
+      { role: "tool", tool_call_id: call.id, content: "result" },
+    ] })).toThrow();
+    expect(() => parseChatCompletion({ ...request(), tools: [{ ...numericTool, function: { ...numericTool.function,
+      parameters: { type: "object", properties: { value: { type: "number", maximum: JSON.parse(literal) } } } } }] })).toThrow();
+  });
+}
+test("finite fractional and safely representable numeric arguments survive unchanged", () => {
+  const input = parseChatCompletion({ ...request(), tools: [{ type: "function", function: { name: "numeric", parameters: { type: "object" } } }] });
+  const args = { integer: Number.MAX_SAFE_INTEGER, fraction: 0.125, small: 1e-20 };
+  const result = decodeChatCompletion(input, JSON.stringify({ content: null, tool_calls: [{ name: "numeric", arguments: args }] }));
+  expect(JSON.parse(result.tool_calls![0]!.function.arguments)).toEqual(args);
+});

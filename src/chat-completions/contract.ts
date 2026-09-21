@@ -61,6 +61,7 @@ function text(value: unknown, param: string): string {
 function validJsonText(value: unknown, depth = 0, nodes = { count: 0 }): boolean {
   if (++nodes.count > 10000 || depth > 32) return false;
   if (typeof value === "string") return wellFormedText(value);
+  if (typeof value === "number") return Number.isFinite(value) && (!Number.isInteger(value) || Number.isSafeInteger(value));
   if (value && typeof value === "object") return Object.entries(value).every(([key, child]) =>
     wellFormedText(key) && validJsonText(child, depth + 1, nodes));
   return true;
@@ -84,10 +85,12 @@ function content(value: unknown, param: string): string {
   return text(joined, param);
 }
 function schemaSafety(value: unknown, depth = 0, nodes = { count: 0 }): void {
+  if (typeof value === "number" && (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)))) fail("Tool schema numbers must be finite and integers safely representable", "tools");
   if (typeof value === "string" && !wellFormedText(value)) fail("Invalid Unicode in tool schema", "tools");
   if (++nodes.count > 10000 || depth > 32) fail("Tool schema exceeds structural limits", "tools");
   if (!value || typeof value !== "object") return;
   for (const [key, child] of Object.entries(value)) {
+    if (!wellFormedText(key)) fail("Invalid Unicode in tool schema", "tools");
     if (key === "$async" || key === "__proto__" || key === "constructor" || key === "prototype") fail("Unsupported schema keyword", "tools");
     if (key === "$ref" && (typeof child !== "string" || !child.startsWith("#"))) fail("Only local schema references are supported", "tools");
     schemaSafety(child, depth + 1, nodes);
