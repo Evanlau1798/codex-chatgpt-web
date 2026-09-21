@@ -25,6 +25,21 @@ export class ChatGptWebAdapterError extends Error {
   }
 }
 
+/** A completed text comparison failed. Never confuse this with an unresponsive reader. */
+export class ChatGptPromptIntegrityMismatchError extends ChatGptWebAdapterError {
+  constructor(message: string, cause?: unknown) {
+    super(message, { status: 502, errorType: "server_error", code: "chatgpt_prompt_integrity_mismatch",
+      retryable: false, retireSession: true, cause });
+    this.name = "ChatGptPromptIntegrityMismatchError";
+  }
+}
+
+export function isChatGptPromptIntegrityMismatch(error: unknown): error is ChatGptWebAdapterError {
+  // The helper protocol preserves fields, not subclass prototypes.
+  return error instanceof ChatGptWebAdapterError && error.code === "chatgpt_prompt_integrity_mismatch"
+    && !error.retryable;
+}
+
 export const CHATGPT_RETAINED_SURFACE_UNAVAILABLE = "The retained ChatGPT conversation is no longer available";
 
 export function chatGptSessionExpiredError(): ChatGptWebAdapterError {

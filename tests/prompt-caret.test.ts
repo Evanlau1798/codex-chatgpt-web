@@ -5,7 +5,7 @@ import {
   clearChatGptComposerInput,
 } from "../src/adapters/chatgpt-web/prompt-caret";
 
-test("classifies an exact composer readback mismatch as a recoverable pre-submit surface failure", () => {
+test("classifies an exact composer readback mismatch as a terminal pre-submit integrity failure", () => {
   const error = chatGptPromptAttachmentMismatch(
     "ChatGPT composer did not commit a complete prompt insertion chunk",
     "abcdef",
@@ -13,8 +13,8 @@ test("classifies an exact composer readback mismatch as a recoverable pre-submit
   );
 
   expect(error).toMatchObject({
-    code: "chatgpt_surface_changed",
-    retryable: true,
+    code: "chatgpt_prompt_integrity_mismatch",
+    retryable: false,
     retireSession: true,
   });
   expect(error.message).toContain("expectedChars=6");
@@ -24,7 +24,7 @@ test("classifies an exact composer readback mismatch as a recoverable pre-submit
   expect(error.message).not.toContain("CodePoints");
 });
 
-test("reports a caller-supplied equivalent prefix while preserving recoverable surface classification", () => {
+test("reports a caller-supplied equivalent prefix while preserving terminal integrity classification", () => {
   const error = chatGptPromptAttachmentMismatch(
     "ChatGPT composer did not preserve the complete prompt",
     "a  b",
@@ -33,8 +33,8 @@ test("reports a caller-supplied equivalent prefix while preserving recoverable s
   );
 
   expect(error).toMatchObject({
-    code: "chatgpt_surface_changed",
-    retryable: true,
+    code: "chatgpt_prompt_integrity_mismatch",
+    retryable: false,
     retireSession: true,
   });
   expect(error.message).toContain("commonPrefixChars=3");

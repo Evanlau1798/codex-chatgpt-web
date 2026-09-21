@@ -112,6 +112,7 @@ export async function handleCompactRequest(
   let body: {
     output?: unknown[];
     status?: unknown;
+    retryable?: boolean;
     error?: { message?: unknown; type?: unknown; code?: unknown } | null;
   };
   try {
@@ -125,7 +126,8 @@ export async function handleCompactRequest(
       type: typeof body.error.type === "string" ? body.error.type : "upstream_error",
       code: typeof body.error.code === "string" ? body.error.code : null,
     };
-    return Response.json({ error }, { status: httpStatusFromTerminalError(error) });
+    return Response.json({ error, ...(typeof body.retryable === "boolean" ? { retryable: body.retryable } : {}) },
+      { status: httpStatusFromTerminalError(error) });
   }
   if (body.status !== "completed") {
     return formatErrorResponse(502, "upstream_error", `Compaction turn failed (status: ${String(body.status ?? "unknown")})`);

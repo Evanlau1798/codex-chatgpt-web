@@ -1,3 +1,4 @@
+import { ChatGptPromptIntegrityMismatchError, isChatGptPromptIntegrityMismatch } from "./adapter-error";
 import { ChatGptPromptOperation } from "./prompt-operation";
 import { chatGptPromptCodeUnitEquivalent, chatGptPromptTextEquivalent, chatGptPromptEquivalentPrefixLength, readChatGptPromptText } from "./prompt-text";
 import { randomUUID } from "node:crypto";
@@ -2097,6 +2098,12 @@ export class ChatGptBrowserWorker {
       if (!mutationStarted || error instanceof ChatGptPersistentBrowserStateError) throw error;
       try { await this.clearChatGptComposerState(page); }
       catch (cleanupError) {
+        if (isChatGptPromptIntegrityMismatch(error)) {
+          throw new ChatGptPromptIntegrityMismatchError(
+            `${error.message}; composer cleanup could not be verified; the failed surface must be retired`,
+            new AggregateError([error, cleanupError]),
+          );
+        }
         throw new ChatGptPersistentBrowserStateError(
           [error, cleanupError],
           "ChatGPT prompt attachment failed and its composer state could not be cleared",

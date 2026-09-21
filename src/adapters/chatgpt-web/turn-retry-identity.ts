@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CodexParsedRequest } from "../../types";
+import { chatGptTurnExecutionKey } from "./turn-execution-key";
+import { currentTurnUserRevision } from "./turn-user-revision";
 import { extractChatGptTurnIdentity } from "./environment";
 
 interface ClaudeRetryMetadata {
@@ -29,5 +31,21 @@ export function chatGptTurnRetryKey(parsed: CodexParsedRequest): string {
     turnId: identity.turnId,
     purpose: parsed._compactionRequest ? "compaction" : "response",
     ...(requestHash ? { claudeRequestHash: requestHash } : {}),
+  })).digest("hex");
+}
+
+/** Canonical native owner + request revision, never a prompt-only global blacklist.
+ * Transport flags/timestamps are excluded, but changed tool results and item identities are not.
+ * The digest stays process-local and is never written to diagnostics or the error response.
+ */
+export function chatGptPromptFailureKey(parsed: CodexParsedRequest): string {
+  const executionKey = chatGptTurnExecutionKey(parsed); // validates the required native identity
+  const identity = extractChatGptTurnIdentity(parsed);
+  const revision = currentTurnUserRevision(parsed._rawBody, identity.turnId!);
+  return createHash("sha256").update(JSON.stringify({
+    executionKey,
+    revision,
+    context: { ...parsed.context, messages: parsed.context.messages.map(({ timestamp: _timestamp, ...message }) => message) },
+    options: parsed.options,
   })).digest("hex");
 }

@@ -369,6 +369,7 @@ test("preserves a structured browser preflight failure through the v1 compaction
 
   expect(response.status).toBe(400);
   expect(await response.json()).toEqual({
+    retryable: false,
     error: {
       message: "This task exceeds the ChatGPT Web context window.",
       type: "invalid_request_error",

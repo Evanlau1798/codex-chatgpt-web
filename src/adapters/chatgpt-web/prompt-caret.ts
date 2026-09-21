@@ -2,7 +2,7 @@ import { ChatGptPromptOperation } from "./prompt-operation";
 import { chatGptPromptMismatchDetails } from "./prompt-text";
 import { chatGptNativeEditValue, type ChatGptPromptInsertionMetrics } from "./prompt-insertion-metrics";
 import type { Locator } from "playwright-core";
-import { chatGptWebSurfaceError } from "./adapter-error";
+import { chatGptWebSurfaceError, ChatGptPromptIntegrityMismatchError } from "./adapter-error";
 import { CHATGPT_PROMPT_MARKDOWN_DELIMITERS as MARKDOWN_SHORTCUT_DELIMITERS } from "./prompt-insertion-plan";
 
 export interface ChatGptCaretEvidence {
@@ -440,8 +440,8 @@ export function chatGptPromptAttachmentMismatch(
   const details = chatGptPromptMismatchDetails(expected, observed);
   // Keep the existing caller's equivalent-prefix diagnostic without exporting reversible text.
   if (equivalentPrefix !== undefined) details.commonPrefixChars = equivalentPrefix;
-  return chatGptWebSurfaceError(
-    `${message} (${Object.entries(details).map(([key, value]) => `${key}=${value}`).join(", ")})`, false,
+  return new ChatGptPromptIntegrityMismatchError(
+    `${message} (${Object.entries(details).map(([key, value]) => `${key}=${value}`).join(", ")})`,
   );
 }
 
