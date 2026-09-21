@@ -59,6 +59,34 @@ bun run verify
 Inspect the existing scripts before any account-bound smoke test. Do not send
 these large synthetic prompts automatically or run historical tool commands.
 
+## 02 — Cancellation at insertion await boundaries
+
+Every composer acquisition, insertion, verification, boundary restoration,
+Markdown restoration and reanchor started by `insertChatGptPromptText` is checked
+before and after its awaited operation. Pre-aborted empty/direct requests start
+no action, and cancellation during the last verification or reanchor cannot
+return a successful insertion. The original abort reason is retained.
+
+The guard awaits the actual operation; it does not race an in-flight edit against
+an abort promise or claim that cancellation physically stopped the renderer.
+Outer mutation settlement, cleanup and surface retirement remain authoritative.
+Lower-level reader/caret deadline propagation is still a separate follow-up;
+this change prevents subsequent orchestration steps from starting after the
+observed cancellation, not every mutation inside an already-started helper.
+
+18 focused regression cases cover direct/chunked boundaries, final verification,
+Markdown restoration admission, original error propagation and an explicitly
+held in-flight edit. Against 01, 16 checks failed and 2 passed (the failures
+include abort-reason preservation assertions, not 16 distinct incident reports).
+After the patch, all 18 pass; all 37 strategy/fixture tests also still pass under
+Node 22.16 after focused strict TypeScript compilation with the same local
+compile-only Playwright declarations. Full Bun/launcher verification and Windows
+account-bound tests remain required; no synthetic result closes #43.
+
+```powershell
+bun test ./tests/prompt-insertion-plan.test.ts ./tests/prompt-insertion-cancel-boundaries.test.ts ./tests/prompt-fast-insertion.test.ts ./tests/prompt-direct-insertion.test.ts ./tests/prompt-attachment-cancellation.test.ts
+```
+
 ## Remaining boundaries
 
 Cancellation/deadline completion, structured integrity failures with bounded
