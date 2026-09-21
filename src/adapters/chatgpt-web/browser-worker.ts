@@ -144,7 +144,7 @@ import { ChatGptBrowserDiagnostics, redactChatGptUiDiagnostic } from "./browser-
 import { openChatGptConnectorPlusMenu } from "./connector-plus-menu";
 import {
   ChatGptBrowserObservationTimeoutError,
-  MAX_CHATGPT_BROWSER_PAGE_REBINDS,
+  ChatGptObservationRecoveryEpisode,
   observeChatGptSubmission,
   observeChatGptTurnIdentityAfterSend,
   withChatGptBrowserObservationTimeout,
@@ -3136,6 +3136,7 @@ export class ChatGptBrowserWorker {
       const deadline = this.config.turnTimeoutMs === undefined
         ? undefined
         : Date.now() + this.config.turnTimeoutMs;
+      let launcherTargetId: string | undefined;
       let page = await this.runStage(turn.traceId, "browser_page", browserStageTimeouts.browserPage, async (abortSignal) => {
         if (maintenancePage) return maintenancePage;
         if (!launcherSurfaceId) {
@@ -3157,66 +3158,75 @@ export class ChatGptBrowserWorker {
           throw new DOMException("ChatGPT browser page acquisition aborted", "AbortError");
         }
         turnConnection = connection.browser;
+        launcherTargetId = connection.descriptor.surfaceTargets[launcherSurfaceId];
         await waitForOperationalChatGptViewport(connection.page, abortSignal);
         return connection.page;
       });
       if (!maintenancePage && !launcherSurfaceId) managedPage = page;
       diagnosticPage = page;
-      const rebindLauncherPage = async (attempt: number, cause: Error, callerSignal?: AbortSignal): Promise<void> => {
+      const rebindLauncherPage = async (
+        attempt: number, cause: Error, callerSignal?: AbortSignal, episodeRemainingMs?: () => number,
+      ): Promise<void> => {
         if (!launcherSurfaceId || !this.config.browserHostDescriptorPath) throw cause;
         const rebindSignal = callerSignal && turn.abortSignal
           ? AbortSignal.any([callerSignal, turn.abortSignal])
           : callerSignal ?? turn.abortSignal;
-        if (rebindSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-        console.warn(
-          `[chatgpt-web] browser turn ${turn.traceId} is rebinding its launcher page after a stalled browser operation:`
-          + ` ${redactChatGptUiDiagnostic(cause.message)}`,
-        );
-        const previousConnection = turnConnection;
-        const connection = await connectAfterClosingBrowserConnection(
-          previousConnection,
-          async () => {
-            turnConnection = undefined;
-            await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
-              phase: "heartbeat",
-              traceId: turn.traceId,
-              helperPid: process.pid,
-              refreshViewport: true,
-            }, LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS);
-            return this.runStage(
-              turn.traceId,
-              `response_page_rebind_${attempt}`,
-              browserStageTimeouts.browserPage,
-              async (stageSignal) => {
-                const signal = rebindSignal
-                  ? AbortSignal.any([stageSignal, rebindSignal])
-                  : stageSignal;
-                const rebound = await connectLauncherBrowserHost(
-                  this.config.browserHostDescriptorPath!,
-                  browserStageTimeouts.browserPage,
-                  launcherSurfaceId,
-                  signal,
-                );
-                // Own the transport before viewport preparation can fail or be cancelled.
-                turnConnection = rebound.browser;
-                diagnosticPage = rebound.page;
-                await waitForOperationalChatGptViewport(rebound.page, signal);
-                return rebound;
-              },
-              rebindSignal,
-            );
-          },
-        );
-        turnConnection = connection.browser;
-        page = connection.page;
-        diagnosticPage = page;
-        console.warn(
-          `[chatgpt-web] browser turn ${turn.traceId} rebound its existing launcher page after a stalled browser operation`,
-        );
+        rebindSignal?.throwIfAborted();
+        const remaining = () => Math.max(0, Math.min(
+          episodeRemainingMs?.() ?? browserStageTimeouts.browserPage,
+          deadline === undefined ? Infinity : deadline - Date.now(),
+        ));
+        let active = true;
+        const check = () => {
+          rebindSignal?.throwIfAborted();
+          if (!active || remaining() <= 0) throw new Error("ChatGPT same-page acquisition deadline expired");
+        };
+        console.warn(`[chatgpt-web] browser turn ${turn.traceId} same-page recovery attempt=${attempt} phase=acquire`);
+        try {
+          check();
+          await this.runStage(turn.traceId, `response_page_rebind_${attempt}`, remaining(), async (stageSignal, stageRemainingMs) => {
+            const signal = rebindSignal ? AbortSignal.any([stageSignal, rebindSignal]) : stageSignal;
+            const budget = () => Math.min(remaining(), stageRemainingMs());
+            const checkCurrent = () => { signal.throwIfAborted(); check(); };
+            const previousConnection = turnConnection;
+            const connection = await connectAfterClosingBrowserConnection(previousConnection, async () => {
+              checkCurrent();
+              turnConnection = undefined;
+              await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
+                phase: "heartbeat", traceId: turn.traceId, helperPid: process.pid, refreshViewport: true,
+              }, Math.min(LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS, budget()));
+              checkCurrent();
+              const rebound = await connectLauncherBrowserHost(
+                this.config.browserHostDescriptorPath!, budget(), launcherSurfaceId, signal,
+              );
+              try {
+                checkCurrent();
+                if (!launcherTargetId || rebound.descriptor.surfaceTargets[launcherSurfaceId] !== launcherTargetId) {
+                  throw new Error("ChatGPT launcher target ownership changed during same-page acquisition");
+                }
+              } catch (error) {
+                // A late connect may outlive cancellation; it never replaces the next owner.
+                await rebound.browser.close().catch(() => {});
+                throw error;
+              }
+              // Own the transport before viewport preparation can fail or be cancelled.
+              turnConnection = rebound.browser;
+              diagnosticPage = rebound.page;
+              await waitForOperationalChatGptViewport(rebound.page, signal, Math.min(10_000, budget()));
+              checkCurrent();
+              return rebound;
+            });
+            checkCurrent();
+            page = connection.page;
+            diagnosticPage = page;
+          }, rebindSignal);
+          check();
+          console.warn(`[chatgpt-web] browser turn ${turn.traceId} same-page recovery attempt=${attempt} phase=ready`);
+        } finally { active = false; }
       };
       const toolTurnObservationRecovery = launcherSurfaceId !== undefined && this.config.browserHostDescriptorPath !== undefined
-        ? async (attempt: number, cause: ChatGptBrowserObservationTimeoutError, signal?: AbortSignal) => {
-          await rebindLauncherPage(attempt, cause, signal);
+        ? async (attempt: number, cause: ChatGptBrowserObservationTimeoutError, signal?: AbortSignal, remainingMs?: () => number) => {
+          await rebindLauncherPage(attempt, cause, signal, remainingMs);
           await diagnostics.capture(page, "submission-page-rebound");
           return page;
         }
@@ -3537,7 +3547,9 @@ export class ChatGptBrowserWorker {
         // Both output paths must reach the shared answer-retry handling below.
         responseObservation: {
         if (turn.tunneledOutput) {
-          let tunneledObservationRebinds = 0;
+          const tunneledObservationRecovery = new ChatGptObservationRecoveryEpisode(
+            () => deadline === undefined ? Infinity : deadline - Date.now(),
+          );
           const tunneled = await runChatGptTunneledOutputTurn({
             output: turn.tunneledOutput,
             afterSequence: tunneledOutputSequence,
@@ -3628,18 +3640,11 @@ export class ChatGptBrowserWorker {
                   );
                   if (!observed) continue;
                   current = observed;
-                  tunneledObservationRebinds = 0;
+                  tunneledObservationRecovery.resetAfterObservation();
                   break;
                 } catch (error) {
                   if (!(error instanceof ChatGptBrowserObservationTimeoutError)) throw error;
-                  tunneledObservationRebinds += 1;
-                  if (tunneledObservationRebinds > MAX_CHATGPT_BROWSER_PAGE_REBINDS) {
-                    throw new Error(
-                      `ChatGPT browser DOM remained unresponsive after ${MAX_CHATGPT_BROWSER_PAGE_REBINDS} same-page rebinds`,
-                      { cause: error },
-                    );
-                  }
-                  await rebindLauncherPage(tunneledObservationRebinds, error);
+                  await tunneledObservationRecovery.recover(error, rebindLauncherPage, turn.abortSignal);
                   responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
                 }
               }
@@ -3739,7 +3744,9 @@ export class ChatGptBrowserWorker {
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
         const nativeToolActivityTracker = new ChatGptNativeToolActivityTracker();
         let completionFenceRevision: number | undefined;
-        let consecutiveObservationRebinds = 0;
+        const responseObservationRecovery = new ChatGptObservationRecoveryEpisode(
+          () => deadline === undefined ? Infinity : deadline - Date.now(),
+        );
         let internalObservationFaults = 0;
         for (;;) {
           if (Date.now() - lastHeartbeat >= 10_000) {
@@ -3776,17 +3783,10 @@ export class ChatGptBrowserWorker {
           );
           if (!observed) continue;
           currentResponseTurn = observed;
-          consecutiveObservationRebinds = 0;
+          responseObservationRecovery.resetAfterObservation();
         } catch (error) {
           if (!(error instanceof ChatGptBrowserObservationTimeoutError)) throw error;
-          consecutiveObservationRebinds += 1;
-          if (consecutiveObservationRebinds > MAX_CHATGPT_BROWSER_PAGE_REBINDS) {
-            throw new Error(
-              `ChatGPT browser DOM remained unresponsive after ${MAX_CHATGPT_BROWSER_PAGE_REBINDS} same-page rebinds`,
-              { cause: error },
-            );
-          }
-          await rebindLauncherPage(consecutiveObservationRebinds, error);
+          await responseObservationRecovery.recover(error, rebindLauncherPage, turn.abortSignal);
           responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
           responseTurn = responseTurnBinding
             ? locateChatGptAssistantTurn(responseTurns, responseTurnBinding)

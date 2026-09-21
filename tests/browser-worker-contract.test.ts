@@ -427,7 +427,7 @@ test("a stalled post-submit DOM probe is bounded before same-page launcher recov
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   const runBrowserTurn = workerSource.slice(workerSource.indexOf("  private async runBrowserTurn("));
   const submissionAccepted = runBrowserTurn.indexOf("submission accepted evidence=");
-  const recovery = runBrowserTurn.indexOf("await rebindLauncherPage(", submissionAccepted);
+  const recovery = runBrowserTurn.indexOf("await tunneledObservationRecovery.recover(", submissionAccepted);
   const duplicateSend = runBrowserTurn.indexOf("sendAttachedPrompt(", recovery);
 
   const rebindDefinition = runBrowserTurn.indexOf("const rebindLauncherPage");
@@ -444,8 +444,8 @@ test("a stalled post-submit DOM probe is bounded before same-page launcher recov
     failClosedDisconnect,
   );
   const reconnectStage = runBrowserTurn.indexOf(
-    "return this.runStage(",
-    detachClosedConnection,
+    "await this.runStage(turn.traceId, `response_page_rebind_${attempt}`",
+    rebindDefinition,
   );
   const reconnectTransport = runBrowserTurn.indexOf(
     "const rebound = await connectLauncherBrowserHost(",
@@ -458,7 +458,8 @@ test("a stalled post-submit DOM probe is bounded before same-page launcher recov
   expect(previousConnection).toBeGreaterThan(rebindDefinition);
   expect(failClosedDisconnect).toBeGreaterThan(previousConnection);
   expect(detachClosedConnection).toBeGreaterThan(failClosedDisconnect);
-  expect(reconnectStage).toBeGreaterThan(detachClosedConnection);
+  expect(reconnectStage).toBeGreaterThan(rebindDefinition);
+  expect(reconnectStage).toBeLessThan(previousConnection);
   expect(reconnectTransport).toBeGreaterThan(reconnectStage);
   expect(runBrowserTurn).not.toContain(
     "previous browser observation connection did not close after rebind",

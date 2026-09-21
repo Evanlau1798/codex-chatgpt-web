@@ -15,7 +15,7 @@ import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/pr
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
 import { activateChatGptSendControl, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
-import { chatGptSuspensionClock } from "../src/adapters/chatgpt-web/browser-stage-lifecycle";
+import { ChatGptViewportReadinessError, chatGptSuspensionClock } from "../src/adapters/chatgpt-web/browser-stage-lifecycle";
 
 type Recovery = (attempt: number, cause: Error, signal?: AbortSignal) => Promise<Page>;
 type State = { count: number; lastId?: string; identities?: readonly string[]; knownTurnIdentities?: readonly string[] };
@@ -147,7 +147,9 @@ test("accepted send rebinds observation once without sending the prompt twice", 
     signal, () => { activated++; }, new ChatGptExternalTurnProgress(), async (attempt, cause, caller) => {
       expect(attempt).toBe(1);
       expect(cause).toBeInstanceOf(ChatGptBrowserObservationTimeoutError);
-      expect(caller).toBe(signal);
+      expect(caller?.aborted).toBe(false);
+      // The child signal also enforces the single recovery episode's deadline.
+      expect(caller).toBeInstanceOf(AbortSignal);
       recoveries++;
       return next.page;
     });
@@ -516,4 +518,31 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
     expect(events).toEqual(["attach", "verify:stage", "send", "rebind", "ack"]);
     expect(next.selected).toEqual(["conversation-turn-new"]);
   }
+});
+
+
+test("a failed first rebind shares the two-attempt budget and never reactivates Send", async () => {
+  const first = surface(timeout);
+  const next = surface(async () => ({ count: 1, lastId: "conversation-turn-new" }));
+  const instance = worker();
+  let presses = 0;
+  let activated = 0;
+  const attempts: number[] = [];
+  const progress = new ChatGptExternalTurnProgress();
+  const revision = progress.recordToolBatch(1);
+  instance.activeComposer = async () => ({ locator: () => ({ getByTestId: () => ({
+    waitFor: async () => {}, isEnabled: async () => true, press: async () => { presses++; },
+  }) }) });
+  const evidence = await instance.sendAttachedPrompt(first.page, first.baseline, initial, undefined,
+    undefined, () => { activated++; }, progress, async attempt => {
+      attempts.push(attempt);
+      if (attempt === 1) throw new ChatGptViewportReadinessError("viewport_pending", { width: 0, height: 0 });
+      // Completion of an already dispatched tool is not assistant completion.
+      progress.recordToolResult();
+      return next.page;
+    });
+  expect(evidence).toBe("assistant_turn");
+  expect(attempts).toEqual([1, 2]);
+  expect([presses, activated]).toEqual([1, 1]);
+  expect(progress.snapshot().lastToolBatchRevision).toBe(revision);
 });

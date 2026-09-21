@@ -50,20 +50,72 @@ export async function connectAfterClosingBrowserConnection<T>(
 
 export const CHATGPT_MIN_OPERATIONAL_VIEWPORT = Object.freeze({ width: 320, height: 240 });
 
+/** A readiness failure after acquiring the exact launcher-owned target; not permission to resend. */
+export class ChatGptViewportReadinessError extends Error {
+  constructor(
+    readonly kind: "viewport_pending" | "renderer_unresponsive" | "target_closed" | "unknown",
+    readonly dimensions?: Readonly<{ width: number; height: number }>,
+    cause?: unknown,
+  ) {
+    super(`ChatGPT browser surface did not expose an operational viewport (${kind})`, { cause });
+    this.name = "ChatGptViewportReadinessError";
+  }
+}
+
+export function isRecoverableChatGptViewportFailure(error: unknown): boolean {
+  return error instanceof ChatGptViewportReadinessError
+    && (error.kind === "viewport_pending" || error.kind === "renderer_unresponsive");
+}
+
 export async function waitForOperationalChatGptViewport(
   page: Page,
   signal?: AbortSignal,
+  timeoutMs = 10_000,
 ): Promise<void> {
-  try {
-    await withAbort(page.waitForFunction(
-      ({ width, height }) => innerWidth >= width && innerHeight >= height,
-      CHATGPT_MIN_OPERATIONAL_VIEWPORT,
-      { polling: 50, timeout: 10_000 },
-    ), signal);
-  } catch (error) {
-    if (signal?.aborted) throw new DOMException("ChatGPT browser page acquisition aborted", "AbortError");
-    throw new Error(
-      `ChatGPT browser surface did not expose an operational viewport: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  const now = () => performance.now() - chatGptSuspensionClock.suspendedMs();
+  const started = now();
+  const remaining = () => Math.max(0, timeoutMs - (now() - started));
+  let dimensions: { width: number; height: number } | undefined;
+  const check = () => {
+    signal?.throwIfAborted();
+    if (page.isClosed()) throw new ChatGptViewportReadinessError("target_closed");
+  };
+  for (;;) {
+    check();
+    if (remaining() <= 0) throw new ChatGptViewportReadinessError(dimensions ? "viewport_pending" : "unknown", dimensions);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // One outstanding read at most. A nonresponsive read is not evidence of zero dimensions.
+      const timeout = new Promise<never>((_resolve, reject) => {
+        const expire = () => {
+          if (remaining() > 0) timer = setTimeout(expire, remaining());
+          else reject(new ChatGptViewportReadinessError("renderer_unresponsive"));
+        };
+        timer = setTimeout(expire, remaining());
+      });
+      dimensions = await withAbort(Promise.race([
+        page.evaluate(() => ({ width: innerWidth, height: innerHeight })), timeout,
+      ]), signal);
+      check();
+      if (remaining() <= 0) throw new ChatGptViewportReadinessError("unknown");
+      if (!Number.isFinite(dimensions.width) || !Number.isFinite(dimensions.height)) {
+        throw new ChatGptViewportReadinessError("unknown");
+      }
+      if (dimensions.width >= CHATGPT_MIN_OPERATIONAL_VIEWPORT.width
+        && dimensions.height >= CHATGPT_MIN_OPERATIONAL_VIEWPORT.height) return;
+    } catch (error) {
+      check();
+      if (error instanceof ChatGptViewportReadinessError) throw error;
+      // Target/transport/identity errors do not become another generic timeout retry.
+      throw new ChatGptViewportReadinessError("unknown", undefined, error);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
+    if (remaining() > 0) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await withAbort(new Promise<void>(resolve => { timer = setTimeout(resolve, Math.min(50, remaining())); }), signal);
+      } finally { if (timer !== undefined) clearTimeout(timer); }
+    }
   }
 }
