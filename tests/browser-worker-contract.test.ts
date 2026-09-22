@@ -646,6 +646,25 @@ test("prompt verification accepts Lexical NBSP preservation without weakening ot
   ).resolves.toBeUndefined();
 });
 
+test("pre-wrapped prompt verification carries exact leading text through both checkpoints", async () => {
+  const observed: boolean[] = [];
+  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    attachedPromptText: async (_page: Page, _signal: unknown, _operation: unknown, preserveLeading: boolean) => {
+      observed.push(preserveLeading);
+      return " \u2028exact prompt";
+    },
+  }) as ChatGptBrowserWorker;
+  const methods = ChatGptBrowserWorker.prototype as unknown as {
+    waitForPromptChunkAttached(page: Page, text: string, signal?: AbortSignal,
+      operation?: unknown, preserveLeading?: boolean): Promise<void>;
+    assertPromptAttached(page: Page, text: string, signal?: AbortSignal,
+      operation?: unknown, preserveLeading?: boolean): Promise<void>;
+  };
+  await methods.waitForPromptChunkAttached.call(worker, {} as Page, " \u2028exact prompt", undefined, undefined, true);
+  await methods.assertPromptAttached.call(worker, {} as Page, " \u2028exact prompt", undefined, undefined, true);
+  expect(observed).toEqual([true, true]);
+});
+
 test("compaction prompt attachment retries once only before submission evidence", async () => {
   const attachWithRetry = (ChatGptBrowserWorker.prototype as unknown as {
     attachPromptWithCompactionRetry(

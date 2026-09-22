@@ -58,19 +58,20 @@ export async function insertChatGptPromptText(
   const metrics = new ChatGptPromptInsertionMetrics(plan, actions.onProgress, op.now);
   try {
     if (plan.strategy !== "guarded-chunked") {
-      // One exact editor transaction avoids both cumulative Lexical remounts and thousands of
+      // One bounded insertion avoids cumulative editor remounts and thousands of
       // delimiter-restoration edits. Full readback remains the acceptance boundary.
       await verify("");
       // HTML parsing changes CR and NUL; retain the exact text path for those inputs.
-      const plainTextBlocks = plan.strategy === "direct-html";
+      const htmlShape = plan.strategy === "direct-html-prewrap" ? "prewrap" : plan.strategy === "direct-html";
       await metrics.run("insert", async () => {
         metrics.chunk();
-        await withComposer(composer => insertChatGptComposerGuardedText(composer, text, abortSignal, plainTextBlocks, metrics, op));
+        await withComposer(composer => insertChatGptComposerGuardedText(composer, text, abortSignal, htmlShape, metrics, op));
         metrics.inserted(text.length);
       });
-      await verify(text.trimStart());
+      const expected = plan.strategy === "direct-html-prewrap" ? text : text.trimStart();
+      await verify(expected);
       await checked(() => new Promise<void>(resolve => setTimeout(resolve, 0)));
-      await verify(text.trimStart(), true);
+      await verify(expected, true);
       await reanchor();
       return;
     }

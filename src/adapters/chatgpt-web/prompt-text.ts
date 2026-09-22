@@ -18,11 +18,15 @@ export function chatGptPromptTextEquivalent(expected: string, observed: string):
 }
 
 /** Browser-serializable reader. Characterize this representation; never consult expected text. */
-export function readChatGptPromptText(element: HTMLElement | SVGElement): string {
+export function readChatGptPromptText(
+  element: HTMLElement | SVGElement,
+  options?: { preserveLeading?: boolean },
+): string {
   const clone = element.cloneNode(true) as HTMLElement;
   clone.querySelectorAll('[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]')
     .forEach(part => part.remove());
-  return [...clone.childNodes].map(child => child.textContent ?? "").join("\n").trimStart();
+  const text = [...clone.childNodes].map(child => child.textContent ?? "").join("\n");
+  return options?.preserveLeading ? text : text.trimStart();
 }
 
 /** Content-free diagnostic only. It never changes the readback or acceptance decision. */

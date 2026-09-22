@@ -284,7 +284,7 @@ export async function insertChatGptComposerGuardedText(
   composer: Locator,
   text: string,
   abortSignal?: AbortSignal,
-  plainTextBlocks = false,
+  htmlShape: boolean | "prewrap" = false,
   metrics?: ChatGptPromptInsertionMetrics,
   operation?: ChatGptPromptOperation,
 ): Promise<void> {
@@ -316,14 +316,26 @@ export async function insertChatGptComposerGuardedText(
       return result(false);
     }
     if (typeof input !== "string") {
-      // A single escaped text fragment avoids insertText's incremental paragraph creation.
-      const html = value.split("\n").map(line => (
-        `<div>${line.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;") || "<br>"}</div>`
-      )).join("");
-      return result(edit("insertHTML", html));
+      const escape = (part: string) => part.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      const html = input.prewrap
+        ? `<p style="white-space:pre-wrap">${escape(value)}</p>`
+        : value.split("\n").map(line => `<div>${escape(line) || "<br>"}</div>`).join("");
+      if (!edit("insertHTML", html)) return result(false);
+      // ProseMirror may retain its empty placeholder paragraph ahead of an inserted block.
+      // Remove it through a native edit so the editor model and the visible DOM agree.
+      const first = element.childNodes[0];
+      const second = element.childNodes[1];
+      if (input.prewrap && first?.nodeName === "P" && first.textContent === "" && second?.nodeName === "P") {
+        const range = document.createRange();
+        range.selectNode(first);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        return result(edit("delete", ""));
+      }
+      return result(true);
     }
     return result(edit("insertText", value));
-  }, plainTextBlocks ? { text } : text, options);
+  }, htmlShape ? htmlShape === "prewrap" ? { text, prewrap: true } : { text } : text, options);
   });
   const inserted = chatGptNativeEditValue(editResult, metrics);
   if (!inserted) throw chatGptWebSurfaceError("ChatGPT composer rejected the bounded plain-text edit", false);
@@ -352,7 +364,7 @@ export async function clearChatGptComposerInput(
   const op = (operation ?? new ChatGptPromptOperation(abortSignal)).budget(5_000);
   await op.mutate(options => composer.fill("", options));
   const hasText = await op.read(options => composer.evaluate(
-    element => (element.textContent?.trim().length ?? 0) > 0,
+    element => (element.textContent?.length ?? 0) > 0,
     undefined,
     options,
   ));

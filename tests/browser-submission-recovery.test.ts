@@ -11,6 +11,7 @@ import {
   observeChatGptTurnIdentityAfterSend,
 } from "../src/adapters/chatgpt-web/browser-observation";
 import { ChatGptPromptOperation } from "../src/adapters/chatgpt-web/prompt-operation";
+import { planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
@@ -28,7 +29,8 @@ type Baseline = {
 };
 interface Worker {
   activeComposer(page: Page): Promise<unknown>;
-  assertPromptAttached(page: Page, prompt: string, signal?: AbortSignal): Promise<void>;
+  assertPromptAttached(page: Page, prompt: string, signal?: AbortSignal, operation?: ChatGptPromptOperation,
+    preserveLeading?: boolean): Promise<void>;
   waitForTurnDomMutation(page: Page): Promise<void>;
   sendAttachedPrompt(page: Page, baseline: Baseline, initial: State, capture?: unknown,
     signal?: AbortSignal, activated?: () => void, progress?: ChatGptExternalTurnProgress, recover?: Recovery,
@@ -182,6 +184,27 @@ test("send revalidates the exact prompt before activation", async () => {
     "literal prompt",
   )).rejects.toThrow("composer changed after attachment");
   expect([presses, activated]).toEqual([0, 0]);
+});
+
+test("multipart pre-Send revalidation preserves leading text for a large pre-wrapped stage", async () => {
+  const fixture = surface(async () => ({ count: 2, lastId: "conversation-turn-new" }));
+  const instance = worker();
+  (instance as unknown as { config: object }).config = { experimentalComposerPlainText: true };
+  const expected = ` \n${"x".repeat(40_000)}`;
+  let observed: { text: string; preserveLeading: boolean } | undefined;
+  let presses = 0;
+  instance.activeComposer = async () => ({ locator: () => ({ getByTestId: () => ({
+    waitFor: async () => {}, isEnabled: async () => true, press: async () => { presses++; },
+  }) }) });
+  instance.assertPromptAttached = async (_page, text, _signal, _operation, preserveLeading) => {
+    observed = { text, preserveLeading: preserveLeading === true };
+    throw new Error("stop before Send");
+  };
+  await expect(instance.sendAttachedPrompt(fixture.page, fixture.baseline, initial,
+    undefined, undefined, undefined, undefined, undefined, expected)).rejects.toThrow("stop before Send");
+  expect(observed?.text === expected).toBeTrue();
+  expect(observed?.preserveLeading).toBeTrue();
+  expect(presses).toBe(0);
 });
 
 test("submission recovery is bounded and propagates ordinary failures without retry", async () => {
@@ -432,7 +455,7 @@ test("every post-Send identity observer uses transient read-only recovery", () =
   expect((source.match(/const initialResponseTurn = await readChatGptAssistantTurnState\(/g) ?? []).length).toBe(2);
 });
 
-test.each(["final", "multipart"] as const)("production %s send reacquires locators after recovery without resending", async lane => {
+test.each(["final", "multipart", "final-prewrap"] as const)("production %s send reacquires locators after recovery without resending", async lane => {
   let reads = 0;
   const first = surface(async () => {
     // Multipart captures its baseline in production before activating Send.
@@ -441,8 +464,9 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
   });
   const next = surface(async () => ({ count: 1, lastId: "conversation-turn-new" }));
   const events: string[] = [];
+  const verified: Array<{ text: string; preserveLeading: boolean }> = [];
   const instance = Object.assign(worker(), {
-    config: { experimentalNoAutoCompact: false },
+    config: { experimentalNoAutoCompact: false, experimentalComposerPlainText: lane === "final-prewrap" },
     activeComposer: async () => ({ locator: () => ({ getByTestId: () => ({
       waitFor: async () => {}, isEnabled: async () => true, press: async (_key: string, options: { noWaitAfter?: boolean; timeout?: number; signal?: AbortSignal }) => {
         expect(options).toMatchObject({ noWaitAfter: true, timeout: 0 });
@@ -451,7 +475,12 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
       },
     }) }) }),
     attachPrompt: async () => { events.push("attach"); },
-    assertPromptAttached: async (_page: Page, prompt: string) => { events.push(`verify:${prompt}`); },
+    assertPromptAttached: async (_page: Page, prompt: string, _signal: unknown, _operation: unknown,
+      preserveLeading: boolean) => {
+      verified.push({ text: prompt, preserveLeading: preserveLeading === true });
+      events.push(lane === "final-prewrap" ? "verify:prewrap" : `verify:${prompt}`);
+    },
+    connectorIsSelected: async () => true,
     waitForMultipartAcknowledgement: async (page: Page, turn: Locator) => {
       expect(page).toBe(next.page);
       expect(turn).toBe(next.assistant);
@@ -459,10 +488,10 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
     },
   });
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  const start = lane === "final"
+  const start = lane !== "multipart"
     ? source.indexOf('        await this.runStage(\n          turn.traceId,\n          "send",')
     : source.indexOf("        for (let index = 0; index < multipartTransport.stages.length;");
-  const end = lane === "final"
+  const end = lane !== "multipart"
     ? source.indexOf('        await diagnostics.capture(page, "send-accepted");', start)
     : source.indexOf("        if (mode.effort !== requestedMode.effort)", start);
   expect(start).toBeGreaterThan(0);
@@ -475,9 +504,9 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
       onSendActivated: () => { events.push("activated"); },
       onSubmitted: () => { events.push("submitted"); },
     },
-    mode: { localTools: false },
+    mode: { localTools: lane === "final-prewrap" },
     prepared: { multipart: lane === "multipart" ? { parts: ["part"] } : undefined },
-    responsePrompt: "final prompt",
+    responsePrompt: lane === "final-prewrap" ? `\n${"x".repeat(40_000)}` : "final prompt",
     multipartTransport: { stages: [{ text: "stage" }] },
     deadline: undefined,
     diagnostics: { capture: async () => {} },
@@ -485,7 +514,7 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
     CHATGPT_SEND_ENABLE_GRACE_MS: 5_000,
     CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR,
     CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, chatGptSuspensionClock,
-    chatGptPromptAttachmentTimeoutMs,
+    chatGptPromptAttachmentTimeoutMs, planChatGptPromptInsertion,
     throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
     activateChatGptSendControl, readChatGptAssistantTurnState,
   };
@@ -498,6 +527,8 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
       const initialResponseTurn = initial;
       const initialUserTurnCount = 1;
       const submissionBaseline = first.baseline;
+      const reuseConversation = false;
+      const responseAttempt = 1;
       let retrySubmitted = () => events.push("retry-submitted");
       const toolTurnObservationRecovery = async () => {
         events.push("rebind");
@@ -510,10 +541,15 @@ test.each(["final", "multipart"] as const)("production %s send reacquires locato
   `);
   const run = new Function(...Object.keys(dependencies), `${compiled}; return run;`)(...Object.values(dependencies));
   const result = await run.call(instance);
-  if (lane === "final") {
+  if (lane !== "multipart") {
     expect(result.responseTurns).toBe(next.responses);
     expect(result.responseTurn).toBe(next.assistant);
-    expect(events).toEqual(["verify:final prompt", "activated", "send", "rebind", "submitted", "retry-submitted"]);
+    expect(events).toEqual([lane === "final-prewrap" ? "verify:prewrap" : "verify:final prompt",
+      "activated", "send", "rebind", "submitted", "retry-submitted"]);
+    if (lane === "final-prewrap") {
+      expect(verified[0]?.text === ` ${dependencies.responsePrompt}`).toBeTrue();
+      expect(verified[0]?.preserveLeading).toBeTrue();
+    }
   } else {
     expect(events).toEqual(["attach", "verify:stage", "send", "rebind", "ack"]);
     expect(next.selected).toEqual(["conversation-turn-new"]);

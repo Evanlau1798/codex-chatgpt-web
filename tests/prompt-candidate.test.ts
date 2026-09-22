@@ -19,7 +19,8 @@ for (const suffix of ["\r\n\0", "\u00a0\u2028", "\n```\n**[x](y)\n```\n", "ðŸ‘©â
   test(`candidate keeps literal input category ${JSON.stringify(suffix)}`, () => {
     const text = "x".repeat(32001) + suffix;
     const plan = planChatGptPromptInsertion(text, { candidatePlainText: true });
-    expect(plan.strategy).toBe("direct-text");
+    expect(plan.strategy).toBe(/[\r\u0000]/u.test(suffix) || !/[\n\u2028\u2029]/u.test(suffix)
+      ? "direct-text" : "direct-html-prewrap");
     expect(plan.utf16Units).toBe(text.length);
   });
 }
@@ -73,12 +74,14 @@ test("actual attachment caller shares its plan and remaining budget with staging
   const { ChatGptBrowserWorker } = await import("../src/adapters/chatgpt-web/browser-worker");
   const { ChatGptPromptOperation } = await import("../src/adapters/chatgpt-web/prompt-operation");
   const seen: Array<{ text: string; context: any }> = [];
+  const asserted: Array<{ text: string; preserveLeading: boolean }> = [];
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { experimentalComposerPlainText: true },
     activeComposer: async () => ({ fill: async () => {}, focus: async () => {} }),
     selectConnector: async () => ({ focus: async () => {} }),
     insertPromptText: async (_page: unknown, text: string, _signal: unknown, _large: boolean, _force: boolean, context: any) => { seen.push({ text, context }); },
-    assertPromptAttached: async () => {},
+    assertPromptAttached: async (_page: unknown, text: string, _signal: unknown, _operation: unknown,
+      preserveLeading: boolean) => { asserted.push({ text, preserveLeading }); },
   });
   const page = { keyboard: { press: async () => {} } };
   const parent = new ChatGptPromptOperation(undefined, () => 5000);
@@ -93,6 +96,19 @@ test("actual attachment caller shares its plan and remaining budget with staging
     expect(value.context.operation.timeLeft()).toBeLessThanOrEqual(5000);
   }
   expect(seen[1]!.text.startsWith(" ")).toBeTrue();
+  const multiline = `${"x".repeat(33000)}\nlast line`;
+  await worker.attachPrompt(page, multiline, false, undefined, undefined, false,
+    { triggerAttempts: 0 }, false, true, false, undefined,
+    { traceId: "fixture", stage: "attachment", operation: parent });
+  await worker.attachPrompt(page, multiline, true, undefined, undefined, false,
+    { triggerAttempts: 0 }, false, true, false, undefined,
+    { traceId: "fixture", stage: "attachment", operation: parent });
+  expect(seen.slice(-2).map(value => value.context.insertionPlan.strategy))
+    .toEqual(["direct-html-prewrap", "direct-html-prewrap"]);
+  expect(asserted.slice(-2)).toEqual([
+    { text: multiline, preserveLeading: true },
+    { text: ` ${multiline}`, preserveLeading: true },
+  ]);
 });
 
 test("existing safe compaction repair cannot refill the candidate deadline", async () => {

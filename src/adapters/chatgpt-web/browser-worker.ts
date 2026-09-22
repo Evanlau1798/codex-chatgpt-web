@@ -1595,7 +1595,10 @@ export class ChatGptBrowserWorker {
       await settleChatGptUi();
     }
     if (expectedPrompt !== undefined) {
-      await this.assertPromptAttached(page, expectedPrompt, abortSignal);
+      const preserveLeading = planChatGptPromptInsertion(expectedPrompt, {
+        candidatePlainText: this.config?.experimentalComposerPlainText === true,
+      }).strategy === "direct-html-prewrap";
+      await this.assertPromptAttached(page, expectedPrompt, abortSignal, undefined, preserveLeading);
     }
     await captureDiagnostic?.("send-ready");
     const initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0;
@@ -1736,20 +1739,23 @@ export class ChatGptBrowserWorker {
 
   private async attachedPromptText(
     page: Page, signal?: AbortSignal, operation?: ChatGptPromptOperation,
+    preserveLeading = false,
   ): Promise<string> {
     const op = operation ?? new ChatGptPromptOperation(signal);
     const composer = await this.activeComposer(page, 30_000, signal, op);
-    return op.read(options => composer.evaluate(readChatGptPromptText, undefined, options));
+    return op.read(options => composer.evaluate(readChatGptPromptText,
+      preserveLeading ? { preserveLeading: true } : undefined, options));
   }
 
   private async assertPromptAttached(
     page: Page, prompt: string, abortSignal?: AbortSignal, operation?: ChatGptPromptOperation,
+    preserveLeading = false,
   ): Promise<void> {
     const parent = operation ?? new ChatGptPromptOperation(abortSignal);
     const op = parent.budget(10_000);
     let observed = "";
     while (op.timeLeft() > 0) {
-      observed = await this.attachedPromptText(page, abortSignal, op);
+      observed = await this.attachedPromptText(page, abortSignal, op, preserveLeading);
       op.check();
       if (this.promptTextEquivalent(prompt, observed)) return;
       await op.poll(50);
@@ -1827,7 +1833,7 @@ export class ChatGptBrowserWorker {
       await clearChatGptComposerInput(composer, signal, op);
       await withBrowserTurnAbort(settleChatGptUi(), signal);
       const text = await composer.evaluate(
-        element => element.textContent?.trim() ?? "",
+        element => element.textContent ?? "",
         undefined,
         op.options(5_000),
       );
@@ -2092,7 +2098,9 @@ export class ChatGptBrowserWorker {
         op.check();
         mutationStarted = true;
         await this.insertPromptText(page, prompt, abortSignal, largeStructuredDirect, forceStructuredDirect, diagnosticContext);
-        await this.assertPromptAttached(page, prompt, abortSignal, op);
+        await this.assertPromptAttached(page,
+          insertionPlan.strategy === "direct-html-prewrap" ? insertionText : prompt,
+          abortSignal, op, insertionPlan.strategy === "direct-html-prewrap");
         return;
       }
       const selectedComposer = await this.selectConnector(
@@ -2110,7 +2118,9 @@ export class ChatGptBrowserWorker {
       await op.mutate(options => selectedComposer.focus(options));
       await op.mutate(() => page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY));
       await this.insertPromptText(page, ` ${prompt}`, abortSignal, largeStructuredDirect, forceStructuredDirect, diagnosticContext);
-      await this.assertPromptAttached(page, prompt, abortSignal, op);
+      await this.assertPromptAttached(page,
+        insertionPlan.strategy === "direct-html-prewrap" ? insertionText : prompt,
+        abortSignal, op, insertionPlan.strategy === "direct-html-prewrap");
     } catch (error) {
       if (!mutationStarted || error instanceof ChatGptPersistentBrowserStateError) throw error;
       try { await this.clearChatGptComposerState(page); }
@@ -2275,9 +2285,14 @@ export class ChatGptBrowserWorker {
     diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation; insertionPlan?: ChatGptPromptInsertionPlan; candidateBudget?: ChatGptCandidateAttachmentBudget },
   ): Promise<void> {
     const op = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
+    const insertionPlan = diagnosticContext?.insertionPlan ?? planChatGptPromptInsertion(text, {
+      largeStructuredDirect, forceStructuredDirect,
+      candidatePlainText: this.config?.experimentalComposerPlainText === true,
+    });
     await insertChatGptPromptText(text, abortSignal, {
       composer: () => this.activeComposer(page, 30_000, abortSignal, op),
-      verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal, op),
+      verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal, op,
+        insertionPlan.strategy === "direct-html-prewrap"),
       reanchor: () => this.reanchorPromptCaret(page, abortSignal, op),
       onProgress: snapshot => {
         diagnosticContext?.candidateBudget?.observe(snapshot);
@@ -2285,17 +2300,18 @@ export class ChatGptBrowserWorker {
           + ` stage=${diagnosticContext?.stage ?? "prompt_attachment"} composer=${JSON.stringify(snapshot)}`);
       },
     }, { largeStructuredDirect, forceStructuredDirect,
-      candidatePlainText: this.config?.experimentalComposerPlainText === true }, op, diagnosticContext?.insertionPlan);
+      candidatePlainText: this.config?.experimentalComposerPlainText === true }, op, insertionPlan);
   }
 
   private async waitForPromptChunkAttached(
     page: Page, expected: string, abortSignal?: AbortSignal, operation?: ChatGptPromptOperation,
+    preserveLeading = false,
   ): Promise<void> {
     const parent = operation ?? new ChatGptPromptOperation(abortSignal);
     const op = parent.budget(20_000);
     let observed = "";
     while (op.timeLeft() > 0) {
-      observed = await this.attachedPromptText(page, abortSignal, op);
+      observed = await this.attachedPromptText(page, abortSignal, op, preserveLeading);
       op.check();
       if (this.promptTextEquivalent(expected, observed)) return;
       await op.poll(100);
@@ -3562,7 +3578,17 @@ export class ChatGptBrowserWorker {
           }
           await settleChatGptUi();
         }
-        await this.assertPromptAttached(page, responsePrompt, stageSignal);
+        const localToolsAtSend = (turn.nativeConnector === true || mode.localTools)
+          && !(reuseConversation || responseAttempt > 1);
+        const insertionText = localToolsAtSend ? ` ${responsePrompt}` : responsePrompt;
+        const sendPlan = planChatGptPromptInsertion(insertionText, {
+          largeStructuredDirect: !multipartTransport && prepared.transport === "inline",
+          forceStructuredDirect: turn.compaction === true && turn.requireRetainedConversation === true,
+          candidatePlainText: this.config?.experimentalComposerPlainText === true,
+        });
+        const preserveLeading = sendPlan.strategy === "direct-html-prewrap";
+        await this.assertPromptAttached(page, preserveLeading ? insertionText : responsePrompt,
+          stageSignal, undefined, preserveLeading);
         if ((turn.nativeConnector === true || mode.localTools)
           && !(reuseConversation || responseAttempt > 1)
           && !await this.connectorIsSelected(composer, stageSignal)) {

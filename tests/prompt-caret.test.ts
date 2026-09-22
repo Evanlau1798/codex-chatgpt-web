@@ -120,3 +120,17 @@ test("does not issue native clearing keys when fill empties the composer", async
 
   expect(calls).toEqual(["fill"]);
 });
+
+test("clears whitespace left by a failed fill", async () => {
+  let text = "  \n";
+  const calls: string[] = [];
+  const composer = {
+    fill: async () => { calls.push("fill"); },
+    evaluate: async (reader: (element: { textContent: string }) => unknown) => reader({ textContent: text }),
+    focus: async () => { calls.push("focus"); },
+    press: async (key: string) => { calls.push(key); if (key === "Backspace") text = ""; },
+  };
+  await clearChatGptComposerInput(composer as never);
+  expect(text).toBe("");
+  expect(calls).toContain("Backspace");
+});

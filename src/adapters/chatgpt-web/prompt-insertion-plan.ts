@@ -14,7 +14,7 @@ export interface ChatGptPromptInsertionOptions {
   candidatePlainText?: boolean;
 }
 
-export type ChatGptPromptInsertionStrategy = "guarded-chunked" | "direct-text" | "direct-html";
+export type ChatGptPromptInsertionStrategy = "guarded-chunked" | "direct-text" | "direct-html" | "direct-html-prewrap";
 
 /** Shape only: never retain prompt text, DOM, credentials, or a content fingerprint. */
 export interface ChatGptPromptInsertionPlan {
@@ -39,8 +39,16 @@ export function planChatGptPromptInsertion(
   let markdownDelimiterCount = 0;
   let hasCR = false;
   let hasNul = false;
+  let hasUnpairedSurrogate = false;
   for (let index = 0; index < text.length; index += 1) {
     const unit = text.charCodeAt(index);
+    if (unit >= 0xD800 && unit <= 0xDBFF) {
+      const next = text.charCodeAt(index + 1);
+      if (!(next >= 0xDC00 && next <= 0xDFFF)) hasUnpairedSurrogate = true;
+    } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
+      const previous = text.charCodeAt(index - 1);
+      if (!(previous >= 0xD800 && previous <= 0xDBFF)) hasUnpairedSurrogate = true;
+    }
     if (MARKDOWN_DELIMITERS.has(text[index]!)) markdownDelimiterCount += 1;
     if (unit === 0) hasNul = true;
     if (unit === 13) hasCR = true;
@@ -59,11 +67,12 @@ export function planChatGptPromptInsertion(
   // Preserve the direct inline route; the candidate replaces only large guarded work.
   const candidate = options?.candidatePlainText === true && !legacyDirect && text.length > DIRECT_INSERT_MIN_CHARS;
   const direct = candidate || legacyDirect;
-  // Multiline HTML fragments can create an extra editor paragraph before their final line.
+  // One pre-wrapped paragraph avoids the extra LF created by one HTML block per line.
+  // HTML parsing changes CR, NUL and lone surrogates; preserve the native text route for them.
   const strategy: ChatGptPromptInsertionStrategy = !direct
     ? "guarded-chunked"
-    : !candidate && text.length > DIRECT_INSERT_MIN_CHARS && lineCount === 1 && !hasCR && !hasNul
-      ? "direct-html"
+    : text.length > DIRECT_INSERT_MIN_CHARS && !hasCR && !hasNul && !hasUnpairedSurrogate
+      ? lineCount > 1 ? "direct-html-prewrap" : !candidate ? "direct-html" : "direct-text"
       : "direct-text";
   return Object.freeze({
     strategy, utf16Units: text.length, lineCount, maxLineUnits,

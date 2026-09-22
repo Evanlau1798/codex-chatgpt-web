@@ -51,7 +51,10 @@ test("characterizes existing top-level/LF, decoration and leading-whitespace rea
   expect(equivalent("AB", readChatGptPromptText(element))).toBeFalse();
   element.textContent = "  payload";
   expect(readChatGptPromptText(element)).toBe("payload");
+  expect(readChatGptPromptText(element, { preserveLeading: true })).toBe("  payload");
   expect(equivalent("  payload", readChatGptPromptText(element))).toBeFalse();
+  element.textContent = "\u2028\u2029\uFEFFpayload";
+  expect(readChatGptPromptText(element, { preserveLeading: true })).toBe("\u2028\u2029\uFEFFpayload");
 });
 
 

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { insertChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-insertion";
+import { readChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-text";
 import { structuredCompactionHandoffInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
 import { CHATGPT_PROMPT_INSERT_CHUNK_CHARS } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 import {
@@ -48,11 +49,17 @@ function fakeLexicalComposer(acceptEdit = true, onEdit?: () => void, rejectLarge
     if (command === "insertText" && rejectLargeText && value.length > 32_000) return false;
     if (command === "insertHTML") {
       const fragment = createDocument(`<body>${value}</body>`).body;
-      // This fixture represents the native HTML boundary, not production's escaping logic.
-      expect([...fragment.querySelectorAll("*")].every(node => node.tagName === "DIV" || node.tagName === "BR"))
-        .toBeTrue();
-      expect([...fragment.querySelectorAll("*")].every(node => node.attributes.length === 0)).toBeTrue();
-      value = Array.from(fragment.children, node => node.textContent ?? "").join("\n");
+      const children = Array.from(fragment.children);
+      if (children.length === 1 && children[0]?.tagName === "P") {
+        expect(children[0].getAttribute("style")).toBe("white-space:pre-wrap");
+        expect(children[0].querySelectorAll("*").length).toBe(0);
+        value = children[0].textContent ?? "";
+      } else {
+        expect([...fragment.querySelectorAll("*")].every(node => node.tagName === "DIV" || node.tagName === "BR"))
+          .toBeTrue();
+        expect([...fragment.querySelectorAll("*")].every(node => node.attributes.length === 0)).toBeTrue();
+        value = children.map(node => node.textContent ?? "").join("\n");
+      }
     }
     text.data = `${text.data.slice(0, selected.start)}${value}${text.data.slice(selected.end)}`;
     selected.start += value.length;
@@ -117,11 +124,11 @@ test("REG-04: uses one exact direct edit for the short generated structured comp
   expect(editor.commands).toEqual(["insertText"]);
 });
 
-test("inserts the incident-sized multiline structured prompt with exact native text", async () => {
+test("inserts the incident-sized multiline structured prompt with one exact pre-wrapped paragraph", async () => {
   const prompt = structuredMarkdownRestorationProbeText();
   const editor = await insertWithFakeEditor(prompt);
   expect(editor.text()).toBe(prompt);
-  expect(editor.commands).toEqual(["insertText"]);
+  expect(editor.commands).toEqual(["insertHTML"]);
 });
 
 test("inserts incident-sized single-line Markdown through one escaped native fragment", async () => {
@@ -138,7 +145,51 @@ test("keeps multiline HTML-like input, entities, whitespace and empty lines lite
   ).repeat(400) + "\n\n";
   const editor = await insertWithFakeEditor(prompt);
   expect(editor.text()).toBe(prompt);
-  expect(editor.commands).toEqual(["insertText"]);
+  expect(editor.commands).toEqual(["insertHTML"]);
+});
+
+test("removes the empty ProseMirror paragraph created before a pre-wrapped block", async () => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument: (html: string) => Document };
+  const document = createDocument('<div id="composer"><p></p></div>') as Document & {
+    execCommand(command: string, showUi: boolean, value?: string): boolean;
+  };
+  const element = document.getElementById("composer")!;
+  const commands: string[] = [];
+  let selectedNode: Node | undefined;
+  document.createRange = () => ({ selectNode: (node: Node) => { selectedNode = node; } }) as Range;
+  document.execCommand = (command, _showUi, value = "") => {
+    commands.push(command);
+    if (command === "insertHTML") {
+      const fragment = createDocument(`<body>${value}</body>`).body;
+      element.innerHTML = `<p></p><p>${fragment.firstElementChild?.innerHTML ?? ""}</p>`;
+      return true;
+    }
+    if (command === "delete" && selectedNode === element.firstChild) {
+      const inserted = element.childNodes[1]?.textContent ?? "";
+      const split = inserted.indexOf("\n");
+      element.innerHTML = split < 0 ? "<p></p>" : "<p></p><p></p>";
+      element.childNodes[0]!.textContent = split < 0 ? inserted : inserted.slice(0, split);
+      if (split >= 0) element.childNodes[1]!.textContent = inserted.slice(split + 1);
+      return true;
+    }
+    return false;
+  };
+  Object.defineProperty(document, "activeElement", { configurable: true, get: () => element });
+  const selection = { isCollapsed: true, get anchorNode() { return element.firstChild; },
+    get focusNode() { return element.firstChild; }, removeAllRanges() {}, addRange() {} };
+  const previous = { document: globalThis.document, window: globalThis.window };
+  Object.assign(globalThis, { document, window: { getSelection: () => selection } });
+  const prompt = `  start <>&\n${"middle **bold** <tag>\n".repeat(2_000)}end`;
+  try {
+    await insertChatGptPromptText(prompt, undefined, {
+      composer: async () => ({ focus: async () => {}, evaluate: async (callback: Function, input: unknown) => callback(element, input) }) as never,
+      verify: async expected => expect(readChatGptPromptText(element, { preserveLeading: true }) === expected).toBeTrue(),
+      reanchor: async () => {},
+    }, { largeStructuredDirect: true });
+    expect(commands).toEqual(["insertHTML", "delete"]);
+  } finally {
+    Object.assign(globalThis, previous);
+  }
 });
 
 test("escapes one-line HTML-like input in the native fragment", async () => {

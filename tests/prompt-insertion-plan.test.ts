@@ -61,9 +61,17 @@ for (const fixture of composerSyntheticFixtures()) {
       verify: async expected => { verified.push(expected); },
       reanchor: async () => { anchors += 1; },
     }, { forceStructuredDirect: true });
-    const html = fixture.text.length > 32_000 && !/[\r\n\u0000\u2028\u2029]/u.test(fixture.text);
-    assert.deepEqual(edits, [html ? { text: fixture.text } : fixture.text]);
-    assert.deepEqual(verified, ["", fixture.text.trimStart(), fixture.text.trimStart()]);
+    const html = fixture.text.length > 32_000 && !/[\r\u0000]/u.test(fixture.text);
+    const prewrap = html && fixture.text.includes("\n");
+    assert.equal(edits.length, 1);
+    const edit = edits[0];
+    assert.equal(typeof edit === "object", html);
+    assert.equal((typeof edit === "object" ? (edit as { text: string }).text : edit) === fixture.text, true);
+    if (html) assert.equal((edit as { prewrap?: boolean }).prewrap === true, prewrap);
+    const expected = prewrap ? fixture.text : fixture.text.trimStart();
+    assert.equal(verified.length, 3);
+    assert.equal(verified[0], "");
+    assert.equal(verified[1] === expected && verified[2] === expected, true);
     assert.equal(anchors, 1);
   });
 }
@@ -79,10 +87,10 @@ for (const length of [15_999, 16_000, 16_001, 31_999, 32_000, 32_001]) {
   });
 }
 
-test("large multiline direct prompts avoid HTML's extra paragraph on the live composer", () => {
+test("large multiline direct prompts use one pre-wrapped paragraph", () => {
   const text = `${"x".repeat(40_000)}\nlast line`;
-  assert.equal(planChatGptPromptInsertion(text, { largeStructuredDirect: true }).strategy, "direct-text");
-  assert.equal(planChatGptPromptInsertion(text, { candidatePlainText: true }).strategy, "direct-text");
+  assert.equal(planChatGptPromptInsertion(text, { largeStructuredDirect: true }).strategy, "direct-html-prewrap");
+  assert.equal(planChatGptPromptInsertion(text, { candidatePlainText: true }).strategy, "direct-html-prewrap");
   assert.equal(planChatGptPromptInsertion("x".repeat(40_000), { largeStructuredDirect: true }).strategy, "direct-html");
 });
 
@@ -94,6 +102,13 @@ test("actual CR and NUL keep direct-text; their literal escapes do not", () => {
   for (const literal of ["\\r", "\\r\\n", "\\u0000"]) {
     assert.equal(planChatGptPromptInsertion(base + literal, { largeStructuredDirect: true }).strategy, "direct-html");
   }
+});
+
+test("a lone surrogate never enters HTML parsing", () => {
+  const text = `${"x".repeat(40_000)}\n\uD800`;
+  assert.equal(planChatGptPromptInsertion(text, { largeStructuredDirect: true }).strategy, "direct-text");
+  assert.equal(planChatGptPromptInsertion(`${"x".repeat(40_000)}\n😀`, { largeStructuredDirect: true }).strategy,
+    "direct-html-prewrap");
 });
 
 test("shape facts do not retain content and distinguish delimiters from private-use markers", () => {
