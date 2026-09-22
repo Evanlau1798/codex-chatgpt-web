@@ -1738,6 +1738,51 @@ test("stale recovery preserves an active-state marker owned by another live laun
   }
 });
 
+for (const browserTurns of [0, 1]) {
+  test(`stale-owner browser-idle stop ${browserTurns ? "rejects active Web" : "cancels HTTP-only work"}`, async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-stale-browser-idle-"));
+    const events = [];
+    const supervisor = new RuntimeSupervisor({
+      app: { getVersion: () => "0.2.0", isPackaged: false },
+      logger: { info() {}, warn() {}, error() {} }, sourceRoot: root, coreHome: root,
+      browserDescriptorPath: path.join(root, "launcher.json"),
+    });
+    const config = { mode: "browser-only", releaseVersion: "test-release" };
+    supervisor.readConfig = () => config;
+    supervisor.readState = () => ({ ownerPid: process.pid, daemonPid: process.pid, tunnelPid: null, status: "ready" });
+    supervisor.proxyHealth = async () => true;
+    supervisor.proxyHealthPayload = async () => ({
+      service: "codex-chatgpt-web", mode: config.mode, version: config.releaseVersion, pid: process.pid,
+    });
+    supervisor.control = async (_config, action) => {
+      events.push(action);
+      if (action === "drain-if-idle") throw new Error("HTTP-only work is active");
+      if (action === "drain") return { status: "ok", accepting_turns: false,
+        active_http_turns: 1, active_browser_turns: browserTurns };
+      if (action === "resume") return { status: "ok", accepting_turns: true };
+      if (action === "cancel-turns-if-browser-idle") return { status: "ok", browser_idle: true,
+        active_http_turns: 0, active_browser_turns: 0, cancelled_http_turns: 1 };
+      return { status: "ok" };
+    };
+    supervisor.waitForProcessExit = async () => {};
+    supervisor.waitForPortRelease = async () => {};
+    supervisor.clearState = () => { events.push("clear"); };
+    supervisor.ownedRuntimeReady = async () => true;
+    supervisor.tryWriteState = () => {};
+    try {
+      if (browserTurns) {
+        await assert.rejects(supervisor.stopForSetup({ browserOnly: true }), /active browser/);
+        assert.deepEqual(events, ["drain", "resume"]);
+      } else {
+        await supervisor.stopForSetup({ browserOnly: true });
+        assert.deepEqual(events, ["drain", "cancel-turns-if-browser-idle", "shutdown", "clear", "clear"]);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
 test("missing config does not erase an active-state marker owned by another live launcher", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-live-owner-no-config-"));
   const liveOwner = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });

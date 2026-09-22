@@ -29,8 +29,10 @@ test("first enable waits for a generated key, then starts the daemon once", asyn
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   assert.deepEqual(await host.apiAccessStatus(), {
     state: "disabled", endpoint: "http://127.0.0.1:17841/v1", hasKey: false, keyPreview: null,
+    firstEnablePending: true,
   });
   assert.equal((await host.setApiAccessEnabled(true)).state, "key_required");
+  assert.equal((await host.apiAccessStatus()).firstEnablePending, false);
   assert.deepEqual(calls, []);
   const status = await host.generateApiAccessKey();
   assert.equal(status.state, "enabled");
@@ -51,6 +53,7 @@ test("disabling preserves the key; reset rotates it and failed restart rolls bac
   await host.generateApiAccessKey();
   const first = await host.copyApiAccessKey();
   assert.equal((await host.setApiAccessEnabled(false)).state, "disabled");
+  assert.equal((await host.apiAccessStatus()).firstEnablePending, false);
   assert.equal(await host.copyApiAccessKey(), first);
   await host.setApiAccessEnabled(true);
   const second = await host.resetApiAccessKey();
@@ -66,6 +69,14 @@ test("disabling preserves the key; reset rotates it and failed restart rolls bac
   await assert.rejects(host.resetApiAccessKey(), /failed to start/);
   assert.equal(await host.copyApiAccessKey(), old);
   assert.equal((await host.apiAccessStatus()).state, "enabled");
+});
+
+test("API Access first-enable warning is confirmed before activation and remains available as help", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "src", "api-access-card.tsx"), "utf8");
+  assert.match(source, /status\?\.firstEnablePending[\s\S]*setShowWarning\(true\)/);
+  assert.match(source, /<dialog[\s\S]*aria-labelledby="api-access-warning-title"/);
+  assert.match(source, /copy\.apiAccessWarningBody/);
+  assert.match(source, /account-safety-help[\s\S]*copy\.apiAccessHelpLabel/);
 });
 
 test("only the managed daemon receives the API key, never the tunnel or inherited environment", async (t) => {

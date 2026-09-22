@@ -38,6 +38,15 @@ async function acquireBrowserDrain(supervisor, config) {
   }
 }
 
+async function cancelHttpTurnsIfBrowserIdle(supervisor, config) {
+  // Recheck browser idleness atomically with cancellation, not through a separate health snapshot.
+  const cancelled = await supervisor.control(config, "cancel-turns-if-browser-idle");
+  if (cancelled?.status !== "ok" || cancelled.browser_idle !== true
+    || cancelled.active_http_turns !== 0 || cancelled.active_browser_turns !== 0) {
+    throw new Error("daemon did not acknowledge browser-idle HTTP cancellation");
+  }
+}
+
 async function performStopForSetup({ browserOnly = false } = {}) {
   if (this.startPromise) {
     try {
@@ -80,7 +89,7 @@ async function performStopForSetup({ browserOnly = false } = {}) {
           throw new Error("runtime configuration is missing while launcher ownership processes are still alive");
         }
       } else if (runtimeMayBeLive) {
-        const recovered = await this.stopStaleOwnedRuntime(config);
+        const recovered = await this.stopStaleOwnedRuntime(config, { browserOnly });
         if (!recovered) {
           throw new Error("an existing runtime could not be safely recovered");
         }
@@ -96,12 +105,7 @@ async function performStopForSetup({ browserOnly = false } = {}) {
       }
       drained = browserOnly ? await acquireBrowserDrain(this, config) : await this.acquireDrain(config);
       if (browserOnly) {
-        // Recheck browser idleness atomically with cancellation, not through a separate health snapshot.
-        const cancelled = await this.control(config, "cancel-turns-if-browser-idle");
-        if (cancelled?.status !== "ok" || cancelled.browser_idle !== true
-          || cancelled.active_http_turns !== 0 || cancelled.active_browser_turns !== 0) {
-          throw new Error("daemon did not acknowledge browser-idle HTTP cancellation");
-        }
+        await cancelHttpTurnsIfBrowserIdle(this, config);
       }
     }
     if (this.tunnel) {
@@ -152,4 +156,5 @@ async function performStopForSetup({ browserOnly = false } = {}) {
   }
 }
 
-module.exports = { errorMessage, appendFailure, runtimeOwnershipMayBeLive, performStopForSetup };
+module.exports = { errorMessage, appendFailure, runtimeOwnershipMayBeLive,
+  acquireBrowserDrain, cancelHttpTurnsIfBrowserIdle, performStopForSetup };

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "./icons";
 import { messageOf } from "./app-shared";
 import type { Copy } from "./i18n";
@@ -14,7 +14,9 @@ export function ApiAccessCard({ copy, configured, setError }: {
   const [status, setStatus] = useState<ApiAccessStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [showWarning, setShowWarning] = useState(false);
   const [copied, setCopied] = useState<"endpoint" | "key" | null>(null);
+  const warningDialog = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
     if (!configured) { setStatus(null); return; }
@@ -36,6 +38,12 @@ export function ApiAccessCard({ copy, configured, setError }: {
     const timer = window.setTimeout(() => setCopied(null), 2_000);
     return () => window.clearTimeout(timer);
   }, [copied]);
+
+  useEffect(() => {
+    const dialog = warningDialog.current;
+    if (showWarning && !dialog?.open) dialog?.showModal();
+    else if (!showWarning && dialog?.open) dialog.close();
+  }, [showWarning]);
 
   const change = async (operation: () => Promise<ApiAccessStatus>) => {
     if (busy) return;
@@ -65,12 +73,19 @@ export function ApiAccessCard({ copy, configured, setError }: {
       </div>
       <div className="api-access-controls">
         <span className={`api-access-indicator is-${status?.state ?? "disabled"}`} aria-live="polite">{stateLabel}</span>
+        <span className="account-safety-help">
+          <button aria-describedby="api-access-help" aria-label={copy.apiAccessHelpLabel} type="button">?</button>
+          <span id="api-access-help" role="tooltip">{copy.apiAccessWarningBody}</span>
+        </span>
         <button
           aria-checked={enabled}
           aria-label={copy.apiAccessToggle}
           className={`switch${enabled ? " is-on" : ""}`}
           disabled={!configured || !status || busy}
-          onClick={() => void change(() => api!.setApiAccessEnabled(!enabled))}
+          onClick={() => {
+            if (!enabled && status?.firstEnablePending) setShowWarning(true);
+            else void change(() => api!.setApiAccessEnabled(!enabled));
+          }}
           role="switch"
           type="button"
         ><span /></button>
@@ -105,5 +120,22 @@ export function ApiAccessCard({ copy, configured, setError }: {
       </div>
     </div>
     <span className="api-access-feedback" role="status">{copied ? copy.apiAccessCopied : ""}</span>
+    <dialog
+      aria-describedby="api-access-warning-body"
+      aria-labelledby="api-access-warning-title"
+      className="api-access-warning-dialog"
+      onClose={() => setShowWarning(false)}
+      ref={warningDialog}
+    >
+      <h2 id="api-access-warning-title">{copy.apiAccessWarningTitle}</h2>
+      <p id="api-access-warning-body">{copy.apiAccessWarningBody}</p>
+      <div className="api-access-warning-actions">
+        <button autoFocus className="account-safety-action" onClick={() => setShowWarning(false)} type="button">{copy.apiAccessWarningCancel}</button>
+        <button className="account-safety-action" onClick={() => {
+          setShowWarning(false);
+          void change(() => api!.setApiAccessEnabled(true));
+        }} type="button">{copy.apiAccessWarningConfirm}</button>
+      </div>
+    </dialog>
   </div>;
 }

@@ -71,6 +71,7 @@ function status(host) {
     endpoint: `http://127.0.0.1:${config.port}/v1`,
     hasKey: key !== null,
     keyPreview: key ? `sk-local-${"*".repeat(16)}${key.slice(-5)}` : null,
+    firstEnablePending: !fs.existsSync(files(host.supervisor.coreHome).state),
   };
 }
 

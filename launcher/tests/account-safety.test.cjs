@@ -138,6 +138,31 @@ test("launcher applies account-safety settings in one runtime restart and can di
   assert.deepEqual(item.calls, ["stop", "start", "stop", "start"]);
 });
 
+test("account-safety setting change requires browser idleness while allowing the atomic HTTP-turn path", async (t) => {
+  const item = fixture();
+  t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
+  item.supervisor.stopForSetup = async (options) => {
+    assert.deepEqual(options, { browserOnly: true });
+    item.calls.push("browser-idle-stop");
+    return { status: "stopped" };
+  };
+  await item.host.setAccountSafetySettings({ maxBrowserTabs: 2 });
+  assert.deepEqual(item.calls, ["browser-idle-stop", "start"]);
+});
+
+test("account-safety change leaves config and runtime intact when browser activity blocks restart", async (t) => {
+  const item = fixture();
+  t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
+  const before = fs.readFileSync(item.configPath, "utf8");
+  item.supervisor.stopForSetup = async (options) => {
+    assert.deepEqual(options, { browserOnly: true });
+    throw new Error("daemon has 1 active browser turn(s)");
+  };
+  await assert.rejects(item.host.setAccountSafetySettings({ maxBrowserTabs: 2 }), /active browser/);
+  assert.equal(fs.readFileSync(item.configPath, "utf8"), before);
+  assert.deepEqual(item.calls, []);
+});
+
 test("launcher serializes account-safety polling before a settings restart", async (t) => {
   const item = fixture();
   t.after(() => fs.rmSync(item.root, { recursive: true, force: true }));
@@ -252,6 +277,7 @@ test("launcher account-safety recovery uses the authenticated runtime control ch
 test("launcher exposes Automatic-only account safety through renderer and IPC", () => {
   const root = path.join(__dirname, "..");
   const settings = fs.readFileSync(path.join(root, "src", "settings-surface.tsx"), "utf8");
+  const app = fs.readFileSync(path.join(root, "src", "App.tsx"), "utf8");
   const types = fs.readFileSync(path.join(root, "src", "types.ts"), "utf8");
   const main = fs.readFileSync(path.join(root, "electron", "main.cjs"), "utf8");
   const preload = fs.readFileSync(path.join(root, "electron", "preload.cjs"), "utf8");
@@ -268,6 +294,10 @@ test("launcher exposes Automatic-only account safety through renderer and IPC", 
   assert.match(main, /runtimeHost\.resumeAutomaticWeb\(\)/);
   assert.match(main, /runtimeHost\.acknowledgeAccountSafetyStop\(\)/);
   assert.match(settings, /snapshot\.state\.browserInteractionMode === "automatic" \? <>/);
+  assert.match(app, /<SettingsSurface[\s\S]*browser=\{browser\}/);
+  assert.match(settings, /const activeWebTurn = browser\?\.tabs\.some/);
+  assert.match(settings, /activeWebTurn[\s\S]*accountSafetySettingsChanged/);
+  assert.match(settings, /copy\.accountSafetyActiveWebTurn/);
   assert.match(settings, /account-safety-card/);
   assert.match(settings, /label=\{copy\.accountSafetyLimitToggle\}/);
   assert.match(settings, /aria-label=\{label\}/);

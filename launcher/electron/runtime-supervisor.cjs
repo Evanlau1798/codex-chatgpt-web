@@ -1,5 +1,6 @@
 const fs = require("node:fs");
-const { errorMessage, appendFailure, runtimeOwnershipMayBeLive, performStopForSetup } = require("./runtime-supervisor-stop.cjs");
+const { errorMessage, appendFailure, runtimeOwnershipMayBeLive,
+  acquireBrowserDrain, cancelHttpTurnsIfBrowserIdle, performStopForSetup } = require("./runtime-supervisor-stop.cjs");
 const net = require("node:net");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
@@ -1764,7 +1765,7 @@ class RuntimeSupervisor {
     });
   }
 
-  async stopStaleOwnedRuntime(config) {
+  async stopStaleOwnedRuntime(config, { browserOnly = false } = {}) {
     const state = this.readState();
     if (!state) return false;
     if (runtimeOwnershipPredatesCurrentBoot(state)) {
@@ -1828,7 +1829,8 @@ class RuntimeSupervisor {
     if (daemonRunning) {
       let drained = false;
       try {
-        drained = await this.acquireDrain(config);
+        drained = browserOnly ? await acquireBrowserDrain(this, config) : await this.acquireDrain(config);
+        if (browserOnly) await cancelHttpTurnsIfBrowserIdle(this, config);
         const shutdown = await this.control(config, "shutdown");
         if (shutdown.status !== "ok") throw new Error("stale daemon did not acknowledge graceful shutdown");
         await this.waitForProcessExit("stale daemon", state.daemonPid);

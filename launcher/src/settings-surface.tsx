@@ -15,6 +15,7 @@ import {
 import type {
   AccountSafetyStatus,
   BrowserInteractionMode,
+  BrowserState,
   DoctorReport,
   Language,
   LauncherSnapshot,
@@ -24,6 +25,7 @@ import type {
 const api = window.codexWebLauncher;
 
 export function SettingsSurface({
+  browser,
   configureInteractionMode,
   copy,
   devProfile,
@@ -32,6 +34,7 @@ export function SettingsSurface({
   snapshot,
   updateState,
 }: {
+  browser: BrowserState | null;
   configureInteractionMode: (mode: BrowserInteractionMode) => void;
   copy: Copy;
   devProfile: boolean;
@@ -51,6 +54,9 @@ export function SettingsSurface({
   const [accountSafety, setAccountSafety] = useState<AccountSafetyStatus | null>(null);
   const [accountSafetySaveRetry, setAccountSafetySaveRetry] = useState(0);
   const [resetUsageStage, setResetUsageStage] = useState<"idle" | "confirm" | "complete">("idle");
+  const activeWebTurn = browser?.tabs.some(
+    (tab) => tab.status === "running" && tab.interactionMode !== "manual",
+  ) ?? false;
 
   useEffect(() => {
     setMaxBrowserTabs(snapshot.state.maxBrowserTabs);
@@ -150,6 +156,7 @@ export function SettingsSurface({
     finally { setBusy(false); }
   };
   const applyAccountSafetySettings = async () => {
+    if (activeWebTurn) return;
     setBusy(true);
     setError(null);
     try {
@@ -170,6 +177,7 @@ export function SettingsSurface({
     }
   };
   const recoverAccountSafety = async (action: "resume" | "acknowledge") => {
+    if (activeWebTurn) return;
     setBusy(true);
     setError(null);
     try {
@@ -183,6 +191,7 @@ export function SettingsSurface({
     }
   };
   const resetAccountSafetyUsage = async () => {
+    if (activeWebTurn) return;
     if (resetUsageStage !== "confirm") {
       setResetUsageStage("confirm");
       return;
@@ -286,6 +295,7 @@ export function SettingsSurface({
   useEffect(() => {
     if (snapshot.state.browserInteractionMode !== "automatic"
       || snapshot.state.coreSetupComplete !== true
+      || activeWebTurn
       || busy
       || !accountSafetySettingsValid
       || !accountSafetySettingsChanged) return;
@@ -299,6 +309,7 @@ export function SettingsSurface({
     accountSafetySettingsValid,
     accountSafetySettingsChanged,
     accountSafetySaveRetry,
+    activeWebTurn,
     busy,
     snapshot.state.browserInteractionMode,
     snapshot.state.coreSetupComplete,
@@ -408,6 +419,7 @@ export function SettingsSurface({
             <div>
               <strong>{copy.accountSafety}</strong>
               <p>{copy.accountSafetySummary}</p>
+              {activeWebTurn ? <p role="status">{copy.accountSafetyActiveWebTurn}</p> : null}
             </div>
             <div className="account-safety-card-controls">
               <span className="account-safety-help">
@@ -417,7 +429,7 @@ export function SettingsSurface({
               <Switch
                 label={copy.accountSafetyLimitToggle}
                 checked={sessionLimitEnabled}
-                disabled={busy || snapshot.state.coreSetupComplete !== true}
+                disabled={busy || activeWebTurn || snapshot.state.coreSetupComplete !== true}
                 onChange={setSessionLimitEnabled}
               />
             </div>
@@ -431,7 +443,7 @@ export function SettingsSurface({
               <div className="account-safety-input">
                 <input
                   aria-label={copy.automaticWebSessionLimit}
-                  disabled={busy || !sessionLimitEnabled || snapshot.state.coreSetupComplete !== true}
+                  disabled={busy || activeWebTurn || !sessionLimitEnabled || snapshot.state.coreSetupComplete !== true}
                   max={10_000}
                   min={1}
                   onChange={(event) => setSessionLimitCount(Number(event.target.value))}
@@ -448,7 +460,7 @@ export function SettingsSurface({
               <div className="account-safety-input">
                 <input
                   aria-label={copy.accountSafetyWindowHours}
-                  disabled={busy || !sessionLimitEnabled || snapshot.state.coreSetupComplete !== true}
+                  disabled={busy || activeWebTurn || !sessionLimitEnabled || snapshot.state.coreSetupComplete !== true}
                   max={168}
                   min={0.25}
                   onChange={(event) => setSessionLimitHours(Number(event.target.value))}
@@ -465,7 +477,7 @@ export function SettingsSurface({
               <div className="account-safety-input">
                 <input
                   aria-label={copy.maximumConcurrentWebTurns}
-                  disabled={busy || snapshot.state.coreSetupComplete !== true}
+                  disabled={busy || activeWebTurn || snapshot.state.coreSetupComplete !== true}
                   max={6}
                   min={1}
                   onChange={(event) => setMaxBrowserTabs(Number(event.target.value))}
@@ -505,7 +517,7 @@ export function SettingsSurface({
                   <button
                     aria-describedby="account-safety-reset-hint"
                     className={`account-safety-action account-safety-reset-action${resetUsageStage === "confirm" ? " is-confirm" : ""}${resetUsageStage === "complete" ? " is-complete" : ""}`}
-                    disabled={busy || usedSessions === 0 || accountSafety?.state === "DRAINING" || accountSafety?.state === "HARD_STOP"}
+                    disabled={busy || activeWebTurn || usedSessions === 0 || accountSafety?.state === "DRAINING" || accountSafety?.state === "HARD_STOP"}
                     onClick={() => void resetAccountSafetyUsage()}
                     type="button"
                   >{resetUsageStage === "confirm"
@@ -518,7 +530,7 @@ export function SettingsSurface({
                 {accountSafety?.state === "PAUSED" && accountSafety.reason === "rate_limit" ? (
                   <button
                     className="account-safety-action"
-                    disabled={busy}
+                    disabled={busy || activeWebTurn}
                     onClick={() => void recoverAccountSafety("resume")}
                     type="button"
                   >{copy.resumeAutomaticWeb}</button>
@@ -526,7 +538,7 @@ export function SettingsSurface({
                 {accountSafety?.state === "HARD_STOP" ? (
                   <button
                     className="account-safety-action"
-                    disabled={busy}
+                    disabled={busy || activeWebTurn}
                     onClick={() => void recoverAccountSafety("acknowledge")}
                     type="button"
                   >{copy.acknowledgeAccountSafetyStop}</button>

@@ -669,6 +669,7 @@ function LauncherShell({
             ) : null}
             {surface === "settings" ? (
               <SettingsSurface
+                browser={browser}
                 configureInteractionMode={(mode) => {
                   setMcpTargetMode(mode);
                   setSurface("mcp");

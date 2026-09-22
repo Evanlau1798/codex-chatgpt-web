@@ -149,6 +149,7 @@ export interface ApiAccessStatus {
   endpoint: string;
   hasKey: boolean;
   keyPreview: string | null;
+  firstEnablePending: boolean;
 }
 
 export interface LauncherApi {

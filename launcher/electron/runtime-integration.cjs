@@ -317,7 +317,7 @@ module.exports = {
     this.lifecycleOperation = name;
     const previous = fs.readFileSync(this.supervisor.configPath, "utf8");
     try {
-      await this.supervisor.stopForSetup();
+      await this.supervisor.stopForSetup({ browserOnly: true });
       try {
         const next = { ...current.config, maxBrowserTabs };
         if (automaticWebSessionLimitMinutes === undefined) {
