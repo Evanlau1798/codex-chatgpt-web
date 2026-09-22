@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+  <title>ChatGPT composer behavior fixture</title>
+  <style>
+    :root { color-scheme: dark; font: 14px/1.5 system-ui, sans-serif; background: #15161a; color: #e9e9ed; }
+    body { margin: 0 auto; max-width: 900px; padding: 36px 24px 80px; }
+    h1 { font-size: 22px; margin: 0 0 10px; }
+    p { margin: 0; }
+    .muted { color: #a7a8af; }
+    .card { background: #202126; border: 1px solid #44454d; border-radius: 18px; padding: 24px; margin-top: 24px; }
+    .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
+    .composer { min-height: 88px; max-height: 350px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+      border: 1px solid #60616a; border-radius: 12px; padding: 14px 16px; outline: none; }
+    .composer:focus { border-color: #7da8ff; box-shadow: 0 0 0 2px #7da8ff33; }
+    .composer p { min-height: 1.5em; }
+    .composer .placeholder { color: #92949c; }
+    .composer .placeholder::before { content: attr(data-placeholder); }
+    button, select { color: inherit; background: #33353e; border: 1px solid #5c5e69; border-radius: 9px; padding: 8px 12px; font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid #7da8ff; outline-offset: 2px; }
+    label { display: inline-flex; align-items: center; gap: 7px; }
+    output, pre { display: block; padding: 12px; margin-top: 12px; border-radius: 9px; background: #15161a; }
+    pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .note { margin-top: 22px; color: #bcbec5; }
+  </style>
+</head>
+<body>
+  <h1>Current composer behavior fixture</h1>
+  <p class="muted">Local, synthetic test page. Observed against the signed-in Automatic Web composer on 2026-09-22.</p>
+  <p class="note">This page reproduces the observed editor shape and selected input behavior. It does not contain ChatGPT's private editor code, account state, network requests, or model Send path.</p>
+
+  <section class="card" aria-label="Composer test surface">
+    <form id="composer-form">
+      <div id="prompt-textarea" data-testid="prompt-textarea" class="composer" role="textbox"
+        aria-label="Test composer" aria-multiline="true" contenteditable="true" spellcheck="false">
+        <p dir="auto" data-empty-paragraph="true" data-placeholder="Temporary Chat" class="placeholder"><br class="ProseMirror-trailingBreak"></p>
+      </div>
+      <div class="row">
+        <button type="submit" data-testid="send-button" disabled>Send locally</button>
+        <button type="button" data-testid="reset-button">Reset composer</button>
+        <label><input type="checkbox" data-testid="markdown-loss-toggle" checked> Replay observed Markdown rewrite</label>
+      </div>
+    </form>
+    <output id="submit-status" data-testid="submit-status" aria-live="polite">No local submission.</output>
+  </section>
+
+  <section class="card" aria-label="Synthetic inputs">
+    <h2>Synthetic inputs</h2>
+    <div class="row">
+      <label>Case
+        <select id="case">
+          <option value="short">Short text</option>
+          <option value="multiline">Paragraphs and empty line</option>
+          <option value="markdown">Observed Markdown rewrite</option>
+          <option value="large">350k character transport</option>
+        </select>
+      </label>
+      <button type="button" id="insert-text">Native insertText</button>
+      <button type="button" id="insert-html">Native insertHTML</button>
+    </div>
+    <output id="diagnostics" aria-live="polite"></output>
+    <pre id="dom-shape" aria-label="Editor DOM shape"></pre>
+  </section>
+
+  <details class="note">
+    <summary>Observed scope</summary>
+    <p>The live root was <code>div#prompt-textarea[role=textbox][contenteditable=true]</code> with paragraph children and a <code>ProseMirror-trailingBreak</code> on empty paragraphs. A native insertion of <code>alpha\nbeta</code> produced two paragraphs; a blank line produced an empty paragraph. In two no-Send probes, inserting <code>*bold* _under_ `code` </code> returned success from <code>execCommand</code> but left the editor empty. The checkbox reproduces only that observed case; it is not a general Markdown parser.</p>
+  </details>
+
+  <script>
+    (() => {
+      const editor = document.getElementById("prompt-textarea");
+      const send = document.querySelector('[data-testid="send-button"]');
+      const reset = document.querySelector('[data-testid="reset-button"]');
+      const rewrite = document.querySelector('[data-testid="markdown-loss-toggle"]');
+      const diagnostics = document.getElementById("diagnostics");
+      const shape = document.getElementById("dom-shape");
+      const status = document.getElementById("submit-status");
+      const observedRewrite = "*bold* _under_ `code` ";
+      const cases = {
+        short: "hello",
+        multiline: "a  b\n\nend",
+        markdown: observedRewrite,
+        large: "synthetic archived context ".repeat(12963).slice(0, 350000),
+      };
+      const read = () => {
+        const clone = editor.cloneNode(true);
+        clone.querySelectorAll('[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]')
+          .forEach(part => part.remove());
+        return Array.from(clone.childNodes, child => child.textContent ?? "").join("\n").trimStart();
+      };
+      const paragraph = (line, placeholder = false) => {
+        const p = document.createElement("p");
+        p.dir = "auto";
+        if (!line) {
+          p.dataset.emptyParagraph = "true";
+          if (placeholder) {
+            p.dataset.placeholder = "Temporary Chat";
+            p.className = "placeholder";
+          }
+          const br = document.createElement("br");
+          br.className = "ProseMirror-trailingBreak";
+          p.append(br);
+        } else p.textContent = line;
+        return p;
+      };
+      const caretAtEnd = () => {
+        const range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      };
+      const refresh = () => {
+        const value = read();
+        send.disabled = value.length === 0;
+        diagnostics.textContent = `${value.length.toLocaleString()} UTF-16 units · ${editor.children.length} paragraphs · send ${send.disabled ? "disabled" : "enabled"}`;
+        shape.textContent = Array.from(editor.children, child => {
+          const empty = child.hasAttribute("data-empty-paragraph") ? " empty" : "";
+          return `<${child.tagName.toLowerCase()}${empty}> ${child.textContent.length} chars`;
+        }).slice(0, 12).join("\n") + (editor.children.length > 12 ? "\n…" : "");
+      };
+      const render = (value, restoreFocus = false) => {
+        const lines = value ? value.split("\n") : [""];
+        editor.replaceChildren(...lines.map(line => paragraph(line, !value)));
+        if (restoreFocus) { editor.focus(); caretAtEnd(); }
+        refresh();
+      };
+      editor.addEventListener("input", () => {
+        const value = read();
+        if (rewrite.checked && value === observedRewrite) {
+          render("");
+          return;
+        }
+        if (!Array.from(editor.childNodes).every(child => child.nodeName === "P")) {
+          render(value, true);
+          return;
+        }
+        // Keep native paragraphs and selection intact during normal typing.
+        for (const p of editor.children) {
+          if (p.textContent) {
+            p.removeAttribute("data-empty-paragraph");
+            p.removeAttribute("data-placeholder");
+            p.classList.remove("placeholder");
+          }
+        }
+        refresh();
+      });
+      reset.addEventListener("click", () => { render(""); status.textContent = "No local submission."; });
+      document.getElementById("composer-form").addEventListener("submit", event => {
+        event.preventDefault();
+        const value = read();
+        if (!value) return;
+        status.textContent = `Locally captured ${value.length.toLocaleString()} UTF-16 units. Nothing was sent.`;
+        render("");
+      });
+      const insert = command => {
+        const value = cases[document.getElementById("case").value];
+        editor.focus();
+        caretAtEnd();
+        const html = value.split("\n").map(line => `<div>${line.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;") || "<br>"}</div>`).join("");
+        const accepted = document.execCommand(command, false, command === "insertHTML" ? html : value);
+        if (!accepted) status.textContent = `Native ${command} was rejected.`;
+        refresh();
+      };
+      document.getElementById("insert-text").addEventListener("click", () => insert("insertText"));
+      document.getElementById("insert-html").addEventListener("click", () => insert("insertHTML"));
+      window.composerFixture = Object.freeze({ read, reset: () => render(""), insert });
+      render("");
+    })();
+  </script>
+</body>
+</html>
