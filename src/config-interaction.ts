@@ -79,6 +79,8 @@ export interface AppConfig {
   experimentalSkillAttachments: boolean;
   /** Hide routed context limits from Codex and reject routed compact requests. */
   experimentalNoAutoCompact: boolean;
+  /** Candidate only: replace large guarded insertions; preserve existing direct inline routes. */
+  experimentalComposerPlainText?: boolean;
   /** Explicitly install the additional Pro-sized model row while Zero Risk is active. */
   zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */

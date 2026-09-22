@@ -63,6 +63,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
         ? {}
         : { automaticWebSessionLimitMinutes: config.automaticWebSessionLimitMinutes }),
       ...(config.experimentalNoAutoCompact ? { experimentalNoAutoCompact: true } : {}),
+      ...(config.experimentalComposerPlainText ? { experimentalComposerPlainText: true } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,
     },
   };

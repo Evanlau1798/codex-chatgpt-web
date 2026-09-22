@@ -165,6 +165,8 @@ import {
   reanchorChatGptComposerCaret,
 } from "./prompt-caret";
 import { insertChatGptPromptText } from "./prompt-insertion";
+import { planChatGptPromptInsertion, type ChatGptPromptInsertionPlan } from "./prompt-insertion-plan";
+import { ChatGptCandidateAttachmentBudget } from "./prompt-candidate-budget";
 import {
   CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS,
   chatGptPromptAttachmentTimeoutMs,
@@ -623,6 +625,8 @@ export interface ResolvedBrowserConfig {
   headed: boolean;
   autoApproveToolCalls: boolean;
   experimentalNoAutoCompact?: boolean;
+  /** Candidate only: replace large guarded insertions; preserve existing direct inline routes. */
+  experimentalComposerPlainText?: boolean;
   maxBrowserTabs?: number;
 }
 
@@ -820,6 +824,7 @@ export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBro
     headed: configured.headed !== false,
     autoApproveToolCalls: configured.autoApproveToolCalls === true,
     experimentalNoAutoCompact: configured.experimentalNoAutoCompact === true,
+    ...(configured.experimentalComposerPlainText ? { experimentalComposerPlainText: true } : {}),
     maxBrowserTabs: Math.min(
       configured.maxBrowserTabs ?? MAX_CHATGPT_BROWSER_TABS,
       configured.useEnhancedWebSessionMode === true ? MAX_CHATGPT_BROWSER_TABS : ORIGINAL_CHATGPT_BROWSER_TABS,
@@ -2050,9 +2055,21 @@ export class ChatGptBrowserWorker {
     largeStructuredDirect = false,
     forceStructuredDirect = false,
     beforeRecoveryInsertion?: (composer: Locator) => Promise<void>,
-    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation },
+    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation; insertionPlan?: ChatGptPromptInsertionPlan; candidateBudget?: ChatGptCandidateAttachmentBudget },
   ): Promise<void> {
-    const op = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
+    const parent = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
+    const insertionText = localTools ? ` ${prompt}` : prompt;
+    const insertionPlan = diagnosticContext?.insertionPlan ?? planChatGptPromptInsertion(insertionText, {
+      largeStructuredDirect, forceStructuredDirect,
+      candidatePlainText: this.config?.experimentalComposerPlainText === true,
+    });
+    const candidateBudget = diagnosticContext?.candidateBudget ?? (this.config?.experimentalComposerPlainText
+      ? new ChatGptCandidateAttachmentBudget(insertionPlan, parent.now) : undefined);
+    const op = candidateBudget
+      ? new ChatGptPromptOperation(abortSignal, () => Math.min(parent.timeLeft(), candidateBudget.remainingMs()), parent.now)
+      : parent;
+    diagnosticContext = { traceId: diagnosticContext?.traceId ?? "unscoped",
+      stage: diagnosticContext?.stage ?? "prompt_attachment", operation: op, insertionPlan, candidateBudget };
     op.check();
     let mutationStarted = false;
     try {
@@ -2172,8 +2189,20 @@ export class ChatGptBrowserWorker {
     largeStructuredDirect = false,
     forceStructuredDirect = false,
     beforeRecoveryInsertion?: (composer: Locator) => Promise<void>,
-    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation },
+    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation; insertionPlan?: ChatGptPromptInsertionPlan; candidateBudget?: ChatGptCandidateAttachmentBudget },
   ): Promise<void> {
+    // One deadline owner covers the existing initial + at most one safe compaction repair.
+    // Neither reset nor a second attachment gets a fresh candidate hard budget.
+    if (this.config?.experimentalComposerPlainText) {
+      const parent = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
+      const insertionPlan = planChatGptPromptInsertion(localTools ? ` ${prompt}` : prompt,
+        { largeStructuredDirect, forceStructuredDirect, candidatePlainText: true });
+      const candidateBudget = new ChatGptCandidateAttachmentBudget(insertionPlan, parent.now);
+      const operation = new ChatGptPromptOperation(abortSignal,
+        () => Math.min(parent.timeLeft(), candidateBudget.remainingMs()), parent.now);
+      diagnosticContext = { traceId: diagnosticContext?.traceId ?? "unscoped",
+        stage: diagnosticContext?.stage ?? "prompt_attachment", operation, insertionPlan, candidateBudget };
+    }
     let retryAvailable = compaction;
     for (;;) {
       try {
@@ -2240,18 +2269,20 @@ export class ChatGptBrowserWorker {
     abortSignal?: AbortSignal,
     largeStructuredDirect = false,
     forceStructuredDirect = false,
-    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation },
+    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation; insertionPlan?: ChatGptPromptInsertionPlan; candidateBudget?: ChatGptCandidateAttachmentBudget },
   ): Promise<void> {
     const op = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
     await insertChatGptPromptText(text, abortSignal, {
       composer: () => this.activeComposer(page, 30_000, abortSignal, op),
       verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal, op),
       reanchor: () => this.reanchorPromptCaret(page, abortSignal, op),
-      onProgress: snapshot => console.info(
-        `[chatgpt-web] browser turn ${diagnosticContext?.traceId ?? "unscoped"}`
-        + ` stage=${diagnosticContext?.stage ?? "prompt_attachment"} composer=${JSON.stringify(snapshot)}`,
-      ),
-    }, { largeStructuredDirect, forceStructuredDirect }, op);
+      onProgress: snapshot => {
+        diagnosticContext?.candidateBudget?.observe(snapshot);
+        console.info(`[chatgpt-web] browser turn ${diagnosticContext?.traceId ?? "unscoped"}`
+          + ` stage=${diagnosticContext?.stage ?? "prompt_attachment"} composer=${JSON.stringify(snapshot)}`);
+      },
+    }, { largeStructuredDirect, forceStructuredDirect,
+      candidatePlainText: this.config?.experimentalComposerPlainText === true }, op, diagnosticContext?.insertionPlan);
   }
 
   private async waitForPromptChunkAttached(
