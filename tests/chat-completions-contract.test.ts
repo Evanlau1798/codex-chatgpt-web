@@ -45,6 +45,8 @@ test("multiple calls require distinct IDs and all results before continuation", 
   expect(() => parseChatCompletion({ ...request(), messages: [messages[0], { ...messages[1], tool_calls: [call, call] }] })).toThrow();
 });
 for (const parameters of [{ type: "object", properties: { x: { $ref: "https://example.invalid/schema" } } },
+  { type: "object", properties: { value: { type: "string", pattern: "^(a+)+$" } } },
+  { type: "object", patternProperties: { "^(a+)+$": { type: "string" } } },
   { type: "object", $async: true }, { type: "array" }, { type: "object", invalidKeyword: true }]) {
   test(`rejects unsafe/unsupported schema ${JSON.stringify(parameters)}`, () => expect(() => parseChatCompletion({ ...request(), tools: [{ type: "function", function: { name: "read", parameters } }] })).toThrow());
 }

@@ -2195,9 +2195,12 @@ export class ChatGptBrowserWorker {
     // Neither reset nor a second attachment gets a fresh candidate hard budget.
     if (this.config?.experimentalComposerPlainText) {
       const parent = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
-      const insertionPlan = planChatGptPromptInsertion(localTools ? ` ${prompt}` : prompt,
-        { largeStructuredDirect, forceStructuredDirect, candidatePlainText: true });
-      const candidateBudget = new ChatGptCandidateAttachmentBudget(insertionPlan, parent.now);
+      const insertionPlan = diagnosticContext?.insertionPlan ?? planChatGptPromptInsertion(
+        localTools ? ` ${prompt}` : prompt,
+        { largeStructuredDirect, forceStructuredDirect, candidatePlainText: true },
+      );
+      const candidateBudget = diagnosticContext?.candidateBudget
+        ?? new ChatGptCandidateAttachmentBudget(insertionPlan, parent.now);
       const operation = new ChatGptPromptOperation(abortSignal,
         () => Math.min(parent.timeLeft(), candidateBudget.remainingMs()), parent.now);
       diagnosticContext = { traceId: diagnosticContext?.traceId ?? "unscoped",
@@ -3429,29 +3432,48 @@ export class ChatGptBrowserWorker {
         try {
         for (;;) {
           try {
+            let candidateAttachment: {
+              insertionPlan: ChatGptPromptInsertionPlan;
+              candidateBudget: ChatGptCandidateAttachmentBudget;
+            } | undefined;
             await this.retryPromptAttachmentAfterRebind(
               () => this.runStage(
                 turn.traceId,
                 "prompt_attachment",
                 chatGptPromptAttachmentTimeoutMs(responsePrompt.length, this.config.experimentalNoAutoCompact),
-                (stageSignal, remainingMs) => this.attachPromptWithCompactionRetry(
-                  page,
-                  responsePrompt,
+                (stageSignal, remainingMs) => {
+                  const operation = new ChatGptPromptOperation(stageSignal, remainingMs);
                   // Connector access persists in this bound conversation without another mention.
-                  (turn.nativeConnector === true || mode.localTools) && !(reuseConversation || responseAttempt > 1),
-                  turn.compaction === true,
-                  submissionBaseline,
-                  checkpoint => diagnostics.capture(page, checkpoint),
-                  stageSignal,
-                  catalogRefreshAvailable,
-                  connectorAttemptBudget,
-                  mode.thinkEnabled,
-                  !multipartTransport && prepared.transport === "inline",
-                  turn.compaction === true && turn.requireRetainedConversation === true,
-                  beforeRecoveryInsertion,
-                  { traceId: turn.traceId, stage: "prompt_attachment",
-                    operation: new ChatGptPromptOperation(stageSignal, remainingMs) },
-                ),
+                  const localTools = (turn.nativeConnector === true || mode.localTools)
+                    && !(reuseConversation || responseAttempt > 1);
+                  if (this.config.experimentalComposerPlainText && !candidateAttachment) {
+                    const insertionPlan = planChatGptPromptInsertion(localTools ? ` ${responsePrompt}` : responsePrompt, {
+                      largeStructuredDirect: !multipartTransport && prepared.transport === "inline",
+                      forceStructuredDirect: turn.compaction === true && turn.requireRetainedConversation === true,
+                      candidatePlainText: true,
+                    });
+                    candidateAttachment = {
+                      insertionPlan,
+                      candidateBudget: new ChatGptCandidateAttachmentBudget(insertionPlan, operation.now),
+                    };
+                  }
+                  return this.attachPromptWithCompactionRetry(
+                    page,
+                    responsePrompt,
+                    localTools,
+                    turn.compaction === true,
+                    submissionBaseline,
+                    checkpoint => diagnostics.capture(page, checkpoint),
+                    stageSignal,
+                    catalogRefreshAvailable,
+                    connectorAttemptBudget,
+                    mode.thinkEnabled,
+                    !multipartTransport && prepared.transport === "inline",
+                    turn.compaction === true && turn.requireRetainedConversation === true,
+                    beforeRecoveryInsertion,
+                    { traceId: turn.traceId, stage: "prompt_attachment", operation, ...candidateAttachment },
+                  );
+                },
                 turn.abortSignal,
                 chatGptSuspensionClock,
                 true,
@@ -3693,10 +3715,10 @@ export class ChatGptBrowserWorker {
                   // Capture before dispatch, then retain this same baseline if the tunnel needs DOM fallback.
                   const baseline = await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running);
                   turn.abortSignal?.throwIfAborted();
-                  if (!baseline.responsePresent) {
-                    throw chatGptWebSurfaceError("ChatGPT could not observe the current answer before native tool dispatch", false);
-                  }
-                  completionTracker.observeToolBatch(progress.lastToolBatchRevision, baseline.visibleText);
+                  // The tunnel can announce an immediate tool call before ChatGPT projects text for
+                  // the already-identified current turn. An empty baseline still prevents stale final reuse.
+                  completionTracker.observeToolBatch(progress.lastToolBatchRevision,
+                    baseline.responsePresent ? baseline.visibleText : "");
                   await turn.externalProgress.acknowledgeToolBatch(progress.lastToolBatchRevision);
                 }
               }

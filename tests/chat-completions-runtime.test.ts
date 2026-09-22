@@ -100,6 +100,19 @@ test("split surrogate deltas are buffered until they form valid Unicode", async 
   } finally { f.dispose(); }
 });
 
+test("many small plain-text deltas do not repeatedly tokenize the full response", async () => {
+  const f = fixture(); const answer = "a".repeat(3_000); let streamed = "";
+  const execute = createChatCompletionExecutor({ safety: f.safety, worker: () => ({ async run(turn) {
+    for (const character of answer) turn.onTextDelta(character);
+    return answer;
+  } }) });
+  try {
+    const result = await execute(req({ max_tokens: 65_536 }), defaultConfig(), new AbortController().signal,
+      delta => { streamed += delta; });
+    expect(streamed).toBe(answer); expect(result.answer).toBe(answer);
+  } finally { f.dispose(); }
+}, 5_000);
+
 test("shared account-security drain cancels an active general turn instead of emitting new work", async () => {
   const f = fixture(); let wasAborted = false;
   const execute = createChatCompletionExecutor({ safety: f.safety, worker: () => ({ async run(turn) {

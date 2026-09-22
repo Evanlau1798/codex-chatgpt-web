@@ -77,6 +77,7 @@ export function createChatCompletionExecutor(dependencies: ChatCompletionRuntime
     let finished = false;
     let delivered = "";
     let observed = "";
+    let nextTokenProbeLength = 1;
     const functionMode = input.tools.length > 0 && input.toolChoice !== "none";
     const provider = providerConfig(config);
     provider.chatgptWeb = { ...provider.chatgptWeb,
@@ -112,9 +113,12 @@ export function createChatCompletionExecutor(dependencies: ChatCompletionRuntime
         const lastUnit = observed.charCodeAt(observed.length - 1);
         const publishable = lastUnit >= 0xD800 && lastUnit <= 0xDBFF ? observed.slice(0, -1) : observed;
         if (!wellFormedText(publishable)) { abort.abort(new ChatCompletionError("Model output contained invalid Unicode", 502, "model_protocol_error")); return; }
+        if (publishable.length < nextTokenProbeLength) return;
         const allowed = boundedChatText(publishable, input.maxTokens, delivered);
         if (allowed.length > delivered.length) { const next = allowed.slice(delivered.length); delivered = allowed; onText(next); }
-        if (allowed.length < publishable.length) { limited = true; abort.abort(limitReached); }
+        if (allowed.length < publishable.length) { limited = true; abort.abort(limitReached); return; }
+        // Geometric checkpoints retain exact token accounting without re-tokenizing the full prefix per delta.
+        nextTokenProbeLength = Math.max(publishable.length + 1, publishable.length * 2);
       },
       onHeartbeat: safetyCheck,
     };

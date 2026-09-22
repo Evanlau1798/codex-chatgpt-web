@@ -151,6 +151,45 @@ test.each(["multi_agent_v1", "multi_agent_v2", "collaboration"].flatMap(namespac
   }
 });
 
+test("one-hour logical agent wait uses 120 bounded slices and rejects a longer timeout", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-wait-hour-"));
+  const socket = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socket);
+  const token = await broker.register({ cwd: root, roots: [root], writableRoots: [],
+    sandboxPolicy: { type: "readOnly", networkAccess: false },
+    tools: [{ namespace: "multi_agent_v2", name: "wait_agent", description: "Wait", parameters: {} }],
+  }, 60_000, "one-hour-wait", undefined, true);
+  try {
+    const { bindingId } = await callTurnBroker<{ bindingId: string }>(socket, {
+      method: "claim", token, activityId: "activity_1234567890123456",
+    });
+    await callTurnBroker(socket, { method: "activity_complete", token, activityId: "activity_1234567890123456" });
+    const receipt = await callTurnBroker<{ wait_id: string }>(socket, { method: "start_agent_wait", bindingId,
+      wireName: "multi_agent_v2__wait_agent", arguments: { targets: ["child"], timeout_ms: 3_600_000 } });
+    const timedOut: BrokerToolResult = { content: [{ type: "text", text: "pending" }],
+      structuredContent: { timed_out: true, status: {} } };
+    for (let slice = 1; slice < 120; slice++) {
+      const [request] = await broker.nextToolBatch(token, AbortSignal.timeout(2_000));
+      expect(request!.arguments).toEqual({ targets: ["child"], timeout_ms: 30_000 });
+      broker.completeTool(token, request!.callId, timedOut);
+    }
+    const [finalRequest] = await broker.nextToolBatch(token, AbortSignal.timeout(2_000));
+    const terminal: BrokerToolResult = { content: [{ type: "text", text: "complete" }],
+      structuredContent: { timed_out: false, status: { child: { completed: "done" } } } };
+    broker.completeTool(token, finalRequest!.callId, terminal);
+    await Promise.resolve();
+    expect(await callTurnBroker<unknown>(socket, { method: "read_agent_wait", token, waitId: receipt.wait_id }))
+      .toEqual({ operation_status: "ready", wait_id: receipt.wait_id, result: terminal });
+    await expect(callTurnBroker(socket, { method: "start_agent_wait", bindingId,
+      wireName: "multi_agent_v2__wait_agent", arguments: { targets: ["child"], timeout_ms: 3_630_000 } }))
+      .rejects.toThrow("timeout_ms");
+  } finally {
+    broker.revoke(token);
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);
+
 test("compaction supersedes a queued agent wait and expiration retires pending ownership", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-wait-retire-"));
   const socket = defaultBrokerEndpoint(root);

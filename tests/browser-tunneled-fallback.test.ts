@@ -385,11 +385,12 @@ test("terminal Web controls do not seal fallback while a native tool is running"
   expect(result.actions.indexOf("tool-settled")).toBeLessThan(result.actions.indexOf("output-seal"));
 });
 
-test("a missing pre-tool DOM observation fails before dispatch or final publication", async () => {
+test("an identified current turn may use an empty baseline before its first native tool", async () => {
   const result = await runFixture({ missingBaseline: true });
-  expect((result.error as Error).message).toContain("could not observe the current answer before native tool dispatch");
-  expect(result.actions).not.toContain("tool-dispatched");
-  expect(result.deltas).toEqual([]);
+  expect(result.error).toBeUndefined();
+  expect(result.actions).toContain("tool-dispatched");
+  expect(result.answer).toBe(FINAL);
+  expect(result.deltas).toEqual([FINAL]);
 });
 
 test("cancellation during baseline observation cannot release a waiting tool batch", async () => {

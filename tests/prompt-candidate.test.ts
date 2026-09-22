@@ -115,3 +115,30 @@ test("existing safe compaction repair cannot refill the candidate deadline", asy
   expect(remaining).toEqual([90000, 40000]);
   expect(contexts[0].candidateBudget).toBe(contexts[1].candidateBudget);
 });
+
+test("launcher surface rebind cannot refill the candidate deadline", async () => {
+  const { ChatGptBrowserWorker } = await import("../src/adapters/chatgpt-web/browser-worker");
+  const { ChatGptWebAdapterError } = await import("../src/adapters/chatgpt-web/adapter-error");
+  const { ChatGptPromptOperation } = await import("../src/adapters/chatgpt-web/prompt-operation");
+  let now = 0; const contexts: any[] = []; const remaining: number[] = [];
+  const plan = planChatGptPromptInsertion("x".repeat(33000), { candidatePlainText: true });
+  const candidateBudget = new ChatGptCandidateAttachmentBudget(plan, () => now);
+  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    config: { experimentalComposerPlainText: true },
+    attachPrompt: async (...args: any[]) => {
+      const context = args.at(-1); contexts.push(context); remaining.push(context.operation.timeLeft());
+      if (contexts.length === 1) throw new ChatGptWebAdapterError("ChatGPT browser stage timed out: prompt_attachment", {
+        status: 502, errorType: "server_error", code: "chatgpt_surface_changed", retryable: true,
+      });
+    },
+  });
+  const action = () => worker.attachPromptWithCompactionRetry({}, "x".repeat(33000), false, false,
+    { userTurns: 0, responseTurns: 0, initialTurnIdentities: [] }, undefined, undefined, false,
+    { triggerAttempts: 0 }, false, false, false, undefined,
+    { traceId: "fixture", stage: "attachment",
+      operation: new ChatGptPromptOperation(undefined, () => 900000, () => now), insertionPlan: plan, candidateBudget });
+  await worker.retryPromptAttachmentAfterRebind(action, async () => { now = 50000; });
+  expect(remaining).toEqual([90000, 40000]);
+  expect(contexts[0].candidateBudget).toBe(candidateBudget);
+  expect(contexts[1].candidateBudget).toBe(candidateBudget);
+});

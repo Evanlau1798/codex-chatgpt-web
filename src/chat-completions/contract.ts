@@ -91,7 +91,8 @@ function schemaSafety(value: unknown, depth = 0, nodes = { count: 0 }): void {
   if (!value || typeof value !== "object") return;
   for (const [key, child] of Object.entries(value)) {
     if (!wellFormedText(key)) fail("Invalid Unicode in tool schema", "tools");
-    if (key === "$async" || key === "__proto__" || key === "constructor" || key === "prototype") fail("Unsupported schema keyword", "tools");
+    if (key === "$async" || key === "pattern" || key === "patternProperties"
+      || key === "__proto__" || key === "constructor" || key === "prototype") fail("Unsupported schema keyword", "tools");
     if (key === "$ref" && (typeof child !== "string" || !child.startsWith("#"))) fail("Only local schema references are supported", "tools");
     schemaSafety(child, depth + 1, nodes);
   }
