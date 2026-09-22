@@ -226,13 +226,6 @@ export function boundedChatText(text: string, limit: number, previous = ""): str
   }
   return previous + points.slice(0, low).join("");
 }
-function unescapeRenderedJsonPunctuation(text: string): string {
-  // The browser supplies rendered Markdown; ChatGPT escapes these JSON tokens in its projection.
-  // Only an odd backslash run is presentation escaping. Even runs are literal JSON content.
-  return text.replace(/(\\+)([_\[\]])/g, (whole, slashes: string, punctuation: string) => (
-    slashes.length % 2 === 1 ? slashes.slice(1) + punctuation : whole
-  ));
-}
 export function decodeChatCompletion(input: ChatCompletionInput, answer: string, limited = false): ChatCompletionResult {
   const protocol = (): never => { throw new ChatCompletionError("The completed model output did not satisfy the function-call contract", 502, "model_protocol_error"); };
   if (!wellFormedText(answer) || answer.length > MAX_TEXT) protocol();
@@ -243,10 +236,7 @@ export function decodeChatCompletion(input: ChatCompletionInput, answer: string,
   let value: Record<string, unknown>;
   let parsed: unknown;
   try { parsed = JSON.parse(answer); }
-  catch {
-    try { parsed = JSON.parse(unescapeRenderedJsonPunctuation(answer)); }
-    catch { return protocol(); }
-  }
+  catch { return protocol(); }
   try {
     value = object(parsed, "output"); keys(value, ["content", "tool_calls"], "output");
   } catch { return protocol(); }

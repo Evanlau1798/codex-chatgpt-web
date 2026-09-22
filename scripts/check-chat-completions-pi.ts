@@ -7,6 +7,7 @@ import { startServer } from "../src/server";
 import { ChatGptAccountSafety } from "../src/adapters/chatgpt-web/account-safety";
 import { createChatCompletionExecutor, activeChatCompletionTurns } from "../src/chat-completions/runtime";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptMarkdownBuffer } from "../src/adapters/chatgpt-web/markdown";
 import { ChatCompletionError } from "../src/chat-completions/contract";
 
 /** Real unmodified pi CLI, production HTTP/compiler/output/runtime with a scripted model worker.
@@ -29,7 +30,7 @@ async function main() {
     bun: Bun.version, nodeVersion: Bun.spawnSync([node, "--version"]).stdout.toString().trim(),
     worktreeDirty: Bun.spawnSync(["git", "diff", "--quiet"]).exitCode !== 0, commit: Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim(), cases: [] };
   const results = report.cases as Array<Record<string, unknown>>;
-  let mode: "tools" | "isolation" | "steer" | "resume" | "error" | "cancel" = "tools";
+  let mode: "tools" | "isolation" | "steer" | "resume" | "error" | "cancel" | "text" | "structured-text" | "compact" | "compact-error" | "compact-hold" = "tools";
   let calls = 0; let toolResults = 0; let cancellationObserved = false;
   const isolationTraces = new Map<string, Set<string>>();
   let isolationArrivals = 0;
@@ -46,6 +47,26 @@ async function main() {
   const resumeTraces = new Set<string>();
   let cancelStarted!: () => void;
   const cancelReady = new Promise<void>(r => { cancelStarted = r; });
+  const project = (turn: BrowserTurn, answer: string, html?: string) => {
+    const buffer = new ChatGptMarkdownBuffer(undefined, 0, turn.outputFormat);
+    const escaped = answer.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+    buffer.observe([{ key: "answer", tag: "p", html: html ?? (answer.startsWith("PI_") && !turn.outputFormat
+      ? `<p><code>${escaped}</code></p>` : `<p>${escaped}</p>`), text: answer, streamable: false }]);
+    const visible = buffer.finish().markdown;
+    turn.onTextDelta(visible);
+    return visible;
+  };
+  let summaryCalls = 0;
+  let compactFollowUps = 0;
+  const compactTraces = new Map<string, Set<string>>();
+  let summaryArrivals = 0;
+  let releaseSummaries!: () => void;
+  const summaryBarrier = new Promise<void>(resolve => { releaseSummaries = resolve; });
+  const longMarkdown = `PI_LONG_MARKER\n# Heading\n\n- item with \\path and literal \\n\n`.repeat(160);
+  const structuredContent = 'line one\nline two\\n C:\\work\\file "quoted" _[brackets] 漢字';
+  const readFixture = `INERT_PI_FIXTURE\n${'line with \\path, literal \\n, and 漢字\n'.repeat(180)}`;
+  let holdSummaryStarted!: () => void;
+  const summaryHeld = new Promise<void>(resolve => { holdSummaryStarted = resolve; });
   const safety = new ChatGptAccountSafety(join(temporary, "safety.json"));
   const executor = createChatCompletionExecutor({ safety, worker: provider => {
     if (provider.chatgptWeb?.localToolsEnabled !== false) throw new Error("Unexpected local tool authority");
@@ -54,6 +75,51 @@ async function main() {
       if (turn.nativeConnector || turn.conversationKey || turn.retainConversation || turn.capabilities.localToolsEnabled) throw new Error("Unexpected native or retained capability");
       const prepared = await turn.prepare(); prepared.release();
       const payload = JSON.parse(prepared.text.slice(prepared.text.indexOf('{"messages"')));
+      if (mode === "text") {
+        if (!JSON.stringify(payload.messages).includes(JSON.stringify(longMarkdown).slice(1, -1))) throw new Error("Long Pi input changed in the model prompt");
+        return project(turn, "# Heading\n\n- item\n\n`code`", "<h1>Heading</h1><ul><li>item</li></ul><p><code>code</code></p>");
+      }
+      if (mode === "structured-text") {
+        const hasResult = payload.messages.some((message: { role: string }) => message.role === "tool");
+        return project(turn, JSON.stringify(hasResult
+          ? { content: `**done**\n- item\n${structuredContent}`, tool_calls: [] }
+          : { content: null, tool_calls: [{ name: "write", arguments: { path: "structured.txt", content: structuredContent } }] }));
+      }
+      if (mode === "compact" || mode === "compact-error" || mode === "compact-hold") {
+        const history = JSON.stringify(payload.messages);
+        const owners = ["ALPHA", "BRAVO", "AUTO", "FAIL"].filter(value => history.includes(`PI_COMPACT_${value}`));
+        if (owners.length !== 1) throw new Error("Compaction request lost or mixed Pi session owners");
+        const owner = owners[0]!;
+        const traces = compactTraces.get(owner) ?? new Set<string>();
+        traces.add(turn.traceId); compactTraces.set(owner, traces);
+        const summary = history.includes("Create a structured context checkpoint summary");
+        if (summary) {
+          if (payload.tools.length || turn.outputFormat || turn.capabilities.localToolsEnabled) throw new Error("Pi summarizer received tool authority");
+          summaryCalls++;
+          if (mode === "compact-error") throw new ChatCompletionError("Synthetic summary failure", 502, "model_protocol_error");
+          if (mode === "compact-hold") {
+            holdSummaryStarted();
+            await new Promise<void>(resolve => {
+              if (turn.abortSignal?.aborted) resolve(); else turn.abortSignal?.addEventListener("abort", () => resolve(), { once: true });
+            });
+            turn.abortSignal!.throwIfAborted();
+          }
+          if (owner === "ALPHA" || owner === "BRAVO") {
+            summaryArrivals++;
+            if (summaryArrivals === 2) releaseSummaries();
+            await Promise.race([summaryBarrier, Bun.sleep(10_000).then(() => { throw new Error("Concurrent Pi compactions did not overlap"); })]);
+          }
+          return project(turn, `PI_SUMMARY_${owner}`);
+        }
+        if (history.includes(`PI_COMPACT_${owner}_FOLLOWUP`)) {
+          if (!history.includes(`PI_SUMMARY_${owner}`) || history.includes("PI_SUMMARY_" + (owner === "ALPHA" ? "BRAVO" : "ALPHA"))) {
+            throw new Error("Pi compact follow-up lost or mixed its summary");
+          }
+          compactFollowUps++;
+          return project(turn, `PI_COMPACT_${owner}_DONE`);
+        }
+        return project(turn, `PI_COMPACT_${owner}_SEED_ACK`);
+      }
       if (mode === "resume") {
         resumeCalls++;
         resumeTraces.add(turn.traceId);
@@ -61,8 +127,8 @@ async function main() {
         if (!history.includes("PI_RESUME_MARKER")
           || (resumeCalls === 2 && !history.includes("PI_RESUME_ACK"))
           || resumeCalls > 2) throw new Error("Pi resume lost or mixed its local session history");
-        const answer = JSON.stringify({ content: resumeCalls === 1 ? "PI_RESUME_ACK" : "PI_RESUME_CONFIRMED", tool_calls: [] });
-        turn.onTextDelta(answer); return answer;
+        const answer = resumeCalls === 1 ? "PI_RESUME_ACK" : "PI_RESUME_CONFIRMED";
+        return project(turn, answer);
       }
       if (mode === "steer") {
         steerCalls++;
@@ -72,8 +138,8 @@ async function main() {
         } else if (steerCalls === 2 && JSON.stringify(payload.messages).includes("PI_STEER_MARKER")) {
           markSteerObserved();
         } else throw new Error("Pi steering reached the wrong model turn");
-        const answer = JSON.stringify({ content: steerCalls === 1 ? "Initial work segment finished." : "PI_STEER_CONFIRMED", tool_calls: [] });
-        turn.onTextDelta(answer); return answer;
+        const answer = steerCalls === 1 ? "Initial work segment finished." : "PI_STEER_CONFIRMED";
+        return project(turn, answer);
       }
       if (mode === "isolation") {
         const history = JSON.stringify(payload.messages);
@@ -97,7 +163,7 @@ async function main() {
           : results.length === 1
             ? { content: null, tool_calls: [{ name: "write", arguments: { path: "result.txt", content: `PI_ISOLATION_${owner}_OK\n` } }] }
             : { content: `PI_ISOLATION_${owner}_OK`, tool_calls: [] });
-        turn.onTextDelta(answer); return answer;
+        return project(turn, answer);
       }
       if (mode === "error") throw new ChatCompletionError("Synthetic model failure", 502, "model_protocol_error");
       if (mode === "cancel") {
@@ -111,10 +177,9 @@ async function main() {
       const historyResults = payload.messages.filter((message: { role: string }) => message.role === "tool");
       toolResults = Math.max(toolResults, historyResults.length);
       let answer: string;
-      if (historyResults.length === 0) answer = JSON.stringify({ content: null, tool_calls: [{ name: "read", arguments: { path: "input.txt" } }] })
-        .replace('"tool_calls":[', '"tool\\_calls":\\[').replace(']}', '\\]}');
+      if (historyResults.length === 0) answer = JSON.stringify({ content: null, tool_calls: [{ name: "read", arguments: { path: "input.txt" } }] });
       else if (historyResults.length === 1) {
-        if (!historyResults[0].content.includes("INERT_PI_FIXTURE")) throw new Error("pi did not return the read result");
+        if (historyResults[0].content !== readFixture) throw new Error("Pi changed the complete long tool result");
         answer = JSON.stringify({ content: null, tool_calls: [{ name: "write", arguments: { path: "result.txt", content: "PI_TOOL_LOOP_OK\n" } }] });
       } else if (historyResults.length === 2) answer = JSON.stringify({ content: null, tool_calls: [{
         name: "bash", arguments: { command: "node -e \"process.stdout.write('PI_BASH_OK')\"" },
@@ -123,7 +188,7 @@ async function main() {
         if (!historyResults[2]?.content.includes("PI_BASH_OK")) throw new Error("Pi did not return the command output");
         answer = JSON.stringify({ content: "PI_TOOL_LOOP_OK", tool_calls: [] });
       }
-      turn.onTextDelta(answer); return answer;
+      return project(turn, answer);
     } };
   } });
   const server = startServer(config, { chatCompletionExecutor: executor });
@@ -141,7 +206,7 @@ async function main() {
         supportsUsageInStreaming: false, supportsStrictMode: false, maxTokensField: "max_tokens" } }],
   } } }));
   writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { enabled: false, provider: { maxRetries: 0 } }, compaction: { enabled: false } }));
-  writeFileSync(join(work, "input.txt"), "INERT_PI_FIXTURE\n");
+  writeFileSync(join(work, "input.txt"), readFixture);
   const flags = ["--offline", "--no-session", "--no-context-files", "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-approve", "--provider", "enhanced", "--model", "chatgpt-web/high", "--thinking", "off"];
   const runPrint = async (extra: string[], cwd = work) => {
     const child = Bun.spawn([node, pi, ...flags, "--mode", "json", "--print", ...extra], { cwd, env, stdout: "pipe", stderr: "pipe" });
@@ -152,6 +217,42 @@ async function main() {
       if (err) writeFileSync(join(temporary, "last-stderr.txt"), err);
       return { out, code, err };
     } finally { clearTimeout(timeout); }
+  };
+  const openRpc = (name: string) => {
+    const sessionDir = join(temporary, `compact-${name}`); mkdirSync(sessionDir);
+    const child = Bun.spawn([node, pi, ...flags.filter(flag => flag !== "--no-session"),
+      "--session-dir", sessionDir, "--mode", "rpc", "--no-tools"],
+    { cwd: work, env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    const events: Array<Record<string, any>> = [];
+    const output = (async () => {
+      const reader = child.stdout.getReader(); const decoder = new TextDecoder(); let pending = "";
+      try {
+        while (true) {
+          const chunk = await reader.read(); if (chunk.done) break;
+          pending += decoder.decode(chunk.value, { stream: true });
+          let end: number;
+          while ((end = pending.indexOf("\n")) >= 0) {
+            const line = pending.slice(0, end).trim(); pending = pending.slice(end + 1);
+            if (line) events.push(JSON.parse(line));
+          }
+        }
+      } finally { reader.releaseLock(); }
+    })();
+    const errors = new Response(child.stderr).text();
+    return {
+      events, sessionDir,
+      async send(value: Record<string, unknown>) { child.stdin.write(JSON.stringify(value) + "\n"); await child.stdin.flush(); },
+      async until(predicate: (event: Record<string, any>) => boolean, after = 0) {
+        const deadline = Date.now() + 30_000;
+        while (Date.now() < deadline) {
+          const found = events.slice(after).find(predicate); if (found) return found;
+          if (child.exitCode !== null) throw new Error(`Pi RPC exited before event (${child.exitCode})`);
+          await Bun.sleep(20);
+        }
+        throw new Error(`Pi RPC event timed out: ${name}`);
+      },
+      async close() { child.stdin.end(); child.kill(); await child.exited; await output; await errors; },
+    };
   };
   try {
     const version = Bun.spawnSync([node, pi, "--version"], { cwd: work, env });
@@ -222,6 +323,131 @@ async function main() {
       throw new Error("Aged Pi session did not replay its complete local history through fresh Web requests");
     }
     results.push({ case: "aged-session-resume", status: "PASS", agedHours: 2, freshWebRequests: 2 });
+    mode = "text";
+    const rendered = await runPrint(["--no-tools", longMarkdown]);
+    const renderedFinal = rendered.out.split("\n").filter(Boolean).map(line => JSON.parse(line))
+      .findLast(event => event.type === "agent_end")?.messages?.at(-1)?.content?.[0]?.text;
+    if (rendered.code !== 0 || renderedFinal !== "# Heading\n\n- item\n\n`code`") {
+      throw new Error("Pi long Markdown input or visible Markdown output changed");
+    }
+    results.push({ case: "long-input-and-markdown-output", status: "PASS", inputChars: longMarkdown.length });
+    mode = "structured-text";
+    const structured = await runPrint(["--tools", "write", "Write the requested structured fixture and finish."]);
+    const structuredEvents = structured.out.split("\n").filter(Boolean).map(line => JSON.parse(line));
+    const structuredFinal = structuredEvents.findLast(event => event.type === "agent_end")?.messages?.at(-1)?.content?.[0]?.text;
+    if (structured.code !== 0 || readFileSync(join(work, "structured.txt"), "utf8") !== structuredContent
+      || structuredFinal !== `**done**\n- item\n${structuredContent}`) {
+      throw new Error("Pi structured tool argument or final Markdown text was altered");
+    }
+    results.push({ case: "structured-tool-and-final-text", status: "PASS", exactFile: true });
+    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { enabled: false, provider: { maxRetries: 0 } },
+      compaction: { enabled: true, reserveTokens: 2048, keepRecentTokens: 1 } }));
+    mode = "compact";
+    const compactOwner = async (owner: "ALPHA" | "BRAVO") => {
+      const rpc = openRpc(owner.toLowerCase());
+      try {
+        for (let n = 0; n < 2; n++) {
+          const after = rpc.events.length;
+          await rpc.send({ type: "prompt", message: `PI_COMPACT_${owner} seed ${n}` });
+          await rpc.until(event => event.type === "agent_end", after);
+        }
+        const after = rpc.events.length;
+        await rpc.send({ id: `compact-${owner}`, type: "compact" });
+        const response = await rpc.until(event => event.type === "response" && event.id === `compact-${owner}`, after);
+        const ending = await rpc.until(event => event.type === "compaction_end" && event.reason === "manual", after);
+        if (!response.success || ending.aborted || !ending.result?.summary.includes(`PI_SUMMARY_${owner}`)) throw new Error("Pi manual compact failed");
+        const files = readdirSync(rpc.sessionDir, { recursive: true }).filter((entry): entry is string => typeof entry === "string" && entry.endsWith(".jsonl"));
+        if (files.length !== 1 || !readFileSync(join(rpc.sessionDir, files[0]!), "utf8").split("\n").some(line => {
+          try { const entry = JSON.parse(line); return entry.type === "compaction" && entry.summary?.includes(`PI_SUMMARY_${owner}`); }
+          catch { return false; }
+        })) {
+          throw new Error("Pi did not persist its compacted summary");
+        }
+        const follow = rpc.events.length;
+        await rpc.send({ type: "prompt", message: `PI_COMPACT_${owner}_FOLLOWUP` });
+        await rpc.until(event => event.type === "agent_settled", follow);
+        const final = rpc.events.slice(follow).findLast(event => event.type === "agent_end")?.messages?.at(-1);
+        if (final?.stopReason !== "stop" || !final.content?.some((part: { type: string; text?: string }) =>
+          part.type === "text" && part.text?.includes(`PI_COMPACT_${owner}_DONE`))) throw new Error("Pi compact follow-up did not finish successfully");
+      } finally { await rpc.close(); }
+    };
+    const beforeCompact = summaryCalls;
+    await Promise.all([compactOwner("ALPHA"), compactOwner("BRAVO")]);
+    if (summaryCalls !== beforeCompact + 2 || compactFollowUps !== 2 || (compactTraces.get("ALPHA")?.size ?? 0) < 4
+      || (compactTraces.get("BRAVO")?.size ?? 0) < 4 || [...compactTraces.get("ALPHA")!].some(id => compactTraces.get("BRAVO")!.has(id))) {
+      throw new Error("Concurrent Pi compactions did not preserve summary/trace ownership");
+    }
+    results.push({ case: "manual-compact-concurrent-isolation", status: "PASS", sessions: 2, summaryCalls: 2, followUps: 2 });
+    const modelsPath = join(agentDir, "models.json");
+    const models = JSON.parse(readFileSync(modelsPath, "utf8"));
+    models.providers.enhanced.models[0].contextWindow = 16000;
+    writeFileSync(modelsPath, JSON.stringify(models));
+    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { enabled: false, provider: { maxRetries: 0 } },
+      compaction: { enabled: false, reserveTokens: 9000, keepRecentTokens: 1 } }));
+    const auto = openRpc("auto");
+    try {
+      for (let n = 0; n < 2; n++) {
+        const after = auto.events.length;
+        await auto.send({ type: "prompt", message: `PI_COMPACT_AUTO seed ${n} ${"x".repeat(15000)}` });
+        await auto.until(event => event.type === "agent_end", after);
+      }
+      const beforeAuto = summaryCalls;
+      const setting = auto.events.length;
+      await auto.send({ id: "enable-auto", type: "set_auto_compaction", enabled: true });
+      if (!(await auto.until(event => event.type === "response" && event.id === "enable-auto", setting)).success) throw new Error("Pi refused auto compaction");
+      const after = auto.events.length;
+      await auto.send({ type: "prompt", message: "PI_COMPACT_AUTO_FOLLOWUP" });
+      const compacted = await auto.until(event => event.type === "compaction_end" && event.reason === "threshold", after);
+      await auto.until(event => event.type === "agent_settled", after);
+      const final = auto.events.slice(after).findLast(event => event.type === "agent_end")?.messages?.at(-1);
+      if (compacted.aborted || !compacted.result?.summary.includes("PI_SUMMARY_AUTO") || summaryCalls !== beforeAuto + 1
+        || Number(compactFollowUps) !== 3 || final?.stopReason !== "stop" || !final.content?.some((part: { type: string; text?: string }) =>
+          part.type === "text" && part.text?.includes("PI_COMPACT_AUTO_DONE"))
+        || auto.events.slice(after).filter(event => event.type === "compaction_end").length !== 1) {
+        throw new Error("Pi auto compaction did not produce one usable summary before follow-up");
+      }
+      results.push({ case: "auto-compact-and-follow-up", status: "PASS", summaryCalls: 1, followUp: true });
+    } finally { await auto.close(); }
+    mode = "compact-error";
+    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ retry: { enabled: false, provider: { maxRetries: 0 } },
+      compaction: { enabled: true, reserveTokens: 2048, keepRecentTokens: 1 } }));
+    const failed = openRpc("failed");
+    try {
+      for (let n = 0; n < 2; n++) {
+        const after = failed.events.length;
+        await failed.send({ type: "prompt", message: `PI_COMPACT_FAIL seed ${n}` });
+        await failed.until(event => event.type === "agent_end", after);
+      }
+      const after = failed.events.length;
+      await failed.send({ id: "failing-compact", type: "compact" });
+      const response = await failed.until(event => event.type === "response" && event.id === "failing-compact", after);
+      const ending = await failed.until(event => event.type === "compaction_end" && event.reason === "manual", after);
+      const files = readdirSync(failed.sessionDir, { recursive: true }).filter((entry): entry is string => typeof entry === "string" && entry.endsWith(".jsonl"));
+      if (response.success || ending.result || files.some(file => readFileSync(join(failed.sessionDir, file), "utf8").split("\n").some(line => {
+        try { return JSON.parse(line).type === "compaction"; } catch { return false; }
+      }))) throw new Error("Pi persisted a failed summary as compaction");
+      results.push({ case: "compact-summary-error", status: "PASS", noCompactionEntry: true });
+    } finally { await failed.close(); }
+    mode = "compact-hold";
+    const interrupted = openRpc("interrupted");
+    try {
+      for (let n = 0; n < 2; n++) {
+        const after = interrupted.events.length;
+        await interrupted.send({ type: "prompt", message: `PI_COMPACT_FAIL seed ${n}` });
+        await interrupted.until(event => event.type === "agent_end", after);
+      }
+      const after = interrupted.events.length;
+      await interrupted.send({ id: "held-compact", type: "compact" });
+      await Promise.race([summaryHeld, Bun.sleep(15_000).then(() => { throw new Error("Pi compact did not reach the held Web turn"); })]);
+      await interrupted.send({ id: "abort-summary", type: "abort" });
+      const ending = await interrupted.until(event => event.type === "compaction_end" && event.reason === "manual", after);
+      await interrupted.until(event => event.type === "response" && event.id === "held-compact", after);
+      const files = readdirSync(interrupted.sessionDir, { recursive: true }).filter((entry): entry is string => typeof entry === "string" && entry.endsWith(".jsonl"));
+      if (!ending.aborted || ending.result || files.some(file => readFileSync(join(interrupted.sessionDir, file), "utf8").split("\n").some(line => {
+        try { return JSON.parse(line).type === "compaction"; } catch { return false; }
+      }))) throw new Error("Pi persisted an interrupted summary as compaction");
+      results.push({ case: "compact-summary-cancel", status: "PASS", noCompactionEntry: true });
+    } finally { await interrupted.close(); }
     mode = "error"; const before = calls;
     const failure = await runPrint(["--no-tools", "Exercise an intentional offline model error."]);
     if (calls !== before + 1 || !failure.out.includes('"stopReason":"error"')) {

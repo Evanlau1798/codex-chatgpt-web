@@ -100,6 +100,21 @@ test("split surrogate deltas are buffered until they form valid Unicode", async 
   } finally { f.dispose(); }
 });
 
+test("only function-call turns request literal visible browser output", async () => {
+  const f = fixture(); const formats: Array<string | undefined> = [];
+  const execute = createChatCompletionExecutor({ safety: f.safety, worker: () => ({ async run(turn) {
+    formats.push(turn.outputFormat);
+    const answer = turn.outputFormat ? JSON.stringify({ content: "done", tool_calls: [] }) : "plain Markdown";
+    turn.onTextDelta(answer); return answer;
+  } }) });
+  try {
+    await execute(req(), defaultConfig(), new AbortController().signal, () => {});
+    await execute(req({ tools: [{ type: "function", function: { name: "noop", parameters: { type: "object" } } }] }),
+      defaultConfig(), new AbortController().signal, () => {});
+    expect(formats).toEqual([undefined, "visible-text"]);
+  } finally { f.dispose(); }
+});
+
 test("many small plain-text deltas do not repeatedly tokenize the full response", async () => {
   const f = fixture(); const answer = "a".repeat(3_000); let streamed = "";
   const execute = createChatCompletionExecutor({ safety: f.safety, worker: () => ({ async run(turn) {

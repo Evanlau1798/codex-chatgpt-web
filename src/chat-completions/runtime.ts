@@ -100,6 +100,7 @@ export function createChatCompletionExecutor(dependencies: ChatCompletionRuntime
     const safetyTimer = setInterval(safetyCheck, 1_000); safetyTimer.unref?.();
     const turn: BrowserTurn = {
       traceId, modelId: route.backendModel, reasoning: route.adapterEffort, capabilities,
+      ...(functionMode ? { outputFormat: "visible-text" as const } : {}),
       abortSignal: combined,
       prepare: async () => { combined.throwIfAborted(); admit(); return { text: prompt, images: [], transport: "inline", inlineChars: prompt.length, release() {} }; },
       // No retained surface or capabilities are set: normal worker acquisition uses a fresh Temporary Chat.

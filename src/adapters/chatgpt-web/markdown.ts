@@ -217,6 +217,7 @@ export class ChatGptMarkdownBuffer {
   constructor(
     private readonly transform: (markdown: string) => string = markdown => markdown,
     private readonly stabilityMs = 750,
+    private readonly outputFormat: "markdown" | "visible-text" = "markdown",
   ) {
     if (!Number.isFinite(stabilityMs) || stabilityMs < 0) {
       throw new Error("ChatGPT Markdown stability window must be a non-negative finite number");
@@ -293,7 +294,7 @@ export class ChatGptMarkdownBuffer {
     let markdown = this.markdown;
     let lastGroup = this.lastGroup;
     for (const segment of this.latest) {
-      const block = this.transform(chatGptHtmlToMarkdown(segment.html));
+      const block = this.render(segment);
       if (!block) continue;
       const separator = markdown
         ? segment.group !== undefined && segment.group === lastGroup ? "\n" : "\n\n"
@@ -433,7 +434,7 @@ export class ChatGptMarkdownBuffer {
   }
 
   private commit(segment: ChatGptMarkdownSegment): string {
-    const block = this.transform(chatGptHtmlToMarkdown(segment.html));
+    const block = this.render(segment);
     if (!block) return "";
     const separator = this.markdown
       ? segment.group !== undefined && segment.group === this.lastGroup ? "\n" : "\n\n"
@@ -442,5 +443,11 @@ export class ChatGptMarkdownBuffer {
     this.markdown += delta;
     this.lastGroup = segment.group;
     return delta;
+  }
+
+  private render(segment: ChatGptMarkdownSegment): string {
+    return this.outputFormat === "visible-text"
+      ? segment.text
+      : this.transform(chatGptHtmlToMarkdown(segment.html));
   }
 }

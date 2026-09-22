@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { ChatGptMarkdownBuffer, chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
+import { decodeChatCompletion, parseChatCompletion } from "../src/chat-completions/contract";
 
 test("turns observed inline file path formats into Markdown links", () => {
   const cases = [
@@ -63,4 +64,16 @@ test("previewing final Markdown does not commit pending output", () => {
   expect(buffer.preview()).toBe("Final answer.");
   expect(buffer.preview()).toBe("Final answer.");
   expect(buffer.finish()).toEqual({ markdown: "Final answer.", delta: "Final answer." });
+});
+
+test("structured browser output preserves JSON escapes before tool decoding", () => {
+  const input = parseChatCompletion({ model: "chatgpt-web/high", messages: [{ role: "user", content: "fixture" }],
+    tools: [{ type: "function", function: { name: "write", parameters: { type: "object", properties: { content: { type: "string" } }, required: ["content"] } } }] });
+  const content = 'first\nsecond\\n C:\\work\\file "quoted" _[brackets] 漢字';
+  const raw = JSON.stringify({ content: null, tool_calls: [{ name: "write", arguments: { content } }] });
+  const buffer = new ChatGptMarkdownBuffer(undefined, 0, "visible-text");
+  buffer.observe([{ key: "json", tag: "p", html: `<p>${raw}</p>`, text: raw, streamable: false }]);
+  const answer = buffer.finish().markdown;
+  expect(answer).toBe(raw);
+  expect(JSON.parse(decodeChatCompletion(input, answer).tool_calls![0]!.function.arguments)).toEqual({ content });
 });

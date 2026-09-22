@@ -576,6 +576,8 @@ export interface BrowserTurn {
   onCommentary?: (text: string, continuation?: boolean) => void;
   /** Append-only, structurally stable Markdown chunks. */
   onTextDelta: (delta: string) => void;
+  /** Preserve visible JSON text without Markdown presentation escaping. */
+  outputFormat?: "visible-text";
   /** Proven current-turn MCP activity; liveness only, never response content or completion. */
   externalProgress?: ChatGptTurnProgressReader;
   /** Atomically fences browser completion against concurrent MCP work accepted by the broker. */
@@ -3794,7 +3796,7 @@ export class ChatGptBrowserWorker {
         const latency = new ChatGptTurnLatencyDiagnostics(turn.traceId, sentAt);
         const visibleTrace = new ChatGptVisibleTraceTracker();
         const markdownOwnership = new ChatGptMarkdownOwnershipTracker();
-        const markdownBuffer = new ChatGptMarkdownBuffer();
+        const markdownBuffer = new ChatGptMarkdownBuffer(undefined, undefined, turn.outputFormat);
         let progressChars = 0;
         let progressToolEpoch = -1;
         const progressStatuses = new Set<string>();

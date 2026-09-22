@@ -117,3 +117,15 @@ test("DIL response extraction preserves ownership, commentary and completion bou
   expect(noCopy.visibleText).toBe("CODEX WEB GPT READY");
   expect(noCopy.completionActionVisible).toBeFalse();
 });
+
+test("production DOM snapshot preserves structured JSON text inside a rendered code block", async () => {
+  const content = 'line one\nline two\\n C:\\work\\file "quoted" _[brackets] 漢字';
+  const raw = JSON.stringify({ content: null, tool_calls: [{ name: "write", arguments: { content } }] });
+  const escaped = raw.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const response = await snapshot(`<section id="turn"><div class="markdown"><pre><code>${escaped}</code></pre></div>`
+    + '<button data-testid="copy-turn-action-button"></button></section>');
+  const buffer = new ChatGptMarkdownBuffer(undefined, 0, "visible-text");
+  buffer.observe(response.markdownSegments, 0);
+  expect(buffer.finish().markdown).toBe(raw);
+  expect(JSON.parse(buffer.preview())).toEqual(JSON.parse(raw));
+});
