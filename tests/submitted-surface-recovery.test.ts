@@ -173,7 +173,7 @@ test("original Web session mode does not install same-conversation recovery", as
   }
 });
 
-test("rebuilds a submitted tool surface once from complete canonical state", async () => {
+test("keeps a submitted tool surface terminal after acceptance", async () => {
   const socketPath = brokerTestEndpoint(`cgw-submitted-recovery-${process.pid}-${Date.now()}`);
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
@@ -280,12 +280,15 @@ test("rebuilds a submitted tool surface once from complete canonical state", asy
     const finalEvents: AdapterEvent[] = [];
     await adapter.runTurn!(continuation, { headers: new Headers() }, event => finalEvents.push(event));
 
-    expect(browserStarts).toBe(2);
-    expect(new Set(turnTokens).size).toBe(2);
+    expect(browserStarts).toBe(1);
+    expect(new Set(turnTokens).size).toBe(1);
     expect(finalEvents.filter(event => event.type === "tool_call_start")).toEqual([]);
-    expect(finalEvents.filter(event => event.type === "text_delta").map(event => event.text).join(""))
-      .toBe("Recovered final answer.");
-    expect(finalEvents.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+    expect(finalEvents.filter(event => event.type === "text_delta")).toEqual([]);
+    expect(finalEvents.at(-1)).toMatchObject({
+      type: "error",
+      code: "chatgpt_submitted_turn_failed",
+      retryable: false,
+    });
     await expect(callTurnBroker(socketPath, { method: "claim", token: turnTokens[0]! }))
       .rejects.toThrow("already finished");
   } finally {

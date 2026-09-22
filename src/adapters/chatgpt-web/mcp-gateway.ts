@@ -1,4 +1,9 @@
-import { CHATGPT_WEB_AGENT_WAIT_POLL_MS, CHATGPT_WEB_AGENT_WAIT_RULE, CHATGPT_WEB_SYNC_WAIT_RULE } from "./mcp-tool-inventory";
+import {
+  CHATGPT_WEB_AGENT_WAIT_MAX_MS,
+  CHATGPT_WEB_AGENT_WAIT_POLL_MS,
+  CHATGPT_WEB_AGENT_WAIT_RULE,
+  CHATGPT_WEB_SYNC_WAIT_RULE,
+} from "./mcp-tool-inventory";
 
 export const GATEWAY_AGENT_WAIT_TOOL_NAMES = [
   "collaboration__wait_agent",
@@ -20,6 +25,32 @@ export function isGatewayAgentWaitTool(name: string): boolean {
 
 export function gatewayToolDescription(tool: GatewayToolDescriptor, native = true): string {
   return isGatewayAgentWaitTool(tool.name) ? `${tool.description}\n\n${native ? CHATGPT_WEB_AGENT_WAIT_RULE : CHATGPT_WEB_SYNC_WAIT_RULE}` : tool.description;
+}
+
+export function gatewayToolParameters(tool: GatewayToolDescriptor, native = true): Record<string, unknown> {
+  if (!isGatewayAgentWaitTool(tool.name)) return { type: "object", additionalProperties: true };
+  const timeout = native ? {
+    type: "number",
+    minimum: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
+    maximum: CHATGPT_WEB_AGENT_WAIT_MAX_MS,
+    multipleOf: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
+    description: "Logical wait deadline. Enhanced executes it as transport-safe 30000 ms native slices.",
+  } : {
+    type: "number",
+    const: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
+    minimum: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
+    maximum: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
+    description: "Required transport-safe polling interval. Use exactly 30000; timeout means pending.",
+  };
+  return {
+    type: "object",
+    properties: {
+      targets: { type: "array", items: { type: "string" } },
+      timeout_ms: timeout,
+    },
+    required: ["targets", "timeout_ms"],
+    additionalProperties: false,
+  };
 }
 
 export function assertGatewayToolArguments(name: string, args: Record<string, unknown>): void {

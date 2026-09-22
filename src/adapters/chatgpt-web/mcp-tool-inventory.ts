@@ -11,8 +11,9 @@ export function execGateway(environment: ChatGptTurnEnvironment): CodexTool | un
 }
 
 export const CHATGPT_WEB_AGENT_WAIT_POLL_MS = 30_000;
+export const CHATGPT_WEB_AGENT_WAIT_MAX_MS = 3_600_000;
 export const CHATGPT_WEB_SYNC_WAIT_RULE = "Use timeout_ms=30000 for wait_agent. A timeout means pending; repeat the same target ids until a native terminal result is returned.";
-export const CHATGPT_WEB_AGENT_WAIT_RULE = "Native2 wait_agent: use structured codex_tool_call with timeout_ms=30000. It returns an asynchronous wait_id, not an agent status. Retrieve that same operation with codex_tool_inventory query=next_query and the same turn_token until operation_status=ready; inspect result for the original native outcome. Do not start another wait while a receipt is pending, busy-poll, or submit final before retrieving the result. A native timeout means pending, not failed or completed; only then start the next wait for the same target ids if needed. Do not embed wait_agent in raw exec.";
+export const CHATGPT_WEB_AGENT_WAIT_RULE = "Native2 wait_agent accepts a logical timeout_ms from 30000 to 3600000 in 30000 ms steps. It returns an asynchronous wait_id, not an agent status. Retrieve that same operation with codex_tool_inventory query=next_query and the same turn_token until operation_status=ready; inspect result for the original native outcome. Enhanced keeps the MCP channel responsive by running 30000 ms native wait slices internally until the agent reaches a terminal state or the logical timeout expires. Do not start another wait while a receipt is pending, busy-poll, or embed wait_agent in raw exec.";
 export const CONNECTOR_LONG_POLL_SLICE_MS = 30_000;
 
 const wireName = (tool: CodexTool): string => namespacedToolName(tool.namespace, tool.name);
@@ -44,21 +45,30 @@ export function browserToolDescription(tool: CodexTool, native = true): string {
   return tool.description;
 }
 
-export function browserToolParameters(tool: CodexTool): Record<string, unknown> {
+export function browserToolParameters(tool: CodexTool, logicalAgentWait = false): Record<string, unknown> {
   if (!isAgentWaitTool(tool)) return tool.parameters;
   const parameters = structuredClone(tool.parameters);
   const properties = parameters.properties && typeof parameters.properties === "object" && !Array.isArray(parameters.properties)
     ? parameters.properties as Record<string, unknown> : {};
   const timeout = properties.timeout_ms && typeof properties.timeout_ms === "object" && !Array.isArray(properties.timeout_ms)
     ? properties.timeout_ms as Record<string, unknown> : {};
-  const { default: _ignoredDefault, ...timeoutSchema } = timeout;
+  const {
+    default: _ignoredDefault, const: _ignoredConst, enum: _ignoredEnum,
+    minimum: _ignoredMinimum, maximum: _ignoredMaximum, multipleOf: _ignoredMultipleOf,
+    ...timeoutSchema
+  } = timeout;
   const required = Array.isArray(parameters.required)
     ? parameters.required.filter((value): value is string => typeof value === "string") : [];
   return {
     ...parameters,
     properties: {
       ...properties,
-      timeout_ms: {
+      timeout_ms: logicalAgentWait ? {
+        ...timeoutSchema, type: "number",
+        minimum: CHATGPT_WEB_AGENT_WAIT_POLL_MS, maximum: CHATGPT_WEB_AGENT_WAIT_MAX_MS,
+        multipleOf: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
+        description: "Logical wait deadline. Enhanced executes it as transport-safe 30000 ms native slices.",
+      } : {
         ...timeoutSchema, type: "number", const: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
         minimum: CHATGPT_WEB_AGENT_WAIT_POLL_MS, maximum: CHATGPT_WEB_AGENT_WAIT_POLL_MS,
         description: "Required transport-safe polling interval. Use exactly 30000; timeout means pending, so repeat the same targets until completion.",
@@ -66,6 +76,16 @@ export function browserToolParameters(tool: CodexTool): Record<string, unknown> 
     },
     required: [...new Set([...required, "timeout_ms"])],
   };
+}
+
+export function agentWaitLogicalTimeoutMs(args: Record<string, unknown>): number {
+  const timeout = args.timeout_ms;
+  if (!Number.isSafeInteger(timeout) || (timeout as number) < CHATGPT_WEB_AGENT_WAIT_POLL_MS
+    || (timeout as number) > CHATGPT_WEB_AGENT_WAIT_MAX_MS
+    || (timeout as number) % CHATGPT_WEB_AGENT_WAIT_POLL_MS !== 0) {
+    throw new Error("ChatGPT Web wait_agent timeout_ms must be a 30000 ms step between 30000 and 3600000");
+  }
+  return timeout as number;
 }
 
 export function assertBrowserToolArguments(tool: CodexTool, args: Record<string, unknown>): void {
@@ -77,7 +97,7 @@ export function assertBrowserToolArguments(tool: CodexTool, args: Record<string,
 
 export function boundedConnectorToolArguments(tool: CodexTool | string, args: Record<string, unknown>): Record<string, unknown> {
   const name = typeof tool === "string" ? tool : wireName(tool);
-  if (!["wait", "write_stdin", "multi_agent_v1__wait_agent", "collaboration__wait_agent"].includes(name)) return args;
+  if (!["wait", "write_stdin", "multi_agent_v1__wait_agent", "multi_agent_v2__wait_agent", "collaboration__wait_agent"].includes(name)) return args;
   const key = typeof args.timeout_ms === "number" ? "timeout_ms"
     : typeof args.yield_time_ms === "number" ? "yield_time_ms" : undefined;
   return !key || (args[key] as number) <= CONNECTOR_LONG_POLL_SLICE_MS

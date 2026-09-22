@@ -7,6 +7,7 @@ import {
   assertGatewayToolArguments,
   gatewayToolCatalogPage,
   gatewayToolCatalogProgram,
+  gatewayToolParameters,
 } from "../src/adapters/chatgpt-web/mcp-gateway";
 
 async function execute(program: string, names: string[], calls: Array<{ name: string; input: unknown }>) {
@@ -59,6 +60,17 @@ test("Native2 raw exec cannot bypass asynchronous wait receipts", async () => {
     "await tools.multi_agent_v2__wait_agent({ targets: [], timeout_ms: 30000 });", "exec", true,
   ), ["multi_agent_v2__wait_agent"], calls)).rejects.toThrow("codex_tool_call");
   expect(calls).toEqual([]);
+});
+
+test("native gateway wait inventory exposes the logical timeout contract", () => {
+  expect(gatewayToolParameters({
+    name: "multi_agent_v2__wait_agent", description: "wait",
+  }, true)).toMatchObject({
+    properties: {
+      timeout_ms: { minimum: 30_000, maximum: 3_600_000, multipleOf: 30_000 },
+    },
+    required: ["targets", "timeout_ms"],
+  });
 });
 
 test("raw exec proxy blocks recursion and enforces wait_agent polling without hiding other tools", async () => {

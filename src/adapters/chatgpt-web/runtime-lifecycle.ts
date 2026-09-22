@@ -151,7 +151,9 @@ export function chatGptSurfaceRecoveryDecision(
   if (session.runtime.compactionRequested) return reject("compaction_requested");
   if (signal?.aborted) return reject("aborted");
   if (session.runtime.mode !== "tools") return reject("read_only");
-  if (session.runtime.submission?.phase === "send_activated") return reject("submission_activated");
+  if (session.runtime.submission && session.runtime.submission.phase !== "prepared") {
+    return reject("submission_activated");
+  }
   const surfaceFailure = error instanceof ChatGptWebAdapterError
     && (error.code === "chatgpt_surface_changed"
       || error.code === "chatgpt_connector_unavailable"

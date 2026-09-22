@@ -2582,7 +2582,7 @@ describe("ChatGPT outer-native harness v4", () => {
           description: expect.stringContaining("asynchronous wait_id"),
           parameters: {
             properties: {
-              timeout_ms: { const: 30_000, minimum: 30_000, maximum: 30_000 },
+              timeout_ms: { minimum: 30_000, maximum: 3_600_000, multipleOf: 30_000 },
             },
             required: ["targets", "timeout_ms"],
           },
@@ -2592,10 +2592,10 @@ describe("ChatGPT outer-native harness v4", () => {
       const rejectedLongWait = await call("codex_tool_call", {
         turn_token: token,
         wire_name: "multi_agent_v1__wait_agent",
-        arguments: { targets: ["agent_test"], timeout_ms: 3_600_000 },
+        arguments: { targets: ["agent_test"], timeout_ms: 3_600_001 },
       });
       expect(rejectedLongWait.isError).toBe(true);
-      expect(JSON.stringify(rejectedLongWait.content)).toContain("requires timeout_ms=30000");
+      expect(JSON.stringify(rejectedLongWait.content)).toContain("timeout_ms");
 
       const agentWait = call("codex_tool_call", {
         turn_token: token,

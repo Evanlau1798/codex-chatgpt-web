@@ -21,6 +21,7 @@ import {
   gatewayToolCatalogProgram,
   gatewayToolDescription,
   gatewayToolNameIsValid,
+  gatewayToolParameters,
   isGatewayAgentWaitTool,
 } from "./mcp-gateway";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
@@ -397,7 +398,7 @@ export async function runChatGptMcpServer(options: {
           namespace: tool.namespace ?? null,
           description: browserToolDescription(tool, contract === "native"),
           kind: tool.freeform ? "freeform" : tool.toolSearch ? "tool_search" : "function",
-          ...(include_schema ? { parameters: browserToolParameters(tool) } : {}),
+          ...(include_schema ? { parameters: browserToolParameters(tool, contract === "native") } : {}),
         }));
         const gateway = execGateway(bound);
         if (!gateway) return result({
@@ -414,7 +415,7 @@ export async function runChatGptMcpServer(options: {
           const nestedPage = catalog.tools.map(tool => ({
             wire_name: tool.name, name: tool.name, namespace: null,
             description: gatewayToolDescription(tool, contract === "native"), kind: "gateway",
-            ...(include_schema ? { parameters: { type: "object", additionalProperties: true } } : {}),
+            ...(include_schema ? { parameters: gatewayToolParameters(tool, contract === "native") } : {}),
           }));
           const tools = [...directPage, ...nestedPage];
           const total = matches.length + catalog.total;
@@ -477,7 +478,7 @@ export async function runChatGptMcpServer(options: {
             throw new Error(`Codex nested tool ${wire_name} accepts either arguments or freeform input, not both`);
           }
           if (isGatewayAgentWaitTool(wire_name) && input !== undefined) {
-            throw new Error(`ChatGPT Web wait_agent requires structured arguments and timeout_ms=${CHATGPT_WEB_AGENT_WAIT_POLL_MS}`);
+            throw new Error("ChatGPT Web wait_agent requires structured arguments and a logical timeout_ms from 30000 to 3600000 in 30000 ms steps");
           }
           const invocationArguments = args ?? {};
           if (wire_name === "exec_command" || wire_name === "shell_command") {

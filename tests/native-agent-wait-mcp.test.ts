@@ -32,8 +32,9 @@ test("Native2 wait releases the serial MCP channel before the child finishes", a
   try {
     await client.connect(transport());
     const waiting = call("codex_tool_call", { turn_token: parent, wire_name: "multi_agent_v2__wait_agent",
-      arguments: { targets: ["same-child"], timeout_ms: 30_000 } });
+      arguments: { targets: ["same-child"], timeout_ms: 60_000 } });
     const [request] = await broker.nextToolBatch(parent, AbortSignal.timeout(5_000));
+    expect(request!.arguments).toEqual({ targets: ["same-child"], timeout_ms: 30_000 });
     // No native result is released until both receipt and child output have passed this serial channel.
     const receipt = await Promise.race([waiting.then(value => value.structuredContent),
       new Promise(resolve => { timer = setTimeout(() => resolve({ operation_status: "blocked" }), 1_000); })]);
@@ -55,12 +56,21 @@ test("Native2 wait releases the serial MCP channel before the child finishes", a
       structuredContent: { timed_out: true, status: {} } };
     broker.completeTool(parent, request!.callId, result);
     expect(broker.beginCompletionFence(parent)).toBeUndefined();
+    const [retryRequest] = await broker.nextToolBatch(parent, AbortSignal.timeout(5_000));
+    expect(retryRequest!.arguments).toEqual(request!.arguments);
+    const stillPending = await call("codex_tool_inventory", { turn_token: parent, query: pending.next_query });
+    expect(stillPending.structuredContent).toEqual({
+      operation_status: "pending", wait_id: pending.wait_id, next_query: pending.next_query,
+    });
+    const terminal = { content: [{ type: "text", text: "same child completed" }],
+      structuredContent: { timed_out: false, status: { "same-child": { completed: "Final evidence" } } } };
+    broker.completeTool(parent, retryRequest!.callId, terminal);
     await client.close();
     client = new Client({ name: "async-wait-reconnected", version: "1.0.0" });
     await client.connect(transport());
     const read = () => call("codex_tool_inventory", { turn_token: parent, query: pending.next_query });
-    expect((await read()).structuredContent).toEqual({ operation_status: "ready", wait_id: pending.wait_id, result });
-    expect((await read()).structuredContent).toEqual({ operation_status: "ready", wait_id: pending.wait_id, result });
+    expect((await read()).structuredContent).toEqual({ operation_status: "ready", wait_id: pending.wait_id, result: terminal });
+    expect((await read()).structuredContent).toEqual({ operation_status: "ready", wait_id: pending.wait_id, result: terminal });
     expect(broker.beginCompletionFence(parent)).toBeNumber();
     const nextWait = call("codex_tool_call", { turn_token: parent, wire_name: "multi_agent_v2__wait_agent",
       arguments: { targets: ["same-child"], timeout_ms: 30_000 } });
@@ -68,8 +78,6 @@ test("Native2 wait releases the serial MCP channel before the child finishes", a
     expect(nextRequest!.arguments).toEqual(request!.arguments);
     const nextReceipt = (await nextWait).structuredContent as { wait_id: string; next_query: string };
     expect(nextReceipt.wait_id).not.toBe(pending.wait_id);
-    const terminal = { content: [{ type: "text", text: "same child completed" }],
-      structuredContent: { timed_out: false, status: { "same-child": { completed: "Final evidence" } } } };
     broker.completeTool(parent, nextRequest!.callId, terminal);
     expect((await call("codex_tool_inventory", { turn_token: parent, query: nextReceipt.next_query })).structuredContent)
       .toMatchObject({ operation_status: "ready", result: terminal });
@@ -102,14 +110,14 @@ test.each(["multi_agent_v1", "multi_agent_v2", "collaboration"].flatMap(namespac
     });
     await callTurnBroker(socket, { method: "activity_complete", token, activityId: "activity_1234567890123456" });
     const wireName = `${namespace}__wait_agent`;
-    const args = { targets: ["child"], timeout_ms: 30_000 };
+    const args = { targets: ["child"], timeout_ms: 180_000 };
     const start = (arguments_ = args) => callTurnBroker<{ wait_id: string }>(socket, {
       method: "start_agent_wait", bindingId, wireName, arguments: arguments_,
     });
     const receipt = await start();
     expect(await start()).toEqual(receipt);
     await expect(start({ ...args, targets: ["other"] })).rejects.toThrow("existing agent wait");
-    await expect(start({ ...args, timeout_ms: 180_000 })).rejects.toThrow("timeout_ms=30000");
+    await expect(start({ ...args, timeout_ms: 30_001 })).rejects.toThrow("timeout_ms");
     await expect(callTurnBroker(socket, { method: "read_agent_wait", token: "turn_wrong", waitId: receipt.wait_id }))
       .rejects.toThrow("invalid");
     expect(broker.beginCompletionFence(token)).toBeUndefined();
@@ -124,8 +132,8 @@ test.each(["multi_agent_v1", "multi_agent_v2", "collaboration"].flatMap(namespac
         { [wireName]: async (input: unknown) => { calls.push(input); return { native: true }; } },
         [{ name: wireName }], () => {},
       );
-      expect(calls).toEqual([args]);
-    } else expect(request.arguments).toEqual(args);
+      expect(calls).toEqual([{ ...args, timeout_ms: 30_000 }]);
+    } else expect(request.arguments).toEqual({ ...args, timeout_ms: 30_000 });
     const result = { content: [{ type: "text", text: "native error" }], isError: true,
       structuredContent: { untouched: "metadata" }, _meta: { evidence: 42 } };
     broker.completeTool(token, request.callId, result);

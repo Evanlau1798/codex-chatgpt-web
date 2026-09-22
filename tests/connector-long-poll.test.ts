@@ -18,6 +18,10 @@ describe("connector long-poll slicing", () => {
       timeout_ms: 30_000,
       marker: "keep",
     });
+    expect(boundedConnectorToolArguments(tool("multi_agent_v2", "wait_agent"), args)).toEqual({
+      timeout_ms: 30_000,
+      marker: "keep",
+    });
     expect(boundedConnectorToolArguments(tool("collaboration", "send_message"), args)).toBe(args);
   });
 

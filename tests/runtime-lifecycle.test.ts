@@ -370,6 +370,31 @@ test("same-surface recovery requires complete canonical state and no pending eff
     .toMatchObject({ eligible: false, reason: "tool_results_pending" });
 });
 
+test.each([
+  ["surface changed", chatGptWebSurfaceError("surface changed", false)],
+  ["completion evidence missing", chatGptCompletionEvidenceError("completion evidence disappeared", false)],
+  ["upstream server error", new ChatGptWebAdapterError("upstream failed", {
+    status: 502,
+    errorType: "server_error",
+    code: "upstream_server_error",
+    retryable: true,
+    retireSession: true,
+  })],
+  ["stall timeout", new StallTimeoutError("stalled", 300_000, 1234)],
+])("tool surface recovery cannot rebuild an accepted turn after %s", (_label, failure) => {
+  const tools = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_accepted"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    submission: { phase: "accepted" },
+    cancel: () => {},
+  });
+  expect(chatGptSurfaceRecoveryDecision(failure, tools, completeRequest(), 0))
+    .toMatchObject({ eligible: false, reason: "submission_activated" });
+});
+
 test("same-surface recovery rejects partial final output, aborts, and unrelated failures", () => {
   const text = new ChatGptTextFeed();
   const session = new ChatGptTurnSession({
