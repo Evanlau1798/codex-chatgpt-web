@@ -62,6 +62,7 @@ export function createChatGptWebAdapter(
     worker?: ChatGptRuntimeWorker;
     zeroRiskManualControl?: ChatGptZeroRiskManualControl;
     accountSafety?: ChatGptAccountSafety;
+    environmentStore?: ChatGptThreadEnvironmentStore;
   } = {},
 ): ProviderAdapter {
   const worker = dependencies.worker ?? ChatGptBrowserWorker.forProvider(provider);
@@ -77,7 +78,7 @@ export function createChatGptWebAdapter(
     configuredCapabilities,
     executionNamespace,
   } = runtimeConfig;
-  const environmentStore = new ChatGptThreadEnvironmentStore(provider.chatgptWeb?.threadEnvironmentStatePath ? resolve(expandUserPath(provider.chatgptWeb.threadEnvironmentStatePath)) : undefined);
+  const environmentStore = dependencies.environmentStore ?? new ChatGptThreadEnvironmentStore(provider.chatgptWeb?.threadEnvironmentStatePath ? resolve(expandUserPath(provider.chatgptWeb.threadEnvironmentStatePath)) : undefined);
   const lunaCheckpointStore = new ChatGptLunaCheckpointStore(provider.chatgptWeb?.lunaCheckpointStatePath ? resolve(expandUserPath(provider.chatgptWeb.lunaCheckpointStatePath)) : undefined);
   const automaticStartRuntime = createChatGptRuntimeStarter({
     provider,

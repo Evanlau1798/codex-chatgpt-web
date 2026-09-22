@@ -8,11 +8,11 @@ import { ChatGptWebAdapterError } from "../adapters/chatgpt-web/adapter-error";
 import { ChatGptPersistentBrowserStateError } from "../browser-mutation";
 import { chatGptTurnSessions } from "../adapters/chatgpt-web/turn-execution";
 import { chatGptAccountSafety, ChatGptAccountSafety, CHATGPT_ACCOUNT_SAFETY_DRAIN_PROMPT, DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT } from "../adapters/chatgpt-web/account-safety";
-import { boundedChatText, ChatCompletionError, compileChatCompletion, wellFormedText, type ChatCompletionInput } from "./contract";
+import { boundedChatText, ChatCompletionError, compileChatCompletion, wellFormedText, type ChatCompletionInput, type ChatCompletionResult } from "./contract";
 import type { CodexProviderConfig } from "../types";
 
 export type ChatCompletionExecutor = (input: ChatCompletionInput, config: AppConfig, signal: AbortSignal,
-  onText: (delta: string) => void) => Promise<{ answer: string; limited?: boolean }>;
+  onText: (delta: string) => void) => Promise<{ answer: string; limited?: boolean; result?: ChatCompletionResult }>;
 export interface ChatCompletionRuntimeDependencies {
   worker?: (provider: CodexProviderConfig) => Pick<ChatGptBrowserWorker, "run">;
   safety?: ChatGptAccountSafety;

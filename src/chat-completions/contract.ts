@@ -259,3 +259,27 @@ export function decodeChatCompletion(input: ChatCompletionInput, answer: string,
   if (count > input.maxTokens) return { content: boundedChatText(content ?? "", input.maxTokens), finishReason: "length" };
   return { content, ...(calls.length ? { tool_calls: calls } : {}), finishReason: calls.length ? "tool_calls" : "stop" };
 }
+
+/** Validate broker calls at the public API boundary without replacing their continuation IDs. */
+export function decodeNativeChatCompletion(input: ChatCompletionInput, content: string | null,
+  calls: ChatToolCall[]): ChatCompletionResult {
+  const protocol = (): never => { throw new ChatCompletionError("The completed Web turn did not satisfy the function-call contract", 502, "model_protocol_error"); };
+  if (content !== null && (!wellFormedText(content) || content.length > MAX_TEXT)) protocol();
+  if (calls.length > 128 || (calls.length && (!input.tools.length || input.toolChoice === "none"))) protocol();
+  const ids = new Set<string>();
+  for (const call of calls) {
+    if (!ID.test(call.id) || ids.has(call.id) || call.type !== "function" || !NAME.test(call.function.name)
+      || !wellFormedText(call.function.arguments) || call.function.arguments.length > MAX_TEXT) protocol();
+    ids.add(call.id);
+    let args: unknown;
+    try { args = JSON.parse(call.function.arguments); } catch { protocol(); }
+    if (!args || typeof args !== "object" || Array.isArray(args) || !validJsonText(args)
+      || input.validators.get(call.function.name)?.(args) !== true) protocol();
+  }
+  if ((!input.parallel && calls.length > 1) || (input.toolChoice === "required" && !calls.length)
+    || (typeof input.toolChoice === "object" && (calls.length !== 1 || calls[0]!.function.name !== input.toolChoice.name))) protocol();
+  if (!calls.length && content === null) protocol();
+  const count = chatOutputTokens(content ?? "") + (calls.length ? chatOutputTokens(JSON.stringify(calls)) : 0);
+  if (count > input.maxTokens) return { content: boundedChatText(content ?? "", input.maxTokens), finishReason: "length" };
+  return { content, ...(calls.length ? { tool_calls: calls } : {}), finishReason: calls.length ? "tool_calls" : "stop" };
+}

@@ -5,6 +5,7 @@ export interface BrokerToolRequest {
   callId: string;
   wireName: string;
   freeform: boolean;
+  invokeDeadlineAt?: number;
   arguments?: Record<string, unknown>;
   input?: string;
 }
@@ -40,6 +41,7 @@ export interface BrokerRequest {
   freeform?: boolean;
   arguments?: Record<string, unknown>;
   input?: string;
+  invokeDeadlineAt?: number;
   handoffId?: string;
   summary?: string;
   index?: number;

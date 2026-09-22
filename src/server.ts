@@ -1,11 +1,13 @@
 import { chatCompletionApiKey, isChatCompletionKey, chatCompletionRequestGuard, chatCompletionErrorResponse, chatCompletionModels, chatCompletionRequest } from "./chat-completions/http";
 import { activeChatCompletionTurns } from "./chat-completions/runtime";
+import { NativeChatCompletionBridge } from "./chat-completions/native-bridge";
 import { ChatCompletionError } from "./chat-completions/contract";
-import { chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
+import { chatGptWebExecutionNamespace, chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT, chatGptAccountSafety } from "./adapters/chatgpt-web/account-safety";
 import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
-import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
+import { chatGptTurnExecutionKey, chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
+import { ChatGptThreadEnvironmentStore } from "./adapters/chatgpt-web/thread-environment";
 import { handleClaudeSteeringHook } from "./messages/steering-hook";
 import { handleTurnCancellation } from "./server-turn-cancellation";
 import {
@@ -47,6 +49,16 @@ import type { ChatGptWebAdapterFactory, ResponseRequestOptions, ServerDependenci
 
 export { HttpTurnCounter, modelsRequest, nativeSearchRequest };
 export type { ResponseRequestOptions } from "./server-dependencies";
+
+export function nativeChatToolCallsLive(session: {
+  isActive(): boolean;
+  outstanding(): Array<{ callId: string; invokeDeadlineAt?: number }>;
+} | undefined, ids: string[], now = Date.now()): boolean {
+  if (!session?.isActive()) return false;
+  const outstanding = session.outstanding();
+  return ids.every(id => outstanding.some(call => call.callId === id
+    && typeof call.invokeDeadlineAt === "number" && now < call.invokeDeadlineAt));
+}
 
 export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppConfig): ChatGptWebModelRoute {
   const route = requireChatGptWebModelRoute(parsed.modelId, config);
@@ -300,6 +312,26 @@ export function startServer(
     throw new Error("DEV harness configuration cannot start a Responses listener");
   }
   const generalApiKey = chatCompletionApiKey(config);
+  // General API turns carry a server-generated read-only environment on every request. Keep their
+  // short-lived identities out of the persistent native Codex thread-authority store.
+  const apiEnvironmentStore = new ChatGptThreadEnvironmentStore();
+  const nativeChatExecutionKey = (body: Record<string, unknown>, current: AppConfig): string => {
+    const parsed = parseRequest(body);
+    routeChatGptWebRequest(parsed, current);
+    return `${chatGptWebExecutionNamespace(providerConfig(current))}:${chatGptTurnExecutionKey(parsed)}`;
+  };
+  const nativeChatBridge = config.mode === "full" && config.useEnhancedWebSessionMode && !dependencies.chatCompletionExecutor
+    ? new NativeChatCompletionBridge((req, current) => responseRequest(req, current,
+      dependencies.adapterFactory ?? (provider => createChatGptWebAdapter(provider, { environmentStore: apiEnvironmentStore })),
+      { rememberState: false }),
+      Date.now, {
+        isLive: (body, ids, current) => {
+          const session = chatGptTurnSessions.find(nativeChatExecutionKey(body, current));
+          return nativeChatToolCallsLive(session, ids);
+        },
+        retire: async (body, current) => { await chatGptTurnSessions.retireAndWait(nativeChatExecutionKey(body, current)); },
+      })
+    : undefined;
   const startedAt = Date.now();
   const turnBroker = config.mode === "full" ? TurnBroker.forSocket(config.brokerSocketPath) : undefined;
   if (config.mode === "full") {
@@ -335,7 +367,8 @@ export function startServer(
       if (isChatCompletionKey(req, generalApiKey)) {
         if (draining) return chatCompletionErrorResponse(new ChatCompletionError("Service is draining", 503, "service_draining"));
         if (url.pathname === "/v1/models") return chatCompletionModels(config);
-        return httpTurns.track(signal => chatCompletionRequest(req, config, signal, dependencies.chatCompletionExecutor), req.signal, process.platform, "/v1/chat/completions");
+        return httpTurns.track(signal => chatCompletionRequest(req, config, signal, dependencies.chatCompletionExecutor,
+          nativeChatBridge), req.signal, process.platform, "/v1/chat/completions");
       }
       const securityRejection = enforceLocalDataRequestSecurity(req, url.pathname, server.port!); if (securityRejection) return securityRejection;
       if (req.method === "GET" && url.pathname === "/healthz") {

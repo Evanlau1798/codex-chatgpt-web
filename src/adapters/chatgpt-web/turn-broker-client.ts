@@ -30,7 +30,9 @@ export async function callTurnBroker<T>(
   const settleOnResponseFrame = timeoutMs === null;
   const wireRequest = request.method === "claim" && request.activityId === undefined
     ? { ...request, activityId: opaqueId("activity") }
-    : request;
+    : request.method === "invoke" && timeoutMs !== null
+      ? { ...request, invokeDeadlineAt: Date.now() + timeoutMs }
+      : request;
   return new Promise<T>((resolveCall, rejectCall) => {
     const socket = createConnection(socketPath);
     let buffered = "";

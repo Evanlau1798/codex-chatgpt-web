@@ -3,6 +3,7 @@ import type { AppConfig } from "../config";
 import { ChatGptWebAdapterError } from "../adapters/chatgpt-web/adapter-error";
 import { parseChatCompletion, decodeChatCompletion, ChatCompletionError, type ChatCompletionInput } from "./contract";
 import { chatCompletionRoutes, createChatCompletionExecutor, prepareChatCompletion, requireChatCompletionAvailability, type ChatCompletionExecutor } from "./runtime";
+import { NativeChatCompletionBridge } from "./native-bridge";
 
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]", "::1", "::ffff:127.0.0.1"]);
 const ROUTES = new Set(["/v1/models", "/v1/chat/completions"]);
@@ -114,15 +115,21 @@ export function chatCompletionModels(config: AppConfig): Response {
 }
 
 export async function chatCompletionRequest(req: Request, config: AppConfig, signal: AbortSignal,
-  execute: ChatCompletionExecutor = createChatCompletionExecutor()): Promise<Response> {
+  execute: ChatCompletionExecutor = createChatCompletionExecutor(), nativeBridge?: NativeChatCompletionBridge): Promise<Response> {
   let input: ChatCompletionInput;
-  try { input = parseChatCompletion(await readBody(req, AbortSignal.any([signal, AbortSignal.timeout(30_000)]))); prepareChatCompletion(input, config); requireChatCompletionAvailability(config); signal.throwIfAborted(); }
+  try { input = parseChatCompletion(await readBody(req, AbortSignal.any([signal, AbortSignal.timeout(30_000)]))); prepareChatCompletion(input, config);
+    if (nativeBridge?.isContinuation(input) && (input.tools.length === 0 || input.toolChoice === "none"))
+      throw new ChatCompletionError("Tool continuation requires the original function tools", 409, "tool_continuation_conflict");
+    if (!nativeBridge?.isContinuation(input)) requireChatCompletionAvailability(config); signal.throwIfAborted(); }
   catch (error) { return chatCompletionErrorResponse(error); }
+  const run: ChatCompletionExecutor = nativeBridge && input.tools.length > 0 && input.toolChoice !== "none"
+    ? (value, settings, abort, onText) => nativeBridge.execute(value, settings, abort, onText)
+    : execute;
   const identity = { id: `chatcmpl_${randomUUID().replaceAll("-", "")}`, created: Math.floor(Date.now() / 1000), model: input.model };
   if (!input.stream) {
     try {
-      const output = await execute(input, config, signal, () => {}); signal.throwIfAborted();
-      const result = decodeChatCompletion(input, output.answer, output.limited);
+      const output = await run(input, config, signal, () => {}); signal.throwIfAborted();
+      const result = output.result ?? decodeChatCompletion(input, output.answer, output.limited);
       return Response.json({ ...identity, object: "chat.completion", choices: [{ index: 0,
         message: { role: "assistant", content: result.content, ...(result.tool_calls ? { tool_calls: result.tool_calls } : {}) },
         finish_reason: result.finishReason }] }, { headers: { "cache-control": "no-store" } });
@@ -152,12 +159,12 @@ export async function chatCompletionRequest(req: Request, config: AppConfig, sig
         let emitted = "";
         try {
           chunk({ role: "assistant", content: "" });
-          const output = await execute(input, config, combined, delta => {
+          const output = await run(input, config, combined, delta => {
             if (input.tools.length && input.toolChoice !== "none") return;
             combined.throwIfAborted(); emitted += delta; chunk({ content: delta });
           });
           combined.throwIfAborted();
-          const result = decodeChatCompletion(input, output.answer, output.limited);
+          const result = output.result ?? decodeChatCompletion(input, output.answer, output.limited);
           const finalText = result.content ?? "";
           if (!finalText.startsWith(emitted)) throw new ChatCompletionError("Model output changed after streaming began", 502, "model_output_changed");
           if (finalText.length > emitted.length) chunk({ content: finalText.slice(emitted.length) });

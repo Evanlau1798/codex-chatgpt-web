@@ -9,6 +9,7 @@ import { createChatCompletionExecutor, activeChatCompletionTurns } from "../src/
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptMarkdownBuffer } from "../src/adapters/chatgpt-web/markdown";
 import { ChatCompletionError } from "../src/chat-completions/contract";
+import { runPiNativeBrokerProbe } from "./chat-completions-pi-native";
 
 /** Real unmodified pi CLI, production HTTP/compiler/output/runtime with a scripted model worker.
  * Offline protocol/integration proof, not logged-in ChatGPT inference or Windows release acceptance.
@@ -467,6 +468,7 @@ async function main() {
       if (!cancellationObserved || activeChatCompletionTurns() !== 0) throw new Error("pi cancellation did not settle the original runtime");
       results.push({ case: "rpc-cancel", status: "PASS", cancellationObserved, activeBrowserTurns: activeChatCompletionTurns() });
     } finally { if (cancelTimer) clearTimeout(cancelTimer); child.stdin.end(); child.kill(); await child.exited; await stdout; await stderr; }
+    results.push(await runPiNativeBrokerProbe({ temporary, agentDir, safety, runPrint }));
     report.status = "PASS";
   } finally {
     await server.stop(true);

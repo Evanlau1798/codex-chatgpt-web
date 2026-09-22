@@ -219,6 +219,7 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
     callId,
     wireName,
     freeform: request.freeform === true,
+    ...(Number.isFinite(request.invokeDeadlineAt) ? { invokeDeadlineAt: request.invokeDeadlineAt } : {}),
     ...(request.freeform === true ? { input: request.input ?? "" } : { arguments: request.arguments ?? {} }),
   };
   return new Promise<BrokerToolResult>((resolve, reject) => {
