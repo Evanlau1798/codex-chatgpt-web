@@ -10,19 +10,28 @@ export class ChatGptCandidateAttachmentBudget {
   private prefix = 0;
   private markers: number;
   private readonly completed = new Set<string>();
+  private directEditInFlight = false;
 
   constructor(readonly plan: ChatGptPromptInsertionPlan,
     private readonly now: () => number = () => performance.now(), readonly stallMs = 20_000) {
-    // One native edit has its own existing 20s cap. Keep setup/verification headroom,
-    // without extending the former 60/90s limit or budgeting thousands of marker edits.
+    // Playwright's edit timeout may not interrupt synchronous renderer work. Keep the finite
+    // attachment limit without budgeting thousands of marker edits.
     this.timeoutMs = plan.strategy === "guarded-chunked" ? 60_000 : 90_000;
     this.started = now();
     this.markers = plan.strategy === "guarded-chunked" ? plan.markdownDelimiterCount : 0;
   }
 
   observe(snapshot: ChatGptPromptInsertionSnapshot): void {
+    if (snapshot.event === "failed" && snapshot.phase === "insert") this.directEditInFlight = false;
     if (snapshot.event === "summary" || snapshot.event === "failed") return;
     this.lastProgress ??= this.now();
+    if (this.plan.strategy !== "guarded-chunked" && snapshot.phase === "insert") {
+      if (snapshot.event === "edit_started") this.directEditInFlight = true;
+      if (snapshot.event === "edit_settled") {
+        this.directEditInFlight = false;
+        this.lastProgress = this.now(); // The native transaction settled; exact readback follows.
+      }
+    }
     let progress = false;
     if (snapshot.verifiedUtf16Units > this.prefix) {
       this.prefix = snapshot.verifiedUtf16Units; progress = true;
@@ -41,7 +50,8 @@ export class ChatGptCandidateAttachmentBudget {
   remainingMs(): number {
     const left = this.timeoutMs - Math.max(0, this.now() - this.started);
     if (left <= 0) return 0;
-    if (this.lastProgress === undefined) return left; // Connector/setup is not editor progress.
+    // The renderer cannot report verified progress while a single direct native edit is running.
+    if (this.lastProgress === undefined || this.directEditInFlight) return left;
     const idle = this.stallMs - Math.max(0, this.now() - this.lastProgress);
     if (idle <= 0) throw new ChatGptWebAdapterError("ChatGPT prompt attachment made no verified progress", {
       status: 502, errorType: "server_error", code: "chatgpt_prompt_attachment_stalled",

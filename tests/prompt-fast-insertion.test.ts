@@ -117,11 +117,11 @@ test("REG-04: uses one exact direct edit for the short generated structured comp
   expect(editor.commands).toEqual(["insertText"]);
 });
 
-test("inserts the incident-sized structured prompt without an oversized native text edit", async () => {
+test("inserts the incident-sized multiline structured prompt with exact native text", async () => {
   const prompt = structuredMarkdownRestorationProbeText();
-  const editor = await insertWithFakeEditor(prompt, false, true);
+  const editor = await insertWithFakeEditor(prompt);
   expect(editor.text()).toBe(prompt);
-  expect(editor.commands).toEqual(["insertHTML"]);
+  expect(editor.commands).toEqual(["insertText"]);
 });
 
 test("inserts incident-sized single-line Markdown through one escaped native fragment", async () => {
@@ -131,11 +131,18 @@ test("inserts incident-sized single-line Markdown through one escaped native fra
   expect(editor.commands).toEqual(["insertHTML"]);
 });
 
-test("keeps HTML-like input, entities, whitespace and empty lines literal in the native fragment", async () => {
+test("keeps multiline HTML-like input, entities, whitespace and empty lines literal", async () => {
   const prompt = "prefix\n" + (
     '  literal\t\u00a0\uE000 😀 <img src=x onerror="throw 1"> &amp; &#13; <!--comment-->\n\n'
     + "</div><script>throw 1</script>\u2028line\u2029next\n"
   ).repeat(400) + "\n\n";
+  const editor = await insertWithFakeEditor(prompt);
+  expect(editor.text()).toBe(prompt);
+  expect(editor.commands).toEqual(["insertText"]);
+});
+
+test("escapes one-line HTML-like input in the native fragment", async () => {
+  const prompt = '<script>throw 1</script> &amp; <img src=x onerror="throw 1"> '.repeat(700);
   const editor = await insertWithFakeEditor(prompt, false, true);
   expect(editor.text()).toBe(prompt);
   expect(editor.commands).toEqual(["insertHTML"]);

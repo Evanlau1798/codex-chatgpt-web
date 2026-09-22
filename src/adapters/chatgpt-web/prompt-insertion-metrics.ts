@@ -5,7 +5,7 @@ export interface ChatGptNativeEditResult<T> { result: T; attempts: number; accep
 export interface ChatGptPromptInsertionSnapshot {
   plan: ChatGptPromptInsertionPlan;
   phase: ChatGptPromptPhase;
-  event: "started" | "completed" | "failed" | "progress" | "summary";
+  event: "started" | "completed" | "failed" | "progress" | "summary" | "edit_started" | "edit_settled";
   phaseElapsedMs: number;
   totalElapsedMs: number;
   actualChunks: number;
@@ -79,13 +79,18 @@ export class ChatGptPromptInsertionMetrics {
     }
   }
   restorationBatch(): void { if (!this.closed) this.restorationBatches += 1; }
-  editStarted(): void { if (!this.closed) this.editEvaluationsStarted += 1; }
+  editStarted(): void {
+    if (this.closed) return;
+    this.editEvaluationsStarted += 1;
+    if (this.plan.strategy !== "guarded-chunked") this.publish("edit_started");
+  }
   editSettled<T>(value: T | ChatGptNativeEditResult<T>): T {
     const counted = value !== null && typeof value === "object" && "attempts" in value && "accepted" in value && "result" in value;
     if (!this.closed) {
       this.editEvaluationsSettled += 1;
       if (counted) { this.nativeEditAttempts += value.attempts; this.nativeEditAccepted += value.accepted; }
       else this.nativeEditCountsComplete = false; // Legacy test doubles cannot prove native edits.
+      if (this.plan.strategy !== "guarded-chunked") this.publish("edit_settled");
     }
     return counted ? value.result : value;
   }

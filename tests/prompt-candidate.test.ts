@@ -116,6 +116,75 @@ test("existing safe compaction repair cannot refill the candidate deadline", asy
   expect(contexts[0].candidateBudget).toBe(contexts[1].candidateBudget);
 });
 
+test("a single direct edit may settle after 20 seconds but cannot exceed its hard deadline", async () => {
+  let now = 0;
+  const plan = planChatGptPromptInsertion("x".repeat(89_000), { candidatePlainText: true });
+  const budget = new ChatGptCandidateAttachmentBudget(plan, () => now);
+  const metrics = new ChatGptPromptInsertionMetrics(plan, snapshot => budget.observe(snapshot), () => now);
+  expect(plan.strategy).toBe("direct-text");
+  await metrics.run("insert", async () => {
+    metrics.editStarted();
+    now = 52_000;
+    expect(budget.remainingMs()).toBe(38_000);
+    metrics.editSettled({ result: true, attempts: 1, accepted: 1 });
+  });
+  expect(budget.remainingMs()).toBe(20_000);
+  now = 90_000;
+  expect(budget.remainingMs()).toBe(0);
+});
+
+test("a failed direct edit does not leave the stall exemption active for a later attempt", async () => {
+  let now = 0;
+  const plan = planChatGptPromptInsertion("x".repeat(40_000), { candidatePlainText: true });
+  const budget = new ChatGptCandidateAttachmentBudget(plan, () => now);
+  const metrics = new ChatGptPromptInsertionMetrics(plan, snapshot => budget.observe(snapshot), () => now);
+  await expect(metrics.run("insert", async () => { metrics.editStarted(); throw new Error("editor rejected"); })).rejects.toThrow("editor rejected");
+  now = 20_001;
+  expect(() => budget.remainingMs()).toThrow("no verified progress");
+});
+
+test("composer acquisition cannot borrow the direct native-edit stall exemption", async () => {
+  const { insertChatGptPromptText } = await import("../src/adapters/chatgpt-web/prompt-insertion");
+  const { ChatGptPromptOperation } = await import("../src/adapters/chatgpt-web/prompt-operation");
+  let now = 0;
+  const text = "x".repeat(40_000);
+  const plan = planChatGptPromptInsertion(text, { candidatePlainText: true });
+  const budget = new ChatGptCandidateAttachmentBudget(plan, () => now);
+  let nativeEdits = 0;
+  await expect(insertChatGptPromptText(text, undefined, {
+    composer: async () => {
+      now = 20_001; // Surface lookup settles before any native editor evaluation.
+      return { focus: async () => {}, evaluate: async () => { nativeEdits += 1; return true; } } as never;
+    },
+    verify: async () => {}, reanchor: async () => {},
+    onProgress: snapshot => budget.observe(snapshot),
+  }, { candidatePlainText: true }, new ChatGptPromptOperation(undefined, () => budget.remainingMs(), () => now), plan))
+    .rejects.toThrow("no verified progress");
+  expect(nativeEdits).toBe(0);
+});
+
+test("a direct edit starting just before stall keeps a usable native mutation timeout", async () => {
+  const { insertChatGptPromptText } = await import("../src/adapters/chatgpt-web/prompt-insertion");
+  const { ChatGptPromptOperation } = await import("../src/adapters/chatgpt-web/prompt-operation");
+  let now = 0;
+  let editTimeout = 0;
+  const text = "x".repeat(40_000);
+  const plan = planChatGptPromptInsertion(text, { candidatePlainText: true });
+  const budget = new ChatGptCandidateAttachmentBudget(plan, () => now);
+  const composer = {
+    focus: async () => { now = 19_999; },
+    evaluate: async (_callback: unknown, _input: unknown, options: { timeout: number }) => {
+      editTimeout = options.timeout;
+      return { result: true, attempts: 1, accepted: 1 };
+    },
+  } as never;
+  await insertChatGptPromptText(text, undefined, {
+    composer: async () => composer, verify: async () => {}, reanchor: async () => {},
+    onProgress: snapshot => budget.observe(snapshot),
+  }, { candidatePlainText: true }, new ChatGptPromptOperation(undefined, () => budget.remainingMs(), () => now), plan);
+  expect(editTimeout).toBeGreaterThan(1_000);
+});
+
 test("launcher surface rebind cannot refill the candidate deadline", async () => {
   const { ChatGptBrowserWorker } = await import("../src/adapters/chatgpt-web/browser-worker");
   const { ChatGptWebAdapterError } = await import("../src/adapters/chatgpt-web/adapter-error");

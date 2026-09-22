@@ -291,8 +291,10 @@ export async function insertChatGptComposerGuardedText(
   const op = operation ?? new ChatGptPromptOperation(abortSignal);
   op.check();
   await op.mutate(options => composer.focus(options));
+  const directEdit = metrics !== undefined && metrics.plan.strategy !== "guarded-chunked";
+  if (directEdit) metrics.editStarted(); // Set the edit budget before mutate computes its timeout.
   const editResult = await op.mutate(options => {
-    metrics?.editStarted();
+    if (!directEdit) metrics?.editStarted();
     return composer.evaluate((element, input) => {
     let attempts = 0; let accepted = 0;
     const result = <T>(result: T) => ({ result, attempts, accepted });

@@ -61,7 +61,7 @@ for (const fixture of composerSyntheticFixtures()) {
       verify: async expected => { verified.push(expected); },
       reanchor: async () => { anchors += 1; },
     }, { forceStructuredDirect: true });
-    const html = fixture.text.length > 32_000 && !/[\r\u0000]/u.test(fixture.text);
+    const html = fixture.text.length > 32_000 && !/[\r\n\u0000\u2028\u2029]/u.test(fixture.text);
     assert.deepEqual(edits, [html ? { text: fixture.text } : fixture.text]);
     assert.deepEqual(verified, ["", fixture.text.trimStart(), fixture.text.trimStart()]);
     assert.equal(anchors, 1);
@@ -78,6 +78,13 @@ for (const length of [15_999, 16_000, 16_001, 31_999, 32_000, 32_001]) {
       length > 32_000 ? "direct-html" : "direct-text");
   });
 }
+
+test("large multiline direct prompts avoid HTML's extra paragraph on the live composer", () => {
+  const text = `${"x".repeat(40_000)}\nlast line`;
+  assert.equal(planChatGptPromptInsertion(text, { largeStructuredDirect: true }).strategy, "direct-text");
+  assert.equal(planChatGptPromptInsertion(text, { candidatePlainText: true }).strategy, "direct-text");
+  assert.equal(planChatGptPromptInsertion("x".repeat(40_000), { largeStructuredDirect: true }).strategy, "direct-html");
+});
 
 test("actual CR and NUL keep direct-text; their literal escapes do not", () => {
   const base = "x".repeat(32_001);
