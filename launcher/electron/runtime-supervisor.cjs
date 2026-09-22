@@ -4,6 +4,7 @@ const net = require("node:net");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
+const { daemonApiKey } = require("./api-access.cjs");
 const { readJsonFile } = require("./json-file.cjs");
 const { redactText } = require("./logging.cjs");
 const {
@@ -528,14 +529,24 @@ class RuntimeSupervisor {
     if (!preservesLiveOwnership) this.writeState("external", detail);
   }
 
-  spawnChild(name, invocation) {
+  childEnvironment(name, config) {
+    const env = {
+      ...process.env,
+      CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
+    };
+    delete env.CODEX_CHATGPT_WEB_API_KEY;
+    if (name === "daemon" && config?.browserInteractionMode !== "manual") {
+      const key = daemonApiKey(this.coreHome);
+      if (key) env.CODEX_CHATGPT_WEB_API_KEY = key;
+    }
+    return env;
+  }
+
+  spawnChild(name, invocation, config) {
     const child = spawn(invocation.executable, invocation.args, {
       cwd: invocation.cwd,
       detached: DETACH_OWNED_CHILD,
-      env: {
-        ...process.env,
-        CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
-      },
+      env: this.childEnvironment(name, config),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
@@ -1182,7 +1193,7 @@ class RuntimeSupervisor {
     }
     let child;
     try {
-      child = this.spawnChild("daemon", this.runtimeCommand(["serve"]));
+      child = this.spawnChild("daemon", this.runtimeCommand(["serve"]), config);
       await this.waitForProxy(config);
       if (this.daemon !== child) throw new Error("Responses proxy exited immediately after becoming healthy");
       this.restartableChildren.add(child);
@@ -1643,7 +1654,7 @@ class RuntimeSupervisor {
       const child = spawn(tunnel.binaryPath, args, {
         cwd: tunnel.profileDir,
         detached: DETACH_OWNED_CHILD,
-        env: { ...process.env, MCP_CONNECTION_MAX_TTL: TUNNEL_MCP_CONNECTION_MAX_TTL },
+        env: { ...this.childEnvironment("tunnel", config), MCP_CONNECTION_MAX_TTL: TUNNEL_MCP_CONNECTION_MAX_TTL },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });

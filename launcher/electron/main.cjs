@@ -8,6 +8,7 @@ const { pathToFileURL } = require("node:url");
 const {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -735,6 +736,20 @@ function registerIpc({ logger, stateStore }) {
   handle("launcher:account-safety-reset-usage", async () => runtimeHost.resetAutomaticWebUsage());
   handle("launcher:account-safety-resume", async () => runtimeHost.resumeAutomaticWeb());
   handle("launcher:account-safety-acknowledge", async () => runtimeHost.acknowledgeAccountSafetyStop());
+  handle("launcher:api-access-status", async () => runtimeHost.apiAccessStatus());
+  handle("launcher:api-access-enabled", async (_event, enabled) => runtimeHost.setApiAccessEnabled(enabled));
+  handle("launcher:api-access-generate", async () => runtimeHost.generateApiAccessKey());
+  handle("launcher:api-access-reset", async () => runtimeHost.resetApiAccessKey());
+  handle("launcher:api-access-copy-endpoint", async () => {
+    clipboard.writeText((await runtimeHost.apiAccessStatus()).endpoint);
+    return true;
+  });
+  handle("launcher:api-access-copy-key", async () => {
+    const key = await runtimeHost.copyApiAccessKey();
+    if (!key) throw new Error("Generate an API key before copying it");
+    clipboard.writeText(key);
+    return true;
+  });
   handle("launcher:bigger-context", async (_event, enabled) => {
     const result = await runtimeHost.setBiggerContext(enabled === true);
     const state = stateStore.update({

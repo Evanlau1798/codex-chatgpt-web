@@ -48,7 +48,10 @@ export function publicChatError(error: unknown): { status: number; body: { error
 export function chatCompletionRequestGuard(req: Request, path: string, key: string | undefined,
   port: number, peerAddress?: string): Response | undefined {
   const recognized = isChatCompletionKey(req, key);
-  if (!recognized && path !== "/v1/chat/completions") return undefined;
+  if (!recognized && path !== "/v1/chat/completions") {
+    // Native catalog requests remain compatible; the managed API's sk-local- prefix identifies its own credential scope.
+    if (path !== "/v1/models" || !/^Bearer sk-local-/i.test(req.headers.get("authorization") ?? "")) return undefined;
+  }
   if (!key) return chatCompletionErrorResponse(new ChatCompletionError("Chat Completions is disabled", 404, "api_disabled"));
   if (!recognized) return chatCompletionErrorResponse(new ChatCompletionError("Invalid API key", 401, "invalid_api_key"));
   if (!ROUTES.has(path)) return chatCompletionErrorResponse(new ChatCompletionError("This API key cannot access that route", 403, "route_not_allowed"));

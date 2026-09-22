@@ -11,6 +11,16 @@ probe; a scripted model worker in that probe is not signed-in ChatGPT inference.
 
 ## Enable local admission
 
+In the Launcher, open Settings → API Access under Account Safety. Turn it on,
+then choose **Generate Key**. Copy the displayed endpoint and use the **Copy API
+Key** button to put the secret on your clipboard. The field shows only a masked
+preview and its last five characters. Turning API Access off preserves the key;
+**Reset Key** requires a second click and immediately retires the old key after
+the runtime restarts successfully. The Launcher stores one private key per
+profile and injects it only into its daemon. Automatic Web mode is required.
+
+For a daemon started outside the Launcher, use the environment variable below.
+
 Start the daemon with `CODEX_CHATGPT_WEB_API_KEY` set to a random 32..512-character
 printable ASCII secret. It must differ from the native/admin `controlToken`.
 The listener must bind `127.0.0.1`. The same API key must be available to the client.

@@ -2282,6 +2282,60 @@ code {
   margin-top: 0;
 }
 
+.api-access-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 24px;
+  padding-top: 4px;
+}
+
+.api-access-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.api-access-indicator::before {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+  content: "";
+}
+
+.api-access-indicator.is-enabled::before { background: var(--green-300); }
+.api-access-indicator.is-key_required::before { background: #e9b35e; }
+
+.api-access-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 20px;
+}
+
+.api-access-input button {
+  display: grid;
+  width: 43px;
+  height: 30px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.api-access-input button:hover:not(:disabled) { color: var(--color-text-primary); }
+.api-access-input button:disabled { opacity: 0.45; cursor: default; }
+.api-access-input button svg { width: 18px; height: 18px; }
+.api-access-action { padding-bottom: 3px; }
+.api-access-action button { white-space: nowrap; }
+.api-access-feedback { display: block; min-height: 18px; margin-top: 8px; color: var(--color-text-secondary); font-size: var(--text-xs); }
+
 .language-menu {
   position: relative;
   z-index: 1;
@@ -2967,6 +3021,9 @@ code {
     grid-template-columns: 1fr;
     gap: 16px;
   }
+
+  .api-access-grid { grid-template-columns: 1fr; gap: 16px; }
+  .api-access-action { padding-bottom: 0; }
 
   .account-safety-field > small {
     min-height: 0;

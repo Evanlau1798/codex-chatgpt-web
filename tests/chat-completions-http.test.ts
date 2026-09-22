@@ -57,6 +57,18 @@ test("Host, peer and Origin checks also protect model reads against DNS rebindin
   expect(chatCompletionRequestGuard(req, "/v1/models", key, 1234, "192.0.2.1")?.status).toBe(403);
 });
 
+test("retired local API keys cannot fall through to the native model catalog", () => {
+  const req = new Request("http://127.0.0.1:1234/v1/models", {
+    headers: { host: "127.0.0.1:1234", authorization: "Bearer sk-local-retired-key" },
+  });
+  expect(chatCompletionRequestGuard(req, "/v1/models", key, 1234)?.status).toBe(401);
+  expect(chatCompletionRequestGuard(req, "/v1/models", undefined, 1234)?.status).toBe(404);
+  const native = new Request("http://127.0.0.1:1234/v1/models", {
+    headers: { host: "127.0.0.1:1234", authorization: "Bearer private-session-token" },
+  });
+  expect(chatCompletionRequestGuard(native, "/v1/models", key, 1234)).toBeUndefined();
+});
+
 test("JSON and SSE share Chat Completions semantics, not Responses events", async () => {
   const server = listener(async (_input, _config, _signal, onText) => { onText("hello "); onText("world"); return { answer: "hello world" }; });
   try {

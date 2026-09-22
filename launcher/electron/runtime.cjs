@@ -430,6 +430,22 @@ class RuntimeHost {
     return this.serializeRuntimeLifecycle(() => integrationOperations.accountSafetyStatus.apply(this, args));
   }
 
+  apiAccessStatus() {
+    return this.serializeRuntimeLifecycle(() => require("./api-access.cjs").status(this));
+  }
+  setApiAccessEnabled(enabled) {
+    return this.serializeRuntimeLifecycle(() => require("./api-access.cjs").setEnabled(this, enabled));
+  }
+  generateApiAccessKey() {
+    return this.serializeRuntimeLifecycle(() => require("./api-access.cjs").generate(this));
+  }
+  resetApiAccessKey() {
+    return this.serializeRuntimeLifecycle(() => require("./api-access.cjs").reset(this));
+  }
+  copyApiAccessKey() {
+    return this.serializeRuntimeLifecycle(() => require("./api-access.cjs").keyForCopy(this));
+  }
+
   resetAutomaticWebUsage(...args) {
     return this.serializeRuntimeLifecycle(() => integrationOperations.resetAutomaticWebUsage.apply(this, args));
   }

@@ -144,6 +144,13 @@ export interface AccountSafetyStatus {
   session_limit?: number;
 }
 
+export interface ApiAccessStatus {
+  state: "disabled" | "key_required" | "enabled";
+  endpoint: string;
+  hasKey: boolean;
+  keyPreview: string | null;
+}
+
 export interface LauncherApi {
   snapshot(): Promise<LauncherSnapshot>;
   setLanguage(language: Language): Promise<LauncherState>;
@@ -177,6 +184,12 @@ export interface LauncherApi {
     automaticWebSessionLimitMinutes?: number;
   }): Promise<LauncherState>;
   accountSafetyStatus(): Promise<AccountSafetyStatus>;
+  apiAccessStatus(): Promise<ApiAccessStatus>;
+  setApiAccessEnabled(enabled: boolean): Promise<ApiAccessStatus>;
+  generateApiAccessKey(): Promise<ApiAccessStatus>;
+  resetApiAccessKey(): Promise<ApiAccessStatus>;
+  copyApiAccessEndpoint(): Promise<boolean>;
+  copyApiAccessKey(): Promise<boolean>;
   resetAutomaticWebUsage(): Promise<AccountSafetyStatus>;
   resumeAutomaticWeb(): Promise<AccountSafetyStatus>;
   acknowledgeAccountSafetyStop(): Promise<AccountSafetyStatus>;

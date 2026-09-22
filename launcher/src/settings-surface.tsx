@@ -2,6 +2,7 @@ import languages from "../electron/languages.json";
 import { useEffect, useState, type ReactNode } from "react";
 import { biggerContextSwitchState } from "./context-mode";
 import { Icon } from "./icons";
+import { ApiAccessCard } from "./api-access-card";
 import type { Copy } from "./i18n";
 import {
   BrandMark,
@@ -534,6 +535,7 @@ export function SettingsSurface({
             </div>
           </div>
         </div>
+        <ApiAccessCard copy={copy} configured={snapshot.state.coreSetupComplete === true} setError={setError} />
       </> : null}
 
       <SectionHeading label={copy.general} spaced />

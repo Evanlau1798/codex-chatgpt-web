@@ -11,6 +11,21 @@ const settingsSource = fs.existsSync(settingsPath)
 const i18nSource = fs.readFileSync(path.join(launcherRoot, "src", "i18n.ts"), "utf8");
 const i18nJaSource = fs.readFileSync(path.join(launcherRoot, "src", "i18n-ja.ts"), "utf8");
 
+test("API Access card follows Account Safety and exposes main-process key copy only", () => {
+  const safety = settingsSource.indexOf('className="settings-card account-safety-card"');
+  const access = settingsSource.indexOf("<ApiAccessCard");
+  const general = settingsSource.indexOf("<SectionHeading label={copy.general}");
+  assert.ok(safety >= 0 && access > safety && access < general);
+  const accessSource = fs.readFileSync(path.join(launcherRoot, "src", "api-access-card.tsx"), "utf8");
+  assert.match(accessSource, /className="settings-card api-access-card"/);
+  assert.match(accessSource, /api!\.copyApiAccessKey\(\)/);
+  assert.doesNotMatch(accessSource, /navigator\.clipboard\.writeText\([^)]*key/i);
+  const preload = fs.readFileSync(path.join(launcherRoot, "electron", "preload.cjs"), "utf8");
+  const main = fs.readFileSync(path.join(launcherRoot, "electron", "main.cjs"), "utf8");
+  assert.match(preload, /copyApiAccessKey: \(\) => ipcRenderer\.invoke\("launcher:api-access-copy-key"\)/);
+  assert.match(main, /clipboard\.writeText\(key\)/);
+});
+
 test("settings keep upstream controls in General and fork controls in Enhanced Feature Settings", () => {
   const general = settingsSource.indexOf("<SectionHeading label={copy.general}");
   const enhanced = settingsSource.indexOf('<div className="settings-card enhanced-feature-card">');
