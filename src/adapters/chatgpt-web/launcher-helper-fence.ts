@@ -8,6 +8,9 @@ type FenceEvent = Extract<LauncherHelperMessage, {
 }>;
 
 export function assertLauncherHelperFenceFeatures(turn: BrowserTurn, features: Set<string>): void {
+  if (turn.outputFormat === "visible-text" && !features.has("visible-text-output-v1")) {
+    throw new Error("Launcher browser helper does not support lossless structured Web output; update or restart the launcher");
+  }
   if (turn.tunneledOutput && !features.has("tunneled-output-v1")) {
     throw new Error("Launcher browser helper does not support tunneled Web output; update or restart the launcher");
   }

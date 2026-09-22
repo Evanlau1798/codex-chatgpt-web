@@ -27,6 +27,7 @@ export interface BrowserHelperRunMessage {
     requireRetainedConversation?: boolean;
     conversationKey?: string;
     compaction?: boolean;
+    outputFormat?: "visible-text";
     captureLunaCheckpoint?: boolean;
     externalProgress?: boolean;
     tunneledOutput?: boolean;

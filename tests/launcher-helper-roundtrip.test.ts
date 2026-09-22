@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
@@ -22,6 +22,9 @@ test("daemon streams browser lifecycle through the real helper process", async (
     ChatGptBrowserWorker.prototype.run = async function(turn) {
       if ((this as any).config.experimentalNoAutoCompact !== true) {
         throw new Error("Experimental no-auto-compact setting was lost across helper IPC");
+      }
+      if (turn.outputFormat !== "visible-text") {
+        throw new Error("Structured output format was lost across helper IPC");
       }
       await turn.onPreparedSelected(false);
       const prepared = await turn.prepare();
@@ -100,6 +103,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
       modelId: "gpt-5.6-sol",
       reasoning: "high",
       capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
+      outputFormat: "visible-text",
       prepare: async () => ({
         text: "inspect", images: [],
         multipart: { parts: ["part one", "part two", "part three"], commit: "inspect" },
@@ -135,6 +139,68 @@ test("daemon streams browser lifecycle through the real helper process", async (
       },
     }]);
     expect(released).toBe(true);
+  } finally {
+    await client.close();
+  }
+});
+
+test("structured output fails closed before dispatch to an older helper", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-launcher-helper-compat-"));
+  roots.push(root);
+  const dispatched = join(root, "run-dispatched");
+  const helper = join(root, "old-helper.cjs");
+  writeFileSync(helper, `
+    const fs = require("node:fs");
+    const readline = require("node:readline").createInterface({ input: process.stdin });
+    const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
+    send({ type: "ready", features: ["progress", "answer-before-completion"] });
+    readline.on("line", line => {
+      const message = JSON.parse(line);
+      if (message.type === "shutdown") process.exit(0);
+      if (message.type !== "run") return;
+      fs.writeFileSync(${JSON.stringify(dispatched)}, "unexpected");
+      send({ type: "error", id: message.id, message: "run was dispatched" });
+    });
+  `, { mode: 0o700 });
+  const descriptorPath = join(root, "launcher.json");
+  writeFileSync(descriptorPath, `${JSON.stringify({
+    version: 3,
+    kind: LAUNCHER_BROWSER_HOST_KIND,
+    profile: "production",
+    pid: process.pid,
+    endpoint: "http://127.0.0.1:39001",
+    control: {
+      endpoint: "http://127.0.0.1:39002",
+      token: "launcher-control-token-0123456789abcdefghijklmnop",
+    },
+    helper: { executable: process.execPath, script: helper },
+    partition: "persist:codex-web-gpt-chatgpt",
+    idleUrl: LAUNCHER_BROWSER_IDLE_URL,
+    surfaceId: "launcher_surface_id_0123456789AB",
+    surfaceTargets: { launcher_surface_id_0123456789AB: "native-owned-target" },
+    createdAt: new Date().toISOString(),
+  })}\n`, { mode: 0o600 });
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native2",
+    browserHost: "launcher",
+    browserHostDescriptorPath: descriptorPath,
+    browserHelperScriptPath: helper,
+    storageStatePath: join(root, "unused-state.json"),
+    chromeExecutablePath: join(root, "unused-chrome"),
+    turnTimeoutMs: 60_000,
+    headed: true,
+    autoApproveToolCalls: false,
+  });
+  try {
+    await expect(client.run({
+      traceId: "structured-compat-123",
+      modelId: "gpt-5.6-sol",
+      capabilities: { localToolsEnabled: false, solAvailable: true, proAvailable: false },
+      outputFormat: "visible-text",
+      prepare: async () => ({ text: "inspect", images: [], release() {} }),
+      onTextDelta() {},
+    })).rejects.toThrow("does not support lossless structured Web output; update or restart the launcher");
+    expect(existsSync(dispatched)).toBe(false);
   } finally {
     await client.close();
   }

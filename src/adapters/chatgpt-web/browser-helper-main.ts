@@ -103,6 +103,9 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.compaction !== undefined && typeof message.turn.compaction !== "boolean") {
     throw new Error("Browser helper compaction flag is invalid");
   }
+  if (message.turn.outputFormat !== undefined && message.turn.outputFormat !== "visible-text") {
+    throw new Error("Browser helper output format is invalid");
+  }
   if (message.turn.externalProgress !== undefined && typeof message.turn.externalProgress !== "boolean") {
     throw new Error("Browser helper external progress flag is invalid");
   }
@@ -149,6 +152,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
     ...(message.turn.conversationKey ? { conversationKey: message.turn.conversationKey } : {}),
     ...(message.turn.compaction ? { compaction: true } : {}),
+    ...(message.turn.outputFormat ? { outputFormat: message.turn.outputFormat } : {}),
     abortSignal: abortController.signal,
     ...fenced,
     ...tunneled,
@@ -453,4 +457,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "answer-before-completion", "luna-safety-retry-v1", "tunneled-output-v1", "skill-attachments"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "answer-before-completion", "luna-safety-retry-v1", "tunneled-output-v1", "skill-attachments", "visible-text-output-v1"] });

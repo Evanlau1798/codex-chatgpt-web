@@ -106,6 +106,7 @@ export class LauncherBrowserHelperClient {
             ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
             ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
             ...(turn.compaction ? { compaction: true } : {}),
+            ...(turn.outputFormat ? { outputFormat: turn.outputFormat } : {}),
             ...(turn.captureLunaCheckpoint ? { captureLunaCheckpoint: true } : {}),
             ...(turn.externalProgress ? { externalProgress: true } : {}),
             ...(turn.tunneledOutput ? { tunneledOutput: true } : {}),
