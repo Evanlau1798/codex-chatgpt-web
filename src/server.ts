@@ -310,6 +310,7 @@ export function startServer(
     });
   }
   let draining = false;
+  let accountSafetyDrainOwner: string | undefined;
   let shutdownPromise: Promise<void> | undefined;
   let successfulModelCatalogRequests = 0;
   let lastSuccessfulModelCatalogRequestAt: string | null = null;
@@ -356,12 +357,32 @@ export function startServer(
       }
       if (req.method === "POST" && (url.pathname === "/admin/drain" || url.pathname === "/admin/resume")) {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
+        if (accountSafetyDrainOwner) return new Response("Account Safety drain is owned", { status: 409 });
         draining = url.pathname === "/admin/drain";
         turnBroker?.setExternalOwnersAccepted(!draining);
         return Response.json({ status: "ok", accepting_turns: !draining, ...activity() });
       }
+      if (req.method === "POST" && url.pathname === "/admin/account-safety-sync-and-resume") {
+        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
+        if (!accountSafetyDrainOwner || req.headers.get("x-account-safety-drain-owner") !== accountSafetyDrainOwner) {
+          return new Response("Account Safety drain owner mismatch", { status: 409 });
+        }
+        const current = activity();
+        if (!draining || current.active_http_turns > 0 || current.active_browser_turns > 0) {
+          return Response.json({ status: "refused", accepting_turns: !draining, ...current }, { status: 409 });
+        }
+        try { accountSafety.reloadFromDisk(); }
+        catch (error) {
+          return Response.json({ status: "refused", message: error instanceof Error ? error.message : String(error) }, { status: 409 });
+        }
+        draining = false;
+        accountSafetyDrainOwner = undefined;
+        turnBroker?.setExternalOwnersAccepted(true);
+        return Response.json({ status: "ok", accepting_turns: true, ...activity() });
+      }
       if (req.method === "POST" && url.pathname.startsWith("/admin/account-safety-")) {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
+        if (draining) return new Response("Service is draining", { status: 503 });
         const activeTraceIds = accountSafety.activeTraceIds(chatGptTurnSessions.activeTraceIds());
         try {
           if (url.pathname === "/admin/account-safety-reset-usage") accountSafety.resetUsage();
@@ -390,10 +411,14 @@ export function startServer(
       }
       if (req.method === "POST" && url.pathname === "/admin/drain-if-idle") {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
+        if (accountSafetyDrainOwner) return new Response("Account Safety drain is owned", { status: 409 });
+        const owner = req.headers.get("x-account-safety-drain-owner") ?? undefined;
+        if (owner && !/^[a-f0-9]{64}$/.test(owner)) return new Response("Invalid Account Safety drain owner", { status: 400 });
         const current = activity();
         if (draining) return Response.json({ status: "draining", acquired: false, accepting_turns: false, ...current });
         if (current.active_http_turns > 0 || current.active_browser_turns > 0) return Response.json({ status: "busy", acquired: false, accepting_turns: true, ...current });
         draining = true;
+        accountSafetyDrainOwner = owner;
         turnBroker?.setExternalOwnersAccepted(false);
         return Response.json({ status: "ok", acquired: true, accepting_turns: false, ...current });
       }
@@ -401,6 +426,7 @@ export function startServer(
       if (cancellation) return cancellation;
       if (req.method === "POST" && url.pathname === "/admin/shutdown") {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
+        if (accountSafetyDrainOwner) return new Response("Account Safety drain is owned", { status: 409 });
         const current = activity();
         if (!draining || current.active_http_turns > 0 || current.active_browser_turns > 0) {
           return Response.json(

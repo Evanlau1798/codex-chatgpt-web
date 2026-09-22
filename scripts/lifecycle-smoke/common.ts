@@ -76,7 +76,7 @@ export type { LauncherEvent } from "./launcher-event-reader";
 export type Timeline = Record<string, string | number | null>;
 export type LaneResult = {
   status: "passed" | "failed" | "blocked";
-  lane: "claude" | "codex";
+  lane: "claude" | "codex" | "pi";
   sessionId?: string;
   threadId?: string;
   checks: Record<string, boolean>;

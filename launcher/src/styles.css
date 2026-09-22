@@ -2316,23 +2316,28 @@ code {
   gap: 20px;
 }
 
+.api-access-input { height: 32px; }
+
 .api-access-input button {
   display: grid;
-  width: 43px;
-  height: 30px;
+  width: 32px;
+  height: 100%;
   flex: none;
   place-items: center;
   border: 0;
-  border-left: 1px solid var(--color-border);
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
+  opacity: 0;
+  transform: translateX(4px);
+  transition: opacity 160ms ease, transform 160ms ease;
 }
 
+.api-access-input:hover button,
+.api-access-input:focus-within button { opacity: 1; transform: translateX(0); }
 .api-access-input button:hover:not(:disabled) { color: var(--color-text-primary); }
-.api-access-input button:disabled { opacity: 0.45; cursor: default; }
+.api-access-input button:disabled { cursor: default; }
 .api-access-input button svg { width: 18px; height: 18px; }
-.api-access-action { padding-bottom: 3px; }
 .api-access-action button { white-space: nowrap; }
 .api-access-feedback { display: block; min-height: 18px; margin-top: 8px; color: var(--color-text-secondary); font-size: var(--text-xs); }
 

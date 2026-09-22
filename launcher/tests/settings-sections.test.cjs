@@ -26,6 +26,14 @@ test("API Access card follows Account Safety and exposes main-process key copy o
   assert.match(main, /clipboard\.writeText\(key\)/);
 });
 
+test("API Access inputs align with reset and reveal embedded copy controls on hover or focus", () => {
+  const css = fs.readFileSync(path.join(launcherRoot, "src", "styles.css"), "utf8");
+  assert.match(css, /\.api-access-input\s*\{[^}]*height:\s*32px/s);
+  assert.match(css, /\.api-access-input button\s*\{[^}]*opacity:\s*0/s);
+  assert.match(css, /\.api-access-input:(?:hover|focus-within)[^{]*button[^{}]*\{[^}]*opacity:\s*1/s);
+  assert.match(css, /\.api-access-input button\s*\{[^}]*transition:\s*opacity/s);
+});
+
 test("settings keep upstream controls in General and fork controls in Enhanced Feature Settings", () => {
   const general = settingsSource.indexOf("<SectionHeading label={copy.general}");
   const enhanced = settingsSource.indexOf('<div className="settings-card enhanced-feature-card">');

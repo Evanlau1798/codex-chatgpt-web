@@ -1,6 +1,6 @@
 import { join, resolve } from "node:path";
 
-export type LifecycleSmokeLane = "codex" | "claude" | "all";
+export type LifecycleSmokeLane = "codex" | "claude" | "pi" | "all";
 
 export interface LifecycleSmokeOptions {
   live: true;
@@ -8,6 +8,8 @@ export interface LifecycleSmokeOptions {
   artifactRoot: string;
   codexExecutable?: string;
   claudeExecutable?: string;
+  piExecutable?: string;
+  nodeExecutable?: string;
   launcherLog?: string;
   browserDescriptor?: string;
 }
@@ -28,6 +30,8 @@ export function parseLifecycleSmokeOptions(args: string[], repo: string): Lifecy
   let artifactRoot = join(repo, "tmp", "lifecycle-smoke", "runs");
   let codexExecutable: string | undefined;
   let claudeExecutable: string | undefined;
+  let piExecutable: string | undefined;
+  let nodeExecutable: string | undefined;
   let launcherLog: string | undefined;
   let browserDescriptor: string | undefined;
 
@@ -35,8 +39,8 @@ export function parseLifecycleSmokeOptions(args: string[], repo: string): Lifecy
     if (argument === "--live") continue;
     const laneValue = valueOf(argument, "lane");
     if (laneValue !== undefined) {
-      if (laneValue !== "codex" && laneValue !== "claude" && laneValue !== "all") {
-        throw new Error(`Lifecycle smoke lane must be codex, claude, or all: ${laneValue}`);
+      if (laneValue !== "codex" && laneValue !== "claude" && laneValue !== "pi" && laneValue !== "all") {
+        throw new Error(`Lifecycle smoke lane must be codex, claude, pi, or all: ${laneValue}`);
       }
       lane = laneValue;
       continue;
@@ -47,6 +51,10 @@ export function parseLifecycleSmokeOptions(args: string[], repo: string): Lifecy
     if (codex !== undefined) { codexExecutable = resolve(codex); continue; }
     const claude = valueOf(argument, "claude");
     if (claude !== undefined) { claudeExecutable = resolve(claude); continue; }
+    const pi = valueOf(argument, "pi");
+    if (pi !== undefined) { piExecutable = resolve(pi); continue; }
+    const node = valueOf(argument, "node");
+    if (node !== undefined) { nodeExecutable = resolve(node); continue; }
     const log = valueOf(argument, "launcher-log");
     if (log !== undefined) { launcherLog = resolve(log); continue; }
     const descriptor = valueOf(argument, "browser-descriptor");
@@ -60,6 +68,8 @@ export function parseLifecycleSmokeOptions(args: string[], repo: string): Lifecy
     artifactRoot,
     ...(codexExecutable ? { codexExecutable } : {}),
     ...(claudeExecutable ? { claudeExecutable } : {}),
+    ...(piExecutable ? { piExecutable } : {}),
+    ...(nodeExecutable ? { nodeExecutable } : {}),
     ...(launcherLog ? { launcherLog } : {}),
     ...(browserDescriptor ? { browserDescriptor } : {}),
   };

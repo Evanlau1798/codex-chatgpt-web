@@ -55,7 +55,7 @@ Existing native client routes remain separate and unchanged for native clients.
 
 ## Unmodified pi configuration
 
-The verified external client is **pi coding agent 0.86.1**, package
+The verified external client is **pi coding agent 0.87.0**, package
 `@earendil-works/pi-coding-agent`, using `openai-completions` (Chat Completions,
 not the legacy `/v1/completions` endpoint). No pi extension or source patch is used.
 Merge this provider into the user's standard `~/.pi/agent/models.json`:
@@ -126,6 +126,9 @@ remote schema references and decoder-level `strict: true` are not supported.
 `auto`, `none`, `required`, a named function choice and `parallel_tool_calls: false`
 are enforced. Invalid or incomplete model output becomes a protocol error, not a
 fabricated successful answer or a runnable partially repaired call.
+For tool JSON only, the Web Markdown projection's observed escapes of `_`, `[` and `]`
+are removed when needed for JSON parsing. The resulting object still passes the
+same exact-key, function-name and argument-schema checks; ordinary text is unchanged.
 
 `stream` defaults false. Streaming emits `chat.completion.chunk`, role/content or
 indexed `delta.tool_calls`, one final finish reason and one `[DONE]` on success.
@@ -180,18 +183,26 @@ bun test tests/chat-completions-contract.test.ts tests/chat-completions-runtime.
 bun run scripts/check-chat-completions-pi.ts --pi=/path/to/pi/dist/bundle/cli.js --node=/path/to/node
 ```
 
-The explicit pi probe creates disposable directories, disables extensions/skills/
-context discovery/startup network, generates a disposable local key, and exercises
-real pi read/write tools only inside an inert fixture directory. It uses production
+The Pi lifecycle lane (`bun run lifecycle:sim --lane=pi`, included in `--lane=all`)
+installs the pinned client in ignored `tmp/runtime-cache` and runs the explicit
+probe. It creates disposable directories, disables extensions/skills/context
+discovery/startup network, generates a disposable local key, and exercises
+real pi read/write/bash tools only inside an inert fixture directory. It uses production
 HTTP parsing, compiler, runtime capability isolation and output decoding with a
-scripted worker. It also verifies SDK-visible SSE failure and RPC cancellation.
-It never opens ChatGPT, uses a login profile, installs clients, or calls a real model.
+scripted worker. It verifies two concurrent Pi sessions cannot exchange Web trace
+ownership or tool results, RPC steering, an aged local Pi session resumed with a
+fresh Web request, SSE failure, and RPC cancellation.
+The explicit probe does not install clients. The offline lane never opens ChatGPT,
+uses a login profile, or calls a real model.
 The result under `tmp/chat-completions/pi-result.json` contains only safe metadata.
 
-Before promotion, on the maintainer's Windows installed candidate: confirm the
-same standard pi configuration completes at least two actual model/tool rounds,
-check tool ID/results and fresh chats, test cancellation/error handling, verify
-no Native2 capability for the general key, then recheck existing Codex/Claude
-flows. Use only an inert test directory and minimal authorized Web requests.
+The optional live lane is `bun run scripts/lifecycle-smoke/run.ts --live --lane=pi`.
+It starts an isolated source server with the launcher browser host, asks the
+unmodified Pi client to execute `node --version`, steers its active turn, then
+ages and resumes the saved local session. Pi Chat Completions uses a fresh
+Temporary Chat for every model request, so this tests local transcript resume;
+it does not assert a retained Web session survived two hours. Use only an inert
+test directory and minimal authorized Web requests. Recheck existing Codex/Claude
+flows at the applicable release gate.
 A security/rate-limit signal stops validation without retries or account switching.
 No automatic release or promotion is authorized by these offline results.

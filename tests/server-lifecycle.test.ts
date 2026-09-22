@@ -4,7 +4,7 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatGptWebTraceId } from "../src/adapters/chatgpt-web";
-import { chatGptAccountSafety } from "../src/adapters/chatgpt-web/account-safety";
+import { ChatGptAccountSafety, chatGptAccountSafety } from "../src/adapters/chatgpt-web/account-safety";
 import { runStructuredCompactionOnce } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { callTurnBroker, closeTurnBrokers, RemoteTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
@@ -645,6 +645,43 @@ test.serial("authenticated account-safety control exposes status and recovery ac
     await server.stop(true);
     if (previousSafetyHome === undefined) delete process.env.CODEX_CHATGPT_WEB_HOME;
     else process.env.CODEX_CHATGPT_WEB_HOME = previousSafetyHome;
+    rmSync(safetyHome, { recursive: true, force: true });
+  }
+});
+
+test.serial("idle drain blocks stale safety writes and reloads external usage before resume", async () => {
+  const safetyHome = mkdtempSync(join(tmpdir(), "cgw-server-safety-sync-"));
+  const previous = process.env.CODEX_CHATGPT_WEB_HOME;
+  process.env.CODEX_CHATGPT_WEB_HOME = safetyHome;
+  const config = { ...defaultConfig("browser-only"), port: 0, automaticWebSessionLimitCount: 6,
+    automaticWebSessionLimitMinutes: 300 };
+  const server = startServer(config);
+  const endpoint = `http://127.0.0.1:${server.port}`;
+  const headers = { authorization: `Bearer ${config.controlToken}` };
+  const owner = "a".repeat(64);
+  const ownedHeaders = { ...headers, "x-account-safety-drain-owner": owner };
+  try {
+    const drain = await fetch(`${endpoint}/admin/drain-if-idle`, { method: "POST", headers: ownedHeaders });
+    expect(await drain.json()).toMatchObject({ acquired: true, accepting_turns: false });
+    expect((await fetch(`${endpoint}/admin/drain-if-idle`, { method: "POST", headers })).status).toBe(409);
+    expect((await fetch(`${endpoint}/admin/resume`, { method: "POST", headers })).status).toBe(409);
+    expect((await fetch(`${endpoint}/admin/drain`, { method: "POST", headers })).status).toBe(409);
+    expect((await fetch(`${endpoint}/admin/shutdown`, { method: "POST", headers })).status).toBe(409);
+    expect((await fetch(`${endpoint}/admin/account-safety-status`, { method: "POST", headers })).status).toBe(503);
+    const external = new ChatGptAccountSafety(join(safetyHome, "runtime", "account-safety.json"));
+    expect(external.admit("pi", "pi", 6, 300, []).allowed).toBe(true);
+    const unauthorized = await fetch(`${endpoint}/admin/account-safety-sync-and-resume`, { method: "POST" });
+    expect(unauthorized.status).toBe(401);
+    expect((await fetch(`${endpoint}/admin/account-safety-sync-and-resume`, { method: "POST", headers })).status).toBe(409);
+    const resumed = await fetch(`${endpoint}/admin/account-safety-sync-and-resume`, { method: "POST", headers: ownedHeaders });
+    expect(await resumed.json()).toMatchObject({ status: "ok", accepting_turns: true });
+    expect(chatGptAccountSafety().status(6, 300, []).usedSessions).toBe(1);
+    expect(new ChatGptAccountSafety(join(safetyHome, "runtime", "account-safety.json"))
+      .status(6, 300, []).usedSessions).toBe(1);
+  } finally {
+    await server.stop(true);
+    if (previous === undefined) delete process.env.CODEX_CHATGPT_WEB_HOME;
+    else process.env.CODEX_CHATGPT_WEB_HOME = previous;
     rmSync(safetyHome, { recursive: true, force: true });
   }
 });

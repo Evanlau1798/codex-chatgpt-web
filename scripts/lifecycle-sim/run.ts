@@ -2,15 +2,15 @@ import { resolveLifecycleExecutable } from "../lifecycle-smoke/paths";
 import { resolve } from "node:path";
 import { claudeLifecycleTests, codexLifecycleTests, sharedLifecycleTests } from "./manifest";
 
-type Lane = "codex" | "claude" | "all";
+type Lane = "codex" | "claude" | "pi" | "all";
 
 const repo = resolve(import.meta.dir, "..", "..");
 const lane = (process.argv.find(argument => argument.startsWith("--lane="))?.slice(7) ?? "all") as Lane;
-if (!(["codex", "claude", "all"] as const).includes(lane)) {
-  throw new Error("Lifecycle simulation lane must be codex, claude, or all");
+if (!(["codex", "claude", "pi", "all"] as const).includes(lane)) {
+  throw new Error("Lifecycle simulation lane must be codex, claude, pi, or all");
 }
 
-const executable = (name: "codex" | "claude") =>
+const executable = (name: "codex" | "claude" | "pi" | "node") =>
   process.argv.find(argument => argument.startsWith(`--${name}=`))?.slice(name.length + 3)
     || resolveLifecycleExecutable(name);
 
@@ -41,8 +41,15 @@ async function claudeLane(): Promise<void> {
   process.stdout.write("CLAUDE_DETERMINISTIC_LIFECYCLE_LANE_OK\n");
 }
 
+async function piLane(): Promise<void> {
+  await run([process.execPath, "run", "scripts/check-chat-completions-pi.ts",
+    `--pi=${executable("pi")}`, `--node=${executable("node")}`]);
+  process.stdout.write("PI_DETERMINISTIC_LIFECYCLE_LANE_OK\n");
+}
+
 if (lane === "codex" || lane === "all") await codexLane();
 if (lane === "claude" || lane === "all") await claudeLane();
+if (lane === "pi" || lane === "all") await piLane();
 if (lane === "all") {
   await runTests(sharedLifecycleTests);
   process.stdout.write("ALL_DETERMINISTIC_LIFECYCLE_LANES_OK\n");

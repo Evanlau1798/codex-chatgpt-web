@@ -62,6 +62,13 @@ try {
     claudeLane.selfTestClaudeLaneBudget();
     results.push(await claudeLane.runClaudeLane(root));
   }
+  if (options.lane === "pi" || options.lane === "all") {
+    const [{ runPiLane }, { ensurePinnedLifecycleClients }] = await Promise.all([
+      import("./pi-lane"), import("../lifecycle-sim/entry"),
+    ]);
+    const pinned = options.piExecutable && options.nodeExecutable ? undefined : await ensurePinnedLifecycleClients();
+    results.push(await runPiLane(root, options.piExecutable ?? pinned!.pi, options.nodeExecutable ?? pinned!.node));
+  }
   const postflight = await captureLifecyclePostflight(`${serviceBaseUrl}/healthz`);
   const failed = !postflight.idle || results.some(result => (
     typeof result === "object" && result !== null && (result as { status?: unknown }).status !== "passed"

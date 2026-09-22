@@ -92,6 +92,12 @@ export class ChatGptAccountSafety {
   private readonly traceRefs = new Map<string, number>();
 
   constructor(private readonly path = defaultChatGptAccountSafetyStatePath()) {
+    this.data = { version: 1, state: "NORMAL" };
+    this.reloadFromDisk();
+  }
+
+  reloadFromDisk(): void {
+    if (this.traceRefs.size > 0) throw new Error("Cannot reload account safety while traces are active");
     this.data = this.load();
     if (this.data.state === "DRAINING") {
       this.data = {

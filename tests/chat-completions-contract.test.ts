@@ -69,6 +69,17 @@ for (const answer of ['```json\n{}\n```', '{}', '{"content":null,"tool_calls":[]
   '{"content":null,"tool_calls":[{"name":"read","arguments":{"path":"a","bad":true}}]}']) {
   test(`rejects invalid completed model envelope ${answer}`, () => expect(() => decodeChatCompletion(parseChatCompletion({ ...request(), tools: [tool] }), answer)).toThrow());
 }
+
+test("decodes ChatGPT Markdown escapes in a complete function JSON envelope", () => {
+  const input = parseChatCompletion({ ...request(), tools: [tool] });
+  const rendered = '{"content":null,"tool\\_calls":\\[{"name":"read","arguments":{"path":"safe.txt"}}\\]}';
+  expect(decodeChatCompletion(input, rendered).tool_calls?.[0]?.function.arguments).toBe('{"path":"safe.txt"}');
+  const literalSlash = JSON.stringify({ content: null, tool_calls: [{ name: "read", arguments: { path: "a\\_b" } }] });
+  expect(decodeChatCompletion(input, literalSlash).tool_calls?.[0]?.function.arguments).toBe('{"path":"a\\\\_b"}');
+  const renderedLiteralSlash = literalSlash.replace(`a${"\\".repeat(2)}_b`, `a${"\\".repeat(3)}_b`);
+  expect(decodeChatCompletion(input, renderedLiteralSlash).tool_calls?.[0]?.function.arguments).toBe('{"path":"a\\\\_b"}');
+  expect(() => decodeChatCompletion(input, rendered.replace("tool\\_calls", "tool\\*calls"))).toThrow();
+});
 test("required, named and parallel false are enforced after generation", () => {
   const final = JSON.stringify({ content: "done", tool_calls: [] });
   for (const tool_choice of ["required", { type: "function", function: { name: "read" } }]) {

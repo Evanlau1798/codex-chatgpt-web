@@ -40,3 +40,8 @@ test("live lifecycle smoke rejects unknown lanes and flags", () => {
   expect(() => parseLifecycleSmokeOptions(["--live", "--wat"], "C:\\repo"))
     .toThrow("Unknown lifecycle smoke option");
 });
+
+test("live Pi lane accepts explicit Pi and Node executables", () => {
+  expect(parseLifecycleSmokeOptions(["--live", "--lane=pi", "--pi=D:\\bin\\pi.js", "--node=D:\\bin\\node.exe"], "C:\\repo"))
+    .toMatchObject({ lane: "pi", piExecutable: resolve("D:\\bin\\pi.js"), nodeExecutable: resolve("D:\\bin\\node.exe") });
+});
