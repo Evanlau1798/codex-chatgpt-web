@@ -287,6 +287,7 @@ export async function insertChatGptComposerGuardedText(
   htmlShape: boolean | "prewrap" = false,
   metrics?: ChatGptPromptInsertionMetrics,
   operation?: ChatGptPromptOperation,
+  recoverCaret?: () => Promise<void>,
 ): Promise<void> {
   const op = operation ?? new ChatGptPromptOperation(abortSignal);
   op.check();
@@ -338,6 +339,11 @@ export async function insertChatGptComposerGuardedText(
   }, htmlShape ? htmlShape === "prewrap" ? { text, prewrap: true } : { text } : text, options);
   });
   const inserted = chatGptNativeEditValue(editResult, metrics);
+  if (!inserted && recoverCaret && editResult !== null && typeof editResult === "object"
+    && "attempts" in editResult && editResult.attempts === 0) {
+    await recoverCaret();
+    return insertChatGptComposerGuardedText(composer, text, abortSignal, htmlShape, metrics, op);
+  }
   if (!inserted) throw chatGptWebSurfaceError("ChatGPT composer rejected the bounded plain-text edit", false);
 }
 

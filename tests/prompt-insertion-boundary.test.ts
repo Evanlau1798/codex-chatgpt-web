@@ -165,7 +165,7 @@ test("bounded composer edit rejects a selection outside the active composer", as
     await expect(worker.insertPromptText({
       keyboard: { insertText: async () => {} },
     }, "plain text"))
-      .rejects.toThrow("plain-text");
+      .rejects.toMatchObject({ code: "chatgpt_surface_changed" });
   } finally {
     Object.assign(globalThis, { window: previousWindow, document: previousDocument });
   }

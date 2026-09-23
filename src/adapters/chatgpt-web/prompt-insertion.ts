@@ -52,6 +52,7 @@ export async function insertChatGptPromptText(
     metrics.verified(expected.length);
   });
   const reanchor = () => metrics.run("reanchor", () => checked(() => actions.reanchor()));
+  const recoverCaret = () => checked(() => actions.reanchor());
 
   checkAborted();
   const plan = selectedPlan ?? planChatGptPromptInsertion(text, options);
@@ -65,7 +66,7 @@ export async function insertChatGptPromptText(
       const htmlShape = plan.strategy === "direct-html-prewrap" ? "prewrap" : plan.strategy === "direct-html";
       await metrics.run("insert", async () => {
         metrics.chunk();
-        await withComposer(composer => insertChatGptComposerGuardedText(composer, text, abortSignal, htmlShape, metrics, op));
+        await withComposer(composer => insertChatGptComposerGuardedText(composer, text, abortSignal, htmlShape, metrics, op, recoverCaret));
         metrics.inserted(text.length);
       });
       const expected = plan.strategy === "direct-html-prewrap" ? text : text.trimStart();
@@ -86,7 +87,7 @@ export async function insertChatGptPromptText(
       const chunk = boundary?.text ?? original;
       await metrics.run("insert", async () => {
         metrics.chunk();
-        await withComposer(composer => insertChatGptComposerGuardedText(composer, chunk, abortSignal, false, metrics, op));
+        await withComposer(composer => insertChatGptComposerGuardedText(composer, chunk, abortSignal, false, metrics, op, recoverCaret));
         metrics.inserted(end);
       });
       await verify(`${insertionText.slice(0, offset)}${chunk}`.trimStart());

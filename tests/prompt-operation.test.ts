@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { ChatGptPromptDeadlineError, ChatGptPromptOperation } from "../src/adapters/chatgpt-web/prompt-operation";
+import { insertChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-insertion";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { insertChatGptComposerGuardedText, clearChatGptComposerInput,
   restoreChatGptPromptChunkBoundary, restoreChatGptPromptMarkdown, guardChatGptPromptMarkdown,
@@ -65,6 +66,43 @@ test("native edit receives the remaining budget after focus, not another full ti
   } as never;
   await insertChatGptComposerGuardedText(composer, "fixture", undefined, false, undefined, op);
   expect(budgets).toEqual([50, 7]);
+});
+
+test("a caret lost before the native edit is reanchored once without duplicating text", async () => {
+  let insertEvaluations = 0; let reanchors = 0;
+  const composer = {
+    focus: async () => {},
+    evaluate: async () => {
+      insertEvaluations += 1;
+      return insertEvaluations === 1
+        ? { result: false, attempts: 0, accepted: 0 }
+        : { result: true, attempts: 1, accepted: 1 };
+    },
+  } as never;
+  await insertChatGptPromptText("fixture", undefined, {
+    composer: async () => composer,
+    verify: async () => {},
+    reanchor: async () => { reanchors += 1; },
+  });
+  expect([insertEvaluations, reanchors]).toEqual([2, 1]);
+});
+
+test("a rejected native edit is never retried as a caret failure", async () => {
+  let evaluations = 0; let reanchors = 0;
+  const composer = {
+    focus: async () => {},
+    evaluate: async () => {
+      evaluations += 1;
+      return { result: false, attempts: 1, accepted: 0 };
+    },
+  } as never;
+  await expect(insertChatGptPromptText("fixture", undefined, {
+    composer: async () => composer,
+    verify: async () => {},
+    reanchor: async () => { reanchors += 1; },
+  }))
+    .rejects.toThrow("rejected the bounded plain-text edit");
+  expect([evaluations, reanchors]).toEqual([1, 0]);
 });
 
 test("expired parent prevents a new native edit after successful focus", async () => {
