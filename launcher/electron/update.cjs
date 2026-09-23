@@ -48,8 +48,8 @@ function releaseAssetName(version, platform = process.platform, arch = process.a
   if (platform === "win32" && arch === "x64") {
     return `codex-web-gpt-${version}-win-x64.exe`;
   }
-  if (platform === "linux" && arch === "x64") {
-    return `codex-web-gpt-${version}-linux-x64.AppImage`;
+  if (platform === "linux" && ["x64", "arm64"].includes(arch)) {
+    return `codex-web-gpt-${version}-linux-${arch}.AppImage`;
   }
   return null;
 }
@@ -275,6 +275,10 @@ function createUpdateController({
     transition({ status: "checking" });
     try {
       const release = await deps.fetchRelease();
+      if (release?.draft === true || release?.prerelease === true) {
+        candidate = null;
+        return transition({ status: "up-to-date" });
+      }
       const version = releaseVersion(release?.tag_name);
       if (compareVersions(version, currentVersion) <= 0) {
         candidate = null;

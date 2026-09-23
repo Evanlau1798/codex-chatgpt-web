@@ -26,7 +26,8 @@ case "$OS" in
     EXTENSION="AppImage"
     case "$MACHINE" in
       x86_64|amd64) ARCH="x64" ;;
-      *) echo "The packaged Linux launcher currently supports x86_64; detected $MACHINE" >&2; exit 1 ;;
+      arm64|aarch64) ARCH="arm64" ;;
+      *) echo "The packaged Linux launcher supports x86_64 or arm64; detected $MACHINE" >&2; exit 1 ;;
     esac
     ;;
   *) echo "Use install-launcher.ps1 on Windows; unsupported OS: $OS" >&2; exit 1 ;;

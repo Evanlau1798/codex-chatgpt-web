@@ -221,3 +221,123 @@ test("Windows packages embed the checksummed Bun baseline runtime for CPUs witho
   assert.match(baseline, /Get-FileHash[^\n]+SHA256/);
   assert.match(baseline, /CODEX_CHATGPT_WEB_EMBEDDED_BUN=/);
 });
+
+
+test("Linux ARM64 is built and smoked on native PR and release runners", () => {
+  const ci = fs.readFileSync(path.join(repositoryRoot, ".github/workflows/ci.yml"), "utf8");
+  const release = fs.readFileSync(path.join(repositoryRoot, ".github/workflows/release.yml"), "utf8");
+  for (const workflow of [ci, release]) {
+    assert.match(workflow, /ubuntu-24\.04-arm/);
+    assert.match(workflow, /runner\.os == 'Linux' && runner\.arch == 'X64'/);
+    assert.match(workflow, /bun run app:package/);
+    assert.match(workflow, /bun run app:smoke/);
+  }
+  assert.match(release, /runtime_asset: codex-chatgpt-web-linux-arm64\.tar\.gz/);
+  const installer = fs.readFileSync(path.join(repositoryRoot, "scripts/install-launcher.sh"), "utf8");
+  assert.match(installer.slice(installer.indexOf('  Linux)')), /arm64\|aarch64\) ARCH="arm64"/);
+  const smoke = fs.readFileSync(path.join(launcherRoot, "scripts/smoke-package.cjs"), "utf8");
+  assert.match(smoke, /process\.arch/);
+  assert.match(smoke, /-linux-/);
+});
+
+test("libnotify preparation selects the SONAME library, not Meson symbol metadata", () => {
+  const source = fs.readFileSync(path.join(repositoryRoot, "scripts/prepare-linux-libnotify.sh"), "utf8");
+  assert.ok(source.includes('LIBRARY="$TEMP_DIR/build/libnotify/libnotify.so.4"'));
+  assert.doesNotMatch(source, /find .*libnotify\.so\.4\.\*/);
+});
+
+test("release rebuild preserves an existing preview without changing Enhanced stable tags", () => {
+  const { spawnSync } = require("node:child_process");
+  const source = fs.readFileSync(path.join(repositoryRoot, ".github/workflows/release.yml"), "utf8");
+  const start = source.indexOf("          release_flags=");
+  const stop = source.indexOf('          gh release edit "$GITHUB_REF_NAME"', start);
+  assert.ok(start >= 0 && stop > start);
+  const policy = source.slice(start, stop);
+  for (const [tag, preview, expected] of [
+    ["v6.0.0-Enhanced.1", "true", "--prerelease --latest=false"],
+    ["v6.0.0-Enhanced.1", "false", "--prerelease=false --latest"],
+    ["v6.0.0-rc.1-Enhanced.1", "false", "--prerelease --latest=false"],
+  ]) {
+    const result = spawnSync("bash", ["-c", policy + '\nprintf "%s" "${release_flags[*]}"'], {
+      encoding: "utf8", env: { ...process.env, GITHUB_REF_NAME: tag, existing_prerelease: preview },
+      timeout: 5000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, expected);
+  }
+  assert.ok(source.indexOf("--json isPrerelease") < source.indexOf("--draft=true"));
+});
+
+test("native libnotify staging verifies ELF family and exported symbol on both architectures", () => {
+  const os = require("node:os");
+  const vm = require("node:vm");
+  const source = fs.readFileSync(path.join(launcherRoot, "scripts/prepare-linux-appimage-tools.cjs"), "utf8");
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "codex-native-libnotify-"));
+  const module = { exports: {} };
+  let symbols = "00000100 T notify_notification_get_activation_app_launch_context\n";
+  vm.runInNewContext(source, { module, Buffer, process, require: name => {
+    if (name === "builder-util") return { Arch: { x64: 1, arm64: 3 } };
+    if (name === "app-builder-lib/out/toolsets/linux.js") return {
+      getAppImageTools() { throw new Error("This unit test must not download tools"); },
+    };
+    if (name === "node:child_process") return { spawnSync: () => ({ status: 0, stdout: symbols, stderr: "" }) };
+    return require(name);
+  } });
+  const { replaceToolsetLibnotify, requireLibnotifySymbol } = module.exports;
+  try {
+    for (const [arch, machine] of [["x64", 62], ["arm64", 183]]) {
+      const library = path.join(scratch, `${arch}.so`);
+      const bytes = Buffer.alloc(64);
+      Buffer.from("7f454c460201", "hex").copy(bytes);
+      bytes.writeUInt16LE(3, 16);
+      bytes.writeUInt16LE(machine, 18);
+      fs.writeFileSync(library, bytes);
+      const toolsRoot = path.join(scratch, arch);
+      if (arch === "x64") {
+        const libDir = path.join(toolsRoot, "lib", "x64");
+        fs.mkdirSync(libDir, { recursive: true });
+        fs.writeFileSync(path.join(libDir, "libnotify.so.4"), "old x64 library");
+      }
+      const staged = replaceToolsetLibnotify(toolsRoot, library, arch);
+      assert.deepEqual(fs.readFileSync(staged), bytes);
+      assert.throws(() => requireLibnotifySymbol(library, arch === "arm64" ? "x64" : "arm64"), /ELF shared library/);
+      symbols = "00000100 T unrelated_symbol\n";
+      assert.throws(() => requireLibnotifySymbol(library, arch), /does not export/);
+      symbols = "00000100 T notify_notification_get_activation_app_launch_context\n";
+      fs.writeFileSync(library, "not ELF");
+      assert.throws(() => requireLibnotifySymbol(library, arch), /ELF shared library/);
+      if (arch === "arm64") assert.equal(fs.existsSync(path.join(toolsRoot, "lib", "x64")), false);
+    }
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+});
+
+test("pinned builder parses validates and copies the ARM64 extraFiles library", async () => {
+  const { createRequire } = require("node:module");
+  const os = require("node:os");
+  const scriptRequire = createRequire(path.join(launcherRoot, "scripts/package.cjs"));
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "codex-builder-extra-files-"));
+  try {
+    const library = path.join(scratch, "libnotify.so.4");
+    const bytes = Buffer.from("owned library fixture");
+    fs.writeFileSync(library, bytes);
+    const source = fs.readFileSync(path.join(launcherRoot, "scripts/package.cjs"), "utf8");
+    const flags = source.match(/`--config\.linux\.extraFiles\.from=\$\{library\}`,[\s\S]*?"--config\.linux\.extraFiles\.to=([^"]+)"/);
+    assert.ok(flags, "packager must pass the native library through builder's Linux extraFiles");
+    const parsed = scriptRequire("yargs/yargs")([
+      `--config.linux.extraFiles.from=${library}`, `--config.linux.extraFiles.to=${flags[1]}`,
+    ]).parse();
+    await scriptRequire("app-builder-lib/out/util/config/config.js").validateConfiguration(parsed.config, { isEnabled: false });
+    const { getFileMatchers, copyFiles } = scriptRequire("app-builder-lib/out/fileMatcher.js");
+    const appDir = path.join(scratch, "app");
+    const matchers = getFileMatchers(parsed.config, "extraFiles", appDir, {
+      macroExpander: value => value, customBuildOptions: parsed.config.linux,
+      defaultSrc: scratch, globalOutDir: appDir,
+    });
+    await copyFiles(matchers);
+    assert.deepEqual(fs.readFileSync(path.join(appDir, "usr/lib/libnotify.so.4")), bytes);
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+});

@@ -46,7 +46,8 @@ test("release comparison and platform assets are strict", () => {
   assert.equal(releaseAssetName("1.2.0", "darwin", "x64"), "codex-web-gpt-1.2.0-mac-x64.zip");
   assert.equal(releaseAssetName("1.2.0", "win32", "x64"), "codex-web-gpt-1.2.0-win-x64.exe");
   assert.equal(releaseAssetName("1.2.0", "linux", "x64"), "codex-web-gpt-1.2.0-linux-x64.AppImage");
-  assert.equal(releaseAssetName("1.2.0", "linux", "arm64"), null);
+  assert.equal(releaseAssetName("1.2.0", "linux", "arm64"), "codex-web-gpt-1.2.0-linux-arm64.AppImage");
+  assert.equal(releaseAssetName("1.2.0", "linux", "ia32"), null);
 });
 
 test("checksums and release URLs bind the exact expected asset", () => {
@@ -233,4 +234,29 @@ test("detached worker replaces an installed Linux AppImage and removes the old v
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+for (const flag of ["draft", "prerelease"]) {
+  test(`updater ignores ${flag} releases even when the tag looks stable`, async () => {
+    const controller = createUpdateController({
+      currentVersion: "5.0.8-Enhanced.4", platform: "linux", arch: "x64", packaged: true,
+      executablePath: "/fixture/launcher", runtimeExecutable: "/fixture/bun", logsDirectory: "/fixture/logs",
+      dependencies: { fetchRelease: async () => ({ tag_name: "v6.0.0-Enhanced.1", [flag]: true,
+        assets: [] }) },
+    });
+    assert.deepEqual(await controller.checkOnce(), { status: "up-to-date" });
+  });
+}
+
+test("Linux ARM64 updater selects only the matching checksummed Enhanced asset", async () => {
+  const version = "6.0.0-Enhanced.1";
+  const url = `https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v${version}/`;
+  const controller = createUpdateController({
+    currentVersion: "5.0.8-Enhanced.4", platform: "linux", arch: "arm64", packaged: true,
+    executablePath: "/fixture/launcher", runtimeExecutable: "/fixture/bun", logsDirectory: "/fixture/logs",
+    dependencies: { fetchRelease: async () => ({ tag_name: `v${version}`, draft: false, prerelease: false,
+      assets: ["checksums.txt", `codex-web-gpt-${version}-linux-arm64.AppImage`]
+        .map(name => ({ name, browser_download_url: url + name })) }) },
+  });
+  assert.deepEqual(await controller.checkOnce(), { status: "available", version });
 });

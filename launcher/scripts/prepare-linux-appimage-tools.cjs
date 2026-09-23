@@ -6,7 +6,21 @@ const { getAppImageTools } = require("app-builder-lib/out/toolsets/linux.js");
 
 const REQUIRED_LIBNOTIFY_SYMBOL = "notify_notification_get_activation_app_launch_context";
 
-function requireLibnotifySymbol(libraryPath) {
+function requireLibnotifySymbol(libraryPath, arch = process.arch) {
+  const machine = { x64: 62, arm64: 183 }[arch];
+  if (!machine) throw new Error(`Unsupported Linux AppImage architecture: ${arch}`);
+  const header = Buffer.alloc(20);
+  const fd = fs.openSync(libraryPath, "r");
+  try {
+    if (fs.readSync(fd, header, 0, header.length, 0) !== header.length
+      || header.toString("hex", 0, 6) !== "7f454c460201"
+      || header.readUInt16LE(16) !== 3
+      || header.readUInt16LE(18) !== machine) {
+      throw new Error(`${libraryPath} must be a Linux ${arch} ELF shared library`);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
   const result = spawnSync("nm", ["-D", "--defined-only", libraryPath], {
     encoding: "utf8",
     timeout: 30_000,
@@ -29,8 +43,18 @@ function assertInside(root, target) {
   }
 }
 
-function replaceToolsetLibnotify(toolsetRoot, source) {
-  const libraryLink = path.join(toolsetRoot, "lib", "x64", "libnotify.so.4");
+function replaceToolsetLibnotify(toolsetRoot, source, arch = process.arch) {
+  requireLibnotifySymbol(source, arch);
+  const libraryLink = path.join(toolsetRoot, "lib", arch, "libnotify.so.4");
+  // The pinned FUSE2 toolset ships no ARM libraries. package.cjs includes this owned
+  // ARM library through extraFiles; x64 retains the toolset's existing library layout.
+  if (arch === "arm64") {
+    fs.mkdirSync(path.dirname(libraryLink), { recursive: true });
+    fs.copyFileSync(source, libraryLink);
+    fs.chmodSync(libraryLink, 0o755);
+    requireLibnotifySymbol(libraryLink, arch);
+    return libraryLink;
+  }
   const metadata = fs.lstatSync(libraryLink, { throwIfNoEntry: false });
   if (!metadata) throw new Error(`AppImage toolset contains no ${libraryLink}`);
   const replacement = metadata.isSymbolicLink()
@@ -42,13 +66,13 @@ function replaceToolsetLibnotify(toolsetRoot, source) {
   }
   fs.copyFileSync(source, replacement);
   fs.chmodSync(replacement, 0o755);
-  requireLibnotifySymbol(libraryLink);
+  requireLibnotifySymbol(libraryLink, arch);
   return libraryLink;
 }
 
 async function main() {
-  if (process.platform !== "linux" || process.arch !== "x64") {
-    throw new Error("Codex Web GPT AppImage tool preparation requires Linux x64");
+  if (process.platform !== "linux" || !["x64", "arm64"].includes(process.arch)) {
+    throw new Error("Codex Web GPT AppImage tool preparation requires Linux x64 or arm64");
   }
   const source = process.env.CODEX_WEB_GPT_LINUX_LIBNOTIFY?.trim();
   if (!source || !path.isAbsolute(source) || !fs.statSync(source, { throwIfNoEntry: false })?.isFile()) {
@@ -58,8 +82,8 @@ async function main() {
   }
   requireLibnotifySymbol(source);
 
-  const tools = await getAppImageTools("0.0.0", Arch.x64);
-  const downloadedRoot = path.dirname(path.dirname(tools.runtimeLibraries));
+  const tools = await getAppImageTools("0.0.0", Arch[process.arch]);
+  const downloadedRoot = path.dirname(tools.runtime);
   const outputRoot = path.resolve(
     process.env.CODEX_WEB_GPT_APPIMAGE_TOOLS_OUTPUT
       || path.join(__dirname, "..", "build", "appimage-tools"),

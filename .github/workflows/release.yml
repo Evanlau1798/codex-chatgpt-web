@@ -33,6 +33,8 @@ jobs:
             runtime_asset: codex-chatgpt-web-darwin-amd64.tar.gz
           - runner: ubuntu-latest
             runtime_asset: codex-chatgpt-web-linux-amd64.tar.gz
+          - runner: ubuntu-24.04-arm
+            runtime_asset: codex-chatgpt-web-linux-arm64.tar.gz
           - runner: windows-latest
             runtime_asset: codex-chatgpt-web-windows-amd64.zip
     runs-on: ${{ matrix.runner }}
@@ -62,7 +64,7 @@ jobs:
       - run: bun run verify
       - run: bun run app:package
       - name: Verify Linux AppImage ABI on current Arch
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.arch == 'X64'
         run: |
           artifact="$(find launcher/artifacts -maxdepth 1 -name '*-linux-x64.AppImage' -print -quit)"
           test -n "$artifact"
@@ -173,7 +175,8 @@ jobs:
         run: |
           mapfile -d '' release_files < <(find release-assets -type f -print0)
           test "${#release_files[@]}" -gt 0
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          existing_prerelease=false
+          if existing_prerelease="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq '.isPrerelease' 2>/dev/null)"; then
             gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=true --latest=false
             gh release upload "$GITHUB_REF_NAME" "${release_files[@]}" \
               --repo "$GITHUB_REPOSITORY" \
@@ -202,10 +205,10 @@ jobs:
             --jq '.assets[] | select(.name == "checksums.txt") | .digest')"
           test "sha256:$local_manifest_digest" = "$remote_manifest_digest"
 
-          release_flags=(--latest)
+          release_flags=(--prerelease=false --latest)
           version="${GITHUB_REF_NAME#v}"
           upstream_version="${version%%-Enhanced.*}"
-          if [[ "$upstream_version" == *-* ]]; then
+          if [[ "$existing_prerelease" == true || "$upstream_version" == *-* ]]; then
             release_flags=(--prerelease --latest=false)
           fi
           gh release edit "$GITHUB_REF_NAME" \
