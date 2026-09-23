@@ -152,6 +152,9 @@ async function claim(request: BrokerRequest, signal: AbortSignal, state: Dispatc
     throw new Error("Zero Risk MCP contract requires a Zero Risk request id");
   }
   assertTurnActivityId(request.activityId);
+  if (activeChannel.outputSealed) {
+    throw new Error("Codex Native work cannot start after DOM fallback was sealed");
+  }
   if (activeChannel.outputFinalSequence !== undefined) {
     throw new Error("Codex Native work cannot start while the final answer is pending");
   }
@@ -191,6 +194,9 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
   }
   if (request.method === "resolve") return { environment: binding.channel.environment };
   assertSafeHarnessRunning(binding.channel);
+  if (binding.channel.outputSealed) {
+    throw new Error("Codex Native work cannot start after DOM fallback was sealed");
+  }
   if (binding.channel.outputFinalSequence !== undefined) {
     throw new Error("Codex Native work cannot start while the final answer is pending");
   }

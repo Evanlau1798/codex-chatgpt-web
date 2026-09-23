@@ -25,7 +25,7 @@ export interface TurnBrokerOwner {
   commitCompletionFence(token: string, revision: number): boolean | Promise<boolean>;
   nextOutput(token: string, afterSequence: number, signal?: AbortSignal): Promise<BrokerTurnOutputEvent>;
   resetOutput(token: string, finalSequence: number): void | Promise<void>;
-  sealOutput(token: string, afterSequence: number): boolean | Promise<boolean>;
+  sealOutput(token: string, afterSequence: number, expectedRevision: number): boolean | Promise<boolean>;
   waitForRetirement(token: string, signal?: AbortSignal): Promise<void>;
   revoke(token: string, reason?: Error): void | Promise<void>;
 }
@@ -130,10 +130,11 @@ export function dispatchExternalOwnerRequest(
     return Promise.resolve(target.resetOutput(request.token, request.outputSequence!)).then(() => ({ reset: true }));
   }
   if (request.method === "owner_seal_output") {
-    if (!Number.isSafeInteger(request.afterSequence) || request.afterSequence! < 0) {
+    if (!Number.isSafeInteger(request.afterSequence) || request.afterSequence! < 0
+      || !Number.isSafeInteger(request.expectedRevision) || request.expectedRevision! < 0) {
       throw new Error("turn output seal sequence is invalid");
     }
-    return Promise.resolve(target.sealOutput(request.token, request.afterSequence!)).then(sealed => ({ sealed }));
+    return Promise.resolve(target.sealOutput(request.token, request.afterSequence!, request.expectedRevision!)).then(sealed => ({ sealed }));
   }
   if (request.method === "owner_wait_retirement") {
     return target.waitForRetirement(request.token, signal).then(() => ({ retired: true }));
@@ -352,9 +353,9 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     if (response.reset !== true) throw new Error("DEV turn owner received an invalid output reset result");
   }
 
-  async sealOutput(token: string, afterSequence: number): Promise<boolean> {
+  async sealOutput(token: string, afterSequence: number, expectedRevision: number): Promise<boolean> {
     const response = await callTurnBroker<{ sealed?: unknown }>(this.socketPath, {
-      method: "owner_seal_output", token, afterSequence,
+      method: "owner_seal_output", token, afterSequence, expectedRevision,
     });
     if (typeof response.sealed !== "boolean") throw new Error("DEV turn owner received an invalid output seal result");
     return response.sealed;

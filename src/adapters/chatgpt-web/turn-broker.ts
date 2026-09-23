@@ -314,11 +314,11 @@ export class TurnBroker implements TurnBrokerOwner {
     resetTurnOutput(channel, finalSequence);
   }
 
-  sealOutput(token: string, afterSequence: number): boolean {
+  sealOutput(token: string, afterSequence: number, expectedRevision: number): boolean {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
-    return sealTurnOutput(channel, afterSequence);
+    return sealTurnOutput(channel, afterSequence, expectedRevision);
   }
 
   startSafeTurn(requestId: string): { started: true; duplicate: boolean } {

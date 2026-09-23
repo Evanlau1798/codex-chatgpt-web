@@ -286,8 +286,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         reset: async (finalSequence: number) => brokerOwner.resetOutput(
           activeToken ?? await token.promise, finalSequence,
         ),
-        seal: async (afterSequence: number) => brokerOwner.sealOutput(
-          activeToken ?? await token.promise, afterSequence,
+        seal: async (afterSequence: number, expectedRevision: number) => brokerOwner.sealOutput(
+          activeToken ?? await token.promise, afterSequence, expectedRevision,
         ),
       } } : {}),
       ...(finalAnswerAdmission ? { finalAnswerAdmission } : {}),

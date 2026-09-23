@@ -22,7 +22,7 @@ export class BrowserHelperOutputRegistry {
     return { tunneledOutput: {
       next: (after, signal) => this.next(id, after, signal),
       reset: finalSequence => this.reset(id, finalSequence),
-      seal: afterSequence => this.seal(id, afterSequence),
+      seal: (afterSequence, expectedRevision) => this.seal(id, afterSequence, expectedRevision),
     } };
   }
 
@@ -101,14 +101,14 @@ export class BrowserHelperOutputRegistry {
     });
   }
 
-  private seal(id: string, afterSequence: number): Promise<boolean> {
+  private seal(id: string, afterSequence: number, expectedRevision: number): Promise<boolean> {
     const session = this.sessions.get(id);
     if (!session) return Promise.reject(new Error("Browser helper output mirror is unavailable"));
     if (session.seal) return Promise.reject(new Error("Browser helper output seal is already pending"));
     return new Promise((resolve, reject) => {
       const requestId = ++this.nextRequestId;
       session.seal = { requestId, resolve, reject };
-      if (this.write({ type: "event", id, event: "tunneled_output_seal", requestId, afterSequence })) return;
+      if (this.write({ type: "event", id, event: "tunneled_output_seal", requestId, afterSequence, expectedRevision })) return;
       session.seal = undefined;
       reject(new Error("Browser helper could not request an output seal"));
     });

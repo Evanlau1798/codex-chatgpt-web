@@ -589,7 +589,7 @@ export interface BrowserTurn {
   tunneledOutput?: {
     next(afterSequence: number, signal?: AbortSignal): Promise<BrokerTurnOutputEvent>;
     reset(finalSequence: number): Promise<void>;
-    seal(afterSequence: number): Promise<boolean>;
+    seal(afterSequence: number, expectedRevision: number): Promise<boolean>;
   };
   finalAnswerAdmission?: {
     seal(): boolean;
@@ -3647,9 +3647,26 @@ export class ChatGptBrowserWorker {
               if (snapshot.stoppedThinkingVisible) {
                 throw chatGptStoppedThinkingError();
               }
-              if (!snapshot.responsePresent || running
-                || chatGptExternalProgressSuppressesDomHealth(turn.externalProgress?.snapshot(), Date.now())) return "observe";
-              if (snapshot.visibleText.trim()) return undefined;
+              const progress = turn.externalProgress?.snapshot();
+              if (!snapshot.responsePresent || running || chatGptExternalToolCallsAreInFlight(progress)) return "observe";
+              if (snapshot.visibleText.trim()) {
+                const completion = completionTracker.update({
+                  responsePresent: true, running: false,
+                  currentText: snapshot.visibleText, currentHtml: snapshot.fullHtml,
+                  completionActionVisible: snapshot.completionActionVisible,
+                  projection: snapshot.projection,
+                });
+                if (completion.status === "stalled") {
+                  throw new ChatGptWebAdapterError(
+                    `ChatGPT final Markdown projection stopped before completion (${JSON.stringify(completion.diagnostic)})`,
+                    { status: 502, errorType: "server_error", code: "chatgpt_final_projection_stalled",
+                      retryable: false, retireSession: true },
+                  );
+                }
+                return completion.status === "complete" ? undefined : "observe";
+              }
+              // Recent completed tools protect an empty DOM, not a bound visible final answer.
+              if (chatGptExternalProgressSuppressesDomHealth(progress, Date.now())) return "observe";
               if (stoppedMs < CHATGPT_COMPLETION_ACTION_GRACE_MS) return "observe";
               const composers = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
               const composerVisibleCount = await composers.count();

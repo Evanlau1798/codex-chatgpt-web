@@ -79,7 +79,7 @@ export function handleLauncherHelperOutputSeal(
   send: (message: unknown) => Promise<void>,
 ): Promise<void> {
   if (!turn.tunneledOutput) throw new Error("Browser helper requested output seal for a DOM output turn");
-  return turn.tunneledOutput.seal(message.afterSequence).then(sealed => send({
+  return turn.tunneledOutput.seal(message.afterSequence, message.expectedRevision).then(sealed => send({
     type: "tunneled_output_seal_ack", id: message.id, requestId: message.requestId, sealed,
   }));
 }

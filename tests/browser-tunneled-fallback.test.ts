@@ -22,6 +22,7 @@ async function runFixture(options: {
   compactionSettlement?: boolean;
   emptyStopped?: boolean; recoveryFails?: boolean; composerBusy?: boolean; stoppedThinking?: boolean;
   composerBusyAfterAdmission?: boolean;
+  recentToolProgress?: boolean;
 } = {}) {
   const diagnostics = mkdtempSync(join(tmpdir(), "boole-browser-"));
   const progress = new ChatGptExternalTurnProgress();
@@ -31,7 +32,7 @@ async function runFixture(options: {
   const info = spyOn(console, "info").mockImplementation(message => { logs.push(`info:${message}`); });
   const warn = spyOn(console, "warn").mockImplementation(message => { logs.push(`warn:${message}`); });
   const controller = new AbortController();
-  const guard = setTimeout(() => controller.abort(new Error("fixture did not settle")), 10_000);
+  const guard = setTimeout(() => controller.abort(new Error("fixture did not settle")), options.recentToolProgress ? 4_000 : 10_000);
   let now = Date.now();
   const clock = spyOn(Date, "now").mockImplementation(() => now);
   let submitted = 0;
@@ -57,6 +58,7 @@ async function runFixture(options: {
   let snapshotsBeforeDispatch = 0;
   let domWaits = 0;
   let lastToolResultAt = now;
+  let fallbackAgeMs: number | undefined;
   const acknowledge = progress.acknowledgeToolBatch.bind(progress);
   progress.acknowledgeToolBatch = async revision => {
     await acknowledge(revision);
@@ -82,7 +84,7 @@ async function runFixture(options: {
   const turns: any = {
     ...hidden, nth: () => response, page: () => page,
     evaluateAll: async () => {
-      now += options.emptyStopped ? 15_000 : 61_000; // Advance observation time, never sleep to guess tool completion.
+      now += options.recentToolProgress ? 500 : options.emptyStopped ? 15_000 : 61_000; // Advance observation time, never sleep to guess tool completion.
       if (pendingResult) {
         expect(actions).not.toContain("output-seal");
         expect(deltas).toEqual([]);
@@ -217,9 +219,10 @@ async function runFixture(options: {
         actions.push("output-reset");
         finalSequence++;
       },
-      seal: async sequence => {
+      seal: async (sequence, revision) => {
         expect(progress.snapshot().activeToolCalls).toBe(0); actions.push("output-seal");
-        return options.emptyStopped ? sealTurnOutput(channel, sequence) : true;
+        fallbackAgeMs = now - lastToolResultAt;
+        return options.emptyStopped ? sealTurnOutput(channel, sequence, revision) : true;
       },
     },
   };
@@ -242,7 +245,7 @@ async function runFixture(options: {
     expect(actions.filter(a => a === "send")).toHaveLength(options.tunneledRetry ? 2 : 1);
     expect(actions.filter(a => a === "submitted")).toHaveLength(options.tunneledRetry ? 2 : 1);
   }
-  return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText };
+  return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText, fallbackAgeMs };
 }
 
 test("a stopped empty Web response continues once before sealing the native output channel", async () => {
@@ -392,6 +395,19 @@ test("an identified current turn may use an empty baseline before its first nati
   expect(result.answer).toBe(FINAL);
   expect(result.deltas).toEqual([FINAL]);
 });
+
+test("a visible completed answer after a settled native tool does not wait for the 60s progress grace", async () => {
+  const result = await runFixture({ recentToolProgress: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.fallbackAgeMs).toBeLessThan(10_000);
+}, 8_000);
+
+test("recent tool progress cannot seal the tunnel for unchanged pre-tool text", async () => {
+  const result = await runFixture({ recentToolProgress: true, stale: true });
+  expect(result.actions).not.toContain("output-seal");
+  expect(result.deltas).toEqual([]);
+}, 8_000);
 
 test("cancellation during baseline observation cannot release a waiting tool batch", async () => {
   const result = await runFixture({ abortAtBaseline: true });

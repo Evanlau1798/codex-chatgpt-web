@@ -59,6 +59,7 @@ export interface BrokerRequest {
   outputText?: string;
   outputEnabled?: boolean;
   afterSequence?: number;
+  expectedRevision?: number;
   outputSequence?: number;
   contract?: "native" | "safe";
 }

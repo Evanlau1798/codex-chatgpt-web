@@ -36,8 +36,11 @@ test("helper protocol validates tool boundaries and completion requests", () => 
     type: "event", id: "trace_123", event: "completion_fence_commit", requestId: 1, revision: -1,
   }))).toThrow("revision is invalid");
   expect(parseLauncherHelperMessage(JSON.stringify({
+    type: "event", id: "trace_123", event: "tunneled_output_seal", requestId: 2, afterSequence: 0, expectedRevision: 3,
+  }))).toMatchObject({ event: "tunneled_output_seal", requestId: 2, afterSequence: 0, expectedRevision: 3 });
+  expect(() => parseLauncherHelperMessage(JSON.stringify({
     type: "event", id: "trace_123", event: "tunneled_output_seal", requestId: 2, afterSequence: 0,
-  }))).toMatchObject({ event: "tunneled_output_seal", requestId: 2, afterSequence: 0 });
+  }))).toThrow("output seal is invalid");
 });
 
 test("helper fence registry correlates begin and commit acknowledgements", async () => {
@@ -86,8 +89,9 @@ test("browser helper mirrors ordered output and acknowledges final reset", async
   ])).resolves.toBe("waiting");
   registry.apply("trace_123", { sequence: 2, kind: "final", text: "Retried." });
   expect(await retried).toEqual({ sequence: 2, kind: "final", text: "Retried." });
-  const sealed = output.seal(2);
+  const sealed = output.seal(2, 3);
   const sealFrame = sent[1] as { requestId: number };
+  expect(sent[1]).toMatchObject({ event: "tunneled_output_seal", afterSequence: 2, expectedRevision: 3 });
   registry.resolveSeal("trace_123", sealFrame.requestId, true);
   await expect(sealed).resolves.toBeTrue();
   registry.end("trace_123");

@@ -115,6 +115,57 @@ test.each(["commentary", "reasoning"] as const)("the broker preserves whitespace
   expect(submitTurnOutput(channel as never, kind, " ").event).toMatchObject({ kind, text: " " });
 });
 
+test("broker seal rejects a tool that starts after the browser's last observation", () => {
+  const channel = {
+    outputEnabled: true, outputSealed: false, outputEvents: [], outputChars: 0,
+    outputWaiters: new Set(), activities: new Set<string>(), invocations: new Map<string, unknown>(),
+    completionCommitted: false, activityRevision: 0,
+  } as unknown as TurnChannel;
+  channel.invocations.set("new-tool", {} as never);
+  expect(sealTurnOutput(channel, 0, channel.activityRevision)).toBeFalse();
+  expect(channel.outputSealed).toBeFalse();
+  channel.invocations.clear();
+  channel.activities.add("new-activity");
+  expect(sealTurnOutput(channel, 0, channel.activityRevision)).toBeFalse();
+  expect(channel.outputSealed).toBeFalse();
+  channel.activities.clear();
+  const observedRevision = channel.activityRevision;
+  channel.activityRevision += 2; // A tool starts and settles before the seal reaches the broker.
+  expect(sealTurnOutput(channel, 0, observedRevision)).toBeFalse();
+  expect(channel.outputSealed).toBeFalse();
+  expect(sealTurnOutput(channel, 0, channel.activityRevision)).toBeTrue();
+});
+
+test("DOM fallback carries its completion fence revision into the output seal", async () => {
+  let sealedRevision: number | undefined;
+  const output = queue([]);
+  const decision = await runChatGptTunneledOutputTurn({
+    output: { ...output, seal: async (_sequence, revision) => { sealedRevision = revision; return true; } },
+    completionFence: { begin: async () => 7, commit: async () => true },
+    observe: async () => ({ running: false, responsePresent: true }),
+    attempt: 1, onFinal: () => {}, pollMs: 1, fallbackGraceMs: 0,
+  });
+  expect(decision.status).toBe("fallback");
+  expect(sealedRevision).toBe(7);
+});
+
+test("DOM fallback captures the revision before its confirming observation", async () => {
+  let observations = 0;
+  let revision = 0;
+  let sealedRevision: number | undefined;
+  const output = queue([]);
+  await runChatGptTunneledOutputTurn({
+    output: { ...output, seal: async (_sequence, expected) => { sealedRevision = expected; return true; } },
+    completionFence: { begin: async () => revision, commit: async () => true },
+    observe: async () => {
+      if (++observations === 2) revision += 2; // A tool starts and settles during confirmation.
+      return { running: false, responsePresent: true };
+    },
+    attempt: 1, onFinal: () => {}, pollMs: 1, fallbackGraceMs: 0,
+  });
+  expect(sealedRevision).toBe(0);
+});
+
 test("tunneled final resets before a same-surface answer retry", async () => {
   let reset = 0;
   const output = queue([{ sequence: 1, kind: "final", text: "Premature." }], value => { reset = value; });
@@ -180,7 +231,7 @@ test.each(["final", "tools", "abort"] as const)("%s arriving during missing-fina
     output: {
       next: (after, signal) => waitForTurnOutput(channel, after, signal),
       reset: async sequence => { resetTurnOutput(channel, sequence); },
-      seal: async sequence => { seals++; return sealTurnOutput(channel, sequence); },
+      seal: async (sequence, revision) => { seals++; return sealTurnOutput(channel, sequence, revision); },
     },
     signal: controller.signal, attempt: 1, pollMs: 1, fallbackGraceMs: 0,
     observe: async () => ({

@@ -76,11 +76,13 @@ export function resetTurnOutput(channel: TurnChannel, finalSequence: number): vo
   channel.activityRevision += 1;
 }
 
-export function sealTurnOutput(channel: TurnChannel, afterSequence: number): boolean {
+export function sealTurnOutput(channel: TurnChannel, afterSequence: number, expectedRevision: number): boolean {
   assertOutputEnabled(channel);
   assertSequence(afterSequence, true);
+  assertSequence(expectedRevision, true);
   const latest = channel.outputEvents.at(-1)?.sequence ?? 0;
   if (latest !== afterSequence) return false;
+  if (channel.activityRevision !== expectedRevision || channel.activities.size > 0 || channel.invocations.size > 0) return false;
   channel.outputSealed = true;
   channel.activityRevision += 1;
   return true;

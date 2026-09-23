@@ -62,7 +62,7 @@ test("turn output is ordered and final delivery is fail closed", async () => {
     await assert.rejects(submit("final", "Late."), /invalid, expired, or revoked/);
 
     const sealedToken = await broker.register(environment(root), undefined, "sealed-output-test", undefined, true);
-    assert.equal(await owner.sealOutput(sealedToken, 0), true);
+    assert.equal(await owner.sealOutput(sealedToken, 0, 0), true);
     await assert.rejects(callTurnBroker(socket, {
       method: "submit_output", token: sealedToken, outputKind: "final", outputText: "Too late.",
     }), /DOM fallback was sealed/);
@@ -102,6 +102,34 @@ test("final output waits for work settlement and blocks later work until reset",
   }
 });
 
+test("DOM fallback seal rejects new work before completion is committed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-output-sealed-work-"));
+  const socket = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socket);
+  const owner = new RemoteTurnBroker(socket);
+  try {
+    const token = await broker.register(environment(root), undefined, "sealed-work-test", undefined, true);
+    const activityId = "activity_1234567890123456";
+    const claimed = await callTurnBroker<{ bindingId: string }>(socket, { method: "claim", token, activityId });
+    await callTurnBroker(socket, { method: "activity_complete", token, activityId });
+    const revision = await owner.beginCompletionFence(token);
+    assert.equal(typeof revision, "number");
+    assert.equal(await owner.sealOutput(token, 0, revision!), true);
+    await assert.rejects(callTurnBroker(socket, {
+      method: "claim", token, activityId: "activity_abcdefghijklmnop",
+    }), /DOM fallback was sealed/);
+    await assert.rejects(callTurnBroker(socket, {
+      method: "invoke", bindingId: claimed.bindingId, wireName: "read", arguments: { path: "test" },
+    }), /DOM fallback was sealed/);
+    const completionRevision = await owner.beginCompletionFence(token);
+    assert.equal(typeof completionRevision, "number");
+    assert.equal(await owner.commitCompletionFence(token, completionRevision!), true);
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the hidden MCP output control is scoped to output-enabled turns", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-output-mcp-"));
   const socket = defaultBrokerEndpoint(root);
@@ -122,7 +150,7 @@ test("the hidden MCP output control is scoped to output-enabled turns", async ()
     });
     await assert.rejects(remote.nextOutput(disabled, 0), /not enabled/);
     await assert.rejects(remote.resetOutput(disabled, 1), /not enabled/);
-    await assert.rejects(remote.sealOutput(disabled, 0), /not enabled/);
+    await assert.rejects(remote.sealOutput(disabled, 0, 0), /not enabled/);
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });

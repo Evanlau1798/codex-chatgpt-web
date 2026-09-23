@@ -6,7 +6,7 @@ import type { BrokerTurnOutputEvent } from "./turn-broker-protocol";
 export interface ChatGptTunneledOutputReader {
   next(afterSequence: number, signal?: AbortSignal): Promise<BrokerTurnOutputEvent>;
   reset(finalSequence: number): Promise<void>;
-  seal(afterSequence: number): Promise<boolean>;
+  seal(afterSequence: number, expectedRevision: number): Promise<boolean>;
 }
 
 interface TunnelObservation { running: boolean; responsePresent: boolean; toolCallsInFlight?: boolean }
@@ -95,6 +95,10 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
         if (stoppedWithoutFinalSince !== undefined && Date.now() - stoppedWithoutFinalSince >= fallbackGraceMs) {
           const settled = await Promise.race([pending, delay(pollMs)]);
           if (settled.kind === "output") { acceptOutput(settled.event); continue; }
+          // Fence the whole confirmation, including a tool that starts and settles
+          // before the DOM candidate is read. The broker checks this revision at seal.
+          const sealRevision = options.completionFence ? await options.completionFence.begin() : 0;
+          if (sealRevision === undefined) { stoppedWithoutFinalSince = undefined; continue; }
           const confirmed = await options.observe();
           if (!confirmed.responsePresent || confirmed.running || confirmed.toolCallsInFlight) {
             stoppedWithoutFinalSince = undefined;
@@ -123,7 +127,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
               return { status: "retry", retry: admission.retry, lastSequence: sequence };
             }
           }
-          if (!await options.output.seal(sequence)) {
+          if (!await options.output.seal(sequence, sealRevision)) {
             stoppedWithoutFinalSince = undefined;
             continue;
           }
