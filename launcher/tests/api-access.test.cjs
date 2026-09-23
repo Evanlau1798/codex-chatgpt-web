@@ -79,6 +79,24 @@ test("API Access first-enable warning is confirmed before activation and remains
   assert.match(source, /account-safety-help[\s\S]*copy\.apiAccessHelpLabel/);
 });
 
+test("API Access is labeled experimental and explains compatibility limits in every language", () => {
+  const locales = [
+    ["i18n.ts", /experimental/, /unstable/, /compatibility/],
+    ["i18n-zh-tw.ts", /實驗性/, /不穩定/, /相容性/],
+    ["i18n-ja.ts", /実験的/, /不安定/, /互換性/],
+    ["i18n-ko.ts", /실험적/, /불안정/, /호환성/],
+  ];
+  for (const [file, marker, stability, compatibility] of locales) {
+    const source = fs.readFileSync(path.join(__dirname, "..", "src", file), "utf8");
+    assert.match(source, new RegExp(`apiAccess: "[^"\\n]*${marker.source}[^"\\n]*"`, "i"));
+    assert.match(source, new RegExp(`apiAccessWarningBody: "[^"\\n]*${stability.source}[^"\\n]*"`, "i"));
+    assert.match(source, new RegExp(`apiAccessWarningBody: "[^"\\n]*${compatibility.source}[^"\\n]*"`, "i"));
+  }
+  const simplified = fs.readFileSync(path.join(__dirname, "..", "src", "i18n.ts"), "utf8");
+  assert.match(simplified, /apiAccess: "API 访问（实验性）"/);
+  assert.match(simplified, /apiAccessWarningBody: "[^"\n]*兼容性[^"\n]*不稳定/);
+});
+
 test("only the managed daemon receives the API key, never the tunnel or inherited environment", async (t) => {
   const { root, host } = fixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
