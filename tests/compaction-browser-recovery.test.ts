@@ -70,7 +70,7 @@ test.each([
     },
     attachPromptWithCompactionRetry: async function (_page: unknown, _text: string, localTools: boolean, ...args: unknown[]) {
       expect(localTools).toBe((requiredRetained || tools) && !reused);
-      expect(args[7]).toBe(direct);
+      expect(args[7]).toBe(direct || multipart);
       expect(args[8]).toBe(requiredRetained);
       if (reused) return methods.attachPromptWithCompactionRetry!.call(this, _page, _text, localTools, ...args);
       actions.push(localTools ? "attach:tools" : "attach:plain");

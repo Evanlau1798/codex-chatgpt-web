@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import {
   assertChatGptWebMultipartInputWithinLimits,
   prepareChatGptWebMultipartTransport,
@@ -6,6 +6,9 @@ import {
 } from "../src/adapters/chatgpt-web/multipart-browser-transport";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
+import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptBrowserDiagnostics } from "../src/adapters/chatgpt-web/browser-diagnostics";
+import { planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import type { CodexParsedRequest } from "../src/types";
 
 const pro = { localToolsEnabled: false, solAvailable: true, proAvailable: true };
@@ -72,4 +75,62 @@ test("Bigger Context transport stages inert parts and executes only from the fin
   expect(prepared!.finalPrompt).toContain("<codex_multipart_execute>");
   expect(prepared!.finalPrompt).toContain("perform the task");
   expect(prepared!.stagingMode.effort).toBe("low");
+});
+
+test("large Bigger Context stage reaches the verified direct attachment route by default", async () => {
+  const parsed = request();
+  parsed.context.systemPrompt = [`system ${"dense *markdown* [link](x)\n".repeat(1_500)}`];
+  parsed.context.messages[0]!.content = `developer ${"middle *markdown* [link](x)\n".repeat(1_500)}`;
+  parsed.context.messages[1]!.content = `perform the task ${"final *markdown* [link](x)\n".repeat(1_500)}`;
+  const compiled = compileChatGptWebPrompt(parsed, pro, undefined, { experimentalMultipartParts: 3 });
+  const failure = new Error("attachment intercepted");
+  const capture = spyOn(ChatGptBrowserDiagnostics.prototype, "capture").mockImplementation(async () => {});
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  const stages: Array<{ text: string; direct: boolean }> = [];
+  let final: { text: string; direct: boolean } | undefined;
+  const page = {
+    isClosed: () => false,
+    locator: () => ({ count: async () => 0, nth() { return this; },
+      evaluateAll: async () => ({ count: 0, identities: [], ambiguous: false }) }),
+  };
+  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    config: {},
+    finalizingRuns: new Set<string>(),
+    runStage: async (_trace: string, _stage: string, _timeout: number,
+      action: (signal: AbortSignal, remaining: () => number) => Promise<unknown>) =>
+      action(new AbortController().signal, () => 90_000),
+    prepareTemporaryChatSurface: async () => {},
+    selectModelAndEffort: async () => ({ effort: "low", localTools: false }),
+    attachPrompt: async (_page: unknown, text: string, _tools: boolean, _capture: unknown,
+      _signal: unknown, _catalog: unknown, _budget: unknown, _think: unknown, direct: boolean) => {
+      stages.push({ text, direct });
+    },
+    sendAttachedPrompt: async () => "user_turn",
+    waitForNewAssistantTurn: async () => ({}),
+    waitForMultipartAcknowledgement: async () => {},
+    attachPromptWithCompactionRetry: async (...args: unknown[]) => {
+      final = { text: args[1] as string, direct: args[10] as boolean };
+      throw failure;
+    },
+  });
+  try {
+    await expect(worker.runBrowserTurn({
+      traceId: "multipart_direct_fixture", modelId: CHATGPT_WEB_MODEL_ID,
+      reasoning: "high", capabilities: pro,
+      prepare: async () => ({ ...compiled, release: () => {} }),
+      onTextDelta: () => {},
+    }, undefined, page)).rejects.toBe(failure);
+    expect(stages).toHaveLength(2);
+    for (const stage of stages) {
+      expect(stage.text.length).toBeGreaterThan(32_000);
+      expect(planChatGptPromptInsertion(stage.text, { largeStructuredDirect: stage.direct }).strategy)
+        .toBe("direct-html-prewrap");
+    }
+    expect(final?.text.length).toBeGreaterThan(32_000);
+    expect(planChatGptPromptInsertion(final!.text, { largeStructuredDirect: final!.direct }).strategy)
+      .toBe("direct-html-prewrap");
+  } finally {
+    capture.mockRestore();
+    error.mockRestore();
+  }
 });

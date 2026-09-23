@@ -34,7 +34,7 @@ interface Worker {
   waitForTurnDomMutation(page: Page): Promise<void>;
   sendAttachedPrompt(page: Page, baseline: Baseline, initial: State, capture?: unknown,
     signal?: AbortSignal, activated?: () => void, progress?: ChatGptExternalTurnProgress, recover?: Recovery,
-    expectedPrompt?: string): Promise<string>;
+    expectedPrompt?: string, insertionPlan?: ReturnType<typeof planChatGptPromptInsertion>): Promise<string>;
   waitForSubmissionAccepted(page: Page, users: Locator, responses: Locator, response: Locator,
     userCount: number, initial: State, turnIdentities: readonly string[], signal?: AbortSignal, progress?: ChatGptExternalTurnProgress,
     initialRevision?: number, recover?: Recovery): Promise<string>;
@@ -186,11 +186,12 @@ test("send revalidates the exact prompt before activation", async () => {
   expect([presses, activated]).toEqual([0, 0]);
 });
 
-test("multipart pre-Send revalidation preserves leading text for a large pre-wrapped stage", async () => {
+test("default multipart pre-Send revalidation rejects added leading text before activation", async () => {
   const fixture = surface(async () => ({ count: 2, lastId: "conversation-turn-new" }));
   const instance = worker();
-  (instance as unknown as { config: object }).config = { experimentalComposerPlainText: true };
+  (instance as unknown as { config: object }).config = {};
   const expected = ` \n${"x".repeat(40_000)}`;
+  const insertionPlan = planChatGptPromptInsertion(expected, { largeStructuredDirect: true });
   let observed: { text: string; preserveLeading: boolean } | undefined;
   let presses = 0;
   instance.activeComposer = async () => ({ locator: () => ({ getByTestId: () => ({
@@ -198,10 +199,11 @@ test("multipart pre-Send revalidation preserves leading text for a large pre-wra
   }) }) });
   instance.assertPromptAttached = async (_page, text, _signal, _operation, preserveLeading) => {
     observed = { text, preserveLeading: preserveLeading === true };
-    throw new Error("stop before Send");
+    if (preserveLeading) throw new Error("composer changed after attachment");
   };
   await expect(instance.sendAttachedPrompt(fixture.page, fixture.baseline, initial,
-    undefined, undefined, undefined, undefined, undefined, expected)).rejects.toThrow("stop before Send");
+    undefined, undefined, undefined, undefined, undefined, expected, insertionPlan))
+    .rejects.toThrow("composer changed after attachment");
   expect(observed?.text === expected).toBeTrue();
   expect(observed?.preserveLeading).toBeTrue();
   expect(presses).toBe(0);
@@ -455,7 +457,7 @@ test("every post-Send identity observer uses transient read-only recovery", () =
   expect((source.match(/const initialResponseTurn = await readChatGptAssistantTurnState\(/g) ?? []).length).toBe(2);
 });
 
-test.each(["final", "multipart", "final-prewrap"] as const)("production %s send reacquires locators after recovery without resending", async lane => {
+test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as const)("production %s send reacquires locators after recovery without resending", async lane => {
   let reads = 0;
   const first = surface(async () => {
     // Multipart captures its baseline in production before activating Send.
@@ -478,7 +480,7 @@ test.each(["final", "multipart", "final-prewrap"] as const)("production %s send 
     assertPromptAttached: async (_page: Page, prompt: string, _signal: unknown, _operation: unknown,
       preserveLeading: boolean) => {
       verified.push({ text: prompt, preserveLeading: preserveLeading === true });
-      events.push(lane === "final-prewrap" ? "verify:prewrap" : `verify:${prompt}`);
+      events.push(lane.endsWith("prewrap") ? "verify:prewrap" : `verify:${prompt}`);
     },
     connectorIsSelected: async () => true,
     waitForMultipartAcknowledgement: async (page: Page, turn: Locator) => {
@@ -505,8 +507,8 @@ test.each(["final", "multipart", "final-prewrap"] as const)("production %s send 
       onSubmitted: () => { events.push("submitted"); },
     },
     mode: { localTools: lane === "final-prewrap" },
-    prepared: { multipart: lane === "multipart" ? { parts: ["part"] } : undefined },
-    responsePrompt: lane === "final-prewrap" ? `\n${"x".repeat(40_000)}` : "final prompt",
+    prepared: { multipart: lane === "multipart" || lane === "final-multipart-prewrap" ? { parts: ["part"] } : undefined },
+    responsePrompt: lane.endsWith("prewrap") ? `\n${"x".repeat(40_000)}` : "final prompt",
     multipartTransport: { stages: [{ text: "stage" }] },
     deadline: undefined,
     diagnostics: { capture: async () => {} },
@@ -544,10 +546,11 @@ test.each(["final", "multipart", "final-prewrap"] as const)("production %s send 
   if (lane !== "multipart") {
     expect(result.responseTurns).toBe(next.responses);
     expect(result.responseTurn).toBe(next.assistant);
-    expect(events).toEqual([lane === "final-prewrap" ? "verify:prewrap" : "verify:final prompt",
+    expect(events).toEqual([lane.endsWith("prewrap") ? "verify:prewrap" : "verify:final prompt",
       "activated", "send", "rebind", "submitted", "retry-submitted"]);
-    if (lane === "final-prewrap") {
-      expect(verified[0]?.text === ` ${dependencies.responsePrompt}`).toBeTrue();
+    if (lane.endsWith("prewrap")) {
+      expect(verified[0]?.text === (lane === "final-prewrap"
+        ? ` ${dependencies.responsePrompt}` : dependencies.responsePrompt)).toBeTrue();
       expect(verified[0]?.preserveLeading).toBeTrue();
     }
   } else {

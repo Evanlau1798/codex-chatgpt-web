@@ -1576,6 +1576,7 @@ export class ChatGptBrowserWorker {
     externalProgress?: ChatGptTurnProgressReader,
     recoverObservation?: ChatGptObservationRecovery,
     expectedPrompt?: string,
+    insertionPlan?: ChatGptPromptInsertionPlan,
   ): Promise<ChatGptSubmissionEvidence> {
     const composer = await this.activeComposer(page);
     const sendButton = composer
@@ -1597,9 +1598,9 @@ export class ChatGptBrowserWorker {
       await settleChatGptUi();
     }
     if (expectedPrompt !== undefined) {
-      const preserveLeading = planChatGptPromptInsertion(expectedPrompt, {
+      const preserveLeading = (insertionPlan ?? planChatGptPromptInsertion(expectedPrompt, {
         candidatePlainText: this.config?.experimentalComposerPlainText === true,
-      }).strategy === "direct-html-prewrap";
+      })).strategy === "direct-html-prewrap";
       await this.assertPromptAttached(page, expectedPrompt, abortSignal, undefined, preserveLeading);
     }
     await captureDiagnostic?.("send-ready");
@@ -3320,6 +3321,10 @@ export class ChatGptBrowserWorker {
       if (multipartTransport) {
         for (let index = 0; index < multipartTransport.stages.length; index += 1) {
           const stage = multipartTransport.stages[index]!;
+          const stageInsertionPlan = planChatGptPromptInsertion(stage.text, {
+            largeStructuredDirect: true,
+            candidatePlainText: this.config.experimentalComposerPlainText === true,
+          });
           const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
           const initialResponseTurn = await readChatGptAssistantTurnState(responseTurns);
           const initialTurnIdentities = initialResponseTurn.knownTurnIdentities ?? [];
@@ -3341,9 +3346,9 @@ export class ChatGptBrowserWorker {
               false,
               checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
-              false, connectorAttemptBudget, false, false, false, undefined,
+              false, connectorAttemptBudget, false, true, false, undefined,
               { traceId: turn.traceId, stage: `multipart_stage_${index + 1}_attachment`,
-                operation: new ChatGptPromptOperation(stageSignal, remainingMs) },
+                operation: new ChatGptPromptOperation(stageSignal, remainingMs), insertionPlan: stageInsertionPlan },
             ),
             turn.abortSignal,
             chatGptSuspensionClock,
@@ -3364,6 +3369,7 @@ export class ChatGptBrowserWorker {
               undefined,
               toolTurnObservationRecovery,
               stage.text,
+              stageInsertionPlan,
             ),
             turn.abortSignal,
           );
@@ -3466,7 +3472,7 @@ export class ChatGptBrowserWorker {
                     && !(reuseConversation || responseAttempt > 1);
                   if (this.config.experimentalComposerPlainText && !candidateAttachment) {
                     const insertionPlan = planChatGptPromptInsertion(localTools ? ` ${responsePrompt}` : responsePrompt, {
-                      largeStructuredDirect: !multipartTransport && prepared.transport === "inline",
+                      largeStructuredDirect: Boolean(multipartTransport) || prepared.transport === "inline",
                       forceStructuredDirect: turn.compaction === true && turn.requireRetainedConversation === true,
                       candidatePlainText: true,
                     });
@@ -3486,7 +3492,7 @@ export class ChatGptBrowserWorker {
                     catalogRefreshAvailable,
                     connectorAttemptBudget,
                     mode.thinkEnabled,
-                    !multipartTransport && prepared.transport === "inline",
+                    Boolean(multipartTransport) || prepared.transport === "inline",
                     turn.compaction === true && turn.requireRetainedConversation === true,
                     beforeRecoveryInsertion,
                     { traceId: turn.traceId, stage: "prompt_attachment", operation, ...candidateAttachment },
@@ -3584,7 +3590,7 @@ export class ChatGptBrowserWorker {
           && !(reuseConversation || responseAttempt > 1);
         const insertionText = localToolsAtSend ? ` ${responsePrompt}` : responsePrompt;
         const sendPlan = planChatGptPromptInsertion(insertionText, {
-          largeStructuredDirect: !multipartTransport && prepared.transport === "inline",
+          largeStructuredDirect: Boolean(multipartTransport) || prepared.transport === "inline",
           forceStructuredDirect: turn.compaction === true && turn.requireRetainedConversation === true,
           candidatePlainText: this.config?.experimentalComposerPlainText === true,
         });
