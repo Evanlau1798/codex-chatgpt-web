@@ -77,6 +77,7 @@ export function completeSafeTurn(
   safe.state = "completed";
   safe.finalAnswer = finalAnswer;
   resolveSafeWaiters(safe.completionWaiters, finalAnswer);
+  console.info(`[chatgpt-web] broker trace=${channel!.traceId} safe_completion accepted chars=${finalAnswer.length}`);
   return { completed: true, duplicate: false };
 }
 

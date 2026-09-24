@@ -376,6 +376,18 @@ export const LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS = 120_000;
 
 export type LauncherTurnActivity =
   | {
+      phase: "usage";
+      traceId: string;
+      helperPid: number;
+      receipt?: {
+        id: string;
+        accountKey: string;
+        model: "gpt-6-pro" | "gpt-5.6-pro" | "pro-unknown" | "other";
+        at: number;
+      };
+      trackingError?: "account-unavailable";
+    }
+  | {
       phase: "start";
       traceId: string;
       helperPid: number;
@@ -394,7 +406,8 @@ export type LauncherTurnActivity =
       connectorBound?: boolean;
     };
 
-export const LAUNCHER_TURN_START_TIMEOUT_MS = 5_000;
+// Startup must outlast the launcher's ten-second idle bootstrap. This is not a model-turn budget.
+export const LAUNCHER_TURN_START_TIMEOUT_MS = 30_000;
 export const LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS = 10_000;
 export const LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS = 5_000;
 export const LAUNCHER_TURN_END_TIMEOUT_MS = 15_000;
@@ -407,7 +420,8 @@ export async function notifyLauncherTurn(
     : activity.phase === "heartbeat"
       ? LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS
       : LAUNCHER_TURN_START_TIMEOUT_MS,
-): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean; cancelledByUser?: boolean; authenticationBlocked?: boolean }> {
+  signal?: AbortSignal,
+): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean; cancelledByUser?: boolean; authenticationBlocked?: boolean; trackUsage?: boolean }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -419,7 +433,7 @@ export async function notifyLauncherTurn(
         "content-type": "application/json",
       },
       body: JSON.stringify(activity),
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({})) as Record<string, unknown>;
@@ -446,6 +460,7 @@ export async function notifyLauncherTurn(
         surfaceId: body.surfaceId,
         reused: body.reused === true,
         ...(body.connectorBound === true ? { connectorBound: true } : {}),
+        trackUsage: body.trackUsage === true,
       };
     }
     if (activity.phase === "end") {
@@ -459,7 +474,10 @@ export async function notifyLauncherTurn(
     }
     return {};
   } catch (error) {
-    if (error instanceof LauncherBrowserTurnCancelledError) throw error;
+    if (signal?.aborted) throw new DOMException("Launcher browser acquisition cancelled", "AbortError");
+    if (controller.signal.aborted) throw new Error(`Launcher browser control ${activity.phase} timed out after ${timeoutMs}ms`);
+    if (error instanceof LauncherBrowserTurnCancelledError
+      || error instanceof LauncherRetainedConversationUnavailableError) throw error;
     throw new Error(`Launcher browser control channel failed: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     clearTimeout(timer);

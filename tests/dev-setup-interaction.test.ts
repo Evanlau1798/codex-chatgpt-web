@@ -58,7 +58,8 @@ test("first manual DEV setup keeps its isolated Zero Risk tunnel profile without
     expect(config.tunnel!.profileName).toBe("codex-chatgpt-web-dev-zero-risk");
     expect(config.tunnel!.alias).toBe("codex-chatgpt-web-dev-zero-risk");
     expect(config.tunnel).toEqual(config.manualTunnel);
-    expect(connected[0]!.tunnel).toEqual(config.tunnel);
+    expect(connected).toEqual([]);
+    expect(readFileSync(config.tunnel!.runtimeKeyFile, "utf8")).toBe("manual-fixture-key");
     expect(inspected).not.toHaveBeenCalled();
   });
 });
@@ -67,6 +68,8 @@ test("DEV Automatic to manual to Automatic retains connector identity and both p
   await fixture(async ({ setup, connected, inspected }) => {
     const original = await setup("automatic", true);
     const originalProfile = join(original.tunnel!.profileDir, `${original.tunnel!.profileName}.yaml`);
+    mkdirSync(original.tunnel!.profileDir, { recursive: true });
+    writeFileSync(originalProfile, "supervisor-owned-profile");
     const profileBytes = readFileSync(originalProfile);
     const keyBytes = readFileSync(original.tunnel!.runtimeKeyFile);
     const manual = await setup("manual", true);
@@ -77,7 +80,7 @@ test("DEV Automatic to manual to Automatic retains connector identity and both p
     expect(restored.manualTunnel).toEqual(manual.manualTunnel);
     expect(readFileSync(originalProfile)).toEqual(profileBytes);
     expect(readFileSync(original.tunnel!.runtimeKeyFile)).toEqual(keyBytes);
-    expect(connected.map(config => config.browserInteractionMode)).toEqual(["automatic", "manual", "automatic"]);
+    expect(connected).toEqual([]);
     expect(inspected).toHaveBeenCalledTimes(2);
   });
 });

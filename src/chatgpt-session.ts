@@ -2,6 +2,11 @@ import type { Locator, Page } from "playwright-core";
 import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
 
 export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
+export const CHATGPT_SAVED_CHAT_URL = "https://chatgpt.com/";
+
+export function chatGptNewChatUrl(useSavedChats = false): string {
+  return useSavedChats ? CHATGPT_SAVED_CHAT_URL : CHATGPT_TEMPORARY_CHAT_URL;
+}
 export const CHATGPT_COMPOSER_SELECTOR = [
   '[data-testid="prompt-textarea"]',
   "#prompt-textarea",
@@ -175,6 +180,23 @@ export function chatGptEffortSliderAdvancedTowardTarget(previous: number, curren
     : current < previous && current >= target;
 }
 
+export async function readChatGptEffortAvailability(
+  sliderContainer: Locator,
+  state: ChatGptEffortSliderState,
+): Promise<boolean[]> {
+  // Plus exposes a fourth ARIA position for a locked Pro upsell. Only the ticks
+  // carry both attributes; the slider root also has data-locked and is not a choice.
+  const locks = await sliderContainer.evaluate(container => Array.from(
+    container.querySelectorAll("[data-locked][data-selected]"),
+    tick => tick.getAttribute("data-locked"),
+  ));
+  if (locks.length !== state.max - state.min + 1
+    || locks.some(lock => lock !== "true" && lock !== "false")) {
+    throw new Error("ChatGPT effort availability could not be verified from its slider ticks");
+  }
+  return locks.map(lock => lock === "false");
+}
+
 async function anyVisible(locator: Locator): Promise<boolean> {
   const count = await locator.count();
   for (let index = 0; index < count; index += 1) {
@@ -197,6 +219,16 @@ export async function assertTemporaryChatPage(page: Page): Promise<void> {
     throw new Error(`ChatGPT left the isolated Temporary Chat surface (${page.url()})`);
   }
 }
+
+export async function assertNewChatPage(page: Page, useSavedChats = false): Promise<void> {
+  const url = new URL(page.url());
+  const expected = new URL(chatGptNewChatUrl(useSavedChats));
+  if (url.origin !== expected.origin || url.pathname !== expected.pathname
+    || (url.searchParams.get("temporary-chat") === "true") === useSavedChats) {
+    throw new Error(`ChatGPT left the requested new ${useSavedChats ? "saved" : "Temporary"} Chat surface (${page.url()})`);
+  }
+}
+
 
 export async function ensureChatGptTemporaryChatPersonalized(
   page: Page,
@@ -319,12 +351,14 @@ export async function detectChatGptAccountCapabilities(
       await slider.getAttribute("aria-valuemax"),
       await slider.getAttribute("aria-valuenow"),
     );
-    if (!state) throw new Error("ChatGPT effort slider exposed an invalid ARIA range");
-    return {
-      solAvailable: true,
-      extraHighAvailable: state.max - state.min + 1 >= 4,
-      proAvailable: state.max - state.min + 1 >= 5,
-    };
+    if (!state) {
+      throw new Error(
+        "ChatGPT model controls are unavailable. Reload ChatGPT and run Repair again.",
+        { cause: new Error("ChatGPT effort slider exposed an invalid ARIA range") },
+      );
+    }
+    const available = await readChatGptEffortAvailability(sliderContainer, state);
+    return { solAvailable: true, extraHighAvailable: available[3] === true, proAvailable: available[4] === true };
   } finally {
     await page.keyboard.press("Escape").catch(() => {});
   }

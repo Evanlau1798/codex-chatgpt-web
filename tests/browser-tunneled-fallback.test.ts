@@ -1,4 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -97,7 +98,7 @@ async function runFixture(options: {
       return { count: identities.length, lastId: identities.at(-1), identities };
     },
   };
-  const page: any = {
+  const page: any = Object.assign(new EventEmitter(), {
     isClosed: () => false, url: () => CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
     locator: (selector: string) => {
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
@@ -110,14 +111,14 @@ async function runFixture(options: {
       };
       return hidden;
     },
-  };
+  });
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics },
     finalizingRuns: new Set<string>(),
     takePreemptiveRetry: () => options.tunneledRetry === "preemptive" && submitted === 1
       ? options.compactionSettlement ? activeCompactionToolResultInstruction() : "Apply pending steering." : undefined,
     runStage: async (_trace: string, _name: string, _timeout: number, action: (s: AbortSignal) => unknown) => action(controller.signal),
-    prepareTemporaryChatSurface: async () => {},
+    prepareChatSurface: async () => {},
     selectModelAndEffort: async (_page: unknown, model: string, effort: string) => resolveChatGptWebModelMode(
       model, effort, { localToolsEnabled: true, solAvailable: true, proAvailable: true, extraHighAvailable: true },
     ),

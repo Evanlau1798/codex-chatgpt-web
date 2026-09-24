@@ -41,12 +41,12 @@ function effortMenuFixture(itemCount: number) {
     filter() { return this; },
     last() { return this; },
     isVisible: async () => false,
-    waitFor: async () => { throw timeout(); },
+    waitFor: () => new Promise<void>(() => {}),
   };
   const effortControl = {
     last() { return this; },
     waitFor: async () => {},
-    getAttribute: async (name: string) => name === "aria-expanded" ? "false" : null,
+    getAttribute: async (name: string) => name === "aria-expanded" ? "true" : null,
     press: async () => {},
   };
   const composerForm = {
@@ -60,6 +60,10 @@ function effortMenuFixture(itemCount: number) {
     locator: (selector: string) => {
       if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return effortMenu;
       if (selector === CHATGPT_EFFORT_SLIDER_SELECTOR) return effortSliderCollection;
+      if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
+        filter() { return this; }, last() { return this; }, isVisible: async () => true,
+        waitFor: async () => {}, locator: () => effortSlider,
+      };
       if (selector.includes('[role="alert"]') || selector.includes('[role="dialog"]')) return rateLimitDialog;
       throw new Error(`Unexpected selector: ${selector}`);
     },
@@ -95,6 +99,7 @@ async function effortMenuError(itemCount: number): Promise<ChatGptWebAdapterErro
 describe("ChatGPT effort menu failure classification", () => {
   test("prefers an attached semantic effort slider over model radio rows in the same picker", async () => {
     let sliderValue = 3;
+    let expanded = true;
     const pressed: string[] = [];
     const modelRow = {
       waitFor: async () => {},
@@ -124,9 +129,11 @@ describe("ChatGPT effort menu failure classification", () => {
       locator: () => ({ nth: () => modelRow }),
     };
     const effortControl = {
-      last() { return this; },
+      last() { return this; }, first() { return this; }, filter() { return this; },
+      count: async () => 1, innerText: async () => "Medium",
+      click: async () => { expanded = true; },
       waitFor: async () => {},
-      getAttribute: async (name: string) => name === "aria-expanded" ? "true" : null,
+      getAttribute: async (name: string) => name === "aria-expanded" ? String(expanded) : null,
     };
     const hiddenDialog = {
       filter() { return this; },
@@ -135,19 +142,21 @@ describe("ChatGPT effort menu failure classification", () => {
       waitFor: () => new Promise(() => {}),
     };
     const page = {
+      url: () => "https://chatgpt.com/?temporary-chat=true",
       locator: (selector: string) => {
         if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return effortMenu;
         if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
           filter() { return this; }, last() { return this; },
           isVisible: async () => true, waitFor: async () => {},
+          evaluate: async () => ["false", "false", "false", "false", "false"],
           locator: () => slider,
         };
         if (selector.includes('[role="alert"]') || selector.includes('[role="dialog"]')) return hiddenDialog;
         throw new Error(`Unexpected selector: ${selector}`);
       },
-      keyboard: { press: async () => {} },
+      keyboard: { press: async () => { expanded = false; } },
     };
-    const composer = { locator: () => ({ locator: () => effortControl }) };
+    const composer = { isEditable: async () => true, locator: () => ({ locator: () => effortControl }) };
     const selectModelAndEffort = (ChatGptBrowserWorker.prototype as unknown as {
       selectModelAndEffort(
         page: unknown,
@@ -157,7 +166,7 @@ describe("ChatGPT effort menu failure classification", () => {
       ): Promise<unknown>;
     }).selectModelAndEffort;
 
-    await expect(selectModelAndEffort.call({ activeComposer: async () => composer },
+    await expect(selectModelAndEffort.call(Object.assign(Object.create(ChatGptBrowserWorker.prototype), { activeComposer: async () => composer }),
       page, CHATGPT_WEB_MODEL_ID, "medium", {
         localToolsEnabled: true,
         solAvailable: true,
@@ -168,6 +177,7 @@ describe("ChatGPT effort menu failure classification", () => {
 
   test("selects an attached semantic slider even when its thumb has no visible box", async () => {
     let sliderValue = 3;
+    let expanded = true;
     const pressed: string[] = [];
     const sliderControl = {
       isVisible: async () => true,
@@ -198,12 +208,14 @@ describe("ChatGPT effort menu failure classification", () => {
       locator: () => ({ nth: () => unavailableChoice }),
     };
     const effortControl = {
-      last() { return this; },
+      last() { return this; }, first() { return this; }, filter() { return this; },
+      count: async () => 1, innerText: async () => "Medium",
+      click: async () => { expanded = true; },
       waitFor: async () => {},
-      getAttribute: async (name: string) => name === "aria-expanded" ? "true" : null,
+      getAttribute: async (name: string) => name === "aria-expanded" ? String(expanded) : null,
       press: async () => {},
     };
-    const composer = { locator: () => ({ locator: () => effortControl }) };
+    const composer = { isEditable: async () => true, locator: () => ({ locator: () => effortControl }) };
     const hiddenDialog = {
       filter() { return this; },
       last() { return this; },
@@ -211,17 +223,19 @@ describe("ChatGPT effort menu failure classification", () => {
       waitFor: () => new Promise(() => {}),
     };
     const page = {
+      url: () => "https://chatgpt.com/?temporary-chat=true",
       locator: (selector: string) => {
         if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return effortMenu;
         if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
           filter() { return this; }, last() { return this; },
           isVisible: async () => true, waitFor: async () => {},
+          evaluate: async () => ["false", "false", "false", "false", "false"],
           locator: () => hiddenSliderCollection.last(),
         };
         if (selector.includes('[role="alert"]') || selector.includes('[role="dialog"]')) return hiddenDialog;
         throw new Error(`Unexpected selector: ${selector}`);
       },
-      keyboard: { press: async () => {} },
+      keyboard: { press: async () => { expanded = false; } },
     };
     const selectModelAndEffort = (ChatGptBrowserWorker.prototype as unknown as {
       selectModelAndEffort(
@@ -232,7 +246,7 @@ describe("ChatGPT effort menu failure classification", () => {
       ): Promise<unknown>;
     }).selectModelAndEffort;
 
-    await expect(selectModelAndEffort.call({ activeComposer: async () => composer },
+    await expect(selectModelAndEffort.call(Object.assign(Object.create(ChatGptBrowserWorker.prototype), { activeComposer: async () => composer }),
       page, CHATGPT_WEB_MODEL_ID, "medium", {
         localToolsEnabled: true,
         solAvailable: true,

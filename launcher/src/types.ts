@@ -1,9 +1,10 @@
 import languages from "../electron/languages.json";
+import type { LimitsSnapshot } from "./limits-types";
 
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
-export type Surface = "browser" | "setup" | "mcp" | "activity" | "settings";
+export type Surface = "browser" | "setup" | "mcp" | "activity" | "limits" | "settings";
 
 export interface LauncherState {
   version: 1;
@@ -26,6 +27,8 @@ export interface LauncherState {
   showBrowserDuringTurns: boolean;
   lockBrowserDuringTurns: boolean;
   browserInteractionMode: BrowserInteractionMode;
+  experimentalFreshConversationPerTurn: boolean;
+  useSavedChats: boolean;
   zeroRiskProEnabled: boolean;
   sidebarOpen: boolean;
   sidebarWidth: number;
@@ -154,6 +157,8 @@ export interface ApiAccessStatus {
 
 export interface LauncherApi {
   snapshot(): Promise<LauncherSnapshot>;
+  getLimits(): Promise<LimitsSnapshot>;
+  setupLimits(): Promise<LimitsSnapshot>;
   setLanguage(language: Language): Promise<LauncherState>;
   openSocial(target: "github" | "x"): Promise<LauncherState>;
   completeOnboarding(language: Language, browserInteractionMode: BrowserInteractionMode): Promise<LauncherState>;
@@ -209,6 +214,8 @@ export interface LauncherApi {
   }): Promise<{ ok: boolean; stdout: string }>;
   setMcpStep(step: number): Promise<LauncherState>;
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
+  setFreshConversationPerTurn(enabled: boolean): Promise<LauncherState>;
+  setUseSavedChats(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;
   setBrowserInteractionMode(mode: BrowserInteractionMode): Promise<{
     state: LauncherState;

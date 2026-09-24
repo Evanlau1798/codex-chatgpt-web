@@ -19,6 +19,8 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
+> **開発候補版：`6.0.0-Enhanced.1`。** ダウンロードボタンは公開済みの Enhanced パッケージを指します。このブランチはリリース公開を意味しません。
+
 <p align="center">
   <a href="TROUBLESHOOTING.md">トラブルシューティング</a> · <a href="SECURITY.md">セキュリティ</a> · <a href="CONTRIBUTING.md">コントリビューション</a>
 </p>
@@ -53,14 +55,13 @@ Codex タスク ──Responses + SSE──▶ codex-chatgpt-web ──内蔵ブ
 ```
 
 Codex はネイティブのタスク、コンテキストライフサイクル、UI、ツールハーネスを維持します。
-ローカル Responses ブリッジは、選択されたモデルのタスクだけをタスクに紐付いた ChatGPT 一時チャットへルーティングします。
+ローカル Responses ブリッジは、選択されたモデルのタスクだけをタスクに紐付いた ChatGPT 会話（既定では一時チャット）へルーティングします。
 Full モードでは、次のコンパクション境界まで、MCP が ChatGPT を同じ Codex タスクのツールへ接続します。
 
-> [!TIP]
-> **[ChatGPT Persona Voice](https://github.com/miuuyy/ChatGPT-Persona-Voice)** も開発しています。
-> ChatGPT/Codex の音声をローカル環境でほぼリアルタイムに変換するアプリです。
-> アカウント、ブラウザーセッション、ChatGPT リクエストには一切触れないため、
-> 使用によってアカウントがブロックされるリスクはありません。気に入っていただけたら、ぜひお試しください。
+1. **ランチャーをインストール**：上のボタンから、お使いの OS 向けのアプリをダウンロードします。
+2. **ChatGPT にサインイン**：内蔵ブラウザーでログインし、ブラウザーのスモークテストを実行します。
+3. **モデルをインストール**：Codex を一度再起動します。自動モードでは、名前の末尾が **(Web)** のモデルを選択します。Pro はバージョン別の項目、Sol の推論レベルは Effort で選択します。Zero Risk は専用の項目を引き続き使用します。
+4. **ツールを使って開発する場合**：ランチャーの **MCP** を開き、下記の Full ハーネス設定を完了します。
 
 ## 主な特長
 
@@ -69,7 +70,7 @@ Full モードでは、次のコンパクション境界まで、MCP が ChatGPT
 - **MCP 経由の完全な Codex ハーネス。** Full モードでは、Pro を含め、サインイン中のアカウントで
   利用可能なすべての effort から、実行中タスクのファイルシステム、シェル、画像、承認、設定済みツール／アプリを使用できます。
 - **継続的なタスクセッションとネイティブコンパクション。** 連続するメッセージは、タスクに紐付いた
-  1 つの一時チャットを 30 分間再利用し、差分だけを送ります。Codex Desktop は安定した native session key
+  1 つのタスク会話を 30 分間再利用し、差分だけを送ります。既定では一時チャットを使用します。Codex Desktop は安定した native session key
   で会話を維持するため、毎ターン再構築される base instructions で TTL 内の tab は破棄されません。
   現在の developer／environment 更新は差分に含まれます。安定した識別子を持たない client は system instructions
   の変更時に新しいチャットを開始します。コンテキスト境界に達すると、
@@ -128,6 +129,8 @@ cd codex-chatgpt-web && \
 bun run app
 ```
 
+Zero Risk は ChatGPT ページを読み取ったり操作したりしません。モデルと `Codex Zero Risk` コネクタを自分で選び、用意されたプロンプトを貼り付けて送信し、ランチャーで **Sent** を確認してください。名前の末尾が **(Web)** の自動モデルでは、対応する Effort を Codex で選択できます。コンテキスト上限を維持するため、Instant と各 Pro バージョンは別の項目になります。既存のタスクに保存された旧モデル項目は、従来の固定モードを維持します。
+
 この方法には Bun 1.4.0 が必要です。コマンドはロックされた依存関係をインストールしてアプリを開きます。
 
 ## モード
@@ -138,8 +141,8 @@ bun run app
 | **Full harness（自動操作）** | Free/Go: Luna、Plus: Instant～High、Pro: Extra High と Pro を追加 | Pro を含むすべての表示 effort で使用可能 | OpenAI トンネル + ChatGPT コネクタ |
 | **Zero Risk** | ChatGPT のモデルと effort を手動選択。任意で Pro コンテキスト | 使用可能。ターン紐付き Codex harness を維持 | 個別 OpenAI トンネル + `Codex Zero Risk` コネクタ。貼り付けと送信は手動 |
 
-モデル選択画面の各項目は、1 つの固定 ChatGPT モードに対応します。Codex には内蔵の Effort と Speed 行も表示されますが、
-それらを変更しても、選択済みのブラウザーモデルが黙って切り替わることはありません。
+新しい **(Web)** 項目は対応する Effort のみを公開し、Instant と各 Pro family は個別の context budget を維持します。
+旧項目は固定モードを保持します。送信前に要求された family と effort を検証し、未対応の選択では明示的に失敗します。
 Full モードでは、利用可能なすべての effort が同じターン紐付き MCP capability を受け取ります。
 Pro 専用の制限や縮小されたツール契約はありません。
 
@@ -153,13 +156,22 @@ Enhanced の自動ツールターンでは、**Web Agent 出力を MCP Tunnel �
 ない場合は、同じページで完了済みの応答を検証して prompt の再送は行いません。Enhanced を無効に
 するか Zero Risk を選ぶと、設定値を保持したままこの転送経路を無効にします。
 
+### 会話設定、Limits と API
+
+**Save chats in ChatGPT** は既定で無効です。Codex／Claude のタスク会話を保存できますが、API の直接送信と native tool bridge は常に Temporary Chat を使い、`store:true` を拒否します。無効化しても既存の履歴は削除しません。
+
+**New browser chat for each turn** は既定で無効で、Original Automatic のみで使用できます。Enhanced と Zero Risk では UI、launcher、config、adapter の各境界で無効にし、古い設定からの再有効化も防ぎます。履歴保存とは独立した設定です。
+
+**Limits** は opt-in のローカル使用量推定で、公式の残り枠や Account Safety の代替ではありません。受理された実際の送信を一度だけ記録し、記録失敗による再送はしません。Zero Risk では自動のアカウント検査や追跡を行いません。
+API `reasoning_effort` は新しい route の対応値だけを受け入れ、旧 route は固定の意味を維持します。同じ native Web generation のツール継続で有効な family／effort を変更できません。
+
 ### コンテキスト設定の違い
 
 **Enhanced Web セッションモード**は、ツールラウンド、steering、compaction をまたいで 1 つの
 タスク紐付き ChatGPT 会話を保持します。変更するのは会話の連続性だけで、コンテキストウィンドウを
 拡大したり compaction を無効にしたりはしません。**Bigger Context** とは同時に有効化できません。
-Bigger Context は大きな Codex ターンを 2～3 件のステージングメッセージと 1 件の最終実行
-メッセージに分割します。各メッセージは実際の ChatGPT リクエストで、利用枠を消費する場合が
+Bigger Context は合計 1、2、6 件のメッセージを使います。6 件の場合は 5 件のステージングと
+1 件の最終実行メッセージです。各メッセージは実際の ChatGPT リクエストで、利用枠を消費する場合が
 あります。Codex に公開するコンテキストと compaction しきい値は 3 倍になりますが、ChatGPT の
 メッセージ、モデル、コンポーザー、転送、サービス上限は残ります。
 

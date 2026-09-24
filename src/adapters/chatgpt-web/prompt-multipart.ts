@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
 import { estimateTokens } from "../../lib/token-estimate";
 
-export const CHATGPT_BIGGER_CONTEXT_PARTS = 3 as const;
+export const CHATGPT_BIGGER_CONTEXT_PARTS = 6 as const;
 export type ChatGptWebMultipartPartCount = 2 | typeof CHATGPT_BIGGER_CONTEXT_PARTS;
-export type ChatGptWebMultipartParts = readonly [string, string] | readonly [string, string, string];
+export type ChatGptWebMultipartParts = readonly string[];
+
+export function isChatGptWebMultipartPartCount(value: number): value is ChatGptWebMultipartPartCount {
+  return value === 2 || value === CHATGPT_BIGGER_CONTEXT_PARTS;
+}
 
 export interface ChatGptWebMultipartPrompt {
   parts: ChatGptWebMultipartParts;
@@ -40,11 +44,11 @@ export function formatChatGptWebMultipartStage(
   payload: string,
   transactionId: string,
   partIndex: number,
-  totalParts: ChatGptWebMultipartPartCount = CHATGPT_BIGGER_CONTEXT_PARTS,
+  totalParts: number = CHATGPT_BIGGER_CONTEXT_PARTS,
 ): ChatGptWebMultipartStage {
   assertTransactionId(transactionId);
   if (!Number.isInteger(partIndex) || partIndex < 1 || partIndex > totalParts
-    || (totalParts !== 2 && totalParts !== CHATGPT_BIGGER_CONTEXT_PARTS)) {
+    || !isChatGptWebMultipartPartCount(totalParts)) {
     throw new Error("ChatGPT multipart stage index is invalid");
   }
   JSON.parse(payload);
@@ -79,8 +83,8 @@ export function formatChatGptWebMultipartCommit(
 ): string {
   assertTransactionId(transactionId);
   const totalParts = multipart.parts.length;
-  if (totalParts !== 2 && totalParts !== CHATGPT_BIGGER_CONTEXT_PARTS) {
-    throw new Error("ChatGPT multipart commit requires two or three staged parts");
+  if (!isChatGptWebMultipartPartCount(totalParts)) {
+    throw new Error("ChatGPT multipart commit requires two or six context parts");
   }
   const manifest = multipart.parts.map((payload, index) => (
     `${index + 1}/${totalParts}:${createHash("sha256").update(payload).digest("hex")}`
@@ -123,6 +127,7 @@ function recordWeight(record: MultipartContextRecord): MultipartRecordBudget {
 function partitionBoundaries(
   weights: readonly MultipartRecordBudget[],
   budgets: readonly MultipartRecordBudget[],
+  finalRecordStart: number,
 ): number[] {
   const scale = 1_000_000;
   const load = (part: number, tokens: number, chars: number): number => Math.max(
@@ -136,13 +141,14 @@ function partitionBoundaries(
     totalTokens += weight.tokens;
     totalChars += weight.chars;
   }
-  let upper = weights.length === 0 ? 0 : load(0, totalTokens, totalChars);
+  let upper = weights.length === 0 ? 0 : Math.max(...budgets.map((_budget, part) => load(part, totalTokens, totalChars)));
   const boundaries = (capacity: number): number[] => {
     let offset = 0;
     return budgets.map((_budget, part) => {
       let tokens = 0;
       let chars = 0;
       while (offset < weights.length) {
+        if (part < budgets.length - 1 && offset >= finalRecordStart) break;
         const weight = weights[offset]!;
         if (load(part, tokens + weight.tokens, chars + weight.chars) > capacity) break;
         tokens += weight.tokens;
@@ -168,7 +174,9 @@ export function partitionMultipartContext(
   if (budgets.length !== totalParts) throw new Error("ChatGPT multipart budget count does not match parts");
   let offset = 0;
   const weights = records.map(recordWeight);
-  const groups = partitionBoundaries(weights, budgets).map(end => {
+  const lastMessage = records.findLastIndex(record => record.kind === "message");
+  const finalRecordStart = lastMessage >= 0 ? lastMessage : Math.max(0, records.length - 1);
+  const groups = partitionBoundaries(weights, budgets, finalRecordStart).map(end => {
     const group = records.slice(offset, end);
     offset = end;
     return group;
@@ -177,6 +185,5 @@ export function partitionMultipartContext(
   const payloads = groups.map((group, index) => withoutRetiredTurnHandles(JSON.stringify({
     version: 1, part_index: index + 1, total_parts: totalParts, records: group,
   })));
-  if (totalParts === 2) return [payloads[0]!, payloads[1]!];
-  return [payloads[0]!, payloads[1]!, payloads[2]!];
+  return payloads;
 }

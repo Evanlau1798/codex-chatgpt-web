@@ -102,8 +102,11 @@ function ipc(name, context) {
   const start = source.indexOf(`  handle("launcher:${name}",`);
   const end = source.indexOf("\n  });", start);
   assert.ok(start >= 0 && end > start);
+  const syncStart = source.indexOf("function syncFreshConversationPreference(");
+  const syncEnd = source.indexOf("function registerIpc(", syncStart);
+  assert.ok(syncStart >= 0 && syncEnd > syncStart);
   let handler;
-  vm.runInNewContext(source.slice(start, end + 6), {
+  vm.runInNewContext(source.slice(syncStart, syncEnd) + source.slice(start, end + 6), {
     IS_DEV_PROFILE: false, send() {}, logger: {}, startCatalogVerificationMonitor() {},
     ...context, handle: (_name, callback) => { handler = callback; },
   });
@@ -127,6 +130,7 @@ for (const entry of ["browser-interaction-mode", "setup-mcp"]) {
     const handler = ipc(entry, {
       browserHost: host, runtimeHost: {
         mcpCredentialsConfigured: () => true, setBrowserInteractionMode: setup, setupMcp: setup,
+        currentOperation: () => null,
         runtimeConfigSnapshot: () => ({ config: {} }),
       },
       stateStore: { read: () => state, update: patch => Object.assign(state, patch) },

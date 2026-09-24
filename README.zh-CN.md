@@ -19,6 +19,8 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
+> **开发候选版：`6.0.0-Enhanced.1`。** 下载按钮仍指向已发布的 Enhanced 安装包；此分支不代表已经发版。
+
 <p align="center">
   <a href="TROUBLESHOOTING.md">故障排除</a> · <a href="SECURITY.md">安全</a> · <a href="CONTRIBUTING.md">贡献</a>
 </p>
@@ -54,10 +56,10 @@ Codex 会保留原生任务、上下文生命周期、界面和工具 harness。
 所选模型的任务转发到与该任务绑定的 ChatGPT 临时聊天；在完整模式下，MCP 会把 ChatGPT 连接回
 同一个 Codex 任务的工具，直到下一次上下文压缩边界。
 
-> [!TIP]
-> 我还开发了 **[ChatGPT Persona Voice](https://github.com/miuuyy/ChatGPT-Persona-Voice)**：一款
-> 能够近实时改变 ChatGPT/Codex 声音的本地应用。它不会接触你的账户、浏览器会话或 ChatGPT
-> 请求，因此不会带来账户封禁风险。如果你喜欢我的作品，欢迎试用。
+1. **安装启动器**：点击上方对应系统的下载按钮。
+2. **登录 ChatGPT**：在内置浏览器中登录并运行浏览器冒烟测试。
+3. **安装模型**：重启一次 Codex。在自动模式下，选择名称以 **(Web)** 结尾的模型。Pro 版本使用独立条目，Sol 推理等级通过 Effort 选择。Zero Risk 保留专用条目。
+4. **需要使用工具编程时**：打开启动器中的 **MCP**，完成下方的完整 harness 设置。
 
 ## 亮点
 
@@ -68,11 +70,11 @@ Codex 会保留原生任务、上下文生命周期、界面和工具 harness。
 - **ChatGPT 就是所选模型。** 它作为 Codex 原生模型运行，而不是由另一个宿主模型调用的工具。
   原有的模型选择器、任务生命周期、流式输出、追踪和工具界面保持不变。
 - **本地优先的任务会话。** Codex 或 Claude Code 仍然是电脑上任务历史的真实来源。原始模式
-  保留上游每轮新建会话的行为；Enhanced 模式会将完成的 root／subagent 对话保留 30 分钟，
+  使用配置的上游会话策略；Enhanced 模式会将完成的 root／subagent 对话保留 30 分钟，
   并只发送新增后缀。Codex Desktop 以稳定的原生 session key 维持同一浏览器对话，因此每轮重建的
   base instructions 不会释放仍在 TTL 内的 tab；当前 developer 与 environment 更新仍随新增后缀传送。
   其他没有该身分的 client 在 system instructions 改变时会建立新对话。compact 后也会切换到新的 epoch。浏览器聊天不会在无关任务
-  之间共享，也不会加入普通 ChatGPT 历史记录。
+  之间共享。默认使用临时聊天；Saved Chats 可明确启用 Codex／Claude 的历史保存，但不影响 API。
 - **同时支持 Codex 与 Claude Code。** 启动器可分别安装两种集成。Codex 使用兼容 OpenAI 的
   Responses 路由；Claude Code 使用标准 Anthropic Messages 数据流，并保留 Markdown、工具区块、
   subagent、非中断式 steering、原生 `/compact` 与 recap 行为。
@@ -132,6 +134,8 @@ cd codex-chatgpt-web && \
 bun run app
 ```
 
+Zero Risk 不读取或操作 ChatGPT 页面。请自行选择模型和 `Codex Zero Risk` 连接器，粘贴并发送准备好的提示词，再在启动器中确认 **Sent**。名称以 **(Web)** 结尾的自动模型会在 Codex 中提供其支持的 Effort 选项。Instant 和各个 Pro 版本使用独立条目，以保留各自的上下文额度；旧任务中保存的模型条目仍使用原来的固定模式。
+
 源码方式需要 Bun 1.4.0。该命令会安装锁定版本的依赖并打开应用。
 
 ## 模式
@@ -142,13 +146,22 @@ bun run app
 | **完整 harness（自动化）** | Free/Go：Luna；Plus：Instant–High；Pro：增加 Extra High 和 Pro | 每个列出的 effort 均支持，包括 Pro | OpenAI 隧道 + ChatGPT 连接器 |
 | **Zero Risk** | 手动选择 ChatGPT 模型与 effort；可选 Pro 上下文 | 支持；保留完整的回合绑定 Codex harness | 独立 OpenAI 隧道 + `Codex Zero Risk` 连接器；手动贴上并发送 |
 
-模型选择器中的每一项都对应一个固定的 ChatGPT 模式。Codex 仍会显示内置的 Effort 和 Speed
-选项，但更改它们不会在后台静默切换所选的浏览器模型。在完整模式下，每一个可用 effort 都会
+新版 **(Web)** 条目只提供实际支持的 Effort；Instant 与各个 Pro family 保留独立的上下文额度。
+旧条目保留固定模式。发送前必须验证所请求的 family 与 effort，不支持的选择会明确失败。在完整模式下，每一个可用 effort 都会
 获得同一个与当前回合绑定的 MCP 能力；Pro 没有单独限制，也没有缩减后的工具契约。
 
 Zero Risk 保留本地 Responses bridge 与完整 Codex harness，但不会读取或修改 ChatGPT 页面，也不会
 替你发送提示。启动器只准备并复制提示；模型、effort、`Codex Zero Risk` 连接器、贴上与发送均由
 你手动完成，以排除 ChatGPT 网页自动化本身带来的帐号风险。
+
+### 会话设置、Limits 与 API
+
+**Save chats in ChatGPT** 默认关闭，可为 Codex／Claude 任务启用历史保存。API 的直送与 native tool bridge 都保持 Temporary Chat，并拒绝 `store:true`。关闭保存不会删除已有历史。
+
+**New browser chat for each turn** 默认关闭，仅供 Original Automatic 模式使用。Enhanced 与 Zero Risk 在 UI、launcher、config 和 adapter 边界强制关闭此设置，过期配置也不能重启它；该设置与是否保存历史独立。
+
+**Limits** 是 opt-in 本地用量估算，不是官方精确剩余额度，也不取代 Account Safety。仅对实际已接受的物理消息去重计数；记账失败不能导致重发。Zero Risk 不进行自动账户检查或跟踪。
+API `reasoning_effort` 仅接受新路由支持的选择，旧路由保持固定语义；同一 native Web generation 的工具续接必须保持有效 family／effort。
 
 ### 增强型 Web 工作阶段模式
 
@@ -171,7 +184,7 @@ reasoning 摘要与最终答案会通过现有 Native2 tunnel 返回，ChatGPT �
 ### 更大上下文（实验性）
 
 此功能使用独立开关，可传输超过单条 ChatGPT 消息实测上限的请求，同时确保每次 composer
-提交仍在已验证边界内。Bridge 会在同一个临时聊天中分两至三次暂存不会执行任务的 context part，
+提交仍在已验证边界内。Bridge 会在同一个任务聊天中发送总共 1、2 或 6 条消息；六段包含五条不会执行任务的暂存消息，
 逐次验证精确 acknowledgement，最后才由 commit 消息开始工作。连接器选择最多完整输入三次
 `@codex`；找不到连接器时会明确失败，不会无限建立替代会话。
 
@@ -182,7 +195,7 @@ reasoning 摘要与最终答案会通过现有 Native2 tunnel 返回，ChatGPT �
 
 **增强型 Web 会话模式**会在工具回合、steering 与压缩之间保留同一个任务绑定的 ChatGPT 对话。
 它只改变会话连续性，不会扩大上下文窗口，也不会关闭压缩；它与 **Bigger Context** 互斥。
-Bigger Context 会把一个大型 Codex 回合拆成两条或三条暂存消息，再发送一条最终执行消息。每条都
+Bigger Context 使用总共 1、2 或 6 条浏览器消息；六段为五条暂存消息加一条最终执行消息。每条都
 是真实的 ChatGPT 请求，可能消耗账户额度。它会把向 Codex 公布的上下文和压缩阈值扩大三倍，但
 ChatGPT 的消息、模型、编辑器、传输与服务限制仍然有效。
 

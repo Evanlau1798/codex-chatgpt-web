@@ -30,6 +30,7 @@ function picker(options: { failFirst?: boolean; staleExpanded?: boolean; missing
     },
   };
   const container = {
+    evaluate: async () => ["false", "false", "false", "false", "false"],
     isVisible: async () => true,
     waitFor: async ({ state }: { state: string }) => {
       expect(state).toBe("visible");

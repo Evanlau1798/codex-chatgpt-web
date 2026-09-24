@@ -25,7 +25,7 @@ test("multipart selection accounts for whole-record and composer fit", () => {
   const plus = { ...capabilities, proAvailable: false };
   for (const [contents, expected] of [
     [["small task"], undefined],
-    [[50_000, 40_000, 50_000, 5_000].map(n => "word ".repeat(n)), 3],
+    [[50_000, 40_000, 50_000, 5_000].map(n => "word ".repeat(n)), 6],
     [Array.from({ length: 3 }, () => " ".repeat(450_000)), 2],
   ] as const) {
     const parsed = request([...contents]);
@@ -39,11 +39,11 @@ test("multipart selection accounts for whole-record and composer fit", () => {
   }
 }, 60_000);
 
-test("Bigger Context compaction selects three parts before the inline byte budget", () => {
+test("Bigger Context compaction selects six parts before the inline byte budget", () => {
   const parsed = request(["x".repeat(160_000)]);
   parsed._compactionRequest = true;
   const parts = resolveBiggerContextMultipartParts(parsed, capabilities);
-  expect(parts).toBe(3);
+  expect(parts).toBe(6);
   const compiled = compileChatGptWebPrompt(parsed, capabilities, undefined, { experimentalMultipartParts: parts });
   expect(compiled.trimmedCompactionMessages).toBeUndefined();
   expect(compiled.multipart!.parts.flatMap(part => JSON.parse(part).records)
@@ -61,7 +61,7 @@ test("multipart planning reserves the final message for attachments and executio
     })),
     timestamp: 37,
   });
-  const compiled = compileChatGptWebPrompt(parsed, capabilities, undefined, { experimentalMultipartParts: 3 });
+  const compiled = compileChatGptWebPrompt(parsed, capabilities, undefined, { experimentalMultipartParts: 6 });
   const messages = compiledChatGptWebMessages(compiled);
   const tokens = messages.map(text => estimateTokens(text));
   const chars = messages.map(text => text.length);
@@ -75,7 +75,7 @@ test("multipart planning reserves the final message for attachments and executio
     "high",
     capabilities,
     Math.max(...chars),
-    3,
+    6,
     {
       stagingEffort: stage.effort,
       maxStageMessageTokens: Math.max(...tokens.slice(0, -1)),

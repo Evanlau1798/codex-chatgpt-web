@@ -55,7 +55,7 @@ export interface DevChatFeatures {
 const DEFAULT_DEV_CHAT_FEATURES: DevChatFeatures = { biggerContext: false };
 
 const isLunaDevChatModel = (model: DevChatModel): boolean => (
-  model === "chatgpt-web/luna" || model === "chatgpt-web/think"
+  model === "chatgpt-web/gpt-5.6-luna" || model === "chatgpt-web/luna" || model === "chatgpt-web/think"
 );
 
 export class DevChatDriver {

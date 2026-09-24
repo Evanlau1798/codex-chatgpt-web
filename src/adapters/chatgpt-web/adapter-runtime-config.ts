@@ -13,10 +13,15 @@ export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
   useEnhancedOutputTunnel: boolean;
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
+  experimentalFreshConversationPerTurn: boolean;
   configuredCapabilities: ChatGptWebCapabilities;
   executionNamespace: string;
 } {
   const useEnhancedWebSessionMode = provider.chatgptWeb?.useEnhancedWebSessionMode === true;
+  for (const field of ["experimentalFreshConversationPerTurn", "useSavedChats"] as const) {
+    const value = provider.chatgptWeb?.[field];
+    if (value !== undefined && typeof value !== "boolean") throw new Error(`ChatGPT ${field} preference must be a boolean`);
+  }
   const skillAttachments = provider.chatgptWeb?.experimentalSkillAttachments;
   if (skillAttachments !== undefined && typeof skillAttachments !== "boolean") {
     throw new Error("ChatGPT skill attachments preference must be a boolean");
@@ -33,6 +38,9 @@ export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
       provider.chatgptWeb?.experimentalBiggerContext === true,
     ),
     experimentalSkillAttachments: skillAttachments === true,
+    experimentalFreshConversationPerTurn: !useEnhancedWebSessionMode
+      && provider.chatgptWeb?.browserInteractionMode !== "manual"
+      && provider.chatgptWeb?.experimentalFreshConversationPerTurn === true,
     configuredCapabilities: {
       localToolsEnabled: provider.chatgptWeb?.localToolsEnabled === true,
       solAvailable: provider.chatgptWeb?.solAvailable !== false,

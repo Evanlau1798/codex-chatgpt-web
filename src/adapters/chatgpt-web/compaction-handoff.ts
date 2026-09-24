@@ -308,14 +308,15 @@ export function runStructuredCompactionOnce(
   return promise;
 }
 
-async function cancelStructuredCompactionRuns(
+function beginCancelStructuredCompactionRuns(
   matches: (run: CachedCompactionRun) => boolean,
   reason: Error,
-): Promise<number> {
+): { cancelled: number; settlement: Promise<void> } {
   const runs = [...structuredCompactionRuns.values()].filter(run => run.active && matches(run));
-  for (const run of runs) if (!run.abort.signal.aborted) run.abort.abort(reason);
-  await Promise.allSettled(runs.map(run => run.settlement));
-  return runs.length;
+  for (const run of runs) {
+    if (!run.abort.signal.aborted) run.abort.abort(reason);
+  }
+  return { cancelled: runs.length, settlement: Promise.allSettled(runs.map(run => run.settlement)).then(() => undefined) };
 }
 
 /** Begin cancelling the structured compaction owned by one exact native Codex turn. */
@@ -343,10 +344,19 @@ export function cancelStructuredCompactionNativeTurn(
 }
 
 /** Cancel a user-requested compaction without treating an HTTP observer disconnect as terminal. */
-export function cancelStructuredCompactionTrace(traceId: string, reason: Error): Promise<number> {
-  return cancelStructuredCompactionRuns(run => run.traceIds.has(traceId), reason);
+export function beginCancelStructuredCompactionTrace(traceId: string, reason: Error): { cancelled: number; settlement: Promise<void> } {
+  return beginCancelStructuredCompactionRuns(run => run.traceIds.has(traceId), reason);
 }
 
-export function cancelAllStructuredCompactions(reason: Error): Promise<number> {
-  return cancelStructuredCompactionRuns(() => true, reason);
+export async function cancelStructuredCompactionTrace(traceId: string, reason: Error): Promise<number> {
+  const cancellation = beginCancelStructuredCompactionTrace(traceId, reason);
+  await cancellation.settlement;
+  return cancellation.cancelled;
+}
+
+/** Cancel every active compaction owner and wait for its browser/helper cleanup. */
+export async function cancelAllStructuredCompactions(reason: Error): Promise<number> {
+  const cancellation = beginCancelStructuredCompactionRuns(() => true, reason);
+  await cancellation.settlement;
+  return cancellation.cancelled;
 }

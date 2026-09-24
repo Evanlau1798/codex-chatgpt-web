@@ -1,5 +1,5 @@
 import type { CodexParsedRequest } from "../../types";
-import { hasEnvironmentContextAttempt } from "./contextual-user-message";
+import { hasEnvironmentContextFragment } from "./contextual-user-message";
 import { extractChatGptTurnIdentity } from "./environment-identity";
 import { itemTurnId } from "./turn-user-revision";
 
@@ -24,7 +24,7 @@ export function unattributedChatGptEnvironmentMessages(
   const messages: ChatGptUnattributedEnvironmentMessage[] = [];
   for (const value of input) {
     const item = record(value);
-    if (item?.type !== "message" || !hasEnvironmentContextAttempt(item.content)) continue;
+    if (!hasEnvironmentContextFragment(item)) continue;
     const owner = itemTurnId(item);
     if (owner !== undefined && owner !== currentTurnId) continue;
     if (owner !== undefined || item.role !== "user" || typeof item.id !== "string" || !item.id) return undefined;

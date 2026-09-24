@@ -10,6 +10,16 @@ export function takeQueuedTools(channel: TurnChannel): BrokerToolRequest[] {
     .filter((request): request is BrokerToolRequest => Boolean(request));
 }
 
+export function logToolDelivery(
+  channel: TurnChannel, batch: BrokerToolRequest[], path: "immediate" | "waiter",
+): void {
+  console.info(`[chatgpt-web] broker trace=${channel.traceId} tool_delivery ${JSON.stringify({
+    path, calls: batch.length, pendingTools: channel.invocations.size,
+    queuedTools: channel.queuedCallIds.length, deliveredTools: channel.deliveredCallIds.size,
+    tools: batch.map(request => ({ callId: request.callId.slice(0, 17), wireName: request.wireName })),
+  })}`);
+}
+
 export function scheduleToolWaiters(channel: TurnChannel): void {
   if (channel.queuedCallIds.length === 0 || channel.waiters.size === 0 || channel.batchTimer) return;
   channel.batchTimer = setTimeout(() => {
@@ -21,8 +31,7 @@ export function scheduleToolWaiters(channel: TurnChannel): void {
 function wakeToolWaiters(channel: TurnChannel): void {
   if (channel.queuedCallIds.length === 0 || channel.waiters.size === 0) return;
   const batch = takeQueuedTools(channel);
-  console.info(`[chatgpt-web] broker trace=${channel.traceId} delivered calls=${batch.length}`
-    + ` tools=${batch.map(request => request.wireName).join(",")}`);
+  logToolDelivery(channel, batch, "waiter");
   const waiters = [...channel.waiters];
   channel.waiters.clear();
   const first = waiters.shift();

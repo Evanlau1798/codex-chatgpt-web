@@ -328,3 +328,166 @@ test("catalog verification reports a failed request instead of requesting anothe
   assert.equal(state.codexRestartRequired, false);
   assert.ok(events.some(([event]) => event === "codex.model_catalog_verified"));
 });
+
+test("fresh-conversation IPC commits only after setup succeeds and refuses active browser work", async () => {
+  const vm = require("node:vm");
+  for (const savedChats of [false, true]) {
+    const property = savedChats ? "useSavedChats" : "experimentalFreshConversationPerTurn";
+    const method = savedChats ? "setUseSavedChats" : "setFreshConversationPerTurn";
+    const channel = savedChats ? "launcher:use-saved-chats" : "launcher:fresh-conversation-per-turn";
+    const nextChannel = savedChats ? "launcher:set-preference" : "launcher:use-saved-chats";
+    const source = electronMain.slice(
+      electronMain.indexOf(`handle("${channel}",`),
+      electronMain.indexOf(`handle("${nextChannel}",`),
+    );
+    const state = { experimentalFreshConversationPerTurn: false, useSavedChats: false };
+    const config = { experimentalFreshConversationPerTurn: false, useSavedChats: false };
+    const events = [];
+    let handler, finishSetup, setupFailure, calls = 0;
+    const browserHost = { activeTraceId: "running-turn", currentOperation: () => null, turnTabs: new Map() };
+    const syncSource = electronMain.slice(electronMain.indexOf("function syncFreshConversationPreference("), electronMain.indexOf("function registerIpc("));
+    vm.runInNewContext(syncSource + source, {
+      handle: (_channel, callback) => { handler = callback; }, browserHost,
+      releaseRetainedConversation: require("../electron/retained-turn-release.cjs").releaseRetainedConversation,
+      runtimeHost: { currentOperation: () => null, runtimeConfigSnapshot: () => ({ config }), [method]: async enabled => {
+        calls++;
+        if (setupFailure) throw setupFailure;
+        await new Promise(resolve => { finishSetup = resolve; });
+        config[property] = enabled;
+        return { enabled };
+      } },
+      stateStore: { read: () => ({ ...state }), update: patch => Object.assign(state, patch) },
+      send: (channel, value) => events.push({ channel, value: { ...value } }),
+    });
+    await assert.rejects(() => handler(null, true), /Finish or cancel active ChatGPT turns/);
+    browserHost.activeTraceId = null;
+    browserHost.currentOperation = () => "browser-smoke";
+    await assert.rejects(() => handler(null, true), /Finish or cancel active ChatGPT turns/);
+    assert.equal(calls, 0);
+    browserHost.currentOperation = () => null;
+    let api;
+    vm.runInNewContext(preloadSource, { require: () => ({
+      contextBridge: { exposeInMainWorld: (_name, value) => { api = value; } },
+      ipcRenderer: { invoke: (actualChannel, enabled) => {
+        assert.equal(actualChannel, channel);
+        return handler(null, enabled);
+      } },
+    }) });
+    const changing = api[method](true);
+    assert.equal(state[property], false);
+    assert.equal(events.length, 0);
+    finishSetup();
+    assert.equal((await changing)[property], true);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].channel, "launcher:state-changed");
+    setupFailure = new Error("synthetic setup rollback");
+    await assert.rejects(() => api[method](false), /synthetic setup rollback/);
+    assert.equal(state[property], true);
+    assert.equal(events.length, 1);
+  }
+});
+
+test("fresh-conversation snapshot uses runtime configuration and manual mode clears the preference", async () => {
+  const vm = require("node:vm");
+  const handlers = new Map();
+  const state = { browserInteractionMode: "automatic", experimentalFreshConversationPerTurn: false };
+  let config = { browserInteractionMode: "automatic", experimentalFreshConversationPerTurn: true };
+  const runtimeHost = {
+    currentOperation: () => null,
+    runtimeConfigSnapshot: () => ({ config }), browserConnectorName: () => "Codex Native2",
+    setupConnectorName: () => "Codex Native2", mcpCredentialsConfigured: () => true,
+    setBrowserInteractionMode: async mode => { config.browserInteractionMode = mode; if (mode === "manual") config.experimentalFreshConversationPerTurn = false; return { configured: true }; },
+    claudeIntegrationStatus: () => "missing",
+  };
+  const sandbox = {
+    handle: (name, handler) => handlers.set(name, handler), runtimeHost,
+    reconcileClaudeSetupState: () => ({ claudeSetupComplete: false, claudeSetupOutdated: false }),
+    releaseRetainedConversation: require("../electron/retained-turn-release.cjs").releaseRetainedConversation,
+    stateStore: { read: () => ({ ...state }), update: patch => Object.assign(state, patch) },
+    browserHost: { activeTraceId: null, turnTabs: new Map(), currentOperation: () => null, snapshot: () => ({}),
+      withInteractionModeChange: async (_mode, action) => action() },
+    validateBrowserInteractionMode: mode => mode, IS_DEV_PROFILE: false, send() {}, startCatalogVerificationMonitor() {},
+    LAUNCHER_PROFILE: { kind: "production", codexHome: "/fixture/codex" }, CORE_HOME: "/fixture/core",
+    launcherUserData: "/fixture/launcher", logger: { recent: () => [] },
+    GITHUB_URL: "", X_URL: "", CONNECTORS_URL: "", TUNNELS_URL: "", KEYS_URL: "",
+    process: { platform: "darwin" }, app: { isPackaged: false, getVersion: () => "test" },
+    smokePassedThisSession: false, smokePassedForCurrentVersion: () => false, lastOperation: null, updateController: null,
+  };
+  vm.runInNewContext(electronMain.slice(electronMain.indexOf("function syncFreshConversationPreference("), electronMain.indexOf("function registerIpc(")) +
+    electronMain.slice(electronMain.indexOf('handle("launcher:snapshot",'),
+    electronMain.indexOf('handle("launcher:set-language",')) +
+    electronMain.slice(electronMain.indexOf('handle("launcher:browser-interaction-mode",'),
+    electronMain.indexOf('handle("launcher:uninstall-integration",')), sandbox);
+  const snapshot = handlers.get("launcher:snapshot");
+  assert.equal((await snapshot()).state.experimentalFreshConversationPerTurn, true);
+  assert.equal(state.experimentalFreshConversationPerTurn, true, "snapshot synchronizes a CLI configuration change");
+  const changeMode = handlers.get("launcher:browser-interaction-mode");
+  for (const mode of ["manual", "automatic"]) {
+    const changed = await changeMode(null, mode);
+    assert.equal(changed.state.experimentalFreshConversationPerTurn, false);
+    assert.equal((await snapshot()).state.experimentalFreshConversationPerTurn, false);
+  }
+  config = {};
+  assert.equal((await snapshot()).state.experimentalFreshConversationPerTurn, false);
+});
+
+test("fresh-conversation control is translated and enforces Original automatic mode", async () => {
+  const ts = require("typescript");
+  const vm = require("node:vm");
+  const transpile = (source, fileName) => ts.transpileModule(source, {
+    fileName, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
+      jsx: ts.JsxEmit.React, jsxFactory: "element" },
+  }).outputText;
+  const load = file => {
+    const module = { exports: {} };
+    vm.runInNewContext(transpile(fs.readFileSync(file, "utf8"), file), {
+      module, exports: module.exports, require: name => load(path.resolve(path.dirname(file), name + ".ts")),
+    });
+    return module.exports;
+  };
+  const translated = load(path.join(launcherRoot, "src/i18n.ts"));
+  const contextMode = load(path.join(launcherRoot, "src/context-mode.ts"));
+  let invocation, saved;
+  const sandbox = {
+    exports: {}, React: { Fragment: "Fragment" },
+    element: (type, props, ...children) => ({ type, props: props ?? {}, children }),
+    useState: value => [value, () => {}], useEffect() {},
+    api: { setFreshConversationPerTurn: async enabled => { invocation = enabled; return { experimentalFreshConversationPerTurn: enabled }; } },
+    messageOf: String, platformLabel: String, languages: require("../electron/languages.json"),
+    biggerContextSwitchState: contextMode.biggerContextSwitchState,
+  };
+  for (const name of ["ContentSurface", "SectionHeading", "NoticeRow", "Icon", "DoctorSummary", "BrandMark", "ApiAccessCard"]) sandbox[name] = name;
+  const settings = fs.readFileSync(path.join(launcherRoot, "src/settings-surface.tsx"), "utf8");
+  vm.runInNewContext(transpile(settings.slice(settings.indexOf("export function SettingsSurface(")), "settings.tsx"), sandbox);
+  const render = sandbox.exports.SettingsSurface;
+  const visit = tree => Array.isArray(tree) ? tree.flatMap(visit) : tree && typeof tree === "object"
+    ? [tree, ...visit(tree.children ?? [])] : [];
+  for (const language of Object.keys(require("../electron/languages.json"))) {
+    const copy = translated.copyFor(language);
+    for (const key of ["freshConversation", "freshConversationBody", "manualFreshConversationUnavailable"]) {
+      assert.equal(typeof copy[key], "string");
+      assert.ok(copy[key].length > 10);
+    }
+    for (const [mode, configured, enabled, enhanced] of [
+      ["automatic", true, false, false], ["automatic", true, true, false],
+      ["manual", true, true, false], ["automatic", false, false, false], ["automatic", true, true, true],
+    ]) {
+      const tree = render({ copy, devProfile: false, language, configureInteractionMode() {}, setError() {}, browser: null,
+        snapshot: { state: { browserInteractionMode: mode, coreSetupComplete: configured, experimentalFreshConversationPerTurn: enabled, useEnhancedWebSessionMode: enhanced } },
+        updateState: value => { saved = value; },
+      });
+      const row = visit(tree).find(node => node.type?.name === "SettingRow" && node.props.label === copy.freshConversation);
+      assert.ok(row);
+      assert.equal(row.props.body, mode === "manual" || enhanced ? copy.manualFreshConversationUnavailable : copy.freshConversationBody);
+      const control = visit(row).find(node => node.type?.name === "Switch");
+      assert.equal(control.props.checked, enabled && mode === "automatic" && !enhanced);
+      assert.equal(control.props.disabled, mode === "manual" || !configured || enhanced);
+      if (!control.props.disabled) {
+        control.props.onChange(true);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(invocation, true);
+        assert.equal(saved.experimentalFreshConversationPerTurn, true);
+      }
+    }
+  }
+});

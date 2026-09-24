@@ -466,3 +466,47 @@ test("skill file experiment uses the setup transaction in production and DEV, an
   await assert.rejects(() => manual.host.setSkillAttachments(true), /Zero Risk/);
   assert.equal(manual.invocation(), undefined);
 });
+
+
+test("fresh-conversation preference uses production and DEV setup without forcing mode or other preferences", async () => {
+  for (const makeHost of [hostFor, devHostFor]) {
+    for (const mode of ["browser-only", "full"]) {
+      const existing = { mode, browserInteractionMode: "automatic", autoApproveToolCalls: true,
+        experimentalFreshConversationPerTurn: false, experimentalSkillAttachments: true };
+      const fixture = makeHost(existing);
+      for (const enabled of [true, false]) {
+        assert.equal((await fixture.host.setFreshConversationPerTurn(enabled)).enabled, enabled);
+        const { name, args } = fixture.invocation();
+        assert.equal(name, "fresh-conversation-per-turn");
+        assert.deepEqual(args.slice(0, makeHost === devHostFor ? 2 : 1), makeHost === devHostFor ? ["dev", "setup"] : ["setup"]);
+        assert.equal(args.includes(`--${mode}`), true);
+        assert.equal(args.includes(enabled ? "--fresh-conversation" : "--retained-conversation"), true);
+        assert.equal(args.includes(enabled ? "--retained-conversation" : "--fresh-conversation"), false);
+        assert.equal(args.includes("--auto-approve-tool-calls"), true);
+        assert.equal(args.includes("--restart-service"), makeHost === hostFor);
+        assert.equal(args.includes("--replace-codex-route"), makeHost === hostFor);
+        assert.equal(existing.experimentalFreshConversationPerTurn, false, "setter must delegate persistence to setup");
+        assert.equal(existing.experimentalSkillAttachments, true);
+      }
+    }
+    for (const config of [null, { mode: "full", browserInteractionMode: "manual" }]) {
+      const fixture = makeHost(config);
+      await assert.rejects(() => fixture.host.setFreshConversationPerTurn(true), /Initialize|Zero Risk/);
+      await assert.rejects(() => fixture.host.setFreshConversationPerTurn(false), /Initialize|Zero Risk/);
+      assert.equal(fixture.invocation(), undefined);
+    }
+    for (const interaction of ["automatic", "manual"]) {
+      const saved = makeHost({ mode: "full", browserInteractionMode: interaction }, interaction);
+      for (const enabled of [true, false]) {
+        await saved.host.setUseSavedChats(enabled);
+        assert.equal(saved.invocation().args.includes(enabled ? "--saved-chats" : "--temporary-chats"), true);
+        assert.equal(saved.invocation().args.includes("--full"), true);
+        assert.equal(saved.invocation().args.includes("--fresh-conversation"), false);
+      }
+      await assert.rejects(() => saved.host.setUseSavedChats("true"), /boolean/);
+    }
+    const fixture = makeHost({ mode: "browser-only", browserInteractionMode: "automatic" });
+    await assert.rejects(() => fixture.host.setFreshConversationPerTurn("true"), /boolean/);
+    assert.equal(fixture.invocation(), undefined);
+  }
+});

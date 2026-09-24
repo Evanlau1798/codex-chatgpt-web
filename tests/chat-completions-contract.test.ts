@@ -20,7 +20,7 @@ test("preserves ordered roles and literal Unicode/text parts without creating na
 });
 
 for (const [field, value] of Object.entries({ temperature: 0, top_p: 1, seed: 1, stop: ["x"], n: 2, store: true,
-  max_completion_tokens: 100, reasoning_effort: "high", response_format: { type: "json_object" },
+  max_completion_tokens: 100, reasoning_effort: "unsupported-effort", response_format: { type: "json_object" },
   metadata: {}, previous_response_id: "prior", nativeConnector: true, tools: [{ type: "web_search" }],
   stream_options: { include_usage: true }, max_tokens: 0 })) {
   test(`rejects unsupported semantic field ${field}`, () => expect(() => parseChatCompletion({ ...request(), [field]: value })).toThrow());

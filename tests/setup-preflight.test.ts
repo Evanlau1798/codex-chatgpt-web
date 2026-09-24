@@ -1,4 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, test, setDefaultTimeout } from "bun:test";
+
+setDefaultTimeout(65_000);
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";

@@ -42,7 +42,7 @@ for (const profile of ["production", "development"]) {
     host.run = async (_name, args, options) => {
       const preflight = args.includes("--preflight-only");
       events.push(preflight ? "preflight" : "setup");
-      if (preflight) assert.equal(options.timeoutMs, 15_000);
+      if (preflight) assert.equal(options.timeoutMs, 120_000);
       return { stdout: "done" };
     };
     assert.deepEqual(await host.runSetup("setup", ["setup", "--browser-only"], { timeoutMs: 120_000 }), { stdout: "done" });

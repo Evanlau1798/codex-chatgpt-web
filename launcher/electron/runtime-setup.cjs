@@ -25,7 +25,7 @@ async function runSetup(name, args, options) {
         ...options,
         message: "Validating Codex configuration before changing the runtime",
         successMessage: "Codex configuration is ready for setup",
-        timeoutMs: Math.min(options.timeoutMs || 15_000, 15_000),
+        timeoutMs: options.timeoutMs || CORE_SETUP_TIMEOUT_MS,
       });
     }
     runtimeTransitionStarted = true;
@@ -89,13 +89,71 @@ async function runSetup(name, args, options) {
       ...failures,
     ].join("; ");
     this.publishOperation?.({ name, status: "failed", message });
-    throw new Error(message);
+    throw new Error(message, { cause: error });
   } finally {
     this.lifecycleOperation = null;
   }
 }
 
 module.exports = {
+  async setFreshConversationPerTurn(enabled) {
+    if (typeof enabled !== "boolean") throw new Error("Fresh conversation preference must be a boolean");
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Initialize the runtime before changing browser conversation retention");
+    if ((current.config?.browserInteractionMode ?? "automatic") !== "automatic") {
+      throw new Error("New browser chats per turn are unavailable in Zero Risk mode");
+    }
+    if (enabled && current.config?.useEnhancedWebSessionMode === true) {
+      throw new Error("New browser chats per turn are unavailable while Enhanced Web session mode is enabled");
+    }
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      enabled ? "--fresh-conversation" : "--retained-conversation",
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const options = {
+      message: enabled ? "Enabling a new browser chat for each turn" : "Restoring browser chat retention",
+      successMessage: enabled ? "New browser chats per turn enabled" : "Browser chat retention restored",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = development
+      ? await this.runDevSetup("fresh-conversation-per-turn", args, options)
+      : await this.runSetup("fresh-conversation-per-turn", args, options);
+    return { ...result, enabled };
+  },
+
+  async setUseSavedChats(enabled) {
+    if (typeof enabled !== "boolean") throw new Error("Saved chat preference must be a boolean");
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Initialize the runtime before changing saved chats");
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      enabled ? "--saved-chats" : "--temporary-chats",
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const options = {
+      message: enabled ? "Enabling saved ChatGPT conversations" : "Restoring Temporary Chat",
+      successMessage: enabled ? "Saved ChatGPT conversations enabled" : "Temporary Chat restored",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = development
+      ? await this.runDevSetup("use-saved-chats", args, options)
+      : await this.runSetup("use-saved-chats", args, options);
+    return { ...result, enabled };
+  },
+
   runSetup,
   async setupCore(integration = "codex") {
     this.assertProductionProfile("Codex integration setup");

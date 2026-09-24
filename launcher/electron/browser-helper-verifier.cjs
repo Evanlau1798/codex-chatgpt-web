@@ -54,7 +54,7 @@ async function runBrowserHelperOperation({ helper, descriptorPath, appName, brok
   if (typeof descriptorPath !== "string" || !descriptorPath || typeof appName !== "string" || !appName) {
     throw new Error("Browser helper verification config is invalid");
   }
-  if (!["verify", "inspect", "smoke"].includes(operation)) {
+  if (!["verify", "inspect", "smoke", "limits"].includes(operation)) {
     throw new Error(`Unsupported browser helper operation: ${String(operation)}`);
   }
   const id = `${operation}-${randomBytes(12).toString("hex")}`;

@@ -73,7 +73,7 @@ test("retained turns reuse prior attachments; fresh chats rebuild them and new s
 
 test("skill content counts toward input and final-message budgets, including multipart", () => {
   const parsed = parse([input(text("testing", "check this carefully\n".repeat(1000))), input("Do it", ["user.text"])]);
-  for (const parts of [undefined, 3] as const) {
+  for (const parts of [undefined, 6] as const) {
     const compiled = compileChatGptWebPrompt(parsed, capabilities, undefined, { experimentalSkillAttachments: true, experimentalMultipartParts: parts });
     const withoutFiles = { ...compiled, skillFiles: undefined };
     const fileTokens = skillFileTokens(compiled.skillFiles, parsed.modelId);

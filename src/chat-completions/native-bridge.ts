@@ -1,3 +1,4 @@
+import { resolveChatCompletionRoute } from "./runtime";
 import { randomUUID } from "node:crypto";
 import type { AppConfig } from "../config";
 import { ChatCompletionError, decodeNativeChatCompletion, type ChatCompletionInput, type ChatCompletionResult,
@@ -15,6 +16,7 @@ interface PendingTurn {
   content: string | null;
   tools: string;
   model: string;
+  effectiveRoute: string;
   busy: boolean;
   expiresAt: number;
   body?: Item;
@@ -75,6 +77,11 @@ export class NativeChatCompletionBridge {
 
   async execute(input: ChatCompletionInput, config: AppConfig, signal: AbortSignal,
     _onText: (delta: string) => void): Promise<{ answer: string; result: ChatCompletionResult }> {
+    // API turns are Temporary even when Codex/Claude task chats are saved globally.
+    // Use the same effective config for dispatch, liveness lookup, and retirement.
+    config = { ...config, useSavedChats: false, experimentalFreshConversationPerTurn: false };
+    const route = resolveChatCompletionRoute(input, config);
+    const effectiveRoute = JSON.stringify([route.backendModel, route.modelFamily ?? null, route.adapterEffort]);
     this.prune();
     signal.throwIfAborted();
     let turn: PendingTurn;
@@ -86,6 +93,7 @@ export class NativeChatCompletionBridge {
       }
       const owner = results.map(result => this.pending.get(result.tool_call_id!)).find(Boolean);
       if (!owner || owner.busy || results.length !== owner.calls.length || input.model !== owner.model
+        || effectiveRoute !== owner.effectiveRoute
         || toolFingerprint(input) !== owner.tools || input.messages.length !== owner.history.length + 1 + results.length
         || JSON.stringify(input.messages.slice(0, owner.history.length)) !== JSON.stringify(owner.history)) {
         throw new ChatCompletionError("Tool continuation is unavailable or conflicts with the pending Web turn", 409, "tool_continuation_conflict");
@@ -119,7 +127,7 @@ export class NativeChatCompletionBridge {
           + "Only the declared function tools are available; their calls are returned to the client for execution. "
           + "Do not claim that you executed a client tool before its result is supplied.\n\n"
           + JSON.stringify({ messages: input.messages }))],
-        history: input.messages, calls: [], content: null, tools: toolFingerprint(input), model: input.model,
+        history: input.messages, calls: [], content: null, tools: toolFingerprint(input), model: input.model, effectiveRoute,
         busy: true, expiresAt: this.now() + TOOL_RESULT_DEADLINE_MS };
     }
     let dispatched = false;
@@ -129,7 +137,7 @@ export class NativeChatCompletionBridge {
         input: turn.input, tools: input.tools.map(tool => ({ type: "function", name: tool.function.name,
           description: tool.function.description ?? "Client-executed function", parameters: tool.function.parameters })),
         tool_choice: typeof input.toolChoice === "object" ? { type: "function", name: input.toolChoice.name } : input.toolChoice,
-        parallel_tool_calls: input.parallel, stream: false, store: false,
+        parallel_tool_calls: input.parallel, stream: false, store: false, reasoning: { effort: route.codexEffort },
         prompt_cache_key: turn.threadId, client_metadata: { "x-codex-turn-metadata": turn.metadata } };
       turn.body = body;
       dispatched = true;

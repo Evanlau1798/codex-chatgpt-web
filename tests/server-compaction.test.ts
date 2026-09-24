@@ -2,10 +2,11 @@ import { expect, test } from "bun:test";
 import type { ProviderAdapter } from "../src/adapters/base";
 import { defaultConfig } from "../src/config";
 import { COMPACT_PROMPT, SUMMARY_PREFIX, decodeCompactionSummary, encodeCompactionSummary } from "../src/responses/compaction";
-import { compactRequest, responseRequest } from "../src/server";
+import { compactRequest, responseRequest as respond } from "../src/server";
 import type { CodexProviderConfig } from "../src/types";
-import { extractChatGptTurnIdentity, extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
+import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity, extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
 import { chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey } from "../src/adapters/chatgpt-web/turn-execution";
+import { parseRequest } from "../src/responses/parser";
 
 const model = "chatgpt-web/high";
 const summary = "The repository was inspected. Continue by implementing the bounded Web context contract.";
@@ -50,6 +51,55 @@ test("rejects remote-v2 routed compaction when the experiment disables it", asyn
     error: { type: "invalid_request_error", message: expect.stringContaining("disabled") },
   });
 });
+test("native responses/memento compaction returns assistant text, not an encrypted compaction item", async () => {
+  const metadata = {
+    request_kind: "compaction", thread_id: "thread_memento", turn_id: "turn_memento",
+    compaction: { trigger: "auto", reason: "context_limit", implementation: "responses", phase: "pre_turn", strategy: "memento" },
+  };
+  const body = {
+    model, client_metadata: { "x-codex-turn-metadata": JSON.stringify(metadata) },
+    tools: [{ type: "function", name: "exec_command", parameters: { type: "object" } }],
+    input: [{ type: "message", id: "msg_source_memento", role: "user", content: [{ type: "input_text", text: "Summarize the previous work." }] }],
+  };
+  expect(parseRequest(body)._compactionRequest).toBe(true);
+  for (const stream of [false, true]) {
+    const response = await respond(new Request("http://127.0.0.1/v1/responses", {
+      method: "POST", body: JSON.stringify({ ...body, stream }),
+    }), defaultConfig("full"), compactionAdapterFactory());
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    const result = stream
+      ? JSON.parse(text.split("\n").find(line => line.startsWith('data: {"type":"response.completed"'))!.slice(6)).response
+      : JSON.parse(text);
+    expect(result.output).toHaveLength(1);
+    expect(result.output[0]).toMatchObject({ type: "message", role: "assistant", content: [{ type: "output_text", text: summary }] });
+  }
+  const cwd = process.cwd();
+  const continuation = await responseRequest(new Request("http://127.0.0.1/v1/responses", {
+    method: "POST", body: JSON.stringify({ model, stream: false,
+      client_metadata: { "x-codex-turn-metadata": JSON.stringify({ ...metadata, request_kind: "turn", sandbox: "none", workspaces: { [cwd]: {} } }) },
+      input: [
+        { type: "message", role: "user", id: "msg_environment", content: [{ type: "input_text",
+          text: `<environment_context><cwd>${cwd}</cwd><sandbox_mode>danger-full-access</sandbox_mode></environment_context>` }] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: `${SUMMARY_PREFIX}\n${summary}` }] },
+      ],
+    }),
+  }), defaultConfig("full"), () => ({ name: "verified-continuation", async runTurn(parsed, _incoming, emit) {
+    expect(extractChatGptTurnEnvironment(parsed).cwd).toBe(cwd);
+    expect(extractChatGptTurnUserRevision(parsed)).toEqual(body.input[0]!.content);
+    emit({ type: "text_delta", text: "Continued", phase: "final_answer" });
+    emit({ type: "done", stopReason: "stop", endTurn: true });
+  } }));
+  expect(continuation.status).toBe(200);
+  expect(await continuation.json()).toMatchObject({ status: "completed" });
+  expect(parseRequest({ ...body, client_metadata: { "x-codex-turn-metadata": JSON.stringify({ ...metadata, request_kind: "turn" }) } })._compactionRequest).toBeUndefined();
+  expect(() => parseRequest({ ...body, client_metadata: { "x-codex-turn-metadata": JSON.stringify({ ...metadata, compaction: { strategy: "unknown" } }) } })).toThrow("Unsupported native text compaction");
+});
+
+// Ordinary fixtures avoid persisted state. The memento handoff above uses the production
+// completion callback because its continuation specifically requires a recorded checkpoint.
+const responseRequest: typeof respond = (request, config, factory, options) =>
+  respond(request, config, factory, { ...options, rememberState: false });
 
 function compactionAdapterFactory(
   seenProviders: CodexProviderConfig[] = [],
@@ -105,28 +155,31 @@ test("compacts ChatGPT Web v1 through a dedicated read-only browser summarizatio
   ]);
 });
 
-test("compacts a Pro task with Pro effort", async () => {
+test("compacts legacy and named Pro tasks with Pro effort and preserves the selected family", async () => {
   const config = defaultConfig("full");
   config.extraHighAvailable = true;
   config.proAvailable = true;
-  const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      model: "chatgpt-web/pro",
-      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Inspect" }] }],
-    }),
-  }), config, () => ({
-    name: "pro-compaction-effort-check",
-    async runTurn(parsed, _incoming, emit) {
-      expect(parsed._compactionRequest).toBe(true);
-      expect(parsed.options.reasoning).toBe("max");
-      emit({ type: "text_delta", text: summary, phase: "final_answer" });
-      emit({ type: "done", stopReason: "stop", endTurn: true });
-    },
-  }));
+  for (const [model, family] of [["chatgpt-web/pro", undefined], ["chatgpt-web/gpt-5.6-pro", "5.6"], ["chatgpt-web/gpt-6-pro", "6"]] as const) {
+    const response = await compactRequest(new Request("http://127.0.0.1:17841/v1/responses/compact", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model,
+        input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "Inspect" }] }],
+      }),
+    }), config, () => ({
+      name: "pro-compaction-effort-check",
+      async runTurn(parsed, _incoming, emit) {
+        expect(parsed._compactionRequest).toBe(true);
+        expect(parsed.options.reasoning).toBe("max");
+        expect(parsed._chatgptModelFamily).toBe(family);
+        emit({ type: "text_delta", text: summary, phase: "final_answer" });
+        emit({ type: "done", stopReason: "stop", endTurn: true });
+      },
+    }));
 
-  expect(response.status).toBe(200);
+    expect(response.status).toBe(200);
+  }
 });
 
 test("preserves canonical Codex turn metadata from the compact endpoint header", async () => {

@@ -1,8 +1,15 @@
 function normalizeContextModes(config) {
-  if (config?.useEnhancedWebSessionMode !== true || config.experimentalBiggerContext !== true) {
-    return config;
-  }
-  return { ...config, experimentalBiggerContext: false };
+  if (!config) return config;
+  const enhanced = config.useEnhancedWebSessionMode === true;
+  const bigger = enhanced && config.experimentalBiggerContext === true;
+  const fresh = (enhanced || config.browserInteractionMode === "manual")
+    && config.experimentalFreshConversationPerTurn === true;
+  if (!bigger && !fresh) return config;
+  return {
+    ...config,
+    ...(bigger ? { experimentalBiggerContext: false } : {}),
+    ...(fresh ? { experimentalFreshConversationPerTurn: false } : {}),
+  };
 }
 
 function assertBiggerContextChangeAllowed(config, enabled) {

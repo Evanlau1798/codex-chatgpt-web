@@ -5,7 +5,7 @@ import type { CodexProviderConfig } from "../../types";
 import { ChatGptBrowserWorker, closeChatGptBrowserWorkers, type BrowserTurn } from "./browser-worker";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
 import { createProcessLineWriter } from "./process-line-writer";
-import type { CompiledChatGptWebPrompt } from "./prompt";
+import { isChatGptWebMultipartPartCount, type CompiledChatGptWebPrompt } from "./prompt";
 import type { ChatGptRetryPrompt } from "./steering";
 import { createBrowserHelperPromptSelection } from "./browser-helper-prompt-selection";
 import { BrowserHelperFenceRegistry } from "./browser-helper-fence";
@@ -124,6 +124,7 @@ async function run(message: RunMessage): Promise<void> {
       autoApproveToolCalls: message.config.autoApproveToolCalls,
       experimentalNoAutoCompact: message.config.experimentalNoAutoCompact === true,
       experimentalComposerPlainText: message.config.experimentalComposerPlainText === true,
+      useSavedChats: message.config.useSavedChats === true,
     },
   };
   const abortController = new AbortController();
@@ -144,6 +145,7 @@ async function run(message: RunMessage): Promise<void> {
     traceId: message.turn.traceId,
     modelId: message.turn.modelId,
     reasoning: message.turn.reasoning,
+    ...(message.turn.modelFamily ? { modelFamily: message.turn.modelFamily } : {}),
     capabilities: message.turn.capabilities,
     ...(message.turn.nativeConnector ? { nativeConnector: true } : {}),
     prepare: prepareSelected,
@@ -167,7 +169,11 @@ async function run(message: RunMessage): Promise<void> {
       sendActivationWaiters.delete(message.id);
       reject(new Error("Browser helper could not publish Send activation"));
     }),
-    onSubmitted: () => writeProtocol({ type: "event", id: message.id, event: "submitted" }),
+    onSubmitted: () => {
+      if (!writeProtocol({ type: "event", id: message.id, event: "submitted" })) {
+        throw new Error("Browser helper could not publish submission receipt");
+      }
+    },
     onPreparedSelected: reused => {
       writeProtocol({ type: "event", id: message.id, event: "prepared_selected", reused });
       return promptSelection.wait().then(() => {});
@@ -291,6 +297,7 @@ async function maintain(message: Exclude<MaintenanceMessage, { type: "verify" }>
     const worker = maintenanceWorker(message);
     const value = message.type === "inspect"
       ? await worker.inspectSession(message.detectCapabilities)
+      : message.type === "limits" ? await worker.inspectLimitsPlan()
       : await worker.smokeTest(abortController.signal);
     writeProtocol({ type: "result", id: message.id, value });
   } catch (error) {
@@ -375,7 +382,7 @@ input.on("line", line => {
     const multipart = prepared?.multipart;
     const invalidMultipart = multipart !== undefined && (
       !Array.isArray(multipart.parts)
-      || (multipart.parts.length !== 2 && multipart.parts.length !== 3)
+      || !isChatGptWebMultipartPartCount(multipart.parts.length)
       || multipart.parts.some(part => typeof part !== "string")
       || typeof multipart.commit !== "string"
     );
@@ -423,7 +430,7 @@ input.on("line", line => {
       id: message.id,
       message: error instanceof Error ? error.message : String(error),
     }));
-  } else if (message.type === "inspect" || message.type === "smoke") {
+  } else if (message.type === "inspect" || message.type === "smoke" || message.type === "limits") {
     void maintain(message).catch(error => writeProtocol({
       type: "error",
       id: message.id,

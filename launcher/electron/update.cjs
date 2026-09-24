@@ -275,6 +275,7 @@ function createUpdateController({
     transition({ status: "checking" });
     try {
       const release = await deps.fetchRelease();
+      // GitHub's /releases/latest already excludes these, including for older launchers.
       if (release?.draft === true || release?.prerelease === true) {
         candidate = null;
         return transition({ status: "up-to-date" });

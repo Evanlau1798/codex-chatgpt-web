@@ -16,8 +16,10 @@ structured issue form. Reproduce once on the latest release and attach the priva
 
 Large feature branches, broad refactors, rewrites, new providers, and changes to core behavior or
 architecture are generally not accepted. In rare cases they may be considered, but discuss the
-proposal in an issue before implementation. Prior discussion does not guarantee acceptance, and a
-large unsolicited pull request may be closed even when substantial work went into it.
+proposal in a focused feature-request issue in this fork before implementation. General upstream
+ideas may be discussed in upstream Discussions, but Enhanced-specific proposals belong here.
+Prior discussion does not guarantee acceptance, and a large unsolicited pull request may be
+closed even when substantial work went into it.
 
 ## Scope and invariants
 

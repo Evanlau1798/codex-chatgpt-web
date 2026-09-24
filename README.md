@@ -19,6 +19,8 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
+> **Development candidate: `6.0.0-Enhanced.1`.** The download buttons still point to released Enhanced packages; this branch does not publish a release.
+
 <p align="center">
   <a href="TROUBLESHOOTING.md">Troubleshooting</a> · <a href="SECURITY.md">Security</a> · <a href="CONTRIBUTING.md">Contributing</a>
 </p>
@@ -39,7 +41,7 @@ opt-in Web-session lifecycle for long-running Codex and Claude Code work. Fork r
 Free and Go accounts get **ChatGPT Web — Luna** in Codex's native model picker. Accounts that
 expose the reasoning selector keep **Instant**, **Medium**, **High**, **Extra High**, and **Pro** as
 their subscription allows. The bridge sends the current compiled Codex task context to a fresh
-ChatGPT Temporary Chat, attaches images, and streams visible reasoning, tool activity, and Markdown
+ChatGPT conversation (Temporary Chat by default), attaches images, and streams visible reasoning, tool activity, and Markdown
 back into the same Codex task.
 
 <p align="center">
@@ -53,14 +55,13 @@ Codex / Claude Code ──Responses or Messages──▶ local bridge ──brow
 ```
 
 Codex keeps the native task, context lifecycle, UI, and tool harness. The local Responses bridge
-routes only the selected model turn through a fresh ChatGPT Temporary Chat; in full mode, MCP
+routes only the selected model turn through a task-bound ChatGPT conversation (Temporary Chat by default); in full mode, MCP
 connects ChatGPT back to the tools of that same Codex task.
 
-> [!TIP]
-> I also built **[ChatGPT Persona Voice](https://github.com/miuuyy/ChatGPT-Persona-Voice)**, a local
-> app that changes the ChatGPT/Codex voice in near real time. It never touches your account, browser
-> session, or ChatGPT requests, so using it carries no account-blocking risk. If you like my work,
-> give it a try.
+1. **Install the launcher** using the download for your system above.
+2. **Sign in to ChatGPT** in the embedded browser and run the browser smoke test.
+3. **Install models** and restart Codex once. In automatic mode, choose a model ending in **(Web)**. Pro versions have separate entries; Sol reasoning is selected through Effort. Zero Risk keeps its dedicated entry.
+4. **For coding with tools**, open **MCP** in the launcher and complete the Full harness setup below.
 
 ## Highlights
 
@@ -73,12 +74,13 @@ connects ChatGPT back to the tools of that same Codex task.
   another host model. The original model picker, task lifecycle, streaming, tracing, and tool UI
   remain intact.
 - **Local-first task sessions.** Codex or Claude Code remains the source of truth for task history
-  on your computer. Original mode keeps upstream's fresh-turn behavior. Enhanced mode retains a
+  on your computer. Original mode follows the configured upstream conversation policy. Enhanced mode retains a
   completed root or subagent conversation for 30 minutes and sends only the continuation suffix.
   Codex Desktop binds that conversation to its stable native session key, so rebuilt base instructions
   do not discard a live retained tab; current developer and environment updates travel in the suffix.
   Other clients rotate on an exact system-instruction change. Compaction likewise starts a new epoch. Browser chats are never
-  shared across unrelated tasks or added to normal ChatGPT history.
+  shared across unrelated tasks. Temporary Chat is the default; Saved Chats explicitly opts
+  Codex and Claude task conversations into ChatGPT history, never API Access.
 - **Codex and Claude Code clients.** The launcher installs either integration independently.
   Codex uses the OpenAI-compatible Responses route; Claude Code uses the standard Anthropic
   Messages stream while preserving Markdown, tool-use blocks, subagents, additive steering, and
@@ -144,6 +146,8 @@ cd codex-chatgpt-web && \
 bun run app
 ```
 
+Zero Risk does not read or operate the ChatGPT page. Choose the model and `Codex Zero Risk` connector yourself, paste and send the prepared prompt, then confirm **Sent** in the launcher. Automatic models ending in **(Web)** expose their supported Effort choices in Codex. Instant and each Pro version have separate entries to preserve their context budgets; older saved model entries keep their original fixed mode.
+
 This source path requires Bun 1.4.0+34cbb9a40. The command installs locked dependencies and opens the app.
 
 ## Modes
@@ -154,8 +158,9 @@ This source path requires Bun 1.4.0+34cbb9a40. The command installs locked depen
 | **Full harness (With Automation)** | Free/Go: Luna; Plus: Instant–High; Pro: adds Extra High and Pro | Yes for every listed effort, including Pro | OpenAI tunnel + ChatGPT connector |
 | **Zero Risk** | Choose the ChatGPT model and effort manually; optional Pro-sized context | Yes; the full turn-bound Codex harness remains available | Separate OpenAI tunnel + `Codex Zero Risk` connector; paste and send manually |
 
-Each automatic picker entry has one fixed ChatGPT mode. Codex still displays its built-in Effort and
-Speed rows, but changing them cannot silently change the selected browser model. In automatic Full
+New automatic **(Web)** entries expose only supported Effort choices; Instant and each Pro family
+keep separate context budgets. Legacy entries retain their fixed bindings. The requested family
+and effort must be verified before Send; unsupported selections fail without a silent fallback. In automatic Full
 mode every available effort receives the same turn-bound MCP capability. Pro has no separate
 restriction or reduced tool contract.
 
@@ -191,7 +196,7 @@ this transport.
 
 This separately controlled feature can carry a request larger than one measured ChatGPT
 message while keeping every individual composer submission inside its verified boundary. The bridge
-stages two or three inert context parts in the same Temporary Chat, verifies an exact acknowledgement
+uses one, two, or six total messages in the same task chat, verifies an exact acknowledgement
 for each part, and executes the task only from the final commit message. Connector selection is
 bounded to three complete `@codex` attempts, and a missing connector fails explicitly instead of
 opening replacement sessions indefinitely.
@@ -205,7 +210,8 @@ handoff compact remain independent.
 **Enhanced Web session mode** keeps one task-bound ChatGPT conversation across tool rounds,
 steering, and compaction. It changes conversation continuity only: it neither enlarges the context
 window nor disables compaction. **Bigger Context** is mutually exclusive with Enhanced mode. It
-splits one large Codex turn into two or three staging messages plus one final execution message;
+uses one, two, or six total browser messages. A six-message transaction contains five inert
+stages followed by one final execution message;
 each message is a real ChatGPT request that can consume account allowance. It triples the context
 and compaction thresholds advertised to Codex, while ChatGPT's own message, model, composer,
 transport, and service limits remain in force.
@@ -261,6 +267,19 @@ that option clicks **Allow once**, never a permanent grant.
 
 Use **Activity** for safe local diagnostics and **Settings → Run doctor** for end-to-end health.
 Settings can also cancel a retained browser turn or remove the Codex integration before uninstall.
+**Save chats in ChatGPT** is off by default and applies to Codex and Claude task conversations.
+API Access remains Temporary Chat in both direct and native-tool paths and rejects `store:true`.
+Turning Saved Chats off does not delete existing history.
+
+**New browser chat for each turn** is opt-in and available only in Original Automatic mode.
+Enhanced and Zero Risk force it off at the UI, launcher, configuration and adapter boundaries,
+including stale configuration. This is independent of whether chats are saved.
+
+**Limits** is opt-in local usage accounting, not an official remaining-quota display or a
+replacement for Account Safety. Physical accepted sends are counted once; accounting failures
+cannot replay a submission. Zero Risk performs no automatic plan inspection or tracking.
+API `reasoning_effort` accepts supported choices on new routes, keeps legacy routes fixed, and
+binds effective family/effort across all tool-result HTTP rounds of one native Web generation.
 Set `CODEX_CHATGPT_WEB_BROWSER_DIAGNOSTICS=1` only when every browser checkpoint needs a screenshot.
 
 Browser turn diagnostics save bounded JSON state at each checkpoint. Screenshots are captured for

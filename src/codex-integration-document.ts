@@ -499,3 +499,14 @@ export function restoreManagedFeatures(
     journal.previousRemoteCompactionV2,
   );
 }
+
+export function assertBuiltinModelProvider(text: string): void {
+  const { model_provider: provider } = Bun.TOML.parse(splitLines(text).join("\n")) as { model_provider?: unknown };
+  if (provider !== undefined && provider !== "openai") {
+    throw new Error(
+      "Codex model_provider selects a custom provider; the bridge requires the built-in openai provider. "
+      + "Select model_provider = \"openai\" or remove that selection before setup or reconnect. "
+      + "--replace-codex-route only replaces the route URL; it does not change your provider configuration.",
+    );
+  }
+}

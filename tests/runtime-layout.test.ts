@@ -21,6 +21,7 @@ import {
 } from "../src/config";
 import { removeLegacyRuntimeArtifacts } from "../src/service";
 import { processRunning } from "../src/process";
+import { CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL, CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL } from "../src/chatgpt-web-models";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -334,6 +335,72 @@ test("Luna-only provider configuration exposes only the Luna backend", () => {
   expect(provider.defaultModel).toBe("gpt-5.6-luna");
   expect(provider.modelReasoningEfforts).toEqual({ "gpt-5.6-luna": ["low", "medium"] });
   expect(provider.chatgptWeb).toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
+});
+
+test("manual provider configuration preserves a distinct backend without guessing a ChatGPT model", () => {
+  const config = defaultConfig("full");
+  config.browserInteractionMode = "manual";
+  config.solAvailable = true;
+  config.extraHighAvailable = true;
+  config.proAvailable = true;
+  const provider = providerConfig(config);
+
+  expect(provider.models).toEqual([CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL]);
+  expect(provider.defaultModel).toBe(CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL);
+  expect(provider.modelReasoningEfforts).toEqual({ [CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL]: ["low"] });
+  expect(provider.modelDefaultReasoningEfforts).toEqual({ [CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL]: "low" });
+  expect(provider.modelInputModalities).toEqual({ [CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL]: ["text"] });
+  expect(provider.chatgptWeb).toMatchObject({
+    appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
+    browserInteractionMode: "manual",
+    solAvailable: false,
+    extraHighAvailable: false, proAvailable: false,
+    experimentalBiggerContext: false,
+  });
+
+  config.zeroRiskProEnabled = true;
+  const proProvider = providerConfig(config);
+  expect(proProvider.models).toEqual([
+    CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
+    CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL,
+  ]);
+  expect(proProvider.modelReasoningEfforts).toEqual({
+    [CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL]: ["low"],
+    [CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL]: ["low"],
+  });
+});
+
+test("conversation preferences survive reload; saved chats also apply to Zero Risk", () => {
+  const root = join(tmpdir(), `codex-web-fresh-config-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const config: Record<string, unknown> = { ...defaultConfig("browser-only"), useEnhancedWebSessionMode: false };
+  const persist = () => writeFileSync(join(root, "config.json"), JSON.stringify(config));
+  expect(config.experimentalFreshConversationPerTurn).toBe(false);
+  expect(config.useSavedChats).toBe(false);
+  delete config.useSavedChats;
+  delete config.experimentalFreshConversationPerTurn;
+  persist();
+  expect(loadConfig()!.experimentalFreshConversationPerTurn).toBe(false);
+  expect(loadConfig()!.useSavedChats).toBe(false);
+  config.useSavedChats = true;
+  config.experimentalFreshConversationPerTurn = true;
+  persist();
+  const loaded = loadConfig()!;
+  expect(providerConfig(loaded).chatgptWeb!.useSavedChats).toBe(true);
+  expect(providerConfig({ ...loaded, browserInteractionMode: "manual" }).chatgptWeb!.useSavedChats).toBe(true);
+  expect(providerConfig(loaded).chatgptWeb!.experimentalFreshConversationPerTurn).toBe(true);
+  expect(providerConfig({ ...loaded, browserInteractionMode: "manual" })
+    .chatgptWeb!.experimentalFreshConversationPerTurn).toBe(false);
+  expect(loaded.experimentalFreshConversationPerTurn).toBe(true);
+  config.experimentalFreshConversationPerTurn = "true";
+  persist();
+  expect(() => loadConfig()).toThrow("experimentalFreshConversationPerTurn");
+  config.experimentalFreshConversationPerTurn = false;
+  config.useSavedChats = "true";
+  persist();
+  expect(() => loadConfig()).toThrow("useSavedChats");
 });
 
 test("skill attachments config defaults off, reaches the adapter, and rejects invalid/manual settings", () => {

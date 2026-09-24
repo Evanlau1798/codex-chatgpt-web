@@ -81,6 +81,7 @@ export function chatGptConversationKey(parsed: CodexParsedRequest, namespace: st
     claudeAgent: raw?.client_metadata?.claude_subagent === true ? identity.turnId : null,
     modelId: parsed.modelId,
     reasoning: parsed.options.reasoning,
+    ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
     compaction: compactionEpoch(raw?.input),
     modelSwitch: chatGptModelSwitchEpoch(parsed) ?? null,
     claudeHistoryAnchor,

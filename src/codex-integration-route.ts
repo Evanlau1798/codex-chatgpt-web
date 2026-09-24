@@ -1,3 +1,5 @@
+import { assertBuiltinModelProvider } from "./codex-integration-document";
+export { assertBuiltinModelProvider } from "./codex-integration-document";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -177,9 +179,12 @@ export function managedJournalIsActive(journal: ManagedRouteJournal): boolean {
 }
 
 export function verifyManagedJournalState(text: string, journal: ManagedRouteJournal): void {
-  if (journal.version === 3 || journal.active) verifyInstalledRoute(text, journal);
+  // Recovery selects the journal that owns the physical edits, even if a user-selected
+  // provider now bypasses the bridge. That installation must remain removable.
+  if (journal.version === 3 || journal.active) verifyOwnedInstalledRoute(text, journal);
   else verifyRestoredRoute(text, journal);
 }
+
 
 export function replacementBaseline(
   currentText: string,
@@ -241,6 +246,11 @@ export function replacementBaseline(
 export { installRoute } from "./codex-integration-install-route";
 
 export function verifyInstalledRoute(text: string, journal: ManagedRouteJournal): void {
+  verifyOwnedInstalledRoute(text, journal);
+  assertBuiltinModelProvider(text);
+}
+
+function verifyOwnedInstalledRoute(text: string, journal: ManagedRouteJournal): void {
   const lines = splitLines(text);
   const current = assignments(lines);
   if (current.openai_base_url.value !== journal.installed.openai_base_url) {
@@ -390,7 +400,7 @@ export function assertPreservedPreviousRealtimeAssignment(
 }
 
 export function restoreManagedRoute(text: string, journal: ManagedRouteJournal): string {
-  verifyInstalledRoute(text, journal);
+  verifyOwnedInstalledRoute(text, journal);
   const withoutHook = journal.version === 10
     ? restoreCodexInterruptHook(text, journal.interruptHook)
     : text;

@@ -71,14 +71,15 @@ class ManualTurnController {
 
   arm(tab) {
     if (tab.manualTimer) clearTimeout(tab.manualTimer);
-    tab.manualDeadlineAt = Date.now() + SUBMIT_TIMEOUT_MS;
+    const timeoutMs = tab.manualCompaction ? 120_000 : SUBMIT_TIMEOUT_MS;
+    tab.manualDeadlineAt = Date.now() + timeoutMs;
     tab.manualTimer = setTimeout(() => {
       if (!this.host.turnTabs.has(tab.id)) return;
       tab.manualState = "timed-out";
       this.removed(tab, "timeout");
       this.host.removeTurnTab(tab, true);
       this.logger.warn("browser.manual_turn_timed_out", { traceId: tab.traceId });
-    }, SUBMIT_TIMEOUT_MS);
+    }, timeoutMs);
     tab.manualTimer.unref?.();
   }
 
@@ -268,11 +269,15 @@ class ManualTurnController {
         manualState: "completed", status: "ready", prompt: null, promptDigest: null,
         lastHeartbeatAt: Date.now(),
       });
+      this.logger.info("browser.manual_turn_completed", { tabId: tab.id, traceId, status: "completed", retained: true });
       this.host.publishState?.(this.host.snapshot());
       return { cancelledByUser: false };
     }
     this.removed(tab, status === "aborted" ? "cancelled" : status);
     this.host.removeTurnTab(tab, false);
+    if (status === "completed") {
+      this.logger.info("browser.manual_turn_completed", { tabId: tab.id, traceId, status: "completed", retained: false });
+    }
     return { cancelledByUser: status === "aborted" };
   }
 

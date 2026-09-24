@@ -2,6 +2,7 @@ import { skillFileTokens } from "./skill-attachments";
 import { estimateTokens } from "../../lib/token-estimate";
 import {
   CHATGPT_WEB_BACKEND_MODEL,
+  CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER,
   isChatGptWebZeroRiskBackendModel,
   resolveChatGptWebContextLimits,
   resolveChatGptWebMessageTokenBudget,
@@ -77,9 +78,9 @@ export function estimateChatGptWebInputTokens(
 }
 
 /**
- * The compaction threshold chooses the initial part count. Whole records and composer limits can
- * require more parts even when the total token estimate is small. Compaction always receives all
- * three parts without passing through the legacy inline budget.
+ * The compaction threshold chooses the initial part count. Whole records and composer limits
+ * can require more parts even when the total token estimate is small. Plan before submission;
+ * compaction always receives all six parts without passing through the legacy inline budget.
  */
 export function resolveBiggerContextMultipartParts(
   parsed: CodexParsedRequest,
@@ -128,7 +129,8 @@ export function resolveBiggerContextMultipartParts(
       );
       if (estimateTokens(text, parsed.modelId) > budget) return false;
     }
-    return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId) < contextWindow * messages.length;
+    return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId)
+      < contextWindow * Math.min(messages.length, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER);
   };
   if (initialParts === undefined && fits(inline)) return undefined;
   return fits(compile(2)) ? 2 : CHATGPT_BIGGER_CONTEXT_PARTS;

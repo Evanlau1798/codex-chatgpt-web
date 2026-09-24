@@ -54,7 +54,14 @@ function runtime(conversationKey: string, release: () => Promise<void>, cancel: 
 
 describe("Codex local compaction lifecycle", () => {
   test("classifies local compaction from Codex turn metadata rather than prompt text", () => {
-    const compact = parseRequest(localCompactBody());
+    const legacy = localCompactBody();
+    const metadata = JSON.parse(legacy.client_metadata["x-codex-turn-metadata"]);
+    delete metadata.compaction;
+    legacy.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
+    const compact = parseRequest(legacy);
+    const memento = parseRequest(localCompactBody());
+    expect(memento._compactionRequest).toBeTrue();
+    expect(memento._compactionResponseFormat).toBe("message");
     const ordinary = parseRequest(localCompactBody("turn"));
     const remote = parseRequest({
       ...localCompactBody(),
@@ -106,7 +113,11 @@ describe("Codex local compaction lifecycle", () => {
       turn.onTextDelta("Checkpoint complete.");
       return Promise.resolve("Checkpoint complete.");
     };
-    const parsed = parseRequest(localCompactBody());
+    const legacy = localCompactBody();
+    const metadata = JSON.parse(legacy.client_metadata["x-codex-turn-metadata"]);
+    delete metadata.compaction;
+    legacy.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
+    const parsed = parseRequest(legacy);
 
     try {
       for (let attempt = 0; attempt < 2; attempt += 1) {

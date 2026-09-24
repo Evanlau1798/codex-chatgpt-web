@@ -4,14 +4,55 @@ import { decodeChatCompletion, parseChatCompletion } from "../src/chat-completio
 
 test("turns observed inline file path formats into Markdown links", () => {
   const cases = [
-    ["output/path-format-probe/alpha-notes.md", "output/path-format-probe/alpha-notes.md"],
-    ["/Users/dev/project/src/gamma-helper.ts", "/Users/dev/project/src/gamma-helper.ts"],
-    [String.raw`C:\Users\Dev\project\zeta-result.pdf`, "C:/Users/Dev/project/zeta-result.pdf"],
-    ["src/adapters/chatgpt-web/markdown.ts:47:3", "src/adapters/chatgpt-web/markdown.ts:47:3"],
+    { path: "/Users/dev/project/src/gamma-helper.ts", target: "/Users/dev/project/src/gamma-helper.ts" },
+    { path: String.raw`C:\Users\Dev\project\zeta-result.pdf`, target: "C:/Users/Dev/project/zeta-result.pdf" },
+    {
+      path: "output/path-format-probe/alpha-notes.md",
+      target: "output/path-format-probe/alpha-notes.md",
+    },
+    {
+      path: "output/path-format-probe/beta-report.json",
+      target: "output/path-format-probe/beta-report.json",
+    },
+    {
+      path: "/Users/example/codex-chatgpt-web/src/path-format-probe/gamma-helper.ts",
+      target: "/Users/example/codex-chatgpt-web/src/path-format-probe/gamma-helper.ts",
+    },
+    {
+      path: "/Users/example/codex-chatgpt-web/output/path-format-probe/epsilon-report.pdf",
+      target: "/Users/example/codex-chatgpt-web/output/path-format-probe/epsilon-report.pdf",
+    },
+    {
+      path: String.raw`C:\Users\Dev\Documents\Codex\path-format-probe\zeta-result.pdf`,
+      target: "C:/Users/Dev/Documents/Codex/path-format-probe/zeta-result.pdf",
+    },
+    {
+      path: String.raw`C:\Codex_Project_Unity\_Editor\file.cs`,
+      target: "C:/Codex_Project_Unity/_Editor/file.cs",
+    },
+    {
+      path: String.raw`C:\Codex_Project_Unity\_file.cs`,
+      target: "C:/Codex_Project_Unity/_file.cs",
+    },
+    {
+      path: String.raw`\\server\share_name\_Editor\file.cs`,
+      target: "//server/share_name/_Editor/file.cs",
+    },
+    {
+      path: "src/_private_/file_name.ts",
+      target: "src/_private_/file_name.ts",
+    },
+    {
+      path: "src/adapters/chatgpt-web/markdown.ts:47:3",
+      target: "src/adapters/chatgpt-web/markdown.ts:47:3",
+    },
   ];
-  for (const [path, target] of cases) {
-    expect(chatGptHtmlToMarkdown(`<p>Created <code>${path}</code>.</p>`))
-      .toBe(`Created [${path}](<${target}>).`);
+
+  for (const { path, target } of cases) {
+    const markdown = chatGptHtmlToMarkdown(`<p>Created <code>${path}</code>.</p>`);
+    expect(markdown).toContain(`](<${target}>)`);
+    expect(Bun.markdown.html(markdown))
+      .toBe(`<p>Created <a href="${target}">${path}</a>.</p>\n`);
   }
 });
 
@@ -76,4 +117,28 @@ test("structured browser output preserves JSON escapes before tool decoding", ()
   const answer = buffer.finish().markdown;
   expect(answer).toBe(raw);
   expect(JSON.parse(decodeChatCompletion(input, answer).tool_calls![0]!.function.arguments)).toEqual({ content });
+});
+
+test("preserves standalone Codex plan markers in paragraphs and list continuations", () => {
+  expect(chatGptHtmlToMarkdown([
+    "<p>&lt;proposed_plan&gt;</p>",
+    "<h2>Plan</h2>",
+    "<ul><li><p>Keep snake_case.</p><p>&lt;/proposed_plan&gt;</p></li></ul>",
+  ].join(""))).toBe([
+    "<proposed_plan>", "", "## Plan", "", "- Keep snake\\_case.", "  ", "  </proposed_plan>",
+  ].join("\n"));
+  expect(chatGptHtmlToMarkdown("<p>&lt;proposed_plan&gt;<br>Step<br>&lt;/proposed_plan&gt;</p>"))
+    .toBe("<proposed_plan>  \nStep  \n</proposed_plan>");
+});
+
+test("preserving plan markers does not rewrite mentions or literal code", () => {
+  expect(chatGptHtmlToMarkdown([
+    "<p>Mention &lt;proposed_plan&gt; and &lt;/proposed_plan&gt; inline.</p>",
+    "<p><code>&lt;proposed_plan&gt;</code> <code>&lt;/proposed_plan&gt;</code></p>",
+    "<pre><code>&lt;proposed\\_plan&gt;\n&lt;/proposed\\_plan&gt;</code></pre>",
+  ].join(""))).toBe([
+    "Mention <proposed\\_plan> and </proposed\\_plan> inline.", "",
+    "`<proposed_plan>` `</proposed_plan>`", "",
+    "```", "<proposed\\_plan>", "</proposed\\_plan>", "```",
+  ].join("\n"));
 });

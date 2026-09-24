@@ -54,6 +54,8 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
         config.useEnhancedWebSessionMode, config.experimentalBiggerContext,
       ),
       experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
+      experimentalFreshConversationPerTurn: !manual && !config.useEnhancedWebSessionMode && config.experimentalFreshConversationPerTurn === true,
+      useSavedChats: config.useSavedChats === true,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
       ...(manual || config.maxBrowserTabs === undefined ? {} : { maxBrowserTabs: config.maxBrowserTabs }),
       ...(manual || config.automaticWebSessionLimitCount === undefined

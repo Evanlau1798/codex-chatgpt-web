@@ -8,10 +8,12 @@ import {
   extractChatGptTurnEnvironment,
   extractChatGptCompactionSourceRevision,
   extractChatGptContinuationEnvironmentClaims,
+  extractChatGptSteeringEnvironmentClaim,
   extractChatGptTurnIdentity,
   extractChatGptThreadSpawnLineage,
   extractChatGptRootThreadMetadata,
   hasCurrentChatGptEnvironmentContext,
+  hasChatGptCalendarEnvironmentDelta,
   hasRawChatGptEnvironmentContext,
   isChatGptCompactionContinuation,
   MissingTrustedCodexEnvironmentError,
@@ -22,12 +24,12 @@ import { effectiveChatGptToolPolicy } from "./tool-policy";
 import { resolveCurrentCodexRolloutEnvironment } from "./codex-rollout-environment";
 import { unattributedChatGptEnvironmentMessages } from "./environment-history";
 import { isAcceptedCompactionContinuation } from "./compaction-continuation";
-import { isPureContextualCodexUserText } from "./contextual-user-message";
+import { hasEnvironmentContextFragment, isPureContextualCodexUserText } from "./contextual-user-message";
 import { codexTurnMetadataFromBody } from "./environment-identity";
 import {
   isCurrentTurnInstruction,
   isCurrentTurnInstructionCandidate,
-  isUserOrParentInstruction,
+  isNativeInstruction,
   itemTurnId,
   priorAbortedTurnIds,
   turnUserRevisionHistory,
@@ -419,7 +421,7 @@ export class ChatGptThreadEnvironmentStore {
     const checkpointIndex = latestCompactionIndex(input);
     const metadata = codexTurnMetadataFromBody(body);
     const sourceBeforeCheckpoint = checkpointIndex >= 0
-      ? [...input.slice(0, checkpointIndex)].reverse().find(value => isUserOrParentInstruction(record(value), metadata))
+      ? [...input.slice(0, checkpointIndex)].reverse().find(value => isNativeInstruction(record(value), metadata))
       : undefined;
     const crossesForeignCompaction = checkpointIndex >= 0
       && itemTurnId(sourceBeforeCheckpoint) !== identity.turnId;
@@ -449,7 +451,21 @@ export class ChatGptThreadEnvironmentStore {
         tools: effectiveChatGptToolPolicy(parsed).tools,
       });
       if (rolloutEnvironment) {
-        const currentClaims = hasCurrentContext ? extractChatGptContinuationEnvironmentClaims(parsed) : [];
+        const calendarDelta = hasCurrentContext && !currentCompaction && hasChatGptCalendarEnvironmentDelta(parsed);
+        if (calendarDelta && rolloutEnvironment.sandboxPolicy.type !== "dangerFullAccess") {
+          throw new Error("Calendar environment delta conflicts with its current Codex rollout");
+        }
+        if (hasCurrentContext && !directEnvironment && !currentCompaction && !postCompactionContext
+          && ordinaryContinuation && !calendarDelta) {
+          const firstInstruction = input.findIndex(value => isCurrentTurnInstruction(record(value), metadata, identity.turnId!));
+          const hasLaterRefresh = input.slice(firstInstruction + 1).some(value => hasEnvironmentContextFragment(record(value)));
+          // An earlier preamble separated by steering needs two attributed current instructions.
+          // A later refresh uses the existing per-claim/current-rollout comparison instead.
+          if (!hasLaterRefresh && !extractChatGptSteeringEnvironmentClaim(parsed)) {
+            throw new MissingTrustedCodexEnvironmentError("cwd");
+          }
+        }
+        const currentClaims = hasCurrentContext ? extractChatGptContinuationEnvironmentClaims(parsed, calendarDelta) : [];
         if (currentClaims.some(claim => !sameAuthority(claim, rolloutEnvironment))) {
           throw new Error("Compaction continuation environment conflicts with its current Codex rollout");
         }

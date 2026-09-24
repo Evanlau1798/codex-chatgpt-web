@@ -16,12 +16,22 @@ async function markTurnTabSurface(host, tab, viewportCss) {
   }
 }
 
-function initializeAutomaticTurnTab(host, tab, loadCommittedSurface, idleUrl, viewportCss) {
+function initializeAutomaticTurnTab(host, tab, loadCommittedSurface, idleUrl, viewportCss, signal) {
   tab.initializingSurface = true;
   tab.initialization = (async () => {
+    let onAbort;
+    const aborted = new Promise((_, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
     try {
-      await loadCommittedSurface(tab.view.webContents, idleUrl);
-      await markTurnTabSurface(host, tab, viewportCss);
+      signal?.throwIfAborted();
+      await Promise.race([(async () => {
+        await loadCommittedSurface(tab.view.webContents, idleUrl);
+        signal?.throwIfAborted();
+        await markTurnTabSurface(host, tab, viewportCss);
+      })(), aborted]);
+      signal?.throwIfAborted();
       tab.initializingSurface = false;
       return tab;
     } catch (error) {
@@ -31,6 +41,8 @@ function initializeAutomaticTurnTab(host, tab, loadCommittedSurface, idleUrl, vi
       });
       if (host.turnTabs.get(tab.id) === tab) host.removeTurnTab(tab, true);
       throw error;
+    } finally {
+      signal?.removeEventListener("abort", onAbort);
     }
   })();
   return tab.initialization;

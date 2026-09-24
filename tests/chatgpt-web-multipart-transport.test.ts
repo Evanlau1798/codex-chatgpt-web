@@ -31,13 +31,13 @@ function request(): CodexParsedRequest {
 
 test("Bigger Context expands only the total ceiling and preserves per-message boundaries", () => {
   expect(() => assertChatGptWebMultipartInputWithinLimits(
-    280_000, 95_000, CHATGPT_WEB_MODEL_ID, "high", pro, 900_000, 3,
+    280_000, 95_000, CHATGPT_WEB_MODEL_ID, "high", pro, 450_000, 6,
   )).not.toThrow();
   expect(() => assertChatGptWebMultipartInputWithinLimits(
-    333_579, 95_000, CHATGPT_WEB_MODEL_ID, "high", pro, 900_000, 3,
-  )).toThrow("three-part ceiling");
+    333_579, 95_000, CHATGPT_WEB_MODEL_ID, "high", pro, 450_000, 6,
+  )).toThrow("six-part ceiling");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
-    222_386, 95_000, CHATGPT_WEB_MODEL_ID, "high", pro, 900_000, 2,
+    222_386, 95_000, CHATGPT_WEB_MODEL_ID, "high", pro, 450_000, 2,
   )).toThrow("two-part ceiling");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
     20_000,
@@ -61,7 +61,7 @@ test("Bigger Context selects the cheapest account mode that can carry every stag
 });
 
 test("Bigger Context transport stages inert parts and executes only from the final message", () => {
-  const compiled = compileChatGptWebPrompt(request(), pro, undefined, { experimentalMultipartParts: 3 });
+  const compiled = compileChatGptWebPrompt(request(), pro, undefined, { experimentalMultipartParts: 6 });
   const prepared = prepareChatGptWebMultipartTransport(
     compiled,
     CHATGPT_WEB_MODEL_ID,
@@ -69,7 +69,7 @@ test("Bigger Context transport stages inert parts and executes only from the fin
     "high",
   );
   expect(prepared).toBeDefined();
-  expect(prepared!.stages).toHaveLength(2);
+  expect(prepared!.stages).toHaveLength(5);
   expect(prepared!.stages[0]!.text).toContain("<codex_multipart_stage>");
   expect(prepared!.stages[0]!.acknowledgement).toContain("CODEX_MULTIPART_ACK");
   expect(prepared!.finalPrompt).toContain("<codex_multipart_execute>");
@@ -79,10 +79,10 @@ test("Bigger Context transport stages inert parts and executes only from the fin
 
 test("large Bigger Context stage reaches the verified direct attachment route by default", async () => {
   const parsed = request();
-  parsed.context.systemPrompt = [`system ${"dense *markdown* [link](x)\n".repeat(1_500)}`];
+  parsed.context.systemPrompt = Array.from({ length: 4 }, (_, i) => `system ${i} ${"dense *markdown* [link](x)\n".repeat(1_500)}`);
   parsed.context.messages[0]!.content = `developer ${"middle *markdown* [link](x)\n".repeat(1_500)}`;
   parsed.context.messages[1]!.content = `perform the task ${"final *markdown* [link](x)\n".repeat(1_500)}`;
-  const compiled = compileChatGptWebPrompt(parsed, pro, undefined, { experimentalMultipartParts: 3 });
+  const compiled = compileChatGptWebPrompt(parsed, pro, undefined, { experimentalMultipartParts: 6 });
   const failure = new Error("attachment intercepted");
   const capture = spyOn(ChatGptBrowserDiagnostics.prototype, "capture").mockImplementation(async () => {});
   const error = spyOn(console, "error").mockImplementation(() => {});
@@ -99,7 +99,7 @@ test("large Bigger Context stage reaches the verified direct attachment route by
     runStage: async (_trace: string, _stage: string, _timeout: number,
       action: (signal: AbortSignal, remaining: () => number) => Promise<unknown>) =>
       action(new AbortController().signal, () => 90_000),
-    prepareTemporaryChatSurface: async () => {},
+    prepareChatSurface: async () => {},
     selectModelAndEffort: async () => ({ effort: "low", localTools: false }),
     attachPrompt: async (_page: unknown, text: string, _tools: boolean, _capture: unknown,
       _signal: unknown, _catalog: unknown, _budget: unknown, _think: unknown, direct: boolean) => {
@@ -120,7 +120,7 @@ test("large Bigger Context stage reaches the verified direct attachment route by
       prepare: async () => ({ ...compiled, release: () => {} }),
       onTextDelta: () => {},
     }, undefined, page)).rejects.toBe(failure);
-    expect(stages).toHaveLength(2);
+    expect(stages).toHaveLength(5);
     for (const stage of stages) {
       expect(stage.text.length).toBeGreaterThan(32_000);
       expect(planChatGptPromptInsertion(stage.text, { largeStructuredDirect: stage.direct }).strategy)

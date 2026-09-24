@@ -5,6 +5,8 @@ export interface CodexParsedRequest {
   stream: boolean;
   options: CodexRequestOptions;
   _rawBody?: unknown;
+  /** Set only by the trusted Web route, never parsed from caller-supplied model metadata. */
+  _chatgptModelFamily?: "5.6" | "6";
   /** Number of leading raw input items restored from local previous_response_id state. */
   _replayPrefixLen?: number;
   /** Proxy-private proof that context contains a complete canonical request snapshot. */
@@ -12,16 +14,16 @@ export interface CodexParsedRequest {
   /** Internal proof that the retained Web conversation already owns unchanged system context. */
   _retainedConversationResume?: boolean;
   /**
-   * True when the input carried `{type:"compaction_trigger"}` — Codex remote compaction v2 asking
-   * this turn to produce a `{type:"compaction"}` output item. Routed adapters can't natively;
-   * the server runs the model as a summarizer and the bridge emits a synthetic compaction item
-   * (see src/responses/compaction.ts).
+   * Dedicated native compaction, identified by compaction_trigger or canonical responses/memento
+   * metadata. Both run without local tools; their output contracts differ.
    */
   _compactionRequest?: boolean;
   /** True for Codex local compaction identified by structured turn metadata. */
   _localCompactionRequest?: boolean;
   /** True when the request input contains a new provider compaction replacement boundary. */
   _contextCompactionBoundary?: boolean;
+  /** Native compact.rs expects assistant text; remote v2 (the default) expects a compaction item. */
+  _compactionResponseFormat?: "message";
   /**
    * True when Codex MultiAgent V2 delegated an agent_message as provider-private encrypted_content.
    * ChatGPT Web has no OpenAI backend key for that blob; the Responses HTTP boundary rejects it
@@ -330,8 +332,12 @@ export interface CodexProviderConfig {
     useEnhancedOutputTunnel?: boolean;
     /** Authorize per-call "Allow once" confirmation clicks for this connector. */
     autoApproveToolCalls?: boolean;
-    /** DEV-only experimental transport: adapt one context across one, two, or three ChatGPT messages. */
+    /** Experimental transport: adapt one context across one, two, or six ChatGPT messages. */
     experimentalBiggerContext?: boolean;
     experimentalSkillAttachments?: boolean;
+    /** Explicitly rebuild each automatic turn in a fresh browser conversation. */
+    experimentalFreshConversationPerTurn?: boolean;
+    /** Use ordinary ChatGPT history for task conversations. Default: Temporary Chat. */
+    useSavedChats?: boolean;
   };
 }

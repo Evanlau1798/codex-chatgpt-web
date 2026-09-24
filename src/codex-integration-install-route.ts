@@ -1,7 +1,7 @@
 import type { AppConfig } from "./config";
 import { installCodexInterruptHook, installCodexInterruptHookCommand } from "./codex-interrupt-hook";
 import { CODEX_REALTIME_WEBRTC_CALL_BASE_URL, MANAGED_ROUTE_COMMENT, getCodexConfigPath, type CodexIntegrationJournal, type PreviousAssignment } from "./codex-integration-shared";
-import { assignments, findTopLevelAssignment, firstTableIndex, insertDocumentLine, installCompatibilityV1Features, parseDocument, removeManagedComment, renderDocument } from "./codex-integration-document";
+import { assertBuiltinModelProvider, assignments, findTopLevelAssignment, firstTableIndex, insertDocumentLine, installCompatibilityV1Features, parseDocument, removeManagedComment, renderDocument } from "./codex-integration-document";
 
 export function installRoute(
   text: string,
@@ -13,6 +13,7 @@ export function installRoute(
   previous: CodexIntegrationJournal["previous"];
   previousRealtimeWebrtcCallBaseUrl: PreviousAssignment;
 } {
+  assertBuiltinModelProvider(text);
   const document = parseDocument(text);
   const previous = assignments(document.lines);
   if (previous.openai_base_url.present && !replaceExistingRoute) {

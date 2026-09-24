@@ -13,6 +13,7 @@ const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024;
 export const TUNNEL_READY_TIMEOUT_MS = 120_000;
 export const TUNNEL_MCP_CONNECTION_MAX_TTL = "24h";
 const TUNNEL_STATUS_POLL_INTERVAL_MS = 1_000;
+const WINDOWS_REMOVE_RETRY_DELAYS_MS = [100, 200, 500, 1_000, 2_000] as const;
 
 interface TunnelInstallManifest {
   version: 1;
@@ -76,6 +77,28 @@ function manifestPath(): string {
   return join(getConfigDir(), "bin", "tunnel-client-manifest.json");
 }
 
+/** Remove only a file explicitly owned by this install, never sweep other staging files. */
+async function removeTunnelInstallFile(path: string): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      rmSync(path, { force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      const delay = WINDOWS_REMOVE_RETRY_DELAYS_MS[attempt];
+      if (process.platform !== "win32" || (code !== "EBUSY" && code !== "EPERM") || delay === undefined) throw error;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
+function tunnelInstallRecoveryError(primary: unknown, failures: unknown[], operation: string): Error {
+  const message = (error: unknown) => error instanceof Error ? error.message : String(error);
+  return new AggregateError([primary, ...failures],
+    `${message(primary)}; tunnel-client ${operation} also failed: ${failures.map(message).join("; ")}`,
+    { cause: primary });
+}
+
 export async function installTunnelClient(): Promise<string> {
   const executable = binaryPath();
   const manifestFile = manifestPath();
@@ -102,8 +125,8 @@ export async function installTunnelClient(): Promise<string> {
     previousInstallation = { binary: installedBinary, manifestText };
   }
   if (!previousInstallation && (existsSync(executable) || existsSync(manifestFile))) {
-    rmSync(executable, { force: true });
-    rmSync(manifestFile, { force: true });
+    await removeTunnelInstallFile(executable);
+    await removeTunnelInstallFile(manifestFile);
   }
 
   const asset = platformAsset();
@@ -122,16 +145,18 @@ export async function installTunnelClient(): Promise<string> {
   mkdirSync(dirname(executable), { recursive: true, mode: 0o700 });
   const stagedExecutable = `${executable}.install-${process.pid}-${randomUUID()}${process.platform === "win32" ? ".exe" : ""}`;
   atomicWriteFile(stagedExecutable, binary);
-  let version: ReturnType<typeof runChecked>;
   try {
     if (process.platform !== "win32") chmodSync(stagedExecutable, 0o700);
-    version = runChecked(stagedExecutable, ["--version"], { timeout: 10_000 });
+    const version = runChecked(stagedExecutable, ["--version"], { timeout: 10_000 });
     if (!version.stdout.includes(TUNNEL_VERSION) && !version.stderr.includes(TUNNEL_VERSION)) {
       throw new Error(`Installed tunnel-client did not report version ${TUNNEL_VERSION}`);
     }
-  } finally {
-    rmSync(stagedExecutable, { force: true });
+  } catch (error) {
+    try { await removeTunnelInstallFile(stagedExecutable); }
+    catch (cleanupError) { throw tunnelInstallRecoveryError(error, [cleanupError], "temporary file cleanup"); }
+    throw error;
   }
+  await removeTunnelInstallFile(stagedExecutable);
   const manifest: TunnelInstallManifest = {
     version: 1,
     tunnelClientVersion: TUNNEL_VERSION,
@@ -144,14 +169,20 @@ export async function installTunnelClient(): Promise<string> {
     if (process.platform !== "win32") chmodSync(executable, 0o700);
     atomicWriteFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
   } catch (error) {
+    const failures: unknown[] = [];
     if (previousInstallation) {
-      atomicWriteFile(executable, previousInstallation.binary);
-      if (process.platform !== "win32") chmodSync(executable, 0o700);
-      atomicWriteFile(manifestFile, previousInstallation.manifestText);
+      try {
+        atomicWriteFile(executable, previousInstallation.binary);
+        if (process.platform !== "win32") chmodSync(executable, 0o700);
+        atomicWriteFile(manifestFile, previousInstallation.manifestText);
+      } catch (rollbackError) { failures.push(rollbackError); }
     } else {
-      rmSync(executable, { force: true });
-      rmSync(manifestFile, { force: true });
+      for (const path of [executable, manifestFile]) {
+        try { await removeTunnelInstallFile(path); }
+        catch (cleanupError) { failures.push(cleanupError); }
+      }
     }
+    if (failures.length > 0) throw tunnelInstallRecoveryError(error, failures, "rollback");
     throw error;
   }
   return executable;
@@ -278,8 +309,29 @@ export function stopTunnel(config: AppConfig): void {
     && !/not found|not running|unknown alias|\balias\b[^\r\n]{0,160}\bis not known\b/i.test(
       `${result.stdout}\n${result.stderr}`,
     )) {
+    // v0.0.12 clears its saved PID even when SIGTERM times out. Its subsequent
+    // "stopped" inventory is not exit evidence; probe the PID from the stop error.
+    if (tunnelStopProcessExited(result.stdout, settings.alias)) {
+      console.warn("[codex-chatgpt-web] tunnel stop timed out; OS confirmed process exit");
+      return;
+    }
     throw new Error(`Failed to stop tunnel runtime: ${result.stderr.trim() || result.stdout.trim()}`);
   }
+}
+
+function tunnelStopProcessExited(output: string, alias: string): boolean {
+  let pid: number;
+  try {
+    const result = JSON.parse(output);
+    if (result?.alias !== alias || typeof result.stop_error !== "string") return false;
+    const match = /^process ([1-9]\d*) did not exit after SIGTERM$/.exec(result.stop_error);
+    if (!match) return false;
+    pid = Number(match[1]);
+    if (!Number.isSafeInteger(pid) || pid <= 1) return false;
+  } catch { return false; }
+  try { process.kill(pid, 0); }
+  catch (error) { return (error as NodeJS.ErrnoException)?.code === "ESRCH"; }
+  return false;
 }
 
 export interface TunnelRuntimeStatus {

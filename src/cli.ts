@@ -183,6 +183,16 @@ async function setupCommand(args: string[]): Promise<void> {
     throw new Error("Choose at most one session mode: --enhanced-session or --standard-session");
   }
   if (enhancedSession || standardSession) options.useEnhancedWebSessionMode = enhancedSession;
+  const savedChats = takeFlag(args, "--saved-chats");
+  const temporaryChats = takeFlag(args, "--temporary-chats");
+  if (savedChats && temporaryChats) throw new Error("Choose --saved-chats or --temporary-chats");
+  if (savedChats || temporaryChats) options.useSavedChats = savedChats;
+  const freshConversation = takeFlag(args, "--fresh-conversation");
+  const retainedConversation = takeFlag(args, "--retained-conversation");
+  if (freshConversation && retainedConversation) {
+    throw new Error("Choose --fresh-conversation or --retained-conversation");
+  }
+  if (freshConversation || retainedConversation) options.experimentalFreshConversationPerTurn = freshConversation;
   const biggerContext = takeFlag(args, "--bigger-context");
   const standardContext = takeFlag(args, "--standard-context");
   if (biggerContext && standardContext) {
@@ -280,6 +290,9 @@ async function routeCommand(args: string[]): Promise<void> {
         : undefined;
   if (!result) throw new Error(`Unknown route action: ${action}`);
   stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if ("changed" in result && result.changed) {
+    process.stderr.write("Fully restart Codex to apply the route change.\n");
+  }
 }
 
 async function subagentsCommand(args: string[]): Promise<void> {

@@ -61,7 +61,9 @@ export function nativeChatToolCallsLive(session: {
 }
 
 export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppConfig): ChatGptWebModelRoute {
-  const route = requireChatGptWebModelRoute(parsed.modelId, config);
+  const route = requireChatGptWebModelRoute(parsed.modelId, config, parsed.options.reasoning);
+  if (route.interactionMode === "automatic" && route.modelFamily) parsed._chatgptModelFamily = route.modelFamily;
+  else delete parsed._chatgptModelFamily;
   parsed.modelId = route.backendModel;
   // Zero Risk preserves a distinct backend identity. Its immutable Codex effort is only a
   // protocol/catalog value; the manual adapter must never reinterpret it as a ChatGPT selection.
@@ -167,6 +169,7 @@ export async function responseRequest(
   }
 
   const compaction = parsed._compactionRequest === true;
+  const compactionItem = compaction && parsed._compactionResponseFormat !== "message";
   const rememberCompletedResponse = (response: Record<string, unknown>): void => {
     if (!compaction) {
       if (options.rememberState !== false) rememberResponseState(parsed._rawBody, response, { force: true });
@@ -272,7 +275,7 @@ export async function responseRequest(
         ...(provider.chatgptWeb?.stallTimeoutSec !== undefined
           ? { stallTimeoutSec: provider.chatgptWeb.stallTimeoutSec }
           : {}),
-        ...(compaction ? { compaction: true } : {}),
+        ...(compactionItem ? { compaction: true } : {}),
         onCompletedResponse: rememberCompletedResponse,
       },
     );
@@ -294,7 +297,7 @@ export async function responseRequest(
     toolNsMap: maps.toolNsMap,
     freeformToolNames: maps.freeformToolNames,
     toolSearchToolNames: maps.toolSearchToolNames,
-    ...(compaction ? { compaction: true } : {}),
+    ...(compactionItem ? { compaction: true } : {}),
   });
   rememberCompletedResponse(json);
   return Response.json(json, { headers: { "X-Reasoning-Included": "true" } });

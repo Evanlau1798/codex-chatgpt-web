@@ -17,7 +17,7 @@ import { opaqueId, type BrokerToolRequest, type BrokerToolResult, type BrokerTur
 import { TurnContextStore } from "./turn-context-store";
 import { beginTurnCompletionFence, commitTurnCompletionFence } from "./turn-broker-completion";
 import { rejectTurnOutputWaiters, resetTurnOutput, sealTurnOutput, waitForTurnOutput } from "./turn-broker-output";
-import { rejectTurnChannel, takeQueuedTools } from "./turn-broker-queue";
+import { logToolDelivery, rejectTurnChannel, takeQueuedTools } from "./turn-broker-queue";
 import {
   assertSafeHarnessRunning,
   waitForSafeState,
@@ -213,7 +213,10 @@ export class TurnBroker implements TurnBrokerOwner {
       throw new Error("Codex context compaction superseded ordinary MCP tool delivery");
     }
     const ready = takeQueuedTools(channel);
-    if (ready.length > 0) return ready;
+    if (ready.length > 0) {
+      logToolDelivery(channel, ready, "immediate");
+      return ready;
+    }
     if (signal?.aborted) throw new DOMException("tool wait aborted", "AbortError");
     return new Promise<BrokerToolRequest[]>((resolveWait, rejectWait) => {
       const waiter: ToolWaiter = { resolve: resolveWait, reject: rejectWait, ...(signal ? { signal } : {}) };
@@ -386,6 +389,14 @@ export class TurnBroker implements TurnBrokerOwner {
   revoke(token: string, reason = new Error("Codex turn binding was revoked")): void {
     const channel = this.channels.get(token);
     if (!channel) return;
+    console.info(`[chatgpt-web] broker_retired ${JSON.stringify({
+      traceId: channel.traceId,
+      pendingTools: channel.invocations.size,
+      queuedTools: channel.queuedCallIds.length,
+      deliveredTools: channel.deliveredCallIds.size,
+      activeMcpRequests: channel.activities.size,
+      completionCommitted: channel.completionCommitted,
+    })}`);
     this.channels.delete(token);
     this.pending.delete(token);
     if (channel.bindingId) {

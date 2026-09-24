@@ -1,4 +1,4 @@
-import { isContextualCodexUserMessage } from "./contextual-user-message";
+import { hasEnvironmentContextFragment, isContextualCodexUserMessage } from "./contextual-user-message";
 import { codexTurnMetadataFromBody } from "./environment-identity";
 
 export interface CurrentTurnUserRevision {
@@ -24,7 +24,7 @@ export function isUserOrParentInstruction(
   metadata?: Record<string, unknown>,
 ): item is Record<string, unknown> {
   if (item?.type === "message" && item.role === "user") {
-    return !isContextualCodexUserMessage(item.content);
+    return !isContextualCodexUserMessage(item.content) && !hasEnvironmentContextFragment(item);
   }
   if (item?.type !== "agent_message" || typeof item.id !== "string" || !item.id
     || metadata?.subagent_kind !== "thread_spawn"
@@ -38,12 +38,31 @@ export function isUserOrParentInstruction(
     && item.author === agentName.slice(0, agentName.lastIndexOf("/"));
 }
 
+/** The desktop injects cross-task messages as synthetic tool outputs without a call_id. */
+function isDelegatedInstruction(item: Record<string, unknown> | undefined): boolean {
+  if (item?.type !== "function_call_output" || item.name !== "send_message_to_thread"
+    || item.namespace !== "codex_app" || item.call_id !== undefined
+    || typeof item.id !== "string" || !item.id || !itemTurnId(item)?.trim()
+    || typeof item.output !== "string") return false;
+  // The native producer escapes &, < and > in both fields. Reject extra/nested tags and
+  // malformed entities; keep the original text as task content, never environment authority.
+  const fields = /^<codex_delegation>\s*<source_thread_id>([^<>]+)<\/source_thread_id>\s*<input>([^<>]+)<\/input>\s*<\/codex_delegation>$/.exec(item.output.trim());
+  return fields !== null && fields.slice(1).every(text => text.trim() && !/&(?!amp;|lt;|gt;)/.test(text));
+}
+
+export function isNativeInstruction(
+  item: Record<string, unknown> | undefined,
+  metadata?: Record<string, unknown>,
+): item is Record<string, unknown> {
+  return isUserOrParentInstruction(item, metadata) || isDelegatedInstruction(item);
+}
+
 export function isCurrentTurnInstruction(
   item: Record<string, unknown> | undefined,
   metadata: Record<string, unknown> | undefined,
   turnId: string,
 ): boolean {
-  if (!isUserOrParentInstruction(item, metadata)) return false;
+  if (!isNativeInstruction(item, metadata)) return false;
   const owner = itemTurnId(item);
   return owner === turnId || (item.type === "agent_message" && owner === undefined);
 }
@@ -54,7 +73,7 @@ export function isCurrentTurnInstructionCandidate(
   metadata: Record<string, unknown> | undefined,
   turnId: string,
 ): boolean {
-  if (!isUserOrParentInstruction(item, metadata)) return false;
+  if (!isNativeInstruction(item, metadata)) return false;
   const owner = itemTurnId(item);
   return owner === turnId || (owner === undefined && typeof item.id === "string" && !!item.id);
 }
@@ -62,7 +81,7 @@ export function isCurrentTurnInstructionCandidate(
 function revision(item: Record<string, unknown>): CurrentTurnUserRevision {
   const turnId = itemTurnId(item);
   const itemId = typeof item.id === "string" && item.id.length > 0 ? item.id : undefined;
-  return { content: item.content, ...(turnId ? { turnId } : {}), ...(itemId ? { itemId } : {}) };
+  return { content: item.type === "function_call_output" ? item.output : item.content, ...(turnId ? { turnId } : {}), ...(itemId ? { itemId } : {}) };
 }
 
 export function turnUserRevisionHistory(rawBody: unknown): CurrentTurnUserRevision[] {
@@ -71,14 +90,14 @@ export function turnUserRevisionHistory(rawBody: unknown): CurrentTurnUserRevisi
   const input = Array.isArray(body?.input) ? body.input : [];
   return input.flatMap(value => {
     const item = record(value);
-    if (!isUserOrParentInstruction(item, metadata)) return [];
+    if (!isNativeInstruction(item, metadata)) return [];
     const turnId = itemTurnId(item);
     if (turnId === undefined && (typeof item.id !== "string" || !item.id)) return [];
     return [revision(item)];
   });
 }
 
-function isTurnAbortedNotice(content: unknown): boolean {
+export function isTurnAbortedNotice(content: unknown): boolean {
   const values = typeof content === "string" ? [content] : Array.isArray(content)
     ? content.flatMap(part => {
         const value = record(part);
@@ -115,7 +134,7 @@ export function currentTurnUserRevision(
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = record(input[index]);
     const ordinaryUser = item?.type === "message" && item.role === "user";
-    if (!ordinaryUser && !isUserOrParentInstruction(item, metadata)) continue;
+    if (!ordinaryUser && !isNativeInstruction(item, metadata)) continue;
     const messageTurnId = itemTurnId(item);
     const serverOwnedId = typeof item.id === "string" && item.id.length > 0;
     if (messageTurnId === undefined && !serverOwnedId) continue;

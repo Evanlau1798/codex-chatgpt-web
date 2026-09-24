@@ -26,6 +26,7 @@ test("failed first-time combined setup removes its routes before restoring the u
   let cleared = 0;
   let stops = 0;
   const calls = [];
+  const setupError = new Error("synthetic setup failure");
   const supervisor = {
     coreHome,
     configPath,
@@ -58,12 +59,16 @@ test("failed first-time combined setup removes its routes before restoring the u
     fs.writeFileSync(recoveryJournalPath, "partial recovery journal\n");
     fs.writeFileSync(codexConfigPath, "partially changed codex config\n");
     fs.rmSync(codexModelsCachePath);
-    throw new Error("synthetic setup failure");
+    throw setupError;
   };
   try {
     await assert.rejects(
       host.runSetup("core-setup", ["setup", "--browser-only", "--all-integrations"], {}),
-      /synthetic setup failure; incomplete first-time setup was rolled back/,
+      error => {
+        assert.match(error.message, /synthetic setup failure; incomplete first-time setup was rolled back/);
+        assert.equal(error.cause, setupError);
+        return true;
+      },
     );
     assert.deepEqual(calls.map((args) => args.includes("--preflight-only") ? "preflight" : args[0]), ["preflight", "setup"]);
     assert.equal(fs.existsSync(configPath), false);
@@ -362,6 +367,134 @@ test("failed terminal migration restores removed launchd ownership before verify
       "tunnel start",
       "doctor --json",
     ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+test("setup preflight keeps the requested setup budget before stopping the current runtime", async () => {
+  const events = [];
+  const host = new RuntimeHost({
+    app: { getPath: () => os.tmpdir() },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: "/source",
+    browserDescriptorPath: "/runtime/launcher-browser.json",
+    supervisor: {
+      readSetupConfig: () => null,
+      readConfig: () => null,
+      stopForSetup: async () => { events.push("stop"); },
+      startIfConfigured: async () => { events.push("start"); return { status: "ready" }; },
+    },
+  });
+  host.captureSetupCheckpoint = () => [];
+  host.run = async (_name, args, options) => {
+    events.push(args.includes("--preflight-only") ? "preflight" : "setup");
+    assert.equal(options.timeoutMs, 300_000);
+    return { code: 0, stdout: "", stderr: "" };
+  };
+  await host.runSetup("core-setup", ["setup", "--full"], { timeoutMs: 300_000 });
+  assert.deepEqual(events, ["preflight", "stop", "setup", "start"]);
+});
+
+
+test("failed fresh-conversation setting restores every mutable setup file before restarting the previous runtime", { skip: !testFileSymlinks }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-setup-checkpoint-"));
+  const coreHome = path.join(root, "core");
+  const codexHome = path.join(root, "codex");
+  const configPath = path.join(coreHome, "config.json");
+  const journalPath = path.join(coreHome, "codex", "integration-journal.json");
+  const recoveryJournalPath = path.join(coreHome, "codex", "integration-journal.recovery.json");
+  const keyPath = path.join(coreHome, "secrets", "tunnel-runtime.key");
+  const profileDir = path.join(coreHome, "tunnel", "profiles");
+  const profilePath = path.join(profileDir, "custom.yaml");
+  const codexConfigPath = path.join(codexHome, "config.toml");
+  const sharedDirectory = path.join(root, "shared");
+  const sharedConfigPath = path.join(sharedDirectory, "config.toml");
+  const codexModelsCachePath = path.join(codexHome, "models_cache.json");
+  const oldConfig = {
+    mode: "full",
+    browserHost: "launcher",
+    browserInteractionMode: "automatic",
+    experimentalFreshConversationPerTurn: false,
+    releaseVersion: "0.1.16",
+    tunnel: {
+      runtimeKeyFile: keyPath,
+      profileDir,
+      profileName: "custom",
+    },
+  };
+  for (const file of [configPath, journalPath, recoveryJournalPath, keyPath, profilePath, codexConfigPath, codexModelsCachePath]) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+  }
+  fs.writeFileSync(configPath, `${JSON.stringify(oldConfig)}\n`, { mode: 0o600 });
+  fs.writeFileSync(journalPath, "old journal\n", { mode: 0o600 });
+  fs.writeFileSync(recoveryJournalPath, "old recovery journal\n", { mode: 0o600 });
+  fs.writeFileSync(keyPath, "old key\n", { mode: 0o600 });
+  fs.writeFileSync(profilePath, "old profile\n", { mode: 0o600 });
+  fs.mkdirSync(sharedDirectory, { mode: 0o750 });
+  fs.writeFileSync(sharedConfigPath, "old codex config\n", { mode: 0o640 });
+  fs.symlinkSync(sharedConfigPath, codexConfigPath);
+  const linkTarget = fs.readlinkSync(codexConfigPath);
+  const linkInode = fs.lstatSync(codexConfigPath).ino;
+  const directoryMode = fs.statSync(sharedDirectory).mode & 0o777;
+  const fileMode = fs.statSync(sharedConfigPath).mode & 0o777;
+  fs.writeFileSync(codexModelsCachePath, "old codex models cache\n", { mode: 0o600 });
+
+  let startAttempts = 0;
+  const readConfig = () => JSON.parse(fs.readFileSync(configPath, "utf8"));
+  const supervisor = {
+    coreHome,
+    configPath,
+    readSetupConfig: readConfig,
+    readConfig,
+    stopForSetup: async () => ({ status: "stopped" }),
+    startIfConfigured: async () => {
+      startAttempts += 1;
+      if (readConfig().releaseVersion !== oldConfig.releaseVersion) {
+        throw new Error("synthetic updated runtime startup failure");
+      }
+      return { status: "ready" };
+    },
+  };
+  const host = new RuntimeHost({
+    app: { getPath: () => path.join(root, "launcher") },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: "/source",
+    browserDescriptorPath: path.join(coreHome, "runtime", "launcher-browser.json"),
+    codexHome,
+    supervisor,
+  });
+  host.run = async (_name, args) => {
+    if (args.includes("--preflight-only")) return { code: 0, stdout: "", stderr: "" };
+    fs.writeFileSync(configPath, `${JSON.stringify({ ...oldConfig, releaseVersion: "0.2.0", experimentalFreshConversationPerTurn: true })}\n`);
+    fs.writeFileSync(journalPath, "new journal\n");
+    fs.writeFileSync(recoveryJournalPath, "new recovery journal\n");
+    fs.writeFileSync(keyPath, "new key\n");
+    fs.writeFileSync(profilePath, "new profile\n");
+    fs.writeFileSync(codexConfigPath, "new codex config\n");
+    fs.rmSync(codexModelsCachePath);
+    return { code: 0, stdout: "", stderr: "" };
+  };
+
+  try {
+    await assert.rejects(
+      host.setFreshConversationPerTurn(true),
+      /synthetic updated runtime startup failure$/,
+    );
+    assert.equal(startAttempts, 2);
+    assert.deepEqual(readConfig(), oldConfig);
+    assert.equal(fs.readFileSync(journalPath, "utf8"), "old journal\n");
+    assert.equal(fs.readFileSync(recoveryJournalPath, "utf8"), "old recovery journal\n");
+    assert.equal(fs.readFileSync(keyPath, "utf8"), "old key\n");
+    assert.equal(fs.readFileSync(profilePath, "utf8"), "old profile\n");
+    assert.equal(fs.readFileSync(codexConfigPath, "utf8"), "old codex config\n");
+    assert.equal(fs.lstatSync(codexConfigPath).isSymbolicLink(), true);
+    assert.equal(fs.lstatSync(codexConfigPath).ino, linkInode);
+    assert.equal(fs.readlinkSync(codexConfigPath), linkTarget);
+    assert.equal(fs.statSync(sharedDirectory).mode & 0o777, directoryMode);
+    assert.equal(fs.statSync(sharedConfigPath).mode & 0o777, fileMode);
+    assert.equal(fs.readFileSync(codexModelsCachePath, "utf8"), "old codex models cache\n");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

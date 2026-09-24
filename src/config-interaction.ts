@@ -77,6 +77,10 @@ export interface AppConfig {
   proAvailable: boolean;
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
+  /** Rebuild Original-mode turns; Enhanced always disables this preference. */
+  experimentalFreshConversationPerTurn: boolean;
+  /** Save Codex/Claude chats to history. API Access always remains Temporary Chat. */
+  useSavedChats: boolean;
   /** Hide routed context limits from Codex and reject routed compact requests. */
   experimentalNoAutoCompact: boolean;
   /** Candidate only: replace large guarded insertions; preserve existing direct inline routes. */

@@ -30,8 +30,9 @@ function parsedClaudeRequest(raw: unknown, req: Request, config: AppConfig) {
   );
   const parsed = parseRequest(translated.body);
   parsed._canonicalContextComplete = true;
-  const route = requireChatGptWebModelRoute(parsed.modelId, config);
+  const route = requireChatGptWebModelRoute(parsed.modelId, config, parsed.options.reasoning);
   parsed.modelId = route.backendModel;
+  if (route.interactionMode === "automatic" && route.modelFamily) parsed._chatgptModelFamily = route.modelFamily;
   parsed.options.reasoning = route.adapterEffort;
   if (translated.compact) {
     delete parsed.context.tools;

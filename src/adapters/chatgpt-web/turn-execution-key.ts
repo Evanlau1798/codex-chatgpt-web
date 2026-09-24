@@ -9,6 +9,7 @@ import {
 function executionKey(parsed: CodexParsedRequest, payload: unknown): string {
   return createHash("sha256").update(JSON.stringify({
     modelId: parsed.modelId,
+    modelFamily: parsed._chatgptModelFamily,
     reasoning: parsed.options.reasoning,
     payload,
   })).digest("hex");

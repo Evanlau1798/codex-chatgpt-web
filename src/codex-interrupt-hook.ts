@@ -164,6 +164,15 @@ function hookTextPattern(text: string): string {
     .join("(?:\\r\\n|\\n|\\r)");
 }
 
+function definitionTextPattern(text: string): string {
+  // Native TOML writers may remove definition separators, not owned executable fields.
+  const leading = text.match(/^[\r\n]+/)?.[0] ?? "";
+  const trailing = text.match(/[\r\n]+$/)?.[0] ?? "";
+  const separator = (value: string) => `(?:\\r\\n|\\n|\\r){0,${value.match(/\r\n|\n|\r/g)?.length ?? 0}}`;
+  return separator(leading) + hookTextPattern(text.slice(leading.length, text.length - trailing.length))
+    + separator(trailing);
+}
+
 function normalizeTomlLineEndings(text: string): string {
   return text.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
 }
@@ -203,8 +212,8 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   if (withoutBlankLine !== hookPrefix) hookPrefixVariants.push(withoutBlankLine);
   const nativePrefix = nativeRewrittenHookPrefix(hookPrefix);
   if (nativePrefix) hookPrefixVariants.push(nativePrefix);
-  const stateSuffixPattern = stateSuffixVariants.map(hookTextPattern).join("|");
-  const hookPrefixPattern = hookPrefixVariants.map(hookTextPattern).join("|");
+  const stateSuffixPattern = stateSuffixVariants.map(definitionTextPattern).join("|");
+  const hookPrefixPattern = hookPrefixVariants.map(definitionTextPattern).join("|");
   // Native config may insert unrelated tables before the hook trust table and normalizes CRLF to LF.
   // The executable hook and trust state are compared semantically below and must still match exactly.
   const pattern = new RegExp(

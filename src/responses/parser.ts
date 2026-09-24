@@ -13,7 +13,7 @@ import type {
 } from "../types";
 import { namespacedToolName } from "../types";
 import { responsesRequestSchema } from "./schema";
-import { compactionItemToText } from "./compaction";
+import { compactionItemToText, isNativeTextCompaction } from "./compaction";
 import { previousResponseReplayPrefixLength } from "./state";
 import { decodeReasoningEnvelope } from "./reasoning-envelope";
 import { prepareMultiAgentV2Tool } from "./multi-agent-v2";
@@ -631,6 +631,7 @@ export function parseRequest(body: unknown): CodexParsedRequest {
   Object.assign(options, parseTextControls(data.text));
   if (data.prompt_cache_key !== undefined) options.promptCacheKey = data.prompt_cache_key;
 
+  const textCompaction = !compactionRequest && isNativeTextCompaction(body);
   return {
     modelId: data.model,
     ...(data.previous_response_id ? { previousResponseId: data.previous_response_id } : {}),
@@ -640,8 +641,9 @@ export function parseRequest(body: unknown): CodexParsedRequest {
     _rawBody: body,
     ...(replayedInputPrefixLength > 0 ? { _replayPrefixLen: replayedInputPrefixLength } : {}),
     ...(contextCompactionBoundary ? { _contextCompactionBoundary: true } : {}),
-    ...(compactionRequest ? { _compactionRequest: true } : {}),
-    ...(!compactionRequest && codexResponsesRequestKind(body) === "compaction"
+    ...(compactionRequest || textCompaction ? { _compactionRequest: true } : {}),
+    ...(textCompaction ? { _compactionResponseFormat: "message" as const } : {}),
+    ...(!compactionRequest && !textCompaction && codexResponsesRequestKind(body) === "compaction"
       ? { _localCompactionRequest: true }
       : {}),
     ...(opaqueMultiAgentV2Payload ? { _opaqueMultiAgentV2Payload: true } : {}),

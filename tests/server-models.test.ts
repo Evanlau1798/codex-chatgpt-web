@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { defaultConfig } from "../src/config";
-import { CHATGPT_WEB_MODEL_ROUTES, resolveChatGptWebContextLimits } from "../src/chatgpt-web-models";
+import { CHATGPT_WEB_MODEL_ROUTES, CHATGPT_WEB_ZERO_RISK_MODEL_ROUTE, availableChatGptWebModelRoutes, resolveChatGptWebContextLimits } from "../src/chatgpt-web-models";
 import { claudeGatewayModelsResponse, isClaudeGatewayModelsRequest } from "../src/messages/models";
 import { modelsRequest } from "../src/server";
 
@@ -13,9 +13,8 @@ test("serves the account-scoped Claude gateway model catalog without proxying up
   expect(isClaudeGatewayModelsRequest(request)).toBe(true);
   expect(await claudeGatewayModelsResponse(config).json()).toEqual({
     data: [
-      { id: "claude-chatgpt-web-light", display_name: "ChatGPT Web — Instant", max_input_tokens: 41_000 },
-      { id: "claude-chatgpt-web-medium", display_name: "ChatGPT Web — Medium", max_input_tokens: 90_000 },
-      { id: "claude-chatgpt-web-high", display_name: "ChatGPT Web — High", max_input_tokens: 90_000 },
+      { id: "claude-chatgpt-web-gpt-5.6-sol-instant", display_name: "GPT-5.6 Sol Instant (Web)", max_input_tokens: 41_000 },
+      { id: "claude-chatgpt-web-gpt-5.6-sol", display_name: "GPT-5.6 Sol (Web)", max_input_tokens: 90_000 },
     ],
   });
 });
@@ -24,9 +23,9 @@ test("advertises the routed Claude model context window used by client preflight
   const config = { ...defaultConfig("full"), extraHighAvailable: true, proAvailable: true, useEnhancedWebSessionMode: true };
   const body = await claudeGatewayModelsResponse(config).json() as { data: Array<Record<string, unknown>> };
 
-  expect(body.data.find(model => model.id === "claude-chatgpt-web-extra-high")).toEqual({
-    id: "claude-chatgpt-web-extra-high",
-    display_name: "ChatGPT Web — Extra High",
+  expect(body.data.find(model => model.id === "claude-chatgpt-web-gpt-5.6-sol")).toEqual({
+    id: "claude-chatgpt-web-gpt-5.6-sol",
+    display_name: "GPT-5.6 Sol (Web)",
     max_input_tokens: 256_000,
   });
 });
@@ -78,6 +77,10 @@ test("proxies official /models auth and query, then appends the fixed ChatGPT We
   };
   expect(body.models.map(model => model.slug)).toEqual([
     "gpt-5.6-sol",
+    "chatgpt-web/gpt-5.6-sol-instant",
+    "chatgpt-web/gpt-5.6-sol",
+    "chatgpt-web/gpt-5.6-pro",
+    "chatgpt-web/gpt-6-pro",
     "chatgpt-web/light",
     "chatgpt-web/medium",
     "chatgpt-web/high",
@@ -89,7 +92,7 @@ test("proxies official /models auth and query, then appends the fixed ChatGPT We
   expect(body.models[0]!.auto_compact_token_limit).toBe(270_000);
   expect(body.models[0]!.multi_agent_version).toBe("v2");
   for (const [index, model] of body.models.slice(1).entries()) {
-    const route = CHATGPT_WEB_MODEL_ROUTES[index]!;
+    const route = availableChatGptWebModelRoutes(config, true)[index]!;
     const limits = resolveChatGptWebContextLimits(
       route.backendModel,
       route.adapterEffort,
@@ -127,7 +130,7 @@ test("Luna-only account exposes no paid ChatGPT Web routes", async () => {
   );
   const body = await response.json() as { models: Array<{ slug: string }> };
   expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/")).map(model => model.slug))
-    .toEqual(["chatgpt-web/luna", "chatgpt-web/think"]);
+    .toEqual(["chatgpt-web/gpt-5.6-luna", "chatgpt-web/luna", "chatgpt-web/think"]);
 });
 
 test("ChatGPT-only native catalog rows do not turn model discovery into a 502", async () => {
@@ -153,7 +156,7 @@ test("ChatGPT-only native catalog rows do not turn model discovery into a 502", 
   const body = await response.json() as { models: Array<{ slug: string; supported_in_api?: boolean }> };
   expect(body.models[0]).toMatchObject({ slug: "gpt-chatgpt-only", supported_in_api: false });
   expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/")))
-    .toHaveLength(3);
+    .toHaveLength(5);
   expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/"))
     .every(model => model.supported_in_api === true)).toBe(true);
 });

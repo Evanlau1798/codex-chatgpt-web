@@ -230,6 +230,20 @@ export function SettingsSurface({
       setBusy(false);
     }
   };
+  const setFreshConversationPerTurn = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try { updateState(await api!.setFreshConversationPerTurn(enabled)); }
+    catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
+  const setUseSavedChats = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try { updateState(await api!.setUseSavedChats(enabled)); }
+    catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
   const setExperimentalNoAutoCompact = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
@@ -608,6 +622,23 @@ export function SettingsSurface({
             checked={snapshot.state.experimentalSkillAttachments}
             disabled={busy || snapshot.state.browserInteractionMode === "manual" || !snapshot.state.coreSetupComplete}
             onChange={(enabled) => void setSkillAttachments(enabled)}
+          />
+        </SettingRow>
+        <SettingRow body={snapshot.state.browserInteractionMode === "manual" || snapshot.state.useEnhancedWebSessionMode
+          ? copy.manualFreshConversationUnavailable : copy.freshConversationBody} label={copy.freshConversation}>
+          <Switch
+            checked={snapshot.state.experimentalFreshConversationPerTurn
+              && snapshot.state.browserInteractionMode === "automatic" && !snapshot.state.useEnhancedWebSessionMode}
+            disabled={busy || snapshot.state.browserInteractionMode === "manual"
+              || snapshot.state.useEnhancedWebSessionMode || snapshot.state.coreSetupComplete !== true}
+            onChange={(checked) => void setFreshConversationPerTurn(checked)}
+          />
+        </SettingRow>
+        <SettingRow body={copy.savedChatsBody} label={copy.savedChats}>
+          <Switch
+            checked={snapshot.state.useSavedChats}
+            disabled={busy || snapshot.state.coreSetupComplete !== true}
+            onChange={(checked) => void setUseSavedChats(checked)}
           />
         </SettingRow>
         <SettingRow body={copy.chooseLanguageHint} label={copy.language}>

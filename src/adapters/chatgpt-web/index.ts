@@ -75,6 +75,7 @@ export function createChatGptWebAdapter(
     useEnhancedOutputTunnel,
     experimentalBiggerContext,
     experimentalSkillAttachments,
+    experimentalFreshConversationPerTurn,
     configuredCapabilities,
     executionNamespace,
   } = runtimeConfig;
@@ -88,6 +89,7 @@ export function createChatGptWebAdapter(
     timeoutMs,
     useEnhancedWebSessionMode,
     useEnhancedOutputTunnel,
+    experimentalFreshConversationPerTurn,
     experimentalBiggerContext,
     experimentalSkillAttachments,
     configuredCapabilities,
@@ -295,8 +297,9 @@ export function createChatGptWebAdapter(
                 await withAbort(settlement, signal);
                 return summary;
               } catch (error) {
-                runtime.cancel(error instanceof Error ? error : new Error(String(error)));
-                throw error;
+                const reason = signal.aborted && signal.reason instanceof Error ? signal.reason : error;
+                runtime.cancel(reason instanceof Error ? reason : new Error(String(reason)));
+                throw reason;
               }
             },
           });
@@ -304,7 +307,13 @@ export function createChatGptWebAdapter(
           console.info("[chatgpt-web] Web session mode=enhanced path=reconstructed_compact result=started");
         } else {
           console.info("[chatgpt-web] compact mode=original path=upstream_compact result=started");
-          await chatGptTurnSessions.retireAndWait(responseExecutionKey, incoming.abortSignal);
+          const previous = chatGptTurnSessions.find(responseExecutionKey);
+          if (experimentalFreshConversationPerTurn && previous?.settledOutcome()?.type === "final") {
+            // Fresh compaction rebuilds from native history; a committed answer remains replayable.
+            await withAbort(previous.physicalSettlement, incoming.abortSignal);
+          } else {
+            await chatGptTurnSessions.retireAndWait(responseExecutionKey, incoming.abortSignal);
+          }
         }
       }
       await chatGptTurnSessions.waitForRetirement(executionKey, incoming.abortSignal);

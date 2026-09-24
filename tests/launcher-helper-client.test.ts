@@ -96,6 +96,8 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+
+    useSavedChats: true,
   };
   const reasoning: Array<{ text: string; continuation: boolean }> = [];
   const deltas: string[] = [];
@@ -218,6 +220,7 @@ test("a rejected prompt preparation releases the helper turn before the trace ca
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const turn = (prepare: BrowserTurn["prepare"]): BrowserTurn => ({
     traceId: "reusable-trace-123",
@@ -286,7 +289,7 @@ test("accepted compaction retires through the helper as completed without hiding
     appName: "Codex Native2", browserHost: "launcher", browserHostDescriptorPath: descriptorPath,
     browserHelperScriptPath: helper, browserDiagnosticsPath: join(root, "diagnostics"),
     storageStatePath: join(root, "unused-state.json"), chromeExecutablePath: join(root, "unused-chrome"),
-    turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
+    turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false, useSavedChats: false,
   });
   const logs: string[] = [];
   const logger = spyOn(console, "info").mockImplementation((...args) => { logs.push(args.join(" ")); });
@@ -339,6 +342,8 @@ test("launcher helper protocol preserves multipart context and the compaction fl
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
+
   });
   const internal = client as unknown as {
     child: unknown;
@@ -382,7 +387,7 @@ test("launcher helper protocol preserves multipart context and the compaction fl
       skillFiles: [selectedSkillFile({ role: "user", origin: "codex_skill", timestamp: 0,
         content: "<skill>\n<name>ipc</name>\n<path>/skills/ipc/SKILL.md</path>\ncheck IPC\n</skill>",
       })],
-      multipart: { parts: ["{\"part\":1}", "{\"part\":2}", "{\"part\":3}"], commit: "commit" },
+      multipart: { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "commit" },
       trimmedCompactionMessages: 4,
       release() {},
     }),
@@ -403,16 +408,126 @@ test("launcher helper protocol preserves multipart context and the compaction fl
         name: expect.stringMatching(/^ipc--[a-f0-9]{16}\.txt$/),
         text: expect.stringContaining("check IPC"),
       })],
-      multipart: { parts: ["{\"part\":1}", "{\"part\":2}", "{\"part\":3}"], commit: "commit" },
+      multipart: { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "commit" },
       trimmedCompactionMessages: 4,
     },
+  });
+});
+
+test("an abort dispatched during run submission cannot overtake the run frame", async () => {
+  const controller = new AbortController();
+  const messages: string[] = [];
+  let released = false;
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native",
+    browserHost: "launcher",
+    browserHostDescriptorPath: "/durable/launcher.json",
+    storageStatePath: "/durable/unused-state.json",
+    chromeExecutablePath: "/durable/unused-chrome",
+    turnTimeoutMs: 60_000,
+    headed: true,
+    autoApproveToolCalls: false,
+    useSavedChats: false,
+
+  });
+  const internal = client as unknown as {
+    ensureChild(): Promise<void>;
+    send(message: { type: string; id?: string }): Promise<void>;
+    finishWithError(id: string, error: Error): void;
+  };
+  internal.ensureChild = async () => {};
+  internal.send = async message => {
+    messages.push(message.type);
+    if (message.type === "run") controller.abort();
+    if (message.type === "abort" && message.id) {
+      queueMicrotask(() => internal.finishWithError(
+        message.id!,
+        new DOMException("ChatGPT web turn aborted", "AbortError"),
+      ));
+    }
+  };
+
+  await expect(client.run({
+    traceId: "abort-order-123",
+    modelId: "gpt-5.6-sol",
+    reasoning: "high",
+    capabilities: { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false },
+    abortSignal: controller.signal,
+    prepare: async () => ({
+      text: "inspect",
+      images: [],
+      release: () => { released = true; },
+    }),
+    onTextDelta: () => {},
+  })).rejects.toMatchObject({ name: "AbortError" });
+
+  expect(messages).toEqual(["run", "abort"]);
+  expect(released).toBe(false);
+});
+
+test("structured helper errors preserve the ChatGPT adapter failure contract", async () => {
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native",
+    browserHost: "launcher",
+    browserHostDescriptorPath: "/durable/launcher.json",
+    storageStatePath: "/durable/unused-state.json",
+    chromeExecutablePath: "/durable/unused-chrome",
+    turnTimeoutMs: 60_000,
+    headed: true,
+    autoApproveToolCalls: false,
+    useSavedChats: false,
+
+  });
+  const internal = client as unknown as {
+    child?: unknown;
+    pending: Map<string, {
+      turn: BrowserTurn;
+      resolve: (value: string) => void;
+      reject: (error: Error) => void;
+    }>;
+    handleLine(child: unknown, line: string): void;
+  };
+  const child = {};
+  internal.child = child;
+  const result = new Promise<string>((resolveResult, rejectResult) => {
+    internal.pending.set("rate-limit-123", {
+      turn: {
+        traceId: "rate-limit-123",
+        modelId: "chatgpt-web/medium",
+        capabilities: { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false },
+        prepare: async () => ({ text: "inspect", images: [], release() {} }),
+        onTextDelta() {},
+      },
+      resolve: resolveResult,
+      reject: rejectResult,
+    });
+  });
+
+  internal.handleLine(child, JSON.stringify({
+    type: "error",
+    id: "rate-limit-123",
+    name: "ChatGptWebAdapterError",
+    message: "ChatGPT rate limit: too many requests are being made too quickly. Wait before retrying.",
+    status: 429,
+    errorType: "rate_limit_error",
+    code: "rate_limit_exceeded",
+    retryable: true,
+  }));
+
+  const error = await result.then(() => undefined, failure => failure);
+  expect(error).toBeInstanceOf(ChatGptWebAdapterError);
+  expect(error).toMatchObject({
+    status: 429,
+    errorType: "rate_limit_error",
+    code: "rate_limit_exceeded",
+    retryable: true,
   });
 });
 
 test("an older helper cannot silently drop selected skill files and releases the prepared turn", async () => {
   const client = new LauncherBrowserHelperClient({
     appName: "Codex Native2", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
-    storageStatePath: "/durable/unused.json", chromeExecutablePath: "/durable/chrome", headed: true, autoApproveToolCalls: false,
+    storageStatePath: "/durable/unused.json", chromeExecutablePath: "/durable/chrome", headed: true, autoApproveToolCalls: false, useSavedChats: false,
   });
   const internal = client as unknown as {
     child: unknown;
@@ -462,6 +577,7 @@ test("an abort dispatched during run submission cannot overtake the run frame", 
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const internal = client as unknown as {
     ensureChild(): Promise<void>;
@@ -500,7 +616,7 @@ test("an abort dispatched during run submission cannot overtake the run frame", 
 
 test("checkpoint preemption uses a non-aborting helper control frame", async () => {
   const sent: unknown[] = [];
-  const client = new LauncherBrowserHelperClient({
+  const client = new LauncherBrowserHelperClient({ useSavedChats: false,
     appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
     storageStatePath: "/durable/unused-state.json", chromeExecutablePath: "/durable/unused-chrome",
     turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
@@ -538,6 +654,7 @@ test("structured helper errors preserve the ChatGPT adapter failure contract", a
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const internal = client as unknown as {
     child?: unknown;
@@ -595,6 +712,7 @@ test("a synchronous answer retry failure rejects only its browser turn", async (
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const internal = client as unknown as {
     child?: unknown;
@@ -643,6 +761,7 @@ test("launcher helper retries recoverable browser failures in the same turn", as
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const sent: unknown[] = [];
   let failure = "";
@@ -689,7 +808,7 @@ test("launcher helper retries recoverable browser failures in the same turn", as
 });
 
 test("launcher helper preserves structured replacement retries for completion evidence failures", async () => {
-  const client = new LauncherBrowserHelperClient({
+  const client = new LauncherBrowserHelperClient({ useSavedChats: false,
     appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
     storageStatePath: "/durable/unused-state.json", chromeExecutablePath: "/durable/unused-chrome",
     turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
@@ -739,7 +858,7 @@ test("launcher helper preserves structured replacement retries for completion ev
 });
 
 test("launcher helper preserves the Luna safety retry allowance across the process boundary", async () => {
-  const client = new LauncherBrowserHelperClient({
+  const client = new LauncherBrowserHelperClient({ useSavedChats: false,
     appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
     storageStatePath: "/durable/unused-state.json", chromeExecutablePath: "/durable/chrome",
     turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
@@ -776,7 +895,7 @@ test("launcher helper preserves the Luna safety retry allowance across the proce
 });
 
 test("Luna safety retries require an explicitly compatible launcher helper", async () => {
-  const client = new LauncherBrowserHelperClient({
+  const client = new LauncherBrowserHelperClient({ useSavedChats: false,
     appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
     storageStatePath: "/durable/unused-state.json", chromeExecutablePath: "/durable/chrome",
     turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,
@@ -813,7 +932,7 @@ test("Luna safety retries require an explicitly compatible launcher helper", asy
 });
 
 test("launcher helper preserves retry submission acknowledgement across the process boundary", async () => {
-  const client = new LauncherBrowserHelperClient({
+  const client = new LauncherBrowserHelperClient({ useSavedChats: false,
     appName: "Codex Native", browserHost: "launcher", browserHostDescriptorPath: "/durable/launcher.json",
     storageStatePath: "/durable/unused-state.json", chromeExecutablePath: "/durable/unused-chrome",
     turnTimeoutMs: 60_000, headed: true, autoApproveToolCalls: false,

@@ -32,6 +32,8 @@ export interface SetupOptions {
   experimentalBiggerContext?: boolean;
   experimentalSkillAttachments?: boolean;
   experimentalNoAutoCompact?: boolean;
+  experimentalFreshConversationPerTurn?: boolean;
+  useSavedChats?: boolean;
   zeroRiskProEnabled?: boolean;
   replaceCodexRoute?: boolean;
   restartService?: boolean;
@@ -100,6 +102,17 @@ export function buildSetupConfig(
   if (options.useEnhancedWebSessionMode !== undefined) {
     config.useEnhancedWebSessionMode = options.useEnhancedWebSessionMode;
     if (options.useEnhancedWebSessionMode) config.experimentalBiggerContext = false;
+  }
+  if (options.useSavedChats !== undefined) config.useSavedChats = options.useSavedChats;
+  if (options.experimentalFreshConversationPerTurn !== undefined) {
+    if (options.experimentalFreshConversationPerTurn
+      && (config.useEnhancedWebSessionMode || config.browserInteractionMode === "manual")) {
+      throw new Error("Fresh browser conversations per turn requires automatic Original mode (Enhanced must be off)");
+    }
+    config.experimentalFreshConversationPerTurn = options.experimentalFreshConversationPerTurn;
+  }
+  if (config.useEnhancedWebSessionMode || config.browserInteractionMode === "manual") {
+    config.experimentalFreshConversationPerTurn = false;
   }
   if (options.experimentalBiggerContext !== undefined) {
     if (options.experimentalBiggerContext && config.useEnhancedWebSessionMode && config.browserInteractionMode !== "manual") {

@@ -76,6 +76,20 @@ async function snapshot(html: string): Promise<Snapshot> {
   }
 }
 
+test("keeps an unfinished hyperlink buffered and detects changed destinations after delivery", async () => {
+  const page = (href: string) => `<section id="turn"><div class="markdown"><p data-start="0" data-end="99"><strong><a${href}>Open report</a></strong>.</p><p data-start="100" data-end="115">Next paragraph.</p></div></section>`;
+  const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
+  const pending = await snapshot(page(""));
+  expect(buffer.observe(pending.markdownSegments, 0)).toBe("");
+  const linked = await snapshot(page(' href="https://example.com/report#details"'));
+  expect(buffer.observe(linked.markdownSegments, 1000)).toBe("**[Open report](https://example.com/report#details)**.");
+  expect(buffer.finish().markdown).toBe("**[Open report](https://example.com/report#details)**.\n\nNext paragraph.");
+  const changed = await snapshot(page(' href="https://example.com/different"'));
+  buffer.observe(changed.markdownSegments, 2000);
+  expect(buffer.currentSnapshotIsConsistent()).toBeFalse();
+  expect(() => buffer.finish()).toThrow("completed text block");
+});
+
 test("captured DIL smoke response reaches Markdown delivery and stable completion", async () => {
   // Also cover a changed CSS module hash and nested Markdown without duplicate delivery.
   for (const html of [

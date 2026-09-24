@@ -1,4 +1,5 @@
 const languages = require("./languages.json");
+const { normalizeContextModes } = require("./context-mode.cjs");
 const fs = require("node:fs");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { readJsonFile } = require("./json-file.cjs");
@@ -27,6 +28,8 @@ const DEFAULT_STATE = Object.freeze({
   showBrowserDuringTurns: true,
   lockBrowserDuringTurns: true,
   browserInteractionMode: "automatic",
+  experimentalFreshConversationPerTurn: false,
+  useSavedChats: false,
   zeroRiskProEnabled: false,
   browserSmokePassed: false,
   browserSmokeVersion: null,
@@ -79,6 +82,8 @@ function readState(filePath) {
       "keepRunningOnClose",
       "showBrowserDuringTurns",
       "lockBrowserDuringTurns",
+      "experimentalFreshConversationPerTurn",
+      "useSavedChats",
       "zeroRiskProEnabled",
       "browserSmokePassed",
       "codexSetupComplete",
@@ -134,7 +139,7 @@ function readState(filePath) {
     ]) {
       if (state[key] !== undefined && typeof state[key] !== "boolean") delete state[key];
     }
-    return state;
+    return normalizeContextModes(state);
   } catch {
     return { ...DEFAULT_STATE };
   }
@@ -161,7 +166,7 @@ function createStateStore(filePath) {
       return structuredClone(state);
     },
     update(patch) {
-      const next = { ...state, ...patch, version: 1 };
+      const next = normalizeContextModes({ ...state, ...patch, version: 1 });
       writeState(filePath, next);
       state = next;
       return structuredClone(next);

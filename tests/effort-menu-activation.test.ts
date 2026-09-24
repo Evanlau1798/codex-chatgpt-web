@@ -13,6 +13,7 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
   const hidden = {
     filter() { return this; }, last() { return this; },
     isVisible: async () => false, count: async () => 0,
+    locator() { return this; },
     waitFor: async () => { throw new Error("surface missing"); },
   };
   const hiddenAlert = { ...hidden, waitFor: () => new Promise<void>(() => {}) };
@@ -32,7 +33,8 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
     getAttribute: async (name: string) => ({ "aria-valuemin": "0", "aria-valuemax": "4", "aria-valuenow": "1" })[name],
   };
   const control = {
-    last() { return this; }, waitFor: async () => {},
+    last() { return this; }, first() { return this; }, filter() { return this; },
+    count: async () => 1, innerText: async () => "Medium", waitFor: async () => {},
     getAttribute: async (name: string) => {
       if (name === "aria-controls") return opened ? "owned-effort" : null;
       if (name === "aria-expanded") return String(expanded);
@@ -51,6 +53,7 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
     },
   };
   const page = {
+    url: () => "https://chatgpt.com/?temporary-chat=true",
     locator: (selector: string) => {
       if (selector === '[id="owned-effort"]') return owned;
       if (selector === CHATGPT_EFFORT_MENU_SELECTOR) return stale;
@@ -59,6 +62,7 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
         isVisible: async () => opened || openWith === "hidden-slider",
         waitFor: async () => { if (!opened && openWith !== "hidden-slider") throw new Error("container missing"); },
         locator: () => slider,
+        evaluate: async () => ["false", "false", "false", "false", "false"],
       };
       return hiddenAlert;
     },
@@ -101,12 +105,12 @@ test("an invisible semantic slider remains usable through its visible menuitem c
 test("production model selection uses the opened slider instead of stale global model rows", async () => {
   const f = fixture("click");
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
-    activeComposer: async () => ({ locator: () => ({ locator: () => f.control }) }),
+    activeComposer: async () => ({ isEditable: async () => true, locator: () => ({ locator: () => f.control }) }),
   });
   await expect(worker.selectModelAndEffort(f.page, CHATGPT_WEB_MODEL_ID, "medium", {
     localToolsEnabled: true, solAvailable: true, proAvailable: true,
   })).resolves.toMatchObject({ uiEffortIndex: 1 });
-  expect(f.events).toEqual(["click", "Escape"]);
+  expect(f.events).toEqual(["click", "Escape", "click", "Escape"]);
 });
 
 test.each([false, true])("activation failure retains structured error classification (late 429: %s)", async limited => {
@@ -115,11 +119,13 @@ test.each([false, true])("activation failure retains structured error classifica
   const locator = f.page.locator;
   const dialogText = "Too many requests. You're making requests too quickly.";
   const hiddenDialog = {
+    waitFor: () => new Promise<void>(() => {}),
     filter() { return this; }, last() { return this; },
     isVisible: async () => false,
     getByRole: () => ({ last: () => ({ isVisible: async () => false, press: async () => {} }) }),
   };
   const dialog = {
+    waitFor: () => new Promise<void>(() => {}),
     filter({ hasText }: { hasText?: RegExp }) { return hasText?.test(dialogText) === false ? hiddenDialog : this; },
     last() { return this; },
     isVisible: async () => visible,
@@ -131,7 +137,7 @@ test.each([false, true])("activation failure retains structured error classifica
     throw new Error("activation failed after the control changed");
   };
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
-    activeComposer: async () => ({ locator: () => ({ locator: () => f.control }) }),
+    activeComposer: async () => ({ isEditable: async () => true, locator: () => ({ locator: () => f.control }) }),
   });
   await expect(worker.selectModelAndEffort(f.page, CHATGPT_WEB_MODEL_ID, "medium", {
     localToolsEnabled: true, solAvailable: true, proAvailable: true,

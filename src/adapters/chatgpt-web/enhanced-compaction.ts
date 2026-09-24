@@ -76,7 +76,7 @@ export async function runEnhancedCompaction(
       if (deadline.signal.aborted) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(
-        () => deadline.abort(new Error(`ChatGPT compaction did not fully settle within ${handoffTimeoutMs}ms`)),
+        () => deadline.abort(new ChatGptWebAdapterError(`ChatGPT compaction did not fully settle within ${handoffTimeoutMs}ms`, { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_timeout", retryable: false })),
         handoffTimeoutMs,
       );
       timer.unref?.();
@@ -183,7 +183,13 @@ export async function runEnhancedCompaction(
     }
     throw new ChatGptWebAdapterError(
       error instanceof Error ? error.message : String(error),
-      { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_failed", retryable: false, cause: error },
+      {
+        status: error instanceof ChatGptWebAdapterError ? error.status : 409,
+        errorType: error instanceof ChatGptWebAdapterError ? error.errorType : "invalid_request_error",
+        code: error instanceof ChatGptWebAdapterError ? error.code : "compaction_handoff_failed",
+        retryable: false,
+        cause: error,
+      },
     );
   }
 }

@@ -40,6 +40,29 @@ if (target === "--mac" && !env.CSC_LINK && !env.CSC_NAME) {
   env.CSC_FOR_PULL_REQUEST = "true";
   builderArgs.push("--config.mac.identity=-");
 }
+if (target === "--linux") {
+  if (!["x64", "arm64"].includes(process.arch)) {
+    throw new Error(`Unsupported Linux AppImage architecture: ${process.arch}`);
+  }
+  builderArgs.push(`--${process.arch}`);
+  validateRuntimeBundle(path.join(root, "build", "runtime"), {
+    version: launcherManifest.version,
+    platform: "linux",
+    arch: process.arch,
+  });
+  if (process.arch === "arm64") {
+    const toolsRoot = env.APPIMAGE_TOOLS_PATH;
+    if (!toolsRoot || !path.isAbsolute(toolsRoot)) {
+      throw new Error("Linux arm64 packaging requires APPIMAGE_TOOLS_PATH from prepare-linux-appimage-tools.cjs");
+    }
+    const library = path.join(toolsRoot, "lib", "arm64", "libnotify.so.4");
+    requireLibnotifySymbol(library);
+    builderArgs.push(
+      `--config.linux.extraFiles.from=${library}`,
+      "--config.linux.extraFiles.to=usr/lib/libnotify.so.4",
+    );
+  }
+}
 
 if (target === "--linux") {
   if (!["x64", "arm64"].includes(process.arch)) {

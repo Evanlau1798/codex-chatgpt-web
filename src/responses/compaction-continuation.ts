@@ -9,10 +9,17 @@ export function rememberCompletedCompaction(
   response: Record<string, unknown>,
   replacement?: Record<string, unknown>[],
 ): void {
-  if (response.status !== "completed" || !Array.isArray(response.output) || response.output.length !== 1) return;
-  const item = response.output[0];
-  if (item?.type !== "compaction" || typeof item.encrypted_content !== "string") return;
-  const summary = decodeCompactionSummary(item.encrypted_content);
+  if (response.status !== "completed" || !Array.isArray(response.output)) return;
+  const compactionItem = parsed._compactionResponseFormat !== "message";
+  const items = response.output.filter(item => item?.type === (compactionItem ? "compaction" : "message"));
+  if (items.length !== 1 || (compactionItem && response.output.length !== 1)) return;
+  const item = items[0];
+  const summary = compactionItem
+    ? (typeof item?.encrypted_content === "string" ? decodeCompactionSummary(item.encrypted_content) : null)
+    : (item?.role === "assistant" && Array.isArray(item.content)
+      ? item.content.filter((part: { type?: string; text?: unknown }) => part.type === "output_text" && typeof part.text === "string")
+        .map((part: { text: string }) => part.text).join("")
+      : null);
   if (!summary) return;
   const identity = extractChatGptTurnIdentity(parsed);
   if (!identity.threadId || !identity.turnId) return;

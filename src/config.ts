@@ -5,7 +5,6 @@ import { basename, delimiter, dirname, isAbsolute, join, resolve, sep, win32 } f
 import { tmpdir } from "node:os";
 import { VERSION } from "./version";
 import { effectiveExperimentalBiggerContext } from "./context-mode";
-
 import {
   CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME,
   isLegacyChatGptConnectorName, resolveInteractionConnectorIdentities, tunnelConfigForInteractionMode,
@@ -13,40 +12,32 @@ import {
 } from "./config-interaction";
 export * from "./config-interaction";
 export { providerConfig } from "./provider-config";
-
 export function expandUserPath(value: string): string {
   if (value === "~") return homedir();
   if (value.startsWith("~/") || value.startsWith("~\\")) return join(homedir(), value.slice(2));
   return value;
 }
-
 export function getConfigDir(): string {
   const configured = process.env.CODEX_CHATGPT_WEB_HOME?.trim();
   return resolve(expandUserPath(configured || join(homedir(), ".codex-chatgpt-web")));
 }
-
 export function getConfigPath(): string {
   return join(getConfigDir(), "config.json");
 }
-
 export function isWindowsPipeEndpoint(value: string): boolean {
   return /^\\\\\.\\pipe\\[A-Za-z0-9._-]+$/.test(value);
 }
-
 export function defaultBrokerEndpoint(home = getConfigDir(), platform = process.platform): string {
   if (platform !== "win32") return join(home, "runtime", "turn-broker.sock");
   const identity = createHash("sha256").update(resolve(home).toLowerCase()).digest("hex").slice(0, 20);
   return `\\\\.\\pipe\\codex-chatgpt-web-${identity}`;
 }
-
 export function resolveBrokerEndpoint(value: string): string {
   const expanded = expandUserPath(value);
   return isWindowsPipeEndpoint(expanded) ? expanded : resolve(expanded);
 }
-
 const atomicWaitCell = new Int32Array(new SharedArrayBuffer(4));
 const WINDOWS_RENAME_RETRY_DELAYS_MS = [25, 50, 100, 150, 250, 350, 500] as const;
-
 function renameAtomicFile(source: string, destination: string): void {
   for (let attempt = 0; ; attempt += 1) {
     try {
@@ -62,7 +53,6 @@ function renameAtomicFile(source: string, destination: string): void {
     }
   }
 }
-
 export function atomicWriteFile(
   path: string,
   data: string | Uint8Array,
@@ -86,11 +76,9 @@ export function atomicWriteFile(
   }
   try { chmodSync(path, mode); } catch { /* Windows ACLs are managed by the installer. */ }
 }
-
 export function stripUtf8Bom(text: string): string {
   return text.startsWith("\uFEFF") ? text.slice(1) : text;
 }
-
 export function preserveUtf8Bom(text: string, original: string): string {
   return original.startsWith("\uFEFF") ? `\uFEFF${stripUtf8Bom(text)}` : stripUtf8Bom(text);
 }
@@ -122,6 +110,8 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     experimentalBiggerContext: false,
     experimentalSkillAttachments: false,
     experimentalNoAutoCompact: false,
+    experimentalFreshConversationPerTurn: false,
+    useSavedChats: false,
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
@@ -452,6 +442,15 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (browserInteractionMode === "manual" && requestedBiggerContext) {
     throw new Error(`Zero Risk does not support Bigger Context in ${path}`);
   }
+  if (parsed.experimentalFreshConversationPerTurn !== undefined
+    && typeof parsed.experimentalFreshConversationPerTurn !== "boolean") {
+    throw new Error(`Invalid experimentalFreshConversationPerTurn in ${path}`);
+  }
+  const experimentalFreshConversationPerTurn = !useEnhancedWebSessionMode && parsed.experimentalFreshConversationPerTurn === true;
+  if (parsed.useSavedChats !== undefined && typeof parsed.useSavedChats !== "boolean") {
+    throw new Error(`Invalid useSavedChats in ${path}`);
+  }
+  const useSavedChats = parsed.useSavedChats === true;
   if (browserInteractionMode === "manual" && experimentalSkillAttachments) {
     throw new Error(`Zero Risk does not support Skills as files in ${path}`);
   }
@@ -479,6 +478,8 @@ function parseConfig(value: unknown, path: string): AppConfig {
     experimentalSkillAttachments,
     experimentalNoAutoCompact: parsed.experimentalNoAutoCompact === true,
     ...(parsed.experimentalComposerPlainText === true ? { experimentalComposerPlainText: true } : {}),
+    experimentalFreshConversationPerTurn,
+    useSavedChats,
     zeroRiskProEnabled,
   } as AppConfig;
 }
@@ -486,8 +487,11 @@ function parseConfig(value: unknown, path: string): AppConfig {
 export function saveConfig(config: AppConfig): void {
   const path = getConfigPath();
   const original = existsSync(path) ? readFileSync(path, "utf8") : "";
-  const canonical = { ...config, experimentalBiggerContext: effectiveExperimentalBiggerContext(
-    config.useEnhancedWebSessionMode, config.experimentalBiggerContext,
-  ) };
+  const canonical = {
+    ...config,
+    experimentalBiggerContext: effectiveExperimentalBiggerContext(config.useEnhancedWebSessionMode, config.experimentalBiggerContext),
+    experimentalFreshConversationPerTurn: !config.useEnhancedWebSessionMode && config.browserInteractionMode !== "manual"
+      && config.experimentalFreshConversationPerTurn === true,
+  };
   atomicWriteFile(path, preserveUtf8Bom(`${JSON.stringify(canonical, null, 2)}\n`, original));
 }

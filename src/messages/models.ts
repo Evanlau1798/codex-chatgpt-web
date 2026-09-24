@@ -20,7 +20,9 @@ export function resolveClaudeGatewayModelId(modelId: string): string | undefined
 }
 
 export function claudeGatewayModels(config: AppConfig): ClaudeGatewayModel[] {
-  return availableChatGptWebModelRoutes(config).map(route => ({
+  return availableChatGptWebModelRoutes(config, true)
+    .toSorted((a, b) => Number(Boolean(b.legacy)) - Number(Boolean(a.legacy)))
+    .map(route => ({
     id: claudeGatewayModelId(route.slug),
     display_name: route.displayName,
     max_input_tokens: resolveChatGptWebContextLimits(
@@ -34,7 +36,7 @@ export function claudeGatewayModels(config: AppConfig): ClaudeGatewayModel[] {
 
 export function preferredClaudeGatewayModelIds(config: AppConfig): string[] {
   const models = claudeGatewayModels(config);
-  const preferred = models.find(model => model.id.endsWith(config.solAvailable ? "-high" : "-luna"));
+  const preferred = models.find(model => model.id === claudeGatewayModelId(config.solAvailable ? "chatgpt-web/high" : "chatgpt-web/luna"));
   return preferred ? [preferred.id, ...models.filter(model => model !== preferred).map(model => model.id)] : models.map(model => model.id);
 }
 

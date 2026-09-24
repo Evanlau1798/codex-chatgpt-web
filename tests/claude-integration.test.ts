@@ -51,6 +51,8 @@ describe("reversible Claude Code integration", () => {
       "claude-chatgpt-web-high",
       "claude-chatgpt-web-light",
       "claude-chatgpt-web-medium",
+      "claude-chatgpt-web-gpt-5.6-sol-instant",
+      "claude-chatgpt-web-gpt-5.6-sol",
     ]);
     expect(installed.enforceAvailableModels).toBe(true);
     expect(installed.env).toMatchObject({
@@ -88,6 +90,7 @@ describe("reversible Claude Code integration", () => {
     expect(installed.availableModels).toEqual([
       "claude-chatgpt-web-luna",
       "claude-chatgpt-web-think",
+      "claude-chatgpt-web-gpt-5.6-luna",
     ]);
     uninstallClaudeIntegration();
     expect(existsSync(getClaudeSettingsPath())).toBe(false);

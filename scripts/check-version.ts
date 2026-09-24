@@ -80,6 +80,11 @@ function checkVersion(root: string): void {
     if (!readFileSync(resolve(root, path), "utf8").includes(needle)) throw new Error(`${path} is not synchronized to ${packageVersion}`);
   }
   const releaseWorkflow = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
+  for (const arch of ["amd64", "arm64"]) {
+    if (!releaseWorkflow.includes(`runtime_asset: codex-chatgpt-web-linux-${arch}.tar.gz`)) {
+      throw new Error(`release.yml must build the native Linux ${arch} runtime`);
+    }
+  }
   const bunSetupCount = releaseWorkflow.match(/uses: oven-sh\/setup-bun@v2/g)?.length ?? 0;
   const pinnedBunCount = releaseWorkflow.split(`bun-version: ${bunVersion}`).length - 1;
   if (bunSetupCount === 0 || pinnedBunCount !== bunSetupCount) {

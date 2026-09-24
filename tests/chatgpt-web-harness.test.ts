@@ -1,4 +1,5 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { MAX_CHATGPT_WEB_TURN_RETRIES } from "../src/adapters/chatgpt-web/retry-policy";
+import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { createHash } from "node:crypto";
@@ -63,6 +64,7 @@ async function executeGatewayProgram(
   program: string,
   availableToolNames: string[],
   calls: GatewayProgramCall[],
+  omitInventory = false,
 ): Promise<Array<{ type: "text"; text: string }>> {
   const nestedTools = Object.fromEntries(availableToolNames.map(name => [
     name,
@@ -82,7 +84,7 @@ async function executeGatewayProgram(
   const ignoreOutput = (_value: unknown): void => {};
   await execute(
     nestedTools,
-    availableToolNames.map(name => ({ name, description: `${name} test tool` })),
+    omitInventory ? undefined : availableToolNames.map(name => ({ name, description: `${name} test tool` })),
     emitText,
     ignoreOutput,
     ignoreOutput,
@@ -260,6 +262,103 @@ describe("ChatGPT outer-native harness v4", () => {
       expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
     } finally {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      await TurnBroker.forSocket(socketPath).close();
+    }
+  });
+
+  test.each([false, true])("sequential native messages honor fresh conversation mode=%s", async freshConversation => {
+    const socketPath = brokerTestEndpoint(`cgw-retained-messages-${process.pid}-${Date.now()}`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web",
+      baseUrl: `browser://chatgpt-retained-messages-${Date.now()}`,
+      chatgptWeb: {
+        browserHost: "launcher",
+        browserHostDescriptorPath: join(tempRoot, "retained-launcher.json"),
+        experimentalFreshConversationPerTurn: freshConversation,
+        brokerSocketPath: socketPath,
+        localToolsEnabled: true,
+        solAvailable: true,
+        extraHighAvailable: true, proAvailable: true,
+      },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run.bind(worker);
+    const preparedPrompts: string[] = [];
+    const conversationKeys: (string | undefined)[] = [];
+    const tokens: string[] = [];
+    let browserMessages = 0;
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+      if (freshConversation) {
+        expect(turn.prepareResume).toBeUndefined();
+        expect(turn.retainConversation).not.toBe(true);
+      }
+      const prepared = browserMessages === 0 || freshConversation ? await turn.prepare() : await turn.prepareResume!();
+      preparedPrompts.push(prepared.text);
+      conversationKeys.push(turn.conversationKey!);
+      const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
+      if (!token) throw new Error("retained message prompt has no current turn token");
+      tokens.push(token);
+      prepared.release();
+      browserMessages += 1;
+      const answer = browserMessages === 1 ? "First retained answer" : "Second retained answer";
+      turn.onTextDelta(answer);
+      return answer;
+    };
+
+    const first = rawWireRequest(environmentXml);
+    const second = parsed();
+    second.context.messages = [
+      { role: "user", content: "Inspect the project", timestamp: 2 },
+      { role: "assistant", content: [{ type: "text", text: "First retained answer" }], timestamp: 3 },
+      { role: "user", content: "Continue in the same repository", timestamp: 4 },
+    ];
+    const firstRaw = first._rawBody as { input: unknown[] };
+    second._rawBody = {
+      prompt_cache_key: "thread_test_123",
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({
+          thread_id: "thread_test_123",
+          turn_id: "turn_test_456",
+        }),
+      },
+      input: [
+        ...structuredClone(firstRaw.input),
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "First retained answer" }],
+        },
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Continue in the same repository" }],
+          internal_chat_message_metadata_passthrough: { turn_id: "turn_test_456" },
+        },
+      ],
+    };
+
+    try {
+      const adapter = createChatGptWebAdapter(provider);
+      await adapter.runTurn!(first, { headers: new Headers() }, () => {});
+      await adapter.runTurn!(second, { headers: new Headers() }, () => {});
+
+      expect(browserMessages).toBe(2);
+      expect(conversationKeys[0]).toBe(freshConversation
+        ? undefined : chatGptConversationKey(first, chatGptWebExecutionNamespace(provider))!);
+      expect(conversationKeys[1]).toBe(conversationKeys[0]);
+      expect(tokens[1]).not.toBe(tokens[0]);
+      expect(preparedPrompts[0]).toContain("Inspect the project");
+      expect(preparedPrompts[1]).toContain("Continue in the same repository");
+      if (freshConversation) {
+        expect(preparedPrompts[1]).toContain("First retained answer");
+        expect(preparedPrompts[1]).toContain("Inspect the project");
+      } else {
+        expect(preparedPrompts[1]).not.toContain("First retained answer");
+      }
+      expect(preparedPrompts[1]).not.toContain(environmentXml);
+    } finally {
+      (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      chatGptTurnSessions.clear();
       await TurnBroker.forSocket(socketPath).close();
     }
   });
@@ -910,6 +1009,8 @@ describe("ChatGPT outer-native harness v4", () => {
 
   test.each([
     { code: "context_length_exceeded", status: 400, errorType: "invalid_request_error" },
+    { code: "message_length_exceeds_limit", status: 400, errorType: "invalid_request_error" },
+    { code: "chatgpt_model_unavailable", status: 409, errorType: "invalid_request_error" },
     { code: "chatgpt_session_expired", status: 401, errorType: "authentication_error" },
   ])("a non-retryable $code browser failure remains replayable without starting another browser turn", async ({ code, status, errorType }) => {
     const socketPath = brokerTestEndpoint(`cgw-h4-${code}-${process.pid}-${Date.now()}`);
@@ -926,7 +1027,7 @@ describe("ChatGPT outer-native harness v4", () => {
       throw new ChatGptWebAdapterError("Nonretryable browser failure", { status, errorType, code, retryable: false });
     };
     try {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
+      for (let attempt = 0; attempt < 6; attempt += 1) {
         const events: AdapterEvent[] = [];
         await createChatGptWebAdapter(provider).runTurn!(
           rawWireRequest(environmentXml),
@@ -935,7 +1036,7 @@ describe("ChatGPT outer-native harness v4", () => {
         );
         expect(events.at(-1)).toMatchObject({
           type: "error",
-          code,
+          code, status, errorType,
           retryable: false,
         });
       }
@@ -2204,13 +2305,14 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
-  test("runs Pro through the same turn-bound MCP tool loop as other Full-mode efforts", async () => {
+  test.each([false, true])("Pro keeps one MCP tool loop and replays results with fresh mode=%s", async freshConversation => {
     const socketPath = brokerTestEndpoint(`cgw-h3-pro-${process.pid}-${Date.now()}`);
     const provider: CodexProviderConfig = {
       adapter: "chatgpt-web",
       baseUrl: "browser://chatgpt-pro-test",
       contextWindow: 256_000,
-      chatgptWeb: { brokerSocketPath: socketPath, turnTimeoutMs: 30_000, localToolsEnabled: true, solAvailable: true, proAvailable: true },
+      chatgptWeb: { brokerSocketPath: socketPath, turnTimeoutMs: 30_000, localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true,
+        experimentalFreshConversationPerTurn: freshConversation },
     };
     const worker = ChatGptBrowserWorker.forProvider(provider);
     const originalRun = worker.run.bind(worker);
@@ -2324,6 +2426,10 @@ describe("ChatGPT outer-native harness v4", () => {
     const gatewayOnlyEnvironment = extractChatGptTurnEnvironment(parsed(environmentXml));
     gatewayOnlyEnvironment.tools = [
       { name: "exec", description: "Run nested Codex tools, including exec_command", parameters: {}, freeform: true },
+      {
+        name: "tool_search", description: "Load deferred tools", toolSearch: true,
+        parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+      },
       { name: "wait", description: "Wait for an exec cell", parameters: { type: "object" } },
       { name: "request_user_input", description: "Request user input", parameters: { type: "object" } },
       {
@@ -2545,6 +2651,176 @@ describe("ChatGPT outer-native harness v4", () => {
       }
       expect((await firstExec).structuredContent).toEqual({ output: tempRoot, exit_code: 0 });
       expect((await secondExec).structuredContent).toEqual({ output: "clean", exit_code: 0 });
+
+      const inventoryThroughGateway = async (
+        query: string,
+        includeSchema: boolean,
+        nestedToolNames: string[],
+      ) => {
+        const pending = call("codex_tool_inventory", {
+          turn_token: token,
+          query,
+          include_schema: includeSchema,
+        });
+        const [request] = await broker.nextToolBatch(token);
+        expect(request).toMatchObject({ wireName: "exec", freeform: true });
+        const gatewayCalls: GatewayProgramCall[] = [];
+        const content = await executeGatewayProgram(request!.input!, nestedToolNames, gatewayCalls);
+        expect(gatewayCalls).toEqual([]);
+        broker.completeTool(token, request!.callId, { content });
+        return await pending;
+      };
+
+      // Even an empty inventory query crosses the broker through the native exec gateway. The
+      // browser therefore observes a real tool boundary before the model plans its next call.
+      const emptyGatewayInventory = await inventoryThroughGateway(
+        "clink opencode pal",
+        false,
+        ["exec", "web__run", "multi_agent_v1__wait_agent"],
+      );
+      expect(emptyGatewayInventory.structuredContent).toEqual({
+        tools: [],
+        total: 0,
+        next_offset: null,
+        discovery_tools: [{
+          wire_name: "tool_search", name: "tool_search", namespace: null,
+          description: "Load deferred tools", kind: "tool_search",
+        }],
+      });
+
+      const search = call("codex_tool_call", {
+        turn_token: token, wire_name: "tool_search", arguments: { query: "clink opencode pal" },
+      });
+      const [searchRequest] = await broker.nextToolBatch(token);
+      expect(searchRequest).toMatchObject({ wireName: "tool_search", arguments: { query: "clink opencode pal" } });
+      broker.completeTool(token, searchRequest!.callId, toolResult({ tools: [] }));
+      await search;
+
+      const rawGatewayInventory = await inventoryThroughGateway(
+        "Run nested Codex tools",
+        false,
+        ["exec", "web__run", "mcp__codex_apps__codex_native2_codex_exec"],
+      );
+      expect(rawGatewayInventory.structuredContent).toMatchObject({
+        tools: [{
+          wire_name: "exec",
+          name: "exec",
+          kind: "freeform",
+          description: expect.stringContaining("Do not start another wait while a receipt is pending"),
+        }, { wire_name: "tool_search", name: "tool_search", kind: "tool_search" }],
+        total: 2,
+        next_offset: null,
+      });
+      expect(rawGatewayInventory.structuredContent).not.toHaveProperty("discovery_tools");
+
+      const rawWeb = call("codex_tool_call", {
+        turn_token: token,
+        wire_name: "exec",
+        input: "const value = await tools.web__run({ search_query: [{ q: 'Codex' }] }); text(value);",
+      });
+      const [rawWebRequest] = await broker.nextToolBatch(token);
+      const rawWebCalls: GatewayProgramCall[] = [];
+      const rawWebContent = await executeGatewayProgram(
+        rawWebRequest!.input!,
+        ["web__run"],
+        rawWebCalls,
+        true,
+      );
+      expect(rawWebCalls).toEqual([{
+        name: "web__run",
+        input: { search_query: [{ q: "Codex" }] },
+      }]);
+      broker.completeTool(token, rawWebRequest!.callId, { content: rawWebContent });
+      expect((await rawWeb).content).toEqual([{
+        type: "text",
+        text: JSON.stringify({ output: "web__run", exit_code: 0 }),
+      }]);
+
+      const rawVendorExec = call("codex_tool_call", {
+        turn_token: token,
+        wire_name: "exec",
+        input: "const value = await tools.vendor__exec({ task: 'safe' }); text(value);",
+      });
+      const [rawVendorExecRequest] = await broker.nextToolBatch(token);
+      const rawVendorExecCalls: GatewayProgramCall[] = [];
+      const rawVendorExecContent = await executeGatewayProgram(
+        rawVendorExecRequest!.input!,
+        ["vendor__exec"],
+        rawVendorExecCalls,
+        true,
+      );
+      expect(rawVendorExecCalls).toEqual([{ name: "vendor__exec", input: { task: "safe" } }]);
+      broker.completeTool(token, rawVendorExecRequest!.callId, { content: rawVendorExecContent });
+      expect((await rawVendorExec).isError).not.toBe(true);
+
+      const recursiveRawExec = call("codex_tool_call", {
+        turn_token: token,
+        wire_name: "exec",
+        input: "await tools.exec('text(\"nested\")');",
+      });
+      const [recursiveRawExecRequest] = await broker.nextToolBatch(token);
+      const recursiveRawExecCalls: GatewayProgramCall[] = [];
+      await expect(executeGatewayProgram(
+        recursiveRawExecRequest!.input!,
+        ["exec"],
+        recursiveRawExecCalls,
+      )).rejects.toThrow("Nested raw exec is unavailable");
+      expect(recursiveRawExecCalls).toEqual([]);
+      broker.completeTool(token, recursiveRawExecRequest!.callId, {
+        content: [{ type: "text", text: "Nested raw exec is unavailable" }],
+        isError: true,
+      });
+      expect((await recursiveRawExec).isError).toBe(true);
+
+      const vendorInventory = await inventoryThroughGateway(
+        "vendor",
+        false,
+        ["exec", "vendor__exec", "vendor__codex_tool_call"],
+      );
+      expect(vendorInventory.structuredContent).toMatchObject({
+        total: 2,
+        tools: [
+          { wire_name: "vendor__exec", kind: "gateway" },
+          { wire_name: "vendor__codex_tool_call", kind: "gateway" },
+        ],
+      });
+
+      const nestedInventory = await inventoryThroughGateway("web__run", true, ["exec", "web__run"]);
+      expect(nestedInventory.structuredContent).toMatchObject({
+        total: 1,
+        next_offset: null,
+        tools: [{
+          wire_name: "web__run",
+          name: "web__run",
+          namespace: null,
+          kind: "gateway",
+          description: "web__run test tool",
+          parameters: { type: "object", additionalProperties: true },
+        }],
+      });
+
+      const nestedWeb = call("codex_tool_call", {
+        turn_token: token,
+        wire_name: "web__run",
+        arguments: { search_query: [{ q: "Codex" }] },
+      });
+      const [nestedWebRequest] = await broker.nextToolBatch(token);
+      expect(nestedWebRequest).toMatchObject({ wireName: "exec", freeform: true });
+      const nestedWebCalls: GatewayProgramCall[] = [];
+      const nestedWebContent = await executeGatewayProgram(
+        nestedWebRequest!.input!,
+        ["web__run"],
+        nestedWebCalls,
+      );
+      expect(nestedWebCalls).toEqual([{
+        name: "web__run",
+        input: { search_query: [{ q: "Codex" }] },
+      }]);
+      broker.completeTool(token, nestedWebRequest!.callId, { content: nestedWebContent });
+      expect((await nestedWeb).content).toEqual([{
+        type: "text",
+        text: JSON.stringify({ output: "web__run", exit_code: 0 }),
+      }]);
 
       const waitPromise = call("codex_tool_call", {
         turn_token: token,
@@ -3295,3 +3571,48 @@ describe("adapter liveness covers every path through a turn", () => {
     expect(heartbeats.at(-1)).toBeGreaterThanOrEqual(CHATGPT_WEB_ADAPTER_HEARTBEAT_MS);
   }, 40_000);
 });
+
+
+test("caps automatic transient-server-error pre-send failures at three retries for one native turn", async () => {
+    const socketPath = brokerTestEndpoint(`cgw-h4-retry-budget-${process.pid}-${Date.now()}`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web",
+      baseUrl: `browser://chatgpt-retry-budget-${Date.now()}`,
+      chatgptWeb: { brokerSocketPath: socketPath, localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run.bind(worker);
+    let browserStarts = 0;
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+      browserStarts += 1;
+      // An ambiguous or accepted Send is terminal in Enhanced; only proven pre-send failures may retry.
+      throw new ChatGptWebAdapterError("ChatGPT is temporarily unavailable. Try again in a few minutes.", {
+        status: 502,
+        errorType: "server_error",
+        code: "upstream_server_error",
+        retryable: true,
+      });
+    };
+    try {
+      for (let attempt = 0; attempt < MAX_CHATGPT_WEB_TURN_RETRIES + 2; attempt += 1) {
+        const events: AdapterEvent[] = [];
+        await createChatGptWebAdapter(provider).runTurn!(
+          rawWireRequest(environmentXml),
+          { headers: new Headers() },
+          event => events.push(event),
+        );
+        const error = events.at(-1);
+        expect(error).toMatchObject({ type: "error", code: "upstream_server_error" });
+        expect((error as Extract<AdapterEvent, { type: "error" }>).retryable)
+          .toBe(attempt < MAX_CHATGPT_WEB_TURN_RETRIES);
+        if (attempt === MAX_CHATGPT_WEB_TURN_RETRIES) {
+          expect((error as Extract<AdapterEvent, { type: "error" }>).message)
+            .toContain("Try again in a few minutes.");
+        }
+      }
+      expect(browserStarts).toBe(MAX_CHATGPT_WEB_TURN_RETRIES + 1);
+    } finally {
+      (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      await TurnBroker.forSocket(socketPath).close();
+    }
+  });

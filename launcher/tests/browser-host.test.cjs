@@ -724,6 +724,38 @@ test("authentication windows stay inside the launcher-owned browser partition", 
   assert.doesNotMatch(source, /loginWithSystemBrowser|captureSystemBrowserLogin|system_login_started/);
 });
 
+test("concurrent authentication probes share the same navigation and allow the next refresh", async () => {
+  let probes = 0;
+  let navigations = 0;
+  let release;
+  let temporary = false;
+  const ready = new Promise(resolve => { release = resolve; });
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    turnTabs: new Map(),
+    state: { authenticated: false }, manualOperation: "ChatGPT login",
+    view: { webContents: {
+      isDestroyed: () => false,
+      getURL: () => "https://chatgpt.com/",
+      executeJavaScript: async () => {
+        probes += 1;
+        await ready;
+        return { composer: true, temporary, sessionAuthenticated: true, url: "https://chatgpt.com/", readyState: "complete" };
+      },
+      loadURL: async () => { navigations += 1; temporary = true; },
+    } },
+    setState(patch) { this.state = { ...this.state, ...patch }; },
+    snapshot() { return this.state; }, logger: { info() {} },
+  });
+  const first = fixture.probeAuthentication();
+  const second = fixture.probeAuthentication();
+  release();
+  await Promise.all([first, second]);
+  assert.equal(navigations, 1);
+  assert.equal(probes, 2); // initial surface, then the one navigated temporary surface
+  await fixture.probeAuthentication();
+  assert.equal(probes, 3); // the settled operation must not cache stale authentication
+});
+
 test("concurrent embedded login requests share one authentication operation", async () => {
   let resolveLogin;
   let waits = 0;
@@ -1914,7 +1946,7 @@ test("a retained conversation is not reused for a different connector identity",
     turnTabs: new Map([[retained.id, retained]]),
     userCancelledTurnOwners: new Map(),
     createTurnTab: (...args) => {
-      assert.deepEqual(args, ["trace_next", 222, true, "conversation-a", "Other Connector"]);
+      assert.deepEqual(args, ["trace_next", 222, true, "conversation-a", "Other Connector", false, undefined]);
       return created;
     },
     writeDescriptor() {},

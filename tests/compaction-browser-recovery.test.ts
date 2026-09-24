@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
+import { chatGptBrowserTabClosedError } from "../src/adapters/chatgpt-web/adapter-error";
 import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 
@@ -18,7 +20,9 @@ test.each([
   [true, true, false, "inline", true, false, true],
 ] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s, direct=%s, required=%s, reused=%s)", async (owned, tools, multipart, transport, direct, requiredRetained, reused) => {
   const diagnostics = mkdtempSync(join(tmpdir(), "compaction-observation-"));
-  const finalResponse = new Error("fixture reached final response observation");
+  const cancellationCase = owned && !tools && !multipart;
+  const effort = tools ? "xhigh" : "high";
+  const finalResponse = cancellationCase ? chatGptBrowserTabClosedError() : new Error("fixture reached final response observation");
   const capabilities = { localToolsEnabled: tools, solAvailable: true, extraHighAvailable: true, proAvailable: true };
   const progress = tools ? new ChatGptExternalTurnProgress() : undefined;
   const recoveryCallbacks: unknown[] = [];
@@ -32,12 +36,14 @@ test.each([
     filter() { return this; }, last() { return this; }, nth() { return this; }, getByText() { return this; },
     isVisible: async () => false };
   const row = { waitFor: async () => {}, count: async () => 1, getAttribute: async () => "" };
-  const page = { evaluate: async () => ({}), isClosed: () => false,
+  let activated = 0;
+  const frame = {};
+  const page = Object.assign(new EventEmitter(), { mainFrame: () => frame, evaluate: async () => ({}), isClosed: () => false,
     getByText: () => ({}),
     keyboard: { press: async () => {} },
     locator: (selector: string) => selector === '.__menu-item[tabindex="0"]'
       ? { filter: () => row } : hidden,
-    url: () => { actions.push("observe"); throw finalResponse; } };
+    url: () => { actions.push("observe"); throw finalResponse; } });
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics, ...(owned ? { browserHostDescriptorPath: "owned-descriptor" } : {}) },
     finalizingRuns: new Set<string>(),
@@ -46,8 +52,12 @@ test.each([
       if (name === "send" || name.endsWith("_send")) sendBudgets.push(timeout);
       return action(new AbortController().signal);
     },
-    prepareTemporaryChatSurface: async () => {},
-    selectModelAndEffort: async (_page: unknown, model: string, effort: string) => {
+    prepareChatSurface: async () => {},
+    assertSelectedEffort: async () => {},
+    selectModelAndEffort: async (_page: unknown, model: string, effort: string, _capabilities: unknown,
+      _diagnostic: unknown, trackUsage: boolean, family: string) => {
+      expect(trackUsage).toBe(false);
+      expect(family).toBe("5.6");
       actions.push(`effort:${effort}`);
       return resolveChatGptWebModelMode(model, effort, capabilities);
     },
@@ -55,7 +65,17 @@ test.each([
       fill: async () => {}, focus: async () => {}, pressSequentially: async () => {},
       press: async () => { actions.push("connector-select"); selected = true; },
       locator: () => ({ getByTestId: () => ({
-      waitFor: async () => {}, isEnabled: async () => true, press: async () => { actions.push("send"); },
+      waitFor: async () => {}, isEnabled: async () => true, press: async () => {
+        actions.push("send");
+        if (cancellationCase) {
+          const request = { method: () => "POST", url: () => "https://chatgpt.com/backend-api/f/conversation", frame: () => frame };
+          page.emit("request", request);
+          page.emit("response", { request: () => request, status: () => 413,
+            headers: () => ({ "content-type": "application/json" }),
+            json: async () => ({ detail: { code: "message_length_exceeds_limit" } }),
+          });
+        }
+      },
     }) }) }),
     waitForSubmissionAccepted: async (...args: unknown[]) => {
       expect(args[8]).toBe(progress);
@@ -95,7 +115,7 @@ test.each([
     sendAttachedPrompt: async (...args: unknown[]) => {
       // Context ingestion cannot mistake tool activity for acknowledgement of a part.
       expect(args[6]).toBeUndefined();
-      if (stage !== "send") expect(args[5]).toBeUndefined();
+      await (args[5] as () => Promise<void>)();
       recoveryCallbacks.push(args[7]);
       actions.push("send");
       return "user_turn";
@@ -113,7 +133,9 @@ test.each([
     await expect(worker.runBrowserTurn({
       traceId: "compaction_recovery_fixture",
       modelId: "gpt-5.6-sol",
-      reasoning: "high",
+      modelFamily: "5.6",
+      reasoning: effort,
+      onSendActivated: () => { activated += 1; },
       capabilities,
       nativeConnector: requiredRetained || reused,
       compaction: requiredRetained || !tools,
@@ -123,25 +145,29 @@ test.each([
         begin: async () => { throw new Error("fixture must stop before completion"); },
         commit: async () => { throw new Error("fixture must stop before completion"); },
       } : undefined,
-      prepare: async () => ({ text: "Summarize the context", images: [], transport, multipart: multipart ? { parts: ['{"part":1}', '{"part":2}', '{"part":3}'], commit: "Summarize" } : undefined, release: () => { released = true; } }),
+      prepare: async () => ({ text: "Summarize the context", images: [], transport, multipart: multipart ? { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "Summarize" } : undefined, release: () => { released = true; } }),
     }, owned ? "owned-surface" : undefined, page, reused)).rejects.toBe(finalResponse);
     expect(recoveryCallbacks.map(callback => typeof callback)).toEqual(
-      Array(multipart ? 5 : 1).fill(owned ? "function" : "undefined"),
+      Array(multipart ? 11 : 1).fill(owned ? "function" : "undefined"),
     );
     expect(actions).toEqual([
       ...(multipart ? [
         "effort:low",
-        "attach:plain", "send", "observe", "ack",
-        "attach:plain", "send", "observe", "ack",
+        ...Array.from({ length: 5 }, (_, index) => [
+          ...(index > 0 ? ["effort:low"] : []), "attach:plain", "send", "observe", "ack",
+        ]).flat(),
       ] : []),
-      "effort:high",
+      `effort:${effort}`,
       ...(reused ? ["attach:retained", "verify"]
         : [tools ? "attach:tools" : "attach:plain"]), "files", "verify",
       ...(tools && !reused ? ["connector-check"] : []),
       "send", "observe",
     ]);
-    expect(sendBudgets).toEqual(multipart ? [180_000, 180_000, 180_000] : [60_000]);
+    expect(sendBudgets).toEqual(multipart ? Array(6).fill(180_000) : [60_000]);
     expect(released).toBe(true);
+    expect(activated).toBe(1);
+    expect(page.listenerCount("request")).toBe(0);
+    expect(page.listenerCount("response")).toBe(0);
   } finally {
     rmSync(diagnostics, { recursive: true, force: true });
   }

@@ -301,3 +301,19 @@ test("manual completion is idempotent and cannot be downgraded after a lost ackn
     if (retain) assert.equal(host.turnTabs.get(lease.tabId).manualState, "completed");
   }
 });
+
+// The fork retains its longer ordinary handoff window; compaction uses the U two-minute bound.
+test("manual compaction has two minutes for confirmation and no deadline after Sent", (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000_000 });
+  const { controller, host } = fixture();
+  const lease = controller.begin("compact-confirm", 10, "checkpoint", undefined, undefined, true);
+  assert.equal(Date.parse(lease.deadlineAt) - Date.now(), 120_000);
+  t.mock.timers.tick(119_999);
+  assert.equal(host.turnTabs.get(lease.tabId).manualState, "awaiting-user");
+  controller.confirmSent(lease.tabId);
+  t.mock.timers.tick(180_000);
+  assert.equal(host.turnTabs.get(lease.tabId).manualState, "sent");
+  assert.equal(host.turnTabs.get(lease.tabId).manualDeadlineAt, null);
+  controller.started("compact-confirm", 10);
+  controller.end("compact-confirm", 10, "completed");
+});

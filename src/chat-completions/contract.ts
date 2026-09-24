@@ -1,3 +1,4 @@
+import type { ChatGptWebCodexEffort } from "../chatgpt-web-models";
 import Ajv, { type ValidateFunction } from "ajv";
 import addFormats from "ajv-formats";
 import { randomUUID } from "node:crypto";
@@ -18,6 +19,7 @@ export interface ChatMessage {
 }
 export interface ChatCompletionInput {
   model: string;
+  reasoningEffort?: ChatGptWebCodexEffort;
   messages: ChatMessage[];
   tools: Array<{ type: "function"; function: ChatFunction }>;
   toolChoice: "auto" | "none" | "required" | { name: string };
@@ -105,8 +107,13 @@ export function parseChatCompletion(input: unknown): ChatCompletionInput {
     "n", "store", "stream_options", "temperature", "top_p", "seed", "stop", "presence_penalty",
     "frequency_penalty", "logprobs", "top_logprobs", "reasoning_effort", "max_completion_tokens", "response_format"], "body");
   for (const field of ["temperature", "top_p", "seed", "stop", "presence_penalty", "frequency_penalty",
-    "logprobs", "top_logprobs", "reasoning_effort", "max_completion_tokens", "response_format"]) {
+    "logprobs", "top_logprobs", "max_completion_tokens", "response_format"]) {
     if (body[field] !== undefined && body[field] !== null) fail("This generation control is not supported by the Web bridge", field);
+  }
+  const reasoningEffort = body.reasoning_effort ?? undefined;
+  if (reasoningEffort !== undefined
+    && !["low", "medium", "high", "xhigh", "max", "ultra"].includes(reasoningEffort as string)) {
+    fail("Unsupported reasoning_effort", "reasoning_effort");
   }
   const model = text(body.model, "model");
   if (model.length > 128) fail("Invalid model", "model");
@@ -191,7 +198,8 @@ export function parseChatCompletion(input: unknown): ChatCompletionInput {
     toolChoice = { name: name(f.name, "tool_choice.function.name") };
   }
   if ((toolChoice === "required" && !tools.length) || (typeof toolChoice === "object" && !validators.has(toolChoice.name))) fail("Tool choice is not in the current tool set", "tool_choice");
-  return { model, messages, tools, toolChoice, parallel: body.parallel_tool_calls !== false,
+  return { model, ...(reasoningEffort === undefined ? {} : { reasoningEffort: reasoningEffort as ChatGptWebCodexEffort }),
+    messages, tools, toolChoice, parallel: body.parallel_tool_calls !== false,
     stream: body.stream === true, maxTokens: maxTokens as number, validators };
 }
 

@@ -1,17 +1,18 @@
 import { isAbsolute, resolve } from "node:path";
-import { isReadableCompactionSummaryText } from "../../responses/compaction";
+import { isReadableCompactionSummaryText, OPAQUE_COMPACTION_NOTE } from "../../responses/compaction";
 import type { CodexContentPart, CodexParsedRequest, CodexTool } from "../../types";
 import { effectiveChatGptToolPolicy } from "./tool-policy";
 import {
   currentTurnUserRevision,
   isCurrentTurnInstruction,
-  isUserOrParentInstruction,
+  isNativeInstruction,
+  isTurnAbortedNotice,
   itemTurnId,
   priorAbortedTurnIds,
   turnUserRevisionHistory,
 } from "./turn-user-revision";
-import { hasEnvironmentContextAttempt, isPureContextualCodexUserText } from "./contextual-user-message";
-import { isAcceptedCompactionContinuation } from "./compaction-continuation";
+import { hasEnvironmentContextFragment, hasEnvironmentContextAttempt, isPureContextualCodexUserText } from "./contextual-user-message";
+import { isAcceptedCompactionContinuation, recoverCompactionInstruction } from "./compaction-continuation";
 import {
   codexTurnMetadataFromBody,
   extractChatGptTurnIdentity,
@@ -86,7 +87,7 @@ export function hasRawChatGptEnvironmentContext(parsed: CodexParsedRequest): boo
   const input = Array.isArray(body?.input) ? body.input : [];
   return input.some(value => {
     const item = record(value);
-    return item?.type === "message" && hasEnvironmentContextAttempt(item.content);
+    return hasEnvironmentContextFragment(item);
   });
 }
 
@@ -118,7 +119,7 @@ function currentEnvironmentAttempts(parsed: CodexParsedRequest): Array<{ item: R
   return input.flatMap((value, index) => {
     if (index < replayPrefixLen) return [];
     const item = record(value);
-    if (!item || item.type !== "message" || !hasEnvironmentContextAttempt(item.content)) return [];
+    if (!hasEnvironmentContextFragment(item)) return [];
     const owner = itemTurnId(item);
     const current = owner === turnId
       || currentInstructions.some(instruction => instruction < index)
@@ -139,9 +140,21 @@ export function extractChatGptTurnUserRevision(parsed: CodexParsedRequest): unkn
   const identity = extractChatGptTurnIdentity(parsed);
   const turnId = identity.turnId;
   if (!turnId) throw new Error("ChatGPT web requires native Codex turn_id metadata for browser-session replay");
-  const revision = isChatGptCompactionContinuation(parsed)
-    ? latestChatGptTurnUserRevision(parsed) : currentTurnUserRevision(parsed._rawBody, turnId);
-  if (!revision) throw new Error("ChatGPT web requires a current-turn user message for browser-session replay");
+  const current = currentTurnUserRevision(parsed._rawBody, turnId);
+  const input = record(parsed._rawBody)?.input;
+  const summaryOnly = turnUserRevisionHistory(parsed._rawBody).length === 0
+    && !isTurnAbortedNotice(current?.content) && Array.isArray(input) && input.some(value => {
+      const item = record(value);
+      return item && (compactionSummaryMessage(item)
+        || ["compaction", "compaction_summary", "context_compaction"].includes(String(item.type)));
+    });
+  // A summary is not a new instruction. Only this daemon's matching completed checkpoint
+  // can recover the source when native compaction removes it, including within the same turn.
+  const revision = summaryOnly ? recoverCompactionInstruction(parsed, identity)?.source
+    : isChatGptCompactionContinuation(parsed) ? latestChatGptTurnUserRevision(parsed) : current;
+  if (!revision || (revision === current && hasEnvironmentContextAttempt(revision.content))) {
+    throw new Error("ChatGPT web requires a current-turn user message for browser-session replay");
+  }
   if (revision.turnId !== undefined && revision.turnId !== turnId
     && (priorAbortedTurnIds(parsed._rawBody, turnId).includes(revision.turnId)
       || !isAcceptedCompactionContinuation(parsed, identity, revision))) {
@@ -164,11 +177,14 @@ export function extractChatGptTurnUserText(parsed: CodexParsedRequest): string |
 }
 
 function latestChatGptTurnUserRevision(parsed: CodexParsedRequest): ChatGptTurnUserRevision | undefined {
-  return turnUserRevisionHistory(parsed._rawBody).at(-1);
+  return turnUserRevisionHistory(parsed._rawBody).at(-1)
+    ?? recoverCompactionInstruction(parsed, extractChatGptTurnIdentity(parsed))?.source;
 }
 
 export function chatGptTurnUserRevisionHistory(parsed: CodexParsedRequest): ChatGptTurnUserRevision[] {
-  return turnUserRevisionHistory(parsed._rawBody);
+  const revisions = turnUserRevisionHistory(parsed._rawBody);
+  const recovered = revisions.length === 0 ? recoverCompactionInstruction(parsed, extractChatGptTurnIdentity(parsed)) : undefined;
+  return recovered ? [recovered.source] : revisions;
 }
 
 /** The instruction summarized by a compaction request may belong to its source turn. */
@@ -191,8 +207,12 @@ export function isChatGptCompactionContinuation(parsed: CodexParsedRequest): boo
     && isAcceptedCompactionContinuation(parsed, identity, revision);
 }
 
+const CALENDAR_ENVIRONMENT_DELTA = /^<environment_context>\s*<current_date>\d{4}-\d{2}-\d{2}<\/current_date>\s*(?:<timezone>[^<>]+<\/timezone>\s*)?<filesystem>\s*<permission_profile type="disabled">\s*<file_system type="unrestricted"\s*\/>\s*<\/permission_profile>\s*<\/filesystem>\s*<\/environment_context>$/;
+
 /** Parse a claim only: the caller must compare it with this turn's native rollout authority. */
-export function extractChatGptContinuationEnvironmentClaims(parsed: CodexParsedRequest): ChatGptTurnEnvironment[] {
+export function extractChatGptContinuationEnvironmentClaims(
+  parsed: CodexParsedRequest, provenCalendarDelta = false,
+): ChatGptTurnEnvironment[] {
   const turnId = extractChatGptTurnIdentity(parsed).turnId;
   const body = record(parsed._rawBody);
   const input = Array.isArray(body?.input) ? body.input : [];
@@ -207,6 +227,7 @@ export function extractChatGptContinuationEnvironmentClaims(parsed: CodexParsedR
     if (isCurrentTurnInstruction(item, metadata, turnId ?? "") || index === revisionIndex) currentInstructions.push(index);
   }
   const updates = currentEnvironmentAttempts(parsed).flatMap(({ item, index }) => {
+    if (provenCalendarDelta && CALENDAR_ENVIRONMENT_DELTA.test(rawMessageText(item).trim())) return [];
     if (item.role !== "user") {
       throw new Error("Compaction continuation contains an unowned current native environment claim");
     }
@@ -238,7 +259,7 @@ export function extractChatGptContinuationEnvironmentClaims(parsed: CodexParsedR
       typeof value === "string" && hasEnvironmentContextAttempt(value)
     ));
   });
-  if (updates.length === 0) throw new Error("Compaction continuation requires a current native environment claim");
+  if (updates.length === 0 && !provenCalendarDelta) throw new Error("Compaction continuation requires a current native environment claim");
   return updates.map(text => {
     const update = text.trim();
     if (!/^<environment_context>[\s\S]*<\/environment_context>$/.test(update)) {
@@ -248,15 +269,84 @@ export function extractChatGptContinuationEnvironmentClaims(parsed: CodexParsedR
   });
 }
 
-function environmentBeforeUser(
-  input: unknown[],
-  userIndex: number,
-  expectedTurnId?: string,
-  metadata?: Record<string, unknown>,
-): string | undefined {
+/**
+ * Steering can separate the original environment/instruction pair from the active instruction.
+ * Git workspace metadata need not list every native filesystem root. Return that earlier claim
+ * only for a same-turn pair; the store must compare it with the current canonical rollout.
+ */
+export function extractChatGptSteeringEnvironmentClaim(parsed: CodexParsedRequest): ChatGptTurnEnvironment | undefined {
+  const turnId = extractChatGptTurnIdentity(parsed).turnId;
+  if (!turnId) return undefined;
+  const body = record(parsed._rawBody);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const metadata = clientTurnMetadata(parsed);
+  const activeIndex = input.findLastIndex(value => isNativeInstruction(record(value), metadata));
+  const active = record(input[activeIndex]);
+  if (itemTurnId(active) !== turnId || typeof active?.id !== "string" || !active.id) return undefined;
+
+  // Do not skip an unrecognized update or use one of several competing envelopes. Older,
+  // explicitly attributed history is not a current claim; untagged XML remains unproven.
+  const claims = input.flatMap((value, index) => {
+    const item = record(value);
+    if (!hasEnvironmentContextFragment(item)) return [];
+    const owner = itemTurnId(item);
+    return owner === undefined || owner === turnId ? [{ item, index }] : [];
+  });
+  if (claims.length !== 1) return undefined;
+  const claim = claims[0]!;
+  if (claim.item.role !== "user" || itemTurnId(claim.item) !== turnId
+    || typeof claim.item.id !== "string" || !claim.item.id) return undefined;
+  const parts = Array.isArray(claim.item.content) ? claim.item.content : [];
+  if (parts.filter(part => /<\/?environment_context\b/i.test(String(record(part)?.text ?? ""))).length !== 1) return undefined;
+
+  for (let index = claim.index + 1; index < activeIndex; index += 1) {
+    const instruction = record(input[index]);
+    if (typeof instruction?.id !== "string" || !instruction.id) continue;
+    const text = environmentBeforeUser(input, index, turnId, metadata);
+    if (text) return parseChatGptEnvironmentText(parsed, text);
+  }
+  return undefined;
+}
+
+/**
+ * Native world-state diffs omit unchanged cwd/shell at midnight but repeat the filesystem
+ * profile. Recognize the observed unrestricted calendar fragment as a claim only: the store
+ * still requires this exact turn's native rollout and corroborating current sandbox metadata.
+ * Unknown profiles/fields are deliberately not classified as permission-neutral updates.
+ */
+export function hasChatGptCalendarEnvironmentDelta(parsed: CodexParsedRequest): boolean {
+  const metadata = clientTurnMetadata(parsed);
+  const turnId = extractChatGptTurnIdentity(parsed).turnId;
+  if (!metadata || !turnId) return false;
+  const body = record(parsed._rawBody);
+  const input = Array.isArray(body?.input) ? body.input : [];
+  const activeIndex = input.findLastIndex(value => isNativeInstruction(record(value), metadata));
+  const active = record(input[activeIndex]);
+  if (itemTurnId(active) !== turnId || typeof active?.id !== "string" || !active.id) return false;
+
+  let deltas = 0;
+  for (let index = activeIndex + 1; index < input.length; index += 1) {
+    const item = record(input[index]);
+    if (!hasEnvironmentContextFragment(item)) continue;
+    if (item.role !== "user" || itemTurnId(item) !== turnId || typeof item.id !== "string" || !item.id
+      || !hasAssistantOutputBetween(input, activeIndex + 1, index)) return false;
+    const text = rawMessageText(item).trim();
+    // Match the whole native fragment, not just the presence of a disabled profile: another
+    // profile, a malformed cwd, or any additional permission declaration must fail closed.
+    if (!CALENDAR_ENVIRONMENT_DELTA.test(text)
+      || !sandboxMetadataMatchesEnvironment(canonicalSandboxMetadata(metadata), text)
+      || [metadata.sandbox_mode, metadata.sandbox].some(value => (
+        value !== undefined && !sandboxMetadataMatchesEnvironment(value, text)
+      ))) return false;
+    deltas += 1;
+  }
+  return deltas > 0;
+}
+
+function environmentBeforeUser(input: unknown[], userIndex: number, expectedTurnId?: string, metadata?: Record<string, unknown>): string | undefined {
   if (userIndex <= 0) return undefined;
   const user = record(input[userIndex]);
-  if (!isUserOrParentInstruction(user, metadata)) return undefined;
+  if (!isNativeInstruction(user, metadata)) return undefined;
 
   const userTurnId = itemTurnId(user);
   if (!userTurnId || (expectedTurnId && userTurnId !== expectedTurnId)) return undefined;
@@ -351,6 +441,12 @@ function environmentMatchesCanonicalMetadata(
   return sandboxMetadataMatchesEnvironment(metadataSandboxValue, environmentText);
 }
 
+function compactionSummaryMessage(value: Record<string, unknown>): boolean {
+  if (value.type !== "message" || value.role !== "user") return false;
+  const text = rawMessageText(value).trim();
+  return isReadableCompactionSummaryText(text) || text === OPAQUE_COMPACTION_NOTE;
+}
+
 function canonicalMetadataEnvironmentBeforeUser(
   input: unknown[],
   userIndex: number,
@@ -363,13 +459,26 @@ function canonicalMetadataEnvironmentBeforeUser(
   if (!metadataTurnId || !metadataSandbox) return undefined;
 
   const user = record(input[userIndex]);
-  if (!isUserOrParentInstruction(user, metadata) || typeof user.id !== "string" || !user.id) return undefined;
+  if (!isNativeInstruction(user, metadata) || typeof user.id !== "string" || !user.id) return undefined;
   const userTurnId = itemTurnId(user);
   if (userTurnId !== undefined && userTurnId !== metadataTurnId) return undefined;
 
-  let candidateIndex = userIndex - 1;
+  return canonicalMetadataEnvironmentBefore(input, userIndex, metadata, requireMetadataBoundRoots);
+}
+
+/** Read an envelope before a proven instruction or completed checkpoint, never as the instruction. */
+function canonicalMetadataEnvironmentBefore(
+  input: unknown[],
+  anchorIndex: number,
+  metadata: Record<string, unknown>,
+  requireMetadataBoundRoots = false,
+): string | undefined {
+  const metadataTurnId = metadata.turn_id;
+  if (typeof metadataTurnId !== "string" || !metadataTurnId.trim()) return undefined;
+
+  let candidateIndex = anchorIndex - 1;
   let candidate = record(input[candidateIndex]);
-  while (candidate?.type === "message" && candidate.role === "developer") {
+  while (candidate?.type === "message" && (candidate.role === "developer" || compactionSummaryMessage(candidate))) {
     const developerTurnId = itemTurnId(candidate);
     const serverOwnedId = typeof candidate.id === "string" && candidate.id.length > 0;
     if (developerTurnId === undefined ? !serverOwnedId : developerTurnId !== metadataTurnId) return undefined;
@@ -417,12 +526,21 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
   let activeUserIndex = -1;
   for (let index = input.length - 1; index >= 0; index -= 1) {
     const item = record(input[index]);
-    if (isUserOrParentInstruction(item, metadata)) {
+    if (isNativeInstruction(item, metadata)) {
       activeUserIndex = index;
       break;
     }
   }
+  const checkpoint = activeUserIndex < 0 ? recoverCompactionInstruction(parsed, extractChatGptTurnIdentity(parsed)) : undefined;
+  const anchorIndex = checkpoint?.summaryIndex ?? activeUserIndex;
   const turnId = metadata?.turn_id;
+  // A mid-turn update supersedes the start envelope too. Do not return that earlier authority
+  // before the store can authenticate the delta against the current native turn context.
+  if (input.slice(anchorIndex + 1).some(value => {
+    const item = record(value);
+    return hasEnvironmentContextFragment(item)
+      && (itemTurnId(item) === undefined || itemTurnId(item) === turnId);
+  })) return undefined;
   const currentByTurn = environmentBeforeUser(
     input,
     activeUserIndex,
@@ -431,7 +549,9 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
   );
   if (currentByTurn) return currentByTurn;
 
-  const current = canonicalMetadataEnvironmentBeforeUser(input, activeUserIndex, metadata);
+  const current = checkpoint && metadata
+    ? canonicalMetadataEnvironmentBefore(input, checkpoint.summaryIndex, metadata)
+    : canonicalMetadataEnvironmentBeforeUser(input, activeUserIndex, metadata);
   if (current) return current;
 
   // Native steering appends same-turn user items without repeating the trusted envelope. Reuse
@@ -472,7 +592,7 @@ function rawEnvironmentText(parsed: CodexParsedRequest): string | undefined {
     ? metadata.thread_id
     : undefined;
   const activeUser = record(input[activeUserIndex]);
-  const activeUserOwned = isUserOrParentInstruction(activeUser, metadata)
+  const activeUserOwned = isNativeInstruction(activeUser, metadata)
     && typeof activeUser.id === "string"
     && activeUser.id.length > 0
     && itemTurnId(activeUser) === currentTurnId;

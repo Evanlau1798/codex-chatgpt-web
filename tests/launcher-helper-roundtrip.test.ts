@@ -28,9 +28,8 @@ test("daemon streams browser lifecycle through the real helper process", async (
       }
       await turn.onPreparedSelected(false);
       const prepared = await turn.prepare();
-      if (prepared.multipart.parts.length !== 3) throw new Error("Multipart context was lost");
-      await turn.onMultipartStageAcknowledged?.(1);
-      await turn.onMultipartStageAcknowledged?.(2);
+      if (prepared.multipart.parts.length !== 6) throw new Error("Multipart context was lost");
+      for (let part = 1; part < 6; part++) await turn.onMultipartStageAcknowledged?.(part);
       await turn.onSendActivated();
       turn.onSubmitted();
       turn.onReasoningSummary("Reading project");
@@ -87,6 +86,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
     experimentalNoAutoCompact: true,
   };
   const reasoning: Array<{ text: string; continuation: boolean }> = [];
@@ -106,7 +106,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
       outputFormat: "visible-text",
       prepare: async () => ({
         text: "inspect", images: [],
-        multipart: { parts: ["part one", "part two", "part three"], commit: "inspect" },
+        multipart: { parts: ["part one", "part two", "part three", "part four", "part five", "part six"], commit: "inspect" },
         release: () => { released = true; },
       }),
       onMultipartStageAcknowledged: stage => { acknowledgedStages.push(stage); },
@@ -126,7 +126,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
     expect(deltas).toEqual(["done"]);
     expect(sendActivated).toBe(true);
     expect(submitted).toBe(true);
-    expect(acknowledgedStages).toEqual([1, 2]);
+    expect(acknowledgedStages).toEqual([1, 2, 3, 4, 5]);
     expect(checkpoints).toEqual([{
       answerHash: "a".repeat(64),
       checkpoint: {
@@ -190,6 +190,7 @@ test("structured output fails closed before dispatch to an older helper", async 
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   try {
     await expect(client.run({
@@ -217,6 +218,7 @@ test("launcher helper protocol preserves multipart context and the compaction fl
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const internal = client as unknown as {
     pending: Map<string, { resolve(value: string): void }>;
@@ -293,6 +295,7 @@ test("an abort dispatched during run submission cannot overtake the run frame", 
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const internal = client as unknown as {
     ensureChild(): Promise<void>;
@@ -339,6 +342,7 @@ test("structured helper errors preserve the ChatGPT adapter failure contract", a
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   });
   const internal = client as unknown as {
     child?: unknown;

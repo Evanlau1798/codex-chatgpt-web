@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, spyOn, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -46,6 +46,8 @@ describe("Zero Risk turn broker lifecycle", () => {
   test("requires both Launcher Sent and connector start before tools can run", async () => {
     const socketPath = endpoint("strict-lifecycle");
     const broker = TurnBroker.forSocket(socketPath);
+    const logs: string[] = [];
+    const logger = spyOn(console, "info").mockImplementation((...args) => { logs.push(args.join(" ")); });
     try {
       // The TTL bounds human setup, not local named-pipe scheduling. Keep enough margin for loaded
       // Windows CI, then cross that exact boundary after activation to prove the turn remains live.
@@ -104,6 +106,7 @@ describe("Zero Risk turn broker lifecycle", () => {
       await expect(invocation).resolves.toMatchObject({ structuredContent: { output: root } });
       expect(() => broker.completeSafeTurn(requestId, "activity still settling"))
         .toThrow("1 active Codex MCP request");
+      expect(logs.filter(line => line.includes("safe_completion accepted"))).toEqual([]);
       await callTurnBroker(socketPath, {
         method: "activity_complete",
         token: requestId,
@@ -125,7 +128,19 @@ describe("Zero Risk turn broker lifecycle", () => {
       expect(() => broker.completeSafeTurn(requestId, "   ")).toThrow("must not be empty");
       await expect(callTurnBroker(socketPath, { method: "claim", token: requestId, contract: "safe" }))
         .rejects.toThrow("already terminal");
+      const deliveries = logs.filter(line => line.includes(" tool_delivery "));
+      expect(deliveries).toHaveLength(1);
+      expect(JSON.parse(deliveries[0]!.split(" tool_delivery ")[1]!)).toMatchObject({
+        path: "waiter", calls: 1, tools: [{ callId: request!.callId.slice(0, 17), wireName: request!.wireName }],
+      });
+      expect(logs.filter(line => line.includes("safe_completion accepted"))).toEqual([
+        "[chatgpt-web] broker trace=safe-lifecycle safe_completion accepted chars=12",
+      ]);
+      for (const privateValue of [requestId, claimed.bindingId, request!.callId, nonceA, nonceB, "final answer", "conflicting answer"]) {
+        expect(logs.join("\n")).not.toContain(privateValue);
+      }
     } finally {
+      logger.mockRestore();
       await broker.close();
     }
   }, 15_000);

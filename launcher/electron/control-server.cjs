@@ -37,11 +37,12 @@ function writeJson(response, status, body) {
 }
 
 class BrowserControlServer {
-  constructor({ logger, getBrowserHost, getPreferences, resolveProxy }) {
+  constructor({ logger, getBrowserHost, getPreferences, resolveProxy, limits }) {
     this.logger = logger;
     this.getBrowserHost = getBrowserHost;
     this.getPreferences = getPreferences;
     this.resolveProxy = resolveProxy;
+    this.limits = limits;
     this.token = randomBytes(32).toString("base64url");
     this.port = 0;
     this.server = createServer((request, response) => {
@@ -95,6 +96,7 @@ class BrowserControlServer {
     }
     const isTurn = request.url === "/v1/turn/start"
       || request.url === "/v1/turn/heartbeat"
+      || request.url === "/v1/turn/usage"
       || request.url === "/v1/turn/end";
     const isTurnRelease = request.url === "/v1/turn/release";
     const isSessionInspect = request.url === "/v1/session/inspect";
@@ -243,18 +245,42 @@ class BrowserControlServer {
         throw new Error("refreshViewport is only valid for a turn heartbeat");
       }
       const preferences = this.getPreferences();
+      if (request.url === "/v1/turn/usage") {
+        if (host.browserInteractionMode() === "manual") throw new Error("Limits tracking is disabled in Zero Risk mode");
+        // The same owner check as a heartbeat prevents another helper from charging this tab.
+        host.heartbeatTurn(body.traceId, body.helperPid);
+        if (!this.limits) throw new Error("Limits tracking is unavailable");
+        const recorded = this.limits.record(body);
+        writeJson(response, 200, { ok: true, recorded });
+        return;
+      }
       if (request.url === "/v1/turn/start") {
-        const lease = await host.beginTurn(
-          body.traceId,
-          preferences.showBrowserDuringTurns === true,
-          body.helperPid,
-          preferences.lockBrowserDuringTurns !== false,
-          body.conversationKey,
-          body.connectorIdentity,
-          body.requireRetainedConversation === true,
-        );
+        if (host.browserInteractionMode() === "manual") {
+          throw new Error("Automatic browser interaction is disabled");
+        }
+        const acquisition = new AbortController();
+        const onClose = () => {
+          if (!response.writableFinished) acquisition.abort(new Error("Browser turn acquisition caller disconnected"));
+        };
+        response.once("close", onClose);
+        let lease;
+        try {
+          if (response.destroyed) onClose();
+          lease = await host.beginTurn(
+            body.traceId,
+            preferences.showBrowserDuringTurns === true,
+            body.helperPid,
+            preferences.lockBrowserDuringTurns === true,
+            body.conversationKey,
+            body.connectorIdentity,
+            body.requireRetainedConversation === true,
+            acquisition.signal,
+          );
+        } finally {
+          response.off("close", onClose);
+        }
         this.logger.info("browser.turn_started", { traceId: body.traceId });
-        writeJson(response, 200, { ok: true, ...lease });
+        writeJson(response, 200, { ok: true, ...lease, trackUsage: this.limits?.enabled() === true });
         return;
       } else if (request.url === "/v1/turn/heartbeat") {
         host.heartbeatTurn(body.traceId, body.helperPid, body.refreshViewport === true);

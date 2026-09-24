@@ -486,6 +486,10 @@ class RuntimeHost {
 
   upgradeManagedRuntime(...args) { return setupOperations.upgradeManagedRuntime.apply(this, args); }
 
+  setFreshConversationPerTurn(...args) { return setupOperations.setFreshConversationPerTurn.apply(this, args); }
+
+  setUseSavedChats(...args) { return setupOperations.setUseSavedChats.apply(this, args); }
+
   setupMcp(...args) { return setupOperations.setupMcp.apply(this, args); }
 
   setupDevMcp(...args) { return setupOperations.setupDevMcp.apply(this, args); }

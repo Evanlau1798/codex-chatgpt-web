@@ -67,6 +67,7 @@ test("browser helper waits for parent activation acknowledgement before completi
     turnTimeoutMs: 60_000,
     headed: true,
     autoApproveToolCalls: false,
+    useSavedChats: false,
   };
   const client = new LauncherBrowserHelperClient(config);
   let activated = false;

@@ -36,6 +36,8 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       showBrowserDuringTurns: true,
       lockBrowserDuringTurns: true,
       browserInteractionMode: "automatic",
+      experimentalFreshConversationPerTurn: false,
+      useSavedChats: false,
       zeroRiskProEnabled: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,
@@ -76,6 +78,8 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       showBrowserDuringTurns: true,
       lockBrowserDuringTurns: false,
       browserInteractionMode: "automatic",
+      experimentalFreshConversationPerTurn: false,
+      useSavedChats: false,
       zeroRiskProEnabled: false,
       browserSmokePassed: true,
       browserSmokeVersion: "0.2.0",
@@ -135,6 +139,8 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       language: "zh-CN",
       onboardingComplete: "yes",
       autoStart: "yes",
+      experimentalFreshConversationPerTurn: "true",
+      bridgeEnabled: false,
       browserSmokePassed: "yes",
       browserSmokeVersion: { invalid: true },
       sidebarOpen: "yes",
@@ -150,7 +156,7 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       githubOpened: false,
       xOpened: false,
       autoStart: true,
-      bridgeEnabled: true,
+      bridgeEnabled: false,
       useEnhancedWebSessionMode: false,
       useEnhancedOutputTunnel: true,
       maxBrowserTabs: 6,
@@ -164,6 +170,8 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       showBrowserDuringTurns: true,
       lockBrowserDuringTurns: true,
       browserInteractionMode: "automatic",
+      experimentalFreshConversationPerTurn: false,
+      useSavedChats: false,
       zeroRiskProEnabled: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,
@@ -216,4 +224,24 @@ test("session refresh reminders are deferred by exactly 48 hours", () => {
   assert.equal(SESSION_REFRESH_REMINDER_INTERVAL_MS, 48 * 60 * 60 * 1000);
   assert.equal(nextSessionRefreshReminderAt(now), "2026-08-07T12:00:00.000Z");
   assert.throws(() => nextSessionRefreshReminderAt(Number.NaN), /must be finite/);
+});
+
+
+test("saved chats persist in manual and Enhanced modes while fresh-per-turn is Original-only", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-conversation-preferences-"));
+  const file = path.join(root, "state.json");
+  try {
+    for (const mode of ["automatic", "manual"]) for (const enhanced of [false, true]) {
+      const store = createStateStore(file);
+      store.update({ onboardingComplete: true, coreSetupComplete: true,
+        browserInteractionMode: mode, useEnhancedWebSessionMode: enhanced,
+        experimentalFreshConversationPerTurn: true, useSavedChats: true });
+      const state = createStateStore(file).read();
+      assert.equal(state.browserInteractionMode, mode);
+      assert.equal(state.useSavedChats, true);
+      assert.equal(state.experimentalFreshConversationPerTurn, mode === "automatic" && !enhanced);
+      fs.writeFileSync(file, JSON.stringify({ ...state, experimentalFreshConversationPerTurn: true }));
+      assert.equal(createStateStore(file).read().experimentalFreshConversationPerTurn, mode === "automatic" && !enhanced);
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

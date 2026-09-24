@@ -43,7 +43,7 @@ function request(compaction = false): CodexParsedRequest {
   };
 }
 
-test("fresh multipart compaction gives each acknowledged phase its own handoff budget", async () => {
+test.each([{ enhanced: true, fresh: false }, { enhanced: true, fresh: true }])("six-phase compaction budgets (Enhanced=$enhanced, fresh=$fresh)", async ({ enhanced, fresh }) => {
   const root = mkdtempSync(join(shortSocketTempRoot(), "cgw-phased-fallback-compact-"));
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
@@ -53,7 +53,8 @@ test("fresh multipart compaction gives each acknowledged phase its own handoff b
       browserHostDescriptorPath: join(root, "launcher.json"),
       brokerSocketPath: defaultBrokerEndpoint(root),
       localToolsEnabled: true,
-      useEnhancedWebSessionMode: true,
+      useEnhancedWebSessionMode: enhanced,
+      experimentalFreshConversationPerTurn: fresh,
       solAvailable: true,
       proAvailable: true,
       turnTimeoutMs: 40,
@@ -62,11 +63,14 @@ test("fresh multipart compaction gives each acknowledged phase its own handoff b
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const originalRun = worker.run.bind(worker);
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+    expect(turn.traceId.endsWith("_fallback")).toBeTrue();
     expect(turn.onMultipartStageAcknowledged).toBeDefined();
     expect(turn.onSubmitted).toBeDefined();
-    mock.timers.tick(25);
-    expect(turn.abortSignal?.aborted).toBeFalse();
-    await turn.onMultipartStageAcknowledged!(1);
+    for (let part = 1; part <= 5; part++) {
+      mock.timers.tick(25);
+      expect(turn.abortSignal?.aborted).toBeFalse();
+      await turn.onMultipartStageAcknowledged!(part);
+    }
     mock.timers.tick(25);
     expect(turn.abortSignal?.aborted).toBeFalse();
     turn.onSubmitted!();

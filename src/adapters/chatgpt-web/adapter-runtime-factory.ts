@@ -36,6 +36,7 @@ interface ChatGptRuntimeFactoryOptions {
   timeoutMs?: number;
   useEnhancedWebSessionMode: boolean;
   useEnhancedOutputTunnel: boolean;
+  experimentalFreshConversationPerTurn: boolean;
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
   configuredCapabilities: ChatGptWebCapabilities;
@@ -55,6 +56,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     timeoutMs,
     useEnhancedWebSessionMode,
     useEnhancedOutputTunnel,
+    experimentalFreshConversationPerTurn,
     experimentalBiggerContext,
     experimentalSkillAttachments,
     configuredCapabilities,
@@ -142,7 +144,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         await upstreamRetry?.(answer, attempt) ?? toolEvidence.retryPromptForAnswer(answer)
       )
       : upstreamRetry;
-    const retainConversation = useEnhancedWebSessionMode && requestedRetention;
+    const retainConversation = requestedRetention && !experimentalFreshConversationPerTurn;
     let conversationKey: string | undefined;
     try {
       conversationKey = retainConversation ? chatGptConversationKey(checkpointInput.parsed, executionNamespace) : undefined;
@@ -179,6 +181,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     if (!mode.localTools) {
       const base = {
         modelId: parsed.modelId,
+        ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
         reasoning: parsed.options.reasoning,
         capabilities: turnCapabilities,
         prepare: async () => prepareChatGptWebContext(broker,
@@ -266,6 +269,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     const browserRun = worker.run({
       traceId,
       modelId: parsed.modelId,
+      ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
       reasoning: parsed.options.reasoning,
       capabilities: turnCapabilities,
       ...(parsed._compactionRequest ? { compaction: true } : {}),

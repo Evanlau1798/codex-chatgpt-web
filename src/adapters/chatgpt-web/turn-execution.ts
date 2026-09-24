@@ -2,6 +2,7 @@ import type { AdapterEvent, CodexParsedRequest, CodexToolResultMessage } from ".
 import type { BrokerToolRequest } from "./turn-broker";
 import { ChatGptSteeringFeed, steeringFingerprint, type ClaudeSteeringDelivery } from "./steering-feed";
 import { ChatGptTextFeed, ChatGptTraceFeed } from "./turn-feeds";
+import { ChatGptWebAdapterError } from "./adapter-error";
 import type { ChatGptExternalTurnProgress } from "./turn-progress";
 export { chatGptConversationKey, chatGptTurnTraceId } from "./conversation-key";
 export {
@@ -83,6 +84,15 @@ export class ChatGptTurnSession {
       .then(outcome => {
       this.steering.settleClaude(outcome.type === "final");
       this.settledBrowserOutcome ??= outcome;
+      const error = this.settledBrowserOutcome.type === "error" && this.settledBrowserOutcome.error instanceof ChatGptWebAdapterError
+        ? this.settledBrowserOutcome.error : undefined;
+      console.info(`[chatgpt-web] browser_settled ${JSON.stringify({
+        traceId: this.traceId,
+        outcome: this.settledBrowserOutcome.type,
+        compaction: runtime.usageInput?._compactionRequest === true,
+        ...(!runtime.usageInput?._compactionRequest ? { submission: runtime.submission?.phase ?? "unknown" } : {}),
+        ...(error ? { code: error.code, retryable: error.retryable } : {}),
+      })}`);
       return this.settledBrowserOutcome;
     });
     this.physicalSettlement = (runtime.physicalSettlement ?? this.browserOutcome.then(() => undefined))

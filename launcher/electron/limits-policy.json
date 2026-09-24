@@ -1,0 +1,7 @@
+{
+  "sourceUrl": "https://help.openai.com/en/articles/20001354-gpt-56-and-gpt-6-pro-in-chatgpt",
+  "checkedOn": "2026-09-19",
+  "pro_200": { "gpt6Weekly": 200, "solDaily": 170, "combinedDaily": 200 },
+  "pro_100": { "combinedWeekly": 50 },
+  "business": { "standardMonthly": 15, "premiumWeekly": 50 }
+}

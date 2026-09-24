@@ -2,6 +2,7 @@ import type { AppConfig } from "./config";
 import type { CodexModelContextOverride } from "./codex-integration";
 import {
   availableChatGptWebModelRoutes,
+  chatGptWebRouteEfforts,
   CHATGPT_WEB_MODEL_PREFIX,
   resolveChatGptWebContextLimits,
   type ChatGptWebModelRoute,
@@ -47,13 +48,11 @@ function routedModelPriority(
   const priority = modelPriority(template);
   if (priority === undefined
     || config.subagentProtocol !== "compatibility-v1"
-    || route.slug !== "chatgpt-web/light") return priority;
+    || !["chatgpt-web/light", "chatgpt-web/gpt-5.6-sol-instant"].includes(route.slug)) return priority;
   if (priority === Number.MAX_SAFE_INTEGER) {
     throw new Error("Native Codex model template priority cannot reserve the Compatibility V1 roster");
   }
-  // Codex V1 exposes at most five model overrides. Keep the native Sol row plus the four useful
-  // delegated Web efforts (Medium, High, Extra High, Pro); Instant remains a selectable root model
-  // but does not displace Pro from spawn_agent's bounded registry.
+  // Preserve the native model and the reasoning/Pro choices in Codex V1's bounded registry.
   return priority + 1;
 }
 
@@ -103,12 +102,16 @@ export function buildChatGptWebModel(
   if (!templateSlug || templateSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX)) {
     throw new Error("ChatGPT Web model template must be a native Codex model");
   }
-  const limits = resolveChatGptWebContextLimits(
-    route.backendModel,
-    route.adapterEffort,
-    config,
-    config.useEnhancedWebSessionMode,
-  );
+  const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config, config.useEnhancedWebSessionMode);
+  const efforts = chatGptWebRouteEfforts(route, config);
+  for (const effort of efforts) {
+    const adapterEffort = route.supportedCodexEfforts ? effort : route.adapterEffort;
+    if (adapterEffort === "ultra") throw new Error("Ultra is not a browser effort");
+    const candidate = resolveChatGptWebContextLimits(route.backendModel, adapterEffort, config, config.useEnhancedWebSessionMode);
+    if (JSON.stringify(candidate) !== JSON.stringify(limits)) {
+      throw new Error(`Cannot group different context budgets under ${route.slug}`);
+    }
+  }
   const multiAgentVersion = routedSubagentVersion(template, config);
   const priority = routedModelPriority(template, route, config);
   const model: JsonObject = {
@@ -117,7 +120,7 @@ export function buildChatGptWebModel(
     display_name: route.displayName,
     description: route.description,
     input_modalities: route.interactionMode === "manual" ? ["text"] : ["text", "image"],
-    visibility: "list",
+    visibility: route.legacy ? "hide" : "list",
     // These slugs are implemented by this local Responses-compatible bridge. Marking them false
     // makes Codex drop them from spawn_agent whenever openai_base_url points at the bridge.
     supported_in_api: true,
@@ -141,7 +144,10 @@ export function buildChatGptWebModel(
     prefer_websockets: false,
     upgrade: null,
     default_reasoning_level: route.codexEffort,
-    supported_reasoning_levels: [reasoningLevel(template, route.codexEffort, route.displayName)],
+    supported_reasoning_levels: efforts.map(effort => reasoningLevel(template, effort,
+      efforts.length === 1 ? route.displayName
+        : route.backendModel === "gpt-5.6-luna" ? effort === "low" ? "Ordinary Luna" : "Think"
+          : `${route.displayName} — ${effort === "xhigh" ? "Extra High" : effort}`)),
     context_window: config.experimentalNoAutoCompact ? null : limits.contextWindow,
     max_context_window: config.experimentalNoAutoCompact ? null : limits.contextWindow,
     effective_context_window_percent: limits.effectiveContextWindowPercent,
@@ -197,7 +203,7 @@ export function augmentNativeModelCatalog(
       }
     }
   }
-  const webModels = availableChatGptWebModelRoutes(config)
+  const webModels = availableChatGptWebModelRoutes(config, true)
     .map(route => buildChatGptWebModel(template, route, config));
   return {
     ...structuredClone(catalog),

@@ -699,15 +699,20 @@ describe("reversible native Codex route integration", () => {
     expect(() => activateCodexIntegration()).toThrow("realtime WebRTC call route changed while the bridge was disconnected");
   });
 
-  test("invalidates Codex's provider-agnostic model cache on install and uninstall", () => {
+  test("invalidates the model cache on install, release reinstall, and uninstall without rewriting a saved model", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     const cachePath = getCodexModelsCachePath();
-    writeFileSync(configPath, 'model = "gpt-5.6-sol"\n');
+    writeFileSync(configPath, 'model = "chatgpt-web/high"\n');
     writeFileSync(cachePath, '{"models":["native-only"]}\n');
 
     installCodexIntegration(nativeConfig("browser-only"));
     expect(() => readFileSync(cachePath, "utf8")).toThrow();
+
+    writeFileSync(cachePath, '{"models":["chatgpt-web/high","chatgpt-web/pro"]}\n');
+    installCodexIntegration({ ...nativeConfig("browser-only"), releaseVersion: "6.0.0" });
+    expect(() => readFileSync(cachePath, "utf8")).toThrow();
+    expect(readFileSync(configPath, "utf8")).toContain('model = "chatgpt-web/high"');
 
     writeFileSync(cachePath, '{"models":["native-and-web"]}\n');
     uninstallCodexIntegration();
@@ -717,7 +722,7 @@ describe("reversible native Codex route integration", () => {
   test("requires explicit replacement and preserves every non-port route assignment", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
-    const original = `model = "gpt-5.6-sol"\nmodel_provider = "existing-provider"\nopenai_base_url = "http://127.0.0.1:9999/v1"\nmodel_catalog_json = "/tmp/native.json"\n\n[features]\ngoals = true\n`;
+    const original = `model = "gpt-5.6-sol"\nmodel_provider = "openai"\nopenai_base_url = "http://127.0.0.1:9999/v1"\nmodel_catalog_json = "/tmp/native.json"\n\n[features]\ngoals = true\n`;
     writeFileSync(configPath, original);
     const config = nativeConfig("full");
 
@@ -725,7 +730,7 @@ describe("reversible native Codex route integration", () => {
     installCodexIntegration(config, { replaceExistingRoute: true });
     const installed = readFileSync(configPath, "utf8");
     expect(installed).toContain('openai_base_url = "http://127.0.0.1:17841/v1"');
-    expect(installed).toContain('model_provider = "existing-provider"');
+    expect(installed).toContain('model_provider = "openai"');
     expect(installed).toContain('model_catalog_json = "/tmp/native.json"');
 
     uninstallCodexIntegration();
@@ -808,12 +813,31 @@ describe("reversible native Codex route integration", () => {
     }
   });
 
-  test("owns only openai_base_url while active", () => {
+  test("rejects custom providers without changing them, even with explicit route replacement", () => {
+    const { codexHome } = fixture();
+    const configPath = join(codexHome, "config.toml");
+    for (const selection of ['model_provider = "custom"', '"model_provider" = \'custom\'']) {
+      const original = `${selection} # user choice\n\n[model_providers.custom]\nname = "custom"\nbase_url = "http://127.0.0.1:9999/v1"\n`;
+      writeFileSync(configPath, original);
+      writeFileSync(getCodexModelsCachePath(), '{"models":[]}\n');
+      for (const replaceExistingRoute of [false, true]) {
+        for (const action of [preflightCodexIntegration, installCodexIntegration]) {
+          expect(() => action(nativeConfig("full"), { replaceExistingRoute })).toThrow(/model_provider.*built-in.*openai/s);
+          expect(readFileSync(configPath, "utf8")).toBe(original);
+          expect(readFileSync(getCodexModelsCachePath(), "utf8")).toBe('{"models":[]}\n');
+          expect(existsSync(getCodexJournalPath())).toBe(false);
+          expect(existsSync(getCodexJournalRecoveryPath())).toBe(false);
+        }
+      }
+    }
+  });
+
+  test("detects a custom provider on an active v10 route while allowing exact release and recovery", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     const original = [
       'model = "gpt-5.6-sol"',
-      'model_provider = "first-provider"',
+      'model_provider = "openai"',
       'model_catalog_json = "/tmp/first.json"',
       "",
       "[features]",
@@ -825,10 +849,25 @@ describe("reversible native Codex route integration", () => {
 
     installCodexIntegration(nativeConfig("full"));
     const userEdited = readFileSync(configPath, "utf8")
-      .replace('model_provider = "first-provider"', 'model_provider = "second-provider"')
+      .replace('model_provider = "openai"', 'model_provider = "second-provider"')
       .replace('model_catalog_json = "/tmp/first.json"', 'model_catalog_json = "/tmp/second.json"')
       .replace("multi_agent = true", "multi_agent = false");
     writeFileSync(configPath, userEdited);
+
+    const journal = readFileSync(getCodexJournalPath(), "utf8");
+    for (const replaceExistingRoute of [false, true]) {
+      for (const action of [preflightCodexIntegration, installCodexIntegration]) {
+        expect(() => action(nativeConfig("full"), { replaceExistingRoute })).toThrow("model_provider");
+        expect(readFileSync(configPath, "utf8")).toBe(userEdited);
+        expect(readFileSync(getCodexJournalPath(), "utf8")).toBe(journal);
+        expect(readFileSync(getCodexJournalRecoveryPath(), "utf8")).toBe(journal);
+      }
+    }
+    expect(() => activateCodexIntegration()).toThrow("model_provider");
+    // Journal recovery proves ownership, so the unsupported route can still be removed.
+    rmSync(getCodexJournalPath());
+    expect(inspectCodexIntegration().errors).toEqual([expect.stringContaining("model_provider")]);
+    expect(readFileSync(getCodexJournalPath(), "utf8")).toBe(journal);
 
     expect(uninstallCodexIntegration()).toEqual({ changed: true });
     const restored = readFileSync(configPath, "utf8");
@@ -836,6 +875,43 @@ describe("reversible native Codex route integration", () => {
     expect(restored).toContain('model_provider = "second-provider"');
     expect(restored).toContain('model_catalog_json = "/tmp/second.json"');
     expect(restored).toContain("multi_agent = false");
+
+    // Recreate a released v10 installation that accepted this provider at setup time.
+    const previousInstall = JSON.parse(journal);
+    previousInstall.previous.model_provider.value = "second-provider";
+    previousInstall.previous.model_provider.rawLine = 'model_provider = "second-provider"';
+    writeFileSync(configPath, userEdited);
+    for (const path of [getCodexJournalPath(), getCodexJournalRecoveryPath()]) {
+      writeFileSync(path, JSON.stringify(previousInstall));
+    }
+    expect(inspectCodexIntegration().errors).toEqual([expect.stringContaining("model_provider")]);
+    expect(() => preflightCodexIntegration(nativeConfig("full"))).toThrow("model_provider");
+    expect(deactivateCodexIntegration()).toEqual({ changed: true, active: false });
+    expect(readFileSync(configPath, "utf8")).toBe(restored);
+    expect(() => activateCodexIntegration()).toThrow("model_provider");
+    expect(uninstallCodexIntegration()).toEqual({ changed: true });
+    expect(readFileSync(configPath, "utf8")).toBe(restored);
+  });
+
+  test("refuses a custom provider added while disconnected without preventing removal", () => {
+    const { codexHome } = fixture();
+    const configPath = join(codexHome, "config.toml");
+    const original = 'model = "gpt-5.6-sol"\n';
+    writeFileSync(configPath, original);
+    const config = nativeConfig("browser-only");
+    installCodexIntegration(config);
+    deactivateCodexIntegration();
+    const changed = `model_provider = 'custom' # user choice\n${original}`;
+    writeFileSync(configPath, changed);
+    const journal = readFileSync(getCodexJournalPath(), "utf8");
+    expect(() => preflightCodexIntegration(config)).toThrow("model_provider");
+    expect(() => installCodexIntegration(config)).toThrow("model_provider");
+    expect(() => activateCodexIntegration()).toThrow("model_provider");
+    expect(readFileSync(configPath, "utf8")).toBe(changed);
+    expect(readFileSync(getCodexJournalPath(), "utf8")).toBe(journal);
+    expect(readFileSync(getCodexJournalRecoveryPath(), "utf8")).toBe(journal);
+    expect(uninstallCodexIntegration()).toEqual({ changed: true });
+    expect(readFileSync(configPath, "utf8")).toBe(changed);
   });
 
   test("preflight detects route conflicts without changing Codex or creating a journal", () => {
@@ -1354,7 +1430,7 @@ describe("reversible native Codex route integration", () => {
     );
   });
 
-  test("explicit replacement adopts a new provider while restoring the still-owned URL and catalog", () => {
+  test("explicit replacement refuses a custom provider while deactivation restores still-owned route fields", () => {
     const { codexHome } = fixture();
     const configPath = join(codexHome, "config.toml");
     const original = [
@@ -1378,7 +1454,9 @@ describe("reversible native Codex route integration", () => {
       ),
     );
 
-    installCodexIntegration(config, { replaceExistingRoute: true });
+    const changed = readFileSync(configPath, "utf8");
+    expect(() => installCodexIntegration(config, { replaceExistingRoute: true })).toThrow("built-in openai provider");
+    expect(readFileSync(configPath, "utf8")).toBe(changed);
     deactivateCodexIntegration();
     const restored = readFileSync(configPath, "utf8");
     expect(restored).toContain('openai_base_url = "https://first.example/v1"');

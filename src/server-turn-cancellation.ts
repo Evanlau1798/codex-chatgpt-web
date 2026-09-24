@@ -1,5 +1,5 @@
 import { ChatGptWebAdapterError, chatGptBrowserTabClosedError } from "./adapters/chatgpt-web/adapter-error";
-import { cancelAllStructuredCompactions, cancelStructuredCompactionTrace, cancelStructuredCompactionNativeTurn } from "./adapters/chatgpt-web/compaction-handoff";
+import { cancelAllStructuredCompactions, beginCancelStructuredCompactionTrace, cancelStructuredCompactionNativeTurn } from "./adapters/chatgpt-web/compaction-handoff";
 import type { TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import type { HttpTurnCounter } from "./http-turn-counter";
@@ -61,15 +61,19 @@ export async function handleTurnCancellation(
         { status: 504, errorType: "server_error", code: leaseFailure, retryable: false },
       )
       : chatGptBrowserTabClosedError();
-    const compaction = cancelStructuredCompactionTrace(traceId, reason);
-    const [browserCount, compactionCount] = await Promise.all([
-      chatGptTurnSessions.cancelTrace(traceId, reason), compaction,
-    ]);
+    const compaction = beginCancelStructuredCompactionTrace(traceId, reason);
+    const browser = chatGptTurnSessions.beginCancelTrace(traceId, reason);
+    const brokerCount = broker?.revokeTrace(traceId, reason) ?? 0;
+    const settlement = Promise.all([browser.settlement, compaction.settlement]);
+    // Closing a tab must revoke authority before acknowledging UI destruction; lease expiry still
+    // waits for physical cleanup. Both paths keep settlement owned by the existing session registry.
+    if (leaseFailure) await settlement;
+    else void settlement.catch(() => console.error("[codex-chatgpt-web] cancelled turn cleanup failed"));
     return Response.json({
       status: "ok", trace_id: traceId,
-      cancelled_browser_turns: browserCount,
-      cancelled_broker_turns: broker?.revokeTrace(traceId, reason) ?? 0,
-      cancelled_compaction_runs: compactionCount,
+      cancelled_browser_turns: browser.cancelled,
+      cancelled_broker_turns: brokerCount,
+      cancelled_compaction_runs: compaction.cancelled,
       ...activity(),
     });
   }

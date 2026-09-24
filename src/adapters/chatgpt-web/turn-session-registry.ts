@@ -388,11 +388,17 @@ export class ChatGptTurnSessions {
   }
 
   async cancelTrace(traceId: string, reason = chatGptBrowserTabClosedError()): Promise<number> {
+    const cancellation = this.beginCancelTrace(traceId, reason);
+    await cancellation.settlement;
+    return cancellation.cancelled;
+  }
+
+  /** Revoke immediately; physical settlement remains tracked until helper cleanup completes. */
+  beginCancelTrace(traceId: string, reason: Error): { cancelled: number; settlement: Promise<void> } {
     const sessions = [...this.entries.values()]
       .filter(session => session.traceId === traceId && session.isActive());
     for (const session of sessions) session.cancel(reason);
-    await Promise.all(sessions.map(session => session.browserOutcome.then(() => undefined)));
-    return sessions.length;
+    return { cancelled: sessions.length, settlement: Promise.all(sessions.map(session => session.physicalSettlement)).then(() => undefined) };
   }
 
   cancelledError(traceId: string): Error | undefined {

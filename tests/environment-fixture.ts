@@ -8,14 +8,14 @@ export const environmentXml = `<environment_context>
 export const dangerFullAccessProfileXml = `<permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile>`;
 
 export function currentWire(
-  options: { workspace?: string; sandbox?: string; includeIds?: boolean; environmentXml?: string } = {},
+  options: { threadId?: string; workspace?: string; sandbox?: string; includeIds?: boolean; environmentXml?: string } = {},
 ): CodexParsedRequest {
   const workspace = options.workspace ?? root;
   const sandbox = options.sandbox ?? "none";
   const includeIds = options.includeIds ?? true;
   const envXml = options.environmentXml ?? environmentXml;
   const turnMetadata = {
-    thread_id: "thread_current",
+    thread_id: options.threadId ?? "thread_current",
     turn_id: "turn_current",
     sandbox,
     workspaces: { [workspace]: { has_changes: true } },

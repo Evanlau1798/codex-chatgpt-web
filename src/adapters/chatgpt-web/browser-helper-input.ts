@@ -12,6 +12,7 @@ export interface BrowserHelperRunMessage {
     browserDiagnosticsPath?: string;
     turnTimeoutMs: number;
     autoApproveToolCalls: boolean;
+    useSavedChats?: boolean;
     experimentalNoAutoCompact?: boolean;
     /** Candidate only: replace large guarded insertions; preserve existing direct inline routes. */
     experimentalComposerPlainText?: boolean;
@@ -20,6 +21,7 @@ export interface BrowserHelperRunMessage {
     traceId: string;
     modelId: string;
     reasoning?: string;
+    modelFamily?: "5.6" | "6";
     capabilities: ChatGptWebCapabilities;
     nativeConnector?: boolean;
     resumeAvailable?: boolean;
@@ -37,7 +39,7 @@ export interface BrowserHelperRunMessage {
 type MaintenanceMessage =
   | { type: "verify"; id: string; config: { appName: string; browserHostDescriptorPath: string; brokerSocketPath: string } }
   | { type: "inspect"; id: string; config: { appName: string; browserHostDescriptorPath: string }; detectCapabilities: boolean }
-  | { type: "smoke"; id: string; config: { appName: string; browserHostDescriptorPath: string } };
+  | { type: "smoke" | "limits"; id: string; config: { appName: string; browserHostDescriptorPath: string } };
 
 export type BrowserHelperInputMessage = BrowserHelperRunMessage | MaintenanceMessage
   | { type: "answer_retry"; id: string; prompt?: string; acknowledge?: boolean; replaceCandidate?: boolean; allowLunaCheckpointRetry?: boolean }
@@ -54,5 +56,5 @@ export type BrowserHelperInputMessage = BrowserHelperRunMessage | MaintenanceMes
   | { type: "shutdown" };
 
 export type BrowserHelperMaintenanceMessage = Extract<BrowserHelperInputMessage, {
-  type: "verify" | "inspect" | "smoke";
+  type: "verify" | "inspect" | "smoke" | "limits";
 }>;

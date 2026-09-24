@@ -16,6 +16,8 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
+> **개발 후보: `6.0.0-Enhanced.1`.** 다운로드 버튼은 기존 Enhanced 릴리스 패키지를 가리킵니다. 이 브랜치는 새 릴리스의 게시를 의미하지 않습니다.
+
 <p align="center">
   <img src="assets/demo.gif" width="960" alt="네이티브 Codex 하네스를 사용하는 ChatGPT Web 실시간 턴">
 </p>
@@ -73,14 +75,23 @@ irm https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/in
 | **Full harness (With Automation)** | 자동 | MCP를 통해 사용 |
 | **Zero Risk** | 직접 붙여넣고 전송 | 별도 MCP 커넥터를 통해 사용 |
 
-Zero Risk는 ChatGPT 페이지를 읽거나 조작하지 않습니다. 모델과 `Codex Zero Risk` 커넥터를 직접 선택하고, 준비된 프롬프트를 붙여넣어 전송한 다음 런처에서 **Sent**를 확인하세요. 자동 모드의 각 모델 항목은 고정된 ChatGPT 모드에 대응하며, Codex의 Effort와 Speed 설정으로 바뀌지 않습니다.
+Zero Risk는 ChatGPT 페이지를 읽거나 조작하지 않습니다. 모델과 `Codex Zero Risk` 커넥터를 직접 선택하고, 준비된 프롬프트를 붙여넣어 전송한 다음 런처에서 **Sent**를 확인하세요. 이름이 **(Web)** 으로 끝나는 자동 모델은 Codex에서 지원하는 Effort를 선택할 수 있습니다. 각 컨텍스트 한도를 유지하기 위해 Instant와 각 Pro 버전은 별도 항목으로 제공됩니다. 기존 작업에 저장된 이전 모델 항목은 원래의 고정 모드를 유지합니다.
+
+### 대화 설정, Limits 및 API
+
+**Save chats in ChatGPT**는 기본적으로 꺼져 있으며 Codex／Claude 작업 대화를 저장할 수 있습니다. API 직접 전송과 native tool bridge는 항상 Temporary Chat을 사용하고 `store:true`를 거부합니다. 설정을 꺼도 기존 기록은 삭제되지 않습니다.
+
+**New browser chat for each turn**은 기본적으로 꺼져 있고 Original Automatic에서만 사용할 수 있습니다. Enhanced 및 Zero Risk에서는 UI, launcher, config, adapter 경계에서 강제로 끄며 오래된 설정으로도 다시 켤 수 없습니다. 기록 저장 여부와는 독립적입니다.
+
+**Limits**는 opt-in 로컬 사용량 추정치이며 공식 잔여 할당량이나 Account Safety의 대체 기능이 아닙니다. 수락된 실제 전송을 한 번만 기록하며 기록 실패로 메시지를 재전송하지 않습니다. Zero Risk에서는 자동 계정 확인이나 추적을 수행하지 않습니다.
+API `reasoning_effort`는 새 route가 지원하는 값만 허용하고 이전 route의 고정 의미를 유지합니다. 하나의 native Web generation 안에서 도구 결과를 이어 보낼 때 유효한 family／effort를 바꿀 수 없습니다.
 
 ### 컨텍스트 설정의 차이
 
 **Enhanced Web 세션 모드**는 도구 라운드, steering 및 컴팩션 전체에 하나의 작업 연결 ChatGPT
 대화를 유지합니다. 대화의 연속성만 바꾸며 컨텍스트 창을 늘리거나 컴팩션을 끄지 않습니다.
-**Bigger Context**와 동시에 사용할 수 없습니다. Bigger Context는 하나의 큰 Codex 턴을 2~3개의
-준비 메시지와 1개의 최종 실행 메시지로 나눕니다. 각 메시지는 실제 ChatGPT 요청이며 계정 사용량을
+**Bigger Context**와 동시에 사용할 수 없습니다. Bigger Context는 총 1개, 2개 또는 6개의
+메시지를 사용합니다. 6개일 때는 준비 메시지 5개와 최종 실행 메시지 1개입니다. 각 메시지는 실제 ChatGPT 요청이며 계정 사용량을
 소모할 수 있습니다. Codex에 표시되는 컨텍스트와 컴팩션 임계값은 3배가 되지만 ChatGPT의 메시지,
 모델, 작성기, 전송 및 서비스 제한은 계속 적용됩니다.
 
@@ -104,7 +115,7 @@ inbound 포트를 열거나 라우터 포트 포워딩을 설정할 필요가 �
 > **Limits**
 >
 > GPT-5.6 Sol Pro 및 GPT-6 Astra의 현재 ChatGPT 메시지 허용량은
-> [Limits](https://github.com/Evanlau1798/codex-chatgpt-web/discussions/309)를 참고하세요.
+> [Limits](https://github.com/miuuyy/codex-chatgpt-web/discussions/309)를 참고하세요.
 > 컨텍스트 한도는 계정 유형과 선택한 effort에 따라 달라집니다. Plus의 Medium/High는 실측
 > 90,000-token 창을 사용하며, 실험적 3× context를 활성화하면 최대 270,000 tokens까지 확장됩니다.
 > 모든 경우에 네이티브 Codex compaction이 지원됩니다.

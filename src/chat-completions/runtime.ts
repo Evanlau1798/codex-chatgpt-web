@@ -25,12 +25,26 @@ export function chatCompletionRoutes(config: AppConfig) {
   return availableChatGptWebModelRoutes(config).filter(route => route.interactionMode === "automatic");
 }
 
-/** Preflight is also called by HTTP before headers or browser work are started. */
-export function prepareChatCompletion(input: ChatCompletionInput, config: AppConfig) {
+/** Resolve model and effort before acquiring a browser or consuming a pending tool turn. */
+export function resolveChatCompletionRoute(input: ChatCompletionInput, config: AppConfig) {
   let route;
   try { route = requireChatGptWebModelRoute(input.model, config); }
   catch { throw new ChatCompletionError("Model is not available to this API", 400, "model_not_found", "model"); }
   if (route.interactionMode !== "automatic") throw new ChatCompletionError("Manual browser interaction is not supported by this API", 400, "model_not_found", "model");
+  if (input.reasoningEffort !== undefined) {
+    if (!route.supportedCodexEfforts) {
+      throw new ChatCompletionError("Legacy fixed routes do not accept reasoning_effort", 400, "invalid_request", "reasoning_effort");
+    }
+    try { route = requireChatGptWebModelRoute(input.model, config, input.reasoningEffort); }
+    catch { throw new ChatCompletionError("This model does not support the requested reasoning_effort", 400, "invalid_request", "reasoning_effort"); }
+    if (route.interactionMode !== "automatic") throw new ChatCompletionError("Model is not available to this API", 400, "model_not_found", "model");
+  }
+  return route;
+}
+
+/** Preflight is also called by HTTP before headers or browser work are started. */
+export function prepareChatCompletion(input: ChatCompletionInput, config: AppConfig) {
+  const route = resolveChatCompletionRoute(input, config);
   const capabilities = { localToolsEnabled: false, solAvailable: config.solAvailable,
     extraHighAvailable: config.extraHighAvailable, proAvailable: config.proAvailable };
   const prompt = compileChatCompletion(input);
@@ -82,6 +96,7 @@ export function createChatCompletionExecutor(dependencies: ChatCompletionRuntime
     const provider = providerConfig(config);
     provider.chatgptWeb = { ...provider.chatgptWeb,
       localToolsEnabled: false, useEnhancedWebSessionMode: false, useEnhancedOutputTunnel: false,
+      useSavedChats: false, experimentalFreshConversationPerTurn: false,
       experimentalBiggerContext: false, experimentalSkillAttachments: false, experimentalNoAutoCompact: false,
       autoApproveToolCalls: false, turnTimeoutMs: provider.chatgptWeb?.turnTimeoutMs || 600_000 };
     // Finite request lifetime includes queueing; worker retains its own settlement/cleanup responsibility.
@@ -99,7 +114,7 @@ export function createChatCompletionExecutor(dependencies: ChatCompletionRuntime
     };
     const safetyTimer = setInterval(safetyCheck, 1_000); safetyTimer.unref?.();
     const turn: BrowserTurn = {
-      traceId, modelId: route.backendModel, reasoning: route.adapterEffort, capabilities,
+      traceId, modelId: route.backendModel, modelFamily: route.modelFamily, reasoning: route.adapterEffort, capabilities,
       ...(functionMode ? { outputFormat: "visible-text" as const } : {}),
       abortSignal: combined,
       prepare: async () => { combined.throwIfAborted(); admit(); return { text: prompt, images: [], transport: "inline", inlineChars: prompt.length, release() {} }; },

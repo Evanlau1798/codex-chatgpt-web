@@ -391,7 +391,8 @@ export async function runChatGptMcpServer(options: {
       }
       return withTurn("codex_tool_inventory", requestId, extra, claimed => {
         const bound = claimed.environment;
-        const matches = matchingToolInventory(safeVisibleTools(bound, contract), query);
+        const visibleTools = safeVisibleTools(bound, contract);
+        const matches = matchingToolInventory(visibleTools, query);
         const directPage = matches.slice(offset, offset + limit).map(tool => ({
           wire_name: wireName(tool),
           name: tool.name,
@@ -400,10 +401,18 @@ export async function runChatGptMcpServer(options: {
           kind: tool.freeform ? "freeform" : tool.toolSearch ? "tool_search" : "function",
           ...(include_schema ? { parameters: browserToolParameters(tool, contract === "native") } : {}),
         }));
+        // A registry miss exposes only advertised discovery entries, never an automatic call.
+        const discoveryTools = query?.trim() && matches.length === 0
+          ? visibleTools.filter(tool => tool.toolSearch).map(tool => ({
+            wire_name: wireName(tool), name: tool.name, namespace: tool.namespace ?? null,
+            description: browserToolDescription(tool, contract === "native"), kind: "tool_search",
+            ...(include_schema ? { parameters: browserToolParameters(tool, contract === "native") } : {}),
+          })) : [];
         const gateway = execGateway(bound);
         if (!gateway) return result({
           tools: directPage, total: matches.length,
           next_offset: offset + directPage.length < matches.length ? offset + directPage.length : null,
+          ...(discoveryTools.length > 0 ? { discovery_tools: discoveryTools } : {}),
         });
         const excludedNames = bound.tools.map(wireName);
         const nestedOffset = Math.max(0, offset - matches.length);
@@ -419,7 +428,10 @@ export async function runChatGptMcpServer(options: {
           }));
           const tools = [...directPage, ...nestedPage];
           const total = matches.length + catalog.total;
-          return result({ tools, total, next_offset: offset + tools.length < total ? offset + tools.length : null });
+          return result({
+            tools, total, next_offset: offset + tools.length < total ? offset + tools.length : null,
+            ...(total === 0 && discoveryTools.length > 0 ? { discovery_tools: discoveryTools } : {}),
+          });
         });
       });
     },

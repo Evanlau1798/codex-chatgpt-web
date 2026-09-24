@@ -51,8 +51,12 @@ Setup options:
   --auto-approve-tool-calls    Opt in to per-call browser clicks on "Allow once" prompts
   --enhanced-session           Enable Enhanced Web session mode
   --standard-session           Disable Enhanced Web session mode
-  --bigger-context             Enable experimental adaptive context (Enhanced mode must be off)
+  --bigger-context             Enable adaptive 1/2/6-message context (Enhanced mode must be off)
   --standard-context           Disable experimental multi-message context
+  --fresh-conversation         Fresh chat per turn (automatic Original mode only)
+  --retained-conversation      Disable fresh chat per turn (default)
+  --saved-chats                Save Codex/Claude task chats to ChatGPT history (API stays Temporary)
+  --temporary-chats            Use Temporary Chat for task conversations (default)
   --skill-attachments          Experimental selected skills as text attachments
   --inline-skills              Keep selected skills inline (default)
   --no-auto-compact            Disable Codex auto compact for routed Web models (experimental)

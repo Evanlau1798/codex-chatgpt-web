@@ -495,11 +495,13 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
     : source.indexOf("        for (let index = 0; index < multipartTransport.stages.length;");
   const end = lane !== "multipart"
     ? source.indexOf('        await diagnostics.capture(page, "send-accepted");', start)
-    : source.indexOf("        if (mode.effort !== requestedMode.effort)", start);
+    : source.indexOf("        // The first saved message changes", start);
   expect(start).toBeGreaterThan(0);
   expect(end).toBeGreaterThan(start);
   const progress = new ChatGptExternalTurnProgress();
   const dependencies = {
+    usageSubmission: async () => undefined, recordFinalUsage: undefined,
+    submissionRejection: { begin() {}, failure: async () => undefined },
     first, next, initial, events, ChatGptPromptOperation, connectorAttemptBudget: { remaining: 3 },
     turn: {
       traceId: `production-${lane}-rebind`, externalProgress: progress,
@@ -531,6 +533,8 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
       const submissionBaseline = first.baseline;
       const reuseConversation = false;
       const responseAttempt = 1;
+      let initialToolBatchRevision = 0;
+      let beforeRecoveryInsertion;
       let retrySubmitted = () => events.push("retry-submitted");
       const toolTurnObservationRecovery = async () => {
         events.push("rebind");

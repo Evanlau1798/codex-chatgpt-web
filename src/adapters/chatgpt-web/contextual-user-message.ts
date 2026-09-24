@@ -23,6 +23,15 @@ export function hasEnvironmentContextAttempt(content: unknown): boolean {
   return texts.some(text => /^<\/?environment_context\b/i.test(text.trim()));
 }
 
+export function hasEnvironmentContextFragment(item: Record<string, unknown> | undefined): item is Record<string, unknown> {
+  if (item?.type !== "message" || (item.role !== "user" && item.role !== "developer")) return false;
+  const metadata = item.internal_chat_message_metadata_passthrough;
+  const kinds = metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>).content_item_kinds : undefined;
+  return (Array.isArray(kinds) && kinds.includes("environments.environment_context"))
+    || hasEnvironmentContextAttempt(item.content);
+}
+
 export function isContextualCodexUserText(text: string): boolean {
   const trimmed = text.trim();
   return marked(trimmed, "# agents.md instructions", "</instructions>")
