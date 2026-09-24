@@ -89,7 +89,10 @@ async function main() {
       command = executable;
       args = ["--launcher-smoke-test"];
     } else if (process.platform === "linux") {
-      executable = artifact(/-linux-x64\.AppImage$/, "Linux AppImage");
+      if (!["x64", "arm64"].includes(process.arch)) {
+        throw new Error(`Unsupported Linux AppImage architecture: ${process.arch}`);
+      }
+      executable = artifact(new RegExp(`-linux-${process.arch}\\.AppImage$`), "Linux AppImage");
       fs.chmodSync(executable, 0o755);
       command = "xvfb-run";
       args = ["-a", executable, "--launcher-smoke-test"];

@@ -4,3 +4,8 @@ paths:
     # https://docs.github.com/en/actions/reference/runners/github-hosted-runners
     ignore:
       - 'label "macos-15-intel" is unknown'
+      # Native ARM64 runner used by the upstream 6.0 packaging matrix.
+      - 'label "ubuntu-24.04-arm" is unknown'
+  .github/workflows/ci.yml:
+    ignore:
+      - 'label "ubuntu-24.04-arm" is unknown'
