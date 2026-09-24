@@ -126,14 +126,16 @@ capability and no ordinary work capability. The checkpoint never rides in the ta
 huge tool result, and its wait is capped at five minutes independently of the normal turn timeout.
 After the structured handoff is accepted, the bridge explicitly ends that one-purpose browser turn
 and waits for its physical launcher settlement before closing the old surface; the next epoch then
-starts a fresh Temporary Chat. This does not depend on ChatGPT rendering assistant text or a Copy
-action after the control-only response. If the retained private chat was already closed, the bridge
+starts a fresh task chat (Temporary by default, saved when Saved Chats is enabled). This does not
+depend on ChatGPT rendering assistant text or a Copy action after the control-only response. If the
+retained private chat was already closed, the bridge
 starts one read-only fallback chat from the canonical Codex history instead. Browser-only mode
 has no retained MCP boundary and uses the six-message compaction path so its summarizer receives
 the complete expanded history.
 
 Any missing or malformed acknowledgement fails the whole transaction. No later part or final
-commit is sent, and a retry starts again from part one in a fresh Temporary Chat. The model context
+commit is sent, and a retry starts again from part one in a fresh task chat (Temporary by default,
+saved when Saved Chats is enabled). The model context
 and auto-compaction ceilings are reported as 3× while the switch is active, but every individual
 stage must still fit the selected ChatGPT mode's measured one-message boundary.
 

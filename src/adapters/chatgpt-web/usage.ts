@@ -1,4 +1,5 @@
 import { skillFileTokens } from "./skill-attachments";
+import { ChatGptWebAdapterError } from "./adapter-error";
 import { estimateTokens } from "../../lib/token-estimate";
 import {
   CHATGPT_WEB_BACKEND_MODEL,
@@ -109,8 +110,6 @@ export function resolveBiggerContextMultipartParts(
   const inline = compile();
   const inputTokens = estimateCompiledChatGptWebInputTokens(inline, parsed.modelId);
   const initialParts = biggerContextPartCount(inputTokens, autoCompactTokenLimit, false);
-  if (initialParts === CHATGPT_BIGGER_CONTEXT_PARTS) return initialParts;
-
   const fits = (compiled: CompiledChatGptWebPrompt): boolean => {
     const messages = compiledChatGptWebMessages(compiled);
     const stagingEffort = capabilities.proAvailable ? "max" : "medium";
@@ -133,7 +132,12 @@ export function resolveBiggerContextMultipartParts(
       < contextWindow * Math.min(messages.length, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER);
   };
   if (initialParts === undefined && fits(inline)) return undefined;
-  return fits(compile(2)) ? 2 : CHATGPT_BIGGER_CONTEXT_PARTS;
+  if (initialParts !== CHATGPT_BIGGER_CONTEXT_PARTS && fits(compile(2))) return 2;
+  if (fits(compile(CHATGPT_BIGGER_CONTEXT_PARTS))) return CHATGPT_BIGGER_CONTEXT_PARTS;
+  throw new ChatGptWebAdapterError(
+    "No Bigger Context partition can carry every whole record within the measured message limits. Compact the task before retrying.",
+    { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+  );
 }
 
 export function biggerContextPartCount(

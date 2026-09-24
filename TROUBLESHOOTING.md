@@ -12,7 +12,7 @@ editing Codex configuration, or opening a new issue.
    **Repair Codex setup**) are green.
 3. Fully quit Codex, including its background process, and reopen it. Signing out, closing only the
    window, or starting another task does not reload the model catalog. Keep the launcher open.
-4. Select a **ChatGPT Web — …** model from Codex's model picker.
+4. Select a model ending in **(Web)** from Codex's model picker.
 5. Run **Settings → Run doctor**. If the problem remains, reproduce it once and immediately use
    **Activity → Export safe log**.
 
@@ -27,6 +27,8 @@ still running. The launcher should move from **Restart Codex** to a verified cat
 
 If the models still do not appear:
 
+- confirm that **Codex itself** uses ChatGPT sign-in; signing into the launcher's browser is separate.
+  An API-key or signed-out Codex session can show only its built-in catalog without contacting the bridge;
 - run **Repair Codex setup** once;
 - check **Settings → Run doctor**;
 - make sure another Codex wrapper is not replacing the route; and
@@ -122,6 +124,7 @@ missing paid selector on those accounts is not itself a sign-in failure.
 In ChatGPT, open **Settings → General → Language** and choose **English** explicitly, then reload
 ChatGPT inside the launcher and retry once. Some browser controls depend on English labels;
 changing the launcher language does not change the ChatGPT website language.
+The same step applies when a model "could not be selected and verified".
 
 ## Full harness or MCP verification fails
 

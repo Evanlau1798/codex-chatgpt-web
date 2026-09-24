@@ -159,9 +159,7 @@ export async function verifyBrowserLoginPage(
     if (!authenticated) throw new Error("ChatGPT session could not be verified for Electron import");
     return;
   }
-  const composer = page.getByRole("textbox", { name: "Chat with ChatGPT" }).or(
-    page.locator(CHATGPT_COMPOSER_SELECTOR),
-  ).first();
+  const composer = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true }).first();
   try {
     await composer.waitFor({ state: "visible", timeout: options.timeoutMs ?? 60_000 });
   } catch {

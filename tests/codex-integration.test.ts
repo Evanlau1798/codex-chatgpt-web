@@ -796,7 +796,6 @@ describe("reversible native Codex route integration", () => {
     const recovery = readFileSync(getCodexJournalRecoveryPath(), "utf8");
     for (const current of [
       active.replace("timeout = 3", "timeout = 2"),
-      active.replace(/^#.*interrupt.*\n/gm, ""),
       withoutHook + installed.interruptHook.fragment.split("[[hooks.Interrupt]]")[0],
       withoutHook + `\n[hooks.state.${JSON.stringify(installed.interruptHook.stateKey)}]\ntrusted_hash = ${JSON.stringify(installed.interruptHook.trustedHash)}\n`,
       withoutHook + '\n[[hooks.Interrupt]]\n[[hooks.Interrupt.hooks]]\ntype = "command"\ncommand = "user-modified-hook"\n',
@@ -811,6 +810,39 @@ describe("reversible native Codex route integration", () => {
       expect(readFileSync(getCodexJournalPath(), "utf8")).toBe(journal);
       expect(readFileSync(getCodexJournalRecoveryPath(), "utf8")).toBe(recovery);
     }
+  });
+
+  test("reinstalls and removes an integration after native hook serialization without resetting other settings", () => {
+    const { codexHome } = fixture();
+    const configPath = join(codexHome, "config.toml");
+    const original = 'model = "gpt-5.6-sol"\n\n[mcp_servers.notes]\ncommand = "user-mcp"\n';
+    writeFileSync(configPath, original);
+    const config = nativeConfig("full");
+    installCodexIntegration(config);
+    const nativeRewrite = () => {
+      const journal = inspectCodexIntegration().journal!;
+      if (journal.version !== 10) throw new Error("Expected current journal");
+      const hook = journal.interruptHook;
+      const inline = `Interrupt = [{ hooks = [{ command = ${JSON.stringify(hook.command)}, timeout = 3, type = 'command' }] }]\n`;
+      const without = readFileSync(configPath, "utf8").replace(hook.fragment, "");
+      const rewritten = without.includes("[hooks]\n")
+        ? without.replace("[hooks]\n", "[hooks]\n" + inline)
+        : without + "\n[hooks]\n" + inline;
+      writeFileSync(configPath, rewritten + `\n[hooks.state.${JSON.stringify(hook.stateKey)}]\ntrusted_hash = '${hook.trustedHash}'\n`);
+      expect(inspectCodexIntegration().errors).toEqual([]);
+    };
+    nativeRewrite();
+    preflightCodexIntegration(config, { replaceExistingRoute: true });
+    installCodexIntegration(config, { replaceExistingRoute: true });
+    nativeRewrite();
+    deactivateCodexIntegration();
+    activateCodexIntegration();
+    nativeRewrite();
+    uninstallCodexIntegration();
+    const restored = readFileSync(configPath, "utf8");
+    expect(restored).toContain(original);
+    expect((Bun.TOML.parse(restored) as any).mcp_servers.notes.command).toBe("user-mcp");
+    expect(inspectCodexIntegration().installed).toBe(false);
   });
 
   test("rejects custom providers without changing them, even with explicit route replacement", () => {

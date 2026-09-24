@@ -9,6 +9,7 @@ import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptBrowserDiagnostics } from "../src/adapters/chatgpt-web/browser-diagnostics";
 import { planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
+import { partitionMultipartContext, type MultipartContextRecord } from "../src/adapters/chatgpt-web/prompt-multipart";
 import type { CodexParsedRequest } from "../src/types";
 
 const pro = { localToolsEnabled: false, solAvailable: true, proAvailable: true };
@@ -28,6 +29,17 @@ function request(): CodexParsedRequest {
     options: { reasoning: "high" },
   };
 }
+
+test("an oversized final record is staged whole while an ordinary last message stays in the final part", () => {
+  const record: MultipartContextRecord = { kind: "message", message_index: 0, message: { role: "user", content: "x".repeat(100) } };
+  const budgets = [{ tokens: 1_000, chars: 500 }, { tokens: 1_000, chars: 50 }];
+  const staged = partitionMultipartContext([record], 2, budgets);
+  expect(JSON.parse(staged[0]!).records).toEqual([record]);
+  expect(JSON.parse(staged[1]!).records).toEqual([]);
+  const ordinary = partitionMultipartContext([record], 2, [{ tokens: 1_000, chars: 500 }, { tokens: 1_000, chars: 500 }]);
+  expect(JSON.parse(ordinary[0]!).records).toEqual([]);
+  expect(JSON.parse(ordinary[1]!).records).toEqual([record]);
+});
 
 test("Bigger Context expands only the total ceiling and preserves per-message boundaries", () => {
   expect(() => assertChatGptWebMultipartInputWithinLimits(

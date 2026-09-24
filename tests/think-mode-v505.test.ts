@@ -17,7 +17,9 @@ function fixture() {
     waitFor: async () => { if (!state.optionCount) throw new Error("Think command is unavailable"); } };
   const rows = { filter: () => rows, first: () => row, count: async () => state.optionCount };
   const popup = { filter: () => popup, locator: () => rows, count: async () => state.popupCount };
-  const page = { locator: () => popup, keyboard: { press: async () => {} } };
+  const absentDialog = { filter: () => absentDialog, last: () => absentDialog, isVisible: async () => false };
+  const page = { locator: (selector: string) => selector === '[role="dialog"]' ? absentDialog : popup,
+    keyboard: { press: async () => {} } };
   const composer = {
     filter: () => composer, first: () => composer, locator: () => composerForm,
     evaluate: async () => ({ text: state.draft.trim(), connectors: [...state.connectors] }),

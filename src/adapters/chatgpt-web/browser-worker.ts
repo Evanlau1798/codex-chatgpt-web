@@ -1968,8 +1968,8 @@ export class ChatGptBrowserWorker {
   private selectedConnectorControl(composer: Locator): Locator {
     return composer
       .locator("xpath=ancestor::form[1]")
-      .locator('[data-id^="plugin:"][data-keyword]')
-      .filter({ hasText: this.config.appName, visible: true });
+      .locator(`[data-id^="plugin:"][data-keyword=${JSON.stringify(this.config.appName)}]`)
+      .filter({ visible: true });
   }
 
   private async connectorIsSelected(composer: Locator, signal?: AbortSignal): Promise<boolean> {

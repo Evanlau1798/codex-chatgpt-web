@@ -374,37 +374,19 @@ export async function verifyLauncherBrowserConnector(
 export const LAUNCHER_SESSION_INSPECTION_TIMEOUT_MS = 30_000;
 export const LAUNCHER_CAPABILITY_INSPECTION_TIMEOUT_MS = 120_000;
 
+type LauncherTurnIdentity = { traceId: string; helperPid: number };
+type LauncherUsageReceipt = {
+  id: string; accountKey: string; at: number; model: "gpt-6-pro" | "gpt-5.6-pro" | "pro-unknown" | "other";
+};
 export type LauncherTurnActivity =
-  | {
-      phase: "usage";
-      traceId: string;
-      helperPid: number;
-      receipt?: {
-        id: string;
-        accountKey: string;
-        model: "gpt-6-pro" | "gpt-5.6-pro" | "pro-unknown" | "other";
-        at: number;
-      };
-      trackingError?: "account-unavailable";
-    }
-  | {
-      phase: "start";
-      traceId: string;
-      helperPid: number;
-      conversationKey?: string;
-      connectorIdentity?: string;
-      requireRetainedConversation?: boolean;
-    }
-  | { phase: "heartbeat"; traceId: string; helperPid: number; refreshViewport?: boolean }
-  | {
-      phase: "end";
-      traceId: string;
-      helperPid: number;
-      status: "completed" | "failed" | "aborted";
-      message?: string;
-      retain?: boolean;
-      connectorBound?: boolean;
-    };
+  | (LauncherTurnIdentity & { phase: "usage"; receipt?: LauncherUsageReceipt; trackingError?: "account-unavailable" })
+  | (LauncherTurnIdentity & { phase: "start"; conversationKey?: string; connectorIdentity?: string;
+      requireRetainedConversation?: boolean })
+  | (LauncherTurnIdentity & { phase: "heartbeat"; refreshViewport?: boolean })
+  | (LauncherTurnIdentity & {
+      phase: "end"; status: "completed" | "failed" | "aborted";
+      message?: string; retain?: boolean; connectorBound?: boolean;
+    });
 
 // Startup must outlast the launcher's ten-second idle bootstrap. This is not a model-turn budget.
 export const LAUNCHER_TURN_START_TIMEOUT_MS = 30_000;

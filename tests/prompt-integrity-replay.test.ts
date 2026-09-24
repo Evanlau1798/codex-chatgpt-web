@@ -82,7 +82,9 @@ test("failed cleanup preserves terminal integrity classification while requiring
     insertPromptText: async () => { throw mismatch(); },
     clearChatGptComposerState: async () => { throw new Error("private cleanup detail"); },
   });
-  const error = await worker.attachPrompt({}, "fixture", false).catch((error: unknown) => error);
+  const absentDialog = { filter: () => absentDialog, last: () => absentDialog, isVisible: async () => false };
+  const page = { locator: () => absentDialog };
+  const error = await worker.attachPrompt(page, "fixture", false).catch((error: unknown) => error);
   expect(error).toMatchObject({ code: "chatgpt_prompt_integrity_mismatch", retryable: false, retireSession: true });
   expect(error.message).toContain("cleanup could not be verified");
   expect(error.message).not.toContain("private cleanup detail");

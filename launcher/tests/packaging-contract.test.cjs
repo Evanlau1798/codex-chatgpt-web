@@ -467,10 +467,10 @@ test("pinned builder parses validates and copies the ARM64 extraFiles library", 
     const bytes = Buffer.from("owned library fixture");
     fs.writeFileSync(library, bytes);
     const source = fs.readFileSync(path.join(launcherRoot, "scripts/package.cjs"), "utf8");
-    const flags = source.match(/`--config\.linux\.extraFiles\.from=\$\{library\}`,[\s\S]*?"--config\.linux\.extraFiles\.to=([^"]+)"/);
-    assert.ok(flags, "packager must pass the native library through builder's Linux extraFiles");
+    const flags = [...source.matchAll(/`--config\.linux\.extraFiles\.from=\$\{library\}`,[\s\S]*?"--config\.linux\.extraFiles\.to=([^"]+)"/g)];
+    assert.equal(flags.length, 1, "packager must pass the ARM64 library exactly once");
     const parsed = scriptRequire("yargs/yargs")([
-      `--config.linux.extraFiles.from=${library}`, `--config.linux.extraFiles.to=${flags[1]}`,
+      `--config.linux.extraFiles.from=${library}`, `--config.linux.extraFiles.to=${flags[0][1]}`,
     ]).parse();
     await scriptRequire("app-builder-lib/out/util/config/config.js").validateConfiguration(parsed.config, { isEnabled: false });
     const { getFileMatchers, copyFiles } = scriptRequire("app-builder-lib/out/fileMatcher.js");

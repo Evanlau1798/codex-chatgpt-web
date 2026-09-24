@@ -64,28 +64,6 @@ if (target === "--linux") {
   }
 }
 
-if (target === "--linux") {
-  if (!["x64", "arm64"].includes(process.arch)) {
-    throw new Error(`Unsupported Linux AppImage architecture: ${process.arch}`);
-  }
-  builderArgs.push(`--${process.arch}`);
-  validateRuntimeBundle(path.join(root, "build", "runtime"), {
-    version: launcherManifest.version, platform: "linux", arch: process.arch,
-  });
-  if (process.arch === "arm64") {
-    const toolsRoot = env.APPIMAGE_TOOLS_PATH;
-    if (!toolsRoot || !path.isAbsolute(toolsRoot)) {
-      throw new Error("Linux arm64 packaging requires APPIMAGE_TOOLS_PATH from prepare-linux-appimage-tools.cjs");
-    }
-    const library = path.join(toolsRoot, "lib", "arm64", "libnotify.so.4");
-    requireLibnotifySymbol(library);
-    builderArgs.push(
-      `--config.linux.extraFiles.from=${library}`,
-      "--config.linux.extraFiles.to=usr/lib/libnotify.so.4",
-    );
-  }
-}
-
 const staging = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-package-"));
 const artifactsDirectory = path.join(root, "artifacts");
 

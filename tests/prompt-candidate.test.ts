@@ -83,7 +83,8 @@ test("actual attachment caller shares its plan and remaining budget with staging
     assertPromptAttached: async (_page: unknown, text: string, _signal: unknown, _operation: unknown,
       preserveLeading: boolean) => { asserted.push({ text, preserveLeading }); },
   });
-  const page = { keyboard: { press: async () => {} } };
+  const absentDialog = { filter: () => absentDialog, last: () => absentDialog, isVisible: async () => false };
+  const page = { keyboard: { press: async () => {} }, locator: () => absentDialog };
   const parent = new ChatGptPromptOperation(undefined, () => 5000);
   for (const [tools, inline] of [[false, false], [true, false], [false, true]]) {
     await worker.attachPrompt(page, "x".repeat(33000), tools, undefined, undefined, false,

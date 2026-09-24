@@ -176,7 +176,13 @@ export function partitionMultipartContext(
   const weights = records.map(recordWeight);
   const lastMessage = records.findLastIndex(record => record.kind === "message");
   const finalRecordStart = lastMessage >= 0 ? lastMessage : Math.max(0, records.length - 1);
-  const groups = partitionBoundaries(weights, budgets, finalRecordStart).map(end => {
+  const finalTail = weights.slice(finalRecordStart).reduce((sum, weight) => ({
+    tokens: sum.tokens + weight.tokens, chars: sum.chars + weight.chars,
+  }), { tokens: 0, chars: 0 });
+  const finalBudget = budgets[totalParts - 1]!;
+  const pinnedStart = finalTail.tokens <= finalBudget.tokens && finalTail.chars <= finalBudget.chars
+    ? finalRecordStart : records.length;
+  const groups = partitionBoundaries(weights, budgets, pinnedStart).map(end => {
     const group = records.slice(offset, end);
     offset = end;
     return group;

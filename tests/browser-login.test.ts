@@ -185,3 +185,18 @@ test("launcher cookie import accepts an authenticated session before Electron pr
     electronImport: true,
   })).rejects.toThrow("session could not be verified");
 });
+
+test("normal browser login accepts a visible composer without an English textbox label", async () => {
+  const composer = { waitFor: async () => {}, isVisible: async () => true };
+  const page = {
+    url: () => CHATGPT_TEMPORARY_CHAT_URL,
+    getByRole: () => { throw new Error("English textbox label is unavailable"); },
+    locator: () => ({
+      filter: () => ({ first: () => composer }),
+      count: async () => 1,
+      nth: () => composer,
+    }),
+  };
+
+  await verifyBrowserLoginPage(page as never);
+});

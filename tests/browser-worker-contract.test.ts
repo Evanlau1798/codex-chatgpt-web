@@ -808,6 +808,37 @@ test("caret re-anchor retries against the latest Lexical DOM before failing the 
   expect(evaluations).toBe(2);
 });
 
+test("selected connector identity does not depend on its visible pill text", async () => {
+  const { createDocument } = require("@mixmark-io/domino");
+  const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+  worker.config = { appName: "Codex Native2" };
+  const selected = async (html: string) => {
+    const document = createDocument(`<form id="owner"><div id="composer"></div>${html}</form><form><span data-id="plugin:other" data-keyword="Codex Native2">Other form</span></form>`);
+    const composer = {
+      locator: (ancestor: string) => {
+        expect(ancestor).toBe("xpath=ancestor::form[1]");
+        return {
+          locator: (selector: string) => ({
+            filter: (options: { visible?: boolean }) => ({
+              evaluateAll: async (read: (elements: Element[]) => unknown) => read(
+                Array.from(document.querySelectorAll(`#owner ${selector}`) as NodeListOf<Element>)
+                  .filter(element => !options.visible || !element.hasAttribute("hidden")),
+              ),
+            }),
+          }),
+        };
+      },
+    };
+    return worker.connectorIsSelected(composer);
+  };
+  const pill = '<span data-id="plugin:configured" data-keyword="Codex Native2">表示名</span>';
+  expect(await selected(pill)).toBeTrue();
+  expect(await selected('<span data-id="plugin:other" data-keyword="Other">Codex Native2</span>')).toBeFalse();
+  expect(await selected('<span data-id="unrelated" data-keyword="Codex Native2">Codex Native2</span>')).toBeFalse();
+  expect(await selected(pill.replace('<span ', '<span hidden '))).toBeFalse();
+  await expect(selected(pill + pill)).rejects.toThrow("duplicate");
+});
+
 test("connector selection re-resolves the active composer after ChatGPT replaces it", async () => {
   const calls: Array<[string, string?]> = [];
   let connectorSelected = false;
@@ -903,10 +934,10 @@ test("connector selection resolves a selected pill from the owning composer form
   const selectedConnector = {};
   const composerForm = {
     locator: (selector: string) => {
-      expect(selector).toBe('[data-id^="plugin:"][data-keyword]');
+      expect(selector).toBe('[data-id^="plugin:"][data-keyword="Codex Native2"]');
       return {
-        filter: (options: { hasText: string; visible: boolean }) => {
-          expect(options).toEqual({ hasText: "Codex Native2", visible: true });
+        filter: (options: { visible: boolean }) => {
+          expect(options).toEqual({ visible: true });
           return selectedConnector;
         },
       };

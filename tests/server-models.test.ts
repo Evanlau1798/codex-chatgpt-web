@@ -13,6 +13,9 @@ test("serves the account-scoped Claude gateway model catalog without proxying up
   expect(isClaudeGatewayModelsRequest(request)).toBe(true);
   expect(await claudeGatewayModelsResponse(config).json()).toEqual({
     data: [
+      { id: "claude-chatgpt-web-light", display_name: "ChatGPT Web — Instant", max_input_tokens: 41_000 },
+      { id: "claude-chatgpt-web-medium", display_name: "ChatGPT Web — Medium", max_input_tokens: 90_000 },
+      { id: "claude-chatgpt-web-high", display_name: "ChatGPT Web — High", max_input_tokens: 90_000 },
       { id: "claude-chatgpt-web-gpt-5.6-sol-instant", display_name: "GPT-5.6 Sol Instant (Web)", max_input_tokens: 41_000 },
       { id: "claude-chatgpt-web-gpt-5.6-sol", display_name: "GPT-5.6 Sol (Web)", max_input_tokens: 90_000 },
     ],
