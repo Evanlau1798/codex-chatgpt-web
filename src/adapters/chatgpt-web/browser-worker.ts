@@ -2316,7 +2316,7 @@ export class ChatGptBrowserWorker {
       }
       await op.mutate(options => selectedComposer.focus(options));
       await op.mutate(() => page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY));
-      await this.insertPromptText(page, ` ${prompt}`, abortSignal, largeStructuredDirect, forceStructuredDirect, diagnosticContext);
+      await this.insertPromptText(page, ` ${prompt}`, abortSignal, largeStructuredDirect, forceStructuredDirect, diagnosticContext, true);
       await this.assertPromptAttached(page,
         insertionPlan.strategy === "direct-html-prewrap" ? insertionText : prompt,
         abortSignal, op, insertionPlan.strategy === "direct-html-prewrap");
@@ -2482,6 +2482,7 @@ export class ChatGptBrowserWorker {
     largeStructuredDirect = false,
     forceStructuredDirect = false,
     diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation; insertionPlan?: ChatGptPromptInsertionPlan; candidateBudget?: ChatGptCandidateAttachmentBudget },
+    connectorSelected = false,
   ): Promise<void> {
     const op = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
     const insertionPlan = diagnosticContext?.insertionPlan ?? planChatGptPromptInsertion(text, {
@@ -2493,6 +2494,7 @@ export class ChatGptBrowserWorker {
       verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal, op,
         insertionPlan.strategy === "direct-html-prewrap"),
       reanchor: () => this.reanchorPromptCaret(page, abortSignal, op),
+      connectorSelected,
       onProgress: snapshot => {
         diagnosticContext?.candidateBudget?.observe(snapshot);
         console.info(`[chatgpt-web] browser turn ${diagnosticContext?.traceId ?? "unscoped"}`

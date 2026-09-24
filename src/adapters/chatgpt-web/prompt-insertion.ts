@@ -23,6 +23,7 @@ export async function insertChatGptPromptText(
     composer(): Promise<Locator>;
     verify(expected: string): Promise<void>;
     reanchor(): Promise<void>;
+    connectorSelected?: boolean;
     onProgress?(snapshot: ChatGptPromptInsertionSnapshot): void;
   },
   options?: ChatGptPromptInsertionOptions,
@@ -61,7 +62,7 @@ export async function insertChatGptPromptText(
     if (plan.strategy !== "guarded-chunked") {
       // One bounded insertion avoids cumulative editor remounts and thousands of
       // delimiter-restoration edits. Full readback remains the acceptance boundary.
-      await verify("");
+      if (!actions.connectorSelected) await verify("");
       // HTML parsing changes CR and NUL; retain the exact text path for those inputs.
       const htmlShape = plan.strategy === "direct-html-prewrap" ? "prewrap" : plan.strategy === "direct-html";
       await metrics.run("insert", async () => {

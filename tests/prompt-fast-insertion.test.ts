@@ -131,6 +131,45 @@ test("inserts the incident-sized multiline structured prompt with one exact pre-
   expect(editor.commands).toEqual(["insertHTML"]);
 });
 
+test("selected connector can replace a transient placeholder before exact post-insertion verification", async () => {
+  const prompt = compactSource;
+  const editor = fakeLexicalComposer(true, () => editor.setText(editor.text().replace("\u200B", "")));
+  editor.setText("\u200B");
+  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
+  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: editor.document.defaultView });
+  const verified: string[] = [];
+  try {
+    await insertChatGptPromptText(prompt, undefined, {
+      composer: async () => editor.composer as never,
+      verify: async expected => { verified.push(expected); expect(editor.text()).toBe(expected); },
+      reanchor: async () => {},
+      connectorSelected: true,
+    }, { largeStructuredDirect: true });
+    expect(verified).toEqual([prompt, prompt]);
+    expect(editor.editCommands()).toBe(1);
+  } finally {
+    Object.assign(globalThis, previous);
+  }
+});
+
+test("selected connector still rejects a placeholder that survives the editor edit", async () => {
+  const editor = fakeLexicalComposer();
+  editor.setText("\u200B");
+  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
+  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: editor.document.defaultView });
+  try {
+    await expect(insertChatGptPromptText(compactSource, undefined, {
+      composer: async () => editor.composer as never,
+      verify: async expected => expect(editor.text()).toBe(expected),
+      reanchor: async () => {},
+      connectorSelected: true,
+    }, { largeStructuredDirect: true })).rejects.toThrow();
+    expect(editor.editCommands()).toBe(1);
+  } finally {
+    Object.assign(globalThis, previous);
+  }
+});
+
 test("inserts incident-sized single-line Markdown through one escaped native fragment", async () => {
   const prompt = markdownRestorationProbeText();
   const editor = await insertWithFakeEditor(prompt, false, true);
