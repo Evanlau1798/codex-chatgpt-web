@@ -124,8 +124,9 @@ irm https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/in
 Then complete the three checks in the app:
 
 1. Sign in in the embedded app by default. If your account requires a passkey, choose **Use Chrome
-   for passkey**; after Chrome verifies Temporary Chat, the launcher imports only non-partitioned
-   ChatGPT/OpenAI session cookies into its private Electron profile and verifies the composer again.
+   for passkey**; after Chrome verifies Temporary Chat, the launcher imports verified,
+   non-partitioned ChatGPT/OpenAI session cookies and, for passkey transfer, `chatgpt.com` local
+   storage into its private Electron profile, then verifies the composer again.
    If configured Chrome is unavailable, the launcher uses embedded sign-in directly.
 2. Run the browser smoke test.
 3. Use **Install into Codex** and/or **Install into Claude Code**. Completing either integration
@@ -314,7 +315,7 @@ codex-chatgpt-web subagents native
   drift fails explicitly instead of silently switching model or transport.
 - Browser state is a sensitive login artifact, and the loopback listener is reachable by processes
   running as the same local user. Never share the launcher profile; use a trusted workstation.
-- Release packages currently target macOS 13+ (arm64/x64), Windows x64, and Linux x64. Runtime,
+- Release packages currently target macOS 13+ (arm64/x64), Windows x64, and Linux x64/arm64. Runtime,
   tests, and native packaging are gated on all three operating systems in CI. Account-bound browser
   and MCP flows require separate release validation; package smoke is not treated as end-to-end
   proof.

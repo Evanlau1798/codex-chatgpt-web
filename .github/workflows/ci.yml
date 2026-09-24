@@ -130,6 +130,10 @@ jobs:
         env:
           CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: git merge-base --is-ancestor e85e3693fdb4e3e033348c08df0298c20fcdb612 "$CANDIDATE_HEAD"
+      - name: Preserve the pinned upstream v6 ancestry
+        env:
+          CANDIDATE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: git merge-base --is-ancestor 212ceef2acac9d6ee0f3c9037abfaf4ad8ff9827 "$CANDIDATE_HEAD"
       - name: Require every CI dependency to succeed
         env:
           LIFECYCLE_SIM_RESULT: ${{ needs['lifecycle-sim'].result }}

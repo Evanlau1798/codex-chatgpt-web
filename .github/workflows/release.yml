@@ -12,6 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Preserve the pinned upstream v6 ancestry
+        run: git merge-base --is-ancestor 212ceef2acac9d6ee0f3c9037abfaf4ad8ff9827 HEAD
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0

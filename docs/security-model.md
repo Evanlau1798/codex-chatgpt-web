@@ -75,16 +75,21 @@ The launcher keeps ChatGPT login, identity-provider navigation, and model turns 
 Electron partition. Allowed login popups are adopted into an in-launcher `WebContentsView` that
 shares that partition; unrelated external links remain outside it. A visible composer alone is not
 authentication evidence: the launcher also requires a valid server session and an exact Temporary
-Chat URL before setup can continue. No cookies, local storage, or browser profile are copied from an
-external browser.
+Chat URL before setup can continue. For external Chrome sign-in, the launcher imports verified,
+non-partitioned ChatGPT/OpenAI cookies into its private Electron partition. The passkey transfer
+also imports `chatgpt.com` local storage after validating its origin. It does not copy the whole
+Chrome profile or import other origins' storage. The saved login-state file can contain ChatGPT
+local storage and must remain private.
 
 ### Cross-turn data leakage
 
-Browser turns use at most five independent task-bound tabs in one private login partition. Every
-outer Codex task owns a fresh Temporary Chat document and an exact launcher surface lease; chats are
-never reused across tasks. Closing a running tab destroys its page and terminates that turn. The
-five-tab limit bounds parallel account traffic. Tool calls remain in the same ChatGPT response. The
-bounded local continuation cache is private, expires, and exists only to implement Codex
+Browser turns use at most six independent task-bound tabs in Enhanced mode, or five in Original mode,
+within one private login partition. Every outer Codex task owns a fresh chat document and an exact
+launcher surface lease; Temporary Chat is the default, while Saved Chats is an explicit opt-in for
+Codex and Claude task conversations. API Access always uses Temporary Chat. Chats are never reused
+across tasks. Closing a running tab destroys its page and terminates that turn. The tab limit bounds
+parallel account traffic. Tool calls remain in the same ChatGPT response. The bounded local
+continuation cache is private, expires, and exists only to implement Codex
 `previous_response_id` replay. ChatGPT Web context compaction remains inside the active browser
 response; the bridge does not fabricate or install a Codex history checkpoint.
 

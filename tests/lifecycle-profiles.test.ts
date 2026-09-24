@@ -87,6 +87,14 @@ test("the aggregate gate checks the actual PR head preserves the pinned v5 ances
   expect(gate).toContain("fetch-depth: 0");
   expect(gate).toContain("github.event.pull_request.head.sha || github.sha");
   expect(gate).toContain('git merge-base --is-ancestor e85e3693fdb4e3e033348c08df0298c20fcdb612 "$CANDIDATE_HEAD"');
+  expect(gate).toContain('git merge-base --is-ancestor 212ceef2acac9d6ee0f3c9037abfaf4ad8ff9827 "$CANDIDATE_HEAD"');
+});
+
+test("tag release checks the pinned v6 ancestor before building packages", () => {
+  const workflow = readFileSync(resolve(repo, ".github", "workflows", "release.yml"), "utf8");
+  const lifecycleGate = workflow.match(/\r?\n  lifecycle-gate:\r?\n([\s\S]*?)\r?\n  build:/)?.[1];
+  expect(lifecycleGate).toContain("fetch-depth: 0");
+  expect(lifecycleGate).toContain("git merge-base --is-ancestor 212ceef2acac9d6ee0f3c9037abfaf4ad8ff9827 HEAD");
 });
 
 test("the executable manifest owns every deterministic lifecycle test", () => {
