@@ -60,9 +60,13 @@ for (const pill of ["missing", "selected", "unrecoverable"] as const) test.each(
     count: async () => 1,
     getAttribute: async () => "",
   };
+  const absentDialog = {
+    filter: () => absentDialog,
+    last: () => ({ isVisible: async () => false }),
+  };
   const page = {
     getByText: () => ({}),
-    locator: () => ({ filter: () => row }),
+    locator: (selector: string) => selector === '[role="dialog"]' ? absentDialog : { filter: () => row },
     keyboard: { press: async () => { calls.push("document-end"); } },
   };
   const fixture = {
