@@ -14,6 +14,7 @@ type FakeComposer = {
   editCommands(): number;
   commands: string[];
   setText(value: string): void;
+  moveCaretToEnd(): void;
   text(): string;
 };
 
@@ -90,6 +91,7 @@ function fakeLexicalComposer(acceptEdit = true, onEdit?: () => void, rejectLarge
     editCommands: () => editCommands,
     commands,
     setText: value => { text.data = value; },
+    moveCaretToEnd: () => { selected = { start: text.data.length, end: text.data.length }; },
     text: () => text.data,
   };
 }
@@ -146,6 +148,28 @@ test("selected connector can replace a transient placeholder before exact post-i
       connectorSelected: true,
     }, { largeStructuredDirect: true });
     expect(verified).toEqual([prompt, prompt]);
+    expect(editor.editCommands()).toBe(1);
+  } finally {
+    Object.assign(globalThis, previous);
+  }
+});
+
+test("selected connector reuses its existing separator for a direct compact prompt", async () => {
+  const prompt = ` ${compactSource}`;
+  const editor = fakeLexicalComposer();
+  editor.setText(" ");
+  editor.moveCaretToEnd();
+  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
+  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: editor.document.defaultView });
+  try {
+    await insertChatGptPromptText(prompt, undefined, {
+      composer: async () => editor.composer as never,
+      verify: async expected => expect(editor.text()).toBe(expected),
+      reanchor: async () => {},
+      connectorSelected: true,
+      existingPrefix: " ",
+    }, { largeStructuredDirect: true });
+    expect(editor.text()).toBe(prompt);
     expect(editor.editCommands()).toBe(1);
   } finally {
     Object.assign(globalThis, previous);

@@ -2489,12 +2489,15 @@ export class ChatGptBrowserWorker {
       largeStructuredDirect, forceStructuredDirect,
       candidatePlainText: this.config?.experimentalComposerPlainText === true,
     });
+    const existingText = connectorSelected && insertionPlan.strategy !== "guarded-chunked"
+      ? await this.attachedPromptText(page, abortSignal, op, true) : "";
     await insertChatGptPromptText(text, abortSignal, {
       composer: () => this.activeComposer(page, 30_000, abortSignal, op),
       verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal, op,
         insertionPlan.strategy === "direct-html-prewrap"),
       reanchor: () => this.reanchorPromptCaret(page, abortSignal, op),
       connectorSelected,
+      existingPrefix: existingText === " " ? " " : undefined,
       onProgress: snapshot => {
         diagnosticContext?.candidateBudget?.observe(snapshot);
         console.info(`[chatgpt-web] browser turn ${diagnosticContext?.traceId ?? "unscoped"}`

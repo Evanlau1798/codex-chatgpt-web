@@ -112,6 +112,53 @@ test("actual attachment caller shares its plan and remaining budget with staging
   ]);
 });
 
+test("worker reuses only one exact connector separator before direct insertion", async () => {
+  const { ChatGptBrowserWorker } = await import("../src/adapters/chatgpt-web/browser-worker");
+  const longText = ` ${"x".repeat(33_000)}\nend`;
+  for (const before of [" ", "", "  ", "\u00a0"]) {
+    const edits: string[] = [];
+    const readbacks: Array<{ text: string; preserveLeading: boolean }> = [];
+    let reads = 0;
+    const composer = {
+      focus: async () => {},
+      evaluate: async (_callback: unknown, input: string | { text: string }) => {
+        edits.push(typeof input === "string" ? input : input.text);
+        return { result: true, attempts: 1, accepted: 1 };
+      },
+    };
+    const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+      config: {},
+      attachedPromptText: async (_page: unknown, _signal: unknown, _op: unknown, preserveLeading: boolean) => {
+        expect(preserveLeading).toBeTrue();
+        reads += 1;
+        return before;
+      },
+      activeComposer: async () => composer,
+      waitForPromptChunkAttached: async (_page: unknown, text: string, _signal: unknown, _op: unknown,
+        preserveLeading: boolean) => { readbacks.push({ text, preserveLeading }); },
+      reanchorPromptCaret: async () => {},
+    });
+    await worker.insertPromptText({}, longText, undefined, true, false, undefined, true);
+    expect(reads).toBe(1);
+    expect(edits).toEqual([before === " " ? longText.slice(1) : longText]);
+    expect(readbacks).toEqual(Array(2).fill({ text: longText, preserveLeading: true }));
+  }
+
+  let reads = 0;
+  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    config: {},
+    attachedPromptText: async () => { reads += 1; return " "; },
+    activeComposer: async () => ({
+      focus: async () => {},
+      evaluate: async () => ({ result: true, attempts: 1, accepted: 1 }),
+    }),
+    waitForPromptChunkAttached: async () => {},
+    reanchorPromptCaret: async () => {},
+  });
+  await worker.insertPromptText({}, " short", undefined, false, false, undefined, true);
+  expect(reads).toBe(0);
+});
+
 test("existing safe compaction repair cannot refill the candidate deadline", async () => {
   const { ChatGptBrowserWorker, ChatGptPromptAttachmentIntegrityError } = await import("../src/adapters/chatgpt-web/browser-worker");
   const { ChatGptPromptOperation } = await import("../src/adapters/chatgpt-web/prompt-operation");

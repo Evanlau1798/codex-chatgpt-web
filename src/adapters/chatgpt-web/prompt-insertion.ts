@@ -24,6 +24,7 @@ export async function insertChatGptPromptText(
     verify(expected: string): Promise<void>;
     reanchor(): Promise<void>;
     connectorSelected?: boolean;
+    existingPrefix?: " ";
     onProgress?(snapshot: ChatGptPromptInsertionSnapshot): void;
   },
   options?: ChatGptPromptInsertionOptions,
@@ -67,7 +68,9 @@ export async function insertChatGptPromptText(
       const htmlShape = plan.strategy === "direct-html-prewrap" ? "prewrap" : plan.strategy === "direct-html";
       await metrics.run("insert", async () => {
         metrics.chunk();
-        await withComposer(composer => insertChatGptComposerGuardedText(composer, text, abortSignal, htmlShape, metrics, op, recoverCaret));
+        const insertionText = actions.connectorSelected && actions.existingPrefix === " " && text.startsWith(" ")
+          ? text.slice(1) : text;
+        await withComposer(composer => insertChatGptComposerGuardedText(composer, insertionText, abortSignal, htmlShape, metrics, op, recoverCaret));
         metrics.inserted(text.length);
       });
       const expected = plan.strategy === "direct-html-prewrap" ? text : text.trimStart();
