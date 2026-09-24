@@ -8,6 +8,7 @@ import {
   assertWebContractRuntimeVersion,
   captureWebContract,
   deriveWebContractCapabilities,
+  findWebContractSurface,
   requestWebContractTurn,
   runWebContractTurns,
   responseHasFinalProjection,
@@ -25,6 +26,18 @@ import {
 } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
 
 describe("lightweight Web contract smoke", () => {
+  test("finds its retained surface while an unrelated Web turn is open", async () => {
+    const result = await findWebContractSurface(["other", "canary"], async surfaceId => ({
+      ownsCanary: surfaceId === "canary",
+      userTurns: 1,
+    }));
+    expect(result).toEqual({ surfaceId: "canary", userTurns: 1 });
+    await expect(findWebContractSurface(["first", "second"], async () => ({
+      ownsCanary: true,
+      userTurns: 1,
+    }))).rejects.toThrow("expected one owned retained surface; found 2");
+  });
+
   test("makes contract turns tool-capable so Native2 receives a bound turn token", () => {
     const turnToken = "turn_12345678901234567890123456789012";
     const parsed = parseRequest({

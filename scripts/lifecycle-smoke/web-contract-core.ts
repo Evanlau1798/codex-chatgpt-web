@@ -40,6 +40,23 @@ export function responseHasFinalProjection(payload: unknown): boolean {
       && (part as { text: string }).text.trim().length > 0));
 }
 
+export async function findWebContractSurface(
+  surfaceIds: string[],
+  inspect: (surfaceId: string) => Promise<{ ownsCanary: boolean; userTurns: number }>,
+): Promise<{ surfaceId: string; userTurns: number }> {
+  const owned: { surfaceId: string; userTurns: number }[] = [];
+  for (const surfaceId of surfaceIds) {
+    try {
+      const observation = await inspect(surfaceId);
+      if (observation.ownsCanary) owned.push({ surfaceId, userTurns: observation.userTurns });
+    } catch {
+      // An unrelated turn may close while its browser surface is being inspected.
+    }
+  }
+  if (owned.length !== 1) throw new Error(`Web contract expected one owned retained surface; found ${owned.length}`);
+  return owned[0]!;
+}
+
 export async function runWebContractTurns(
   send: (turn: number, previousResponseId?: string) => Promise<Record<string, unknown>>,
   observe: () => Promise<{ surfaceId: string; userTurns: number }>,

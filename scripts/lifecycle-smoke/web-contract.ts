@@ -19,6 +19,7 @@ import {
   assertWebContractCooldown,
   assertWebContractRuntimeVersion,
   deriveWebContractCapabilities,
+  findWebContractSurface,
   requestWebContractTurn,
   runWebContractTurns,
   webContractRequestTools,
@@ -187,6 +188,7 @@ await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_C
     : externalConnectorContractVerified
       ? "Reply briefly to confirm this retained follow-up completed."
       : "After the probe succeeds, reply briefly to confirm this retained follow-up completed.";
+  const taggedPrompt = turn === 0 ? `${taskPrompt}\n\nCanary ID: ${threadId}` : taskPrompt;
   const requestTurn = async (promptText: string): Promise<void> => {
     const body = {
       model: "chatgpt-web/medium",
@@ -215,10 +217,10 @@ await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_C
     payload = await result.response.json() as Record<string, unknown>;
   };
   if (externalConnectorContractVerified) {
-    await requestTurn(taskPrompt);
+    await requestTurn(taggedPrompt);
   } else {
     await verifyCurrentConnectorContract(config.appName, "native", async probe => {
-      await requestTurn(`${probe.prompt}\n\n${taskPrompt}`);
+      await requestTurn(`${probe.prompt}\n\n${taggedPrompt}`);
       contractProbeTurns += 1;
     });
   }
@@ -228,11 +230,13 @@ await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_C
   if (!await waitForBrowserIdle(baseUrl)) throw new Error("Web contract turn did not settle before reuse inspection");
   const surfaces = Object.keys(readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!).surfaceTargets)
     .filter(surfaceId => !existingSurfaces.has(surfaceId));
-  if (surfaces.length !== 1) throw new Error("Web contract expected exactly one retained surface");
-  const retained = await connectLauncherBrowserHost(config.browserHostDescriptorPath!, 5_000, surfaces[0]);
-  try {
-    return { surfaceId: surfaces[0]!, userTurns: await retained.page.locator(CHATGPT_USER_TURN_SELECTOR).count() };
-  } finally { await retained.browser.close(); }
+  return findWebContractSurface(surfaces, async surfaceId => {
+    const retained = await connectLauncherBrowserHost(config.browserHostDescriptorPath!, 5_000, surfaceId);
+    try {
+      const turns = retained.page.locator(CHATGPT_USER_TURN_SELECTOR);
+      return { ownsCanary: await turns.filter({ hasText: threadId }).count() === 1, userTurns: await turns.count() };
+    } finally { await retained.browser.close(); }
+  });
 });
 const finalProjection = true;
 const browserIdle = await waitForBrowserIdle(baseUrl);
