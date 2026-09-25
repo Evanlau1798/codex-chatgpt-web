@@ -464,6 +464,7 @@ export class ChatGptSubmissionRejectionObserver {
   private ownedRequests = 0;
   private statuses: number[] = [];
   private requestFailures = 0;
+  private failureCodes: string[] = [];
   private rebinds = 0;
 
   private readonly onRequest = (request: Request): void => {
@@ -492,7 +493,10 @@ export class ChatGptSubmissionRejectionObserver {
   };
 
   private readonly onRequestFailed = (request: Request): void => {
-    if (this.requests.delete(request)) this.requestFailures++;
+    if (!this.requests.delete(request)) return;
+    this.requestFailures++;
+    this.failureCodes.push(request.failure()?.errorText.match(/\bERR_[A-Z0-9_]+\b/)?.[0] ?? "unknown");
+    if (this.failureCodes.length > 8) this.failureCodes.shift();
   };
 
   private readonly onRequestFinished = (request: Request): void => {
@@ -505,6 +509,7 @@ export class ChatGptSubmissionRejectionObserver {
     this.ownedRequests = 0;
     this.statuses = [];
     this.requestFailures = 0;
+    this.failureCodes = [];
     this.rebinds = 0;
     this.page = page;
     page.on("request", this.onRequest);
@@ -515,10 +520,10 @@ export class ChatGptSubmissionRejectionObserver {
 
   noteRebind(): void { if (this.page) this.rebinds++; }
 
-  diagnosticSummary(): { ownedRequests: number; statuses: number[]; requestFailures: number;
+  diagnosticSummary(): { ownedRequests: number; statuses: number[]; requestFailures: number; failureCodes: string[];
     pendingRequests: number; networkObservationContinuous: boolean; rebinds: number } {
     return { ownedRequests: this.ownedRequests, statuses: [...this.statuses],
-      requestFailures: this.requestFailures, pendingRequests: this.requests.size,
+      requestFailures: this.requestFailures, failureCodes: [...this.failureCodes], pendingRequests: this.requests.size,
       networkObservationContinuous: this.rebinds === 0, rebinds: this.rebinds };
   }
 

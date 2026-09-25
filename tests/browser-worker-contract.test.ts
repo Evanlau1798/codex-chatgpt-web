@@ -1785,7 +1785,7 @@ test("upstream failure diagnostics retain only owned request statuses and failur
   const foreign = request("https://other.example/backend-api/f/conversation");
   page.emit("request", foreign);
   page.emit("response", { request: () => foreign, status: () => 500 });
-  const owned = request("https://chatgpt.com/backend-api/f/conversation");
+  const owned = { ...request("https://chatgpt.com/backend-api/f/conversation"), failure: () => ({ errorText: "net::ERR_HTTP2_PROTOCOL_ERROR https://private.example/path" }) };
   page.emit("request", owned);
   page.emit("response", { request: () => owned, status: () => 502 });
   expect(observer.diagnosticSummary()).toMatchObject({ statuses: [502], pendingRequests: 1 });
@@ -1795,9 +1795,10 @@ test("upstream failure diagnostics retain only owned request statuses and failur
   page.emit("response", { request: () => completed, status: () => 200 });
   page.emit("requestfinished", completed);
   expect(observer.diagnosticSummary()).toMatchObject({
-    ownedRequests: 2, statuses: [502, 200], requestFailures: 1, pendingRequests: 0,
+    ownedRequests: 2, statuses: [502, 200], requestFailures: 1, failureCodes: ["ERR_HTTP2_PROTOCOL_ERROR"], pendingRequests: 0,
     networkObservationContinuous: true, rebinds: 0,
   });
+  expect(JSON.stringify(observer.diagnosticSummary())).not.toContain("private.example");
   observer.noteRebind();
   expect(observer.diagnosticSummary()).toMatchObject({ networkObservationContinuous: false, rebinds: 1 });
   observer.dispose();
@@ -1835,7 +1836,7 @@ test("browser failure path logs bounded upstream evidence and preserves the orig
     expect(line).toBeDefined();
     expect(line).not.toContain("private prompt");
     expect(JSON.parse(line!.split(" upstream_failure ")[1]!)).toEqual({
-      submission: { ownedRequests: 0, statuses: [], requestFailures: 0, pendingRequests: 0,
+      submission: { ownedRequests: 0, statuses: [], requestFailures: 0, failureCodes: [], pendingRequests: 0,
         networkObservationContinuous: true, rebinds: 0 },
       ui: { globalErrorActions: 1, assistantTurns: 0, stopButtons: 0, globalAlerts: 0 },
     });
