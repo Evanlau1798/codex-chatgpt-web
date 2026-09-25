@@ -21,6 +21,7 @@ function personalizedTemporaryChatRole(
   return locator;
 }
 import { ChatGptSubmissionRejectionObserver, CHATGPT_COMPLETION_SETTLE_MS } from "../src/adapters/chatgpt-web/browser-worker";
+import { chatGptSameSurfaceReadiness } from "../src/adapters/chatgpt-web/same-surface-readiness";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
@@ -1772,6 +1773,38 @@ test("only a size rejection of the current owned browser submission is non-retry
   observer.dispose();
   expect(page.listenerCount("request")).toBe(0);
   expect(page.listenerCount("response")).toBe(0);
+});
+
+test("retained response ignores older completion actions but detects a later conflicting turn", async () => {
+  const { createWindow } = require("@mixmark-io/domino");
+  const snapshotFor = async (later: boolean, bound: boolean) => {
+    const button = '<button data-testid="copy-turn-action-button"></button>';
+    const window = createWindow(`<div data-turn-id="old">${button}</div><div data-turn-id="current">${bound ? button : ""}</div>${later ? `<div data-turn-id="later">${button}</div>` : ""}`);
+    const root = window.document.querySelector('[data-turn-id="current"]');
+    const context = createContext({
+      document: window.document, HTMLElement: window.HTMLElement, Element: window.Element,
+      Node: window.Node, NodeFilter: window.NodeFilter,
+      getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
+    });
+    const responseTurn = {
+      evaluate: async (callback: Function, options: unknown) => runInContext(`(${callback.toString()})`, context)(root, options),
+      page: () => ({ isClosed: () => false }),
+    };
+    return (ChatGptBrowserWorker.prototype as any).responseDomSnapshot.call({}, responseTurn);
+  };
+  const retained = await snapshotFor(false, false);
+  expect(retained).toMatchObject({ completionActionVisible: false, globalCompletionActionVisible: false });
+  expect(chatGptSameSurfaceReadiness({
+    responsePresent: true, bindingPresent: true, ...retained,
+    composerVisibleCount: 1, composerTextChars: [0], running: false, aborted: false,
+  })).toMatchObject({ eligible: true });
+  expect(await snapshotFor(false, true)).toMatchObject({ completionActionVisible: true, globalCompletionActionVisible: true });
+  const conflict = await snapshotFor(true, false);
+  expect(conflict).toMatchObject({ completionActionVisible: false, globalCompletionActionVisible: true });
+  expect(chatGptSameSurfaceReadiness({
+    responsePresent: true, bindingPresent: true, ...conflict,
+    composerVisibleCount: 1, composerTextChars: [0], running: false, aborted: false,
+  })).toMatchObject({ eligible: false, reason: "completion_action_conflict" });
 });
 
 test("upstream failure diagnostics retain only owned request statuses and failure counts", async () => {
