@@ -40,6 +40,22 @@ test("window state caps corrupt oversized dimensions", () => {
   assert.deepEqual(state.bounds, { width: 16_384, height: 16_384 });
 });
 
+test("restore fits a partly visible window into its remaining display", () => {
+  for (const [position, expected] of [
+    [{ x: 1511, y: 400 }, { x: 392, y: 262 }],
+    [{ x: 100, y: -700 }, { x: 100, y: 0 }],
+    [{ x: 100, y: 981 }, { x: 100, y: 262 }],
+  ]) {
+    assert.deepEqual(normalizeWindowState({ bounds: { width: 1120, height: 720, ...position } }, displays).bounds,
+      { width: 1120, height: 720, ...expected });
+  }
+  const left = { workArea: { x: -1280, y: 0, width: 1280, height: 800 } };
+  assert.deepEqual(normalizeWindowState({ bounds: { x: -1000, y: 50, width: 1120, height: 720 } }, [...displays, left]).bounds,
+    { x: -1120, y: 50, width: 1120, height: 720 });
+  assert.deepEqual(normalizeWindowState({ bounds: { x: -10, y: 10, width: 1800, height: 1200 } }, [left]).bounds,
+    { x: -1280, y: 0, width: 1280, height: 800 });
+});
+
 test("window state is stored atomically with owner-only permissions", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-window-state-"));
   const file = path.join(root, "window-state.json");

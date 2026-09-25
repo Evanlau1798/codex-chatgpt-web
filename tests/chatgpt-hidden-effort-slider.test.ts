@@ -11,6 +11,7 @@ function picker(options: { failFirst?: boolean; staleExpanded?: boolean; missing
   let attached = false;
   let waits = 0;
   const button = {
+    filter() { return this; },
     last() { return this; }, isVisible: async () => true,
     getAttribute: async () => String(options.staleExpanded || expanded),
     press: async () => { presses++; expanded = true; },
@@ -46,7 +47,7 @@ function picker(options: { failFirst?: boolean; staleExpanded?: boolean; missing
     last: () => { throw new Error("Unfiltered stale picker selected"); },
     filter: ({ visible }: { visible: boolean }) => {
       expect(visible).toBeTrue();
-      return { last: () => container };
+      return container;
     },
   };
   const menu = { filter() { return this; }, last() { return this; }, isVisible: async () => false };

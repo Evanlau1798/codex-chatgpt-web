@@ -15,6 +15,7 @@ const { showBrowserWindow } = require("./window-activation.cjs");
 const { validatePasskeyLoginState } = require("./passkey-login-state.cjs");
 const { ManualTurnController } = require("./manual-turn-controller.cjs");
 const { initializeAutomaticTurnTab, markTurnTabSurface } = require("./automatic-turn-surface.cjs");
+const { configureChatGptAnnouncementDismissal } = require("./browser-announcements.cjs");
 const {
   refreshTurnLeasesAfterSuspension,
   shouldBlockSleepForTurns,
@@ -83,8 +84,7 @@ const COMPOSER_SELECTOR = [
   '[data-testid="prompt-textarea"]',
   "#prompt-textarea",
   '[contenteditable="true"][data-lexical-editor="true"]',
-  '[contenteditable="true"][role="textbox"]',
-  "textarea",
+  'form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"][role="textbox"]',
 ].join(", ");
 const CHATGPT_VIEWPORT_CSS = `
   html,
@@ -352,6 +352,9 @@ class BrowserHost {
     this.cloudflareChallengeRecoveryDelayMs = CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS;
     this.cloudflareChallengeRecoverySettleMs = CLOUDFLARE_CHALLENGE_RECOVERY_SETTLE_MS;
     this.viewportCssKey = null;
+    this.primaryRendererReady = false;
+    this.primaryDeviceEmulationViewport = null;
+    this.primaryDeviceEmulationDirty = true;
     this.shellZoomShortcutBindings = new Map();
     this.authView = null;
     this.authNavigationError = null;
@@ -443,13 +446,15 @@ class BrowserHost {
     }
     if (this.manualOperation) throw new Error(`ChatGPT browser is already busy with ${this.manualOperation}`);
     this.assertTurnTabsCanResetForInteractionModeChange();
+    const previousMode = browserInteractionModeFor(this);
     this.interactionModeOverride = mode;
     this.manualOperation = INTERACTION_MODE_CHANGE_OPERATION;
     let completed = false;
     let primaryError;
     try {
-      // Setup capability inspection runs before its runtime-ready callback, so publish the target
-      // mode's native surface mapping for the transaction and restore it if setup rolls back.
+      if (mode === "manual" && previousMode === "automatic") await this.configureAnnouncementDismissal(false);
+      // Setup inspects the primary surface before committing runtime changes. Publish
+      // its native target in the same mode as that inspection, including Zero Risk's exclusion.
       this.writeDescriptor();
       let browserCommitted = false;
       const commitBrowserChange = async () => {
@@ -457,7 +462,10 @@ class BrowserHost {
         // The runtime setup invokes this callback inside its own rollback boundary. Existing tabs
         // are mode-bound and remain valid history, so the browser commit has no irreversible tab
         // mutation that could survive a runtime rollback.
-        if (mode === "automatic") await this.markOwnedSurface();
+        if (mode === "automatic") {
+          await this.markOwnedSurface();
+          await this.configureAnnouncementDismissal(true);
+        }
         browserCommitted = true;
       };
       const result = await action(commitBrowserChange);
@@ -473,6 +481,7 @@ class BrowserHost {
       this.interactionModeOverride = null;
       if (!completed) {
         try {
+          if (previousMode !== mode) await this.configureAnnouncementDismissal(previousMode === "automatic");
           this.writeDescriptor();
         } catch (rollbackError) {
           if (!primaryError) throw rollbackError;
@@ -793,6 +802,18 @@ class BrowserHost {
     });
   }
 
+  async configureAnnouncementDismissal(enabled) {
+    if (enabled) requireAutomaticBrowserInspection(this, "ChatGPT announcement dismissal");
+    const views = [this.view, ...[...this.turnTabs.values()]
+      .filter(tab => tab.interactionMode === "automatic")
+      .map(tab => tab.view)];
+    await Promise.all(views.map(view => {
+      const contents = view?.webContents;
+      if (!contents || contents.isDestroyed()) return;
+      return contents.executeJavaScript(`(${configureChatGptAnnouncementDismissal.toString()})(${enabled})`, true);
+    }));
+  }
+
   bindWebContents() {
     const contents = this.view.webContents;
     contents.setWindowOpenHandler(({ url }) => {
@@ -815,8 +836,14 @@ class BrowserHost {
       }
       return { action: "deny" };
     });
-    contents.on("did-start-navigation", (_event, url, _inPlace, mainFrame) => {
+    contents.on("did-start-navigation", (_event, url, inPlace, mainFrame) => {
       if (!mainFrame) return;
+      if (inPlace) {
+        this.setState({ url });
+        return;
+      }
+      this.primaryRendererReady = false;
+      this.primaryDeviceEmulationDirty = true;
       this.armHomeNavigationTimeout(contents, url);
       this.setState(this.activeTraceId || this.manualOperation
         ? { url, loading: true }
@@ -824,6 +851,14 @@ class BrowserHost {
     });
     contents.on("did-finish-load", () => {
       this.clearHomeNavigationTimeout();
+      this.primaryRendererReady = true;
+      this.syncViewVisibility();
+      if (this.manualOperation === "ChatGPT login") {
+        this.logger.info("browser.auth_navigation_completed", {
+          surface: "primary",
+          origin: navigationOriginForLog(contents.getURL()),
+        });
+      }
       const url = contents.getURL();
       if (browserInteractionModeFor(this) === "manual") {
         this.setState({ status: "idle", message: "No active task", url, loading: false });
@@ -1282,7 +1317,30 @@ class BrowserHost {
   }
 
   presentPrimaryView(visible) {
-    this.view.setBounds(visible ? this.bounds : this.hiddenTurnBounds());
+    // The descriptor advertises this exact WebContents for the lifetime of the launcher. Hiding
+    // the native View can make Windows drop it from the remote-debugging target set, leaving a
+    // live descriptor whose ownership id cannot be leased. Keep the View attached and drawable
+    // offscreen; only its placement, never its ownership lifetime, follows the launcher UI.
+    const automatic = browserInteractionModeFor(this) === "automatic";
+    const bounds = visible ? this.bounds : this.hiddenTurnBounds();
+    if (visible || !automatic) {
+      this.view.setBounds(bounds);
+      if (this.primaryRendererReady && this.primaryDeviceEmulationViewport) {
+        this.view.webContents.disableDeviceEmulation();
+        this.primaryDeviceEmulationViewport = null;
+      }
+      if (this.primaryRendererReady) this.primaryDeviceEmulationDirty = false;
+    } else {
+      if (this.primaryRendererReady
+        && (this.primaryDeviceEmulationDirty
+          || this.primaryDeviceEmulationViewport?.width !== bounds.width
+          || this.primaryDeviceEmulationViewport?.height !== bounds.height)) {
+        this.enableHiddenTurnViewport(this.view.webContents, bounds);
+        this.primaryDeviceEmulationViewport = { width: bounds.width, height: bounds.height };
+        this.primaryDeviceEmulationDirty = false;
+      }
+      this.view.setBounds(bounds);
+    }
     this.view.setVisible(true);
   }
 
@@ -1532,6 +1590,7 @@ class BrowserHost {
         writable: false,
       });
       document.documentElement.dataset.codexWebGptSurface = ${surfaceId};
+      (${configureChatGptAnnouncementDismissal.toString()})(true);
     })()`, true);
   }
 

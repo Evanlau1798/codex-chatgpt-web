@@ -14,7 +14,7 @@ import { ChatGptPromptOperation } from "../src/adapters/chatgpt-web/prompt-opera
 import { planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
-import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
+import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SEND_BUTTON_SELECTOR, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
 import { activateChatGptSendControl, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
 import { ChatGptViewportReadinessError, chatGptSuspensionClock } from "../src/adapters/chatgpt-web/browser-stage-lifecycle";
 
@@ -52,6 +52,7 @@ function surface(read: () => Promise<State>) {
   const elements = (identities: readonly string[]) => identities.map(identity => ({
     getAttribute: (name: string) => name.startsWith("data-turn-id") ? identity : null,
     parentElement: null,
+    closest: () => null,
   }));
   const users = {
     count: async () => 1,
@@ -86,7 +87,7 @@ function surface(read: () => Promise<State>) {
     locator: (selector: string) => {
       if (selector.includes('data-message-author-role="assistant"')) return responses;
       if (selector.includes('data-message-author-role="user"')) return users;
-      if (selector === "[data-turn-id-container]") {
+      if (selector === "[data-turn-id-container], [data-turn-key]") {
         return {
           evaluateAll: async (callback: (items: unknown[], name?: string) => unknown, name?: string) => callback(
             elements(lastState.knownTurnIdentities ?? ["conversation-turn-old", ...(lastState.identities ?? [])]),
@@ -141,7 +142,7 @@ test("accepted send rebinds observation once without sending the prompt twice", 
   let presses = 0;
   let activated = 0;
   let recoveries = 0;
-  instance.activeComposer = async () => ({ locator: () => ({ getByTestId: () => ({
+  instance.activeComposer = async () => ({ locator: () => ({ locator: () => ({
     waitFor: async () => {}, isEnabled: async () => true, press: async () => { presses++; },
   }) }) });
   const signal = new AbortController().signal;
@@ -164,7 +165,7 @@ test("send revalidates the exact prompt before activation", async () => {
   const instance = worker();
   let presses = 0;
   let activated = 0;
-  instance.activeComposer = async () => ({ locator: () => ({ getByTestId: () => ({
+  instance.activeComposer = async () => ({ locator: () => ({ locator: () => ({
     waitFor: async () => {}, isEnabled: async () => true, press: async () => { presses++; },
   }) }) });
   instance.assertPromptAttached = async (_page, prompt) => {
@@ -194,7 +195,7 @@ test("default multipart pre-Send revalidation rejects added leading text before 
   const insertionPlan = planChatGptPromptInsertion(expected, { largeStructuredDirect: true });
   let observed: { text: string; preserveLeading: boolean } | undefined;
   let presses = 0;
-  instance.activeComposer = async () => ({ locator: () => ({ getByTestId: () => ({
+  instance.activeComposer = async () => ({ locator: () => ({ locator: () => ({
     waitFor: async () => {}, isEnabled: async () => true, press: async () => { presses++; },
   }) }) });
   instance.assertPromptAttached = async (_page, text, _signal, _operation, preserveLeading) => {
@@ -323,7 +324,7 @@ test("recovered MCP batch is acknowledged by the real worker observation before 
   let sends = 0, rebinds = 0, observed = false, revision = 0;
   let observation: Promise<void> | undefined;
   const instance = Object.assign(worker(), {
-    activeComposer: async () => ({ locator: () => ({ getByTestId: () => ({
+    activeComposer: async () => ({ locator: () => ({ locator: () => ({
       waitFor: async () => {}, isEnabled: async () => true, press: async () => { sends++; },
     }) }) }),
     responseDomSnapshot: async (response: Locator) => {
@@ -469,7 +470,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
   const verified: Array<{ text: string; preserveLeading: boolean }> = [];
   const instance = Object.assign(worker(), {
     config: { experimentalNoAutoCompact: false, experimentalComposerPlainText: lane === "final-prewrap" },
-    activeComposer: async () => ({ locator: () => ({ getByTestId: () => ({
+    activeComposer: async () => ({ locator: () => ({ locator: () => ({
       waitFor: async () => {}, isEnabled: async () => true, press: async (_key: string, options: { noWaitAfter?: boolean; timeout?: number; signal?: AbortSignal }) => {
         expect(options).toMatchObject({ noWaitAfter: true, timeout: 0 });
         expect(options.signal).toBeInstanceOf(AbortSignal);
@@ -516,7 +517,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
     diagnostics: { capture: async () => {} },
     settleChatGptUi: async () => {},
     CHATGPT_SEND_ENABLE_GRACE_MS: 5_000,
-    CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_USER_TURN_SELECTOR,
+    CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SEND_BUTTON_SELECTOR, CHATGPT_USER_TURN_SELECTOR,
     CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, chatGptSuspensionClock,
     chatGptPromptAttachmentTimeoutMs, planChatGptPromptInsertion,
     throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
@@ -573,7 +574,7 @@ test("a failed first rebind shares the two-attempt budget and never reactivates 
   const attempts: number[] = [];
   const progress = new ChatGptExternalTurnProgress();
   const revision = progress.recordToolBatch(1);
-  instance.activeComposer = async () => ({ locator: () => ({ getByTestId: () => ({
+  instance.activeComposer = async () => ({ locator: () => ({ locator: () => ({
     waitFor: async () => {}, isEnabled: async () => true, press: async () => { presses++; },
   }) }) });
   const evidence = await instance.sendAttachedPrompt(first.page, first.baseline, initial, undefined,

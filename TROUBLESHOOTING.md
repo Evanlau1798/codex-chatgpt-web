@@ -8,8 +8,8 @@ editing Codex configuration, or opening a new issue.
 1. Install the [latest Enhanced release](https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest). Quit
    **Codex Web GPT** before running the installer again; updating preserves its private ChatGPT
    profile and launcher configuration.
-2. In the launcher, confirm that ChatGPT sign-in, the browser smoke test, and **Install models** (or
-   **Repair Codex setup**) are green.
+2. In **Setup**, confirm that ChatGPT sign-in, the browser smoke test, and **Install into Codex**
+   are green. The installation button says **Install models**, or **Reinstall** after setup.
 3. Fully quit Codex, including its background process, and reopen it. Signing out, closing only the
    window, or starting another task does not reload the model catalog. Keep the launcher open.
 4. Select a model ending in **(Web)** from Codex's model picker.
@@ -29,7 +29,7 @@ If the models still do not appear:
 
 - confirm that **Codex itself** uses ChatGPT sign-in; signing into the launcher's browser is separate.
   An API-key or signed-out Codex session can show only its built-in catalog without contacting the bridge;
-- run **Repair Codex setup** once;
+- open **Setup → Install into Codex** and click **Reinstall** once;
 - check **Settings → Run doctor**;
 - make sure another Codex wrapper is not replacing the route; and
 - export a safe log after the failed catalog check.
@@ -46,8 +46,9 @@ for the whole installation or only for the process they launch.
 
 Choose one route owner:
 
-- To use Codex Web GPT, disable the other wrapper's provider/proxy mode, run **Repair Codex setup**,
-  fully restart Codex, and start Codex directly rather than through the wrapper command.
+- To use Codex Web GPT, disable the other wrapper's provider/proxy mode, click
+  **Setup → Install into Codex → Reinstall**, fully restart Codex, and start Codex directly rather
+  than through the wrapper command.
 - A tool may remain enabled only as an MCP integration if it does not replace `openai_base_url`.
 - To switch away cleanly, use **Settings → Remove Codex integration** first. This restores the exact
   route that existed before Codex Web GPT was installed.
@@ -287,8 +288,13 @@ To update, quit **Codex Web GPT** and run the same installer command from the RE
 replaces the application and runtime while preserving the launcher configuration and private
 ChatGPT profile.
 
-To repair a valid installation, use **Repair Codex setup** once and fully restart Codex. Avoid
-deleting configuration until **Run doctor** and a safe log identify which layer failed.
+On Linux, automatic updates require the installed launcher created by `install-launcher.sh`.
+If Update reports that the stable wrapper is missing, quit the app, run the installer command
+from the README, and reopen Codex Web GPT from the applications menu. This preserves settings and browser data.
+
+To repair a valid integration, open **Setup → Install into Codex**, click **Reinstall** once,
+and fully restart Codex. Avoid deleting configuration until **Run doctor** and a safe log identify
+which layer failed.
 
 To remove the integration safely:
 

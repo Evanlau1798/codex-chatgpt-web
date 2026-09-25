@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { renameAtomicFile } = require("./atomic-file.cjs");
+const { renameAtomicFile, writePrivateFileAtomic } = require("./atomic-file.cjs");
 
 const MAX_LOG_BYTES = 4 * 1024 * 1024;
 const MAX_MEMORY_RECORDS = 300;
@@ -32,7 +32,7 @@ function sanitizeForExport(value, seen = new WeakSet()) {
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       key,
-      /^(?:prompt|response|html|dom|content|visibleRows|sidebarRows|sidebarTitles|conversationTitle|conversationTitles|chatTitle|chatTitles)$/i.test(key)
+      /^(?:prompt|response|html|dom|content|url|visibleRows|sidebarRows|sidebarTitles|conversationTitle|conversationTitles|chatTitle|chatTitles)$/i.test(key)
         ? "[redacted]"
         : sanitizeForExport(item, seen),
     ]),
@@ -42,7 +42,16 @@ function sanitizeForExport(value, seen = new WeakSet()) {
 function exportSanitizedLogs({ filePath, destinationPath }) {
   const sourcePaths = [`${filePath}.1`, filePath];
   const destination = path.resolve(destinationPath);
-  if (sourcePaths.some(sourcePath => path.resolve(sourcePath) === destination)) {
+  const destinationStat = fs.statSync(destination, { throwIfNoEntry: false });
+  if (sourcePaths.some(sourcePath => {
+    if (path.resolve(sourcePath) === destination) return true;
+    if (!destinationStat) return false;
+    const sourceStat = fs.statSync(sourcePath, { throwIfNoEntry: false });
+    return sourceStat && (
+      (sourceStat.ino !== 0 && sourceStat.dev === destinationStat.dev && sourceStat.ino === destinationStat.ino)
+      || fs.realpathSync(sourcePath) === fs.realpathSync(destination)
+    );
+  })) {
     throw new Error("Refusing to overwrite a launcher source log with an exported diagnostic");
   }
   const records = [];
@@ -72,13 +81,13 @@ function exportSanitizedLogs({ filePath, destinationPath }) {
       } catch {}
     }
   }
-  fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(
+  // Replacing the directory entry also avoids following a link introduced after
+  // the identity check. A failed write leaves the previous export intact.
+  writePrivateFileAtomic(
     destination,
     records.length > 0 ? `${records.map(record => JSON.stringify(record)).join("\n")}\n` : "",
-    { mode: 0o600 },
+    { protectDirectory: false },
   );
-  if (process.platform !== "win32") fs.chmodSync(destination, 0o600);
   return records.length;
 }
 
@@ -99,33 +108,35 @@ function sanitize(value, seen = new WeakSet()) {
 }
 
 function readRecent(filePath) {
-  try {
-    return fs.readFileSync(filePath, "utf8")
-      .split(/\r?\n/)
-      .filter(Boolean)
-      .slice(-MAX_MEMORY_RECORDS)
-      .flatMap((line) => {
-        try {
-          const record = JSON.parse(line);
-          if (!record
-            || typeof record.at !== "string"
-            || !["debug", "info", "warning", "error"].includes(record.level)
-            || typeof record.event !== "string") return [];
-          return [{
-            at: record.at,
-            level: record.level,
-            event: record.event,
-            detail: record.detail && typeof record.detail === "object"
-              ? sanitize(record.detail)
-              : {},
-          }];
-        } catch {
-          return [];
-        }
-      });
-  } catch {
-    return [];
+  const records = [];
+  // Count valid events, not lines: a partial final write must not evict history.
+  for (const sourcePath of [filePath, `${filePath}.1`]) {
+    let lines;
+    try {
+      lines = fs.readFileSync(sourcePath, "utf8").split(/\r?\n/);
+    } catch {
+      continue;
+    }
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      try {
+        const record = JSON.parse(lines[index]);
+        if (!record
+          || typeof record.at !== "string"
+          || !["debug", "info", "warning", "error"].includes(record.level)
+          || typeof record.event !== "string") continue;
+        records.push({
+          at: record.at,
+          level: record.level,
+          event: record.event,
+          detail: record.detail && typeof record.detail === "object"
+            ? sanitize(record.detail)
+            : {},
+        });
+        if (records.length === MAX_MEMORY_RECORDS) return records.reverse();
+      } catch {}
+    }
   }
+  return records.reverse();
 }
 
 function createLogger({ filePath, publish }) {

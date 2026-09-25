@@ -120,6 +120,7 @@ test("switching from Zero Risk to Automatic marks the already-loaded primary sur
     selectedTabId: "home",
     surfaceId: "automatic-primary-surface",
     view: { webContents: {
+      isDestroyed: () => false,
       executeJavaScript: async script => { scripts.push(script); },
     } },
     writeDescriptor() {},
@@ -130,9 +131,10 @@ test("switching from Zero Risk to Automatic marks the already-loaded primary sur
     await commit();
     return "configured";
   }), "configured");
-  assert.equal(scripts.length, 1);
+  assert.equal(scripts.length, 2);
   assert.match(scripts[0], /__CODEX_WEB_GPT_SURFACE_ID__/);
   assert.match(scripts[0], /automatic-primary-surface/);
+  assert.match(scripts[1], /configureChatGptAnnouncementDismissal/);
 });
 
 test("a failed Automatic ownership proof stays inside the runtime rollback boundary", async () => {

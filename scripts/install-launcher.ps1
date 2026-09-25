@@ -27,16 +27,36 @@ function Test-IsFullyQualifiedWindowsPath {
   return $Path -match '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$))'
 }
 
+function Resolve-LatestReleaseVersion {
+  param([Parameter(Mandatory = $true)][string]$Repository)
+  # The public release redirect does not consume the anonymous REST API quota.
+  $Response = Invoke-WithRetry -Label "Resolving the latest release" -Operation {
+    Invoke-WebRequest "https://github.com/$Repository/releases/latest" -Method Head -UseBasicParsing -TimeoutSec 60
+  }
+  # Windows PowerShell and PowerShell expose different underlying response types.
+  $ReleaseUri = if ($Response.BaseResponse.PSObject.Properties["ResponseUri"]) {
+    $Response.BaseResponse.ResponseUri
+  } else {
+    $Response.BaseResponse.RequestMessage.RequestUri
+  }
+  $Prefix = "/$Repository/releases/tag/"
+  if (-not $ReleaseUri -or $ReleaseUri.Scheme -ne "https" -or $ReleaseUri.Host -ne "github.com" `
+      -or -not $ReleaseUri.IsDefaultPort -or -not $ReleaseUri.AbsolutePath.StartsWith($Prefix, [StringComparison]::Ordinal) `
+      -or $ReleaseUri.Query -or $ReleaseUri.Fragment) {
+    throw "GitHub did not redirect to an official release. Download the installer from https://github.com/$Repository/releases or set CODEX_WEB_GPT_VERSION to a published version."
+  }
+  $Tag = [Uri]::UnescapeDataString($ReleaseUri.AbsolutePath.Substring($Prefix.Length))
+  if ($Tag -notmatch '^v?[A-Za-z0-9][A-Za-z0-9._-]*$') { throw "Invalid GitHub release tag" }
+  return $Tag
+}
+
 $Repository = if ($env:CODEX_WEB_GPT_REPOSITORY) { $env:CODEX_WEB_GPT_REPOSITORY } else { "Evanlau1798/codex-chatgpt-web" }
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
   throw "Invalid GitHub repository: $Repository"
 }
 $Version = $env:CODEX_WEB_GPT_VERSION
 if (-not $Version) {
-  $Release = Invoke-WithRetry -Label "Resolving the latest release" -Operation {
-    Invoke-RestMethod "https://api.github.com/repos/$Repository/releases/latest" -TimeoutSec 60
-  }
-  $Version = [string]$Release.tag_name
+  $Version = Resolve-LatestReleaseVersion -Repository $Repository
 }
 if ($Version -and $Version.StartsWith("v")) { $Version = $Version.Substring(1) }
 if (-not $Version) { throw "Could not resolve the latest Codex Web GPT release" }

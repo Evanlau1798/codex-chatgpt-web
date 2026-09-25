@@ -108,6 +108,8 @@ export const ja: Record<keyof Copy, string> = {
   next: "次へ",
   done: "完了",
   guideVideo: "ガイド動画",
+  playGuideVideo: "動画を再生",
+  pauseGuideVideo: "動画を一時停止",
   expandGuideVideo: "ガイド動画を拡大",
   closeGuideVideo: "拡大したガイド動画を閉じる",
   mcpStepOne: "トンネルと API キーを作成",

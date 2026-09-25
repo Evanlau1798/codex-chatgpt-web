@@ -23,7 +23,7 @@ export function readChatGptPromptText(
   options?: { preserveLeading?: boolean },
 ): string {
   const clone = element.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll('[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target]')
+  clone.querySelectorAll('[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]')
     .forEach(part => part.remove());
   const text = [...clone.childNodes].map(child => child.textContent ?? "").join("\n");
   return options?.preserveLeading ? text : text.trimStart();

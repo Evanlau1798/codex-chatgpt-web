@@ -110,6 +110,7 @@ import {
   assertAuthenticatedChatGptPage,
   assertNewChatPage,
   chatGptNewChatUrl,
+  chatGptAssistantTurnSelector,
   CHATGPT_ASSISTANT_TURN_SELECTOR,
   CHATGPT_COMPLETION_ACTION_SELECTOR,
   CHATGPT_COMPOSER_SELECTOR,
@@ -119,6 +120,7 @@ import {
   activateChatGptEffortMenu,
   CHATGPT_EFFORT_SLIDER_SELECTOR,
   CHATGPT_STOP_BUTTON_SELECTOR,
+  CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_USER_TURN_SELECTOR,
   chatGptEffortSliderAdvancedTowardTarget,
   detectChatGptAccountCapabilities,
@@ -258,7 +260,8 @@ const CHATGPT_DOM_REVISION_ATTRIBUTES = [
   "aria-hidden", "aria-label", "aria-busy", "aria-disabled", "aria-expanded", "class",
   "data-item-anchor", "data-is-last-node", "data-message-author-role", "data-state",
   "data-streaming-response-status", "data-testid", "data-turn", "data-turn-id",
-  "data-turn-id-container", "disabled", "hidden",
+  "data-turn-id-container", "data-turn-key", "data-conversation-role",
+  "data-user-message-bubble", "data-markdown-text-style", "disabled", "hidden",
   "inert", "open", "role", "start", "style",
 ] as const;
 
@@ -1367,7 +1370,7 @@ export class ChatGptBrowserWorker {
       if (!mode.thinkEnabled) await setChatGptThinkMode(composerForm, false, captureDiagnostic);
       return mode;
     }
-    const currentEffort = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).last();
+    const currentEffort = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).filter({ visible: true });
     const effortWaitAbort = new AbortController();
     try {
       const ready = await Promise.race([
@@ -1771,17 +1774,20 @@ export class ChatGptBrowserWorker {
           () => observeChatGptSubmission(async () => {
             await throwIfChatGptSessionFailureAlert(page);
             await throwIfChatGptRateLimitDialog(page);
-            return readChatGptAssistantTurnState(responseTurns);
+            return Promise.all([
+              readChatGptAssistantTurnState(responseTurns),
+              page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count(),
+            ]);
           }, signal, externalProgress, progress?.revision ?? 0),
           settleChatGptUi,
           signal,
         );
         if (!observed) continue;
-        const current = observed.value;
+        const [current, visibleStopButtonCount] = observed.value;
         const binding = bindChatGptAssistantTurn(initialResponseTurn, current);
         if (binding) return locateChatGptAssistantTurn(responseTurns, binding);
         const latestProgress = externalProgress?.snapshot();
-        if (chatGptExternalProgressSuppressesDomHealth(latestProgress, Date.now())) {
+        if (visibleStopButtonCount > 0 || chatGptExternalProgressSuppressesDomHealth(latestProgress, Date.now())) {
           responseDeadline = Math.min(
             deadline ?? Number.POSITIVE_INFINITY,
             Date.now() + responseDomGraceMs,
@@ -1814,7 +1820,7 @@ export class ChatGptBrowserWorker {
     const composer = await this.activeComposer(page);
     const sendButton = composer
       .locator("xpath=ancestor::form[1]")
-      .getByTestId("send-button");
+      .locator(CHATGPT_SEND_BUTTON_SELECTOR);
     await sendButton.waitFor({ state: "visible", timeout: browserStageTimeouts.send });
     await settleChatGptUi();
     const sendEnableDeadline = Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
@@ -2006,14 +2012,17 @@ export class ChatGptBrowserWorker {
   private selectedConnectorControl(composer: Locator): Locator {
     return composer
       .locator("xpath=ancestor::form[1]")
-      .locator(`[data-id^="plugin:"][data-keyword=${JSON.stringify(this.config.appName)}]`)
+      .locator([
+        `[data-id^="plugin:"][data-keyword=${JSON.stringify(this.config.appName)}]`,
+        `[app-mention-path^="app://"][app-mention-display-name=${JSON.stringify(this.config.appName)}][contenteditable="false"]`,
+      ].join(", "))
       .filter({ visible: true });
   }
 
   private async connectorIsSelected(composer: Locator, signal?: AbortSignal): Promise<boolean> {
     const selected = this.selectedConnectorControl(composer);
     const keywords = await withBrowserTurnAbort(selected.evaluateAll(elements => (
-      elements.map(element => element.getAttribute("data-keyword"))
+      elements.map(element => element.getAttribute("data-keyword") ?? element.getAttribute("app-mention-display-name"))
     )), signal);
     const exactMatches = keywords.filter(keyword => keyword === this.config.appName).length;
     if (exactMatches > 1) {
@@ -2108,7 +2117,7 @@ export class ChatGptBrowserWorker {
       await withBrowserTurnAbort(captureDiagnostic?.(checkpoint) ?? Promise.resolve(), abortSignal);
       throwIfPromptAttachmentAborted(abortSignal);
     };
-    const menuRows = page.locator('.__menu-item[tabindex="0"]');
+    const menuRows = page.locator('.__menu-item[tabindex="0"], [data-mention-list-scroll-area] button[data-list-navigation-item="true"]');
     const appResult = menuRows.filter({
       has: page.getByText(this.config.appName, { exact: true }),
     });
@@ -2256,10 +2265,8 @@ export class ChatGptBrowserWorker {
           + ` after ${attemptBudget.triggerAttempts} complete mention trigger attempt(s)`,
         );
       }
-      const rowHighlighted = async () => await appResult.getAttribute(
-        "data-highlighted",
-        op.options(10_000),
-      ) !== null;
+      const rowHighlighted = async () => await appResult.getAttribute("data-highlighted", op.options(10_000)) !== null
+        || await appResult.getAttribute("aria-current", op.options(10_000)) === "true";
       if (!await rowHighlighted()) {
         const visibleRowCount = await withBrowserTurnAbort(
           withChatGptBrowserObservationTimeout(menuRows.filter({ visible: true }).count()),
@@ -2679,12 +2686,13 @@ export class ChatGptBrowserWorker {
     if (files.length === 0) return;
     const composer = await this.activeComposer(page);
     const composerForm = composer.locator("xpath=ancestor::form[1]");
-    const input = page.locator('input[data-testid="upload-photos-input"]');
+    const input = page.locator('input[data-testid="upload-photos-input"], form[data-chatgpt-composer] input[type="file"][multiple]:not([accept])');
     await input.waitFor({ state: "attached", timeout: 20_000 });
     await input.setInputFiles(files);
     try {
       await Promise.all(files.map(file => (
         composerForm.getByRole("group", { name: file.name, exact: true })
+          .or(composerForm.locator(`.composer-attachment-surface[role="button"][aria-label=${JSON.stringify(file.name)}]`))
           .waitFor({ state: "visible", timeout: 60_000 })
       )));
     } catch {
@@ -2696,7 +2704,7 @@ export class ChatGptBrowserWorker {
         + (alerts.length > 0 ? `: ${alerts.join(" | ")}` : ""),
       );
     }
-    const send = composerForm.getByTestId("send-button");
+    const send = composerForm.locator(CHATGPT_SEND_BUTTON_SELECTOR);
     const deadline = Date.now() + 60_000;
     while (Date.now() < deadline) {
       if (await send.isEnabled().catch(() => false)) return;
@@ -2731,15 +2739,22 @@ export class ChatGptBrowserWorker {
         return false;
       };
 
-      // ChatGPT's DIL renderer has no .markdown class (#538). Its build-specific CSS module still
-      // lives under the assistant-owned PUIK response root.
-      const answerRootSelector = '.markdown, [data-message-author-role="assistant"] .puik-root.not-markdown > [class*="_DilResponseRoot"]';
+      // ChatGPT's DIL renderer has no .markdown class (#538). Read its response root within the
+      // assistant-owned PUIK container; the CSS module hash is build-specific. Both renderers
+      // feed the same content serializer and completion checks below, without reading UI text.
+      const answerRootSelector = '.markdown, [data-message-author-role="assistant"] .puik-root.not-markdown > [class*="_DilResponseRoot"], [data-markdown-text-style="assistant-message"]';
       // ChatGPT uses the same content renderer for intermediate commentary and for the final
       // answer. Older responses nested commentary in the streaming-status container. Pro can also
       // render a completed commentary Markdown root immediately before that live status container.
       // Final-answer Markdown follows the live status instead, so DOM order remains the semantic
       // boundary without relying on localized labels such as "Pro thinking".
       const allMarkdownRoots = [...root.querySelectorAll<HTMLElement>(answerRootSelector)]
+        .filter(candidate => {
+          if (!root.hasAttribute("data-turn-key") && !candidate.hasAttribute("data-markdown-text-style")) return true;
+          const unit = candidate.closest("[data-content-search-unit-key]");
+          return Boolean(unit) && Array.from(unit!.children)
+            .some(child => child.getAttribute("data-conversation-role") === "assistant");
+        })
         .filter(candidate => !candidate.parentElement?.closest(answerRootSelector))
         .filter(renderedInDom);
       const streamingStatusContainers = [...root.querySelectorAll<HTMLElement>("[data-streaming-response-status]")]
@@ -3900,7 +3915,7 @@ export class ChatGptBrowserWorker {
         const composer = await this.activeComposer(page);
         const sendButton = composer
           .locator("xpath=ancestor::form[1]")
-          .getByTestId("send-button");
+          .locator(CHATGPT_SEND_BUTTON_SELECTOR);
         await sendButton.waitFor({ state: "visible", timeout: browserStageTimeouts.send });
         await settleChatGptUi();
         const sendEnableDeadline = Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
@@ -4087,7 +4102,7 @@ export class ChatGptBrowserWorker {
               }
               const responsePresent = chatGptAssistantTurnChanged(initialResponseTurn, current);
               if (responsePresent && current.lastId) {
-                await throwIfChatGptTerminalErrorAlert(page.locator(`[data-turn-id=${JSON.stringify(current.lastId)}]`));
+                await throwIfChatGptTerminalErrorAlert(page.locator(chatGptAssistantTurnSelector(current.lastId)));
               }
               const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible().catch(() => false);
               const progress = turn.externalProgress?.snapshot();

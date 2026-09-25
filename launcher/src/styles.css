@@ -1530,6 +1530,7 @@ code {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  cursor: pointer;
 }
 
 .guide-media.is-expanded {
@@ -1542,6 +1543,31 @@ code {
   border: 0;
   border-radius: 0;
   background: var(--color-background-surface-under);
+}
+
+.guide-media-pause {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.94);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.guide-media-pause.is-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.guide-media-pause svg {
+  width: 48px;
+  height: 48px;
+  padding: 13px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 60%);
+  color: #fff;
 }
 
 .guide-media-expand,

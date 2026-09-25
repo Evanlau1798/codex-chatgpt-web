@@ -113,6 +113,8 @@ test("connector verification records only capabilities even when screenshots are
     expect(files.length).toBe(2);
     expect(screenshots).toBe(0);
     expect(verificationEvaluator).not.toMatch(/location\.href|document\.title|innerText|textContent/);
+    expect(verificationEvaluator).toContain("app-mention-path");
+    expect(verificationEvaluator).toContain("data-mention-list-scroll-area");
     for (const file of files) {
       const content = readFileSync(join(directory, file), "utf8");
       expect(content).not.toContain("private-");
@@ -181,6 +183,7 @@ test("opt-in screenshots mask sensitive UI regions and preserve the error envelo
     expect(json.state).toBeNull();
     expect(json.stateError).toContain("execution context unavailable");
     expect(locatorSelectors.join(" ")).toContain("conversation-turn-");
+    expect(locatorSelectors.join(" ")).toContain("[data-turn-key]");
     expect(locatorSelectors.join(" ")).toMatch(/prompt-textarea|contenteditable/);
     expect(locatorSelectors.join(" ")).toContain("dialog");
     expect(locatorSelectors.join(" ")).toMatch(/account|profile/i);

@@ -1,3 +1,5 @@
+const { configureChatGptAnnouncementDismissal } = require("./browser-announcements.cjs");
+
 async function markTurnTabSurface(host, tab, viewportCss) {
   const contents = tab.view.webContents;
   if (contents.isDestroyed() || host.turnTabs.get(tab.id) !== tab) {
@@ -10,6 +12,7 @@ async function markTurnTabSurface(host, tab, viewportCss) {
       value: ${encoded}, configurable: true, enumerable: false, writable: false,
     });
     document.documentElement.dataset.codexWebGptSurface = ${encoded};
+    (${configureChatGptAnnouncementDismissal.toString()})(true);
   })()`, true);
   if (contents.isDestroyed() || host.turnTabs.get(tab.id) !== tab) {
     throw new Error("Browser closed while surface ownership was being established");

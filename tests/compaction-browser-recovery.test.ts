@@ -41,7 +41,7 @@ test.each([
   const page = Object.assign(new EventEmitter(), { mainFrame: () => frame, evaluate: async () => ({}), isClosed: () => false,
     getByText: () => ({}),
     keyboard: { press: async () => {} },
-    locator: (selector: string) => selector === '.__menu-item[tabindex="0"]'
+    locator: (selector: string) => selector.includes('.__menu-item[tabindex="0"]')
       ? { filter: () => row } : hidden,
     url: () => { actions.push("observe"); throw finalResponse; } });
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
@@ -64,7 +64,7 @@ test.each([
     activeComposer: async () => ({
       fill: async () => {}, focus: async () => {}, pressSequentially: async () => {},
       press: async () => { actions.push("connector-select"); selected = true; },
-      locator: () => ({ getByTestId: () => ({
+      locator: () => ({ locator: () => ({
       waitFor: async () => {}, isEnabled: async () => true, press: async () => {
         actions.push("send");
         if (cancellationCase) {

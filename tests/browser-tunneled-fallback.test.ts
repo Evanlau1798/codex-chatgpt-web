@@ -102,7 +102,7 @@ async function runFixture(options: {
     isClosed: () => false, url: () => CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
     locator: (selector: string) => {
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
-      if (selector === "[data-turn-id-container]") return {
+      if (selector === "[data-turn-id-container], [data-turn-key]") return {
         evaluateAll: async () => ["historical", ...Array.from({ length: submitted }, (_, index) => `current${index || ""}`)],
       };
       if (selector.startsWith('[data-turn-id="current')) return response;
@@ -136,7 +136,7 @@ async function runFixture(options: {
       if (options.composerBusyAfterAdmission && actions.includes("recovery:eligible")) composerText = "User draft";
       return { textContent: async () => composerText,
         fill: async () => { composerText = ""; actions.push("clear"); }, focus: async () => {},
-        locator: () => ({ getByTestId: () => ({
+        locator: () => ({ locator: () => ({
       waitFor: async () => {}, isEnabled: async () => true,
       press: async () => {
         submitted++;

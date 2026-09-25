@@ -57,6 +57,14 @@ test("characterizes existing top-level/LF, decoration and leading-whitespace rea
   expect(readChatGptPromptText(element, { preserveLeading: true })).toBe("\u2028\u2029\uFEFFpayload");
 });
 
+test("prompt readback excludes the verified power UI connector pill", () => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+  const document = createDocument('<div id="composer"><span app-mention-path="app://configured" app-mention-display-name="Codex Native2" contenteditable="false">Native2</span><div>payload</div></div>');
+  const element = document.getElementById("composer")!;
+  expect(readChatGptPromptText(element)).toBe("payload");
+  expect(element.textContent).toContain("Native2");
+});
+
 
 test("verified marker progress is observable but never logged once per marker", () => {
   let now = 0;

@@ -44,6 +44,7 @@ function effortMenuFixture(itemCount: number) {
     waitFor: () => new Promise<void>(() => {}),
   };
   const effortControl = {
+    filter() { return this; },
     last() { return this; },
     waitFor: async () => {},
     getAttribute: async (name: string) => name === "aria-expanded" ? "true" : null,

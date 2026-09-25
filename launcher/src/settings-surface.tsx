@@ -409,10 +409,11 @@ export function SettingsSurface({
         </SettingRow>
         {snapshot.state.browserInteractionMode === "manual" ? (
           <SettingRow body={copy.zeroRiskModelSettingsBody} label={copy.zeroRiskModelSettings}>
-            <Switch
-              checked={snapshot.state.zeroRiskProEnabled}
-              disabled={busy || snapshot.state.coreSetupComplete !== true}
+            <ZeroRiskModelMenu
+              busy={busy || snapshot.state.coreSetupComplete !== true}
+              copy={copy}
               onChange={(enabled) => void setZeroRiskPro(enabled)}
+              proEnabled={snapshot.state.zeroRiskProEnabled}
             />
           </SettingRow>
         ) : null}
@@ -690,6 +691,104 @@ export function SettingsSurface({
         </span>
       </div>
     </ContentSurface>
+  );
+}
+
+function ZeroRiskModelMenu({
+  busy,
+  copy,
+  onChange,
+  proEnabled,
+}: {
+  busy: boolean;
+  copy: Copy;
+  onChange: (enabled: boolean) => void;
+  proEnabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const choose = (enabled: boolean) => {
+    setOpen(false);
+    if (enabled !== proEnabled) onChange(enabled);
+  };
+
+  return (
+    <div
+      className={`zero-risk-model-menu${open ? " is-open" : ""}`}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") setOpen(false);
+      }}
+    >
+      <button
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        aria-label={copy.zeroRiskModelSettings}
+        className="zero-risk-model-trigger"
+        disabled={busy}
+        onClick={() => setOpen((current) => !current)}
+        title={copy.zeroRiskModelSettings}
+        type="button"
+      >
+        <Icon name="settings" />
+      </button>
+      {open ? (
+        <>
+          <button
+            aria-label={`${copy.close}: ${copy.zeroRiskModelSettings}`}
+            className="zero-risk-model-scrim"
+            onClick={() => setOpen(false)}
+            type="button"
+          />
+          <div
+            aria-label={copy.zeroRiskModelSettings}
+            className="zero-risk-model-panel"
+            role="radiogroup"
+          >
+            <p>{copy.zeroRiskModelSettingsBody}</p>
+            <div className="zero-risk-model-option-row">
+              <button
+                aria-checked={!proEnabled}
+                className={!proEnabled ? "is-selected" : ""}
+                onClick={() => choose(false)}
+                role="radio"
+                type="button"
+              >
+                {!proEnabled ? <span className="zero-risk-model-radio"><Icon name="check" /></span> : null}
+                <span>
+                  <strong>{copy.zeroRiskDefaultProfile}</strong>
+                  <small>{copy.zeroRiskDefaultProfileBody}</small>
+                </span>
+              </button>
+            </div>
+            <div className="zero-risk-model-option-row has-info">
+              <button
+                aria-checked={proEnabled}
+                className={proEnabled ? "is-selected" : ""}
+                onClick={() => choose(true)}
+                role="radio"
+                type="button"
+              >
+                {proEnabled ? <span className="zero-risk-model-radio"><Icon name="check" /></span> : null}
+                <span>
+                  <strong>{copy.zeroRiskProProfile}</strong>
+                  <small>{copy.zeroRiskProProfileBody}</small>
+                </span>
+              </button>
+              <span
+                aria-label={copy.zeroRiskProProfileInfo}
+                className="zero-risk-model-info"
+                role="img"
+                tabIndex={0}
+              >
+                <Icon name="info" />
+                <span className="zero-risk-model-tooltip" role="tooltip">
+                  {copy.zeroRiskProProfileInfo}
+                </span>
+              </span>
+            </div>
+          </div>
+        </>
+      ) : null}
+    </div>
   );
 }
 

@@ -90,6 +90,7 @@ test("manual primary navigation does not inject code or publish page titles", as
     getBrowserInteractionMode: () => "manual", view: { webContents: contents },
     state: { title: "ChatGPT", status: "loading" }, turnTabs: new Map(), manualOperation: null,
     clearHomeNavigationTimeout() {},
+    syncViewVisibility() {},
     setState(patch) { Object.assign(this.state, patch); },
     applyViewportCss: async () => operations.push("css"),
     markOwnedSurface: async () => operations.push("ownership"),

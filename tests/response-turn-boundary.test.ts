@@ -27,6 +27,35 @@ test("duplicate DOM turn identities are classified as transient observation ambi
     .rejects.toBeInstanceOf(ChatGptTurnIdentityAmbiguityError);
 });
 
+test("power UI groups keep separate stable user and assistant identities", async () => {
+  const { createWindow } = require("@mixmark-io/domino");
+  const document = createWindow('<div data-turn-key="old"><div data-user-message-bubble></div></div><div data-turn-key="new"><div data-user-message-bubble></div><h4 data-conversation-role="assistant"></h4></div>').document;
+  const groups = [...document.querySelectorAll("[data-turn-key]")];
+  const locator = (elements: Element[]) => ({
+    evaluateAll: async (callback: (elements: Element[], name?: string) => unknown, name?: string) => callback(elements, name),
+  });
+  const page = { locator: () => locator(groups) };
+  const assistantTurns = { ...locator([groups[1]!]), page: () => page };
+  const state = await readChatGptAssistantTurnState(assistantTurns as never);
+  expect(state.identities).toEqual(["group:assistant:new"]);
+  expect(state.knownTurnIdentities).toEqual([
+    "group:user:old", "group:assistant:old", "group:user:new", "group:assistant:new",
+  ]);
+  expect(await readChatGptTurnIdentities(locator(groups) as never)).toEqual([
+    "group:user:old", "group:user:new",
+  ]);
+  expect(chatGptSubmissionEvidence({
+    initialUserTurnCount: 1,
+    userTurnCount: 2,
+    initialAssistantTurnCount: 0,
+    assistantTurnCount: 1,
+    initialTurnIdentities: ["group:user:old", "group:assistant:old"],
+    userIdentities: ["group:user:old", "group:user:new"],
+    responseIdentities: state.identities,
+    generationRunning: false,
+  })).toBe("user_turn");
+});
+
 test("logical turn identities ignore remounted history and reject ambiguous additions", () => {
   expect(chatGptNewTurnIdentity(["turn-old-1", "turn-old-2"], ["turn-old-2"])).toBeUndefined();
   expect(chatGptNewTurnIdentity(["turn-old-1", "turn-old-2"], ["turn-old-2", "turn-new"]))
@@ -138,8 +167,8 @@ test("reads assistant count and public identity from one DOM snapshot", async ()
     evaluateAll(callback: (elements: Array<{ getAttribute(name: string): string | null }>) => unknown) {
       snapshots += 1;
       return Promise.resolve(callback([
-        { getAttribute: () => "conversation-turn-5" },
-        { getAttribute: () => "conversation-turn-7" },
+        { getAttribute: (name: string) => name === "data-turn-id" ? "conversation-turn-5" : null },
+        { getAttribute: (name: string) => name === "data-turn-id" ? "conversation-turn-7" : null },
       ]));
     },
   };

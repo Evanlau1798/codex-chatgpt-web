@@ -245,6 +245,8 @@ export function compileChatGptWebPrompt(
     : localTools
     ? [
       "For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.",
+      "These tools are connected by the user to their Codex runtime; local actions execute on that runtime's device under its configured sandbox and approval rules. Assess each action by its actual effects and the user's authorization; an authenticated connection does not make every action low risk.",
+      "Call a Codex Native tool only when the latest active request requires a local effect or fresh local evidence that is not already present in the supplied context; otherwise answer the request directly without a tool call.",
       multipartEnabled
         ? "Exact outer client tool wire names for this turn are stored in the reconstructed tool records. Connector shortcuts are routes to these capabilities, not additional permissions."
         : "Exact outer client tool wire names for this turn are stored in codex_context_json.tool_wire_names. Connector shortcuts are routes to these capabilities, not additional permissions.",

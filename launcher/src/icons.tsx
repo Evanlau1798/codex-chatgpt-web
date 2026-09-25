@@ -18,6 +18,7 @@ export type IconName =
   | "logs"
   | "mcp"
   | "minus"
+  | "pause"
   | "plus"
   | "reload"
   | "settings"
@@ -47,6 +48,7 @@ export function Icon({ name, ...props }: { name: IconName } & SVGProps<SVGSVGEle
       {name === "logs" ? <><path {...common} d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h4" /></> : null}
       {name === "mcp" ? <><path {...common} d="M8 7.5 12 4l4 3.5v5L12 16l-4-3.5v-5Z" /><path {...common} d="m8 12.5-3 2.7v3.3L8 21l3-2.5V16M16 12.5l3 2.7v3.3L16 21l-3-2.5V16" /></> : null}
       {name === "minus" ? <path {...common} d="M5 12h14" /> : null}
+      {name === "pause" ? <><rect fill="currentColor" x="6" y="5" width="4" height="14" rx="1" /><rect fill="currentColor" x="14" y="5" width="4" height="14" rx="1" /></> : null}
       {name === "plus" ? <path {...common} d="M5 12h14M12 5v14" /> : null}
       {name === "reload" ? <><path {...common} d="M19 8a8 8 0 1 0 .3 7" /><path {...common} d="M19 4v4h-4" /></> : null}
       {name === "settings" ? <><circle {...common} cx="12" cy="12" r="3" /><path {...common} d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.97 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15 1.7 1.7 0 0 0 3.08 14H3v-4h.08A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.97 4.6 1.7 1.7 0 0 0 10 3.08V3h4v.08A1.7 1.7 0 0 0 15.03 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9 1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z" /></> : null}

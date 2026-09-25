@@ -6,6 +6,8 @@ import { ChatGptBrowserWorker, ChatGptCompletionTracker, CHATGPT_COMPLETION_SETT
 import { ChatGptMarkdownBuffer, type ChatGptMarkdownSegment } from "../src/adapters/chatgpt-web/markdown";
 
 const smokeHtml = readFileSync(new URL("./fixtures/chatgpt-dil-smoke.html", import.meta.url), "utf8");
+const powerCompleteHtml = readFileSync(new URL("./fixtures/chatgpt-power-complete.html", import.meta.url), "utf8");
+const powerStreamingHtml = readFileSync(new URL("./fixtures/chatgpt-power-streaming.html", import.meta.url), "utf8");
 type Snapshot = {
   responsePresent: boolean;
   visibleText: string;
@@ -113,6 +115,32 @@ test("captured DIL smoke response reaches Markdown delivery and stable completio
       { kind: "answer", text: "CODEX WEB GPT READY" },
     ]);
   }
+});
+
+test("captured power UI excludes the user footer during streaming and completes the assistant answer", async () => {
+  // Captured from the same live DEV turn on 2026-09-25. The user already has Copy/Share
+  // controls while the assistant streams; both live under one data-turn-key.
+  const streaming = await snapshot(powerStreamingHtml);
+  expect(streaming.visibleText).toContain("How a Rainbow Begins");
+  expect(streaming.visibleText).not.toContain("No tools or apps");
+  expect(streaming.completionActionVisible).toBeFalse();
+  const complete = await snapshot(powerCompleteHtml);
+  expect(complete.visibleText).toEndWith("STREAM_END_927");
+  expect(complete.completionActionVisible).toBeTrue();
+  const buffer = new ChatGptMarkdownBuffer();
+  buffer.observe(complete.markdownSegments, 0);
+  const markdown = buffer.finish().markdown;
+  expect(markdown).toContain("## How a Rainbow Begins");
+  expect(markdown).toContain("1. Sunlight enters the droplet and refracts.");
+  expect(markdown).toEndWith("STREAM\\_END\\_927");
+  const translated = await snapshot(powerCompleteHtml.replaceAll('aria-label="Copy"', 'aria-label="복사"'));
+  expect(translated.completionActionVisible).toBeTrue();
+  const noAssistant = await snapshot(powerCompleteHtml.replaceAll('data-conversation-role="assistant"', 'data-conversation-role="user"'));
+  expect(noAssistant.visibleText).toBe("");
+  expect(noAssistant.completionActionVisible).toBeFalse();
+  const userMarkdown = await snapshot(powerCompleteHtml.replace('data-user-message-bubble="true">',
+    'data-user-message-bubble="true"><div class="markdown">USER CONTENT</div>'));
+  expect(userMarkdown.visibleText).toBe(complete.visibleText);
 });
 
 test("DIL response extraction preserves ownership, commentary and completion boundaries", async () => {

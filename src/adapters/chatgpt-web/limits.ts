@@ -62,16 +62,48 @@ export async function detectChatGptLimitsPlan(page: Page): Promise<{ accountKey:
     throw new Error("Close the open ChatGPT dialog and retry Limits setup.");
   }
   let settings: Locator | undefined;
+  const returnUrl = page.url();
+  let openedSettingsPage = false;
   try {
-    // Enter targets the profile control itself; a center click can hit its nested payment button.
-    await page.getByTestId("accounts-profile-button").filter({ visible: true }).last().press("Enter", { timeout: 5_000 });
-    await page.getByTestId("settings-menu-item").click({ timeout: 5_000 });
-    settings = page.getByRole("dialog").filter({ has: page.locator('[role="tab"][id$="-trigger-Billing"]') });
-    await settings.waitFor({ state: "visible", timeout: 10_000 });
-    await settings.locator('[role="tab"][id$="-trigger-Billing"]').click({ timeout: 5_000 });
-    const panel = settings.locator('[role="tabpanel"][id$="-content-Billing"]');
-    await panel.getByRole("heading", { name: /^ChatGPT Pro\b/i }).waitFor({ state: "visible", timeout: 10_000 });
-    const plan = chatGptLimitsPlanFromHeadings(await panel.getByRole("heading").allTextContents());
+    const modernComposer = page.locator('form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"][role="textbox"]')
+      .filter({ visible: true });
+    const modernCount = await modernComposer.count();
+    if (modernCount > 1) throw new Error("Limits could not identify a unique ChatGPT page.");
+    let headings: string[];
+    if (modernCount === 1) {
+      // The new Settings UI has a dedicated route. Open the observed Billing page
+      // directly, without depending on translated profile/menu button labels.
+      openedSettingsPage = true;
+      await page.goto("https://chatgpt.com/settings/billing", { waitUntil: "domcontentloaded", timeout: 15_000 });
+      if (page.url() !== "https://chatgpt.com/settings/billing") throw new Error("ChatGPT did not open Billing settings.");
+      const subscription = page.locator('main [class~="@container/settings-row"]')
+        .filter({ has: page.locator("button") })
+        .filter({ has: page.getByText(/^ChatGPT Pro\b/i) });
+      // Current subscription rows are separate from invoice tables and upgrade
+      // offers. Never activate their subscription controls.
+      await subscription.waitFor({ state: "visible", timeout: 10_000 });
+      headings = await subscription.getByText(/^ChatGPT Pro\b/i).allTextContents();
+    } else {
+      // Collapsed and expanded sidebars can both keep a layout-visible profile
+      // control in the DOM. Only the hit-testable control can open its menu.
+      const profiles = page.getByTestId("accounts-profile-button").filter({ visible: true });
+      const actionable = await profiles.evaluateAll(elements => elements.flatMap((element, index) => {
+        const rect = element.getBoundingClientRect();
+        const hit = element.ownerDocument.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return hit && element.contains(hit) ? [index] : [];
+      }));
+      if (actionable.length !== 1) throw new Error("Limits could not identify a unique accessible ChatGPT profile control.");
+      // Enter targets the profile control itself; a center click can hit its nested payment button.
+      await profiles.nth(actionable[0]!).press("Enter", { timeout: 5_000 });
+      await page.getByTestId("settings-menu-item").click({ timeout: 5_000 });
+      settings = page.getByRole("dialog").filter({ has: page.locator('[role="tab"][id$="-trigger-Billing"]') });
+      await settings.waitFor({ state: "visible", timeout: 10_000 });
+      await settings.locator('[role="tab"][id$="-trigger-Billing"]').click({ timeout: 5_000 });
+      const panel = settings.locator('[role="tabpanel"][id$="-content-Billing"]');
+      await panel.getByRole("heading", { name: /^ChatGPT Pro\b/i }).waitFor({ state: "visible", timeout: 10_000 });
+      headings = await panel.getByRole("heading").allTextContents();
+    }
+    const plan = chatGptLimitsPlanFromHeadings(headings);
     const after = await readChatGptUsageAccount(page);
     if (after.accountKey !== before.accountKey || after.planType !== "pro" || !after.personal || after.needsAttention) {
       throw new Error("The ChatGPT account or subscription changed during Limits setup. Retry the check.");
@@ -79,7 +111,9 @@ export async function detectChatGptLimitsPlan(page: Page): Promise<{ accountKey:
     return { accountKey: after.accountKey, plan };
   } finally {
     // Only dismiss the UI opened by this inspection; no subscription controls are activated.
-    if (settings && await settings.isVisible().catch(() => false)) {
+    if (openedSettingsPage && page.url().startsWith("https://chatgpt.com/settings/")) {
+      await page.goto(returnUrl, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    } else if (settings && await settings.isVisible().catch(() => false)) {
       await page.keyboard.press("Escape");
       await settings.waitFor({ state: "hidden", timeout: 5_000 });
     } else if (await page.getByTestId("settings-menu-item").isVisible().catch(() => false)) {

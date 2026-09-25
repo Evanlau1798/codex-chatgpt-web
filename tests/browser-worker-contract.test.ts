@@ -39,7 +39,7 @@ import {
 import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_RESPONSE_DOM_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptPromptAttachmentIntegrityError, ChatGptSuspensionClock, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, browserStageTimeouts, chatGptExternalProgressSuppressesDomHealth, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, remainingStageBudgetMs, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptWebAdapterError, chatGptStoppedThinkingError } from "../src/adapters/chatgpt-web/adapter-error";
 import { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, defaultChromeExecutable, legacyChatGptConnectorMigrationMessage } from "../src/config";
-import { chatGptEffortSliderAdvancedTowardTarget, parseChatGptEffortSliderState } from "../src/chatgpt-session";
+import { CHATGPT_SEND_BUTTON_SELECTOR, chatGptEffortSliderAdvancedTowardTarget, parseChatGptEffortSliderState } from "../src/chatgpt-session";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { chatGptUnavailableProDetail } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_STOPPED_THINKING_LABELS } from "../src/adapters/chatgpt-web/ui-labels";
@@ -135,7 +135,7 @@ test("browser turn orchestration retains owned prompt insertion and semantic sub
   const runBrowserTurn = workerSource.slice(workerSource.indexOf("  private async runBrowserTurn("));
   expect(runBrowserTurn).toContain("this.attachPromptWithCompactionRetry(");
   expect(runBrowserTurn).toContain('.locator("xpath=ancestor::form[1]")');
-  expect(runBrowserTurn).toContain('.getByTestId("send-button")');
+  expect(runBrowserTurn).toContain('.locator(CHATGPT_SEND_BUTTON_SELECTOR)');
   expect(runBrowserTurn).toContain("await activateChatGptSendControl(sendButton, stageSignal)");
   expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
     .toBeGreaterThanOrEqual(0);
@@ -838,6 +838,12 @@ test("selected connector identity does not depend on its visible pill text", asy
   expect(await selected('<span data-id="unrelated" data-keyword="Codex Native2">Codex Native2</span>')).toBeFalse();
   expect(await selected(pill.replace('<span ', '<span hidden '))).toBeFalse();
   await expect(selected(pill + pill)).rejects.toThrow("duplicate");
+  const powerPill = '<span app-mention-path="app://configured" app-mention-display-name="Codex Native2" contenteditable="false">表示名</span>';
+  expect(await selected(powerPill)).toBeTrue();
+  expect(await selected(powerPill.replace('app://configured', 'https://example.com'))).toBeFalse();
+  expect(await selected(powerPill.replace('contenteditable="false"', 'contenteditable="true"'))).toBeFalse();
+  expect(await selected(powerPill.replace('app-mention-display-name="Codex Native2"', 'app-mention-display-name="Other"'))).toBeFalse();
+  await expect(selected(pill + powerPill)).rejects.toThrow("duplicate");
 });
 
 test("connector selection re-resolves the active composer after ChatGPT replaces it", async () => {
@@ -935,7 +941,7 @@ test("connector selection resolves a selected pill from the owning composer form
   const selectedConnector = {};
   const composerForm = {
     locator: (selector: string) => {
-      expect(selector).toBe('[data-id^="plugin:"][data-keyword="Codex Native2"]');
+      expect(selector).toBe('[data-id^="plugin:"][data-keyword="Codex Native2"], [app-mention-path^="app://"][app-mention-display-name="Codex Native2"][contenteditable="false"]');
       return {
         filter: (options: { visible: boolean }) => {
           expect(options).toEqual({ visible: true });
@@ -1492,14 +1498,16 @@ test("image attachment readiness uses exact file tiles and not localized remove-
       expect(role).toBe("group");
       expect(options).toEqual({ name: "codex-input-image-1.png", exact: true });
       return {
+        or() { return this; },
         waitFor: async (state: { state: string; timeout: number }) => {
           expect(state).toEqual({ state: "visible", timeout: 60_000 });
           calls.push(["fileTile", options.name]);
         },
       };
     },
-    getByTestId: (testId: string) => {
-      expect(testId).toBe("send-button");
+    locator: (selector: string) => {
+      if (selector.startsWith(".composer-attachment-surface")) return {};
+      expect(selector).toBe(CHATGPT_SEND_BUTTON_SELECTOR);
       return send;
     },
   };
@@ -1520,7 +1528,7 @@ test("image attachment readiness uses exact file tiles and not localized remove-
   };
   const page = {
     locator: (selector: string) => {
-      if (selector === 'input[data-testid="upload-photos-input"]') return input;
+      if (selector === 'input[data-testid="upload-photos-input"], form[data-chatgpt-composer] input[type="file"][multiple]:not([accept])') return input;
       if (selector === '[role="alert"]') {
         return { allInnerTexts: async () => [] };
       }
@@ -1975,6 +1983,7 @@ test.each([
 test("effort selection stops as soon as ChatGPT reports an expired session", async () => {
   const neverVisible = new Promise<void>(() => {});
   const effortControl = {
+    filter() { return this; },
     last() { return this; },
     waitFor: async () => await neverVisible,
   };
@@ -2026,6 +2035,7 @@ test("effort selection stops as soon as ChatGPT reports an expired session", asy
 test("effort menu waiting stops when ChatGPT reports an expired session", async () => {
   const neverVisible = new Promise<void>(() => {});
   const effortControl = {
+    filter() { return this; },
     last() { return this; },
     waitFor: async () => {},
     getAttribute: async () => "true",
@@ -2725,7 +2735,6 @@ test("visible DOM trace emits one complete commentary paragraph before the next 
 
 test("response DOM separates streaming commentary from the final Markdown answer", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  expect(workerSource).toContain("const answerRootSelector = '.markdown, [data-message-author-role=\"assistant\"] .puik-root.not-markdown > [class*=\"_DilResponseRoot\"]'");
   expect(workerSource).toContain("const allMarkdownRoots = [...root.querySelectorAll<HTMLElement>(answerRootSelector)]");
   expect(workerSource).toContain("const selectChatGptAnswerRoots = (");
   expect(workerSource).toContain('candidate.closest("[data-streaming-response-status]") !== null');
@@ -3319,6 +3328,39 @@ test("a staged Bigger Context part gets an acknowledgement window sized to its p
   expect(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS).toBe(browserStageTimeouts.multipartStageSend);
 });
 
+test("visible Stop keeps assistant DOM grace alive while reasoning has no mounted turn", async () => {
+  const waitForNewAssistantTurn = (ChatGptBrowserWorker.prototype as unknown as {
+    waitForNewAssistantTurn(page: Page, turns: unknown, initial: { count: number }, deadline: number,
+      signal?: AbortSignal, progress?: unknown, graceMs?: number): Promise<unknown>;
+  }).waitForNewAssistantTurn;
+  const originalNow = Date.now;
+  let now = 1_000;
+  Date.now = () => now;
+  const empty = { isVisible: async () => false, filter: () => empty, last: () => empty };
+  const page = {
+    isClosed: () => false,
+    locator: (selector: string) => selector.includes("stop-button") || selector.includes('aria-label="Stop"')
+      ? { filter: () => ({ count: async () => 1 }) }
+      : selector.includes("data-turn-id-container")
+        ? { evaluateAll: async () => now >= 1_030 ? ["assistant-new"] : [] }
+        : empty,
+  } as unknown as Page;
+  const turns = {
+    evaluateAll: async () => now >= 1_030
+      ? { count: 1, identities: ["assistant-new"], lastId: "assistant-new", ambiguous: false }
+      : { count: 0, identities: [], ambiguous: false },
+    page: () => page,
+  };
+  try {
+    const binding = await waitForNewAssistantTurn.call({
+      waitForTurnDomOrExternalProgress: async () => { now += 25; },
+    }, page, turns, { count: 0 }, 2_000, undefined, undefined, 20);
+    expect(binding).toBe(empty);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
 test("the suspension clock charges only tick gaps that mean the process was frozen", () => {
   const clock = new ChatGptSuspensionClock(1_000, 5_000);
   clock.tick(1_000);
@@ -3402,7 +3444,7 @@ test("two-part saved chats re-prove unchanged effort after the first message cre
   const controls: any = { filter: () => controls, count: async () => 1, first: () => control };
   const sendButton = { waitFor: async () => {}, isEnabled: async () => true,
     press: async () => { sends++; } };
-  const composer = { locator: () => ({ locator: () => controls, getByTestId: () => sendButton }),
+  const composer = { locator: () => ({ locator: (selector: string) => selector === CHATGPT_SEND_BUTTON_SELECTOR ? sendButton : controls }),
     isEditable: async () => true };
   const page = Object.assign(new EventEmitter(), {
     url: () => url, isClosed: () => false,

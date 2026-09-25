@@ -1,4 +1,5 @@
 import type { Locator } from "playwright-core";
+import { chatGptAssistantTurnSelector } from "../../chatgpt-session";
 
 export interface ChatGptAssistantTurnState {
   count: number;
@@ -39,7 +40,10 @@ export async function readChatGptAssistantTurnState(
 ): Promise<ChatGptAssistantTurnState> {
   const state = await turns.evaluateAll(elements => {
     const count = elements.length;
-    const identities = elements.map(element => element.getAttribute("data-turn-id"));
+    const identities = elements.map(element => {
+      const key = element.getAttribute("data-turn-key");
+      return key === null ? element.getAttribute("data-turn-id") : `group:assistant:${key}`;
+    });
     if (identities.some(identity => typeof identity !== "string" || identity.trim().length === 0)) {
       throw new Error("ChatGPT assistant turn has no stable data-turn-id identity");
     }
@@ -57,7 +61,7 @@ export async function readChatGptAssistantTurnState(
   const page = (turns as unknown as Partial<Pick<Locator, "page">>).page?.();
   if (!page) return stableState;
   const knownTurnIdentities = await readChatGptTurnIdentities(
-    page.locator("[data-turn-id-container]"), "data-turn-id-container",
+    page.locator("[data-turn-id-container], [data-turn-key]"), "data-turn-id-container",
   );
   const known = new Set(knownTurnIdentities);
   if (stableState.identities.some(identity => !known.has(identity))) {
@@ -72,10 +76,16 @@ export async function readChatGptTurnIdentities(
 ): Promise<string[]> {
   const identities = await turns.evaluateAll((elements, name) => {
     const candidates = name === "data-turn-id-container"
-      ? elements.filter(element => element.parentElement?.closest("[data-turn-id-container]")
-        ?.getAttribute("data-turn-id-container") !== element.getAttribute("data-turn-id-container"))
+      ? elements.filter(element => element.getAttribute("data-turn-key") !== null
+        || (!element.closest("[data-turn-key]") && element.parentElement?.closest("[data-turn-id-container]")
+          ?.getAttribute("data-turn-id-container") !== element.getAttribute("data-turn-id-container")))
       : elements;
-    const identities = candidates.map(element => element.getAttribute(name));
+    const identities = candidates.flatMap(element => {
+      const key = element.getAttribute("data-turn-key");
+      return key === null ? [element.getAttribute(name)] : name === "data-turn-id-container"
+        ? [`group:user:${key}`, `group:assistant:${key}`]
+        : [`group:user:${key}`];
+    });
     if (identities.some(identity => typeof identity !== "string" || identity.trim().length === 0)) {
       throw new Error(`ChatGPT conversation turn has no stable ${name} identity`);
     }
@@ -150,7 +160,7 @@ export function locateChatGptAssistantTurn(
   turns: Locator,
   binding: ChatGptAssistantTurnBinding,
 ): Locator {
-  return turns.page().locator(`[data-turn-id=${JSON.stringify(binding.id)}]`);
+  return turns.page().locator(chatGptAssistantTurnSelector(binding.id));
 }
 
 export function chatGptSubmissionEvidence(state: {

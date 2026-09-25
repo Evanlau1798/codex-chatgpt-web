@@ -37,6 +37,51 @@ test("Linux auto-update fails closed without the stable installer wrapper", () =
   }
 });
 
+test("unsupported Linux launches reject updates before downloading or changing state", async () => {
+  const keys = ["CODEX_WEB_GPT_APPIMAGE", "APPIMAGE", "CODEX_WEB_GPT_LAUNCHER_EXECUTABLE"];
+  const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  try {
+    for (const [appImage, wrapper] of [
+      [undefined, "/opt/codex/launcher"],
+      ["relative.AppImage", "/opt/codex/launcher"],
+      ["/opt/codex/app.AppImage", undefined],
+      ["/opt/codex/app.AppImage", "relative-launcher"],
+    ]) {
+      for (const key of keys) delete process.env[key];
+      if (appImage !== undefined) process.env.CODEX_WEB_GPT_APPIMAGE = appImage;
+      if (wrapper !== undefined) process.env.CODEX_WEB_GPT_LAUNCHER_EXECUTABLE = wrapper;
+      const calls = [];
+      const states = [];
+      const controller = createUpdateController({
+        currentVersion: "1.1.4", platform: "linux", arch: "x64", packaged: true,
+        publish: state => states.push(state.status),
+        dependencies: {
+          fetchRelease: async () => ({
+            tag_name: "v1.2.0",
+            assets: ["codex-web-gpt-1.2.0-linux-x64.AppImage", "checksums.txt"].map(name => ({
+              name,
+              browser_download_url: `https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v1.2.0/${name}`,
+            })),
+          }),
+          downloadText: async () => { calls.push("checksums"); throw new Error("Unexpected download"); },
+          downloadFile: async () => { calls.push("asset"); },
+          spawnWorker: () => { calls.push("worker"); },
+        },
+      });
+      await controller.checkOnce();
+      await assert.rejects(controller.beginInstall(), /install-launcher\.sh/);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(states, ["checking", "available"]);
+      assert.deepEqual(controller.getState(), { status: "available", version: "1.2.0" });
+    }
+  } finally {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  }
+});
+
 test("release comparison and platform assets are strict", () => {
   assert.equal(compareVersions("1.1.5", "1.1.4"), 1);
   assert.equal(compareVersions("1.1.4", "1.1.4"), 0);
