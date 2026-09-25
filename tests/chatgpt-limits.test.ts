@@ -3,6 +3,7 @@ import {
   chatGptLimitsPlanFromHeadings,
   chatGptUsageModelFromAnnouncements,
   detectChatGptLimitsPlan,
+  prepareChatGptLimitsSubmission,
   readChatGptUsageAccount,
 } from "../src/adapters/chatgpt-web/limits";
 
@@ -41,6 +42,32 @@ test("Limits exposes only hashed account identity and distinguishes personal and
   const workspace = await readChatGptUsageAccount(page as never);
   expect(workspace.personal).toBe(false);
   expect(workspace.accountKey).not.toBe(personal.accountKey);
+});
+
+test("tracked personal ProLite Send produces one account-bound usage receipt", async () => {
+  let planType = "prolite";
+  let structure = "personal";
+  const page = {
+    url: () => "https://chatgpt.com/",
+    evaluate: async () => ({ userId: "user-id", accountId: "account-id", planType, structure, needsAttention: false }),
+  };
+  const at = Date.now();
+  const submission = await prepareChatGptLimitsSubmission(page as never, "gpt-6-pro");
+  const evidence = submission();
+  expect(evidence).toHaveProperty("receipt");
+  if (!evidence.receipt) throw new Error("Expected an account-bound usage receipt");
+  expect(evidence.receipt.accountKey).toBe((await readChatGptUsageAccount(page as never)).accountKey);
+  expect(evidence.receipt.id).toMatch(/^[a-f0-9-]{36}$/);
+  expect(evidence.receipt.model).toBe("gpt-6-pro");
+  expect(evidence.receipt.at).toBeGreaterThanOrEqual(at);
+  expect(JSON.stringify(evidence)).not.toContain("user-id");
+  planType = "pro";
+  expect((await prepareChatGptLimitsSubmission(page as never, "other"))()).toHaveProperty("receipt");
+  structure = "workspace";
+  expect((await prepareChatGptLimitsSubmission(page as never, "other"))()).toEqual({ trackingError: "account-unavailable" });
+  structure = "personal";
+  planType = "plus";
+  expect((await prepareChatGptLimitsSubmission(page as never, "other"))()).toEqual({ trackingError: "account-unavailable" });
 });
 
 test("unsupported plans and payment problems never activate browser plan inspection", async () => {

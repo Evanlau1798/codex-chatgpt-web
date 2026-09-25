@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { validateSkillFiles } from "./skill-attachments";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page, type Request, type Response } from "playwright-core";
-import { detectChatGptLimitsPlan, readChatGptUsageAccount, readChatGptUsageModel, type ChatGptUsageModel } from "./limits";
+import { detectChatGptLimitsPlan, prepareChatGptLimitsSubmission, readChatGptUsageModel, type ChatGptUsageModel } from "./limits";
 import {
   atomicWriteFile,
   CHATGPT_CONNECTOR_NAME,
@@ -3618,22 +3618,14 @@ export class ChatGptBrowserWorker {
       // The ID survives observation recovery; a new actual Send receives a new ID.
       const usageSubmission = async () => {
         if (!trackUsage) return undefined;
-        const id = randomUUID();
-        let accountKey: string | undefined;
-        try {
-          const account = await readChatGptUsageAccount(page);
-          if (account.personal && account.planType === "pro") accountKey = account.accountKey;
-        } catch {
-          // A missing identity is reported as a tracking gap, never charged to the previous account.
-        }
         const model = mode.usageModel ?? (mode.effort === "max" ? "pro-unknown" : "other");
+        const submission = await prepareChatGptLimitsSubmission(page, model);
         return () => {
           // Do not spend the Send observation deadline waiting for optional local accounting.
           // Drain these bounded writes before releasing this turn's launcher lease.
           const write = notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
             phase: "usage", traceId: turn.traceId, helperPid: process.pid,
-            ...(accountKey ? { receipt: { id, accountKey, model, at: Date.now() } }
-              : { trackingError: "account-unavailable" as const }),
+            ...submission(),
           }).then(() => {}, () => {
             // Approximate accounting must not turn an already accepted model message into a retry.
             console.warn(`[chatgpt-web] Limits could not persist a submission receipt for ${turn.traceId}`);
