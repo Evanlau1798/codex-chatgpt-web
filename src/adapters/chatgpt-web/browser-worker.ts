@@ -143,7 +143,7 @@ import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptRetainedSurfaceUnavailableError, chatGptSessionExpiredError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
-import { ChatGptBrowserDiagnostics, redactChatGptUiDiagnostic } from "./browser-diagnostics";
+import { ChatGptBrowserDiagnostics, readChatGptUpstreamFailureUiState, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { openChatGptConnectorPlusMenu } from "./connector-plus-menu";
 import { assertChatGptModelFamily, selectChatGptModelFamily } from "./model-selection";
 import {
@@ -461,16 +461,24 @@ export class ChatGptSubmissionRejectionObserver {
   private page?: Page;
   private readonly requests = new Set<Request>();
   private checks: Array<Promise<ChatGptWebAdapterError | undefined>> = [];
+  private ownedRequests = 0;
+  private statuses: number[] = [];
+  private requestFailures = 0;
+  private rebinds = 0;
 
   private readonly onRequest = (request: Request): void => {
     if (!this.page || request.method() !== "POST"
       || request.url() !== "https://chatgpt.com/backend-api/f/conversation"
       || request.frame() !== this.page.mainFrame()) return;
     this.requests.add(request);
+    this.ownedRequests++;
   };
 
   private readonly onResponse = (response: Response): void => {
-    if (!this.requests.delete(response.request()) || response.status() !== 413
+    if (!this.requests.has(response.request())) return;
+    this.statuses.push(response.status());
+    if (this.statuses.length > 8) this.statuses.shift();
+    if (response.status() !== 413
       || !response.headers()["content-type"]?.includes("application/json")) return;
     this.checks.push(withChatGptBrowserObservationTimeout(response.json(), 3_000)
       .then(body => body?.detail?.code === "message_length_exceeds_limit"
@@ -483,12 +491,35 @@ export class ChatGptSubmissionRejectionObserver {
       .catch(() => undefined));
   };
 
+  private readonly onRequestFailed = (request: Request): void => {
+    if (this.requests.delete(request)) this.requestFailures++;
+  };
+
+  private readonly onRequestFinished = (request: Request): void => {
+    this.requests.delete(request);
+  };
+
   begin(page: Page): void {
     this.dispose();
     this.checks = [];
+    this.ownedRequests = 0;
+    this.statuses = [];
+    this.requestFailures = 0;
+    this.rebinds = 0;
     this.page = page;
     page.on("request", this.onRequest);
     page.on("response", this.onResponse);
+    page.on("requestfailed", this.onRequestFailed);
+    page.on("requestfinished", this.onRequestFinished);
+  }
+
+  noteRebind(): void { if (this.page) this.rebinds++; }
+
+  diagnosticSummary(): { ownedRequests: number; statuses: number[]; requestFailures: number;
+    pendingRequests: number; networkObservationContinuous: boolean; rebinds: number } {
+    return { ownedRequests: this.ownedRequests, statuses: [...this.statuses],
+      requestFailures: this.requestFailures, pendingRequests: this.requests.size,
+      networkObservationContinuous: this.rebinds === 0, rebinds: this.rebinds };
   }
 
   async failure(): Promise<ChatGptWebAdapterError | undefined> {
@@ -498,6 +529,8 @@ export class ChatGptSubmissionRejectionObserver {
   dispose(): void {
     this.page?.off("request", this.onRequest);
     this.page?.off("response", this.onResponse);
+    this.page?.off("requestfailed", this.onRequestFailed);
+    this.page?.off("requestfinished", this.onRequestFinished);
     this.page = undefined;
     this.requests.clear();
   }
@@ -3469,6 +3502,7 @@ export class ChatGptBrowserWorker {
           if (!active || remaining() <= 0) throw new Error("ChatGPT same-page acquisition deadline expired");
         };
         console.warn(`[chatgpt-web] browser turn ${turn.traceId} same-page recovery attempt=${attempt} phase=acquire`);
+        submissionRejection.noteRebind();
         try {
           check();
           await this.runStage(turn.traceId, `response_page_rebind_${attempt}`, remaining(), async (stageSignal, stageRemainingMs) => {
@@ -4590,6 +4624,13 @@ export class ChatGptBrowserWorker {
       if (!(error instanceof DOMException && error.name === "AbortError")
         && !(error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")) {
         error = await submissionRejection.failure() ?? error;
+      }
+      if (error instanceof ChatGptWebAdapterError && error.code === "upstream_server_error") {
+        const ui = diagnosticPage && !diagnosticPage.isClosed()
+          ? await readChatGptUpstreamFailureUiState(diagnosticPage).catch(() => null) : null;
+        console.warn(`[chatgpt-web] browser turn ${turn.traceId} upstream_failure ${JSON.stringify({
+          submission: submissionRejection.diagnosticSummary(), ui,
+        })}`);
       }
       if (error instanceof DOMException && error.name === "AbortError"
         && turn.abortSignal?.reason instanceof ChatGptCompactionHandoffAccepted) {

@@ -1774,6 +1774,82 @@ test("only a size rejection of the current owned browser submission is non-retry
   expect(page.listenerCount("response")).toBe(0);
 });
 
+test("upstream failure diagnostics retain only owned request statuses and failure counts", async () => {
+  const frame = {};
+  const page = Object.assign(new EventEmitter(), { mainFrame: () => frame });
+  const observer = new ChatGptSubmissionRejectionObserver();
+  const request = (url: string, owner = frame) => ({
+    method: () => "POST", url: () => url, frame: () => owner,
+  });
+  observer.begin(page as unknown as Page);
+  const foreign = request("https://other.example/backend-api/f/conversation");
+  page.emit("request", foreign);
+  page.emit("response", { request: () => foreign, status: () => 500 });
+  const owned = request("https://chatgpt.com/backend-api/f/conversation");
+  page.emit("request", owned);
+  page.emit("response", { request: () => owned, status: () => 502 });
+  expect(observer.diagnosticSummary()).toMatchObject({ statuses: [502], pendingRequests: 1 });
+  page.emit("requestfailed", owned);
+  const completed = request("https://chatgpt.com/backend-api/f/conversation");
+  page.emit("request", completed);
+  page.emit("response", { request: () => completed, status: () => 200 });
+  page.emit("requestfinished", completed);
+  expect(observer.diagnosticSummary()).toMatchObject({
+    ownedRequests: 2, statuses: [502, 200], requestFailures: 1, pendingRequests: 0,
+    networkObservationContinuous: true, rebinds: 0,
+  });
+  observer.noteRebind();
+  expect(observer.diagnosticSummary()).toMatchObject({ networkObservationContinuous: false, rebinds: 1 });
+  observer.dispose();
+  expect(page.listenerCount("requestfailed")).toBe(0);
+  expect(page.listenerCount("requestfinished")).toBe(0);
+});
+
+test("browser failure path logs bounded upstream evidence and preserves the original error", async () => {
+  const root = mkdtempSync(join(tmpdir(), "upstream-failure-log-"));
+  const warning = spyOn(console, "warn").mockImplementation(() => {});
+  const failure = new ChatGptWebAdapterError("ChatGPT displayed an error for this response.", {
+    status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true,
+  });
+  const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false };
+  const prepared = { ...compileChatGptWebPrompt({
+    modelId: CHATGPT_WEB_MODEL_ID, stream: true, options: { reasoning: "low" },
+    context: { systemPrompt: [], messages: [{ role: "user", content: "private prompt", timestamp: 1 }] },
+  }, capabilities), release() {} };
+  const worker: any = ChatGptBrowserWorker.forProvider({
+    adapter: "chatgpt-web", baseUrl: `browser://${root}`,
+    chatgptWeb: { browserDiagnosticsPath: root },
+  });
+  worker.prepareChatSurface = async () => { throw failure; };
+  const page = {
+    isClosed: () => false,
+    evaluate: async () => ({}),
+    locator: (selector: string) => ({ filter: () => ({ count: async () => selector.includes("regenerate") ? 1 : 0 }) }),
+  } as unknown as Page;
+  try {
+    await expect(worker.runBrowserTurn({
+      traceId: "upstream_log_test", modelId: CHATGPT_WEB_MODEL_ID, reasoning: "low", capabilities,
+      prepare: async () => prepared, onTextDelta() {}, onReasoningSummary() {},
+    }, undefined, page)).rejects.toBe(failure);
+    const line = warning.mock.calls.map(call => String(call[0])).find(value => value.includes("upstream_failure"));
+    expect(line).toBeDefined();
+    expect(line).not.toContain("private prompt");
+    expect(JSON.parse(line!.split(" upstream_failure ")[1]!)).toEqual({
+      submission: { ownedRequests: 0, statuses: [], requestFailures: 0, pendingRequests: 0,
+        networkObservationContinuous: true, rebinds: 0 },
+      ui: { globalErrorActions: 1, assistantTurns: 0, stopButtons: 0, globalAlerts: 0 },
+    });
+    (page as any).locator = () => ({ filter: () => ({ count: () => new Promise(() => {}) }) });
+    await expect(worker.runBrowserTurn({
+      traceId: "upstream_log_stalled", modelId: CHATGPT_WEB_MODEL_ID, reasoning: "low", capabilities,
+      prepare: async () => prepared, onTextDelta() {}, onReasoningSummary() {},
+    }, undefined, page)).rejects.toBe(failure);
+    const stalled = warning.mock.calls.map(call => String(call[0])).find(value => value.includes("upstream_log_stalled upstream_failure"));
+    expect(stalled).toBeDefined();
+    expect(JSON.parse(stalled!.split(" upstream_failure ")[1]!).ui).toBeNull();
+  } finally { warning.mockRestore(); rmSync(root, { recursive: true, force: true }); }
+}, 15_000);
+
 test("effort readback rejects a changed selection or surface before activating Send", async () => {
   const selection = { url: "https://chatgpt.com/?temporary-chat=true", label: "Alto" };
   const state = { url: selection.url, label: "Alto", expanded: "false", editable: true, count: 1 };

@@ -14,7 +14,7 @@ import {
   CHATGPT_USER_TURN_SELECTOR,
 } from "../../chatgpt-session";
 import type { ChatGptAssistantTurnBinding } from "./response-turn-boundary";
-import { withChatGptBrowserObservationTimeout } from "./browser-observation";
+import { CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, withChatGptBrowserObservationTimeout } from "./browser-observation";
 
 const SAFE_STRING_KEYS = new Set(["tag", "role", "ariaExpanded", "ariaChecked", "dataState", "dataHighlighted", "origin"]);
 export function sanitizeChatGptBrowserDiagnosticState(value: unknown): unknown {
@@ -29,6 +29,25 @@ export function sanitizeChatGptBrowserDiagnosticState(value: unknown): unknown {
 }
 
 const CHATGPT_BROWSER_DIAGNOSTIC_TRACE_LIMIT = 10;
+
+export async function readChatGptUpstreamFailureUiState(
+  page: Page,
+  timeoutMs = CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS,
+): Promise<{
+  globalErrorActions: number | null;
+  assistantTurns: number | null;
+  stopButtons: number | null;
+  globalAlerts: number | null;
+}> {
+  const visibleCount = (selector: string) => page.locator(selector).filter({ visible: true }).count().catch(() => null);
+  const [globalErrorActions, assistantTurns, stopButtons, globalAlerts] = await withChatGptBrowserObservationTimeout(Promise.all([
+    visibleCount('[data-testid="regenerate-thread-error-button"]'),
+    visibleCount(CHATGPT_ASSISTANT_TURN_SELECTOR),
+    visibleCount(CHATGPT_STOP_BUTTON_SELECTOR),
+    visibleCount('[role="alert"], [role="dialog"]'),
+  ]), timeoutMs);
+  return { globalErrorActions, assistantTurns, stopButtons, globalAlerts };
+}
 
 export function redactChatGptUiDiagnostic(value: string): string {
   return value

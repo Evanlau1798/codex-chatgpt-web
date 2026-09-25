@@ -3,7 +3,29 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
-import { ChatGptBrowserDiagnostics, sanitizeChatGptBrowserDiagnosticState } from "../src/adapters/chatgpt-web/browser-diagnostics";
+import { ChatGptBrowserDiagnostics, readChatGptUpstreamFailureUiState, sanitizeChatGptBrowserDiagnosticState } from "../src/adapters/chatgpt-web/browser-diagnostics";
+
+test("upstream failure UI summary records only visible control counts", async () => {
+  const selectors: string[] = [];
+  const page = {
+    locator: (selector: string) => {
+      selectors.push(selector);
+      return { filter: () => ({ count: async () => selector.includes("regenerate-thread-error-button") ? 1 : 2 }) };
+    },
+  } as unknown as Page;
+  expect(await readChatGptUpstreamFailureUiState(page)).toEqual({
+    globalErrorActions: 1, assistantTurns: 2, stopButtons: 2, globalAlerts: 2,
+  });
+  expect(selectors.join(" ")).toContain("regenerate-thread-error-button");
+  expect(selectors.join(" ")).not.toMatch(/textContent|innerText/);
+});
+
+test("upstream failure UI observation is bounded when the renderer never answers", async () => {
+  const page = { locator: () => ({ filter: () => ({ count: () => new Promise(() => {}) }) }) } as unknown as Page;
+  await expect(readChatGptUpstreamFailureUiState(page, 10)).rejects.toMatchObject({
+    name: "ChatGptBrowserObservationTimeoutError",
+  });
+});
 
 const diagnosticState = {
   url: "https://chatgpt.com/",
