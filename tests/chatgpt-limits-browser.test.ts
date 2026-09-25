@@ -9,7 +9,9 @@ for (const modern of [false, true]) test.skipIf(!executablePath)(`Billing inspec
   try {
     const context = await browser.newContext();
     let plan = "ChatGPT Pro 5x";
+    let planType = "prolite";
     let changedAccount = false;
+    let changedPlanType = false;
     let sessionReads = 0;
     let subscriptionClicks = 0;
     const row = () => `<div class="@container/settings-row"><div>${plan}</div><button onclick="fetch('/subscription-click')">プランを変更</button></div>`;
@@ -19,7 +21,9 @@ for (const modern of [false, true]) test.skipIf(!executablePath)(`Billing inspec
       if (pathname === "/api/auth/session") {
         sessionReads++;
         return route.fulfill({ json: { user: { id: "u" }, account: {
-          id: changedAccount && sessionReads % 2 === 0 ? "different" : "a", planType: "pro", structure: "personal",
+          id: changedAccount && sessionReads % 2 === 0 ? "different" : "a",
+          planType: changedPlanType && sessionReads % 2 === 0 ? "pro" : planType,
+          structure: "personal",
         } } });
       }
       if (pathname === "/subscription-click") { subscriptionClicks++; return route.fulfill({ body: "" }); }
@@ -37,7 +41,9 @@ for (const modern of [false, true]) test.skipIf(!executablePath)(`Billing inspec
     const page = await context.newPage();
     await page.bringToFront();
     const start = "https://chatgpt.com/?temporary-chat=true";
-    for (plan of ["ChatGPT Pro 5x", "ChatGPT Pro 20x", "ChatGPT Pro unknown"]) {
+    for (const [currentPlan, currentPlanType] of [["ChatGPT Pro 5x", "prolite"], ["ChatGPT Pro 20x", "pro"], ["ChatGPT Pro unknown", "prolite"]]) {
+      plan = currentPlan;
+      planType = currentPlanType;
       await page.goto(start);
       if (plan.endsWith("unknown")) await expect(detectChatGptLimitsPlan(page)).rejects.toThrow("Could not distinguish");
       else expect((await detectChatGptLimitsPlan(page)).plan).toBe(plan.endsWith("5x") ? "pro_100" : "pro_200");
@@ -45,11 +51,19 @@ for (const modern of [false, true]) test.skipIf(!executablePath)(`Billing inspec
       expect(await page.getByRole("dialog").filter({ visible: true }).count()).toBe(0);
     }
     plan = "ChatGPT Pro 5x";
+    planType = "prolite";
     changedAccount = true;
     sessionReads = 0;
     await page.goto(start);
     await expect(detectChatGptLimitsPlan(page)).rejects.toThrow("account or subscription changed");
     expect(page.url()).toBe(start);
+    if (modern) {
+      changedAccount = false;
+      changedPlanType = true;
+      sessionReads = 0;
+      await expect(detectChatGptLimitsPlan(page)).rejects.toThrow("account or subscription changed");
+      expect(page.url()).toBe(start);
+    }
     expect(subscriptionClicks).toBe(0);
     await context.close();
   } finally { await browser.close(); }

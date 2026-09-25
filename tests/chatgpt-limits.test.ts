@@ -3,6 +3,7 @@ import {
   chatGptLimitsPlanFromHeadings,
   chatGptUsageModelFromAnnouncements,
   detectChatGptLimitsPlan,
+  isPersonalChatGptProAccount,
   readChatGptUsageAccount,
 } from "../src/adapters/chatgpt-web/limits";
 
@@ -43,7 +44,14 @@ test("Limits exposes only hashed account identity and distinguishes personal and
   expect(workspace.accountKey).not.toBe(personal.accountKey);
 });
 
-test("unsupported plans and payment problems never activate browser plan inspection", async () => {
+test("Limits accepts personal Pro and ProLite account types only", () => {
+  expect(isPersonalChatGptProAccount({ personal: true, planType: "pro" })).toBe(true);
+  expect(isPersonalChatGptProAccount({ personal: true, planType: "prolite" })).toBe(true);
+  expect(isPersonalChatGptProAccount({ personal: true, planType: "plus" })).toBe(false);
+  expect(isPersonalChatGptProAccount({ personal: false, planType: "prolite" })).toBe(false);
+});
+
+test("unsupported plans stay out of browser inspection while ProLite reaches plan inspection", async () => {
   let planType = "plus";
   let needsAttention = false;
   const page = {
@@ -52,6 +60,8 @@ test("unsupported plans and payment problems never activate browser plan inspect
     getByRole: () => { throw new Error("Must not touch the browser for this account"); },
   };
   expect((await detectChatGptLimitsPlan(page as never)).plan).toBe("unsupported");
+  planType = "prolite";
+  await expect(detectChatGptLimitsPlan(page as never)).rejects.toThrow("Must not touch the browser");
   planType = "pro";
   needsAttention = true;
   await expect(detectChatGptLimitsPlan(page as never)).rejects.toThrow("subscription payment problem");

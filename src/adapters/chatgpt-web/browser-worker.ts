@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { skillFileTokens, validateSkillFiles } from "./skill-attachments";
-import { detectChatGptLimitsPlan, readChatGptUsageAccount, readChatGptUsageModel, type ChatGptUsageModel } from "./limits";
+import { detectChatGptLimitsPlan, isPersonalChatGptProAccount, readChatGptUsageAccount, readChatGptUsageModel, type ChatGptUsageModel } from "./limits";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page, type Request, type Response } from "playwright-core";
 import {
   atomicWriteFile,
@@ -4870,7 +4870,7 @@ export class ChatGptBrowserWorker {
         let accountKey: string | undefined;
         try {
           const account = await readChatGptUsageAccount(page);
-          if (account.personal && account.planType === "pro") accountKey = account.accountKey;
+          if (isPersonalChatGptProAccount(account)) accountKey = account.accountKey;
         } catch {
           // A missing identity is reported as a tracking gap, never charged to the previous account.
         }
