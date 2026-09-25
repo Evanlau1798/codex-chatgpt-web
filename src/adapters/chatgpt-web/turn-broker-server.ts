@@ -28,7 +28,7 @@ function validateRequest(request: BrokerRequest): void {
   }
   if (request.method !== "claim" && request.method !== "resolve" && request.method !== "release"
     && request.method !== "invoke" && request.method !== "read_context"
-    && request.method !== "submit_compaction_handoff"
+    && request.method !== "submit_compaction_handoff" && request.method !== "submit_recovery_checkpoint"
     && request.method !== "submit_output"
     && request.method !== "owner_status" && request.method !== "owner_register"
     && request.method !== "owner_register_safe" && request.method !== "owner_update"

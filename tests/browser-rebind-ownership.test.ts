@@ -52,6 +52,7 @@ function rebindFixture(viewport: "pending" | "failed" | "ready", connectMode: "n
       let turnConnection = old;
       let page;
       let diagnosticPage;
+      const submissionRejection = { noteRebind() {} };
       ${source.slice(start, end)}
       return { run: rebindLauncherPage, cleanup: async () => { await turnConnection?.close(); } };
     }

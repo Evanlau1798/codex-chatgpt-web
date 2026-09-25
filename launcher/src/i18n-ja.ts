@@ -28,7 +28,7 @@ export const ja: Record<keyof Copy, string> = {
   freshConversationBody: "ターンごとに新しいブラウザチャットで、同じ Codex タスクのコンテキストを再構築します。ChatGPT がツールにアクセスできなくなった場合に役立つことがありますが、送信するコンテキストが増え、遅くなる可能性があります。初期設定はオフです。",
   manualFreshConversationUnavailable: "自動操作と Original セッションモードでのみ利用できます。Enhanced とゼロリスクでは強制的に無効になります。",
   noAutoCompact: "No Context Window（試験的）",
-  noAutoCompactBody: "Codex に公開する ChatGPT Web のコンテキストウィンドウと自動 compaction しきい値だけを取り除きます。無制限のコンテキストにはなりません。ChatGPT のメッセージ、モデル、コンポーザー、転送、サービス上限は残り、Token 使用量は計測され、大きすぎる prompt は安全に失敗します。変更後は Codex を再起動してください。初期設定では無効です。",
+  noAutoCompactBody: "Codex に公開する ChatGPT Web のコンテキストウィンドウと自動 compaction しきい値だけを取り除きます。Enhanced モードでは安全なツール結果の境界で非公開の復旧 checkpoint を作成します（Pro は約 100K Token ごと、Plus は新しいページの容量に合わせて早めに作成）。元のページは継続し、失効時だけ checkpoint とその後の履歴から再構築します。ChatGPT の上限は残り、大きすぎる prompt は安全に失敗します。変更後は Codex を再起動してください。初期設定では無効です。",
   tagline: "ネイティブ Codex ハーネス内で動作する ChatGPT Web",
   chooseLanguage: "言語を選択",
   chooseLanguageHint: "後から設定で変更できます。",

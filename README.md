@@ -220,7 +220,12 @@ transport, and service limits remain in force.
 **No Context Window** removes only those routed context-window and automatic-compaction thresholds
 from the model catalog that Codex reads. It does not create unlimited context, bypass ChatGPT
 limits, stop token accounting, or turn an oversized browser prompt into a valid request. Such a
-prompt still fails closed. Use it only when another workflow deliberately owns compaction.
+prompt still fails closed. Use it only when another workflow deliberately owns compaction or the
+task can tolerate unbounded canonical history.
+With Enhanced Web Session, the bridge keeps a private recovery checkpoint at safe completed-tool
+boundaries (about 100K tokens on Pro; earlier on Plus to fit a fresh page). The retained page keeps
+running. If it fails, a fresh page receives the latest durable checkpoint plus the canonical work
+that followed it. Pending tool effects are never replayed just to recover a page.
 
 ## Claude Code
 

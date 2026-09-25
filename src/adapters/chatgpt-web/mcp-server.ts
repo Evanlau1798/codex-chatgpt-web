@@ -24,7 +24,7 @@ import {
   gatewayToolParameters,
   isGatewayAgentWaitTool,
 } from "./mcp-gateway";
-import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
+import { CODEX_COMPACTION_CONTROL_WIRE_NAME, CODEX_RECOVERY_CHECKPOINT_WIRE_NAME } from "./native-compaction-control";
 import { CODEX_OUTPUT_CONTROL_WIRE_NAME, submitNativeOutputControl } from "./native-output-control";
 import { callTurnBroker } from "./turn-broker";
 import { invokeChatGptMcpTool } from "./mcp-invocation";
@@ -458,7 +458,8 @@ export async function runChatGptMcpServer(options: {
           options.brokerSocketPath, requestId, args, input, extra.signal,
         ));
       }
-      if (contract === "native" && wire_name === CODEX_COMPACTION_CONTROL_WIRE_NAME) {
+      if (contract === "native" && (wire_name === CODEX_COMPACTION_CONTROL_WIRE_NAME
+        || wire_name === CODEX_RECOVERY_CHECKPOINT_WIRE_NAME)) {
         if (input !== undefined) throw new Error("Compaction control handoff does not accept freeform input");
         const handoffId = args?.handoff_id;
         const summary = args?.summary;
@@ -467,7 +468,8 @@ export async function runChatGptMcpServer(options: {
         }
         if (typeof summary !== "string") throw new Error("Compaction control handoff requires summary");
         await callTurnBroker(options.brokerSocketPath, {
-          method: "submit_compaction_handoff",
+          method: wire_name === CODEX_RECOVERY_CHECKPOINT_WIRE_NAME
+            ? "submit_recovery_checkpoint" : "submit_compaction_handoff",
           token: requestId,
           handoffId,
           summary,

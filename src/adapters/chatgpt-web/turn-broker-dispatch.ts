@@ -80,11 +80,12 @@ export async function dispatchTurnBrokerRequest(
     waitForRetirement: owner.waitForRetirement.bind(owner),
     revoke: owner.revoke.bind(owner),
   }, signal);
-  if (request.method === "submit_compaction_handoff") {
+  if (request.method === "submit_compaction_handoff" || request.method === "submit_recovery_checkpoint") {
     if (typeof request.token !== "string" || request.token.length === 0) throw new Error("compaction control token is required");
     if (typeof request.handoffId !== "string" || request.handoffId.length === 0) throw new Error("compaction handoff id is required");
     if (typeof request.summary !== "string") throw new Error("compaction handoff summary is required");
-    state.compactionTransactions.submit(request.token, request.handoffId, request.summary);
+    state.compactionTransactions.submit(request.token, request.handoffId, request.summary,
+      request.method === "submit_recovery_checkpoint" ? "recovery" : "compaction");
     return { submitted: true };
   }
   if (request.method === "submit_output") {

@@ -27,7 +27,7 @@ export const zhTW = {
   manualFreshConversationUnavailable: "僅支援自動化與 Original 工作階段模式。Enhanced 與零風險模式會強制關閉此設定。",
   manualSkillAttachmentsUnavailable: "上傳技能需要自動瀏覽器互動模式。",
   noAutoCompact: "No Context Window（實驗性）",
-  noAutoCompactBody: "只移除向 Codex 公布的 ChatGPT Web 上下文視窗與自動壓縮門檻。這不會建立無限上下文：ChatGPT 的訊息、模型、編輯器、傳輸與服務限制仍然有效，Token 用量仍會計量，過大的提示會安全失敗。變更後請重新啟動 Codex。預設關閉。",
+  noAutoCompactBody: "只移除向 Codex 公布的 ChatGPT Web 上下文視窗與自動壓縮門檻。Enhanced 模式會在安全的工具結果邊界建立私有恢復 checkpoint（Pro 約每 100K Token；Plus 依新頁面容量提前建立），原頁面繼續運作，失效時以 checkpoint 加後續紀錄重建。這不會建立無限上下文；過大的提示仍會安全失敗。變更後請重新啟動 Codex。預設關閉。",
   tagline: "在原生 Codex Harness 中執行 ChatGPT Web",
   chooseLanguage: "選擇語言",
   chooseLanguageHint: "稍後可以在設定中變更。",

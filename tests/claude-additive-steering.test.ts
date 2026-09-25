@@ -87,6 +87,22 @@ test("Claude steering preserves real parallel tool results and attaches once at 
   expect(steering.peek()).toBeUndefined();
 });
 
+test("passive checkpoint instruction follows the last canonical tool result without dropping it", async () => {
+  const { session } = claudeRootSession();
+  const completed: BrokerToolResult[] = [];
+  await completeChatGptToolResults(session, {
+    completeTool: (_token, _callId, result) => { completed.push(result); },
+  }, "turn-token", [
+    toolResult("call-1", "first real result"),
+    toolResult("call-2", "second real result"),
+  ], { recoveryCheckpointInstruction: "PRIVATE_CHECKPOINT_CONTROL" });
+  expect(completed[0]?.content).toEqual([{ type: "text", text: "first real result" }]);
+  expect(completed[1]?.content).toEqual([
+    { type: "text", text: "second real result" },
+    { type: "text", text: "PRIVATE_CHECKPOINT_CONTROL" },
+  ]);
+});
+
 test("Claude transcript identity does not replay guidance already delivered from UserPromptSubmit", () => {
   const steering = new ChatGptSteeringFeed();
   steering.pushClaude("Compare the implementation with upstream");

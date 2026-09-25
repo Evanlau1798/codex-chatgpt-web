@@ -169,6 +169,25 @@ test("upstream failure rebuilds from canonical state without replaying published
     .toMatchObject({ eligible: false, reason: "already_recovered" });
 });
 
+test("a durable checkpoint permits accepted-page rebuild only after every tool effect settles", () => {
+  const progress = new ChatGptExternalTurnProgress();
+  const session = new ChatGptTurnSession({
+    mode: "tools", token: Promise.resolve("turn_checkpoint"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(),
+    externalProgress: progress, submission: { phase: "accepted" }, cancel: () => {},
+  });
+  const parsed = completeRequest(["call_done"], ["call_done"]);
+  const error = chatGptWebSurfaceError("page lost", false);
+  expect(chatGptSurfaceRecoveryDecision(error, session, parsed, 0))
+    .toMatchObject({ eligible: false, reason: "submission_activated" });
+  expect(chatGptSurfaceRecoveryDecision(error, session, parsed, 0, undefined, true))
+    .toMatchObject({ eligible: true });
+  session.setOutstanding([{ callId: "call_pending", wireName: "exec_command", freeform: false }]);
+  expect(chatGptSurfaceRecoveryDecision(error, session, parsed, 0, undefined, true))
+    .toMatchObject({ eligible: false, reason: "tool_results_incomplete" });
+});
+
 test("surface recovery waits for superseded calls to receive canonical results", () => {
   const session = new ChatGptTurnSession({
     mode: "tools",

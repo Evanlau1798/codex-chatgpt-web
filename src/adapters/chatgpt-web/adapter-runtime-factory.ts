@@ -10,6 +10,7 @@ import { reportChatGptPreparationFailure } from "./preparation-diagnostics";
 import { shouldUseEnhancedOutputTunnel } from "./native-output-control";
 import { compileChatGptWebPrompt } from "./prompt";
 import { ChatGptLunaCheckpointStore, type CapturedChatGptLunaCheckpoint } from "./rolling-checkpoint";
+import { EnhancedRecoveryCheckpointStore } from "./enhanced-recovery-checkpoint";
 import { deferred } from "./runtime-lifecycle";
 import { createChatGptSameSurfaceRetry } from "./same-surface-recovery";
 import { browserSteeringRetry, retainedConversationResumeRequest } from "./steering";
@@ -42,6 +43,7 @@ interface ChatGptRuntimeFactoryOptions {
   configuredCapabilities: ChatGptWebCapabilities;
   executionNamespace: string;
   lunaCheckpointStore: ChatGptLunaCheckpointStore;
+  enhancedRecoveryCheckpointStore: EnhancedRecoveryCheckpointStore;
 }
 
 export type ChatGptRuntimeWorker = Pick<ChatGptBrowserWorker, "run">
@@ -62,6 +64,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     configuredCapabilities,
     executionNamespace,
     lunaCheckpointStore,
+    enhancedRecoveryCheckpointStore,
   } = options;
   return (
     parsed: CodexParsedRequest,
@@ -76,7 +79,12 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     if (toolPolicy.requireTool && !mode.localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
     const identity = extractChatGptTurnIdentity(parsed);
     const captureLunaCheckpoint = parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !parsed._compactionRequest && Boolean(identity.threadId && identity.turnId);
-    const checkpointInput = captureLunaCheckpoint ? lunaCheckpointStore.apply(parsed) : { parsed, applied: false };
+    const captureEnhancedCheckpoint = useEnhancedWebSessionMode
+      && provider.chatgptWeb?.experimentalNoAutoCompact === true
+      && parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID && !parsed._compactionRequest;
+    const checkpointInput = captureLunaCheckpoint ? lunaCheckpointStore.apply(parsed)
+      : captureEnhancedCheckpoint ? enhancedRecoveryCheckpointStore.apply(parsed)
+      : { parsed, applied: false };
     const experimentalMultipartParts = experimentalBiggerContext
       ? resolveBiggerContextMultipartParts(checkpointInput.parsed, turnCapabilities, experimentalSkillAttachments)
       : undefined;
@@ -152,7 +160,9 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       throw reportChatGptPreparationFailure(traceId, "full", checkpointInput.parsed, error);
     }
     const releaseRetainedConversation = retainedConversationRelease(provider, conversationKey);
-    const resumeInput = conversationKey ? retainedConversationResumeRequest(checkpointInput.parsed) : undefined;
+    // The passive checkpoint is for a fresh page only. A healthy retained page keeps its full
+    // in-browser history and receives the ordinary incremental resume input.
+    const resumeInput = conversationKey ? retainedConversationResumeRequest(parsed) : undefined;
     const takeBrokerSteering = useEnhancedWebSessionMode
       ? () => activeToken ? broker.takeUndeliveredSteering(activeToken) : undefined
       : undefined;

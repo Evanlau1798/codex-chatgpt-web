@@ -165,6 +165,15 @@ export class TurnBroker implements TurnBrokerOwner {
     return this.compactionTransactions.begin(traceId, ttlMs);
   }
 
+  async beginRecoveryCheckpoint(
+    traceId: string,
+    ttlMs: number,
+    persist: (summary: string) => void,
+  ): Promise<CompactionTransactionHandle> {
+    await this.start();
+    return this.compactionTransactions.begin(traceId, ttlMs, persist);
+  }
+
   waitForCompactionHandoff(token: string, signal?: AbortSignal): Promise<string> {
     return this.compactionTransactions.wait(token, signal);
   }

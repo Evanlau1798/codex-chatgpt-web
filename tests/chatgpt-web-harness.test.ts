@@ -2598,6 +2598,22 @@ describe("ChatGPT outer-native harness v4", () => {
       expect(rejectedControlWork.isError).toBe(true);
       expect(JSON.stringify(rejectedControlWork.content)).toContain("turn token is invalid");
 
+      let savedRecovery = "";
+      const recovery = await broker.beginRecoveryCheckpoint("mcp-passive-recovery", 60_000,
+        summary => { savedRecovery = summary; });
+      const recoveryWait = broker.waitForCompactionHandoff(recovery.token);
+      const recoveryResult = await call("codex_tool_call", {
+        turn_token: recovery.token,
+        wire_name: "codex.control.recovery_checkpoint",
+        arguments: {
+          handoff_id: recovery.handoffId,
+          summary: "Passive checkpoint while the original Web response continues.",
+        },
+      });
+      expect(recoveryResult.structuredContent).toEqual({ submitted: true });
+      expect(savedRecovery).toBe("Passive checkpoint while the original Web response continues.");
+      await expect(recoveryWait).resolves.toBe(savedRecovery);
+
       const firstExec = call("codex_exec", {
         turn_token: token,
         cmd: "pwd",

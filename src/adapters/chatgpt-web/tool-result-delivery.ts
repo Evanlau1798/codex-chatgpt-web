@@ -16,6 +16,7 @@ export interface CodexAgentLifecycleTarget {
 }
 
 export interface ChatGptToolResultDeliveryOptions {
+  recoveryCheckpointInstruction?: string;
   onSpawnedCodexAgent?: (agent: CodexAgentLifecycleTarget) => void;
   onInterruptedCodexAgent?: (agent: CodexAgentLifecycleTarget) => void;
   onClosedCodexAgent?: (agent: CodexAgentLifecycleTarget) => void;
@@ -152,9 +153,14 @@ export async function completeChatGptToolResults(
     const closedAgent = lifecycleTarget(request, result, "close_agent");
     if (closedAgent) options.onClosedCodexAgent?.(closedAgent);
     const agentMessage = claudeAgentMessage(request, result);
-    await broker.completeTool(token, message.toolCallId, isBoundary
+    const delivered = isBoundary
       ? withClaudeSteering(result, steering.messages, token, message.toolCallId)
-      : result);
+      : result;
+    await broker.completeTool(token, message.toolCallId,
+      options.recoveryCheckpointInstruction && index === results.length - 1
+        ? { ...delivered, content: [...delivered.content,
+            { type: "text", text: options.recoveryCheckpointInstruction }] }
+        : delivered);
     session.markResultDelivered(message.toolCallId, message);
     if (agentMessage) options.onClaudeAgentMessage?.(agentMessage);
     if (isBoundary) {

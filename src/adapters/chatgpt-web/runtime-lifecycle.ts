@@ -138,6 +138,7 @@ export function chatGptSurfaceRecoveryDecision(
   parsed: CodexParsedRequest,
   recoveries: number,
   signal?: AbortSignal,
+  durableCheckpoint = false,
 ): ChatGptSurfaceRecoveryDecision {
   const canonicalResultCount = parsed.context.messages.filter(message => message.role === "toolResult").length;
   const unresolvedSupersededCount = session.unresolvedSupersededResultIds().length;
@@ -151,7 +152,8 @@ export function chatGptSurfaceRecoveryDecision(
   if (session.runtime.compactionRequested) return reject("compaction_requested");
   if (signal?.aborted) return reject("aborted");
   if (session.runtime.mode !== "tools") return reject("read_only");
-  if (session.runtime.submission && session.runtime.submission.phase !== "prepared") {
+  const acceptedWithCheckpoint = durableCheckpoint && session.runtime.submission?.phase === "accepted";
+  if (session.runtime.submission && session.runtime.submission.phase !== "prepared" && !acceptedWithCheckpoint) {
     return reject("submission_activated");
   }
   const surfaceFailure = error instanceof ChatGptWebAdapterError
@@ -167,6 +169,17 @@ export function chatGptSurfaceRecoveryDecision(
   if (session.runtime.text.value().length > 0) return reject("final_streamed");
   if (parsed._canonicalContextComplete !== true) return reject("canonical_incomplete");
   if (unresolvedSupersededCount > 0) return reject("superseded_results_pending");
+  if (acceptedWithCheckpoint) {
+    if (session.runtime.externalProgress?.snapshot().activeToolCalls !== 0 || session.outstanding().length > 0) {
+      return reject("tool_results_incomplete");
+    }
+    const results = new Set(parsed.context.messages.flatMap(message =>
+      message.role === "toolResult" ? [message.toolCallId] : []));
+    if (parsed.context.messages.some(message => message.role === "assistant"
+      && message.content.some(part => part.type === "toolCall" && !results.has(part.id)))) {
+      return reject("tool_results_incomplete");
+    }
+  }
   const outstanding = session.outstanding();
   if (upstreamFailure) {
     if (outstanding.length === 0 || !session.outstandingPublished()) {
@@ -205,8 +218,9 @@ export class ChatGptSurfaceRecoveryTracker {
     parsed: CodexParsedRequest,
     recoveries: number,
     signal?: AbortSignal,
+    durableCheckpoint = false,
   ): number | undefined {
-    const decision = chatGptSurfaceRecoveryDecision(error, session, parsed, recoveries, signal);
+    const decision = chatGptSurfaceRecoveryDecision(error, session, parsed, recoveries, signal, durableCheckpoint);
     if (!this.diagnosticLogged) {
       this.diagnosticLogged = true;
       const canonical = session.canonicalCallDiagnostics();

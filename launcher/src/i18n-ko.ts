@@ -27,7 +27,7 @@ export const ko = {
   freshConversationBody: "매 턴 새 브라우저 채팅에서 동일한 Codex 작업의 컨텍스트를 다시 구성합니다. ChatGPT가 도구에 접근하지 못할 때 도움이 될 수 있지만, 더 많은 컨텍스트를 전송하고 속도가 느려질 수 있습니다. 기본값은 꺼짐입니다.",
   manualFreshConversationUnavailable: "자동화와 Original 세션 모드에서만 사용할 수 있습니다. Enhanced와 Zero Risk에서는 강제로 꺼집니다.",
   noAutoCompact: "No Context Window(실험적)",
-  noAutoCompactBody: "Codex에 표시되는 ChatGPT Web 컨텍스트 창과 자동 컴팩션 임계값만 제거합니다. 무제한 컨텍스트를 만들지는 않습니다. ChatGPT의 메시지, 모델, 작성기, 전송 및 서비스 제한은 계속 적용되고 토큰 사용량도 측정되며, 너무 큰 프롬프트는 안전하게 실패합니다. 변경 후 Codex를 다시 시작하세요. 기본적으로 꺼져 있습니다.",
+  noAutoCompactBody: "Codex에 표시되는 ChatGPT Web 컨텍스트 창과 자동 컴팩션 임계값만 제거합니다. Enhanced 모드는 안전한 도구 결과 경계에서 비공개 복구 checkpoint를 만듭니다(Pro는 약 100K Token마다, Plus는 새 페이지 용량에 맞춰 더 일찍). 기존 페이지는 계속 실행되며, 실패할 때만 checkpoint와 이후의 정식 기록으로 다시 구성합니다. ChatGPT 제한은 그대로 적용되고 너무 큰 프롬프트는 안전하게 실패합니다. 변경 후 Codex를 다시 시작하세요. 기본적으로 꺼져 있습니다.",
   tagline: "네이티브 Codex 하네스에서 사용하는 ChatGPT Web",
   chooseLanguage: "언어를 선택하세요",
   chooseLanguageHint: "나중에 설정에서 변경할 수 있습니다.",

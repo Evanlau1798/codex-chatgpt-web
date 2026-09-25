@@ -27,7 +27,7 @@ export interface BrokerTurnOutputEvent {
 
 export interface BrokerRequest {
   id: string;
-  method: "claim" | "resolve" | "release" | "invoke" | "read_context" | "submit_compaction_handoff" | "submit_output"
+  method: "claim" | "resolve" | "release" | "invoke" | "read_context" | "submit_compaction_handoff" | "submit_recovery_checkpoint" | "submit_output"
     | "owner_status" | "owner_register" | "owner_register_safe" | "owner_update" | "owner_safe_sent"
     | "owner_next" | "owner_complete" | "owner_safe_wait_start" | "owner_safe_wait_completion"
     | "owner_request_compaction" | "owner_compaction_delivery_count" | "safe_start" | "safe_complete"

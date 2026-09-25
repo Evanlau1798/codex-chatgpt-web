@@ -65,3 +65,36 @@ test("compaction control fails closed on unusable summaries, timeout, and abort"
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("passive recovery checkpoint is durable before its control call is acknowledged", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-broker-passive-checkpoint-"));
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
+  const saved: string[] = [];
+  try {
+    const transaction = await broker.beginRecoveryCheckpoint("trace-passive", 10_000, summary => {
+      saved.push(summary);
+    });
+    const waiting = broker.waitForCompactionHandoff(transaction.token);
+    await expect(callTurnBroker(broker.socketPath, {
+      method: "submit_compaction_handoff", token: transaction.token,
+      handoffId: transaction.handoffId, summary: "Wrong control operation.",
+    })).rejects.toThrow("operation");
+    await expect(callTurnBroker(broker.socketPath, {
+      method: "submit_recovery_checkpoint", token: transaction.token,
+      handoffId: transaction.handoffId, summary: "Checkpoint for a continuing Web response.",
+    })).resolves.toEqual({ submitted: true });
+    expect(saved).toEqual(["Checkpoint for a continuing Web response."]);
+    await expect(waiting).resolves.toBe(saved[0]!);
+    const failed = await broker.beginRecoveryCheckpoint("trace-failed", 10_000, () => {
+      throw new Error("checkpoint disk write failed");
+    });
+    await expect(callTurnBroker(broker.socketPath, {
+      method: "submit_recovery_checkpoint", token: failed.token,
+      handoffId: failed.handoffId, summary: "Checkpoint that could not persist.",
+    })).rejects.toThrow("checkpoint disk write failed");
+    broker.abortCompactionTransaction(failed.token);
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import * as z from "zod/v4";
 import { namespacedToolName, type CodexTool } from "../../types";
 import type { ChatGptTurnEnvironment } from "./environment";
-import { CODEX_COMPACTION_CONTROL_WIRE_NAME } from "./native-compaction-control";
+import { CODEX_COMPACTION_CONTROL_WIRE_NAME, CODEX_RECOVERY_CHECKPOINT_WIRE_NAME } from "./native-compaction-control";
 import { requestScopeSummary, type McpRequestExtra } from "./mcp-request-diagnostics";
 import { callTurnBroker } from "./turn-broker";
 
@@ -56,6 +56,7 @@ export function safeVisibleTools(
     .map(tool => tool.namespace!));
   return environment.tools.filter(tool => (
     namespacedToolName(tool.namespace, tool.name) !== CODEX_COMPACTION_CONTROL_WIRE_NAME
+    && namespacedToolName(tool.namespace, tool.name) !== CODEX_RECOVERY_CHECKPOINT_WIRE_NAME
     && !BRIDGE_TOOL_NAMES.has(tool.name)
     && (tool.namespace !== undefined || tool.name !== "exec")
     && (!tool.namespace || !bridgeNamespaces.has(tool.namespace))

@@ -1,5 +1,5 @@
-import { resolve } from "node:path";
-import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
+import { dirname, join, resolve } from "node:path";
+import { CHATGPT_WEB_BACKEND_MODEL, isChatGptWebZeroRiskBackendModel, resolveChatGptWebContextLimits } from "../../chatgpt-web-models";
 import { expandUserPath } from "../../config";
 import { withStallTimeout } from "../../stall-timeout";
 import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
@@ -12,7 +12,7 @@ import { codexToolResultsById } from "./compaction-handoff";
 import { runEnhancedCompaction } from "./enhanced-compaction";
 import { runManualCompaction } from "./manual-compaction";
 import { extractChatGptTurnEnvironment } from "./environment";
-import { resolveChatGptWebModelMode } from "./model";
+import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode } from "./model";
 import { createChatGptStructuredOutputValidator } from "./output-validation";
 import { reportChatGptPreparationFailure } from "./preparation-diagnostics";
 import { chatGptNoContextStallTimeoutMs } from "./prompt-attachment-budget";
@@ -22,7 +22,7 @@ import { TurnBroker, type TurnBrokerOwner } from "./turn-broker";
 import { chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnSessions, chatGptTurnTraceId, type ChatGptTraceEvent } from "./turn-execution";
 import { chatGptTurnRetryKey, chatGptPromptFailureKey } from "./turn-retry-identity";
 import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
-import { estimateChatGptWebUsage } from "./usage";
+import { estimateChatGptWebInputTokens, estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
 import { resolveTrustedCodexEnvironment } from "./trusted-environment-lifecycle";
 import { deliverPendingChatGptSteering, sessionForChatGptRequest, validateBatchTools } from "./steering";
@@ -31,6 +31,8 @@ import { effectiveChatGptToolPolicy } from "./tool-policy";
 import { chatGptAgentLifecycleOptions } from "./agent-session-lifecycle";
 import { submittedBrowserFailure, submittedStallFailure } from "./submitted-turn";
 import { ChatGptLunaCheckpointStore } from "./rolling-checkpoint";
+import { EnhancedRecoveryCheckpointStore } from "./enhanced-recovery-checkpoint";
+import { passiveRecoveryCheckpointInstruction } from "./native-compaction-control";
 import {
   CHATGPT_ACCOUNT_SAFETY_DRAIN_PROMPT,
   DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT,
@@ -63,6 +65,7 @@ export function createChatGptWebAdapter(
     zeroRiskManualControl?: ChatGptZeroRiskManualControl;
     accountSafety?: ChatGptAccountSafety;
     environmentStore?: ChatGptThreadEnvironmentStore;
+    enhancedRecoveryCheckpointStore?: EnhancedRecoveryCheckpointStore;
   } = {},
 ): ProviderAdapter {
   const worker = dependencies.worker ?? ChatGptBrowserWorker.forProvider(provider);
@@ -81,6 +84,10 @@ export function createChatGptWebAdapter(
   } = runtimeConfig;
   const environmentStore = dependencies.environmentStore ?? new ChatGptThreadEnvironmentStore(provider.chatgptWeb?.threadEnvironmentStatePath ? resolve(expandUserPath(provider.chatgptWeb.threadEnvironmentStatePath)) : undefined);
   const lunaCheckpointStore = new ChatGptLunaCheckpointStore(provider.chatgptWeb?.lunaCheckpointStatePath ? resolve(expandUserPath(provider.chatgptWeb.lunaCheckpointStatePath)) : undefined);
+  const enhancedRecoveryCheckpointStore = dependencies.enhancedRecoveryCheckpointStore
+    ?? new EnhancedRecoveryCheckpointStore(provider.chatgptWeb?.lunaCheckpointStatePath
+      ? join(dirname(resolve(expandUserPath(provider.chatgptWeb.lunaCheckpointStatePath))), "enhanced-recovery-checkpoints.json")
+      : undefined);
   const automaticStartRuntime = createChatGptRuntimeStarter({
     provider,
     worker,
@@ -95,6 +102,7 @@ export function createChatGptWebAdapter(
     configuredCapabilities,
     executionNamespace,
     lunaCheckpointStore,
+    enhancedRecoveryCheckpointStore,
   });
   const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
   const accountSafety = dependencies.accountSafety ?? chatGptAccountSafety();
@@ -324,6 +332,10 @@ export function createChatGptWebAdapter(
       }
       let surfaceRecoveries = 0;
       const surfaceRecovery = new ChatGptSurfaceRecoveryTracker(traceId);
+      const durableRecoveryCheckpoint = () => useEnhancedWebSessionMode
+        && provider.chatgptWeb?.experimentalNoAutoCompact === true
+        && parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID
+        && enhancedRecoveryCheckpointStore.apply(parsed).applied;
       try {
         await session.runExclusive(async () => { session.observeCanonicalRequest(parsed); });
         for (;;) {
@@ -334,6 +346,7 @@ export function createChatGptWebAdapter(
             if (settled.type === "error") {
               recoveredResultCount = surfaceRecovery.recoverableResultCount(
                 settled.error, session, parsed, surfaceRecoveries, incoming.abortSignal,
+                durableRecoveryCheckpoint(),
               );
               if (recoveredResultCount !== undefined) return;
               const submittedError = submittedBrowserFailure(
@@ -409,8 +422,53 @@ export function createChatGptWebAdapter(
                   return;
                 }
               } else {
-                await completeChatGptToolResults(session, brokerOwner, turnToken, results,
-                  chatGptAgentLifecycleOptions(environmentStore, parsed, chatGptTurnSessions, executionNamespace));
+                const recoveryCheckpointEnabled = useEnhancedWebSessionMode
+                  && provider.chatgptWeb?.experimentalNoAutoCompact === true
+                  && parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID
+                  && !parsed._compactionRequest && parsed._canonicalContextComplete === true
+                  && session.unresolvedSupersededResultIds().length === 0;
+                const recoveryLimits = recoveryCheckpointEnabled
+                  ? resolveChatGptWebContextLimits(
+                      CHATGPT_WEB_BACKEND_MODEL,
+                      resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities).effort,
+                      { ...turnCapabilities, experimentalBiggerContext: false }, true,
+                    )
+                  : undefined;
+                const recoveryInput = recoveryLimits ? enhancedRecoveryCheckpointStore.apply(parsed) : undefined;
+                const recoveryBudget = recoveryInput?.applied && recoveryLimits
+                  ? {
+                      inputTokens: estimateChatGptWebInputTokens(
+                        recoveryInput.parsed, turnCapabilities, automaticUsagePromptOptions),
+                      contextWindow: recoveryLimits.contextWindow,
+                    }
+                  : undefined;
+                const recoveryLimit = recoveryLimits ? Math.min(100_000, recoveryLimits.autoCompactTokenLimit) : undefined;
+                const checkpoint = recoveryLimit !== undefined
+                  && enhancedRecoveryCheckpointStore.shouldCheckpoint(parsed, recoveryLimit, recoveryBudget)
+                  ? await broker.beginRecoveryCheckpoint(traceId, 5 * 60_000,
+                      summary => enhancedRecoveryCheckpointStore.commit(parsed, summary))
+                  : undefined;
+                try {
+                  await completeChatGptToolResults(session, brokerOwner, turnToken, results, {
+                    ...chatGptAgentLifecycleOptions(environmentStore, parsed, chatGptTurnSessions, executionNamespace),
+                    ...(checkpoint ? { recoveryCheckpointInstruction: passiveRecoveryCheckpointInstruction(checkpoint) } : {}),
+                  });
+                  if (checkpoint) {
+                    if (session.runtime.externalProgress?.snapshot().activeToolCalls !== 0) {
+                      throw new Error("Passive recovery checkpoint requires a settled tool batch");
+                    }
+                    await withAbort(Promise.race([
+                      broker.waitForCompactionHandoff(checkpoint.token, incoming.abortSignal),
+                      session.browserOutcome.then(outcome => {
+                        throw outcome.type === "error" ? outcome.error
+                          : new Error("Web response ended before submitting its recovery checkpoint");
+                      }),
+                    ]), incoming.abortSignal);
+                    console.info(`[chatgpt-web] passive recovery checkpoint durable trace=${traceId} limitTokens=${recoveryLimit}`);
+                  }
+                } finally {
+                  if (checkpoint) broker.abortCompactionTransaction(checkpoint.token);
+                }
                 if (useEnhancedWebSessionMode) deliverPendingChatGptSteering(session, broker, turnToken, traceId);
               }
             } else if (useEnhancedWebSessionMode) deliverPendingChatGptSteering(session, broker, turnToken, traceId);
@@ -459,7 +517,8 @@ export function createChatGptWebAdapter(
                   stallTimeoutMs,
                 ), incoming.abortSignal);
               } catch (error) {
-                recoveredResultCount = surfaceRecovery.recoverableResultCount(error, session, parsed, surfaceRecoveries, incoming.abortSignal);
+                recoveredResultCount = surfaceRecovery.recoverableResultCount(error, session, parsed,
+                  surfaceRecoveries, incoming.abortSignal, durableRecoveryCheckpoint());
                 if (recoveredResultCount !== undefined) return;
                 throw error;
               }
@@ -503,6 +562,7 @@ export function createChatGptWebAdapter(
                 if (next.outcome.type === "error") {
                   recoveredResultCount = surfaceRecovery.recoverableResultCount(
                     next.outcome.error, session, parsed, surfaceRecoveries, incoming.abortSignal,
+                    durableRecoveryCheckpoint(),
                   );
                   if (recoveredResultCount !== undefined) return;
                   const submittedError = submittedBrowserFailure(session, incoming.abortSignal?.aborted === true, next.outcome.error);
