@@ -3222,12 +3222,13 @@ export class ChatGptBrowserWorker {
         plainTextFallback,
         markdownSegments,
         markdownRoots,
-        completionActionVisible: completionAction !== undefined,
-        // Retained tabs keep old turns' copy buttons. Only this turn or a later turn can conflict.
+        completionActionVisible: completionAction !== undefined
+          && (renderedRoots.length > 0 || plainTextFallback.length > 0),
+        // Retained tabs keep old turns' copy buttons. Only a later turn can conflict.
         globalCompletionActionVisible: [...document.querySelectorAll<HTMLElement>(completionActionSelector)]
           .some(candidate => renderedInDom(candidate)
-            && (root.contains(candidate)
-              || Boolean(root.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING))),
+            && Boolean(root.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING)
+            && !root.contains(candidate)),
         stoppedThinkingVisible,
         projection,
         traceBlocks,

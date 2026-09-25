@@ -1798,7 +1798,12 @@ test("retained response ignores older completion actions but detects a later con
     responsePresent: true, bindingPresent: true, ...retained,
     composerVisibleCount: 1, composerTextChars: [0], running: false, aborted: false,
   })).toMatchObject({ eligible: true });
-  expect(await snapshotFor(false, true)).toMatchObject({ completionActionVisible: true, globalCompletionActionVisible: true });
+  const empty = await snapshotFor(false, true);
+  expect(empty).toMatchObject({ completionActionVisible: false, globalCompletionActionVisible: false });
+  expect(chatGptSameSurfaceReadiness({
+    responsePresent: true, bindingPresent: true, ...empty,
+    composerVisibleCount: 1, composerTextChars: [0], running: false, aborted: false,
+  })).toMatchObject({ eligible: true });
   const conflict = await snapshotFor(true, false);
   expect(conflict).toMatchObject({ completionActionVisible: false, globalCompletionActionVisible: true });
   expect(chatGptSameSurfaceReadiness({

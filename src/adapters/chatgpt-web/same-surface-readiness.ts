@@ -32,8 +32,8 @@ export interface ChatGptSameSurfaceReadiness {
 
 /**
  * Decide whether a completed-looking ChatGPT document is safe for an in-place continuation.
- * This deliberately uses only public DOM state. A completion action outside the bound assistant
- * turn proves that the page and the current response locator no longer describe the same surface.
+ * This deliberately uses only public DOM state. A completion action in a later assistant turn
+ * proves that the page and the current response locator no longer describe the same surface.
  */
 export function chatGptSameSurfaceReadiness(
   evidence: ChatGptSameSurfaceEvidence,
