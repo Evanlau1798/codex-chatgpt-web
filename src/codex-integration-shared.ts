@@ -61,6 +61,7 @@ export interface InstalledCodexInterruptHook {
 
 export interface CodexIntegrationJournal {
   version: 10;
+  webProvider?: import("./codex-web-provider").WebProviderState;
   active: boolean;
   configPath: string;
   installed: {
@@ -236,6 +237,8 @@ export interface FileSnapshot {
 
 export interface InstallCodexIntegrationOptions {
   replaceExistingRoute?: boolean;
+  providerMode?: "mixed" | "web-only";
+  catalogPath?: string;
 }
 
 export interface UninstallCodexIntegrationResult {
@@ -360,12 +363,14 @@ export function writeIntegrationState(
   journal: AnyCodexIntegrationJournal,
   configWrite?: { path: string; data: string },
   removals: string[] = [],
+  additionalWrites: Array<{ path: string; data: string }> = [],
 ): void {
   const data = serializeJournal(journal);
   // The recovery copy records intent and the primary copy records commit. If the process stops
   // between those writes, the physical config unambiguously selects the completed state.
   writeFilesWithCompensation([
     { path: getCodexJournalRecoveryPath(), data },
+    ...additionalWrites,
     ...(configWrite ? [{ ...configWrite, followSymlink: true }] : []),
     { path: getCodexJournalPath(), data },
   ], removals);

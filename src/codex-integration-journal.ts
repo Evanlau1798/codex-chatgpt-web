@@ -23,6 +23,7 @@ import type {
   LegacyCodexIntegrationJournalV8,
 } from "./codex-integration-shared";
 import { verifyManagedJournalState } from "./codex-integration-route";
+import { isWebProviderState } from "./codex-web-provider";
 
 function isPreviousAssignment(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
@@ -46,6 +47,7 @@ function parseJournal(path: string): AnyCodexIntegrationJournal {
   const value = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
   const installed = value.installed as Record<string, unknown> | undefined;
   if (value.version === 10
+    && (value.webProvider === undefined || isWebProviderState(value.webProvider))
     && typeof value.active === "boolean"
     && installed
     && typeof installed.openai_base_url === "string"

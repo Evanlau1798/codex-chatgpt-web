@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { AppConfig } from "./config";
 import { getConfigPath, loadConfig, saveConfig } from "./config";
 import { installConfiguredRoute } from "./codex-integration-install-route";
+import { applyWebProvider, ownedWebProviderCatalog, persistProviderRoute, restoreWebProvider, verifyWebProviderCatalog } from "./codex-web-provider";
 import {
   CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
   getCodexConfigPath,
@@ -81,6 +82,9 @@ export function setCodexSubagentProtocol(
     throw new Error("Codex integration is disconnected; reconnect it before changing the subagent protocol");
   }
   const nextConfig = { ...config, subagentProtocol: protocol };
+  const previousWebCatalog = status.journal?.version === 10 && status.journal.webProvider
+    ? verifyWebProviderCatalog(status.journal.webProvider) : undefined;
+  let nextWebCatalog: string | undefined;
   // The runtime catalog and Codex feature surface are two halves of one protocol selection. If
   // either write fails, restore every participant so the next launcher/Codex restart cannot load a
   // split V1/V2 state.
@@ -90,13 +94,18 @@ export function setCodexSubagentProtocol(
     getCodexModelsCachePath(),
     getCodexJournalPath(),
     getCodexJournalRecoveryPath(),
+    ...(previousWebCatalog ? [previousWebCatalog] : []),
   ].map(path => snapshotFile(path, { followSymlink: path === getCodexConfigPath() }));
   try {
     const journal = installCodexIntegration(nextConfig);
+    nextWebCatalog = journal.webProvider ? verifyWebProviderCatalog(journal.webProvider) : undefined;
     saveConfig(nextConfig);
     return journal;
   } catch (error) {
     const rollbackFailures: string[] = [];
+    if (nextWebCatalog && nextWebCatalog !== previousWebCatalog) {
+      try { rmSync(nextWebCatalog); } catch (error) { rollbackFailures.push(String(error)); }
+    }
     for (const snapshot of [...snapshots].reverse()) {
       try {
         restoreFileSnapshot(snapshot);
@@ -146,7 +155,7 @@ export function preflightCodexIntegration(
       return;
     }
     if (existing.version === 10) {
-      assertBuiltinModelProvider(currentText);
+      assertBuiltinModelProvider(existing.active && existing.webProvider ? restoreWebProvider(currentText, existing.webProvider) : currentText);
       return;
     }
     const baseline = managedJournalIsActive(existing)
@@ -246,7 +255,7 @@ export function installCodexIntegration(
       } : {}),
       ...(existing.format ? { format: existing.format } : {}),
     };
-    writeIntegrationState(updated, { path: configPath, data: patched.text }, [getCodexModelsCachePath()]);
+    persistProviderRoute(updated, patched.text, config, options, existing.version === 10 ? existing.webProvider : undefined, currentText);
     return updated;
   }
 
@@ -286,7 +295,7 @@ export function installCodexIntegration(
     } : {}),
     format: textFormat(baseline),
   };
-  writeIntegrationState(journal, { path: configPath, data: patched.text }, [getCodexModelsCachePath()]);
+  persistProviderRoute(journal, patched.text, config, options, undefined, currentText);
   if (existing?.version === 2 && existsSync(existing.catalogPath)) rmSync(existing.catalogPath);
   return journal;
 }
@@ -382,8 +391,10 @@ export function activateCodexIntegration(): SetCodexIntegrationActiveResult {
       previousAgentMaxDepth: route.previousAgentMaxDepth,
     } : {}),
     ...(existing.format ? { format: existing.format } : {}),
+    ...(existing.version === 10 && existing.webProvider ? { webProvider: structuredClone(existing.webProvider) } : {}),
   };
-  writeIntegrationState(connected, { path: existing.configPath, data: route.text }, [getCodexModelsCachePath()]);
+  const connectedText = connected.webProvider ? applyWebProvider(route.text, connected.webProvider) : route.text;
+  writeIntegrationState(connected, { path: existing.configPath, data: connectedText }, [getCodexModelsCachePath()]);
   return { changed: true, active: true };
 }
 
@@ -399,13 +410,17 @@ export function uninstallCodexIntegration(): UninstallCodexIntegrationResult {
     }
     restored = restoreLegacyV2(current, journal);
   } else if ((journal.version === 4 || journal.version === 5 || journal.version === 6 || journal.version === 7 || journal.version === 8 || journal.version === 9 || journal.version === 10) && !journal.active) {
-    verifyRestoredRoute(current, journal);
+    verifyRestoredRoute(current, journal, { verifyWebCatalog: false });
     restored = current;
   } else {
     restored = restoreManagedRoute(current, journal);
   }
   const configSnapshot = snapshotFile(journal.configPath, { followSymlink: true });
-  const catalogSnapshot = journal.version === 2 ? snapshotFile(journal.catalogPath) : undefined;
+  const webCatalog = journal.version === 10 && journal.webProvider
+    ? journal.active ? verifyWebProviderCatalog(journal.webProvider) : ownedWebProviderCatalog(journal.webProvider)
+    : undefined;
+  const catalogSnapshot = journal.version === 2 ? snapshotFile(journal.catalogPath)
+    : webCatalog ? snapshotFile(webCatalog) : undefined;
   const modelsCacheSnapshot = snapshotFile(getCodexModelsCachePath());
   const journalSnapshot = snapshotFile(getCodexJournalPath());
   const recoverySnapshot = snapshotFile(getCodexJournalRecoveryPath());

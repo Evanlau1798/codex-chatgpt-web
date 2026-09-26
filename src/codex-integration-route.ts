@@ -1,4 +1,5 @@
 import { assertBuiltinModelProvider } from "./codex-integration-document";
+import { restoreWebProvider, verifyWebProvider, verifyWebProviderCatalog } from "./codex-web-provider";
 export { assertBuiltinModelProvider } from "./codex-integration-document";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -195,6 +196,7 @@ export function replacementBaseline(
   if (!managedJournalIsActive(journal)) return currentText;
 
   if (journal.version === 9 || journal.version === 10) {
+    if (journal.version === 10 && journal.webProvider) currentText = restoreWebProvider(currentText, journal.webProvider);
     const withoutHook = journal.version === 10
       ? restoreCodexInterruptHook(currentText, journal.interruptHook, { allowAbsent: true })
       : currentText;
@@ -247,10 +249,11 @@ export { installRoute } from "./codex-integration-install-route";
 
 export function verifyInstalledRoute(text: string, journal: ManagedRouteJournal): void {
   verifyOwnedInstalledRoute(text, journal);
-  assertBuiltinModelProvider(text);
+  assertBuiltinModelProvider(journal.version === 10 && journal.webProvider ? restoreWebProvider(text, journal.webProvider) : text);
 }
 
 function verifyOwnedInstalledRoute(text: string, journal: ManagedRouteJournal): void {
+  if (journal.version === 10 && journal.webProvider) verifyWebProvider(text, journal.webProvider);
   const lines = splitLines(text);
   const current = assignments(lines);
   if (current.openai_base_url.value !== journal.installed.openai_base_url) {
@@ -302,7 +305,12 @@ function previousAssignmentMatchesExactly(current: PreviousAssignment, previous:
 export function verifyRestoredRoute(
   text: string,
   journal: CodexIntegrationJournal | LegacyCodexIntegrationJournalV9 | LegacyCodexIntegrationJournalV8 | LegacyCodexIntegrationJournalV7 | LegacyCodexIntegrationJournalV6 | LegacyCodexIntegrationJournalV5 | LegacyCodexIntegrationJournalV4,
+  options: { verifyWebCatalog?: boolean } = {},
 ): void {
+  if (journal.version === 10 && journal.webProvider) {
+    if (options.verifyWebCatalog !== false) verifyWebProviderCatalog(journal.webProvider);
+    if (text.includes(journal.webProvider.fragment)) throw new Error("Web provider remains installed while disconnected");
+  }
   const lines = splitLines(text);
   const current = assignments(lines);
   const keys = journal.version === 7 || journal.version === 8 || journal.version === 9 || journal.version === 10
@@ -401,6 +409,7 @@ export function assertPreservedPreviousRealtimeAssignment(
 
 export function restoreManagedRoute(text: string, journal: ManagedRouteJournal): string {
   verifyOwnedInstalledRoute(text, journal);
+  if (journal.version === 10 && journal.webProvider) text = restoreWebProvider(text, journal.webProvider);
   const withoutHook = journal.version === 10
     ? restoreCodexInterruptHook(text, journal.interruptHook)
     : text;

@@ -21,6 +21,38 @@ log are more useful than another reinstall.
 
 ## Models do not appear, or setup remains on step 3
 
+### Web models are blocked by "out of Codex and Work usage"
+
+Codex Desktop can disable Send based on the native account's usage before a Web request reaches
+this bridge. Model catalog entries cannot declare a separate or unlimited quota. Mixed mode remains
+the default; an opt-in Web-only provider removes the dependency on native Codex account admission:
+
+```bash
+codex-chatgpt-web provider web-only
+codex-chatgpt-web provider status
+```
+
+Fully quit and reopen Codex, then start a **new Web task**. This mode only exposes Web models and
+still obeys the real ChatGPT Web account/model limits. Native models and native account features
+are unavailable until switching back with `codex-chatgpt-web provider mixed` and restarting Codex.
+The commands use the same `--home PATH` and `CODEX_HOME` as the existing installation.
+
+The Web catalog is generated locally from Codex's model cache. If that cache is unavailable,
+export the bundled catalog with `codex debug models --bundled` to a UTF-8 JSON file and run
+`codex-chatgpt-web provider web-only --catalog PATH`. No native account credential is copied.
+Rerunning Setup refreshes the Web catalog for the configured capabilities. Disconnect and uninstall
+restore the prior native selection; conflicting user edits are preserved with an error.
+
+This opt-in mode uses a local catalog file, so Setup's native `/models` restart indicator does not
+prove whether Codex loaded it. Check `provider status` and a new Web turn instead. An explicitly
+selected Codex profile must be removed first because it could override this provider selection.
+
+The fix is **awaiting retest on an affected account with exhausted native usage**. Local tests cover
+the provider/account contract, model discovery, request execution and reversible installation;
+they do not establish the affected desktop account's end-to-end result.
+
+### Mixed-mode catalog verification
+
 **Install models** updates the Codex route, but a running Codex process keeps its old model catalog.
 Fully quit every Codex Desktop window and Codex CLI process, then reopen Codex while the launcher is
 still running. The launcher should move from **Restart Codex** to a verified catalog state.
