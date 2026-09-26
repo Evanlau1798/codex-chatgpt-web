@@ -30,6 +30,20 @@ test("current-turn MCP progress tracks active calls without claiming completion"
   expect(() => progress.recordToolResult()).toThrow("without an active call");
 });
 
+test("broker activity advances progress without inventing an outer tool call", async () => {
+  const progress = new ChatGptExternalTurnProgress();
+  const changed = progress.waitForChange(0);
+
+  expect(progress.recordBrokerActivity(1_000)).toBe(1);
+  expect(await changed).toEqual({
+    revision: 1,
+    lastToolBatchRevision: 0,
+    lastBrokerActivityRevision: 1,
+    activeToolCalls: 0,
+    lastProgressAt: 1_000,
+  });
+});
+
 test("current-turn MCP progress wait remains abortable", async () => {
   const progress = new ChatGptExternalTurnProgress();
   const controller = new AbortController();

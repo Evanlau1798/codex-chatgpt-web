@@ -1,6 +1,8 @@
 export interface ChatGptExternalTurnProgressSnapshot {
   revision: number;
   lastToolBatchRevision: number;
+  /** Proven inbound Native2 broker activity, such as reading the bound context archive. */
+  lastBrokerActivityRevision?: number;
   activeToolCalls: number;
   lastProgressAt?: number;
 }
@@ -85,6 +87,7 @@ abstract class ChatGptTurnProgressBroadcaster implements ChatGptTurnProgressRead
 export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster {
   private revision = 0;
   private lastToolBatchRevision = 0;
+  private lastBrokerActivityRevision = 0;
   private observedToolBatchRevision = 0;
   private activeToolCalls = 0;
   private lastProgressAt?: number;
@@ -95,6 +98,9 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
     return {
       revision: this.revision,
       lastToolBatchRevision: this.lastToolBatchRevision,
+      ...(this.lastBrokerActivityRevision > 0
+        ? { lastBrokerActivityRevision: this.lastBrokerActivityRevision }
+        : {}),
       activeToolCalls: this.activeToolCalls,
       ...(this.lastProgressAt !== undefined ? { lastProgressAt: this.lastProgressAt } : {}),
     };
@@ -108,6 +114,13 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
     this.activeToolCalls += count;
     this.advance(now, "tool_batch");
     return this.lastToolBatchRevision;
+  }
+
+  /** Record model-side Native2 broker activity without inventing an outer tool call. */
+  recordBrokerActivity(now = Date.now()): number {
+    this.assertNotRetired();
+    this.advance(now, "broker_activity");
+    return this.lastBrokerActivityRevision;
   }
 
   async acknowledgeToolBatch(revision: number): Promise<void> {
@@ -176,10 +189,11 @@ export class ChatGptExternalTurnProgress extends ChatGptTurnProgressBroadcaster 
     this.assertNotRetired();
   }
 
-  private advance(now: number, event: "tool_batch" | "tool_result"): void {
+  private advance(now: number, event: "tool_batch" | "tool_result" | "broker_activity"): void {
     if (!Number.isFinite(now)) throw new Error("ChatGPT external progress timestamp must be finite");
     this.revision += 1;
     if (event === "tool_batch") this.lastToolBatchRevision = this.revision;
+    if (event === "broker_activity") this.lastBrokerActivityRevision = this.revision;
     this.lastProgressAt = now;
     this.notify(this.snapshot());
   }
@@ -242,6 +256,7 @@ export class ChatGptMirroredTurnProgress extends ChatGptTurnProgressBroadcaster 
     // recorder only ever moves these forward, so a regression means a corrupt or forged frame
     // rather than an ordering artefact, and accepting it would desynchronise observed liveness.
     if (next.lastToolBatchRevision < this.current.lastToolBatchRevision
+      || (next.lastBrokerActivityRevision ?? 0) < (this.current.lastBrokerActivityRevision ?? 0)
       || (next.lastProgressAt === undefined && this.current.lastProgressAt !== undefined)
       || (next.lastProgressAt !== undefined
         && this.current.lastProgressAt !== undefined
@@ -261,8 +276,10 @@ export function assertChatGptTurnProgressSnapshot(
   if (!value
     || !finiteIndex(value.revision)
     || !finiteIndex(value.lastToolBatchRevision)
+    || (value.lastBrokerActivityRevision !== undefined && !finiteIndex(value.lastBrokerActivityRevision))
     || !finiteIndex(value.activeToolCalls)
     || value.lastToolBatchRevision > value.revision
+    || (value.lastBrokerActivityRevision ?? 0) > value.revision
     || (value.lastProgressAt !== undefined && !Number.isFinite(value.lastProgressAt))
     // Any recorded activity stamps a timestamp, so a frame claiming progress without one is
     // malformed and would otherwise report liveness the daemon never observed.

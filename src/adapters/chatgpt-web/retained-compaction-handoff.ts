@@ -1,6 +1,7 @@
 import type { CodexParsedRequest } from "../../types";
 import {
   CHATGPT_RETAINED_SURFACE_UNAVAILABLE,
+  ChatGptCompactionHandoffAccepted,
   ChatGptWebAdapterError,
 } from "./adapter-error";
 import type { ChatGptBrowserWorker } from "./browser-worker";
@@ -73,10 +74,17 @@ export async function requestRetainedCompactionHandoff(
       abortSignal: browserAbort.signal,
       onTextDelta: () => {},
     });
-    const [handoff] = await withCompactionAbort(Promise.all([
-      broker.waitForCompactionHandoff(transaction.token, operationSignal),
-      browser,
-    ]), operationSignal);
+    const accepted = broker.waitForCompactionHandoff(transaction.token, operationSignal).then(handoff => {
+      browserAbort.abort(new ChatGptCompactionHandoffAccepted());
+      return handoff;
+    });
+    const settledBrowser = browser.catch(error => {
+      if (browserAbort.signal.reason instanceof ChatGptCompactionHandoffAccepted
+        && ((error instanceof DOMException && error.name === "AbortError")
+          || error instanceof ChatGptCompactionHandoffAccepted)) return "";
+      throw error;
+    });
+    const [handoff] = await withCompactionAbort(Promise.all([accepted, settledBrowser]), operationSignal);
     completed = true;
     console.info("[chatgpt-web] Web session mode=enhanced path=retained_handoff result=checkpoint_and_response_settled");
     return handoff;

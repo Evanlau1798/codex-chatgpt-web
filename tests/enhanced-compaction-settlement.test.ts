@@ -10,7 +10,11 @@ import type { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import type { CodexParsedRequest } from "../src/types";
 import type { AdapterEvent } from "../src/types";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
-import { ChatGptWebAdapterError, chatGptRetainedSurfaceUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
+import {
+  ChatGptCompactionHandoffAccepted,
+  ChatGptWebAdapterError,
+  chatGptRetainedSurfaceUnavailableError,
+} from "../src/adapters/chatgpt-web/adapter-error";
 import { CompactionTransactionStore } from "../src/adapters/chatgpt-web/compaction-transaction";
 
 function fixture(active = false, tools = false) {
@@ -88,8 +92,8 @@ for (const stoppedWithoutHandoff of [false, true]) test(`active compact avoids p
     if (!stoppedWithoutHandoff) submit(instruction);
     await new Promise<void>(resolve => setImmediate(resolve));
     expect(events).toEqual([]);
-    expect(f.source.isActive()).toBeTrue();
-    f.browser.resolve(stoppedWithoutHandoff ? "compact turn had started" : "turn complete");
+    expect(f.source.isActive()).toBe(stoppedWithoutHandoff);
+    if (stoppedWithoutHandoff) f.browser.resolve("compact turn had started");
     await f.releasing.promise;
     expect(events).toEqual([]);
     f.release.resolve();
@@ -102,6 +106,125 @@ for (const stoppedWithoutHandoff of [false, true]) test(`active compact avoids p
       { type: "text_delta", phase: "final_answer", text: canonicalizeCompactionHandoff(f.options.parsed, "Canonical active checkpoint.")! },
     ]);
   } finally { store.close(); await f.cleanup(); await run; }
+});
+
+test("active compact stops browser observation as soon as its structured checkpoint is accepted", async () => {
+  const f = fixture(true, true);
+  const store = new CompactionTransactionStore();
+  const boundary = deferred<string>();
+  let cancelled: Error | undefined;
+  f.source.runtime.cancel = reason => {
+    cancelled = reason;
+    f.browser.reject(reason ?? new Error("cancelled"));
+  };
+  const broker = {
+    beginCompactionTransaction: async (trace: string, ttl: number) => store.begin(trace, ttl),
+    waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
+    abortCompactionTransaction: (token: string) => store.abort(token),
+    requestCompaction: (_token: string, result: { content: { text: string }[] }, delivered?: () => void) => {
+      boundary.resolve(result.content[0]!.text); delivered?.(); return 1;
+    },
+    compactionDeliveryCount: () => 1,
+    revoke() {},
+    completeTool() {},
+  } as unknown as TurnBroker;
+  const run = runEnhancedCompaction({ ...f.options, broker, timeoutMs: 1_000,
+    startFallback: async () => { throw new Error("unexpected fallback"); },
+  });
+  try {
+    const instruction = await boundary.promise;
+    const token = /turn_token (control_\w+)/.exec(instruction)![1]!;
+    const handoffId = /handoff_id (handoff_\w+)/.exec(instruction)![1]!;
+    store.submit(token, handoffId, "Canonical active checkpoint.");
+    await f.releasing.promise;
+    expect(cancelled).toBeInstanceOf(ChatGptCompactionHandoffAccepted);
+    f.release.resolve();
+    await expect(run).resolves.toBe("completed");
+  } finally {
+    store.close();
+    f.release.resolve();
+    await f.cleanup();
+    await run.catch(() => {});
+  }
+});
+
+test("active compact accepts a helper-flattened abort after its structured checkpoint is accepted", async () => {
+  const f = fixture(true, true);
+  const store = new CompactionTransactionStore();
+  const boundary = deferred<string>();
+  f.source.runtime.cancel = reason => {
+    f.browser.reject(new DOMException(reason?.message ?? "cancelled", "AbortError"));
+  };
+  const broker = {
+    beginCompactionTransaction: async (trace: string, ttl: number) => store.begin(trace, ttl),
+    waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
+    abortCompactionTransaction: (token: string) => store.abort(token),
+    requestCompaction: (_token: string, result: { content: { text: string }[] }, delivered?: () => void) => {
+      boundary.resolve(result.content[0]!.text); delivered?.(); return 1;
+    },
+    compactionDeliveryCount: () => 1,
+    revoke() {},
+    completeTool() {},
+  } as unknown as TurnBroker;
+  const run = runEnhancedCompaction({ ...f.options, broker, timeoutMs: 1_000,
+    startFallback: async () => { throw new Error("unexpected fallback"); },
+  });
+  try {
+    const instruction = await boundary.promise;
+    const token = /turn_token (control_\w+)/.exec(instruction)![1]!;
+    const handoffId = /handoff_id (handoff_\w+)/.exec(instruction)![1]!;
+    store.submit(token, handoffId, "Canonical active checkpoint.");
+    await f.releasing.promise;
+    f.release.resolve();
+    await expect(run).resolves.toBe("completed");
+  } finally {
+    store.close();
+    f.release.resolve();
+    await f.cleanup();
+    await run.catch(() => {});
+  }
+});
+
+test("active compact preserves delivery evidence after acceptance retires the broker capability", async () => {
+  const f = fixture(true, true);
+  const store = new CompactionTransactionStore();
+  const boundary = deferred<string>();
+  let retired = false;
+  f.source.runtime.cancel = reason => {
+    retired = true;
+    f.browser.reject(reason ?? new Error("cancelled"));
+  };
+  const broker = {
+    beginCompactionTransaction: async (trace: string, ttl: number) => store.begin(trace, ttl),
+    waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
+    abortCompactionTransaction: (token: string) => store.abort(token),
+    requestCompaction: (_token: string, result: { content: { text: string }[] }, delivered?: () => void) => {
+      boundary.resolve(result.content[0]!.text); delivered?.(); return 1;
+    },
+    compactionDeliveryCount: () => {
+      if (retired) throw new Error("Cannot read compaction delivery after the turn capability retired");
+      return 1;
+    },
+    revoke() { retired = true; },
+    completeTool() {},
+  } as unknown as TurnBroker;
+  const run = runEnhancedCompaction({ ...f.options, broker, timeoutMs: 1_000,
+    startFallback: async () => { throw new Error("unexpected fallback"); },
+  });
+  try {
+    const instruction = await boundary.promise;
+    const token = /turn_token (control_\w+)/.exec(instruction)![1]!;
+    const handoffId = /handoff_id (handoff_\w+)/.exec(instruction)![1]!;
+    store.submit(token, handoffId, "Canonical active checkpoint.");
+    await f.releasing.promise;
+    f.release.resolve();
+    await expect(run).resolves.toBe("completed");
+  } finally {
+    store.close();
+    f.release.resolve();
+    await f.cleanup();
+    await run.catch(() => {});
+  }
 });
 
 for (const sameExecutionKey of [true, false]) test(`enhanced compact waits for detached source release (same key: ${sameExecutionKey})`, async () => {
@@ -222,6 +345,30 @@ test("retained handoff cancellation waits for the handoff worker to settle", asy
     physical.resolve("stopped");
     expect((await run).message).toContain("operator cancelled");
   } finally { physical.resolve("cleanup"); await run; await f.cleanup(); }
+});
+
+test("retained compact stops browser observation after the structured checkpoint is accepted", async () => {
+  const f = fixture();
+  const submitted = deferred<void>();
+  let abortReason: unknown;
+  const summary = canonicalizeCompactionHandoff(f.options.parsed, "Canonical retained checkpoint.")!;
+  const broker = {
+    beginCompactionTransaction: async () => ({ token: "control", handoffId: "handoff" }),
+    waitForCompactionHandoff: async () => { await submitted.promise; return summary; },
+    abortCompactionTransaction() {},
+  } as unknown as TurnBroker;
+  try {
+    const handoff = requestRetainedCompactionHandoff({ run: async turn => {
+      submitted.resolve();
+      await new Promise<void>((_resolve, reject) => turn.abortSignal!.addEventListener("abort", () => {
+        abortReason = turn.abortSignal!.reason;
+        reject(turn.abortSignal!.reason);
+      }, { once: true }));
+      return "unreachable";
+    } }, f.options.parsed, f.source, broker, f.options.capabilities, "fixture-trace");
+    await expect(handoff).resolves.toBe(summary);
+    expect(abortReason).toBeInstanceOf(ChatGptCompactionHandoffAccepted);
+  } finally { await f.cleanup(); }
 });
 
 for (const surfaceLost of [false, true]) {

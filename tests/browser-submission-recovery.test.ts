@@ -37,14 +37,17 @@ interface Worker {
     expectedPrompt?: string, insertionPlan?: ReturnType<typeof planChatGptPromptInsertion>): Promise<string>;
   waitForSubmissionAccepted(page: Page, users: Locator, responses: Locator, response: Locator,
     userCount: number, initial: State, turnIdentities: readonly string[], signal?: AbortSignal, progress?: ChatGptExternalTurnProgress,
-    initialRevision?: number, recover?: Recovery): Promise<string>;
+    initialRevision?: number, initialBrokerActivityRevision?: number, recover?: Recovery): Promise<string>;
   waitForNewAssistantTurn(page: Page, responses: Locator, initial: State, deadline?: number,
     signal?: AbortSignal, progress?: ChatGptExternalTurnProgress, grace?: number, recover?: Recovery): Promise<Locator>;
   waitForMultipartAcknowledgement(page: Page, response: Locator, stage: { acknowledgement: string },
     deadline?: number, signal?: AbortSignal, progress?: ChatGptExternalTurnProgress): Promise<void>;
 }
 
-function surface(read: () => Promise<State>) {
+function surface(
+  read: () => Promise<State>,
+  readUsers: () => Promise<readonly string[]> = async () => ["conversation-turn-old"],
+) {
   const hidden = {
     filter() { return this; }, last() { return this; }, getByText() { return this; }, getByTestId() { return this; },
     isVisible: async () => false, count: async () => 0,
@@ -57,7 +60,7 @@ function surface(read: () => Promise<State>) {
   const users = {
     count: async () => 1,
     evaluateAll: async (callback: (items: unknown[], name?: string) => unknown, name?: string) => (
-      callback(elements(["conversation-turn-old"]), name)
+      callback(elements(await readUsers()), name)
     ),
   } as unknown as Locator;
   const selected: string[] = [];
@@ -132,7 +135,7 @@ async function bounded<T>(operation: Promise<T>, ms: number): Promise<T> {
 const accepted = (instance: Worker, fixture: ReturnType<typeof surface>, signal?: AbortSignal,
   progress?: ChatGptExternalTurnProgress, recover?: Recovery) => instance.waitForSubmissionAccepted(
     fixture.page, fixture.baseline.userTurns, fixture.responses, fixture.assistant, 1, initial,
-    fixture.baseline.initialTurnIdentities, signal, progress, 0, recover,
+    fixture.baseline.initialTurnIdentities, signal, progress, 0, 0, recover,
   );
 
 test("accepted send rebinds observation once without sending the prompt twice", async () => {
@@ -263,6 +266,29 @@ test("post-Send identity recovery settles once and rereads an ambiguous snapshot
   expect(result).toEqual({ count: 1, lastId: "conversation-turn-new" });
   expect(reads).toBe(2);
   expect(settled).toBe(1);
+});
+
+test("post-Send user identity mismatch settles once and rereads before failing closed", async () => {
+  let reads = 0;
+  const fixture = surface(
+    async () => reads++ === 0
+      ? {
+          count: 1,
+          lastId: "conversation-turn-old",
+          identities: ["conversation-turn-old"],
+          knownTurnIdentities: ["conversation-turn-old"],
+        }
+      : {
+          count: 1,
+          lastId: "conversation-turn-new",
+          identities: ["conversation-turn-new"],
+          knownTurnIdentities: ["conversation-turn-old", "conversation-turn-new"],
+        },
+    async () => ["conversation-turn-new"],
+  );
+
+  expect(await accepted(worker(), fixture)).toBe("user_turn");
+  expect(reads).toBe(2);
 });
 
 test("post-Send identity recovery rejects a second ambiguous snapshot", async () => {
@@ -444,6 +470,65 @@ test("MCP batch arrival wakes a pending submission probe without requiring rebin
   finally { clearTimeout(timer); }
 });
 
+test("trusted native progress proves submission before a DOM turn or tool batch appears", async () => {
+  const fixture = surface(() => new Promise(() => {}));
+  type Snapshot = ReturnType<ChatGptExternalTurnProgress["snapshot"]>;
+  let snapshot: Snapshot = { revision: 0, lastToolBatchRevision: 0, activeToolCalls: 0 };
+  const waiters = new Set<(value: Snapshot) => void>();
+  const progress = {
+    snapshot: () => snapshot,
+    waitForChange: async (afterRevision: number, signal?: AbortSignal) => {
+      if (snapshot.revision > afterRevision) return snapshot;
+      if (signal?.aborted) throw new DOMException("aborted", "AbortError");
+      return new Promise<Snapshot>((resolve, reject) => {
+        const finish = (value: Snapshot) => { signal?.removeEventListener("abort", abort); resolve(value); };
+        const abort = () => { waiters.delete(finish); reject(new DOMException("aborted", "AbortError")); };
+        waiters.add(finish);
+        signal?.addEventListener("abort", abort, { once: true });
+      });
+    },
+    acknowledgeToolBatch: async () => {},
+  } as unknown as ChatGptExternalTurnProgress;
+  const result = accepted(worker(), fixture, undefined, progress);
+  const timer = setTimeout(() => {
+    snapshot = {
+      revision: 1,
+      lastToolBatchRevision: 0,
+      activeToolCalls: 0,
+      lastProgressAt: Date.now(),
+      lastBrokerActivityRevision: 1,
+    };
+    for (const resolve of [...waiters]) { waiters.delete(resolve); resolve(snapshot); }
+  }, 10);
+  try { expect(await bounded(result, 500)).toBe("mcp_tool_call"); }
+  finally { clearTimeout(timer); }
+});
+
+test("send baselines broker activity after the activation handshake", async () => {
+  const fixture = surface(async () => initial);
+  const instance = worker();
+  const progress = new ChatGptExternalTurnProgress();
+  let observedBaseline = -1;
+  instance.activeComposer = async () => ({ locator: () => ({ locator: () => ({
+    waitFor: async () => {}, isEnabled: async () => true, press: async () => {},
+  }) }) });
+  instance.waitForSubmissionAccepted = async (...args: unknown[]) => {
+    observedBaseline = args[10] as number;
+    return "user_turn";
+  };
+
+  expect(await instance.sendAttachedPrompt(
+    fixture.page,
+    fixture.baseline,
+    initial,
+    undefined,
+    undefined,
+    async () => { progress.recordBrokerActivity(); },
+    progress,
+  )).toBe("user_turn");
+  expect(observedBaseline).toBe(progress.snapshot().lastBrokerActivityRevision ?? 0);
+});
+
 test("production send and multipart observation wire same-page recovery for launcher-owned turns", () => {
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   expect(source.includes("const toolTurnObservationRecovery = launcherSurfaceId !== undefined")).toBeTrue();
@@ -506,7 +591,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
     first, next, initial, events, ChatGptPromptOperation, connectorAttemptBudget: { remaining: 3 },
     turn: {
       traceId: `production-${lane}-rebind`, externalProgress: progress,
-      onSendActivated: () => { events.push("activated"); },
+      onSendActivated: () => { events.push("activated"); progress.recordBrokerActivity(); },
       onSubmitted: () => { events.push("submitted"); },
     },
     mode: { localTools: lane === "final-prewrap" },

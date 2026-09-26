@@ -6,6 +6,7 @@ import type { BrokerToolResult, TurnBroker } from "./turn-broker";
 import type { ChatGptTurnSession } from "./turn-execution";
 import { activeCompactionToolResultInstruction } from "./native-compaction-control";
 import type { CompactionTransactionHandle } from "./compaction-transaction";
+import { ChatGptCompactionHandoffAccepted } from "./adapter-error";
 
 export const LATEST_USER_PROMPT_MARKER = "CODEX_LATEST_USER_PROMPT_JSON";
 export const MAX_COMPACTION_HANDOFF_TIMEOUT_MS = 5 * 60_000;
@@ -140,6 +141,8 @@ export async function settleActiveCompactionSource(
     let transaction: CompactionTransactionHandle | undefined;
     let handoff: string | undefined;
     let handoffWait: Promise<void> | undefined;
+    let handoffAccepted = false;
+    let compactionInstructionDelivered = false;
     try {
       token = await withCompactionAbort(source.runtime.token, signal);
       const pending = broker.beginCompactionTransaction(source.traceId ?? "active_compaction", timeoutMs);
@@ -148,10 +151,15 @@ export async function settleActiveCompactionSource(
       }, () => {});
       transaction = await withCompactionAbort(pending, signal);
       handoffWait = broker.waitForCompactionHandoff(transaction.token, signal).then(
-        summary => { handoff = summary; }, () => {},
+        summary => {
+          handoff = summary;
+          handoffAccepted = true;
+          if (source.isActive()) source.cancel(new ChatGptCompactionHandoffAccepted());
+        }, () => {},
       );
       source.runtime.compactionRequested = true;
       broker.requestCompaction(token, interruptedByActiveCompaction(transaction), () => {
+        compactionInstructionDelivered = true;
         console.info("[chatgpt-web] active compaction boundary action=request_checkpoint_in_current_response");
       });
       for (const request of outstanding) {
@@ -160,10 +168,15 @@ export async function settleActiveCompactionSource(
         source.markResultDelivered(request.callId, result);
       }
       const outcome = await withCompactionAbort(source.browserOutcome, signal);
-      if (outcome.type === "error") throw outcome.error;
-      const compactionInstructionDelivered = broker.compactionDeliveryCount(token) > 0;
+      if (outcome.type === "error"
+        && !(handoffAccepted && (outcome.error instanceof ChatGptCompactionHandoffAccepted
+          || (outcome.error instanceof DOMException && outcome.error.name === "AbortError")))) throw outcome.error;
       await withCompactionAbort(source.physicalSettlement, signal);
-      return { answer: outcome.answer, compactionInstructionDelivered, ...(handoff ? { handoff } : {}) };
+      return {
+        answer: outcome.type === "final" ? outcome.answer : "",
+        compactionInstructionDelivered,
+        ...(handoff ? { handoff } : {}),
+      };
     } catch (error) {
       if (signal?.aborted) source.cancel(abortReason(signal));
       throw error;

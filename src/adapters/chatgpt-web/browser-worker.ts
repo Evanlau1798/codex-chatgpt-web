@@ -77,6 +77,7 @@ import {
 import {
   activateChatGptSendControl,
   bindChatGptAssistantTurn,
+  ChatGptTurnIdentityAmbiguityError,
   chatGptAssistantTurnChanged,
   chatGptSubmissionEvidence,
   locateChatGptAssistantTurn,
@@ -1689,6 +1690,7 @@ export class ChatGptBrowserWorker {
     signal?: AbortSignal,
     externalProgress?: ChatGptTurnProgressReader,
     initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0,
+    initialBrokerActivityRevision = externalProgress?.snapshot().lastBrokerActivityRevision ?? 0,
     recoverObservation?: ChatGptObservationRecovery,
   ): Promise<ChatGptSubmissionEvidence> {
     if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
@@ -1703,26 +1705,34 @@ export class ChatGptBrowserWorker {
         if (signal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
         const progress = externalProgress?.snapshot();
         if (progress && progress.lastToolBatchRevision > initialToolBatchRevision) return "mcp_tool_call";
+        if (progress && (progress.lastBrokerActivityRevision ?? 0) > initialBrokerActivityRevision) {
+          return "mcp_tool_call";
+        }
         const observed = await observeChatGptTurnIdentityAfterSend(
           () => observeChatGptSubmission(async () => {
             await throwIfChatGptSessionFailureAlert(page);
             await throwIfChatGptRateLimitDialog(page);
             await throwIfChatGptTerminalErrorAlert(responseTurn);
-            return Promise.all([
+            const snapshot = await Promise.all([
               readChatGptTurnIdentities(userTurns),
               readChatGptAssistantTurnState(responseTurns),
               page.locator(CHATGPT_STOP_BUTTON_SELECTOR).filter({ visible: true }).count(),
             ]);
+            const [userIdentities, assistantTurn] = snapshot;
+            const knownTurns = new Set(assistantTurn.knownTurnIdentities ?? []);
+            if (userIdentities.some(identity => !knownTurns.has(identity))) {
+              throw new ChatGptTurnIdentityAmbiguityError(
+                "conversation",
+                "ChatGPT user turn has no matching identity container",
+              );
+            }
+            return snapshot;
           }, signal, externalProgress, progress?.revision ?? 0),
           settleChatGptUi,
           signal,
         );
         if (!observed) continue;
         const [userIdentities, assistantTurn, visibleStopButtonCount] = observed.value;
-        const knownTurns = new Set(assistantTurn.knownTurnIdentities ?? []);
-        if (userIdentities.some(identity => !knownTurns.has(identity))) {
-          throw new Error("ChatGPT user turn has no matching identity container");
-        }
         const evidence = chatGptSubmissionEvidence({
           initialUserTurnCount,
           userTurnCount: userIdentities.length,
@@ -1843,8 +1853,10 @@ export class ChatGptBrowserWorker {
       await this.assertPromptAttached(page, expectedPrompt, abortSignal, undefined, preserveLeading);
     }
     await captureDiagnostic?.("send-ready");
-    const initialToolBatchRevision = externalProgress?.snapshot().lastToolBatchRevision ?? 0;
     await onSendActivated?.();
+    const initialProgress = externalProgress?.snapshot();
+    const initialToolBatchRevision = initialProgress?.lastToolBatchRevision ?? 0;
+    const initialBrokerActivityRevision = initialProgress?.lastBrokerActivityRevision ?? 0;
     await activateChatGptSendControl(sendButton, abortSignal);
     return this.waitForSubmissionAccepted(
       page,
@@ -1857,6 +1869,7 @@ export class ChatGptBrowserWorker {
       abortSignal,
       externalProgress,
       initialToolBatchRevision,
+      initialBrokerActivityRevision,
       recoverObservation,
     );
   }
@@ -3940,10 +3953,12 @@ export class ChatGptBrowserWorker {
           throw chatGptWebSurfaceError("ChatGPT connector was lost before prompt submission", false);
         }
         await diagnostics.capture(page, "send-ready");
-        initialToolBatchRevision = turn.externalProgress?.snapshot().lastToolBatchRevision ?? 0;
         await this.assertSelectedEffort(page, mode);
         submissionRejection.begin(page);
         await turn.onSendActivated?.();
+        const initialProgress = turn.externalProgress?.snapshot();
+        initialToolBatchRevision = initialProgress?.lastToolBatchRevision ?? 0;
+        const initialBrokerActivityRevision = initialProgress?.lastBrokerActivityRevision ?? 0;
         await activateChatGptSendControl(sendButton, stageSignal);
         const evidence = await this.waitForSubmissionAccepted(
           page,
@@ -3956,6 +3971,7 @@ export class ChatGptBrowserWorker {
           stageSignal,
           turn.externalProgress,
           initialToolBatchRevision,
+          initialBrokerActivityRevision,
           toolTurnObservationRecovery,
         );
         responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);

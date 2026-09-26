@@ -249,7 +249,10 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         environment,
         timeoutMs === undefined ? undefined : timeoutMs + 60_000,
         traceId,
-        () => trace.signalProgress(),
+        () => {
+          trace.signalProgress();
+          externalProgress.recordBrokerActivity();
+        },
         tunneledOutput,
       );
       try {

@@ -21,8 +21,8 @@ export type ChatGptSubmissionEvidence =
   | "mcp_tool_call";
 
 export class ChatGptTurnIdentityAmbiguityError extends Error {
-  constructor(scope: "assistant" | "conversation") {
-    super(`ChatGPT ${scope} turn identities are ambiguous`);
+  constructor(scope: "assistant" | "conversation", detail = `ChatGPT ${scope} turn identities are ambiguous`) {
+    super(detail);
     this.name = "ChatGptTurnIdentityAmbiguityError";
   }
 }

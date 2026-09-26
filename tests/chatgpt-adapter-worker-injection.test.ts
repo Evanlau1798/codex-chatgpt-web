@@ -66,6 +66,78 @@ test("the production adapter accepts an internal deterministic browser worker", 
   }
 });
 
+test("archive reads advance production browser progress without fabricating a tool batch", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-archive-progress-"));
+  const socket = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socket);
+  const environment = `<environment_context><cwd>${root}</cwd><workspace_roots><root>${root}</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></environment_context>`;
+  let observed = false;
+  const worker = {
+    async run(turn: BrowserTurn): Promise<string> {
+      const prepared = await turn.prepare();
+      try {
+        expect(prepared.transport).toBe("native2-archive");
+        const contextToken = prepared.text.match(/context_[a-f0-9]{32}/)?.[0];
+        expect(contextToken).toBeString();
+        const before = turn.externalProgress!.snapshot();
+        expect(before.lastBrokerActivityRevision).toBeUndefined();
+        await callTurnBroker(socket, { method: "read_context", token: contextToken! });
+        const after = turn.externalProgress!.snapshot();
+        expect(after.lastBrokerActivityRevision).toBeGreaterThan(before.revision);
+        expect(after.lastToolBatchRevision).toBe(0);
+        expect(after.activeToolCalls).toBe(0);
+        observed = true;
+        turn.onTextDelta("archive progress verified");
+        return "archive progress verified";
+      } finally {
+        prepared.release();
+      }
+    },
+  };
+  const large = "ARCHIVE_PROGRESS ".repeat(8_000);
+  const parsed: CodexParsedRequest = {
+    modelId: CHATGPT_WEB_MODEL_ID,
+    stream: false,
+    context: {
+      tools: [{ name: "exec_command", description: "Run command", parameters: { type: "object" } }],
+      messages: [
+        { role: "user", content: environment, timestamp: 1 },
+        { role: "user", content: large, timestamp: 2 },
+      ],
+    },
+    options: { reasoning: "high" },
+    _rawBody: {
+      prompt_cache_key: root,
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({ thread_id: root, turn_id: "archive-progress-turn" }),
+      },
+      input: [environment, large].map(text => ({
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text }],
+        internal_chat_message_metadata_passthrough: { turn_id: "archive-progress-turn" },
+      })),
+    },
+  };
+  try {
+    await createChatGptWebAdapter({
+      adapter: "chatgpt-web",
+      baseUrl: `browser://${root}`,
+      chatgptWeb: {
+        brokerSocketPath: socket,
+        localToolsEnabled: true,
+        useEnhancedWebSessionMode: true,
+        useEnhancedOutputTunnel: false,
+      },
+    }, { broker, worker }).runTurn!(parsed, { headers: new Headers() }, () => {});
+    expect(observed).toBeTrue();
+  } finally {
+    chatGptTurnSessions.clear();
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("Standard Web delivers queued account-safety steering to the active browser turn", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-standard-safety-steering-"));
   const safety = new ChatGptAccountSafety(join(root, "state.json"));
