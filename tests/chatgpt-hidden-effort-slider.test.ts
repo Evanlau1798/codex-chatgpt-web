@@ -53,7 +53,8 @@ function picker(options: { failFirst?: boolean; staleExpanded?: boolean; missing
       return container;
     },
   };
-  const menu = { filter() { return this; }, last() { return this; }, isVisible: async () => false };
+  const menu = { filter() { return this; }, last() { return this; }, isVisible: async () => false,
+    getByRole: () => ({ count: async () => 0 }), locator: () => ({ count: async () => 0 }) };
   const page = {
     locator: (selector: string) => {
       if (selector === CHATGPT_COMPOSER_SELECTOR) return composer;
