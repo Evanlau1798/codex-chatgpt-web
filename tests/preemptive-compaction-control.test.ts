@@ -29,7 +29,7 @@ test("active checkpoint preemption stops generation without taking the abort pat
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   const request = source.indexOf("const requestedPreemption =");
   const stop = source.indexOf('await stop.press("Enter")', request);
-  const snapshot = source.indexOf("const snapshot = await this.responseDomSnapshot", request);
+  const snapshot = source.indexOf("await this.responseDomSnapshot(responseTurn, markdownOwnership, running)", request);
   const retry = source.indexOf("const finalOptions =", snapshot);
   const control = source.slice(request, retry);
 
