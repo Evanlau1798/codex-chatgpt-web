@@ -20,12 +20,133 @@ import {
 } from "../scripts/lifecycle-smoke/web-contract-core";
 import {
   markdownRestorationProbeText,
+  connectorState,
   MARKDOWN_RESTORATION_PROBE_CHARS,
   STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS,
   structuredMarkdownRestorationProbeText,
+  waitForSendEnabled,
 } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
 
 describe("lightweight Web contract smoke", () => {
+  test("cancels send readiness while the composer is absent", async () => {
+    const controller = new AbortController();
+    const reason = new Error("probe cancelled");
+    const page = {
+      locator: () => ({ filter: () => ({
+        first: () => ({ waitFor: ({ signal }: { signal?: AbortSignal }) => new Promise((_, reject) => {
+          const timer = setTimeout(() => reject(new Error("composer wait timed out")), 50);
+          signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          }, { once: true });
+          queueMicrotask(() => controller.abort(reason));
+        }) }),
+        count: async () => 1,
+      }) }),
+    };
+    await expect(waitForSendEnabled(page as never, controller.signal)).rejects.toThrow("probe cancelled");
+  });
+  test("accepts the current composer submit control without a send-button test id", async () => {
+    const { createWindow } = require("@mixmark-io/domino") as {
+      createWindow(html: string): { document: Document };
+    };
+    const document = createWindow('<form><div contenteditable="true"></div><button type="submit"></button></form>').document;
+    const editor = document.querySelector('[contenteditable="true"]')!;
+    const composer = {
+      locator: (selector: string) => {
+        expect(selector).toBe("xpath=ancestor::form[1]");
+        return {
+          locator: (sendSelector: string) => ({
+            waitFor: async () => {},
+            isEnabled: async () => {
+              const buttons = editor.closest("form")!.querySelectorAll(sendSelector);
+              expect(buttons).toHaveLength(1);
+              return !(buttons[0] as HTMLButtonElement).disabled;
+            },
+          }),
+          getByTestId: () => { throw new Error("legacy send-button test id is absent"); },
+        };
+      },
+    };
+    const page = {
+      locator: () => ({ filter: () => ({
+        first: () => ({ ...composer, waitFor: async () => {} }),
+        count: async () => 1,
+      }) }),
+    };
+    expect(await waitForSendEnabled(page as never)).toMatchObject(composer);
+  });
+  test("does not treat a hidden enabled submit control as ready", async () => {
+    const composer = {
+      locator: (selector: string) => {
+        expect(selector).toBe("xpath=ancestor::form[1]");
+        return {
+          locator: () => ({
+            waitFor: async () => { throw new Error("hidden submit control"); },
+            isEnabled: async () => true,
+          }),
+        };
+      },
+    };
+    const page = {
+      locator: () => ({ filter: () => ({
+        first: () => ({ ...composer, waitFor: async () => {} }),
+        count: async () => 1,
+      }) }),
+    };
+    await expect(waitForSendEnabled(page as never)).rejects.toThrow("hidden submit control");
+  });
+  test.each([
+    ['<span data-id="plugin:native2" data-keyword="Codex Native2">Codex Native2</span>'],
+    ['<span app-mention-path="app://native2" app-mention-display-name="Codex Native2" contenteditable="false">Codex Native2</span>'],
+  ])("reads the selected connector from composer markup %s", async markup => {
+    const { createWindow } = require("@mixmark-io/domino") as {
+      createWindow(html: string): { document: Document };
+    };
+    const document = createWindow(`<form><div id="composer" contenteditable="true">${markup}</div></form>`).document;
+    const form = document.querySelector("form")!;
+    const composer = { locator: (selector: string) => {
+      expect(selector).toBe("xpath=ancestor::form[1]");
+      return { locator: (selectedSelector: string) => ({ filter: (options: { visible?: boolean }) => {
+        expect(options).toEqual({ visible: true });
+        return { evaluateAll: async (callback: (nodes: Element[]) => string[]) => callback(
+          Array.from(form.querySelectorAll(selectedSelector)),
+        ) };
+      } }) };
+    } };
+    expect(await connectorState(composer as never)).toEqual(["Codex Native2"]);
+  });
+  test("ignores hidden stale connector selections", async () => {
+    const { createWindow } = require("@mixmark-io/domino") as {
+      createWindow(html: string): { document: Document };
+    };
+    const document = createWindow([
+      '<form><div id="composer" contenteditable="true"></div>',
+      '<span hidden data-id="plugin:stale" data-keyword="Old Connector">Old Connector</span>',
+      '<span data-id="plugin:native2" data-keyword="Codex Native2">Codex Native2</span></form>',
+    ].join("")).document;
+    const form = document.querySelector("form")!;
+    const element = document.querySelector("#composer")!;
+    const composer = {
+      evaluate: async (callback: (node: Element, selector: string) => string[], selector: string) => callback(element, selector),
+      locator: (selector: string) => {
+        expect(selector).toBe("xpath=ancestor::form[1]");
+        return {
+          locator: (selectedSelector: string) => ({
+            filter: (options: { visible?: boolean }) => {
+              expect(options).toEqual({ visible: true });
+              return {
+                evaluateAll: async (callback: (nodes: Element[]) => string[]) => callback(
+                  Array.from(form.querySelectorAll(selectedSelector)).filter(node => !node.hasAttribute("hidden")),
+                ),
+              };
+            },
+          }),
+        };
+      },
+    };
+    expect(await connectorState(composer as never)).toEqual(["Codex Native2"]);
+  });
   test("finds its retained surface while an unrelated Web turn is open", async () => {
     const result = await findWebContractSurface(["other", "canary"], async surfaceId => ({
       ownsCanary: surfaceId === "canary",
@@ -151,6 +272,14 @@ describe("lightweight Web contract smoke", () => {
     expect(structuredPrompt.indexOf("```json\n")).toBeLessThan(16_000);
     expect(structuredPrompt.lastIndexOf("```json\n")).toBeGreaterThan(70_000);
     expect(probe).toContain("finally {");
+    const preflightAt = probe.indexOf("await ensureChatGptPersonalizedConnectorAccess(");
+    const firstSelectAt = probe.indexOf("composer = await selectConnector(page, appName, abortSignal)");
+    expect(preflightAt).toBeGreaterThan(probe.indexOf("export async function runMarkdownRestorationProbe"));
+    expect(preflightAt).toBeLessThan(firstSelectAt);
+    expect(probe).toContain("async signal =>");
+    expect(probe).toContain("runChatGptMutationCleanup(async cleanupSignal =>");
+    expect(probe).toContain("clearChatGptComposerInput(await activeComposer(page, cleanupSignal), cleanupSignal)");
+    expect(probe).toContain("composer = await selectConnector(page, appName, abortSignal)");
     expect(probe).toContain("for (let run = 0; run < 3; run += 1)");
     expect(probe).toContain("durationMs >= 10_000");
     expect(probe).toContain("medianMs >= 7_500");
@@ -176,7 +305,7 @@ describe("lightweight Web contract smoke", () => {
       .toBeTrue();
     expect(probe).toContain("clearChatGptComposerInput(composer)");
     expect(probe.indexOf("await clearChatGptComposerInput(composer)"))
-      .toBeLessThan(probe.indexOf("composer = await selectConnector(page, appName)"));
+      .toBeLessThan(probe.indexOf("composer = await selectConnector(page, appName, abortSignal)"));
     const plainInsertAt = probe.indexOf("await insertChatGptPromptText(prompt, abortSignal");
     expect(plainInsertAt).toBeGreaterThan(probe.indexOf("await composer.focus()"));
     expect(plainInsertAt).toBeLessThan(structuredAt);
@@ -191,9 +320,10 @@ describe("lightweight Web contract smoke", () => {
       probe.indexOf("export async function runMarkdownRestorationProbe"),
     );
     const connectorMentionAt = connectorSelection.indexOf('pressSequentially("@codex"');
-    const connectorPlusAt = connectorSelection.indexOf("openChatGptConnectorPlusMenu(page, appName)");
+    const connectorPlusAt = connectorSelection.indexOf("openChatGptConnectorPlusMenu(page, appName, abortSignal)");
     expect(connectorMentionAt).toBeLessThan(connectorPlusAt);
-    expect(connectorSelection.lastIndexOf("clearChatGptComposerInput(composer)", connectorPlusAt))
+    expect(connectorSelection).toContain("chatGptConnectorMentionRowHighlighted(exactRow, { signal: abortSignal })");
+    expect(connectorSelection.lastIndexOf("clearChatGptComposerInput(composer, abortSignal)", connectorPlusAt))
       .toBeGreaterThan(connectorMentionAt);
     expect(probe).toContain("unexpectedly submitted a turn");
     expect(probe).toContain("could not clear connector state");

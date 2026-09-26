@@ -1,6 +1,8 @@
 import type { Locator, Page } from "playwright-core";
+import { runChatGptMutationCleanup } from "../../src/browser-mutation";
 import {
   CHATGPT_COMPOSER_SELECTOR,
+  CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_STOP_BUTTON_SELECTOR,
   CHATGPT_USER_TURN_SELECTOR,
 } from "../../src/chatgpt-session";
@@ -14,12 +16,12 @@ import {
   CHATGPT_UI_SETTLE_MS,
   MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS,
 } from "../../src/adapters/chatgpt-web/browser-worker";
-import { openChatGptConnectorPlusMenu } from "../../src/adapters/chatgpt-web/connector-plus-menu";
+import { CHATGPT_CONNECTOR_MENTION_ROW_SELECTOR, CHATGPT_SELECTED_CONNECTOR_SELECTOR, chatGptConnectorMentionRowHighlighted, openChatGptConnectorPlusMenu } from "../../src/adapters/chatgpt-web/connector-plus-menu";
 import { insertChatGptPromptText } from "../../src/adapters/chatgpt-web/prompt-insertion";
+import { ensureChatGptPersonalizedConnectorAccess } from "../../src/adapters/chatgpt-web/personalization";
 
 export const MARKDOWN_RESTORATION_PROBE_CHARS = 96_000;
 export const STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS = 94_534;
-const CONNECTOR_SELECTOR = '[data-id^="plugin:"][data-keyword]';
 
 export function markdownRestorationProbeText(): string {
   const pattern = 'field_name=value) [literal](target) `code` *bold* ~=~ {"key":[1,2,3]} payload ';
@@ -28,9 +30,9 @@ export function markdownRestorationProbeText(): string {
   return `${text.slice(0, CHATGPT_PROMPT_INSERT_CHUNK_CHARS)} ${text.slice(CHATGPT_PROMPT_INSERT_CHUNK_CHARS + 1)}`;
 }
 
-async function activeComposer(page: Page): Promise<Locator> {
+async function activeComposer(page: Page, abortSignal?: AbortSignal): Promise<Locator> {
   const composer = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
-  await composer.first().waitFor({ state: "visible", timeout: 20_000 });
+  await composer.first().waitFor({ state: "visible", timeout: 20_000, signal: abortSignal });
   if (await composer.count() !== 1) throw new Error("Markdown restoration probe requires one visible composer");
   return composer.first();
 }
@@ -41,14 +43,18 @@ async function editableText(composer: Locator): Promise<string> {
     clone.querySelectorAll(`${ignoredSelector}, [data-inline-selection-pill-cursor-target]`)
       .forEach(part => part.remove());
     return Array.from(clone.childNodes, child => child.textContent ?? "").join("\n").trimStart();
-  }, CONNECTOR_SELECTOR, { timeout: 20_000 });
+  }, CHATGPT_SELECTED_CONNECTOR_SELECTOR, { timeout: 20_000 });
 }
 
-async function connectorState(composer: Locator): Promise<string[]> {
-  return composer.evaluate((element, selector) => Array.from(
-    (element.closest("form") ?? element).querySelectorAll(selector),
-    node => node.getAttribute("data-keyword") ?? "",
-  ), CONNECTOR_SELECTOR, { timeout: 20_000 });
+export async function connectorState(composer: Locator): Promise<string[]> {
+  return composer
+    .locator("xpath=ancestor::form[1]")
+    .locator(CHATGPT_SELECTED_CONNECTOR_SELECTOR)
+    .filter({ visible: true })
+    .evaluateAll(nodes => Array.from(
+      nodes,
+      node => node.getAttribute("data-keyword") ?? node.getAttribute("app-mention-display-name") ?? "",
+    ));
 }
 
 function promptTextEquivalent(expected: string, observed: string): boolean {
@@ -100,12 +106,13 @@ async function waitForText(composer: Locator, expected: string, abortSignal?: Ab
   );
 }
 
-async function waitForSendEnabled(page: Page, abortSignal?: AbortSignal): Promise<Locator> {
+export async function waitForSendEnabled(page: Page, abortSignal?: AbortSignal): Promise<Locator> {
   const deadline = Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
   for (;;) {
     if (abortSignal?.aborted) throw abortSignal.reason;
-    const composer = await activeComposer(page);
-    const send = composer.locator("xpath=ancestor::form[1]").getByTestId("send-button");
+    const composer = await activeComposer(page, abortSignal);
+    const send = composer.locator("xpath=ancestor::form[1]").locator(CHATGPT_SEND_BUTTON_SELECTOR);
+    await send.waitFor({ state: "visible", timeout: Math.max(1, deadline - Date.now()), signal: abortSignal });
     if (await send.isEnabled().catch(() => false)) return composer;
     if (Date.now() >= deadline) {
       throw new Error("Structured Markdown restoration probe send control remained disabled");
@@ -114,35 +121,36 @@ async function waitForSendEnabled(page: Page, abortSignal?: AbortSignal): Promis
   }
 }
 
-async function selectConnector(page: Page, appName: string): Promise<Locator> {
-  let composer = await activeComposer(page);
+async function selectConnector(page: Page, appName: string, abortSignal?: AbortSignal): Promise<Locator> {
+  let composer = await activeComposer(page, abortSignal);
   const selected = () => composer.locator("xpath=ancestor::form[1]")
-    .locator(CONNECTOR_SELECTOR)
+    .locator(CHATGPT_SELECTED_CONNECTOR_SELECTOR)
     .filter({ hasText: appName, visible: true });
   const verifySelected = async (): Promise<Locator> => {
-    composer = await activeComposer(page);
+    composer = await activeComposer(page, abortSignal);
     const control = selected();
-    await control.waitFor({ state: "visible", timeout: 10_000 });
-    if (await control.count() !== 1 || await control.getAttribute("data-keyword") !== appName) {
+    await control.waitFor({ state: "visible", timeout: 10_000, signal: abortSignal });
+    if (await control.count() !== 1
+      || (await control.getAttribute("data-keyword") ?? await control.getAttribute("app-mention-display-name")) !== appName) {
       throw new Error("Markdown restoration probe did not select the expected connector");
     }
     return composer;
   };
   if (await selected().count() === 1) return composer;
 
-  const menuRows = page.locator('.__menu-item[tabindex="0"]');
+  const menuRows = page.locator(CHATGPT_CONNECTOR_MENTION_ROW_SELECTOR);
   const exactRow = menuRows.filter({ has: page.getByText(appName, { exact: true }) });
   let attempt = 0;
   let mentionMenuVisible = false;
   while (attempt < MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS) {
     attempt += 1;
-    composer = await activeComposer(page);
-    await composer.fill("");
-    await composer.focus();
+    composer = await activeComposer(page, abortSignal);
+    await composer.fill("", { signal: abortSignal });
+    await composer.focus({ signal: abortSignal });
     await Bun.sleep(CHATGPT_UI_SETTLE_MS);
-    await composer.pressSequentially("@codex", { delay: 25, timeout: 10_000 });
+    await composer.pressSequentially("@codex", { delay: 25, timeout: 10_000, signal: abortSignal });
     try {
-      await exactRow.waitFor({ state: "visible", timeout: 2_500 });
+      await exactRow.waitFor({ state: "visible", timeout: 2_500, signal: abortSignal });
       mentionMenuVisible = true;
       break;
     } catch (error) {
@@ -153,29 +161,30 @@ async function selectConnector(page: Page, appName: string): Promise<Locator> {
     }
   }
   if (!mentionMenuVisible) {
+    abortSignal?.throwIfAborted();
     await page.keyboard.press("Escape");
-    composer = await activeComposer(page);
-    await clearChatGptComposerInput(composer);
+    composer = await activeComposer(page, abortSignal);
+    await clearChatGptComposerInput(composer, abortSignal);
     await Bun.sleep(CHATGPT_UI_SETTLE_MS);
-    const plusRow = await openChatGptConnectorPlusMenu(page, appName);
+    const plusRow = await openChatGptConnectorPlusMenu(page, appName, abortSignal);
     if (!plusRow) throw new Error(`Markdown restoration probe could not find connector after ${attempt} attempts`);
-    await plusRow.press("Enter", { timeout: 10_000 });
+    await plusRow.press("Enter", { timeout: 10_000, signal: abortSignal });
     return await verifySelected();
   }
   if (await exactRow.count() !== 1) {
     throw new Error("Markdown restoration probe did not find one exact connector row");
   }
-  const rowHighlighted = async () => await exactRow.getAttribute("data-highlighted") !== null;
+  const rowHighlighted = async () => chatGptConnectorMentionRowHighlighted(exactRow, { signal: abortSignal });
   if (!await rowHighlighted()) {
     const visibleRows = await menuRows.filter({ visible: true }).count();
     for (let index = 0; index < visibleRows && !await rowHighlighted(); index += 1) {
-      await composer.press("ArrowDown", { timeout: 10_000 });
+      await composer.press("ArrowDown", { timeout: 10_000, signal: abortSignal });
     }
   }
   if (!await rowHighlighted()) {
     throw new Error("Markdown restoration probe could not highlight the expected connector");
   }
-  await composer.press("Enter", { timeout: 10_000 });
+  await composer.press("Enter", { timeout: 10_000, signal: abortSignal });
   if (await selected().count() > 1) {
     throw new Error("Markdown restoration probe did not select the expected connector");
   }
@@ -193,8 +202,23 @@ export async function runMarkdownRestorationProbe(
   await clearChatGptComposerInput(composer);
   const timings: number[] = [];
   try {
+    await ensureChatGptPersonalizedConnectorAccess(page, undefined, async signal => {
+      let accessible = false;
+      try {
+        await selectConnector(page, appName, signal);
+        accessible = true;
+      } catch (error) {
+        if (!(error instanceof Error) || !error.message.startsWith("Markdown restoration probe could not find connector after")) {
+          throw error;
+        }
+      } finally {
+        await runChatGptMutationCleanup(async cleanupSignal =>
+          clearChatGptComposerInput(await activeComposer(page, cleanupSignal), cleanupSignal));
+      }
+      return accessible;
+    }, abortSignal);
     for (let run = 0; run < 3; run += 1) {
-      composer = await selectConnector(page, appName);
+      composer = await selectConnector(page, appName, abortSignal);
       const connectors = await connectorState(composer);
       if (connectors.length !== 1 || connectors[0] !== appName) {
         throw new Error("Markdown restoration probe requires one selected connector");
@@ -253,7 +277,7 @@ export async function runMarkdownRestorationProbe(
     for (let run = 0; run < 3; run += 1) {
       await clearChatGptComposerInput(composer);
       const structuredStartedAt = performance.now();
-      composer = await selectConnector(page, appName);
+      composer = await selectConnector(page, appName, abortSignal);
       const connectorSelectedAt = performance.now();
       const structuredConnectors = await connectorState(composer);
       await composer.focus();
@@ -316,7 +340,7 @@ export async function runMarkdownRestorationProbe(
     if ((await connectorState(composer)).length !== 0) {
       throw new Error("Markdown restoration probe could not clear connector state");
     }
-    const send = composer.locator("xpath=ancestor::form[1]").getByTestId("send-button");
+    const send = composer.locator("xpath=ancestor::form[1]").locator(CHATGPT_SEND_BUTTON_SELECTOR);
     const sendEnabled = await send.isEnabled().catch(() => false);
     const finalUserTurns = await page.locator(CHATGPT_USER_TURN_SELECTOR).count();
     if (sendEnabled || finalUserTurns !== initialUserTurns) {

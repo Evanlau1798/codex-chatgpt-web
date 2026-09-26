@@ -1,6 +1,29 @@
 import { expect, test } from "bun:test";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
-import { openChatGptConnectorPlusMenu } from "../src/adapters/chatgpt-web/connector-plus-menu";
+import { CHATGPT_CONNECTOR_MENTION_ROW_SELECTOR, chatGptConnectorMentionRowHighlighted, openChatGptConnectorPlusMenu } from "../src/adapters/chatgpt-web/connector-plus-menu";
+
+test.each([
+  [{ "data-highlighted": "" }, true],
+  [{ "aria-current": "true" }, true],
+  [{ "aria-current": "false" }, false],
+] as const)("connector mention row accepts current UI highlight state %j", async (attributes, expected) => {
+  const row = { getAttribute: async (name: string) => attributes[name as keyof typeof attributes] ?? null };
+  expect(await chatGptConnectorMentionRowHighlighted(row as never)).toBe(expected);
+});
+
+test("connector mention discovery recognizes the updated navigation row", () => {
+  const { createWindow } = require("@mixmark-io/domino") as {
+    createWindow(html: string): { document: Document };
+  };
+  const document = createWindow(`
+    <div data-mention-list-scroll-area>
+      <button data-list-navigation-item="true"><span>Codex Native2</span></button>
+    </div>
+  `).document;
+  const rows = document.querySelectorAll(CHATGPT_CONNECTOR_MENTION_ROW_SELECTOR);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.textContent).toBe("Codex Native2");
+});
 
 test("opens the connector plus menu and resolves one exact ARIA connector row", async () => {
   const calls: string[] = [];
