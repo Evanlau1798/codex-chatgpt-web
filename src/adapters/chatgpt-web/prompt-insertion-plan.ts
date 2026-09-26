@@ -29,6 +29,10 @@ export interface ChatGptPromptInsertionPlan {
   readonly hasNul: boolean;
 }
 
+export function chatGptPromptPreservesLeading(plan: ChatGptPromptInsertionPlan): boolean {
+  return plan.strategy === "direct-html-prewrap" || (plan.strategy === "direct-text" && plan.lineCount > 1);
+}
+
 export function planChatGptPromptInsertion(
   text: string,
   options?: ChatGptPromptInsertionOptions,
@@ -67,12 +71,12 @@ export function planChatGptPromptInsertion(
   // Preserve the direct inline route; the candidate replaces only large guarded work.
   const candidate = options?.candidatePlainText === true && !legacyDirect && text.length > DIRECT_INSERT_MIN_CHARS;
   const direct = candidate || legacyDirect;
-  // One pre-wrapped paragraph avoids the extra LF created by one HTML block per line.
-  // HTML parsing changes CR, NUL and lone surrogates; preserve the native text route for them.
+  // The updated composer turns LF inside a pre-wrapped HTML paragraph into spaces.
+  // Keep multiline text and HTML-sensitive code units on the exact native text route.
   const strategy: ChatGptPromptInsertionStrategy = !direct
     ? "guarded-chunked"
     : text.length > DIRECT_INSERT_MIN_CHARS && !hasCR && !hasNul && !hasUnpairedSurrogate
-      ? lineCount > 1 ? "direct-html-prewrap" : !candidate ? "direct-html" : "direct-text"
+      ? lineCount === 1 && !candidate ? "direct-html" : "direct-text"
       : "direct-text";
   return Object.freeze({
     strategy, utf16Units: text.length, lineCount, maxLineUnits,

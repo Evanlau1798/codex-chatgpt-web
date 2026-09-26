@@ -4,6 +4,7 @@ import type { Locator } from "playwright-core";
 import { chatGptWebSurfaceError } from "./adapter-error";
 import {
   chatGptPromptInsertChunkEnd,
+  chatGptPromptPreservesLeading,
   planChatGptPromptInsertion,
   type ChatGptPromptInsertionOptions,
   type ChatGptPromptInsertionPlan,
@@ -73,7 +74,7 @@ export async function insertChatGptPromptText(
         await withComposer(composer => insertChatGptComposerGuardedText(composer, insertionText, abortSignal, htmlShape, metrics, op, recoverCaret));
         metrics.inserted(text.length);
       });
-      const expected = plan.strategy === "direct-html-prewrap" ? text : text.trimStart();
+      const expected = chatGptPromptPreservesLeading(plan) ? text : text.trimStart();
       await verify(expected);
       await checked(() => new Promise<void>(resolve => setTimeout(resolve, 0)));
       await verify(expected, true);

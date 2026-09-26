@@ -11,7 +11,7 @@ import {
   observeChatGptTurnIdentityAfterSend,
 } from "../src/adapters/chatgpt-web/browser-observation";
 import { ChatGptPromptOperation } from "../src/adapters/chatgpt-web/prompt-operation";
-import { planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
+import { chatGptPromptPreservesLeading, planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SEND_BUTTON_SELECTOR, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
@@ -604,7 +604,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
     CHATGPT_SEND_ENABLE_GRACE_MS: 5_000,
     CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SEND_BUTTON_SELECTOR, CHATGPT_USER_TURN_SELECTOR,
     CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, chatGptSuspensionClock,
-    chatGptPromptAttachmentTimeoutMs, planChatGptPromptInsertion,
+    chatGptPromptAttachmentTimeoutMs, chatGptPromptPreservesLeading, planChatGptPromptInsertion,
     throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
     activateChatGptSendControl, readChatGptAssistantTurnState,
   };

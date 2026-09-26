@@ -172,7 +172,7 @@ import {
   reanchorChatGptComposerCaret,
 } from "./prompt-caret";
 import { insertChatGptPromptText } from "./prompt-insertion";
-import { planChatGptPromptInsertion, type ChatGptPromptInsertionPlan } from "./prompt-insertion-plan";
+import { chatGptPromptPreservesLeading, planChatGptPromptInsertion, type ChatGptPromptInsertionPlan } from "./prompt-insertion-plan";
 import { ChatGptCandidateAttachmentBudget } from "./prompt-candidate-budget";
 import {
   CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS,
@@ -1895,9 +1895,9 @@ export class ChatGptBrowserWorker {
       await settleChatGptUi();
     }
     if (expectedPrompt !== undefined) {
-      const preserveLeading = (insertionPlan ?? planChatGptPromptInsertion(expectedPrompt, {
+      const preserveLeading = chatGptPromptPreservesLeading(insertionPlan ?? planChatGptPromptInsertion(expectedPrompt, {
         candidatePlainText: this.config?.experimentalComposerPlainText === true,
-      })).strategy === "direct-html-prewrap";
+      }));
       await this.assertPromptAttached(page, expectedPrompt, abortSignal, undefined, preserveLeading);
     }
     await captureDiagnostic?.("send-ready");
@@ -2524,8 +2524,8 @@ export class ChatGptBrowserWorker {
         mutationStarted = true;
         await this.insertPromptText(page, prompt, abortSignal, largeStructuredDirect, forceStructuredDirect, diagnosticContext);
         await this.assertPromptAttached(page,
-          insertionPlan.strategy === "direct-html-prewrap" ? insertionText : prompt,
-          abortSignal, op, insertionPlan.strategy === "direct-html-prewrap");
+          chatGptPromptPreservesLeading(insertionPlan) ? insertionText : prompt,
+          abortSignal, op, chatGptPromptPreservesLeading(insertionPlan));
         return;
       }
       const selectedComposer = await this.selectConnector(
@@ -2544,8 +2544,8 @@ export class ChatGptBrowserWorker {
       await op.mutate(() => page.keyboard.press(CHATGPT_COMPOSER_DOCUMENT_END_KEY));
       await this.insertPromptText(page, ` ${prompt}`, abortSignal, largeStructuredDirect, forceStructuredDirect, diagnosticContext, true);
       await this.assertPromptAttached(page,
-        insertionPlan.strategy === "direct-html-prewrap" ? insertionText : prompt,
-        abortSignal, op, insertionPlan.strategy === "direct-html-prewrap");
+        chatGptPromptPreservesLeading(insertionPlan) ? insertionText : prompt,
+        abortSignal, op, chatGptPromptPreservesLeading(insertionPlan));
     } catch (error) {
       if (!mutationStarted || error instanceof ChatGptPersistentBrowserStateError) throw error;
       try { await this.clearChatGptComposerState(page); }
@@ -2720,7 +2720,7 @@ export class ChatGptBrowserWorker {
     await insertChatGptPromptText(text, abortSignal, {
       composer: () => this.activeComposer(page, 30_000, abortSignal, op),
       verify: expected => this.waitForPromptChunkAttached(page, expected, abortSignal, op,
-        insertionPlan.strategy === "direct-html-prewrap"),
+        chatGptPromptPreservesLeading(insertionPlan)),
       reanchor: () => this.reanchorPromptCaret(page, abortSignal, op),
       connectorSelected,
       existingPrefix: existingText === " " ? " " : undefined,
@@ -4146,7 +4146,7 @@ export class ChatGptBrowserWorker {
           forceStructuredDirect: turn.compaction === true && turn.requireRetainedConversation === true,
           candidatePlainText: this.config?.experimentalComposerPlainText === true,
         });
-        const preserveLeading = sendPlan.strategy === "direct-html-prewrap";
+        const preserveLeading = chatGptPromptPreservesLeading(sendPlan);
         await this.assertPromptAttached(page, preserveLeading ? insertionText : responsePrompt,
           stageSignal, undefined, preserveLeading);
         if ((turn.nativeConnector === true || mode.localTools)

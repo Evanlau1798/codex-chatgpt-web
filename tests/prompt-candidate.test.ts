@@ -19,8 +19,7 @@ for (const suffix of ["\r\n\0", "\u00a0\u2028", "\n```\n**[x](y)\n```\n", "ðŸ‘©â
   test(`candidate keeps literal input category ${JSON.stringify(suffix)}`, () => {
     const text = "x".repeat(32001) + suffix;
     const plan = planChatGptPromptInsertion(text, { candidatePlainText: true });
-    expect(plan.strategy).toBe(/[\r\u0000]/u.test(suffix) || !/[\n\u2028\u2029]/u.test(suffix)
-      ? "direct-text" : "direct-html-prewrap");
+    expect(plan.strategy).toBe("direct-text");
     expect(plan.utf16Units).toBe(text.length);
   });
 }
@@ -105,7 +104,7 @@ test("actual attachment caller shares its plan and remaining budget with staging
     { triggerAttempts: 0 }, false, true, false, undefined,
     { traceId: "fixture", stage: "attachment", operation: parent });
   expect(seen.slice(-2).map(value => value.context.insertionPlan.strategy))
-    .toEqual(["direct-html-prewrap", "direct-html-prewrap"]);
+    .toEqual(["direct-text", "direct-text"]);
   expect(asserted.slice(-2)).toEqual([
     { text: multiline, preserveLeading: true },
     { text: ` ${multiline}`, preserveLeading: true },

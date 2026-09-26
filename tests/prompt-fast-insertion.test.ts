@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { insertChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-insertion";
+import { insertChatGptComposerGuardedText } from "../src/adapters/chatgpt-web/prompt-caret";
 import { readChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-text";
 import { structuredCompactionHandoffInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
 import { CHATGPT_PROMPT_INSERT_CHUNK_CHARS } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
@@ -54,7 +55,8 @@ function fakeLexicalComposer(acceptEdit = true, onEdit?: () => void, rejectLarge
       if (children.length === 1 && children[0]?.tagName === "P") {
         expect(children[0].getAttribute("style")).toBe("white-space:pre-wrap");
         expect(children[0].querySelectorAll("*").length).toBe(0);
-        value = children[0].textContent ?? "";
+        // Current Lexical HTML paste flattens newlines inside a pre-wrapped paragraph.
+        value = (children[0].textContent ?? "").replaceAll("\n", " ");
       } else {
         expect([...fragment.querySelectorAll("*")].every(node => node.tagName === "DIV" || node.tagName === "BR"))
           .toBeTrue();
@@ -126,11 +128,11 @@ test("REG-04: uses one exact direct edit for the short generated structured comp
   expect(editor.commands).toEqual(["insertText"]);
 });
 
-test("inserts the incident-sized multiline structured prompt with one exact pre-wrapped paragraph", async () => {
+test("inserts the incident-sized multiline structured prompt with one exact native text edit", async () => {
   const prompt = structuredMarkdownRestorationProbeText();
   const editor = await insertWithFakeEditor(prompt);
   expect(editor.text()).toBe(prompt);
-  expect(editor.commands).toEqual(["insertHTML"]);
+  expect(editor.commands).toEqual(["insertText"]);
 });
 
 test("selected connector can replace a transient placeholder before exact post-insertion verification", async () => {
@@ -208,7 +210,7 @@ test("keeps multiline HTML-like input, entities, whitespace and empty lines lite
   ).repeat(400) + "\n\n";
   const editor = await insertWithFakeEditor(prompt);
   expect(editor.text()).toBe(prompt);
-  expect(editor.commands).toEqual(["insertHTML"]);
+  expect(editor.commands).toEqual(["insertText"]);
 });
 
 test("removes the empty ProseMirror paragraph created before a pre-wrapped block", async () => {
@@ -244,11 +246,10 @@ test("removes the empty ProseMirror paragraph created before a pre-wrapped block
   Object.assign(globalThis, { document, window: { getSelection: () => selection } });
   const prompt = `  start <>&\n${"middle **bold** <tag>\n".repeat(2_000)}end`;
   try {
-    await insertChatGptPromptText(prompt, undefined, {
-      composer: async () => ({ focus: async () => {}, evaluate: async (callback: Function, input: unknown) => callback(element, input) }) as never,
-      verify: async expected => expect(readChatGptPromptText(element, { preserveLeading: true }) === expected).toBeTrue(),
-      reanchor: async () => {},
-    }, { largeStructuredDirect: true });
+    await insertChatGptComposerGuardedText({
+      focus: async () => {}, evaluate: async (callback: Function, input: unknown) => callback(element, input),
+    } as never, prompt, undefined, "prewrap");
+    expect(readChatGptPromptText(element, { preserveLeading: true })).toBe(prompt);
     expect(commands).toEqual(["insertHTML", "delete"]);
   } finally {
     Object.assign(globalThis, previous);

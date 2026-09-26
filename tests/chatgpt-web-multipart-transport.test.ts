@@ -136,11 +136,11 @@ test("large Bigger Context stage reaches the verified direct attachment route by
     for (const stage of stages) {
       expect(stage.text.length).toBeGreaterThan(32_000);
       expect(planChatGptPromptInsertion(stage.text, { largeStructuredDirect: stage.direct }).strategy)
-        .toBe("direct-html-prewrap");
+        .toBe("direct-text");
     }
     expect(final?.text.length).toBeGreaterThan(32_000);
     expect(planChatGptPromptInsertion(final!.text, { largeStructuredDirect: final!.direct }).strategy)
-      .toBe("direct-html-prewrap");
+      .toBe("direct-text");
   } finally {
     capture.mockRestore();
     error.mockRestore();
