@@ -1,3 +1,4 @@
+import { parseChatGptWebModelCapabilities } from "./chatgpt-web-models";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -474,6 +475,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     solAvailable,
     extraHighAvailable,
     proAvailable,
+    modelCapabilities: parseChatGptWebModelCapabilities(parsed.modelCapabilities),
     experimentalBiggerContext,
     experimentalSkillAttachments,
     experimentalNoAutoCompact: parsed.experimentalNoAutoCompact === true,

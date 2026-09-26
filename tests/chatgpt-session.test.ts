@@ -207,7 +207,7 @@ test("a complete authenticated composer with no effort selector is Luna-only", a
   await expect(detectChatGptAccountCapabilities(page as never, {
     selectorTimeoutMs: 100,
     stableAbsenceMs: 0,
-  })).resolves.toEqual({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
+  })).resolves.toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
 });
 
 test("a transient effort control does not turn a Luna-only account into Sol", async () => {
@@ -238,7 +238,7 @@ test("a transient effort control does not turn a Luna-only account into Sol", as
   await expect(detectChatGptAccountCapabilities(page as never, {
     selectorTimeoutMs: 100,
     stableAbsenceMs: 0,
-  })).resolves.toEqual({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
+  })).resolves.toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
   expect(visibilityReads).toBe(2);
 });
 
@@ -294,7 +294,7 @@ function reasoningPicker(options: { max?: string; locks?: Array<string | null>; 
   };
   const composer = { filter() { return this; }, last() { return this; }, count: async () => 1, isEditable: async () => true, locator: () => ({ count: async () => 1, locator: () => control }) };
   const modelRows = { count: async () => 3, first() { return this; }, waitFor: async () => {}, nth: () => { throw new Error("Model rows are not effort choices"); } };
-  const menu = { filter() { return this; }, last() { return this; }, isVisible: async () => true, locator: () => modelRows };
+  const menu = { filter() { return this; }, last() { return this; }, isVisible: async () => true, locator: () => modelRows, getByRole: () => ({ count: async () => 0 }) };
   const page = {
     url: () => "https://chatgpt.com/?temporary-chat=true",
     evaluate: async () => true,

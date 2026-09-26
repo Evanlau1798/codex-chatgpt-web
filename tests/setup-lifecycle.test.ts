@@ -31,11 +31,12 @@ test("setup accepts only a matching daemon that is ready for new Codex turns", (
   expect(setupProxyIsReady({ ...ready, version: "0.1.16" }, config)).toBe(false);
 });
 
-test("launcher setup refreshes account capabilities only when missing or explicitly requested", () => {
+test("launcher setup reuses fresh per-model observations unless a refresh is requested", () => {
   const verifiedLauncher = {
     browserHost: "launcher",
     solAvailable: true,
     extraHighAvailable: false, proAvailable: false,
+    modelCapabilities: { observedAt: Date.now(), families: { "5.6": ["low", "medium", "high"] } },
   };
 
   expect(launcherCapabilityProbeRequired(undefined)).toBe(true);

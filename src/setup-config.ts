@@ -54,7 +54,9 @@ export function launcherCapabilityProbeRequired(
     || existing?.browserHost !== "launcher"
     || typeof existing.solAvailable !== "boolean"
     || typeof existing.extraHighAvailable !== "boolean"
-    || typeof existing.proAvailable !== "boolean";
+    || typeof existing.proAvailable !== "boolean"
+    || !existing.modelCapabilities
+    || Date.now() - existing.modelCapabilities.observedAt > 30 * 60_000;
 }
 
 export function existingFullSetupCredentials(

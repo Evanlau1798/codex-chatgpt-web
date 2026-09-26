@@ -23,7 +23,8 @@ test.each(["automatic", "manual"])("managed Automatic re-entry refreshes only pr
   const result = await probe({
     config: { browserHost: "managed-chrome", browserInteractionMode: "automatic" },
     existing: { browserInteractionMode: prior }, options: {}, beforeService: { loaded: false },
-    storedBrowserLoginCapabilities: () => ({ solAvailable: true, extraHighAvailable: true, proAvailable: true }),
+    storedBrowserLoginCapabilities: () => ({ solAvailable: true, extraHighAvailable: true, proAvailable: true,
+      modelCapabilities: { observedAt: Date.now(), families: { "5.6": ["low", "medium", "high", "xhigh", "max"] } } }),
     browserLoginStateExists: () => true,
     inspectBrowserLoginCapabilities: async () => {
       calls.push("inspect");

@@ -15,7 +15,7 @@ const stateSource = read("launcher", "electron", "state.cjs");
 const languages = JSON.parse(read("launcher", "electron", "languages.json"));
 
 test("every declared launcher language is wired across state, IPC, onboarding, and Settings", () => {
-  assert.deepEqual(Object.keys(languages), ["en", "zh-CN", "zh-TW", "ja", "ko"]);
+  assert.deepEqual(Object.keys(languages), ["en", "zh-CN", "zh-TW", "ja", "ko", "fr"]);
   assert.match(languageTypes, /import languages from "\.\.\/electron\/languages\.json";/);
   assert.match(languageTypes, /export type Language = keyof typeof languages;/);
   assert.match(stateSource, /Object\.hasOwn\(languages, state\.language\)/);
