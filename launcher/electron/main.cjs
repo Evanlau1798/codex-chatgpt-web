@@ -233,6 +233,21 @@ function trayImage() {
 }
 
 const NATIVE_COPY = Object.freeze({
+  fr: Object.freeze({
+    openLauncher: "Ouvrir Codex Web GPT",
+    quit: "Quitter",
+    exportDiagnostics: "Exporter les diagnostics expurgés",
+    cancel: "Annuler",
+    remove: "Retirer",
+    removeTitle: "Retirer Codex Web GPT",
+    removeMessage: "Retirer les modèles ChatGPT Web de Codex et rétablir le routage précédent ?",
+    removeDetail: "Le profil de connexion ChatGPT du lanceur sera conservé. Vous devrez redémarrer Codex.",
+    retry: "Réessayer",
+    startupTitle: "Codex Web GPT n’a pas pu démarrer",
+    startupDetail: "Réessayer relance l’application sans modifier vos paramètres ni votre profil ChatGPT.",
+    startupCleanupFailed: "Échec du nettoyage au démarrage",
+    catalogFailure: "Codex a contacté le lanceur, mais le chargement du catalogue de modèles a échoué (HTTP {status} ; {reason}). Consultez l’activité et exportez un journal expurgé si le problème persiste.",
+  }),
   en: Object.freeze({
     openLauncher: "Open Codex Web GPT",
     quit: "Quit",
