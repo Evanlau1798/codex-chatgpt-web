@@ -1,3 +1,4 @@
+import type { ChatGptWebModelCapabilities } from "../../chatgpt-web-models";
 import { ChatGptPromptIntegrityMismatchError, isChatGptPromptIntegrityMismatch } from "./adapter-error";
 import { ChatGptPromptOperation } from "./prompt-operation";
 import { chatGptPromptCodeUnitEquivalent, chatGptPromptTextEquivalent, chatGptPromptEquivalentPrefixLength, readChatGptPromptText } from "./prompt-text";
@@ -1176,6 +1177,7 @@ export class ChatGptBrowserWorker {
     solAvailable?: boolean;
     extraHighAvailable?: boolean;
     proAvailable?: boolean;
+    modelCapabilities?: ChatGptWebModelCapabilities;
   }> {
     return this.enqueueMaintenance("session inspection", () => this.inspectSessionExclusive(detectCapabilities));
   }
@@ -2838,6 +2840,7 @@ export class ChatGptBrowserWorker {
     solAvailable?: boolean;
     extraHighAvailable?: boolean;
     proAvailable?: boolean;
+    modelCapabilities?: ChatGptWebModelCapabilities;
   }> {
     const page = await this.ensurePage();
     await this.prepareChatSurface(page);

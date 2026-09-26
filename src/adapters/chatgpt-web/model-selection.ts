@@ -12,11 +12,11 @@ function familyError(family: ChatGptWebModelFamily, cause?: unknown): ChatGptWeb
   );
 }
 
-function familyOption(menu: EffortMenu, family: ChatGptWebModelFamily) {
+export function familyOption(menu: EffortMenu, family: ChatGptWebModelFamily) {
   return menu.menu.getByRole("menuitemradio", {
     name: family === "5.6" ? /^GPT[-\s]?5\.6\s+Sol(?:\s+Pro)?$/i
-      // Simplified/Traditional Chinese and Japanese share 最新; Korean uses 최신.
-      : /^(?:Latest|最新|최신|GPT[-\s]?6(?:\s+Astra)?(?:\s+Pro)?)$/i,
+      // Match the localized Latest label using the same anchored selector in every language.
+      : /^(?:Latest|Le plus récent|最新|최신|GPT[-\s]?6(?:\s+Astra)?(?:\s+Pro)?)$/i,
     exact: true,
     includeHidden: true,
   });
@@ -50,6 +50,8 @@ export async function selectChatGptModelFamily(
     await option.waitFor({ state: "visible", timeout: 5_000 });
     await option.click({ timeout: 5_000 });
     await page.keyboard.press("Escape");
+    // Do not reopen a menu that is still committing its close animation.
+    await menu.menu.waitFor({ state: "hidden", timeout: 5_000 });
     const selected = await reopen();
     const deadline = Date.now() + 1_000;
     do {
@@ -102,9 +104,27 @@ export async function assertChatGptModelFamily(
       (element.getAttribute("aria-describedby") ?? "").split(/\s+/).filter(Boolean)
         .map(id => element.ownerDocument.getElementById(id)?.textContent ?? "")
     ));
-    if (checked && state && state.value === state.min + effortIndex && chatGptModelFamilyMatches(descriptions, family, effort)) return;
+    if (checked && state && state.value === state.min + effortIndex && (chatGptModelFamilyMatches(descriptions, family, effort)
+      || chatGptUnversionedEffortMatches(descriptions, effort))) return;
     if (Date.now() >= deadline) break;
     await new Promise(resolve => setTimeout(resolve, 50));
   } while (true);
   throw familyError(family);
+}
+
+/** Current pickers omit the version in their status. The caller must also verify the family radio
+ * and slider position; an unscoped generic Pro label is never sufficient evidence. */
+export function chatGptUnversionedEffortMatches(descriptions: readonly string[], effort: ChatGptWebAdapterEffort): boolean {
+  if (descriptions.some(text => /^(?:GPT[-\s]?)?\d+(?:\.\d+)?\s/i.test(text.trim()))) return false;
+  const labels: Record<ChatGptWebAdapterEffort, RegExp> = {
+    low: /^(?:Instant|Instantané)$/i,
+    medium: /^(?:Medium|Moyen)$/i,
+    high: /^(?:High|Élevée?|Elevée?)$/i,
+    xhigh: /^(?:Extra High|Très élevé)$/i,
+    max: /^Pro$/i,
+  };
+  const statuses = descriptions.map(text => /^(.*?),\s*([1-5])\s+(?:of|sur)\s+([1-5])\.$/i.exec(text.trim())).filter(Boolean);
+  const index = ["low", "medium", "high", "xhigh", "max"].indexOf(effort) + 1;
+  return statuses.length === 1 && labels[effort].test(statuses[0]![1]!)
+    && Number(statuses[0]![2]) === index && Number(statuses[0]![3]) >= index;
 }
