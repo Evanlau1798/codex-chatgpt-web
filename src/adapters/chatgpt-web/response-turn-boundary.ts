@@ -65,7 +65,9 @@ export async function readChatGptAssistantTurnState(
   );
   const known = new Set(knownTurnIdentities);
   if (stableState.identities.some(identity => !known.has(identity))) {
-    throw new Error("ChatGPT assistant turn has no matching identity container");
+    // These are separate DOM reads. A remount between them is transient; the
+    // caller retries one settled observation and still fails closed if it persists.
+    throw new ChatGptTurnIdentityAmbiguityError("assistant", "ChatGPT assistant turn has no matching identity container");
   }
   return { ...stableState, knownTurnIdentities };
 }

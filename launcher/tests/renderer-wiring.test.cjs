@@ -26,6 +26,14 @@ test("native clicks reach browser tabs instead of the window drag region", () =>
   assert.match(appSource, /className="browser-tab-drag draggable"/);
 });
 
+test("embedded ChatGPT cannot turn its page header into a native window drag region", () => {
+  const viewportCss = browserHostSource.match(/const CHATGPT_VIEWPORT_CSS = `([\s\S]*?)`;/)?.[1];
+  assert.ok(viewportCss);
+  assert.match(viewportCss, /\*\s*\{[^}]*-webkit-app-region:\s*no-drag\s*!important;/s);
+  assert.match(browserHostSource, /contents\.insertCSS\(CHATGPT_VIEWPORT_CSS\)/);
+  assert.match(browserHostSource, /markTurnTabSurface\(this, tab, CHATGPT_VIEWPORT_CSS\)/);
+});
+
 test("renderer zoom scales the shell without moving or zooming the native ChatGPT surface", () => {
   assert.match(
     electronMain,

@@ -88,6 +88,9 @@ const COMPOSER_SELECTOR = [
   'form[data-chatgpt-composer] [data-composer-markdown][contenteditable="true"][role="textbox"]',
 ].join(", ");
 const CHATGPT_VIEWPORT_CSS = `
+  /* The embedded page must not claim the launcher's native title bar. */
+  * { -webkit-app-region: no-drag !important; }
+
   html,
   body {
     width: 100% !important;

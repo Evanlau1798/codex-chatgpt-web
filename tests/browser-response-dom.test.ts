@@ -31,9 +31,12 @@ type Snapshot = {
 };
 
 // Execute the production page callback, with only missing Domino browser APIs supplied.
-async function snapshot(html: string): Promise<Snapshot> {
+async function snapshot(html: string, later?: { afterMs: number; selector: string; text?: string; remove?: boolean; remount?: boolean },
+  observe?: (state: Snapshot) => void): Promise<Snapshot> {
   const { createWindow } = require("@mixmark-io/domino");
   const window = createWindow(html);
+  let now = 1_000;
+  const observers: Array<{ root: Element; notify: () => void }> = [];
   const innerText = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, "innerText");
   const append = Object.getOwnPropertyDescriptor(window.HTMLElement.prototype, "append");
   Object.defineProperty(window.HTMLElement.prototype, "innerText", {
@@ -54,7 +57,11 @@ async function snapshot(html: string): Promise<Snapshot> {
       getComputedStyle: (element: HTMLElement) => ({
         display: element.style.display || "block", visibility: "visible", opacity: "1",
       }),
-      MutationObserver: class { observe() {} },
+      Date: later ? class extends Date { static now() { return now; } } : Date,
+      MutationObserver: class {
+        constructor(private readonly notify: () => void) {}
+        observe(root: Element) { observers.push({ root, notify: this.notify }); }
+      },
     });
     const errors: unknown[] = [];
     const locator = {
@@ -67,7 +74,21 @@ async function snapshot(html: string): Promise<Snapshot> {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as {
       responseDomSnapshot(locator: Locator): Promise<Snapshot>;
     };
-    const result = await worker.responseDomSnapshot(locator);
+    let result = await worker.responseDomSnapshot(locator);
+    observe?.(result);
+    if (later) {
+      now += later.afterMs;
+      const root = window.document.querySelector(later.selector);
+      expect(root).not.toBeNull();
+      if (later.remove) root!.parentNode!.removeChild(root!);
+      else if (later.remount) root!.parentNode!.replaceChild(root!.cloneNode(true), root!);
+      else {
+        root!.textContent = later.text!;
+        for (const observer of observers) if (observer.root === root) observer.notify();
+      }
+      result = await worker.responseDomSnapshot(locator);
+      observe?.(result);
+    }
     expect(errors).toEqual([]);
     return result;
   } finally {
@@ -126,6 +147,53 @@ test("captured activity summaries use the status stream and keep actual commenta
       '<div style="display:none"><div data-markdown-text-style="assistant-message" data-markdown-text-tone="tertiary">')
     .replace('<p>status 1</p>\n</div>', '<p>status 1</p>\n</div></div>'));
   expect(hidden.traceBlocks.some(block => block.text === "status 1")).toBeFalse();
+});
+
+test("multi-root answer settlement tracks mutations in every contributing answer root", async () => {
+  const response = await snapshot(
+    '<section id="turn"><div class="markdown" id="first"><p>Review in</p></div>'
+      + '<div class="markdown" id="last"><p>Stable tail.</p></div>'
+      + '<button data-testid="copy-turn-action-button"></button></section>',
+    { afterMs: 3_000, selector: "#first", text: "Review in progress." },
+  );
+  expect(response.visibleText).toContain("Review in progress.");
+  expect(response.completionActionVisible).toBeTrue();
+  expect(response.projection.lastMutationAt).toBe(4_000);
+});
+
+test("multi-root answer settlement resets when an earlier answer root disappears", async () => {
+  const response = await snapshot(
+    '<section id="turn"><div class="markdown" id="first"><p>Review in progress.</p></div>'
+      + '<div class="markdown" id="last"><p>Stable tail.</p></div>'
+      + '<button data-testid="copy-turn-action-button"></button></section>',
+    { afterMs: 3_000, selector: "#first", remove: true },
+  );
+  expect(response.visibleText).toBe("Stable tail.");
+  expect(response.completionActionVisible).toBeTrue();
+  expect(response.projection.lastMutationAt).toBe(4_000);
+});
+
+test("an equal-content remount of an earlier answer root restarts the full completion window", async () => {
+  const states: Snapshot[] = [];
+  await snapshot(
+    '<section id="turn"><div class="markdown" id="first"><p>First block.</p></div>'
+      + '<div class="markdown" id="last"><p>Stable tail.</p></div>'
+      + '<button data-testid="copy-turn-action-button"></button></section>',
+    { afterMs: 1_900, selector: "#first", remount: true }, state => states.push(state),
+  );
+  const [before, after] = states;
+  expect(after!.visibleText).toBe(before!.visibleText);
+  expect(after!.fullHtml).toBe(before!.fullHtml);
+  expect(after!.projection.rootId).toBe(before!.projection.rootId);
+  const completion = (state: Snapshot) => ({ ...state, running: false,
+    currentText: state.visibleText, currentHtml: state.fullHtml });
+  const tracker = new ChatGptCompletionTracker();
+  expect(tracker.update(completion(before!), 1_000).status).toBe("waiting");
+  expect(tracker.update(completion(before!), 2_899).status).toBe("waiting");
+  expect(tracker.update(completion(after!), 2_900).status).toBe("waiting");
+  expect(tracker.update(completion(after!), 3_000).status).toBe("waiting");
+  expect(tracker.update(completion(after!), 4_899).status).toBe("waiting");
+  expect(tracker.update(completion(after!), 4_900).status).toBe("complete");
 });
 
 test("keeps an unfinished hyperlink buffered and detects changed destinations after delivery", async () => {

@@ -56,6 +56,31 @@ test("power UI groups keep separate stable user and assistant identities", async
   })).toBe("user_turn");
 });
 
+test("assistant identity container remount between DOM reads is transient ambiguity", async () => {
+  const { createWindow } = require("@mixmark-io/domino") as {
+    createWindow(html: string): { document: Document };
+  };
+  const document = createWindow('<div data-turn-key="first"><h4 data-conversation-role="assistant"></h4></div>').document;
+  let read = 0;
+  const turns = {
+    evaluateAll: async (callback: (elements: Element[]) => unknown) => {
+      const snapshot = [...document.querySelectorAll("[data-turn-key]")];
+      const result = callback(snapshot);
+      if (read++ === 0) document.body.innerHTML = '<div data-turn-key="second"><h4 data-conversation-role="assistant"></h4></div>';
+      return result;
+    },
+    page: () => ({
+      locator: (selector: string) => ({
+        evaluateAll: async (callback: (elements: Element[], name: string) => unknown, name: string) =>
+          callback([...document.querySelectorAll(selector)], name),
+      }),
+    }),
+  };
+  await expect(readChatGptAssistantTurnState(turns as never))
+    .rejects.toBeInstanceOf(ChatGptTurnIdentityAmbiguityError);
+  expect((await readChatGptAssistantTurnState(turns as never)).lastId).toBe("group:assistant:second");
+});
+
 test("logical turn identities ignore remounted history and reject ambiguous additions", () => {
   expect(chatGptNewTurnIdentity(["turn-old-1", "turn-old-2"], ["turn-old-2"])).toBeUndefined();
   expect(chatGptNewTurnIdentity(["turn-old-1", "turn-old-2"], ["turn-old-2", "turn-new"]))

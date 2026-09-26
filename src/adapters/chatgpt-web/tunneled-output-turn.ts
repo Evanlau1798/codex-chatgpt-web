@@ -50,6 +50,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
   let final: BrokerTurnOutputEvent | undefined;
   let fenceRevision: number | undefined;
   let stoppedWithoutFinalSince: number | undefined;
+  let stoppedWithNativeFinalSince: number | undefined;
   let preemptiveRetry: string | undefined;
   let stopRequested = false;
   let lastHeartbeat = 0;
@@ -58,6 +59,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
     pending = waitForOutput(options.output, sequence, signal);
     fenceRevision = undefined;
     stoppedWithoutFinalSince = undefined;
+    stoppedWithNativeFinalSince = undefined;
     options.onProgress?.();
     if (event.kind === "commentary") options.onCommentary?.(event.text);
     else if (event.kind === "reasoning") options.onReasoning?.(event.text);
@@ -135,7 +137,17 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
         }
         continue;
       }
-      if (!observed.responsePresent || observed.running) { fenceRevision = undefined; continue; }
+      if (observed.running || observed.toolCallsInFlight) {
+        stoppedWithNativeFinalSince = undefined;
+        fenceRevision = undefined;
+        continue;
+      }
+      // A Native2 final is the answer authority. Some Web surfaces never project an
+      // assistant turn after tool work, so require a stopped, settled interval instead.
+      if (!observed.responsePresent) {
+        stoppedWithNativeFinalSince ??= Date.now();
+        if (Date.now() - stoppedWithNativeFinalSince < fallbackGraceMs) continue;
+      }
       if (options.completionFence && fenceRevision === undefined) {
         fenceRevision = await options.completionFence.begin();
         continue;

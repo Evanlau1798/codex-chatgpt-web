@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
-import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
+import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
 import type { BrokerTurnOutputEvent } from "../src/adapters/chatgpt-web/turn-broker-protocol";
 import { activeCompactionToolResultInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
 import { submitTurnOutput, waitForTurnOutput, sealTurnOutput, resetTurnOutput } from "../src/adapters/chatgpt-web/turn-broker-output";
@@ -18,28 +18,34 @@ const FINAL = "Findings: No blocking defects. Review complete.";
 
 async function runFixture(options: {
   stale?: boolean; tunneledFinal?: boolean; steering?: boolean; batches?: number;
-  missingBaseline?: boolean; abortAtBaseline?: boolean; delayedResult?: boolean;
+  missingBaseline?: boolean; missingAssistantTurn?: boolean; abortAtBaseline?: boolean; delayedResult?: boolean;
   pastToolBatch?: boolean; retained?: boolean; tunneledRetry?: "answer" | "preemptive";
   compactionSettlement?: boolean;
   emptyStopped?: boolean; recoveryFails?: boolean; composerBusy?: boolean; stoppedThinking?: boolean;
   composerBusyAfterAdmission?: boolean;
   recentToolProgress?: boolean;
+  finalAfterToolWithoutAssistantTurn?: boolean;
+  unsettledBaseline?: boolean;
+  untunneled?: boolean;
+  conversationRoute?: string;
+  initialRoute?: string;
 } = {}) {
   const diagnostics = mkdtempSync(join(tmpdir(), "boole-browser-"));
   const progress = new ChatGptExternalTurnProgress();
   const actions: string[] = [];
+  const selections: Array<{ url: string; model: string; effort: string; family?: string }> = [];
   const deltas: string[] = [];
   const logs: string[] = [];
   const info = spyOn(console, "info").mockImplementation(message => { logs.push(`info:${message}`); });
   const warn = spyOn(console, "warn").mockImplementation(message => { logs.push(`warn:${message}`); });
   const controller = new AbortController();
-  const guard = setTimeout(() => controller.abort(new Error("fixture did not settle")), options.recentToolProgress ? 4_000 : 10_000);
+  const guard = setTimeout(() => controller.abort(new Error("fixture did not settle")), options.recentToolProgress || options.missingAssistantTurn ? 4_000 : 10_000);
   let now = Date.now();
   const clock = spyOn(Date, "now").mockImplementation(() => now);
   let submitted = 0;
   let composerText = options.composerBusy ? "User draft" : "";
   let finalSequence = 1;
-  let text = OLD;
+  let text = options.unsettledBaseline ? "Review in" : OLD;
   let pendingReaders = 0;
   const channel = {
     outputEnabled: true, outputSealed: false, outputEvents: [], outputChars: 0,
@@ -70,11 +76,13 @@ async function runFixture(options: {
     progress.recordToolResult();
     lastToolResultAt = now;
     actions.push("tool-settled");
+    if (options.finalAfterToolWithoutAssistantTurn) submitTurnOutput(channel, "final", FINAL);
     remainingBatches--;
     if (remainingBatches > 0) {
       text = "Intermediate review.";
       progress.recordToolBatch(1);
-    } else if (!options.stale) text = options.emptyStopped ? "" : FINAL;
+    } else if (options.unsettledBaseline) text = OLD;
+    else if (!options.stale) text = options.emptyStopped ? "" : FINAL;
   };
   const hidden: any = {
     count: async () => 0, isVisible: async () => false,
@@ -94,12 +102,14 @@ async function runFixture(options: {
         text = FINAL;
         pendingResult = false;
       }
-      const identities = ["historical", ...Array.from({ length: submitted }, (_, index) => `current${index || ""}`)];
+      const projected = (options.missingAssistantTurn && !actions.includes("tool-dispatched"))
+        || options.finalAfterToolWithoutAssistantTurn ? 0 : submitted;
+      const identities = ["historical", ...Array.from({ length: projected }, (_, index) => `current${index || ""}`)];
       return { count: identities.length, lastId: identities.at(-1), identities };
     },
   };
   const page: any = Object.assign(new EventEmitter(), {
-    isClosed: () => false, url: () => CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
+    isClosed: () => false, url: () => submitted && options.conversationRoute || options.initialRoute || CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
     locator: (selector: string) => {
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
       if (selector === "[data-turn-id-container], [data-turn-key]") return {
@@ -119,9 +129,13 @@ async function runFixture(options: {
       ? options.compactionSettlement ? activeCompactionToolResultInstruction() : "Apply pending steering." : undefined,
     runStage: async (_trace: string, _name: string, _timeout: number, action: (s: AbortSignal) => unknown) => action(controller.signal),
     prepareChatSurface: async () => {},
-    selectModelAndEffort: async (_page: unknown, model: string, effort: string) => resolveChatGptWebModelMode(
-      model, effort, { localToolsEnabled: true, solAvailable: true, proAvailable: true, extraHighAvailable: true },
-    ),
+    selectModelAndEffort: async (_page: unknown, model: string, effort: string, _capabilities: unknown, _capture: unknown, _track: unknown, family?: string) => {
+      selections.push({ url: page.url(), model, effort, family });
+      return {
+        ...resolveChatGptWebModelMode(model, effort, { localToolsEnabled: true, solAvailable: true, proAvailable: true, extraHighAvailable: true }),
+        ...(options.conversationRoute ? { selection: { url: page.url(), label: "Extra High" } } : {}),
+      };
+    },
     attachPromptWithCompactionRetry: async (...args: any[]) => {
       const bindConnector = args[2];
       expect(bindConnector).toBe(!options.retained && submitted === 0);
@@ -134,9 +148,11 @@ async function runFixture(options: {
     attachFiles: async () => {}, assertPromptAttached: async () => {}, connectorIsSelected: async () => true,
     activeComposer: async () => {
       if (options.composerBusyAfterAdmission && actions.includes("recovery:eligible")) composerText = "User draft";
-      return { textContent: async () => composerText,
+      return { textContent: async () => composerText, isEditable: async () => true,
         fill: async () => { composerText = ""; actions.push("clear"); }, focus: async () => {},
-        locator: () => ({ locator: () => ({
+        locator: () => ({ locator: (selector: string) => selector === CHATGPT_EFFORT_CONTROL_SELECTOR ? {
+          ...hidden, count: async () => 1, innerText: async () => "Extra High", getAttribute: async () => "false",
+        } : ({
       waitFor: async () => {}, isEnabled: async () => true,
       press: async () => {
         submitted++;
@@ -162,7 +178,7 @@ async function runFixture(options: {
         completionActionVisible: !options.emptyStopped, globalCompletionActionVisible: !options.emptyStopped,
         stoppedThinkingVisible: options.stoppedThinking === true,
         projection: { rootId: "current-final", boundaryProtocolPresent: false,
-          lastNodePresent: true, lastMutationAt: 1, animations: [] },
+          lastNodePresent: true, lastMutationAt: options.unsettledBaseline ? now : 1, animations: [] },
       };
     },
     waitForTurnDomOrExternalProgress: async () => {
@@ -173,11 +189,15 @@ async function runFixture(options: {
   });
   const turn: BrowserTurn = {
     traceId: "boole_fallback_fixture", modelId: "gpt-5.6-sol", reasoning: "xhigh",
+    modelFamily: options.conversationRoute ? "5.6" : undefined,
     capabilities: { localToolsEnabled: true, solAvailable: true, proAvailable: true, extraHighAvailable: true },
     nativeConnector: true, externalProgress: progress, abortSignal: controller.signal,
     prepare: async () => ({ text: "Review the candidate.", images: [], transport: "native2-archive",
       release: () => { actions.push("release"); } }),
-    onSubmitted: () => { actions.push("submitted"); }, onTextDelta: delta => { deltas.push(delta); },
+    onSubmitted: () => {
+      actions.push("submitted");
+      if (options.untunneled) batch = progress.recordToolBatch(1);
+    }, onTextDelta: delta => { deltas.push(delta); },
     onCommentary: text => { commentary.push(text); },
     retryPromptForError: async (error, attempt) => {
       const session = {
@@ -194,7 +214,7 @@ async function runFixture(options: {
       begin: async () => { actions.push("fence-begin"); return 1; },
       commit: async () => { actions.push("fence-commit"); return true; },
     },
-    tunneledOutput: {
+    tunneledOutput: options.untunneled ? undefined : {
       next: (after, signal) => {
         if (options.emptyStopped) {
           if (!batch) batch = progress.recordToolBatch(1);
@@ -205,6 +225,7 @@ async function runFixture(options: {
             text: options.tunneledRetry && finalSequence === 1 ? "Superseded review." : FINAL });
         }
         if (!batch && !options.tunneledFinal) batch = progress.recordToolBatch(1);
+        if (options.finalAfterToolWithoutAssistantTurn) return waitForTurnOutput(channel, after, signal);
         return new Promise<BrokerTurnOutputEvent>((_resolve, reject) => {
           pendingReaders++;
           signal!.addEventListener("abort", () => {
@@ -246,7 +267,7 @@ async function runFixture(options: {
     expect(actions.filter(a => a === "send")).toHaveLength(options.tunneledRetry ? 2 : 1);
     expect(actions.filter(a => a === "submitted")).toHaveLength(options.tunneledRetry ? 2 : 1);
   }
-  return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText, fallbackAgeMs };
+  return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText, fallbackAgeMs, selections };
 }
 
 test("a stopped empty Web response continues once before sealing the native output channel", async () => {
@@ -260,6 +281,31 @@ test("a stopped empty Web response continues once before sealing the native outp
   expect(result.actions.filter(a => a === "fence-commit")).toHaveLength(1);
   expect(result.actions).toContain("recovery:eligible");
   expect(result.actions).not.toContain("output-seal");
+});
+
+test("final retry re-proves the same model and effort after Temporary Chat acquires its conversation URL", async () => {
+  const conversationRoute = "https://chatgpt.com/c/local-chatgpt%3Areview?temporary-chat=true";
+  const result = await runFixture({ emptyStopped: true, conversationRoute });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.actions.filter(action => action === "send")).toHaveLength(2);
+  expect(result.selections).toEqual([
+    { url: CHATGPT_TEMPORARY_CHAT_URL, model: "gpt-5.6-sol", effort: "xhigh", family: "5.6" },
+    { url: conversationRoute, model: "gpt-5.6-sol", effort: "xhigh", family: "5.6" },
+  ]);
+});
+
+test("final retry cannot transfer the selected model to a different existing conversation", async () => {
+  const initialRoute = "https://chatgpt.com/c/owned?temporary-chat=true";
+  const result = await runFixture({
+    emptyStopped: true, initialRoute,
+    conversationRoute: "https://chatgpt.com/c/unrelated?temporary-chat=true",
+  });
+  expect(result.error).toMatchObject({ code: "upstream_server_error", retryable: false });
+  expect(result.answer).toBeUndefined();
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+  expect(result.selections).toHaveLength(1);
+  expect(result.selections[0]?.url).toBe(initialRoute);
 });
 
 test("a second empty response escalates without another same-conversation submission", async () => {
@@ -389,10 +435,59 @@ test("terminal Web controls do not seal fallback while a native tool is running"
   expect(result.actions.indexOf("tool-settled")).toBeLessThan(result.actions.indexOf("output-seal"));
 });
 
-test("an identified current turn may use an empty baseline before its first native tool", async () => {
+test("an unavailable pre-tool snapshot cannot authorize DOM fallback", async () => {
   const result = await runFixture({ missingBaseline: true });
-  expect(result.error).toBeUndefined();
+  expect((result.error as Error).message).toContain("without producing a final answer after its last Codex tool call");
   expect(result.actions).toContain("tool-dispatched");
+  expect(result.actions).not.toContain("output-seal");
+  expect(result.deltas).toEqual([]);
+});
+
+test("a native tool can start before the current assistant turn is projected without trusting a late DOM final", async () => {
+  const result = await runFixture({ missingAssistantTurn: true });
+  expect((result.error as Error).message).toContain("without producing a final answer after its last Codex tool call");
+  expect(result.actions).toContain("tool-dispatched");
+  expect(result.actions).not.toContain("output-seal");
+  expect(result.deltas).toEqual([]);
+});
+
+test("a late pre-tool assistant DOM cannot become the fallback final without native output", async () => {
+  const result = await runFixture({ missingAssistantTurn: true, stale: true });
+  expect(result.answer).toBeUndefined();
+  expect(result.actions).not.toContain("output-seal");
+  expect(result.deltas).toEqual([]);
+});
+
+test("an unsettled pre-tool assistant projection cannot become the fallback final", async () => {
+  const result = await runFixture({ unsettledBaseline: true });
+  expect(result.answer).toBeUndefined();
+  expect(result.actions).toContain("tool-dispatched");
+  expect(result.actions).not.toContain("output-seal");
+  expect(result.deltas).toEqual([]);
+});
+
+test("an untunneled tool starts before assistant DOM without trusting its late projection", async () => {
+  const result = await runFixture({ untunneled: true, missingAssistantTurn: true });
+  expect(result.actions).toContain("tool-dispatched");
+  expect((result.error as Error).message).toContain("without producing a final answer after its last Codex tool call");
+  expect(result.answer).toBeUndefined();
+  expect(result.deltas).toEqual([]);
+  expect(result.actions).not.toContain("fence-commit");
+});
+
+test("an untunneled tool turn cannot finalize a late pre-tool projection", async () => {
+  const result = await runFixture({ untunneled: true, unsettledBaseline: true });
+  expect(result.answer).toBeUndefined();
+  expect(result.actions).toContain("tool-dispatched");
+  expect(result.deltas).toEqual([]);
+  expect(result.actions).not.toContain("fence-commit");
+});
+
+test("an explicit native final completes after its tool settles without an assistant DOM turn", async () => {
+  const result = await runFixture({ finalAfterToolWithoutAssistantTurn: true });
+  expect(result.error).toBeUndefined();
+  expect(result.actions).toContain("tool-settled");
+  expect(result.actions.filter(a => a === "fence-commit")).toHaveLength(1);
   expect(result.answer).toBe(FINAL);
   expect(result.deltas).toEqual([FINAL]);
 });

@@ -53,6 +53,7 @@ import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import { ChatGptVisibleTraceTracker, type ChatGptVisibleTraceBlock } from "./visible-trace-tracker";
 import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
 import {
+  CHATGPT_COMPLETION_SETTLE_MS,
   ChatGptCompletionTracker,
   type ChatGptFinalProjectionState,
 } from "./completion-tracker";
@@ -126,6 +127,7 @@ import {
   CHATGPT_USER_TURN_SELECTOR,
   chatGptEffortSliderAdvancedTowardTarget,
   detectChatGptAccountCapabilities,
+  isTemporaryChatGptUrl,
   isTemporaryChatGptTurnUrl,
   readChatGptEffortSnapshot,
 } from "../../chatgpt-session";
@@ -147,7 +149,7 @@ import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGpt
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptRetainedSurfaceUnavailableError, chatGptSessionExpiredError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, readChatGptUpstreamFailureUiState, redactChatGptUiDiagnostic } from "./browser-diagnostics";
-import { openChatGptConnectorPlusMenu } from "./connector-plus-menu";
+import { CHATGPT_CONNECTOR_MENTION_ROW_SELECTOR, chatGptConnectorMentionRowHighlighted, openChatGptConnectorPlusMenu } from "./connector-plus-menu";
 import { assertChatGptModelFamily, selectChatGptModelFamily } from "./model-selection";
 import {
   ChatGptBrowserObservationTimeoutError,
@@ -909,6 +911,18 @@ const absentResponseDomSnapshot = (): ChatGptResponseDomSnapshot => ({
   traceBlocks: [],
   nativeToolCandidates: [],
 });
+
+function settledPreToolAnswerText(snapshot: ChatGptResponseDomSnapshot | undefined, running: boolean): string | undefined {
+  if (!snapshot?.responsePresent || running || !snapshot.completionActionVisible || !snapshot.visibleText) return undefined;
+  const projection = snapshot.projection;
+  if (!projection.rootId || projection.lastMutationAt === undefined
+    || Date.now() - projection.lastMutationAt < CHATGPT_COMPLETION_SETTLE_MS) return undefined;
+  if (projection.boundaryProtocolPresent !== false
+    && (!projection.lastNodePresent || projection.boundaryStart === undefined || projection.boundaryEnd === undefined)) {
+    return undefined;
+  }
+  return snapshot.visibleText;
+}
 
 export function isChatGptTraceControl(block: ChatGptVisibleTraceBlock): boolean {
   if (block.kind !== "status") return false;
@@ -1950,7 +1964,7 @@ export class ChatGptBrowserWorker {
       if (externalProgress
         && progress
         && completionTracker.needsToolBatchObservation(progress.lastToolBatchRevision)) {
-        completionTracker.observeToolBatch(progress.lastToolBatchRevision, snapshot.visibleText);
+        completionTracker.observeToolBatch(progress.lastToolBatchRevision, settledPreToolAnswerText(snapshot, running));
         await externalProgress.acknowledgeToolBatch(progress.lastToolBatchRevision);
       }
       const externalProgressLive = chatGptExternalProgressSuppressesDomHealth(progress, Date.now());
@@ -2298,7 +2312,7 @@ export class ChatGptBrowserWorker {
       await withBrowserTurnAbort(captureDiagnostic?.(checkpoint) ?? Promise.resolve(), abortSignal);
       throwIfPromptAttachmentAborted(abortSignal);
     };
-    const menuRows = page.locator('.__menu-item[tabindex="0"], [data-mention-list-scroll-area] button[data-list-navigation-item="true"]');
+    const menuRows = page.locator(CHATGPT_CONNECTOR_MENTION_ROW_SELECTOR);
     const appResult = menuRows.filter({
       has: page.getByText(this.config.appName, { exact: true }),
     });
@@ -2446,8 +2460,7 @@ export class ChatGptBrowserWorker {
           + ` after ${attemptBudget.triggerAttempts} complete mention trigger attempt(s)`,
         );
       }
-      const rowHighlighted = async () => await appResult.getAttribute("data-highlighted", op.options(10_000)) !== null
-        || await appResult.getAttribute("aria-current", op.options(10_000)) === "true";
+      const rowHighlighted = async () => chatGptConnectorMentionRowHighlighted(appResult, op.options(10_000));
       if (!await rowHighlighted()) {
         const visibleRowCount = await withBrowserTurnAbort(
           withChatGptBrowserObservationTimeout(menuRows.filter({ visible: true }).count()),
@@ -3001,10 +3014,12 @@ export class ChatGptBrowserWorker {
           lastMutationAt: number;
           observer: MutationObserver;
         }>;
+        __codexFinalProjectionRootSets?: WeakMap<HTMLElement, { signature: string; lastChangedAt: number }>;
       };
       runtimeWindow.__codexMarkdownRootIds ??= new WeakMap<HTMLElement, string>();
       runtimeWindow.__codexMarkdownRootSequence ??= 0;
       runtimeWindow.__codexFinalProjectionStates ??= new WeakMap();
+      runtimeWindow.__codexFinalProjectionRootSets ??= new WeakMap();
       const nodeId = (markdownRoot: HTMLElement): string => {
         const existing = runtimeWindow.__codexMarkdownRootIds!.get(markdownRoot);
         if (existing) return existing;
@@ -3212,23 +3227,35 @@ export class ChatGptBrowserWorker {
         .flatMap(markdownRoot => markdownRoot.segments);
       const rendered = renderedRoots.at(-1);
       const projection = rendered ? (() => {
-        let state = runtimeWindow.__codexFinalProjectionStates!.get(rendered);
-        if (!state) {
-          const created = {
-            lastMutationAt: Date.now(),
-            observer: undefined as unknown as MutationObserver,
-          };
-          created.observer = new MutationObserver(() => { created.lastMutationAt = Date.now(); });
-          created.observer.observe(rendered, {
-            subtree: true,
-            childList: true,
-            characterData: true,
-            attributes: true,
-            attributeFilter: ["data-start", "data-end", "data-is-last-node"],
-          });
-          runtimeWindow.__codexFinalProjectionStates!.set(rendered, created);
-          state = created;
+        const signature = renderedRoots.map(nodeId).join("\0");
+        let rootSet = runtimeWindow.__codexFinalProjectionRootSets!.get(root);
+        if (!rootSet) {
+          rootSet = { signature, lastChangedAt: Date.now() };
+          runtimeWindow.__codexFinalProjectionRootSets!.set(root, rootSet);
+        } else if (rootSet.signature !== signature) {
+          rootSet.signature = signature;
+          rootSet.lastChangedAt = Date.now();
         }
+        const projectionStates = renderedRoots.map(answerRoot => {
+          let state = runtimeWindow.__codexFinalProjectionStates!.get(answerRoot);
+          if (!state) {
+            const created = {
+              lastMutationAt: Date.now(),
+              observer: undefined as unknown as MutationObserver,
+            };
+            created.observer = new MutationObserver(() => { created.lastMutationAt = Date.now(); });
+            created.observer.observe(answerRoot, {
+              subtree: true,
+              childList: true,
+              characterData: true,
+              attributes: true,
+              attributeFilter: ["data-start", "data-end", "data-is-last-node"],
+            });
+            runtimeWindow.__codexFinalProjectionStates!.set(answerRoot, created);
+            state = created;
+          }
+          return state;
+        });
         const lastNodes = [
           ...(rendered.matches("[data-is-last-node]") ? [rendered] : []),
           ...rendered.querySelectorAll<HTMLElement>("[data-is-last-node]"),
@@ -3254,11 +3281,12 @@ export class ChatGptBrowserWorker {
           : [];
         return {
           rootId: nodeId(rendered),
+          rootSetSignature: rootSet.signature,
           boundaryProtocolPresent: lastNodes.length > 0,
           lastNodePresent: lastNode !== undefined,
           boundaryStart: lastNode?.getAttribute("data-start") ?? undefined,
           boundaryEnd: lastNode?.getAttribute("data-end") ?? undefined,
-          lastMutationAt: state.lastMutationAt,
+          lastMutationAt: Math.max(rootSet.lastChangedAt, ...projectionStates.map(state => state.lastMutationAt)),
           animations,
         };
       })() : { boundaryProtocolPresent: false, lastNodePresent: false, animations: [] };
@@ -3978,6 +4006,21 @@ export class ChatGptBrowserWorker {
       let tunneledOutputSequence = 0;
       let beforeRecoveryInsertion: ((composer: Locator) => Promise<void>) | undefined;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
+        if (responseAttempt > 1 && mode.selection && mode.selection.url !== page.url()) {
+          // A submitted Temporary Chat may acquire /c/<id>. Re-prove the same
+          // selection there; never transfer it between existing conversations.
+          if (!isTemporaryChatGptUrl(mode.selection.url) || !isTemporaryChatGptTurnUrl(page.url())) {
+            throw chatGptModelControlUnavailableAdapterError("ChatGPT changed the selected model's browser surface before retry");
+          }
+          mode = await this.runStage(
+            turn.traceId, "retry_effort_selection", browserStageTimeouts.effortSelection,
+            () => this.selectModelAndEffort(
+              page, turn.modelId, mode.effort, turn.capabilities,
+              checkpoint => diagnostics.capture(page, `retry-${checkpoint}`), trackUsage, turn.modelFamily,
+            ),
+            turn.abortSignal,
+          );
+        }
         let completedRetryPrompt: ChatGptRetryPrompt | undefined;
         let responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
         const initialResponseTurn = await readChatGptAssistantTurnState(responseTurns);
@@ -4281,7 +4324,13 @@ export class ChatGptBrowserWorker {
             observe: async () => {
               if (page.isClosed()) throw chatGptBrowserTabClosedError();
               if (!isTemporaryChatGptTurnUrl(page.url())) {
-                throw chatGptWebSurfaceError("ChatGPT left the isolated Temporary Chat surface while the tunneled turn was active", false);
+                const currentUrl = new URL(page.url());
+                throw chatGptWebSurfaceError(
+                  `ChatGPT left the isolated Temporary Chat surface while the tunneled turn was active `
+                    + `(origin=${currentUrl.origin}, pathRoot=${currentUrl.pathname.split("/")[1] || "/"}, `
+                    + `temporary=${currentUrl.searchParams.get("temporary-chat")})`,
+                  false,
+                );
               }
               await throwIfChatGptSessionFailureAlert(page);
               await throwIfChatGptRateLimitDialog(page);
@@ -4317,18 +4366,19 @@ export class ChatGptBrowserWorker {
               }
               const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible().catch(() => false);
               const progress = turn.externalProgress?.snapshot();
-              if (responsePresent && turn.externalProgress && progress
+              if (turn.externalProgress && progress
                 && progress.lastToolBatchRevision > initialToolBatchRevision
                 && completionTracker.needsToolBatchObservation(progress.lastToolBatchRevision)) {
-                const binding = bindChatGptAssistantTurn(initialResponseTurn, current);
-                if (binding) {
-                  // Capture before dispatch, then retain this same baseline if the tunnel needs DOM fallback.
-                  const baseline = await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running);
+                const binding = responsePresent ? bindChatGptAssistantTurn(initialResponseTurn, current) : undefined;
+                if (!responsePresent || binding) {
+                  // A tool may arrive before the new assistant turn is projected. An incomplete
+                  // pre-tool projection cannot prove that later text was produced after the tool.
+                  const baseline = binding
+                    ? await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running)
+                    : undefined;
                   turn.abortSignal?.throwIfAborted();
-                  // The tunnel can announce an immediate tool call before ChatGPT projects text for
-                  // the already-identified current turn. An empty baseline still prevents stale final reuse.
                   completionTracker.observeToolBatch(progress.lastToolBatchRevision,
-                    baseline.responsePresent ? baseline.visibleText : "");
+                    settledPreToolAnswerText(baseline, running));
                   await turn.externalProgress.acknowledgeToolBatch(progress.lastToolBatchRevision);
                 }
               }
@@ -4553,13 +4603,9 @@ export class ChatGptBrowserWorker {
         }
         // An ordinal locator is live and can silently retarget a historical turn after ChatGPT DOM
         // virtualization. Do not inspect response content until the submitted turn has a stable ID.
-        if (!responseTurnBinding) {
-          await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
-          continue;
-        }
-        const snapshot = await this.responseDomSnapshot(responseTurn, markdownOwnership, running);
-        internalObservationFaults = 0;
-        observedThisIteration = true;
+        const snapshot = responseTurnBinding
+          ? await this.responseDomSnapshot(responseTurn, markdownOwnership, running)
+          : undefined;
         const externalProgressSnapshot = turn.externalProgress?.snapshot();
         if (turn.externalProgress
           && externalProgressSnapshot
@@ -4567,10 +4613,17 @@ export class ChatGptBrowserWorker {
           && completionTracker.needsToolBatchObservation(externalProgressSnapshot.lastToolBatchRevision)) {
           completionTracker.observeToolBatch(
             externalProgressSnapshot.lastToolBatchRevision,
-            snapshot.visibleText,
+            settledPreToolAnswerText(snapshot, running),
           );
+          turn.abortSignal?.throwIfAborted();
           await turn.externalProgress.acknowledgeToolBatch(externalProgressSnapshot.lastToolBatchRevision);
         }
+        if (!snapshot) {
+          await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+          continue;
+        }
+        internalObservationFaults = 0;
+        observedThisIteration = true;
         const externalProgressLive = chatGptExternalProgressSuppressesDomHealth(
           externalProgressSnapshot,
           Date.now(),

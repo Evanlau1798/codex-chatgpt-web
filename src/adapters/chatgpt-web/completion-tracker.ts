@@ -9,6 +9,7 @@ export interface ChatGptProjectionAnimation {
 
 export interface ChatGptFinalProjectionState {
   rootId?: string;
+  rootSetSignature?: string;
   boundaryProtocolPresent?: boolean;
   lastNodePresent: boolean;
   boundaryStart?: string;
@@ -67,6 +68,7 @@ function projectionSignature(
     state.currentText,
     state.currentHtml ?? state.currentText,
     projection.rootId ?? "",
+    projection.rootSetSignature ?? "",
     projection.boundaryProtocolPresent === false ? "plain" : "bounded",
     projection.lastNodePresent ? "last" : "incomplete",
     projection.boundaryStart ?? "",
@@ -104,7 +106,7 @@ export class ChatGptCompletionTracker {
     return revision > this.lastToolBatchRevision;
   }
 
-  observeToolBatch(revision: number, currentText: string): boolean {
+  observeToolBatch(revision: number, currentText: string | undefined): boolean {
     if (!this.needsToolBatchObservation(revision)) return false;
     this.postToolAnswerBaselineText = currentText;
     this.lastToolBatchRevision = revision;
@@ -121,7 +123,11 @@ export class ChatGptCompletionTracker {
       this.missingPostToolAnswerSince = undefined;
       return { status: "waiting" };
     }
-    if (this.postToolAnswerBaselineText === state.currentText) {
+    // Without a pre-tool DOM baseline, a late projection could still be the
+    // pre-tool prefix. Only an explicit Native final may complete that turn.
+    if (this.lastToolBatchRevision > 0
+      && (this.postToolAnswerBaselineText === undefined
+        || this.postToolAnswerBaselineText === state.currentText)) {
       this.candidate = undefined;
       this.progress = undefined;
       if (!chatGptTurnIsComplete(state)) {
