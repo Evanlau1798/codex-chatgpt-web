@@ -323,7 +323,12 @@ function sandboxPolicy(value: unknown, roots: string[], writableRoots: string[])
     return { type: "dangerFullAccess" };
   }
   if (parsed?.type === "workspaceWrite") {
-    if (typeof parsed.networkAccess !== "boolean" || writableRoots.some(path => !roots.some(root => contains(root, path)))) {
+    const policyRoots = absolutePaths(parsed.writableRoots, "workspace-write policy writable roots");
+    const declared = new Set(policyRoots.map(pathIdentity));
+    // Project membership is not the grant boundary: native Codex also authorizes
+    // external output directories. Both persisted grant sets must agree exactly.
+    if (typeof parsed.networkAccess !== "boolean" || policyRoots.length !== writableRoots.length
+      || writableRoots.some(path => !declared.has(pathIdentity(path)))) {
       throw new Error("Invalid persisted ChatGPT workspace-write policy");
     }
     return { type: "workspaceWrite", writableRoots, networkAccess: parsed.networkAccess };

@@ -15,7 +15,8 @@ test("effort selection uses structural menu and slider indices instead of locali
   expect(sessionSource).not.toContain("data-radix-collection-item");
   expect(workerSource).toContain('sliderContainer.waitFor({ state: "visible"');
   expect(workerSource).toContain('effortSlider.waitFor({ state: "attached"');
-  expect(workerSource).toContain('getAttribute("aria-valuenow")');
+  expect(sessionSource).toContain('getAttribute("aria-valuenow")');
+  expect(workerSource).toContain("readChatGptEffortSnapshot");
   expect(workerSource).toContain("sliderControl.press(key)");
   expect(workerSource).not.toContain("currentLabel === targetLabel");
   expect(workerSource).not.toContain("chatGptEffortLabelsMatch");

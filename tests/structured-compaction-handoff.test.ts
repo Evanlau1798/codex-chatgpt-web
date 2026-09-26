@@ -12,7 +12,7 @@ const parsed: CodexParsedRequest = {
   options: { reasoning: "high" }, _compactionRequest: true,
 };
 
-test("retained compaction waits for natural Web confirmation after accepting its checkpoint", async () => {
+test("retained compaction closes its one-purpose Web response after accepting the checkpoint", async () => {
   const accepted = deferred<void>();
   const browser = deferred<string>();
   const broker = {
@@ -44,15 +44,14 @@ test("retained compaction waits for natural Web confirmation after accepting its
   try {
     await accepted.promise;
     await new Promise<void>(resolve => setImmediate(resolve));
-    expect(browserAborted).toBeFalse();
-    expect(completed).toBeFalse();
-    browser.resolve("turn complete");
+    expect(browserAborted).toBeTrue();
     await expect(run).resolves.toBe("Structured retained checkpoint is valid.");
+    expect(completed).toBeTrue();
     expect(turn?.conversationKey).toBe("a".repeat(64));
     expect(turn?.nativeConnector).toBeTrue();
     expect(turn?.requireRetainedConversation).toBeTrue();
     expect(turn?.prepareResume).toBeDefined();
-    expect(browserAborted).toBeFalse();
+    expect(browserAborted).toBeTrue();
   } finally { browser.resolve("cleanup"); await run.catch(() => {}); }
 });
 

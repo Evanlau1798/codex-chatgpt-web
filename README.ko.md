@@ -16,7 +16,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **개발 후보: `6.1.0-Enhanced.1`.** 다운로드 버튼은 기존 Enhanced 릴리스 패키지를 가리킵니다. 이 브랜치는 새 릴리스의 게시를 의미하지 않습니다.
+> **개발 후보: `6.1.1-Enhanced.1`.** 다운로드 버튼은 기존 Enhanced 릴리스 패키지를 가리킵니다. 이 브랜치는 새 릴리스의 게시를 의미하지 않습니다.
 
 <p align="center">
   <img src="assets/demo.gif" width="960" alt="네이티브 Codex 하네스를 사용하는 ChatGPT Web 실시간 턴">

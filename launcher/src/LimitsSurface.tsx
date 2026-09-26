@@ -66,7 +66,7 @@ export function LimitsSurface({
     }
   };
 
-  const planLabel = snapshot?.plan === "pro_200" ? "Pro $200" : snapshot?.plan === "pro_100" ? "Pro $100" : null;
+  const planLabel = snapshot?.plan === "pro_200" ? "Pro 20x ($200)" : snapshot?.plan === "pro_100" ? "Pro 5x ($100)" : null;
   const stateLabel = zeroRisk ? copy.zeroRisk : unsupported ? copy.proOnly : tracking ? copy.active
     : supported ? copy.paused : copy.notConfigured;
   const error = setupError || snapshot?.error;
@@ -176,7 +176,7 @@ export function LimitsSurface({
           <p className="limits-section-description">{copy.referenceBody}</p>
           <div className="limits-reference-grid">
             <article className="limits-reference-plan">
-              <h3>Pro $200</h3>
+              <h3>Pro 20x ($200)</h3>
               <dl>
                 <div><dt>GPT-6 Pro</dt><dd>{copy.week.replace("{count}", number(policy.pro_200.gpt6Weekly))}</dd></div>
                 <div><dt>GPT-5.6 Sol Pro</dt><dd>{copy.day.replace("{count}", number(policy.pro_200.solDaily))}</dd></div>
@@ -184,7 +184,7 @@ export function LimitsSurface({
               </dl>
             </article>
             <article className="limits-reference-plan">
-              <h3>Pro $100</h3>
+              <h3>Pro 5x ($100)</h3>
               <dl><div><dt>{copy.shared}</dt><dd>{copy.week.replace("{count}", number(policy.pro_100.combinedWeekly))}</dd></div></dl>
               <p className="limits-models">GPT-6 Pro + GPT-5.6 Sol Pro</p>
             </article>

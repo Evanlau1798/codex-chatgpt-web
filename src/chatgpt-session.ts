@@ -47,7 +47,7 @@ export const CHATGPT_ASSISTANT_TURN_SELECTOR = [
   '[data-testid^="conversation-turn-"][data-turn="assistant"]:not([data-turn-key] *)',
   '[data-testid^="conversation-turn-"][data-message-author-role="assistant"]:not([data-turn-key] *)',
   '[data-testid^="conversation-turn-"]:has([data-message-author-role="assistant"]):not([data-turn-key] *)',
-  '[data-turn-key]:has([data-conversation-role="assistant"])',
+  '[data-turn-key]:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])',
 ].join(", ");
 export const CHATGPT_USER_TURN_SELECTOR = [
   '[data-testid^="conversation-turn-"][data-turn="user"]:not([data-turn-key] *)',
@@ -72,7 +72,7 @@ export function isTemporaryChatGptUrl(value: string): boolean {
 export function chatGptAssistantTurnSelector(identity: string): string {
   const prefix = "group:assistant:";
   return identity.startsWith(prefix)
-    ? `[data-turn-key=${JSON.stringify(identity.slice(prefix.length))}]:has([data-conversation-role="assistant"])`
+    ? `[data-turn-key=${JSON.stringify(identity.slice(prefix.length))}]:has([data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])`
     : `[data-turn-id=${JSON.stringify(identity)}]`;
 }
 
@@ -202,25 +202,37 @@ export function chatGptEffortSliderAdvancedTowardTarget(previous: number, curren
     : current < previous && current >= target;
 }
 
-export async function readChatGptEffortAvailability(
+export async function readChatGptEffortSnapshot(
   sliderContainer: Locator,
-  state: ChatGptEffortSliderState,
-): Promise<boolean[]> {
-  // Plus exposes a fourth ARIA position for a locked Pro upsell. Only the ticks
-  // carry both attributes; the slider root also has data-locked and is not a choice.
-  const locks = await sliderContainer.evaluate(container => {
-    // The power picker omits data-locked on available ticks; the old picker always
-    // declares it. Accept that omission only inside the observed enabled power control.
-    const power = container.hasAttribute("data-model-picker-power-slider")
-      && Boolean(container.querySelector('[data-orientation="horizontal"][aria-disabled="false"]'));
-    return Array.from(container.querySelectorAll("[data-selected]"), tick =>
-      tick.getAttribute("data-locked") ?? (power ? "false" : null));
-  });
-  if (locks.length !== state.max - state.min + 1
-    || locks.some(lock => lock !== "true" && lock !== "false")) {
-    throw new Error("ChatGPT effort availability could not be verified from its slider ticks");
-  }
-  return locks.map(lock => lock === "false");
+  timeoutMs = 1_000,
+): Promise<ChatGptEffortSliderState & { available: boolean[] }> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    // Read the range, selection and locks in one DOM revision. Separate Playwright
+    // reads can straddle hydration and combine a five-step range with four ticks.
+    const snapshot = await sliderContainer.evaluate(container => {
+      const sliders = container.querySelectorAll('[role="slider"]');
+      const slider = sliders.length === 1 ? sliders[0] : undefined;
+      const power = container.hasAttribute("data-model-picker-power-slider")
+        && Boolean(container.querySelector('[data-orientation="horizontal"][aria-disabled="false"]'));
+      return {
+        min: slider?.getAttribute("aria-valuemin") ?? null,
+        max: slider?.getAttribute("aria-valuemax") ?? null,
+        value: slider?.getAttribute("aria-valuenow") ?? null,
+        locks: Array.from(container.querySelectorAll("[data-selected]"), tick =>
+          tick.getAttribute("data-locked") ?? (power ? "false" : null)),
+      };
+    });
+    const state = parseChatGptEffortSliderState(snapshot.min, snapshot.max, snapshot.value);
+    if (!state) throw new Error("ChatGPT effort slider exposed an invalid ARIA range");
+    if (snapshot.locks.some(lock => lock !== "true" && lock !== "false")) break;
+    if (snapshot.locks.length === state.max - state.min + 1) {
+      return { ...state, available: snapshot.locks.map(lock => lock === "false") };
+    }
+    if (Date.now() >= deadline) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  } while (true);
+  throw new Error("ChatGPT effort availability could not be verified from its slider ticks");
 }
 
 async function anyVisible(locator: Locator): Promise<boolean> {
@@ -327,7 +339,7 @@ export async function detectChatGptAccountCapabilities(
   let absenceSince: number | undefined;
   let presenceObservations = 0;
   while (true) {
-    const effortVisible = await effortButton.isVisible().catch(() => false);
+    const effortVisible = await effortButton.isVisible();
     if (effortVisible) {
       presenceObservations += 1;
       absenceSince = undefined;
@@ -341,13 +353,15 @@ export async function detectChatGptAccountCapabilities(
     const documentReady = await page.evaluate(() => document.readyState === "complete").catch(() => false);
     if (composerReady && formReady && documentReady) {
       absenceSince ??= Date.now();
-      if (Date.now() - absenceSince >= stableAbsenceMs) {
-        return { solAvailable: false, extraHighAvailable: false, proAvailable: false };
-      }
     } else {
       absenceSince = undefined;
     }
     if (Date.now() >= deadline) {
+      // ChatGPT can mount a usable composer before the account's model list arrives.
+      // A short absence is not a capability result; use the complete inspection budget.
+      if (absenceSince !== undefined && Date.now() - absenceSince >= stableAbsenceMs) {
+        return { solAvailable: false, extraHighAvailable: false, proAvailable: false };
+      }
       throw new Error("ChatGPT account capability probe did not reach a stable composer state");
     }
     await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
@@ -363,7 +377,7 @@ export async function detectChatGptAccountCapabilities(
         await effortButton.press("Enter");
       }
       try {
-        const timeout = options.selectorTimeoutMs ?? 10_000;
+        const timeout = options.selectorTimeoutMs ?? 70_000;
         await sliderContainer.waitFor({ state: "visible", timeout });
         await slider.waitFor({ state: "attached", timeout });
         break;
@@ -372,18 +386,7 @@ export async function detectChatGptAccountCapabilities(
         await page.keyboard.press("Escape").catch(() => {});
       }
     }
-    const state = parseChatGptEffortSliderState(
-      await slider.getAttribute("aria-valuemin"),
-      await slider.getAttribute("aria-valuemax"),
-      await slider.getAttribute("aria-valuenow"),
-    );
-    if (!state) {
-      throw new Error(
-        "ChatGPT model controls are unavailable. Reload ChatGPT and run Repair again.",
-        { cause: new Error("ChatGPT effort slider exposed an invalid ARIA range") },
-      );
-    }
-    const available = await readChatGptEffortAvailability(sliderContainer, state);
+    const { available } = await readChatGptEffortSnapshot(sliderContainer);
     return { solAvailable: true, extraHighAvailable: available[3] === true, proAvailable: available[4] === true };
   } finally {
     await page.keyboard.press("Escape").catch(() => {});

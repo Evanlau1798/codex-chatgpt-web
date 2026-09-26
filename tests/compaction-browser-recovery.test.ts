@@ -79,7 +79,7 @@ test.each([
     }) }) }),
     waitForSubmissionAccepted: async (...args: unknown[]) => {
       expect(args[8]).toBe(progress);
-      recoveryCallbacks.push(args[10]);
+      recoveryCallbacks.push(args[11]);
       return "user_turn";
     },
     attachPrompt: async function (...args: unknown[]) {

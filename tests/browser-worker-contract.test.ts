@@ -36,7 +36,7 @@ import {
   MAX_CHATGPT_BROWSER_PAGE_REBINDS,
   withChatGptBrowserObservationTimeout,
 } from "../src/adapters/chatgpt-web/browser-observation";
-import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_RESPONSE_DOM_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptPromptAttachmentIntegrityError, ChatGptSuspensionClock, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, browserStageTimeouts, chatGptExternalProgressSuppressesDomHealth, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, remainingStageBudgetMs, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
+import { CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, CHATGPT_RESPONSE_DOM_GRACE_MS, ChatGptBrowserWorker, ChatGptCompletionTracker, ChatGptPromptAttachmentIntegrityError, ChatGptSuspensionClock, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, browserDiagnosticIncludesScreenshot, browserStageTimeouts, chatGptExternalProgressSuppressesDomHealth, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, sanitizeChatGptBrowserDiagnosticState, remainingStageBudgetMs, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptWebAdapterError, chatGptStoppedThinkingError } from "../src/adapters/chatgpt-web/adapter-error";
 import { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, defaultChromeExecutable, legacyChatGptConnectorMigrationMessage } from "../src/config";
 import { CHATGPT_SEND_BUTTON_SELECTOR, chatGptEffortSliderAdvancedTowardTarget, parseChatGptEffortSliderState } from "../src/chatgpt-session";
@@ -442,6 +442,16 @@ test("launcher prompt attachment recovery does not replay other failures or loop
   expect(rebinds).toBe(1);
 });
 
+test("chat preparation preserves page-read and composer errors instead of reporting an expired login", async () => {
+  const prepare = (ChatGptBrowserWorker.prototype as unknown as {
+    prepareChatSurface(page: unknown): Promise<unknown>;
+  }).prepareChatSurface;
+  for (const error of [new ChatGptBrowserObservationTimeoutError(5_000), new Error("ChatGPT composer is unavailable")]) {
+    const page = { url: () => "https://chatgpt.com/?temporary-chat=true" };
+    await expect(prepare.call({ activeComposer: async () => { throw error; } }, page)).rejects.toBe(error);
+  }
+});
+
 test("a stalled post-submit DOM probe is bounded before same-page launcher recovery", async () => {
   expect(CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS).toBe(5_000);
   expect(MAX_CHATGPT_BROWSER_PAGE_REBINDS).toBe(2);
@@ -779,10 +789,13 @@ test("caret re-anchor fails closed when the live composer cannot be anchored", a
     retireSession: true,
   });
   expect(focusCalls).toBe(2);
-  expect(evaluateOptions).toEqual([
-    { timeout: 20_000 },
-    { timeout: 20_000 },
-  ]);
+  const options = evaluateOptions as Array<{ signal?: AbortSignal; timeout: number }>;
+  expect(options).toHaveLength(2);
+  expect(options.map(option => option.signal)).toEqual([undefined, undefined]);
+  expect(options[0]!.timeout).toBeGreaterThan(0);
+  expect(options[0]!.timeout).toBeLessThanOrEqual(20_000);
+  expect(options[1]!.timeout).toBeGreaterThan(0);
+  expect(options[1]!.timeout).toBeLessThanOrEqual(options[0]!.timeout);
 });
 
 test("caret re-anchor retries against the latest Lexical DOM before failing the surface", async () => {
@@ -2581,6 +2594,38 @@ test("browser diagnostics redact context envelopes and capability values", () =>
   expect(diagnostic).not.toContain("private context");
   expect(diagnostic).not.toContain("12345678901234567890");
   expect(diagnostic).toContain("<codex_context_json>[redacted]</codex_context_json>");
+});
+
+test("browser diagnostic state drops every rendered text field before persistence", () => {
+  const diagnostic = sanitizeChatGptBrowserDiagnosticState({
+    url: "https://chatgpt.com/c/private-conversation-id",
+    title: "private conversation title",
+    documentComplete: false,
+    composer: { unrecognizedEditors: [{
+      tag: "textarea", role: null, attributes: { placeholder: true, id: false },
+      inForm: false, focused: true, value: "private draft", placeholder: "private hint",
+    }] },
+    location: { origin: "https://chatgpt.com", pathSegments: 2, temporaryChat: false },
+    connectorRows: [{
+      tag: "a",
+      role: "button",
+      testId: "private-account-row",
+      text: "private sidebar conversation",
+      textChars: 28,
+    }],
+    overlays: [{ role: "status", text: "private suggestion", textChars: 18 }],
+  });
+  const encoded = JSON.stringify(diagnostic);
+  expect(encoded).not.toContain("private");
+  expect(diagnostic).toEqual({
+    documentComplete: false,
+    composer: { unrecognizedEditors: [{
+      tag: "textarea", role: null, attributes: { placeholder: true, id: false }, inForm: false, focused: true,
+    }] },
+    location: { origin: "https://chatgpt.com", pathSegments: 2, temporaryChat: false },
+    connectorRows: [{ tag: "a", role: "button", textChars: 28 }],
+    overlays: [{ role: "status", textChars: 18 }],
+  });
 });
 
 test("browser stage diagnostics use safe bounded artifact names", () => {

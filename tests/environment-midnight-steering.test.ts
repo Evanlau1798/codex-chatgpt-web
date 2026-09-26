@@ -107,6 +107,57 @@ const externalProfileXml = `<permission_profile type="external"><file_system typ
     return { codexHome, request, rolloutPath };
   }
 
+  test("native workspace-write grants survive duplicate entries, external output roots and cache reload", () => {
+    const fixture = resumedRootFixture();
+    const output = resolve(root, "..", "native-authorized-output");
+    const entries = [
+      { path: { type: "special", value: { kind: "root" } }, access: "read" },
+      { path: { type: "path", path: root }, access: "write" },
+      { path: { type: "special", value: { kind: "slash_tmp" } }, access: "write" },
+      { path: { type: "special", value: { kind: "tmpdir" } }, access: "write" },
+      { path: { type: "path", path: output }, access: "write" },
+      { path: { type: "path", path: output }, access: "write" },
+      { path: { type: "path", path: join(root, ".git") }, access: "read", missing_path_behavior: "skip" },
+    ];
+    const context = childTurnContext(rolloutTurnId, {
+      workspace_roots: [root],
+      sandbox_policy: { type: "workspace-write", writable_roots: [output], network_access: false },
+      permission_profile: { type: "managed", file_system: { type: "restricted", entries }, network: "restricted" },
+      file_system_sandbox_policy: { kind: "restricted", entries },
+    });
+    const cache = join(fixture.codexHome, "thread-environments.json");
+    for (const child of [false, true]) {
+      const request = child ? environmentlessChild(rolloutTurnId, "workspace-write") : fixture.request;
+      if (!child) {
+        const body = request._rawBody as { client_metadata: Record<string, string> };
+        const metadata = JSON.parse(body.client_metadata["x-codex-turn-metadata"]!);
+        body.client_metadata["x-codex-turn-metadata"] = JSON.stringify({ ...metadata, sandbox_mode: "workspace-write" });
+      }
+      writeFileSync(fixture.rolloutPath, [
+        child ? childSessionMeta() : { type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } }, context,
+      ].map(value => JSON.stringify(value)).join("\n") + "\n");
+      for (let reload = 0; reload < 2; reload++) {
+        const actual = new ChatGptThreadEnvironmentStore(cache, Date.now, fixture.codexHome).resolve(request);
+        expect(actual.roots).toEqual([root]);
+        expect(actual.writableRoots).toEqual([root, output]);
+        expect(actual.sandboxPolicy).toEqual({ type: "workspaceWrite", writableRoots: [root, output], networkAccess: false });
+      }
+    }
+    const saved = readFileSync(cache, "utf8");
+    for (const field of ["writableRoots", "sandboxPolicy"] as const) {
+      const state = JSON.parse(saved);
+      const row = state.threads[rolloutThreadId];
+      (field === "writableRoots" ? row.writableRoots : row.sandboxPolicy.writableRoots).push(resolve(root, "..", "unapproved"));
+      writeFileSync(cache, JSON.stringify(state));
+      expect(() => new ChatGptThreadEnvironmentStore(cache, Date.now, fixture.codexHome).resolve(environmentlessChild(rolloutTurnId, "workspace-write")))
+        .toThrow("Invalid persisted ChatGPT workspace-write policy");
+    }
+    entries.splice(4, 2);
+    writeFileSync(fixture.rolloutPath, [childSessionMeta(), context].map(value => JSON.stringify(value)).join("\n") + "\n");
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, fixture.codexHome).resolve(environmentlessChild(rolloutTurnId, "workspace-write")))
+      .toThrow("workspace-write permission profile is inconsistent");
+  });
+
   function midnightRolloutFixture() {
     const fixture = resumedRootFixture();
     const body = fixture.request._rawBody as { input: Array<Record<string, unknown>>; client_metadata: Record<string, string> };

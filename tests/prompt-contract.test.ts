@@ -87,7 +87,8 @@ test("tool-capable prompts pass one stable turn token directly to native actions
   expect(transportOnly).toContain("</codex_native_turn_binding>");
   expect(transportOnly).not.toMatch(/codex_bind_turn|binding_id|outer_tool_gateway|command_tool/);
   expect(transportOnly).not.toMatch(/codex_write_stdin|codex_apply_patch|codex_view_image/);
-  expect(transportOnly).not.toMatch(/expired|invalid|revoked|blocked|safety|security layer|permission gate/i);
+  expect(transportOnly).toContain("Do not claim a safety or permission block without an explicit tool result or platform error supporting it.");
+  expect(transportOnly).not.toMatch(/expired|invalid|revoked|blocked|security layer|permission gate/i);
   expect(compiled.text).not.toContain("CODEX_INTERNAL_CONTEXT_COMPACT");
   expect(compiled.text).not.toContain("internally compacts this response");
 });

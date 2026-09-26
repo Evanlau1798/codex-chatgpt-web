@@ -127,7 +127,7 @@ export async function runEnhancedCompaction(
       }
       raw ??= await requestRetainedCompactionHandoff(
         worker, parsed, source, broker, capabilities, traceId, operationSignal, handoffTimeoutMs,
-        requireAutomaticAdmission,
+        requireAutomaticAdmission, retainOwnershipUntil,
       );
       const canonical = canonicalizeCompactionHandoff(parsed, raw);
       if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");

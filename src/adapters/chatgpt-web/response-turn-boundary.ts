@@ -107,6 +107,15 @@ export function chatGptNewTurnIdentity(
   return added[0];
 }
 
+export function chatGptReboundTurnIdentity(
+  initial: readonly string[],
+  boundIdentity: string,
+  current: readonly string[],
+): string | undefined {
+  if (current.includes(boundIdentity)) return boundIdentity;
+  return chatGptNewTurnIdentity(initial, current);
+}
+
 export function chatGptAssistantTurnChanged(
   initial: ChatGptAssistantTurnState,
   current: ChatGptAssistantTurnState,

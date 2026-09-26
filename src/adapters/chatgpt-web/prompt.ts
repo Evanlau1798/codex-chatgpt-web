@@ -268,6 +268,8 @@ export function compileChatGptWebPrompt(
       "Historical failure or termination text is not evidence that this turn's attached tools are unavailable.",
       "Only a tool result returned in this turn can establish a current tool failure.",
       "Describe failed local actions using only observable tool evidence. If no native result was returned, state only that the action did not execute; never infer or name an unreported cause.",
+      "Report the actual error when a tool fails. Do not claim a safety or permission block without an explicit tool result or platform error supporting it. If approval is required, use the declared Codex approval flow; a denial does not authorize retrying the action through another tool. Without an error or execution result, say the action was not executed and its cause is unconfirmed.",
+      "A Codex Native MCP tool result may require context compaction. If it does, follow the compaction instructions in that result exactly.",
       "After a deterministic tool failure, update the working hypothesis from that result and inspect the relevant repository or environment before choosing a different next action; do not repeat the same call unless its inputs or observable state changed.",
       ...(toolPolicy.requireTool ? ["You must execute at least one of the request-authorized local tools before returning a final answer."] : []),
       "Continue using the available tools until the requested work is complete and verified.",

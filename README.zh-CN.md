@@ -19,7 +19,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **开发候选版：`6.0.0-Enhanced.1`。** 下载按钮仍指向已发布的 Enhanced 安装包；此分支不代表已经发版。
+> **开发候选版：`6.1.1-Enhanced.1`。** 下载按钮仍指向已发布的 Enhanced 安装包；此分支不代表已经发版。
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">故障排除</a> · <a href="SECURITY.md">安全</a> · <a href="CONTRIBUTING.md">贡献</a>

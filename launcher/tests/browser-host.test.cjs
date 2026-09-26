@@ -775,7 +775,7 @@ test("guest and incomplete server sessions do not prove launcher authentication"
   assert.equal(result.status, "signed-out");
 });
 
-test("launcher authentication requires the Temporary Chat composer and complete server session", async () => {
+test("launcher authentication is established by the complete server session", async () => {
   const fixture = {
     state: { authenticated: false },
     activeTraceId: null,
@@ -802,7 +802,7 @@ test("launcher authentication requires the Temporary Chat composer and complete 
   assert.equal(result.status, "ready");
 });
 
-test("authentication finds the new composer only in its ChatGPT form", async () => {
+test("a verified session stays signed in while its composer is unavailable", async () => {
   const vm = require("node:vm");
   const { createDocument } = require("@mixmark-io/domino");
   const url = "https://chatgpt.com/?temporary-chat=true";
@@ -833,7 +833,7 @@ test("authentication finds the new composer only in its ChatGPT form", async () 
       snapshot() { return { ...this.state }; }, logger: { info() {} },
     };
     const result = await BrowserHost.prototype.probeAuthentication.call(fixture);
-    assert.equal(result.authenticated, owned);
+    assert.equal(result.authenticated, true);
   }
 });
 
@@ -859,7 +859,10 @@ test("session verification distinguishes a missing login from network and invali
     }, status: "error", message: /timed out/i },
     { name: "server", fetch: async () => response(null, { ok: false, status: 503 }), status: "error", message: /503/ },
     { name: "html", fetch: async () => response(null, { headers: { get: () => "text/html" } }), status: "error" },
-    { name: "redirect", fetch: async () => response(validSession, { url: "https://example.com/api/auth/session" }), status: "error" },
+    { name: "redirect", fetch: async (_url, options) => {
+      assert.equal(options.redirect, "error");
+      throw new TypeError("Redirect rejected");
+    }, status: "error" },
     { name: "invalid JSON", fetch: async () => response(null, { json: async () => { throw new SyntaxError("private-response"); } }), status: "error" },
     { name: "renderer", rendererError: true, status: "error", message: /browser/i },
   ];
@@ -934,6 +937,102 @@ test("concurrent authentication probes share the same navigation and allow the n
   assert.equal(probes, 3); // the settled operation must not cache stale authentication
 });
 
+test("shared session changes refresh hidden sign-in state without navigating any tab", async () => {
+  const cookies = new EventEmitter();
+  const requests = [];
+  let payload = {};
+  let mode = "automatic";
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    state: { authenticated: true, status: "ready" },
+    turnTabs: new Map(),
+    getBrowserInteractionMode: () => mode,
+    view: { webContents: { session: {
+      cookies,
+      fetch: async (url, options) => {
+        requests.push({ url, options });
+        await new Promise(resolve => setImmediate(resolve));
+        cookies.emit("changed", {}, { httpOnly: true, domain: "chatgpt.com" }, "overwrite", true);
+        cookies.emit("changed", {}, { httpOnly: true, domain: "chatgpt.com" }, "inserted", false);
+        // Electron net.fetch returns an empty Response.url, unlike renderer fetch.
+        return { url: "", ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => payload };
+      },
+    } } },
+    setState(patch) { this.state = { ...this.state, ...patch }; },
+    logger: { warn() { assert.fail("Session refresh failed"); } },
+  });
+  fixture.bindAuthenticationChanges();
+  const notify = cookie => cookies.emit("changed", {}, cookie, "explicit", true);
+  notify({ httpOnly: false, domain: ".chatgpt.com" });
+  notify({ httpOnly: true, domain: "example.com" });
+  assert.equal(requests.length, 0);
+  notify({ httpOnly: true, domain: ".chatgpt.com" });
+  await fixture.authenticationRefresh;
+  assert.equal(fixture.state.authenticated, false);
+  assert.equal(fixture.state.status, "signed-out");
+  payload = { user: { id: "test" }, expires: "2099-01-01T00:00:00Z" };
+  notify({ httpOnly: true, domain: "chatgpt.com" });
+  await fixture.authenticationRefresh;
+  assert.equal(fixture.state.authenticated, true);
+  assert.equal(fixture.state.status, "ready");
+  assert.equal(requests[0].url, "https://chatgpt.com/api/auth/session");
+  assert.equal(requests[0].options.credentials, "include");
+  assert.equal(requests[0].options.redirect, "error");
+  mode = "manual";
+  notify({ httpOnly: true, domain: "chatgpt.com" });
+  assert.equal(requests.length, 2);
+  mode = "automatic";
+  fixture.destroyed = true;
+  notify({ httpOnly: true, domain: "chatgpt.com" });
+  assert.equal(requests.length, 2);
+});
+
+test("a later sign-out wins over pending native and page authentication probes", async () => {
+  let finishNative;
+  let finishPage;
+  let requests = 0;
+  const updates = [];
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    authenticationRevision: 0, state: { authenticated: false },
+    turnTabs: new Map(),
+    view: { webContents: {
+      getURL: () => "https://chatgpt.com/?temporary-chat=true", isDestroyed: () => false,
+      executeJavaScript: () => new Promise(resolve => { finishPage = resolve; }),
+      session: { fetch: async url => {
+        requests += 1;
+        const payload = requests === 1 ? await new Promise(resolve => { finishNative = resolve; }) : {};
+        return { url, ok: true, status: 200, headers: { get: () => "application/json" }, json: async () => payload };
+      } },
+    } },
+    setState(patch) { updates.push(patch); this.state = { ...this.state, ...patch }; },
+    snapshot() { return this.state; }, logger: { info() {}, warn() {} },
+  });
+  const page = fixture.probeAuthentication();
+  const first = fixture.refreshAuthenticationFromSession();
+  const second = fixture.refreshAuthenticationFromSession();
+  assert.equal(first, second);
+  finishNative({ user: { id: "previous-account" } });
+  await second;
+  finishPage({ composer: true, temporary: true, sessionAuthenticated: true });
+  await page;
+  assert.equal(requests, 2);
+  assert.equal(updates.length, 1);
+  assert.equal(fixture.state.authenticated, false);
+  assert.equal(updates.some(update => update.authenticated === true), false);
+});
+
+test("in-page account navigation schedules authentication refresh only for the main frame", async () => {
+  const contents = Object.assign(new EventEmitter(), { setWindowOpenHandler() {} });
+  let checks = 0;
+  const fixture = { view: { webContents: contents }, setState() {},
+    refreshAuthenticationFromSession: async () => { checks += 1; },
+  };
+  BrowserHost.prototype.bindWebContents.call(fixture);
+  contents.emit("did-navigate-in-page", {}, "https://chatgpt.com/", false);
+  assert.equal(checks, 0);
+  contents.emit("did-navigate-in-page", {}, "https://chatgpt.com/", true);
+  assert.equal(checks, 1);
+});
+
 test("concurrent embedded login requests share one authentication operation", async () => {
   let resolveLogin;
   let waits = 0;
@@ -951,7 +1050,7 @@ test("concurrent embedded login requests share one authentication operation", as
         loadURL: async () => {},
       },
     },
-    probeAuthentication: async () => {},
+    probeAuthentication: async () => ({ authenticated: false, status: "signed-out" }),
     waitForAuthenticated: async () => {
       waits += 1;
       return await new Promise((resolve) => { resolveLogin = resolve; });
@@ -966,7 +1065,7 @@ test("concurrent embedded login requests share one authentication operation", as
   const first = BrowserHost.prototype.openLogin.call(fixture);
   const second = BrowserHost.prototype.openLogin.call(fixture);
   assert.equal(first, second);
-  await Promise.resolve();
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(waits, 1);
   resolveLogin({ authenticated: true });
   assert.deepEqual(await first, { authenticated: true });
@@ -990,7 +1089,10 @@ test("explicit login waits for an in-flight saved-session refresh before taking 
       getURL: () => "https://chatgpt.com/?temporary-chat=true",
       loadURL: async () => {},
     } },
-    probeAuthentication: async () => calls.push("probe"),
+    probeAuthentication: async () => {
+      calls.push("probe");
+      return { authenticated: false, status: "signed-out" };
+    },
     waitForAuthenticated: async () => ({ authenticated: true }),
     runSessionInspection: async () => calls.push("inspect"),
     withManualOperation: async (name, action) => {

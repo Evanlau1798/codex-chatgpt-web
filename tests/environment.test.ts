@@ -8,6 +8,7 @@ import { rememberCompactionContinuation } from "../src/adapters/chatgpt-web/comp
 import { encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
 import { parseRequest } from "../src/responses/parser";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
+import { environmentFromTurnContext } from "../src/adapters/chatgpt-web/codex-rollout-permissions";
 import type { CodexParsedRequest, CodexTool } from "../src/types";
 
 import { root, environmentXml, currentWire, dangerFullAccessProfileXml } from "./environment-fixture";
@@ -25,6 +26,44 @@ function filesystemEnvironmentXml(permissionProfileXml: string): string {
 const workspaceWriteProfileXml = `<permission_profile type="managed"><file_system type="restricted"><entry access="read"><special>:root</special></entry><entry access="write"><path>${root}</path></entry><entry access="write"><special>:slash_tmp</special></entry><entry access="write"><special>:tmpdir</special></entry><entry access="read"><path>${root}/.git</path></entry></file_system></permission_profile>`;
 const readOnlyProfileXml = `<permission_profile type="managed"><file_system type="restricted"><entry access="read"><special>:root</special></entry></file_system></permission_profile>`;
 const externalProfileXml = `<permission_profile type="external"><file_system type="external" /></permission_profile>`;
+
+test("native workspace-write grants accept duplicate external output roots", () => {
+  const output = resolve(root, "..", "native-authorized-output");
+  const entries = [
+    { path: { type: "special", value: { kind: "root" } }, access: "read" },
+    { path: { type: "path", path: root }, access: "write" },
+    { path: { type: "special", value: { kind: "slash_tmp" } }, access: "write" },
+    { path: { type: "special", value: { kind: "tmpdir" } }, access: "write" },
+    { path: { type: "path", path: output }, access: "write" },
+    { path: { type: "path", path: output }, access: "write" },
+  ];
+  const payload = {
+    turn_id: "turn_workspace_write",
+    cwd: root,
+    workspace_roots: [root],
+    sandbox_policy: {
+      type: "workspace-write",
+      writable_roots: [output, output],
+      network_access: false,
+      exclude_tmpdir_env_var: false,
+      exclude_slash_tmp: false,
+    },
+    permission_profile: {
+      type: "managed",
+      file_system: { type: "restricted", entries },
+      network: "restricted",
+    },
+    file_system_sandbox_policy: { kind: "restricted", entries },
+  };
+
+  expect(environmentFromTurnContext(payload, "turn_workspace_write", [])).toEqual({
+    cwd: root,
+    roots: [root],
+    writableRoots: [root, output],
+    sandboxPolicy: { type: "workspaceWrite", writableRoots: [root, output], networkAccess: false },
+    tools: [],
+  });
+});
 describe("trusted current Codex environment envelope", () => {
   test("native cross-task messages keep their instruction, environment and compaction source", () => {
     const request = currentWire({ threadId: "thread_delegation" });

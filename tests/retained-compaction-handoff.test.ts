@@ -5,6 +5,7 @@ import { requestRetainedCompactionHandoff } from "../src/adapters/chatgpt-web/re
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/adapters/chatgpt-web/turn-execution";
 import type { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import type { CodexParsedRequest } from "../src/types";
+import { deferred } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 
 const parsed: CodexParsedRequest = {
   modelId: "chatgpt-web", stream: true,
@@ -19,6 +20,29 @@ function source(): ChatGptTurnSession {
     conversationKey: "b".repeat(64), cancel() {},
   });
 }
+
+for (const accepted of [false, true]) test(`retained deadline bounds an uncooperative browser (checkpoint accepted: ${accepted})`, async () => {
+  const browser = deferred<string>();
+  let transactionAborted = false;
+  let browserAborted = false;
+  const broker = {
+    beginCompactionTransaction: async () => ({ token: "control", handoffId: "handoff" }),
+    waitForCompactionHandoff: () => accepted ? Promise.resolve("Already submitted checkpoint") : new Promise<string>(() => {}),
+    abortCompactionTransaction: () => { transactionAborted = true; },
+  } as unknown as TurnBroker;
+  const run = requestRetainedCompactionHandoff({ run: turn => {
+    turn.abortSignal!.addEventListener("abort", () => { browserAborted = true; }, { once: true });
+    return browser.promise;
+  } }, parsed, source(), broker,
+  { localToolsEnabled: true, solAvailable: true, proAvailable: true }, "trace_deadline", undefined, 25)
+    .then(() => new Error("Unexpected success"), error => error);
+  try {
+    const failure = await Promise.race([run, Bun.sleep(250).then(() => new Error("Deadline did not return"))]);
+    expect(failure.message).toContain("timed out after 25ms");
+    expect(transactionAborted).toBeTrue();
+    expect(browserAborted).toBeTrue();
+  } finally { browser.resolve("cleanup"); await run; }
+});
 
 test("structured handoff ignores browser text and uses only the control result", async () => {
   let turn: BrowserTurn | undefined;
@@ -108,4 +132,18 @@ test("pre-submit retained surface loss is exposed to the single outer fallback",
     worker as never, parsed, source(), broker,
     { localToolsEnabled: true, solAvailable: true, proAvailable: true }, "trace_surface_loss",
   )).rejects.toMatchObject({ name: "RetainedCompactionSourceUnavailableError" });
+});
+
+test("retained browser completion without a structured handoff fails immediately", async () => {
+  const worker = { run: async () => "turn complete" };
+  const broker = {
+    beginCompactionTransaction: async () => ({ token: "control", handoffId: "handoff" }),
+    waitForCompactionHandoff: () => new Promise<string>(() => {}),
+    abortCompactionTransaction() {},
+  } as unknown as TurnBroker;
+
+  await expect(requestRetainedCompactionHandoff(
+    worker as never, parsed, source(), broker,
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true }, "trace_missing_handoff", undefined, 40,
+  )).rejects.toMatchObject({ code: "compaction_handoff_missing", retryable: false });
 });

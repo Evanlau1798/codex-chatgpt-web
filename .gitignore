@@ -20,3 +20,4 @@ launcher/artifacts/
 .playwright-cli/
 output/
 notes.md
+/.agents/skills/github-pairing/

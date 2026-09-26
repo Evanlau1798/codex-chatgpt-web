@@ -28,6 +28,7 @@ export async function requestRetainedCompactionHandoff(
   signal?: AbortSignal,
   timeoutMs = MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
   requireAutomaticAdmission?: (traceId: string) => void,
+  retainOwnershipUntil?: (settlement: Promise<void>) => void,
 ): Promise<string> {
   const conversationKey = source.conversationKey();
   if (!conversationKey) throw new RetainedCompactionSourceUnavailableError();
@@ -43,6 +44,7 @@ export async function requestRetainedCompactionHandoff(
   const abortBrowser = () => browserAbort.abort(operationSignal.reason);
   let transaction: Awaited<ReturnType<TurnBroker["beginCompactionTransaction"]>> | undefined;
   let browser: Promise<string> | undefined;
+  let settlement: Promise<void> | undefined;
   let completed = false;
   if (operationSignal.aborted) abortBrowser();
   else operationSignal.addEventListener("abort", abortBrowser, { once: true });
@@ -74,17 +76,18 @@ export async function requestRetainedCompactionHandoff(
       abortSignal: browserAbort.signal,
       onTextDelta: () => {},
     });
-    const accepted = broker.waitForCompactionHandoff(transaction.token, operationSignal).then(handoff => {
-      browserAbort.abort(new ChatGptCompactionHandoffAccepted());
-      return handoff;
+    settlement = browser.then(() => undefined, () => undefined);
+    retainOwnershipUntil?.(settlement);
+    const accepted = broker.waitForCompactionHandoff(transaction.token, operationSignal);
+    const browserWithoutHandoff = browser.then<never>(() => {
+      throw new ChatGptWebAdapterError(
+        "ChatGPT finished without sending the context summary to Codex. Check its response for a refusal or tool error.",
+        { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_missing", retryable: false },
+      );
     });
-    const settledBrowser = browser.catch(error => {
-      if (browserAbort.signal.reason instanceof ChatGptCompactionHandoffAccepted
-        && ((error instanceof DOMException && error.name === "AbortError")
-          || error instanceof ChatGptCompactionHandoffAccepted)) return "";
-      throw error;
-    });
-    const [handoff] = await withCompactionAbort(Promise.all([accepted, settledBrowser]), operationSignal);
+    const handoff = await withCompactionAbort(Promise.race([accepted, browserWithoutHandoff]), operationSignal);
+    browserAbort.abort(new ChatGptCompactionHandoffAccepted());
+    await withCompactionAbort(settlement, operationSignal);
     completed = true;
     console.info("[chatgpt-web] Web session mode=enhanced path=retained_handoff result=checkpoint_and_response_settled");
     return handoff;
@@ -98,7 +101,9 @@ export async function requestRetainedCompactionHandoff(
   } finally {
     if (!completed) browserAbort.abort();
     if (transaction) broker.abortCompactionTransaction(transaction.token);
-    if (browser) await browser.then(() => undefined, () => undefined);
+    // Cancellation waits for cleanup, but never past the deadline. The owner retains
+    // physical settlement independently so timeout cannot admit an overlapping run.
+    if (settlement) await withCompactionAbort(settlement, deadline.signal).catch(() => {});
     operationSignal.removeEventListener("abort", abortBrowser);
     clearTimeout(timer);
   }

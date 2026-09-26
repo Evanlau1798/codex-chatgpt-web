@@ -238,8 +238,8 @@ test("does not treat a transient tool-adjacent status as a commentary flush boun
 
   expect(tracker.observe(blocks, false, 1_000)).toEqual([]);
   expect(tracker.observe(blocks, true, 1_001)).toEqual([
-    { kind: "reasoning", text: "Called Codex Native2" },
     { kind: "commentary", text: "正在確認" },
+    { kind: "reasoning", text: "Called Codex Native2" },
   ]);
 });
 

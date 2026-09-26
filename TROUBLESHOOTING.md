@@ -160,6 +160,17 @@ retains its stable command schema; when current Codex exposes permission-aware f
 `exec_command`/`shell_command` schema through `codex_tool_inventory` and invokes it through
 `codex_tool_call`. Codex's own sandbox and approval policy still decides whether the command can run.
 
+### ChatGPT refuses a tool call or context compaction
+
+Share the exact failed tool result and an **Activity → Export safe log**. An assistant saying
+"safety block" without a failed tool result does not establish the cause. **Allow all actions**
+does not override ChatGPT's own safety checks.
+
+After updating, refresh **Codex Native2** in ChatGPT's plugin settings to load its current tool
+descriptions. This updates the compaction tool contract; it does not remove safety restrictions.
+If compaction ends without a submitted summary, the launcher reports that failure and preserves
+the existing task history.
+
 ### Tools disappear on follow-up messages
 
 If local tools work on the first message but disappear on a follow-up, check the same ChatGPT tab

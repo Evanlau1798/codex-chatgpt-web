@@ -22,7 +22,8 @@ export function passiveRecoveryCheckpointInstruction(transaction: CompactionTran
 
 function compactionControlBinding(transaction: CompactionTransactionHandle): string[] {
   return [
-    "Submit the complete checkpoint through the attached Codex Native control plane by calling codex_tool_call exactly once with the binding below.",
+    "Submit the summary to the pending Codex task through the attached Codex Native plugin using codex_tool_call with the binding below.",
+    "The reserved codex.control.compaction_handoff operation stores this summary for task continuation. It does not run commands, read or edit files, or invoke other tools, and it is not listed by tool inventory.",
     "This one-shot control token is valid only for the reserved compaction operation; do not use it with codex_exec, codex_tool_inventory, or any outer Codex tool.",
     "<codex_compaction_control>",
     `turn_token ${transaction.token}`,
@@ -90,8 +91,7 @@ export function structuredCompactionHandoffInstruction(
     "Automatic Codex context compaction has started. Stop ordinary task work and do not call any more work tools.",
     COMPACT_PROMPT,
     ...compactionControlBinding(transaction),
-    "After the control call returns submitted=true, call no more tools. Output exactly turn complete as ordinary assistant final text in the Web frontend, then end this response normally.",
-    "For this checkpoint confirmation only, the ordinary Native2 output-routing rule does not apply: do not call codex.control.output or discover tools. The frontend confirmation is not the checkpoint and does not complete the user's task.",
-    "The outer bridge accepts compaction only after the structured checkpoint is valid and its owned browser turn has physically settled.",
+    "After the control call returns submitted=true, call no more tools. The bridge will close this one-purpose Web response after accepting the checkpoint.",
+    "If the call is rejected or fails, stop and report its actual error. Do not retry through another tool or claim the summary was submitted without submitted=true.",
   ].join("\n");
 }

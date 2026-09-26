@@ -305,6 +305,7 @@ async function captureBrowserDiagnosticState(
       location: { origin: location.origin, pathSegments: location.pathname.split("/").filter(Boolean).length,
         temporaryChat: new URL(location.href).searchParams.has("temporary-chat") },
       titleChars: document.title.length,
+      documentComplete: document.readyState === "complete",
       surfaceId: (globalThis as typeof globalThis & { __CODEX_WEB_GPT_SURFACE_ID__?: unknown }).__CODEX_WEB_GPT_SURFACE_ID__ ?? null,
       bodyTextChars: document.body?.textContent?.length ?? 0,
       composer: {
@@ -318,6 +319,20 @@ async function captureBrowserDiagnosticState(
           contentEditable: (element as HTMLElement).isContentEditable,
           focused: element === document.activeElement,
         })),
+        unrecognizedEditors: composers.length === 0
+          ? [...document.querySelectorAll('textarea, [contenteditable="true"]')]
+            .filter(rendered).slice(0, 10).map(element => ({
+              tag: element.tagName.toLowerCase(),
+              role: element.getAttribute("role"),
+              attributes: Object.fromEntries([
+                "id", "data-testid", "data-lexical-editor", "data-composer-markdown",
+                "contenteditable", "placeholder", "autofocus", "disabled", "readonly",
+              ].map(name => [name, element.hasAttribute(name)])),
+              inForm: Boolean(element.closest("form")),
+              inComposerForm: Boolean(element.closest("form[data-chatgpt-composer]")),
+              focused: element === document.activeElement,
+            }))
+          : [],
         composerSelectedConnectors: scopedRows(composerForm, '[data-id^="plugin:"][data-keyword], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]', 20),
         mentionMenuConnectors: rows('.__menu-item[tabindex="0"][data-id^="plugin:"][data-keyword], .__menu-item[tabindex="0"] [data-id^="plugin:"][data-keyword], [data-mention-list-scroll-area] button[data-list-navigation-item="true"]', 20),
       },

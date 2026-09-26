@@ -62,7 +62,12 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
         isVisible: async () => opened || openWith === "hidden-slider",
         waitFor: async () => { if (!opened && openWith !== "hidden-slider") throw new Error("container missing"); },
         locator: () => slider,
-        evaluate: async () => ["false", "false", "false", "false", "false"],
+        evaluate: async () => ({
+          min: "0",
+          max: "4",
+          value: "1",
+          locks: ["false", "false", "false", "false", "false"],
+        }),
       };
       return hiddenAlert;
     },

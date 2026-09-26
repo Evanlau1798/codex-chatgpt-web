@@ -68,10 +68,7 @@ export class ChatGptVisibleTraceTracker {
       && (commentaryBlocks.length === 1 || precedingCommentaryComplete);
     const observable = suppressAnimatedStatus
       ? blocks.filter(block => block.kind !== "status")
-      : [
-          ...blocks.filter(block => block.kind === "status"),
-          ...blocks.filter(block => block.kind !== "status"),
-        ];
+      : blocks;
     for (const block of observable) {
       if (block.kind === "answer") continue;
       const index = block.kind === "status" ? statusSlot++ : commentarySlot++;

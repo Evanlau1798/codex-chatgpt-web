@@ -19,7 +19,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **Development candidate: `6.1.0-Enhanced.1`.** The download buttons still point to released Enhanced packages; this branch does not publish a release.
+> **Development candidate: `6.1.1-Enhanced.1`.** The download buttons still point to released Enhanced packages; this branch does not publish a release.
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">Troubleshooting</a> · <a href="SECURITY.md">Security</a> · <a href="CONTRIBUTING.md">Contributing</a>

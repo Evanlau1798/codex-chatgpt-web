@@ -149,7 +149,10 @@ describe("ChatGPT effort menu failure classification", () => {
         if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
           filter() { return this; }, last() { return this; },
           isVisible: async () => true, waitFor: async () => {},
-          evaluate: async () => ["false", "false", "false", "false", "false"],
+          evaluate: async () => ({
+            min: "0", max: "4", value: String(sliderValue),
+            locks: ["false", "false", "false", "false", "false"],
+          }),
           locator: () => slider,
         };
         if (selector.includes('[role="alert"]') || selector.includes('[role="dialog"]')) return hiddenDialog;
@@ -230,7 +233,10 @@ describe("ChatGPT effort menu failure classification", () => {
         if (selector === CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR) return {
           filter() { return this; }, last() { return this; },
           isVisible: async () => true, waitFor: async () => {},
-          evaluate: async () => ["false", "false", "false", "false", "false"],
+          evaluate: async () => ({
+            min: "0", max: "4", value: String(sliderValue),
+            locks: ["false", "false", "false", "false", "false"],
+          }),
           locator: () => hiddenSliderCollection.last(),
         };
         if (selector.includes('[role="alert"]') || selector.includes('[role="dialog"]')) return hiddenDialog;

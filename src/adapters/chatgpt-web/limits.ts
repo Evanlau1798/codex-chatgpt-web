@@ -4,6 +4,11 @@ import type { Locator, Page } from "playwright-core";
 export type ChatGptLimitsPlan = "pro_100" | "pro_200" | "unsupported";
 export type ChatGptUsageModel = "gpt-6-pro" | "gpt-5.6-pro" | "pro-unknown" | "other";
 
+/** Session eligibility only; the current Billing heading determines the allowance. */
+export function supportsChatGptUsageTracking(account: { personal: boolean; planType: string }): boolean {
+  return account.personal && ["pro", "prolite"].includes(account.planType);
+}
+
 /** Only stable account identity leaves the page; never export session credentials. */
 export async function readChatGptUsageAccount(page: Page): Promise<{
   accountKey: string;
@@ -44,9 +49,6 @@ export async function readChatGptUsageAccount(page: Page): Promise<{
   };
 }
 
-function isPersonalChatGptProAccount(account: { personal: boolean; planType: string }): boolean {
-  return account.personal && (account.planType === "pro" || account.planType === "prolite");
-}
 
 /** Read the current subscription heading, not upgrade offers, invoices, or a bare 'Pro' badge. */
 export function chatGptLimitsPlanFromHeadings(headings: readonly string[]): "pro_100" | "pro_200" {
@@ -62,7 +64,7 @@ export async function prepareChatGptLimitsSubmission(page: Page, model: ChatGptU
   let accountKey: string | undefined;
   try {
     const account = await readChatGptUsageAccount(page);
-    if (isPersonalChatGptProAccount(account)) accountKey = account.accountKey;
+    if (supportsChatGptUsageTracking(account)) accountKey = account.accountKey;
   } catch {
     // A missing identity is reported as a tracking gap, never charged to the previous account.
   }
@@ -73,9 +75,7 @@ export async function prepareChatGptLimitsSubmission(page: Page, model: ChatGptU
 
 export async function detectChatGptLimitsPlan(page: Page): Promise<{ accountKey: string; plan: ChatGptLimitsPlan }> {
   const before = await readChatGptUsageAccount(page);
-  if (!isPersonalChatGptProAccount(before)) {
-    return { accountKey: before.accountKey, plan: "unsupported" };
-  }
+  if (!supportsChatGptUsageTracking(before)) return { accountKey: before.accountKey, plan: "unsupported" };
   if (before.needsAttention) {
     throw new Error("ChatGPT reports a subscription payment problem. Check your plan in ChatGPT settings before enabling Limits.");
   }
@@ -127,7 +127,7 @@ export async function detectChatGptLimitsPlan(page: Page): Promise<{ accountKey:
     const plan = chatGptLimitsPlanFromHeadings(headings);
     const after = await readChatGptUsageAccount(page);
     if (after.accountKey !== before.accountKey || after.planType !== before.planType
-      || !isPersonalChatGptProAccount(after) || after.needsAttention) {
+      || !supportsChatGptUsageTracking(after) || after.needsAttention) {
       throw new Error("The ChatGPT account or subscription changed during Limits setup. Retry the check.");
     }
     return { accountKey: after.accountKey, plan };

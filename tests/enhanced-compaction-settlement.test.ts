@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { runEnhancedCompaction } from "../src/adapters/chatgpt-web/enhanced-compaction";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
-import { cancelAllStructuredCompactions, canonicalizeCompactionHandoff } from "../src/adapters/chatgpt-web/compaction-handoff";
+import { beginCancelStructuredCompactionTrace, cancelAllStructuredCompactions, canonicalizeCompactionHandoff, runStructuredCompactionOnce } from "../src/adapters/chatgpt-web/compaction-handoff";
 import { requestRetainedCompactionHandoff } from "../src/adapters/chatgpt-web/retained-compaction-handoff";
 import { deferred } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptConversationKey, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
@@ -317,6 +317,43 @@ test("enhanced compact preserves structured account-safety failures from retaine
     expect(failure).toBe(safetyError);
     expect(failure).toMatchObject({ status: 403, code: "chatgpt_account_safety_stop", retryable: false });
   } finally { await f.cleanup(); }
+});
+
+test("retained deadline returns failure while admission and cancellation still await physical cleanup", async () => {
+  const f = fixture();
+  await f.source.browserOutcome;
+  f.release.resolve();
+  const physical = deferred<string>();
+  let traceId = "";
+  const broker = {
+    beginCompactionTransaction: async () => ({ token: "control", handoffId: "handoff" }),
+    waitForCompactionHandoff: async () => "Already submitted checkpoint.",
+    abortCompactionTransaction() {},
+  } as unknown as TurnBroker;
+  const run = runEnhancedCompaction({ ...f.options, broker, timeoutMs: 25,
+    worker: { run: turn => { traceId = turn.traceId; return physical.promise; } },
+  }).then(() => new Error("Unexpected success"), error => error);
+  let next: Promise<string> | undefined;
+  let cancelled: Promise<void> | undefined;
+  try {
+    const failure = await Promise.race([run, Bun.sleep(250).then(() => new Error("Deadline did not return"))]);
+    expect(failure.message).toMatch(/(?:timed out|did not fully settle)/);
+    let started = false;
+    next = runStructuredCompactionOnce(`${f.key}:next`, { ownerKey: f.key, traceIds: [] }, async () => {
+      started = true; return "next checkpoint";
+    });
+    const cancellation = beginCancelStructuredCompactionTrace(traceId, new Error("operator cleanup"));
+    expect(cancellation.cancelled).toBe(1);
+    let acknowledged = false;
+    cancelled = cancellation.settlement.then(() => { acknowledged = true; });
+    await Bun.sleep(0);
+    expect(started).toBeFalse();
+    expect(acknowledged).toBeFalse();
+    physical.resolve("cleaned");
+    await cancelled;
+    await expect(next).resolves.toBe("next checkpoint");
+    expect(started).toBeTrue();
+  } finally { physical.resolve("cleanup"); await run; await cancelled; await next; await f.cleanup(); }
 });
 
 test("retained handoff cancellation waits for the handoff worker to settle", async () => {
