@@ -1,5 +1,6 @@
 import type { Locator, Page } from "playwright-core";
-import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
+import { familyOption, selectChatGptModelFamily } from "./adapters/chatgpt-web/model-selection";
+import type { ChatGptWebModelCapabilities, ChatGptWebAdapterEffort, ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
 
 export const CHATGPT_TEMPORARY_CHAT_URL = "https://chatgpt.com/?temporary-chat=true";
 export const CHATGPT_SAVED_CHAT_URL = "https://chatgpt.com/";
@@ -373,7 +374,8 @@ export async function detectChatGptAccountCapabilities(
       // ChatGPT can mount a usable composer before the account's model list arrives.
       // A short absence is not a capability result; use the complete inspection budget.
       if (absenceSince !== undefined && Date.now() - absenceSince >= stableAbsenceMs) {
-        return { solAvailable: false, extraHighAvailable: false, proAvailable: false };
+        return { solAvailable: false, extraHighAvailable: false, proAvailable: false,
+          modelCapabilities: { observedAt: Date.now(), families: {} } };
       }
       throw new Error("ChatGPT account capability probe did not reach a stable composer state");
     }
@@ -399,8 +401,66 @@ export async function detectChatGptAccountCapabilities(
         await page.keyboard.press("Escape").catch(() => {});
       }
     }
-    const { available } = await readChatGptEffortSnapshot(sliderContainer);
-    return { solAvailable: true, extraHighAvailable: available[3] === true, proAvailable: available[4] === true };
+    const initial = await readChatGptEffortSnapshot(sliderContainer);
+    let current: ChatGptEffortActivation = { method: "already-open", menu, sliderContainer, slider };
+    const families = ["5.6", "6"] as const;
+    const present: (typeof families[number])[] = [];
+    let original: typeof families[number] | undefined;
+    for (const family of families) {
+      const option = familyOption(current, family);
+      const count = await option.count();
+      if (count > 1) throw new Error("ChatGPT model capability probe found ambiguous family radios");
+      if (count === 1) {
+        present.push(family);
+        if (await option.getAttribute("aria-checked") === "true") original = family;
+      }
+    }
+    // Older selector variants have no family radios. Keep their existing account-only contract.
+    if (present.length === 0) {
+      return { solAvailable: true, extraHighAvailable: initial.available[3] === true, proAvailable: initial.available[4] === true };
+    }
+    if (!original) throw new Error("ChatGPT model capability probe could not verify the selected family");
+    const modelCapabilities: ChatGptWebModelCapabilities = { observedAt: Date.now(), families: {} };
+    const effortOrder: ChatGptWebAdapterEffort[] = ["low", "medium", "high", "xhigh", "max"];
+    const reopen = () => activateChatGptEffortMenu(page, effortButton);
+    try {
+      for (const family of present) {
+        // Family changes can replace the menu node; reacquire the composer-owned menu.
+        current = await reopen();
+        current = await selectChatGptModelFamily(page, current, family, reopen);
+        const snapshot = await readChatGptEffortSnapshot(current.sliderContainer);
+        modelCapabilities.families[family] = effortOrder.filter((_, index) => snapshot.available[index] === true);
+      }
+    } finally {
+      // Inspection must not change the user's next model or effort, even after a probe failure.
+      current = await reopen();
+      current = await selectChatGptModelFamily(page, current, original, reopen);
+      const target = initial.value - initial.min;
+      for (let step = 0; step <= CHATGPT_EFFORT_SLIDER_MAX_OPTIONS; step++) {
+        const state = await readChatGptEffortSnapshot(current.sliderContainer);
+        const index = state.value - state.min;
+        if (index === target) break;
+        if (step === CHATGPT_EFFORT_SLIDER_MAX_OPTIONS || !state.available[target]) {
+          throw new Error("ChatGPT capability probe could not restore the original effort");
+        }
+        const owner = current.slider.locator("xpath=ancestor::*[@role='menuitem'][1]");
+        await (await owner.count() === 1 ? owner : current.slider).press(index < target ? "ArrowRight" : "ArrowLeft");
+        const deadline = Date.now() + 5_000;
+        let changed = state;
+        do {
+          changed = await readChatGptEffortSnapshot(current.sliderContainer);
+          if (changed.value !== state.value) break;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } while (Date.now() < deadline);
+        if (changed.min !== state.min
+          || !chatGptEffortSliderAdvancedTowardTarget(state.value, changed.value, state.min + target)) {
+          throw new Error("ChatGPT capability probe could not verify effort restoration");
+        }
+      }
+    }
+    const observed = Object.values(modelCapabilities.families).flat();
+    return { solAvailable: true, extraHighAvailable: observed.includes("xhigh"),
+      proAvailable: observed.includes("max"), modelCapabilities };
   } finally {
     await page.keyboard.press("Escape").catch(() => {});
   }

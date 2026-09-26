@@ -264,7 +264,32 @@ export interface ChatGptWebZeroRiskModelRoute extends ChatGptWebModelRouteBase {
 
 export type ChatGptWebModelRoute = ChatGptWebAutomaticModelRoute | ChatGptWebZeroRiskModelRoute;
 
+export interface ChatGptWebModelCapabilities {
+  observedAt: number;
+  families: Partial<Record<ChatGptWebModelFamily, readonly ChatGptWebAdapterEffort[]>>;
+}
+
+/** Validate persisted/browser evidence at the boundary, just like the account flags. */
+export function parseChatGptWebModelCapabilities(value: unknown): ChatGptWebModelCapabilities | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid ChatGPT model capabilities");
+  const candidate = value as ChatGptWebModelCapabilities;
+  if (!Number.isFinite(candidate.observedAt) || candidate.observedAt <= 0
+    || !candidate.families || typeof candidate.families !== "object" || Array.isArray(candidate.families)) {
+    throw new Error("Invalid ChatGPT model capabilities");
+  }
+  const efforts = ["low", "medium", "high", "xhigh", "max"];
+  for (const [family, values] of Object.entries(candidate.families)) {
+    if (!["5.6", "6"].includes(family) || !Array.isArray(values)
+      || values.some(value => !efforts.includes(value)) || new Set(values).size !== values.length) {
+      throw new Error("Invalid ChatGPT model effort capabilities");
+    }
+  }
+  return candidate;
+}
+
 export interface ChatGptWebAccountCapabilities {
+  modelCapabilities?: ChatGptWebModelCapabilities;
   solAvailable: boolean;
   /** Missing in older saved observations; setup must probe before exposing Extra High. */
   extraHighAvailable?: boolean;
@@ -402,6 +427,33 @@ export const CHATGPT_WEB_LEGACY_MODEL_ROUTES: readonly ChatGptWebAutomaticModelR
 ];
 
 /** Group only efforts with identical context and compaction budgets. */
+export const CHATGPT_WEB_LATEST_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] = [
+  {
+    slug: "chatgpt-web/latest-instant",
+    displayName: "Latest Instant (Web)",
+    description: "ChatGPT Latest Instant, with its own context and compaction budget.",
+    interactionMode: "automatic",
+    backendModel: CHATGPT_WEB_BACKEND_MODEL,
+    modelFamily: "6",
+    codexEffort: "low",
+    adapterEffort: "low",
+    supportedCodexEfforts: ["low"],
+    requiresPro: false,
+  },
+  {
+    slug: "chatgpt-web/latest",
+    displayName: "Latest (Web)",
+    description: "ChatGPT Latest with the reasoning levels available for this model.",
+    interactionMode: "automatic",
+    backendModel: CHATGPT_WEB_BACKEND_MODEL,
+    modelFamily: "6",
+    codexEffort: "high",
+    adapterEffort: "high",
+    supportedCodexEfforts: ["medium", "high", "xhigh"],
+    requiresPro: false,
+  },
+];
+
 export const CHATGPT_WEB_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] = [
   {
     slug: "chatgpt-web/gpt-5.6-sol-instant",
@@ -459,6 +511,7 @@ const routesBySlug = new Map(
     CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE,
     ...CHATGPT_WEB_LUNA_MODEL_ROUTES,
     ...CHATGPT_WEB_MODEL_ROUTES,
+    ...CHATGPT_WEB_LATEST_MODEL_ROUTES,
     CHATGPT_WEB_LEGACY_LUNA_MODEL_ROUTE,
     CHATGPT_WEB_LUNA_THINK_MODEL_ROUTE,
     ...CHATGPT_WEB_LEGACY_MODEL_ROUTES,
@@ -485,20 +538,28 @@ export function availableChatGptWebModelRoutes(
   if (!capabilities.solAvailable) return includeLegacy
     ? [...CHATGPT_WEB_LUNA_MODEL_ROUTES, CHATGPT_WEB_LEGACY_LUNA_MODEL_ROUTE, CHATGPT_WEB_LUNA_THINK_MODEL_ROUTE]
     : CHATGPT_WEB_LUNA_MODEL_ROUTES;
-  const candidates = includeLegacy
-    ? [...CHATGPT_WEB_MODEL_ROUTES, ...CHATGPT_WEB_LEGACY_MODEL_ROUTES]
-    : CHATGPT_WEB_MODEL_ROUTES;
-  return candidates.filter(route =>
-    (!route.requiresPro || capabilities.proAvailable)
-    && (!route.requiresExtraHigh || capabilities.extraHighAvailable));
+  const current = capabilities.modelCapabilities
+    ? [...CHATGPT_WEB_MODEL_ROUTES, ...CHATGPT_WEB_LATEST_MODEL_ROUTES] : CHATGPT_WEB_MODEL_ROUTES;
+  const candidates = includeLegacy ? [...current, ...CHATGPT_WEB_LEGACY_MODEL_ROUTES] : current;
+  return candidates.filter(route => {
+    const observed = route.modelFamily && capabilities.modelCapabilities?.families[route.modelFamily];
+    if (route.modelFamily && capabilities.modelCapabilities) return Boolean(observed?.includes(route.adapterEffort));
+    // New Latest routes need explicit evidence; preserve the older saved catalog as a fallback.
+    if (route.slug.startsWith("chatgpt-web/latest")) return false;
+    return (!route.requiresPro || capabilities.proAvailable)
+      && (!route.requiresExtraHigh || capabilities.extraHighAvailable);
+  });
 }
 
 export function chatGptWebRouteEfforts(
   route: ChatGptWebModelRoute,
   capabilities: ChatGptWebAccountCapabilities,
 ): readonly ChatGptWebCodexEffort[] {
+  const observed = route.interactionMode === "automatic" && route.modelFamily && capabilities.modelCapabilities
+    ? capabilities.modelCapabilities.families[route.modelFamily] ?? [] : undefined;
   return (route.supportedCodexEfforts ?? [route.codexEffort])
-    .filter(effort => effort !== "xhigh" || capabilities.extraHighAvailable === true);
+    .filter(effort => observed ? observed.includes(effort as ChatGptWebAdapterEffort)
+      : effort !== "xhigh" || capabilities.extraHighAvailable === true);
 }
 
 export function requireChatGptWebModelRoute(
@@ -532,8 +593,10 @@ export function requireChatGptWebModelRoute(
   if (!capabilities.solAvailable) {
     throw new Error(`${route.displayName} is not available for this Luna-only account`);
   }
-  if ((route.requiresPro && !capabilities.proAvailable)
-    || (route.requiresExtraHigh && !capabilities.extraHighAvailable)) {
+  if (route.modelFamily && capabilities.modelCapabilities
+    ? !capabilities.modelCapabilities.families[route.modelFamily]?.includes(route.adapterEffort)
+    : (route.requiresPro && !capabilities.proAvailable)
+      || (route.requiresExtraHigh && !capabilities.extraHighAvailable)) {
     throw new Error(`${route.displayName} is not available for this account`);
   }
   return resolveRouteEffort(route, capabilities, reasoning);
