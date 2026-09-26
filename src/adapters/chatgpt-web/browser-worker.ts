@@ -126,7 +126,7 @@ import {
   CHATGPT_USER_TURN_SELECTOR,
   chatGptEffortSliderAdvancedTowardTarget,
   detectChatGptAccountCapabilities,
-  isTemporaryChatGptUrl,
+  isTemporaryChatGptTurnUrl,
   readChatGptEffortSnapshot,
 } from "../../chatgpt-session";
 import { loginVerificationMarkerPath } from "../../browser-login";
@@ -4280,7 +4280,7 @@ export class ChatGptBrowserWorker {
             },
             observe: async () => {
               if (page.isClosed()) throw chatGptBrowserTabClosedError();
-              if (!isTemporaryChatGptUrl(page.url())) {
+              if (!isTemporaryChatGptTurnUrl(page.url())) {
                 throw chatGptWebSurfaceError("ChatGPT left the isolated Temporary Chat surface while the tunneled turn was active", false);
               }
               await throwIfChatGptSessionFailureAlert(page);
@@ -4430,7 +4430,7 @@ export class ChatGptBrowserWorker {
         if (deadline !== undefined && Date.now() >= deadline) {
           throw new Error("ChatGPT web turn timed out");
         }
-        if (!isTemporaryChatGptUrl(page.url())) {
+        if (!isTemporaryChatGptTurnUrl(page.url())) {
           throw chatGptWebSurfaceError(
             `ChatGPT left the isolated Temporary Chat surface while the turn was active (${page.url()})`,
             answerBuffer.deliveredChars() > 0,

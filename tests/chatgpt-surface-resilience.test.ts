@@ -10,6 +10,7 @@ import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import {
   CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR,
   ensureChatGptTemporaryChatPersonalized,
+  isTemporaryChatGptTurnUrl,
   isTemporaryChatGptUrl,
 } from "../src/chatgpt-session";
 
@@ -215,6 +216,20 @@ describe("ChatGPT Web surface resilience", () => {
     expect(isTemporaryChatGptUrl("https://chatgpt.com/?temporary-chat=true&model=gpt-5")).toBe(true);
     expect(isTemporaryChatGptUrl("https://chatgpt.com/c/changed")).toBe(false);
     expect(isTemporaryChatGptUrl("not a URL")).toBe(false);
+  });
+
+  test("keeps observing a submitted Temporary Chat on its conversation route", () => {
+    const submitted = "https://chatgpt.com/c/12345678-abcd?temporary-chat=true";
+    expect(isTemporaryChatGptUrl(submitted)).toBe(false);
+    expect(isTemporaryChatGptTurnUrl(submitted)).toBe(true);
+    expect(isTemporaryChatGptTurnUrl("https://chatgpt.com/c/local-chatgpt%3A12345678?temporary-chat=true")).toBe(true);
+    expect(isTemporaryChatGptTurnUrl("https://chatgpt.com/?temporary-chat=true")).toBe(true);
+    expect(isTemporaryChatGptTurnUrl("https://chatgpt.com/c/12345678-abcd")).toBe(false);
+    expect(isTemporaryChatGptTurnUrl("https://chatgpt.com/c/12345678-abcd?temporary-chat=false")).toBe(false);
+    expect(isTemporaryChatGptTurnUrl("https://chatgpt.com/g/gpt?temporary-chat=true")).toBe(false);
+    expect(isTemporaryChatGptTurnUrl("https://example.com/c/12345678-abcd?temporary-chat=true")).toBe(false);
+    expect(isTemporaryChatGptTurnUrl("https://chatgpt.com/c/123/extra?temporary-chat=true")).toBe(false);
+    expect(isTemporaryChatGptTurnUrl("not a URL")).toBe(false);
   });
 
   test("discovers localized Temporary Chat personalization controls structurally", () => {

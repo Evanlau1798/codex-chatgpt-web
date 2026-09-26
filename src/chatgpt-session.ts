@@ -68,6 +68,19 @@ export function isTemporaryChatGptUrl(value: string): boolean {
   }
 }
 
+/** Submitted Temporary Chats may acquire a conversation URL while retaining their mode flag. */
+export function isTemporaryChatGptTurnUrl(value: string): boolean {
+  if (isTemporaryChatGptUrl(value)) return true;
+  try {
+    const url = new URL(value);
+    return url.origin === new URL(CHATGPT_TEMPORARY_CHAT_URL).origin
+      && /^\/c\/[^/]+$/.test(url.pathname)
+      && url.searchParams.get("temporary-chat") === "true";
+  } catch {
+    return false;
+  }
+}
+
 /** The new renderer groups both roles under the user's stable turn key. */
 export function chatGptAssistantTurnSelector(identity: string): string {
   const prefix = "group:assistant:";
