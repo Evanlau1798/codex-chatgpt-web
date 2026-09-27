@@ -1,9 +1,9 @@
-import { extractChatGptCompactionSourceRevision, extractChatGptTurnIdentity } from "../adapters/chatgpt-web/environment";
+import { chatGptTurnUserRevisionHistory, extractChatGptCompactionSourceRevision, extractChatGptTurnIdentity } from "../adapters/chatgpt-web/environment";
 import { rememberCompactionContinuation } from "../adapters/chatgpt-web/compaction-continuation";
 import type { CodexParsedRequest } from "../types";
-import { decodeCompactionSummary } from "./compaction";
+import { decodeCompactionSummary, extractCompactUserMessages } from "./compaction";
 
-/** Record only representations actually returned after the route's validation succeeds. */
+/** Bind the accepted checkpoint to its source and the native retained-user representation. */
 export function rememberCompletedCompaction(
   parsed: CodexParsedRequest,
   response: Record<string, unknown>,
@@ -27,5 +27,15 @@ export function rememberCompletedCompaction(
   const sources = replacement ? [source, extractChatGptCompactionSourceRevision({
     ...parsed, _rawBody: { ...(parsed._rawBody as object), input: replacement },
   })] : [source];
+  if (!replacement && compactionItem) {
+    // Native v2 retains user messages but drops synthetic delegated tool outputs. Match the
+    // exact retained instruction from the validated input, as the v1 replacement does above.
+    // Never infer an instruction from the summary or relax turn/model/effort/source matching.
+    const body = parsed._rawBody as { input?: unknown } | undefined;
+    const retained = chatGptTurnUserRevisionHistory({
+      ...parsed, _rawBody: { ...body, input: extractCompactUserMessages(body?.input) },
+    }).at(-1);
+    if (retained) sources.push(retained);
+  }
   rememberCompactionContinuation(parsed, identity, sources, summary);
 }

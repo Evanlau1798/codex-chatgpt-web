@@ -9,6 +9,49 @@ import { extractChatGptTurnIdentity, extractChatGptTurnUserRevision } from "../s
 const model = "chatgpt-web/high";
 const summary = "The repository was inspected. Continue by implementing the bounded Web context contract.";
 
+test("v2 compaction authorizes the retained human instruction when native Codex drops a delegated tool output", async () => {
+  const config = defaultConfig("full");
+  const metadata = { thread_id: "thread_delegated_v2_checkpoint", turn_id: "turn_delegated_v2_checkpoint" };
+  const human = { type: "message", role: "user", id: "msg_original_human",
+    content: [{ type: "input_text", text: "Finish the administrator and user checks." }],
+    internal_chat_message_metadata_passthrough: { turn_id: "turn_original_human" } };
+  const delegation = { type: "function_call_output", id: "fco_delegated_resume", name: "send_message_to_thread", namespace: "codex_app",
+    output: "<codex_delegation><source_thread_id>coordinator</source_thread_id><input>Resume using the saved evidence.</input></codex_delegation>",
+    internal_chat_message_metadata_passthrough: { turn_id: metadata.turn_id } };
+  const original = { model, stream: false, input: [human, delegation], client_metadata: {
+    "x-codex-turn-metadata": JSON.stringify(metadata),
+  } };
+  const request = (body: unknown) => new Request("http://localhost/v1/responses", { method: "POST", body: JSON.stringify(body) });
+  const compact = await responseRequest(request({ ...original, input: [...original.input, { type: "compaction_trigger" }] }),
+    config, compactionAdapterFactory());
+  expect(compact.status).toBe(200);
+  const checkpoint = await compact.json() as { output: unknown[] };
+  // The native v2 replacement retains real user messages, but removes synthetic tool outputs.
+  const continuation = { ...original, input: [human, ...checkpoint.output] };
+  let starts = 0;
+  const send = (body: unknown) => responseRequest(request(body), config, () => ({
+    name: "delegated-v2-continuation", async runTurn(parsed, _incoming, emit) {
+      starts++;
+      expect(extractChatGptTurnUserRevision(parsed)).toEqual(human.content);
+      emit({ type: "text_delta", text: "Continued from the accepted checkpoint", phase: "final_answer" });
+      emit({ type: "done", stopReason: "stop", endTurn: true });
+    },
+  }));
+  const resumed = await send(continuation);
+  expect(resumed.status).toBe(200);
+  expect(await resumed.json()).toMatchObject({ status: "completed" });
+  for (const changed of [
+    { ...continuation, input: [{ ...human, content: "Different task" }, ...checkpoint.output] },
+    { ...continuation, input: [{ ...human, internal_chat_message_metadata_passthrough: { turn_id: "another_source" } }, ...checkpoint.output] },
+    { ...continuation, input: [human, { type: "compaction", encrypted_content: encodeCompactionSummary("Unrecognized checkpoint") }] },
+    { ...continuation, client_metadata: { "x-codex-turn-metadata": JSON.stringify({ ...metadata, thread_id: "another_thread" }) } },
+    { ...continuation, client_metadata: { "x-codex-turn-metadata": JSON.stringify({ ...metadata, turn_id: "another_turn" }) } },
+    { ...continuation, model: "chatgpt-web/medium" },
+    { ...continuation, input: [...continuation.input, { ...human, id: "msg_abort", content: "<turn_aborted>The user interrupted this turn.</turn_aborted>" }] },
+  ]) expect((await send(changed)).status).toBe(400);
+  expect(starts).toBe(1);
+});
+
 function compactionAdapterFactory(
   seenProviders: CodexProviderConfig[] = [],
   emittedSummary = summary,
