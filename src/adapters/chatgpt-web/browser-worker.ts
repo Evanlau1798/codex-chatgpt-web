@@ -39,11 +39,10 @@ import {
   type ChatGptWebModelMode,
 } from "./model";
 import {
-  ChatGptNativeToolActivityTracker,
-  classifyChatGptNativeToolActivity,
   formatChatGptNativeToolActivityTelemetry,
   type ChatGptNativeToolCandidate,
 } from "./native-tool-activity";
+import { ChatGptResponseProgressTracker } from "./response-progress";
 import {
   CHATGPT_LUNA_BROWSER_INPUT_TOKEN_BUDGET,
   compiledChatGptWebMaxMessageChars,
@@ -4237,6 +4236,13 @@ export class ChatGptBrowserWorker {
         );
         await diagnostics.capture(page, "send-accepted");
 
+        const responseProgress = new ChatGptResponseProgressTracker();
+        const observeResponseProgress = (snapshot: ChatGptResponseDomSnapshot, running: boolean): void => {
+          const { progressed, nativeEvents } = responseProgress.observe(snapshot, running);
+          for (const event of nativeEvents) console.info(formatChatGptNativeToolActivityTelemetry(turn.traceId, event));
+          if (progressed) turn.onProgress?.();
+        };
+
         // Both output paths must reach the shared answer-retry handling below.
         responseObservation: {
         if (turn.tunneledOutput) {
@@ -4370,16 +4376,22 @@ export class ChatGptBrowserWorker {
               }
               const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible().catch(() => false);
               const progress = turn.externalProgress?.snapshot();
-              if (turn.externalProgress && progress
-                && progress.lastToolBatchRevision > initialToolBatchRevision
-                && completionTracker.needsToolBatchObservation(progress.lastToolBatchRevision)) {
-                const binding = responsePresent ? bindChatGptAssistantTurn(initialResponseTurn, current) : undefined;
+              const needsToolBoundary = !!progress && progress.lastToolBatchRevision > initialToolBatchRevision
+                && completionTracker.needsToolBatchObservation(progress.lastToolBatchRevision);
+              // The tunnel owns text delivery, but visible progress in this bound response
+              // must renew the same stall budget as the ordinary DOM output path.
+              // A stopped explicit native final still needs no rich DOM traversal.
+              const binding = responsePresent && (running || needsToolBoundary)
+                ? bindChatGptAssistantTurn(initialResponseTurn, current) : undefined;
+              const snapshot = binding
+                ? await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running)
+                : absentResponseDomSnapshot();
+              observeResponseProgress(snapshot, running);
+              if (turn.externalProgress && progress && needsToolBoundary) {
                 if (!responsePresent || binding) {
                   // A tool may arrive before the new assistant turn is projected. An incomplete
                   // pre-tool projection cannot prove that later text was produced after the tool.
-                  const baseline = binding
-                    ? await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running)
-                    : undefined;
+                  const baseline = binding ? snapshot : undefined;
                   turn.abortSignal?.throwIfAborted();
                   completionTracker.observeToolBatch(progress.lastToolBatchRevision,
                     settledPreToolAnswerText(baseline, running));
@@ -4433,9 +4445,6 @@ export class ChatGptBrowserWorker {
         const visibleTrace = new ChatGptVisibleTraceTracker();
         const markdownOwnership = new ChatGptMarkdownOwnershipTracker();
         const markdownBuffer = new ChatGptMarkdownBuffer(undefined, undefined, turn.outputFormat);
-        let progressChars = 0;
-        let progressToolEpoch = -1;
-        const progressStatuses = new Set<string>();
         const checkpointStream = turn.captureLunaCheckpoint
           ? new ChatGptLunaCheckpointStream()
           : undefined;
@@ -4459,7 +4468,6 @@ export class ChatGptBrowserWorker {
           });
         };
         const domHealthTracker = new ChatGptTurnDomHealthTracker();
-        const nativeToolActivityTracker = new ChatGptNativeToolActivityTracker();
         let completionFenceRevision: number | undefined;
         const responseObservationRecovery = new ChatGptObservationRecoveryEpisode(
           () => deadline === undefined ? Infinity : deadline - Date.now(),
@@ -4643,42 +4651,13 @@ export class ChatGptBrowserWorker {
           );
           continue;
         }
-        for (const event of nativeToolActivityTracker.update(
-          classifyChatGptNativeToolActivity(snapshot.nativeToolCandidates),
-          running,
-        )) {
-          console.info(formatChatGptNativeToolActivityTelemetry(turn.traceId, event));
-          if (event.state === "active") turn.onProgress?.();
-        }
+        observeResponseProgress(snapshot, running);
         await throwIfChatGptTerminalErrorAlert(
           responseTurn,
           snapshot.completionActionVisible && snapshot.visibleText.length > 0,
         );
         if (running) sawRunning = true;
         if (snapshot.responsePresent) {
-          const currentProgressChars = snapshot.markdownRoots.reduce(
-            (total, root) => total + root.text.length,
-            0,
-          ) + snapshot.traceBlocks
-            .filter(block => block.kind === "commentary")
-            .reduce((total, block) => total + block.text.length, 0);
-          const currentToolEpoch = snapshot.markdownRoots.reduce(
-            (latest, root) => Math.max(latest, root.toolEpoch),
-            -1,
-          );
-          const newStatus = snapshot.traceBlocks
-            .filter(block => block.kind === "status")
-            .map(block => `${block.key ?? ""}:${block.text}`)
-            .find(status => !progressStatuses.has(status));
-          if (currentProgressChars > progressChars || currentToolEpoch > progressToolEpoch || newStatus) {
-            progressChars = Math.max(progressChars, currentProgressChars);
-            progressToolEpoch = Math.max(progressToolEpoch, currentToolEpoch);
-            if (newStatus) {
-              progressStatuses.add(newStatus);
-              if (progressStatuses.size > 512) progressStatuses.delete(progressStatuses.values().next().value!);
-            }
-            turn.onProgress?.();
-          }
           if (!capturedResponse) {
             capturedResponse = true;
             latency.responseVisible();

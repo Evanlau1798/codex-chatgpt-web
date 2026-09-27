@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
-import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
+import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_STOP_BUTTON_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
 import type { BrokerTurnOutputEvent } from "../src/adapters/chatgpt-web/turn-broker-protocol";
 import { activeCompactionToolResultInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
 import { submitTurnOutput, waitForTurnOutput, sealTurnOutput, resetTurnOutput } from "../src/adapters/chatgpt-web/turn-broker-output";
@@ -29,6 +29,7 @@ async function runFixture(options: {
   untunneled?: boolean;
   conversationRoute?: string;
   initialRoute?: string;
+  progressScenario?: "status" | "native-tool" | "static" | "foreign";
 } = {}) {
   const diagnostics = mkdtempSync(join(tmpdir(), "boole-browser-"));
   const progress = new ChatGptExternalTurnProgress();
@@ -43,6 +44,9 @@ async function runFixture(options: {
   let now = Date.now();
   const clock = spyOn(Date, "now").mockImplementation(() => now);
   let submitted = 0;
+  let progressObservations = 0;
+  const progressTimes: number[] = [];
+  let progressStartedAt = now;
   let composerText = options.composerBusy ? "User draft" : "";
   let finalSequence = 1;
   let text = options.unsettledBaseline ? "Review in" : OLD;
@@ -94,6 +98,7 @@ async function runFixture(options: {
     ...hidden, nth: () => response, page: () => page,
     evaluateAll: async () => {
       now += options.recentToolProgress ? 500 : options.emptyStopped ? 15_000 : 61_000; // Advance observation time, never sleep to guess tool completion.
+      if (options.progressScenario && submitted && ++progressObservations === 9) submitTurnOutput(channel, "final", FINAL);
       if (pendingResult) {
         expect(actions).not.toContain("output-seal");
         expect(deltas).toEqual([]);
@@ -102,7 +107,7 @@ async function runFixture(options: {
         text = FINAL;
         pendingResult = false;
       }
-      const projected = (options.missingAssistantTurn && !actions.includes("tool-dispatched"))
+      const projected = options.progressScenario === "foreign" || (options.missingAssistantTurn && !actions.includes("tool-dispatched"))
         || options.finalAfterToolWithoutAssistantTurn ? 0 : submitted;
       const identities = ["historical", ...Array.from({ length: projected }, (_, index) => `current${index || ""}`)];
       return { count: identities.length, lastId: identities.at(-1), identities };
@@ -112,6 +117,9 @@ async function runFixture(options: {
     isClosed: () => false, url: () => submitted && options.conversationRoute || options.initialRoute || CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
     locator: (selector: string) => {
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
+      if (selector === CHATGPT_STOP_BUTTON_SELECTOR && options.progressScenario) return {
+        ...hidden, isVisible: async () => submitted > 0 && progressObservations < 9,
+      };
       if (selector === "[data-turn-id-container], [data-turn-key]") return {
         evaluateAll: async () => ["historical", ...Array.from({ length: submitted }, (_, index) => `current${index || ""}`)],
       };
@@ -174,7 +182,11 @@ async function runFixture(options: {
       return {
         responsePresent: !(options.missingBaseline && progress.snapshot().activeToolCalls),
         visibleText: text, fullHtml: text, plainTextFallback: text,
-        markdownSegments: [], markdownRoots: [], traceBlocks: [], nativeToolCandidates: [],
+        markdownSegments: [], markdownRoots: [],
+        traceBlocks: options.progressScenario ? [{ kind: "status", key: "thinking",
+          text: options.progressScenario === "status" ? `Étape de réflexion ${progressObservations}` : "Réflexion" }] : [],
+        nativeToolCandidates: options.progressScenario === "native-tool" ? [{ kind: "native_tool",
+          withinStreamingStatus: true, ancestorsVisible: true, ariaBusy: true, runningFiniteAnimation: false }] : [],
         completionActionVisible: !options.emptyStopped, globalCompletionActionVisible: !options.emptyStopped,
         stoppedThinkingVisible: options.stoppedThinking === true,
         projection: { rootId: "current-final", boundaryProtocolPresent: false,
@@ -196,9 +208,11 @@ async function runFixture(options: {
       release: () => { actions.push("release"); } }),
     onSubmitted: () => {
       actions.push("submitted");
+      progressStartedAt = now;
       if (options.untunneled) batch = progress.recordToolBatch(1);
     }, onTextDelta: delta => { deltas.push(delta); },
     onCommentary: text => { commentary.push(text); },
+    onProgress: () => { progressTimes.push(now); },
     retryPromptForError: async (error, attempt) => {
       const session = {
         runtime: { text: { value: () => "" } }, outstanding: () => [],
@@ -216,6 +230,7 @@ async function runFixture(options: {
     },
     tunneledOutput: options.untunneled ? undefined : {
       next: (after, signal) => {
+        if (options.progressScenario) return waitForTurnOutput(channel, after, signal);
         if (options.emptyStopped) {
           if (!batch) batch = progress.recordToolBatch(1);
           return waitForTurnOutput(channel, after, signal);
@@ -267,7 +282,27 @@ async function runFixture(options: {
     expect(actions.filter(a => a === "send")).toHaveLength(options.tunneledRetry ? 2 : 1);
     expect(actions.filter(a => a === "submitted")).toHaveLength(options.tunneledRetry ? 2 : 1);
   }
-  return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText, fallbackAgeMs, selections };
+  return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText, fallbackAgeMs, selections,
+    progressTimes, progressStartedAt };
+}
+
+for (const scenario of ["status", "native-tool", "static", "foreign"] as const) {
+  test(`tunneled progress observes ${scenario} without treating the stop button as progress`, async () => {
+    const result = await runFixture({ progressScenario: scenario });
+    expect(result.error).toBeUndefined();
+    expect(result.answer).toBe(FINAL);
+    expect(result.deltas).toEqual([FINAL]);
+    expect(result.commentary).toEqual([]);
+    const times = [result.progressStartedAt, ...result.progressTimes];
+    const longestSilence = Math.max(...times.slice(1).map((time, index) => time - times[index]!));
+    if (scenario === "status" || scenario === "native-tool") {
+      expect(result.progressTimes.length).toBeGreaterThan(2);
+      expect(longestSilence).toBeLessThan(300_000);
+    } else {
+      expect(longestSilence).toBeGreaterThan(300_000);
+      expect(result.progressTimes.length).toBeLessThanOrEqual(2);
+    }
+  });
 }
 
 test("a stopped empty Web response continues once before sealing the native output channel", async () => {
