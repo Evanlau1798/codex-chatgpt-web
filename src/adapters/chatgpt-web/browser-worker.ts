@@ -1515,8 +1515,7 @@ export class ChatGptBrowserWorker {
       throw chatGptModelControlUnavailableAdapterError("ChatGPT changed its effort range or selection before the menu closed");
     }
     await captureDiagnostic?.("effort-selected");
-    await page.keyboard.press("Escape");
-    await settleChatGptUi();
+    await this.closeEffortMenu(page, composer, currentEffort, selectionUrl);
     // While open, the trigger reads "Thinking effort", not the selected value. Read its
     // closed label and reopen the menu once to prove the selection survived the commit.
     const selectedMode: SelectedChatGptWebModelMode = {
@@ -1538,11 +1537,31 @@ export class ChatGptBrowserWorker {
       selectedMode.usageModel = await readChatGptUsageModel(confirmation.slider, mode.effort === "max")
         .catch(() => mode.effort === "max" ? "pro-unknown" as const : "other" as const);
     }
-    await page.keyboard.press("Escape");
-    await settleChatGptUi();
+    await this.closeEffortMenu(page, composer, currentEffort, selectionUrl);
     await this.assertSelectedEffort(page, selectedMode, false);
     await captureDiagnostic?.("effort-selection-confirmed");
     return selectedMode;
+  }
+
+  private async closeEffortMenu(page: Page, composer: Locator, control: Locator, selectionUrl: string): Promise<void> {
+    await page.keyboard.press("Escape");
+    // Closing the picker commits its label and restores the composer asynchronously.
+    // Keep the existing settle floor, then wait for readiness on the same surface;
+    // the caller still verifies the exact effort and family after this transition.
+    const deadline = Date.now() + 3_000;
+    await settleChatGptUi();
+    do {
+      if (page.url() !== selectionUrl || await control.count() !== 1) {
+        throw chatGptModelControlUnavailableAdapterError("ChatGPT changed the browser surface while closing its effort menu");
+      }
+      if (await control.getAttribute("aria-expanded") === "false"
+        && await composer.isEditable({ timeout: Math.max(1, deadline - Date.now()) }).catch(() => false)) return;
+      if (Date.now() >= deadline) break;
+      await new Promise(resolveSleep => setTimeout(resolveSleep, 50));
+    } while (true);
+    await throwIfChatGptRateLimitDialog(page);
+    await throwIfChatGptSessionFailureAlert(page);
+    throw chatGptModelControlUnavailableAdapterError("ChatGPT effort menu did not close into an editable composer before the readiness deadline");
   }
 
   private async assertSelectedEffort(page: Page, mode: SelectedChatGptWebModelMode, verifyFamily = true): Promise<void> {
@@ -1566,7 +1585,7 @@ export class ChatGptBrowserWorker {
       try {
         await assertChatGptModelFamily(menu, mode.modelFamily, mode.effort, mode.uiEffortIndex);
       } finally {
-        await page.keyboard.press("Escape");
+        await this.closeEffortMenu(page, composer, controls, mode.selection.url);
       }
       if (page.url() !== mode.selection.url || (await control.innerText()).trim() !== mode.selection.label
         || await control.getAttribute("aria-expanded") !== "false" || !await composer.isEditable()) {

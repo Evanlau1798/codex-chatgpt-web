@@ -5,7 +5,7 @@ import {
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 
-function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
+function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider", closeDelayMs = 0) {
   let opened = false;
   let expanded = openWith === "hidden-slider";
   const events: string[] = [];
@@ -71,7 +71,11 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
       };
       return hiddenAlert;
     },
-    keyboard: { press: async (key: string) => { events.push(key); expanded = false; } },
+    keyboard: { press: async (key: string) => {
+      events.push(key);
+      if (closeDelayMs) setTimeout(() => { expanded = false; }, closeDelayMs);
+      else expanded = false;
+    } },
   };
   return { page, control, owned, slider, events, clickOptions };
 }
@@ -115,6 +119,20 @@ test("production model selection uses the opened slider instead of stale global 
   await expect(worker.selectModelAndEffort(f.page, CHATGPT_WEB_MODEL_ID, "medium", {
     localToolsEnabled: true, solAvailable: true, proAvailable: true,
   })).resolves.toMatchObject({ uiEffortIndex: 1 });
+  expect(f.events).toEqual(["click", "Escape", "click", "Escape"]);
+});
+
+test("model selection waits for both delayed menu closes before accepting the effort", async () => {
+  const f = fixture("click", 600);
+  f.control.innerText = async () => await f.control.getAttribute("aria-expanded") === "true" ? "Effort de réflexion" : "Moyen";
+  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    activeComposer: async () => ({ isEditable: async () => true, locator: () => ({ locator: () => f.control }) }),
+  });
+  const mode = await worker.selectModelAndEffort(f.page, CHATGPT_WEB_MODEL_ID, "medium", {
+    localToolsEnabled: true, solAvailable: true, proAvailable: true,
+  });
+  expect(mode.selection.label).toBe("Moyen");
+  expect(await f.control.getAttribute("aria-expanded")).toBe("false");
   expect(f.events).toEqual(["click", "Escape", "click", "Escape"]);
 });
 

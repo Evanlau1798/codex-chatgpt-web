@@ -215,8 +215,13 @@ async function captureVerificationCapabilities(page: Page): Promise<Record<strin
       [...root.querySelectorAll(selector)].some(rendered);
     const composers = [...document.querySelectorAll(selectors.composer)].filter(rendered);
     const composerForm = composers.length === 1 ? composers[0]!.closest("form") : null;
+    const effortControls = composerForm ? [...composerForm.querySelectorAll(selectors.effortControl)].filter(rendered) : [];
     return {
       composerVisible: composers.length === 1,
+      composerEditable: composers.length === 1 && (composers[0] as HTMLElement).isContentEditable,
+      effortControlUnique: effortControls.length === 1,
+      effortControlExpanded: effortControls.length === 1 && effortControls[0]!.getAttribute("aria-expanded") === "true",
+      effortControlClosed: effortControls.length === 1 && effortControls[0]!.getAttribute("aria-expanded") === "false",
       connectorSelected: composerForm !== null
         && any('[data-id^="plugin:"][data-keyword], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]', composerForm),
       mentionMenuVisible: any('.__menu-item[tabindex="0"][data-id^="plugin:"][data-keyword], .__menu-item[tabindex="0"] [data-id^="plugin:"][data-keyword], [data-mention-list-scroll-area] button[data-list-navigation-item="true"]'),
