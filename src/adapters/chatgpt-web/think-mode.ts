@@ -17,7 +17,7 @@ export async function setChatGptThinkMode(
 ): Promise<void> {
   throwIfAborted(abortSignal);
   const controls = composerForm
-    .getByRole("button", { name: "Think", exact: true })
+    .getByRole("button", { name: /^(?:Think|Analyser)$/, exact: true })
     .filter({ visible: true });
   const count = await controls.count();
   if (count === 0 && !enabled) {

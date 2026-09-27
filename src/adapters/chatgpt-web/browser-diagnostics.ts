@@ -72,7 +72,7 @@ function diagnosticScreenshotMask(page: Page) {
     page.locator('[data-testid^="conversation-turn-"], [data-turn-key]'),
     page.locator(CHATGPT_COMPOSER_SELECTOR),
     page.locator('[role="dialog"], [role="alert"], [role="status"], [data-radix-popper-content-wrapper]'),
-    page.locator('[data-testid*="profile" i], [data-testid*="account" i], [aria-label*="profile" i], [aria-label*="account" i]'),
+    page.locator('[data-testid*="profile" i], [data-testid*="account" i], [aria-label*="profile" i], [aria-label*="account" i], [aria-label*="profil" i], [aria-label*="compte" i]'),
   ];
 }
 

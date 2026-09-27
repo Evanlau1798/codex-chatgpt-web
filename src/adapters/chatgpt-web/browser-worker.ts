@@ -305,14 +305,14 @@ export class ChatGptPromptAttachmentIntegrityError extends Error {
 }
 
 const chatGptRateLimitDialog = (page: Page): Locator => page.locator('[role="dialog"]')
-  .filter({ hasText: /Too many requests|太多要求|太多请求|リクエストが多すぎます|요청이 너무 많습니다|요청을 너무 빠르게|너무 많은 요청/i })
-  .filter({ hasText: /making requests too quickly|過於頻繁|过于频繁|リクエストの頻度が高すぎます|요청을 너무 빠르게|요청이 너무 많습니다|너무 많은 요청/i })
+  .filter({ hasText: /Too many requests|Trop de requêtes|太多要求|太多请求|リクエストが多すぎます|요청이 너무 많습니다|요청을 너무 빠르게|너무 많은 요청/i })
+  .filter({ hasText: /making requests too quickly|Vous envoyez des demandes trop rapidement|過於頻繁|过于频繁|リクエストの頻度が高すぎます|요청을 너무 빠르게|요청이 너무 많습니다|너무 많은 요청/i })
   .last();
 
 export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
   const accountSafetyAlert = page.locator('[role="dialog"]')
     .filter({
-      hasText: /Suspicious activity detected|偵測到可疑活動|检测到可疑活动|不審なアクティビティが検出されました|의심스러운 활동이 감지되었습니다/i,
+      hasText: /Suspicious activity detected|Nous détectons une activité suspecte|Activité inhabituelle détectée|偵測到可疑活動|检测到可疑活动|不審なアクティビティが検出されました|의심스러운 활동이 감지되었습니다/i,
     })
     .last();
   if (await accountSafetyAlert.isVisible().catch(() => false)) {
@@ -330,7 +330,7 @@ export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
   const dialog = chatGptRateLimitDialog(page);
   if (!await dialog.isVisible().catch(() => false)) return;
 
-  const acknowledge = dialog.getByRole("button", { name: /^(?:Got it|知道了|了解|알겠습니다|확인)$/i }).last();
+  const acknowledge = dialog.getByRole("button", { name: /^(?:Got it|J[’']ai compris|Compris|知道了|了解|알겠습니다|확인)$/i }).last();
   if (await acknowledge.isVisible().catch(() => false)) {
     try {
       await acknowledge.press("Enter");
@@ -363,12 +363,12 @@ type ChatGptTextScope = Pick<Locator, "getByText" | "getByTestId">;
 
 const chatGptSubscriptionFailureAlert = (page: Page): Locator => page
   .locator('[role="alert"]')
-  .filter({ hasText: /Failed to load subscription/i })
+  .filter({ hasText: /Failed to load subscription|Échec du chargement de l[’']abonnement/i })
   .last();
 
 const chatGptExpiredSessionAlert = (page: Page): Locator => page
   .locator('[role="alert"], [role="dialog"]')
-  .filter({ hasText: /Your session has expired|你的工作階段已過期|您的工作階段已過期|你的会话已过期|您的会话已过期/i })
+  .filter({ hasText: /Your session has expired|Votre session a expiré|你的工作階段已過期|您的工作階段已過期|你的会话已过期|您的会话已过期/i })
   .last();
 
 export async function throwIfChatGptSessionFailureAlert(page: Page): Promise<void> {
@@ -383,7 +383,7 @@ export async function throwIfChatGptSessionFailureAlert(page: Page): Promise<voi
 }
 
 const chatGptTerminalErrorAlert = (scope: ChatGptTextScope): Locator => scope
-  .getByText(/Something went wrong[\s\S]*help\.openai\.com/i)
+  .getByText(/(?:Something went wrong|Une erreur s[’']est produite)[\s\S]*help\.openai\.com/i)
   .last();
 
 export async function throwIfChatGptTerminalErrorAlert(
@@ -563,8 +563,9 @@ export async function resolveChatGptToolConfirmation(
   timeoutMs = CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS,
   onVisible?: () => Promise<void>,
 ): Promise<boolean> {
+  const escapedAppName = appName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const dialog = page.locator('[role="dialog"], [data-testid="tool-approval-card"]')
-    .filter({ hasText: `Allow ChatGPT to use ${appName}?` })
+    .filter({ hasText: new RegExp(`(?:Allow ChatGPT to use|Autoriser ChatGPT à utiliser) ${escapedAppName}\\s*\\?`) })
     .last();
   if (!await dialog.isVisible().catch(() => false)) return false;
   await onVisible?.();
@@ -574,7 +575,7 @@ export async function resolveChatGptToolConfirmation(
     // current one-shot approval. Keep the matcher anchored so persistent
     // actions such as "Always allow" cannot match.
     const allowCurrentAction = dialog
-      .getByRole("button", { name: /^Allow(?: once)?$/ })
+      .getByRole("button", { name: /^(?:Allow(?: once)?|Autoriser(?: une fois)?)$/ })
       .last();
     await allowCurrentAction.waitFor({ state: "visible", timeout: 10_000 });
     await allowCurrentAction.press("Enter");
@@ -589,7 +590,7 @@ export async function resolveChatGptToolConfirmation(
   }
 
   if (!await dialog.isVisible().catch(() => false)) return true;
-  const deny = dialog.getByRole("button", { name: "Deny", exact: true }).last();
+  const deny = dialog.getByRole("button", { name: /^(?:Deny|Refuser)$/, exact: true }).last();
   await deny.waitFor({ state: "visible", timeout: 5_000 });
   await deny.press("Enter");
   await dialog.waitFor({ state: "hidden", timeout: 10_000 });
@@ -928,12 +929,12 @@ function settledPreToolAnswerText(snapshot: ChatGptResponseDomSnapshot | undefin
 export function isChatGptTraceControl(block: ChatGptVisibleTraceBlock): boolean {
   if (block.kind !== "status") return false;
   const text = block.text.replace(/\s+/g, " ").trim();
-  return block.uiControl === true || text === "Answer now" || text === "Thinking";
+  return block.uiControl === true || /^(?:Answer now|Thinking|Répondre maintenant|Réflexion(?: en cours)?(?:\.\.\.|…)?)$/.test(text);
 }
 
 export function stripChatGptTraceControlSuffix(block: ChatGptVisibleTraceBlock): ChatGptVisibleTraceBlock {
   if (block.kind !== "status") return block;
-  const text = block.text.replace(/(?:^|\s)Answer now\s*$/, "").trimEnd();
+  const text = block.text.replace(/(?:^|\s)(?:Answer now|Répondre maintenant)\s*$/, "").trimEnd();
   return text === block.text ? block : { ...block, text };
 }
 

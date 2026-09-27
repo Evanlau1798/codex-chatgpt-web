@@ -1,15 +1,49 @@
 import { expect, test } from "bun:test";
-import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptBrowserWorker, ChatGptTurnDomHealthTracker } from "../src/adapters/chatgpt-web/browser-worker";
 import {
   CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   CHATGPT_EFFORT_MENU_SELECTOR,
   CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
+  CHATGPT_STOP_BUTTON_SELECTOR,
   activateChatGptEffortMenu,
   assertNewChatPage,
   chatGptNewChatUrl,
   detectChatGptAccountCapabilities,
 } from "../src/chatgpt-session";
+
+test("French generation stays live beyond the completion grace period and still requires a finished answer", () => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+  // Captured from the French composer: this renderer has no stop-button test id.
+  const document = createDocument('<form data-chatgpt-composer><button type="button" aria-label="Arrêter"></button></form>');
+  const tracker = new ChatGptTurnDomHealthTracker();
+  const state = () => ({ responsePresent: true, running: !!document.querySelector(CHATGPT_STOP_BUTTON_SELECTOR),
+    currentText: "Résumé partiel", completionActionVisible: false });
+  expect(state().running).toBeTrue();
+  for (const now of [0, 60_000, 60_001, 180_000]) expect(tracker.update(state(), now)).toBeUndefined();
+  document.querySelector("button")!.remove();
+  expect(state().running).toBeFalse();
+  expect(tracker.update(state(), 180_001)).toBeUndefined();
+  expect(tracker.update(state(), 240_001)).toBeUndefined();
+  expect(tracker.update(state(), 240_002)).toContain("did not expose its completed-turn action");
+  expect(tracker.update({ ...state(), completionActionVisible: true }, 240_003)).toBeUndefined();
+});
+
+test("generation control detection preserves legacy and English controls and excludes unrelated French buttons", () => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+  const document = createDocument(`<button data-testid="stop-button" id="legacy"></button>
+    <button type="button" aria-label="Arrêter" id="outside"></button>
+    <form><button type="button" aria-label="Arrêter" id="other-form"></button></form>
+    <form data-chatgpt-composer>
+      <button type="button" aria-label="Stop" id="english"></button>
+      <button type="button" aria-label="Arrêter" id="french"></button>
+      <button type="submit" aria-label="Arrêter" id="submit"></button>
+      <button type="button" aria-label="Envoyer" id="send"></button>
+      <button type="button" aria-label="Arrêter autre chose" id="different-action"></button>
+    </form>`);
+  expect(Array.from(document.querySelectorAll(CHATGPT_STOP_BUTTON_SELECTOR)).map(element => element.id))
+    .toEqual(["legacy", "english", "french"]);
+});
 
 test("saved chats start empty and cannot reuse an arbitrary conversation or a Temporary Chat", async () => {
   expect(chatGptNewChatUrl()).toBe("https://chatgpt.com/?temporary-chat=true");
