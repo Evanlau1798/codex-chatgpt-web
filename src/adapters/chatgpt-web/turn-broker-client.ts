@@ -71,12 +71,13 @@ export async function callTurnBroker<T>(
     signal?.addEventListener("abort", onAbort, { once: true });
     socket.once("error", error => finishError(new Error(`ChatGPT web turn broker unavailable: ${error.message}`)));
     socket.once("end", () => {
-      if (!response) finishResponse();
+      socket.destroy();
+      finishResponse();
     });
     socket.once("close", finishResponse);
     socket.once("connect", () => socket.write(`${JSON.stringify({ id, ...wireRequest })}\n`));
     socket.on("data", chunk => {
-      if (settled) return;
+      if (settled || response) return;
       buffered += chunk;
       if (buffered.length > MAX_BROKER_LINE_CHARS) {
         finishError(new Error("ChatGPT web turn broker response exceeds size limit"));
@@ -91,6 +92,12 @@ export async function callTurnBroker<T>(
         finishError(new Error(`ChatGPT web turn broker returned invalid JSON: ${errorOf(error).message}`));
         return;
       }
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)
+        || ("result" in parsed) === ("error" in parsed)
+        || ("error" in parsed && (typeof parsed.error !== "string" || !parsed.error))) {
+        finishError(new Error("ChatGPT web turn broker returned an invalid response frame"));
+        return;
+      }
       if (parsed.id !== id) {
         finishError(new Error("ChatGPT web turn broker response id mismatch"));
         return;
@@ -99,8 +106,6 @@ export async function callTurnBroker<T>(
       if (settleOnResponseFrame) {
         finishResponse();
         socket.destroy();
-      } else {
-        socket.end();
       }
     });
   });

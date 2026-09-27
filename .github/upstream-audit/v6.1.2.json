@@ -1,0 +1,158 @@
+{
+  "schema": 2,
+  "release": "v6.1.2",
+  "baseline": "fa514a4630e322c9dd50ac2345956b2b64918821",
+  "semanticBaseline": "a13cd09950969f43e3b7e25c71fa43efaf5446c5",
+  "upstream": "2d73f626290a5062825bb595dabb89aaf88d16c5",
+  "tag": {
+    "object": "0da05c9362a543186c7adc70404f501d6eff97a4",
+    "commit": "2d73f626290a5062825bb595dabb89aaf88d16c5",
+    "signed": false
+  },
+  "automaticMergeTree": "4d93997af32e0394f6b09e9e8e369e1d6fc8e178",
+  "mergeCommand": "git -c rerere.enabled=false merge --strategy=ort --no-ff --no-commit 2d73f626290a5062825bb595dabb89aaf88d16c5",
+  "coverage": {
+    "paths": 45,
+    "hunks": 122,
+    "changedTests": 12,
+    "mappedPaths": 45,
+    "pending": 0,
+    "missing": 0
+  },
+  "evidence": {
+    "path": ".github/upstream-audit/v6.1.2-evidence.tar.gz",
+    "sha256": "1290288c903f2e2a38c3e2582bc99143c0e16a8d7f3367a8bb31cdbb46be0136",
+    "autoMergeTrees": {
+      "v6.1.0": "4f5fc0c38a45b3f6968c2dad757a369b28cc99df",
+      "v6.1.1": "f7c075e5c3acf43eff9137e8c2193171ad2ff1f5",
+      "v6.1.2": "4d93997af32e0394f6b09e9e8e369e1d6fc8e178"
+    }
+  },
+  "pathGroups": [
+    {
+      "area": "release metadata and documentation",
+      "classification": "adapted",
+      "paths": [
+        "README.ja.md",
+        "README.ko.md",
+        "README.md",
+        "README.zh-CN.md",
+        "TROUBLESHOOTING.md",
+        "docs/architecture.md",
+        "docs/security-model.md",
+        "launcher/package.json",
+        "package.json",
+        "scripts/install.sh",
+        "src/version.ts"
+      ],
+      "summary": "Applied v6.1.2 behavior and documentation while retaining Enhanced versioning, fork links, and the maintained three-minute manual-turn timeout."
+    },
+    {
+      "area": "packaged tray assets",
+      "classification": "integrated",
+      "paths": [
+        "launcher/assets/trayTemplate.png",
+        "launcher/assets/trayTemplate@2x.png"
+      ],
+      "summary": "Packages and validates the macOS template tray icon pair without changing the running installation."
+    },
+    {
+      "area": "browser authentication recovery and manual ownership",
+      "classification": "adapted",
+      "paths": [
+        "launcher/electron/browser-host.cjs",
+        "launcher/tests/browser-host.test.cjs",
+        "tests/launcher-browser-host.test.ts",
+        "tests/zero-risk-adapter.test.ts"
+      ],
+      "summary": "Propagates explicit authentication-required state through the split launcher host while preserving Enhanced manual-mode ownership and model requirements."
+    },
+    {
+      "area": "configurable connector identity",
+      "classification": "adapted",
+      "paths": [
+        "launcher/electron/connector-identity.cjs",
+        "launcher/electron/main.cjs",
+        "launcher/electron/preload.cjs",
+        "launcher/electron/runtime.cjs",
+        "launcher/src/App.tsx",
+        "launcher/src/i18n.ts",
+        "launcher/src/styles.css",
+        "launcher/src/types.ts",
+        "launcher/tests/localization.test.cjs",
+        "launcher/tests/renderer-wiring.test.cjs",
+        "launcher/tests/runtime-host.test.cjs",
+        "src/cli.ts",
+        "src/config.ts",
+        "src/dev-chat/cli.ts",
+        "src/setup.ts",
+        "tests/runtime-layout.test.ts",
+        "tests/setup-lifecycle.test.ts"
+      ],
+      "summary": "Maps upstream connector renaming into the fork's split setup, runtime, IPC, settings, localization, and migration boundaries with transactional updates."
+    },
+    {
+      "area": "reply projection and code blocks",
+      "classification": "adapted",
+      "paths": [
+        "src/adapters/chatgpt-web/browser-worker.ts",
+        "src/adapters/chatgpt-web/markdown.ts",
+        "tests/browser-response-dom.test.ts",
+        "tests/chatgpt-web-harness.test.ts"
+      ],
+      "summary": "Preserves the Enhanced split worker and adopts canonical code-block extraction without leaking ChatGPT toolbar controls."
+    },
+    {
+      "area": "broker protocol and MCP lifecycle",
+      "classification": "adapted",
+      "paths": [
+        "src/adapters/chatgpt-web/index.ts",
+        "src/adapters/chatgpt-web/mcp-server.ts",
+        "src/adapters/chatgpt-web/turn-broker.ts",
+        "tests/turn-broker-lifecycle.test.ts"
+      ],
+      "summary": "Adds exact socket ownership and frame validation while retaining the Enhanced adapter and MCP module boundaries."
+    },
+    {
+      "area": "server diagnostics",
+      "classification": "adapted",
+      "paths": [
+        "src/launcher-browser-host.ts",
+        "src/server.ts",
+        "tests/server-models.test.ts"
+      ],
+      "summary": "Carries authentication-required and safe nested error codes through the existing server diagnostic contract."
+    }
+  ],
+  "changedTests": [
+    "launcher/tests/browser-host.test.cjs",
+    "launcher/tests/localization.test.cjs",
+    "launcher/tests/renderer-wiring.test.cjs",
+    "launcher/tests/runtime-host.test.cjs",
+    "tests/browser-response-dom.test.ts",
+    "tests/chatgpt-web-harness.test.ts",
+    "tests/launcher-browser-host.test.ts",
+    "tests/runtime-layout.test.ts",
+    "tests/server-models.test.ts",
+    "tests/setup-lifecycle.test.ts",
+    "tests/turn-broker-lifecycle.test.ts",
+    "tests/zero-risk-adapter.test.ts"
+  ],
+  "resolutions": [
+    {
+      "area": "Zero Risk manual handoff",
+      "classification": "integrated",
+      "summary": "Copy refreshes the user decision deadline; Sent retains the prompt until connector activity proves ownership transfer."
+    },
+    {
+      "area": "heartbeat validation",
+      "classification": "retained-stronger",
+      "summary": "Retained the fork's stronger heartbeat assertions instead of accepting weaker upstream expectations."
+    },
+    {
+      "area": "fork architecture",
+      "classification": "adapted",
+      "summary": "Integrated upstream obligations into the existing split launcher, browser adapter, localization, and setup modules."
+    }
+  ]
+}

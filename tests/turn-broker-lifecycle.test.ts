@@ -1,12 +1,37 @@
 import { expect, test } from "bun:test";
 import { browserSteeringRetry } from "../src/adapters/chatgpt-web/steering";
 import { ChatGptSteeringFeed, ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { callTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint, isWindowsPipeEndpoint } from "../src/config";
+
+test.skipIf(process.platform === "win32")("closing a rejected broker leaves the live socket reachable", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-owner-"));
+  const endpoint = join(root, "broker.sock");
+  const server = createServer(socket => {
+    socket.once("data", bytes => {
+      const request = JSON.parse(bytes.toString().trim());
+      socket.end(JSON.stringify({ id: request.id, result: { ready: true } }) + "\n");
+    });
+  });
+  const contender = TurnBroker.forSocket(endpoint);
+  try {
+    await new Promise<void>(resolve => server.listen(endpoint, resolve));
+    chmodSync(endpoint, 0o600);
+    await expect(contender.listen()).rejects.toThrow("already owned by another process");
+    await contender.close();
+    await contender.close();
+    expect(existsSync(endpoint)).toBeTrue();
+    expect(await callTurnBroker<{ ready: boolean }>(endpoint, { method: "owner_status" })).toEqual({ ready: true });
+  } finally {
+    await contender.close();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("explicit browser-turn cancellation aborts and removes every registered session", async () => {
   const sessions = new ChatGptTurnSessions();
@@ -433,6 +458,56 @@ test("an unbounded broker call fails when the broker closes without answering", 
     await broker.close();
   }
 }, 10_000);
+
+test("bounded broker calls preserve server-owned closure before advancing the lifecycle", async () => {
+  let peer!: Socket;
+  let finishFrame!: () => void;
+  const frameWritten = new Promise<void>(resolve => { finishFrame = resolve; });
+  const broker = unansweredBrokerEndpoint("cgw-broker-frame-", socket => {
+    peer = socket;
+    socket.once("data", chunk => {
+      const request = JSON.parse(chunk.toString().trim());
+      const frame = JSON.stringify({ id: request.id, result: { ready: true } }) + "\n";
+      socket.write(frame.slice(0, -1));
+      setImmediate(() => { socket.write(frame.slice(-1)); finishFrame(); });
+    });
+  });
+  await broker.listen();
+  try {
+    let settled = false;
+    const call = callTurnBroker(broker.socketPath, { method: "owner_status" }).then(result => {
+      settled = true;
+      return result;
+    });
+    await frameWritten;
+    await Bun.sleep(25);
+    expect(settled).toBeFalse();
+    peer.end();
+    await expect(call).resolves.toEqual({ ready: true });
+  } finally {
+    peer?.destroy();
+    await broker.close();
+  }
+});
+
+test("broker frame settlement still rejects errors, wrong identities and incomplete replies", async () => {
+  for (const [reply, expected] of [
+    [(id: string) => JSON.stringify({ id, error: "claim rejected" }) + "\n", "claim rejected"],
+    [() => '{"id":"another","result":true}\n', "response id mismatch"],
+    [() => "null\n", "invalid response frame"],
+    [(id: string) => JSON.stringify({ id, result: true, error: "contradiction" }) + "\n", "invalid response frame"],
+    [(id: string) => JSON.stringify({ id }), "closed the connection"],
+    [() => "{broken}\n", "invalid JSON"],
+  ] as const) {
+    const broker = unansweredBrokerEndpoint("cgw-broker-reject-", socket => {
+      socket.once("data", chunk => socket.end(reply(JSON.parse(chunk.toString().trim()).id)));
+    });
+    await broker.listen();
+    try {
+      await expect(callTurnBroker(broker.socketPath, { method: "owner_status" })).rejects.toThrow(expected);
+    } finally { await broker.close(); }
+  }
+});
 
 test("an unbounded broker call outlives the bounded default timeout", async () => {
   const accepted: Socket[] = [];

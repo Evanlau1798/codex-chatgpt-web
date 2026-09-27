@@ -2,6 +2,11 @@ import type { Copy } from "./i18n";
 import { zeroRiskCopy } from "./zero-risk-copy";
 
 export const ja: Record<keyof Copy, string> = {
+  pluginName: "プラグイン名",
+  pluginNameBody: "Codex は固定です。それ以降の名前を編集できます。",
+  pluginNameChange: "名前を変更",
+  pluginNameWarning: "表示された名前で新しいプラグインを作成し、MCP を再確認してください。現在のモードだけが変わります。トンネルの認証情報と ChatGPT のログインは保持されます。",
+  pluginNameConfirm: "変更して設定",
   product: "Codex Web GPT",
   devBadge: "DEV",
   devSetupTitle: "隔離された DEV プロファイルをセットアップ",

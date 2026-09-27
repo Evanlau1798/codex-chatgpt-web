@@ -19,7 +19,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **Development candidate: `6.1.1-Enhanced.1`.** The download buttons still point to released Enhanced packages; this branch does not publish a release.
+> **Development candidate: `6.1.2-Enhanced.1`.** The download buttons still point to released Enhanced packages; this branch does not publish a release.
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">Troubleshooting</a> · <a href="SECURITY.md">Security</a> · <a href="CONTRIBUTING.md">Contributing</a>
@@ -259,9 +259,9 @@ The launcher's **MCP** page guides the complete setup. For the exact clicks, see
 
 1. Finish the required setup, open **MCP**, create the Tunnel and regular API key, then press
    **Connect harness**.
-2. Enable ChatGPT **Developer Mode** and create a new Tunnel connector named exactly
-   **Codex Native2**, with **Authentication: None** and **Allow all actions**.
-3. Run **Verify runtime** to confirm that **Codex Native2** is attached and available.
+2. Enable ChatGPT **Developer Mode** and create a new Tunnel connector with the exact name shown
+   in the launcher (**Codex Native2** by default), with **Authentication: None** and **Allow all actions**.
+3. Run **Verify runtime** to confirm that the displayed connector is attached and available.
 
 Write/modify actions also require the ChatGPT workspace and its administrator policy to permit
 them. See

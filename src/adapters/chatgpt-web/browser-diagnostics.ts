@@ -114,7 +114,7 @@ function verificationFailure(error: unknown): string {
   if (error instanceof Error && error.name === "AbortError") return "cancelled";
   if (error instanceof Error && error.name === "TimeoutError") return "timeout";
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-  return typeof code === "string" && ["chatgpt_connector_unavailable", "chatgpt_rate_limited", "chatgpt_session_expired", "chatgpt_surface_changed"].includes(code)
+  return typeof code === "string" && ["chatgpt_connector_unavailable", "chatgpt_rate_limited", "chatgpt_session_expired", "chatgpt_sign_in_required", "chatgpt_surface_changed"].includes(code)
     ? code : "verification_failed";
 }
 

@@ -4,6 +4,11 @@ import { ja } from "./i18n-ja";
 import { ko } from "./i18n-ko";
 import { zhTW } from "./i18n-zh-tw";
 const en = {
+  pluginName: "Plugin name",
+  pluginNameBody: "Codex stays fixed. Edit the rest of the name.",
+  pluginNameChange: "Change name",
+  pluginNameWarning: "Create a new plugin with the displayed name, then verify MCP again. This changes only the current mode. Tunnel credentials and your ChatGPT login are kept.",
+  pluginNameConfirm: "Change and configure",
   product: "Codex Web GPT",
   devBadge: "DEV",
   devSetupTitle: "Set up the isolated DEV profile",
@@ -260,6 +265,11 @@ const en = {
   logOut: "Log out",
 } as const;
 const zh: Record<keyof typeof en, string> = {
+  pluginName: "插件名称",
+  pluginNameBody: "Codex 保持不变，可以修改其后的名称。",
+  pluginNameChange: "更改名称",
+  pluginNameWarning: "请使用显示的名称创建新插件，然后重新验证 MCP。仅更改当前模式，隧道凭据和 ChatGPT 登录状态将保留。",
+  pluginNameConfirm: "更改并配置",
   product: "Codex Web GPT",
   devBadge: "DEV",
   devSetupTitle: "设置隔离的 DEV 配置",
@@ -515,8 +525,20 @@ const zh: Record<keyof typeof en, string> = {
   sessionReminderBody: "建议每两天重新登录一次。失效的 ChatGPT 会话可能会中断 Web 模型任务和 MCP 工具。",
   logOut: "退出登录",
 };
-export type Copy = typeof en;
-export function copyFor(language: Language): Copy {
+export type Copy = { [Key in keyof typeof en]: string };
+export function copyFor(language: Language, names?: { automatic: string; manual: string }): Copy {
+  const copy = baseCopyFor(language);
+  if (!names) return copy;
+  const localized = { ...copy };
+  for (const key of ["manualMcpStepThreeBody", "manualConnectorNotice", "manualPromptInstruction", "manualPromptWaiting"] as const) {
+    const replaced = copy[key].replaceAll("Codex Zero Risk", () => names.manual);
+    localized[key] = replaced === copy[key] ? `${copy[key]} ${names.manual}` : replaced;
+  }
+  localized.connectorMigrationNotice = copy.connectorMigrationNotice.replaceAll("Codex Native2", () => names.automatic);
+  return localized;
+}
+
+function baseCopyFor(language: Language): Copy {
   if (language === "zh-CN") return zh as Copy;
   if (language === "zh-TW") return { ...en, ...zhTW } as Copy;
   if (language === "ja") return ja as Copy;

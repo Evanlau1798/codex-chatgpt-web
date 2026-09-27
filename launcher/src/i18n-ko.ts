@@ -1,4 +1,9 @@
 export const ko = {
+  pluginName: "플러그인 이름",
+  pluginNameBody: "Codex는 고정입니다. 뒤에 오는 이름을 변경하세요.",
+  pluginNameChange: "이름 변경",
+  pluginNameWarning: "표시된 이름으로 새 플러그인을 만들고 MCP를 다시 확인하세요. 현재 모드에만 적용됩니다. 터널 인증 정보와 ChatGPT 로그인은 유지됩니다.",
+  pluginNameConfirm: "변경 및 설정",
   installCodex: "Codex에 설치",
   reinstallCodex: "Codex 다시 설치",
   product: "Codex Web GPT",

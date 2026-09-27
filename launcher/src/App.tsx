@@ -84,6 +84,9 @@ export function App() {
           }
         : current);
     });
+    const unsubscribeConnectorNames = api.onConnectorNamesChanged(names => {
+      setSnapshot(current => current ? { ...current, ...names } : current);
+    });
     const unsubscribeBrowser = api.onBrowserState(setBrowser);
     const unsubscribeOperation = api.onOperation((next) => {
       setOperation(next);
@@ -96,6 +99,7 @@ export function App() {
     return () => {
       cancelled = true;
       unsubscribeState();
+      unsubscribeConnectorNames();
       unsubscribeBrowser();
       unsubscribeOperation();
       unsubscribeLog();
@@ -118,7 +122,7 @@ export function App() {
   if (!snapshot) return <LaunchLoading />;
 
   const language = snapshot.state.language ?? "en";
-  const copy = copyFor(language);
+  const copy = copyFor(language, snapshot.connectorNames);
 
   return (
     <div

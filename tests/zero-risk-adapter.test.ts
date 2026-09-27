@@ -112,7 +112,7 @@ test("Zero Risk adapter never starts the automatic browser worker and completes 
     expect(events.some(event => event.type === "text_delta"
       && event.phase === "commentary"
       && event.text.startsWith("> **Action required in Zero Risk**")
-      && event.text.includes("select the `Codex Zero Risk` plugin")
+      && event.text.includes("select the plugin shown in the launcher")
       && event.text.includes("confirm it was sent in the launcher"))).toBeTrue();
     expect(events.filter((event): event is Extract<AdapterEvent, { type: "text_delta" }> => (
       event.type === "text_delta" && event.phase === "final_answer"

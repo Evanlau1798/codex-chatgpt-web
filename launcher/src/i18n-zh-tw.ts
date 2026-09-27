@@ -1,4 +1,9 @@
 export const zhTW = {
+  pluginName: "外掛程式名稱",
+  pluginNameBody: "Codex 保持不變，可以修改後面的名稱。",
+  pluginNameChange: "變更名稱",
+  pluginNameWarning: "請使用顯示的名稱建立新的外掛程式，再重新驗證 MCP。僅變更目前模式，隧道憑證和 ChatGPT 登入狀態將保留。",
+  pluginNameConfirm: "變更並設定",
   installCodex: "安裝到 Codex",
   reinstallCodex: "重新安裝 Codex",
   product: "Codex Web GPT",

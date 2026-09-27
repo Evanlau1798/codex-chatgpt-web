@@ -353,6 +353,7 @@ class BrowserHost {
     this.loginOperation = null;
     this.sessionRefreshOperation = null;
     this.authenticationRevision = 0;
+    this.reauthenticationRequired = false;
     this.cloudflareChallengeRecovery = null;
     this.cloudflareChallengeRecoveryArmed = true;
     this.cloudflareChallengeRecoveryDelayMs = CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS;
@@ -705,7 +706,7 @@ class BrowserHost {
     const contents = tab.view.webContents;
     contents.setWindowOpenHandler(({ url }) => {
       if (allowedAuthUrl(url)) {
-        this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
+        if (tab.interactionMode !== "manual") this.markTurnAuthenticationRequired(tab);
         return { action: "deny" };
       }
       let parsed;
@@ -713,13 +714,10 @@ class BrowserHost {
       if (parsed.protocol === "https:" || parsed.protocol === "http:") void shell.openExternal(parsed.toString());
       return { action: "deny" };
     });
-    const blockAuthenticationNavigation = (event, url) => {
-      if (tab.interactionMode === "manual" || !allowedAuthUrl(url)) return;
+    const blockAuthenticationNavigation = (event, url, _inPlace, mainFrame) => {
+      if (mainFrame === false || tab.interactionMode === "manual" || !allowedAuthUrl(url)) return;
       event.preventDefault();
-      tab.authenticationBlocked = true;
-      tab.message = "ChatGPT requires a fresh sign-in; finish this turn, then sign in from Setup";
-      this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
-      this.publishState?.(this.snapshot());
+      this.markTurnAuthenticationRequired(tab);
     };
     contents.on("will-navigate", blockAuthenticationNavigation);
     contents.on("will-redirect", blockAuthenticationNavigation);
@@ -807,6 +805,16 @@ class BrowserHost {
     contents.on("responsive", () => {
       this.logger.info("browser.tab_responsive", { tabId: tab.id, traceId: tab.traceId });
     });
+  }
+
+  markTurnAuthenticationRequired(tab) {
+    tab.authenticationRequired = true;
+    tab.loading = false;
+    tab.message = "ChatGPT requested sign-in. Open sign in in the launcher, then retry.";
+    this.reauthenticationRequired = true;
+    this.authenticationRevision = (this.authenticationRevision ?? 0) + 1;
+    this.setState({ authenticated: false, status: "signed-out", message: tab.message });
+    this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
   }
 
   async configureAnnouncementDismissal(enabled) {
@@ -1021,7 +1029,7 @@ class BrowserHost {
   }
 
   refreshAuthenticationFromSession() {
-    if (this.destroyed || browserInteractionModeFor(this) !== "automatic") return Promise.resolve();
+    if (this.destroyed || this.reauthenticationRequired || browserInteractionModeFor(this) !== "automatic") return Promise.resolve();
     this.authenticationRevision = (this.authenticationRevision ?? 0) + 1;
     if (this.authenticationRefresh) return this.authenticationRefresh;
     const operation = (async () => {
@@ -1032,6 +1040,7 @@ class BrowserHost {
         const result = await readChatGptAuthSession(session.fetch.bind(session), CHATGPT_ORIGIN, CHATGPT_AUTH_SESSION_TIMEOUT_MS);
         if (this.destroyed || browserInteractionModeFor(this) !== "automatic") return;
         if (revision !== this.authenticationRevision) continue;
+        if (this.reauthenticationRequired) return;
         const availability = this.activeTraceId || this.manualOperation ? {} : result.sessionCheckError
           ? { status: "error", message: result.sessionCheckError }
           : result.sessionAuthenticated
@@ -1041,7 +1050,7 @@ class BrowserHost {
       } while (revision !== this.authenticationRevision);
     })();
     const tracked = operation.catch(() => {
-      if (!this.destroyed && browserInteractionModeFor(this) === "automatic") {
+      if (!this.destroyed && !this.reauthenticationRequired && browserInteractionModeFor(this) === "automatic") {
         this.logger.warn("browser.session_refresh_failed");
         this.setState({ authenticated: false, ...(this.activeTraceId || this.manualOperation ? {} : {
           status: "error", message: "Could not check the ChatGPT session. Retry the session check.",
@@ -1143,7 +1152,7 @@ class BrowserHost {
     const state = selected
       ? {
           ...this.state,
-          status: selected.status,
+          status: selected.authenticationRequired ? "signed-out" : selected.status,
           message: selected.message,
           url: selected.url,
           title: selected.interactionMode === "manual" ? selected.label : selected.pageTitle,
@@ -1834,8 +1843,8 @@ class BrowserHost {
       );
     }
     const cancelledByUser = this.userCancelledTurnOwners.get(traceId) === helperPid;
-    const authenticationBlocked = tab.authenticationBlocked === true;
-    if (authenticationBlocked && status === "completed") status = "failed";
+    const authenticationRequired = tab.authenticationRequired === true;
+    if (authenticationRequired && status === "completed") status = "failed";
     tab.status = status === "completed" ? "ready" : status === "aborted" ? "aborted" : "error";
     this.syncPowerSaveBlocker();
     tab.message = status === "completed" ? "Task completed" : message || `ChatGPT turn ${status}`;
@@ -1860,7 +1869,7 @@ class BrowserHost {
     this.removeTurnTab(tab, false);
     if (hideAfterTurn && !this.activeTraceId) this.hide();
     this.logger.info("browser.tab_released", { tabId: tab.id, traceId, status: tab.status });
-    return { cancelledByUser, ...(authenticationBlocked ? { authenticationBlocked: true } : {}) };
+    return { cancelledByUser, ...(authenticationRequired ? { authenticationRequired: true } : {}) };
   }
 
   beginManualTurn(...args) { return this.manualTurns.begin(...args); }
@@ -1905,7 +1914,7 @@ class BrowserHost {
         this.show();
         this.logger.info("browser.login_opened");
         const current = this.view.webContents.getURL();
-        if (!current.startsWith(CHATGPT_ORIGIN)) {
+        if (this.reauthenticationRequired || !current.startsWith(CHATGPT_ORIGIN)) {
           await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
         }
         const session = await this.probeAuthentication();
@@ -2098,6 +2107,8 @@ class BrowserHost {
 
   async probeAuthentication() {
     requireAutomaticBrowserInspection(this, "ChatGPT authentication probe");
+    if (this.reauthenticationRequired
+      && !["ChatGPT login", "ChatGPT passkey login", "ChatGPT logout"].includes(this.manualOperation)) return this.snapshot();
     if (this.authenticationProbe) return this.authenticationProbe;
     // did-finish-load and the login polling loop can arrive together. Only one probe may
     // navigate the shared primary surface; overlapping loadURL calls abort one another.
@@ -2169,6 +2180,7 @@ class BrowserHost {
       // page probe after a sign-out/sign-in notification.
       if (revision !== this.authenticationRevision) return this.snapshot();
       if (result.sessionAuthenticated) {
+        this.reauthenticationRequired = false;
         if (this.authView && !this.authView.webContents.isDestroyed()) {
           this.closeAuthView(this.authView, true, false);
         }

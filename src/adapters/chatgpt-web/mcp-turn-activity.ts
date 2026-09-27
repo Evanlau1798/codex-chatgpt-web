@@ -42,7 +42,11 @@ export async function withClaimedTurn<T>(
     try {
       await settleTurnActivity(socketPath, token, activityId);
     } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], "Codex Native claim failed and its activity could not be retired");
+      throw new AggregateError(
+        [error, cleanupError],
+        `Codex Native claim failed: ${error instanceof Error ? error.message : String(error)}. Its activity could not be retired.`,
+        { cause: error },
+      );
     }
     throw error;
   }

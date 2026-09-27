@@ -1437,6 +1437,27 @@ describe("ChatGPT outer-native harness v4", () => {
     expect(tracker.update({ ...hydrated, running: true }, 5_200).status).toBe("waiting");
   });
 
+  test("repeated empty Markdown blocks are appended without reusing an earlier block identity", () => {
+    const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
+    const initial = [
+      { key: "0:p", tag: "p", html: "<p>First.</p>", text: "First.", streamable: true },
+      { key: "1:hr", tag: "hr", html: "<hr>", text: "", streamable: true },
+      { key: "2:p", tag: "p", html: "<p>Second.</p>", text: "Second.", streamable: false },
+    ];
+    expect(buffer.observe(initial)).toBe("First.\n\n* * *");
+    const expanded = [
+      ...initial.map(segment => ({ ...segment, streamable: true })),
+      { key: "3:hr", tag: "hr", html: "<hr>", text: "", streamable: true },
+      { key: "4:p", tag: "p", html: "<p>Third.</p>", text: "Third.", streamable: false },
+    ];
+    expect(buffer.observe(expanded)).toBe("\n\nSecond.\n\n* * *");
+    expect(buffer.currentSnapshotIsConsistent()).toBeTrue();
+    expect(buffer.observe(expanded)).toBe("");
+    expect(buffer.finish().markdown).toBe("First.\n\n* * *\n\nSecond.\n\n* * *\n\nThird.");
+    buffer.observe([expanded[3]!, expanded[1]!]);
+    expect(() => buffer.finish()).toThrow("changed a completed text block");
+  });
+
   test("preserves GFM formatting while streaming only completed stable DOM blocks", () => {
     const heading = '<h2 data-start="0" data-end="15">Format Probe</h2>';
     const bold = '<p data-start="16" data-end="24"><strong>bold</strong></p>';

@@ -16,7 +16,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **개발 후보: `6.1.1-Enhanced.1`.** 다운로드 버튼은 기존 Enhanced 릴리스 패키지를 가리킵니다. 이 브랜치는 새 릴리스의 게시를 의미하지 않습니다.
+> **개발 후보: `6.1.2-Enhanced.1`.** 다운로드 버튼은 기존 Enhanced 릴리스 패키지를 가리킵니다. 이 브랜치는 새 릴리스의 게시를 의미하지 않습니다.
 
 <p align="center">
   <img src="assets/demo.gif" width="960" alt="네이티브 Codex 하네스를 사용하는 ChatGPT Web 실시간 턴">
@@ -122,9 +122,9 @@ inbound 포트를 열거나 라우터 포트 포워딩을 설정할 필요가 �
 
 1. 필수 설정을 완료하고 **MCP**를 연 다음 Tunnel과 일반 API 키를 생성하고
    **하네스 연결**을 누릅니다.
-2. ChatGPT **Developer Mode**를 활성화하고, **Tunnel** 방식의 새 커넥터를 만들고 이름을 정확히
-   **Codex Native2**로 지정합니다. **Authentication: None**과 **Allow all actions**를 사용합니다.
-3. **런타임 검증**을 실행해 **Codex Native2**가 연결되어 사용 가능한지 확인합니다.
+2. ChatGPT **Developer Mode**를 활성화하고, **Tunnel** 방식의 새 커넥터를 만든 뒤 런처에 표시된
+   정확한 이름(기본값 **Codex Native2**)을 지정합니다. **Authentication: None**과 **Allow all actions**를 사용합니다.
+3. **런타임 검증**을 실행해 표시된 커넥터가 연결되어 사용 가능한지 확인합니다.
 
 쓰기/수정 작업은 ChatGPT 작업 공간과 관리자 정책에서도 허용되어야 합니다.
 [Developer Mode와 MCP 앱](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)을

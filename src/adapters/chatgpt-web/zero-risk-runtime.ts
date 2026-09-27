@@ -183,7 +183,7 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
         }
         if (!parsed._compactionRequest) trace.push({
           kind: "commentary",
-          text: "> **Action required in Zero Risk**\n>\n> Open the launcher, copy and paste the prompt into ChatGPT, add any images yourself because Zero Risk cannot transfer them, select the `Codex Zero Risk` plugin and the model you want, send the prompt, then confirm it was sent in the launcher.",
+          text: "> **Action required in Zero Risk**\n>\n> Open the launcher, copy and paste the prompt into ChatGPT, add any images yourself because Zero Risk cannot transfer them, select the plugin shown in the launcher and the model you want, send the prompt, then confirm it was sent in the launcher.",
         });
         launcherStartAttempted = true;
         await options.control.start(descriptorPath, {

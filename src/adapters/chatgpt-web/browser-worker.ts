@@ -3060,6 +3060,17 @@ export class ChatGptBrowserWorker {
             button.remove();
           }
         }
+        const codeBlockSelector = 'pre, [data-markdown-copy="code-block"]';
+        for (const block of Array.from(content.querySelectorAll(codeBlockSelector))) {
+          if (block.parentElement?.closest(codeBlockSelector)) continue;
+          const codes = block.querySelectorAll("code");
+          if (codes.length !== 1) continue;
+          const code = codes[0]!.cloneNode(true);
+          const pre = block.tagName === "PRE" ? block : content.ownerDocument.createElement("pre");
+          block.textContent = "";
+          pre.appendChild(code);
+          if (pre !== block) block.appendChild(pre);
+        }
         return content;
       };
       const markdownText = (element: HTMLElement): string => {
@@ -3645,10 +3656,15 @@ export class ChatGptBrowserWorker {
           ...(terminalMessage ? { message: terminalMessage } : {}),
         });
         if (release.cancelledByUser) throw chatGptBrowserTabClosedError();
-        if (release.authenticationBlocked && !turn.abortSignal?.aborted) throw chatGptSessionExpiredError();
+        if (release.authenticationRequired && terminal !== "aborted") {
+          throw new ChatGptWebAdapterError(
+            "ChatGPT requested sign-in. Open sign in in the launcher, then retry.",
+            { status: 401, errorType: "authentication_error", code: "chatgpt_sign_in_required", retryable: false },
+          );
+        }
       } catch (controlError) {
         if (controlError instanceof ChatGptWebAdapterError
-          && ["client_cancelled", "chatgpt_session_expired"].includes(controlError.code)) {
+          && ["client_cancelled", "chatgpt_sign_in_required"].includes(controlError.code)) {
           throw controlError;
         }
         if (!originalError) throw controlError;

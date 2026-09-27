@@ -80,10 +80,12 @@ probe. The DEV launcher supervisor owns only the isolated MCP tunnel. Browser di
 state, thread authority, checkpoints, and named chat state live
 under `~/.codex-chatgpt-web-dev` by default.
 
-The ChatGPT connector name is also the public MCP ABI generation identity. Enhanced follows the
-upstream connector generation: while upstream uses `Codex Native2`, production remains
-`Codex Native2`, repository DEV remains `Codex Native2 DEV`, and the retired `Codex Native`
-identity is never selected or refreshed in place. Enhanced runtime extensions do not independently
+The ChatGPT connector schema follows the public MCP ABI generation identity. Enhanced follows the
+upstream connector generation: production defaults to `Codex Native2`, repository DEV defaults to
+`Codex Native2 DEV`, and the retired `Codex Native` identity is never selected or refreshed in place.
+Settings keeps the `Codex ` prefix fixed and can change the remaining name for the selected mode;
+Automatic and Zero Risk names are stored independently and must differ. A rename uses the existing
+setup transaction, rejects active work, and clears MCP verification only after success. Enhanced runtime extensions do not independently
 increment that generation. Within one upstream connector generation, Enhanced freezes the public
 Native2 and Zero Risk `tools/list` ABI; new runtime capabilities must use existing dynamic tools or
 reserved internal semantics rather than changing tool names, descriptions, schemas, annotations, or
@@ -135,10 +137,11 @@ For a new ChatGPT chat the adapter provides the complete compiled prompt. A reta
 the incremental suffix after the last assistant reply. Codex Desktop binds the retained identity to its
 stable native prompt-cache session, while rebuilt developer and environment context remains in the
 message suffix. Clients without that stable identity still bind the exact ordered system instructions,
-so a change starts a fresh surface instead of risking stale instructions. The user has thirty
-seconds to paste, select the visible
+so a change starts a fresh surface instead of risking stale instructions. The user has three
+minutes to paste, select the visible
 ChatGPT model, effort, and Zero Risk connector, send, and confirm Sent; a manual compaction handoff
-allows two minutes. Sent ends that confirmation deadline. Waiting for the first MCP bind is part of
+allows two minutes. Copying the prompt again restarts that confirmation timer. Sent ends the timer,
+but the prompt remains available to copy until the connector starts. Waiting for the first MCP bind is part of
 the live turn, which remains subject to explicit cancellation and runtime-owner cleanup.
 The pasted task carries one opaque `request_id` for routing concurrent requests. Start/completion
 sequencing lives in the Zero Risk MCP server metadata, not in user-authored imperative text; the

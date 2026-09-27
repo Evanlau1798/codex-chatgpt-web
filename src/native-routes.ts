@@ -16,8 +16,15 @@ export interface ModelCatalogFailure {
 }
 
 export function modelCatalogFailure(stage: ModelCatalogFailure["stage"], error: unknown): ModelCatalogFailure {
-  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-  return { stage, ...(typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code) ? { code } : {}) };
+  if (!error || typeof error !== "object") return { stage };
+  for (const source of [error, "cause" in error ? error.cause : undefined]) {
+    const code = source && typeof source === "object" && "code" in source ? source.code : undefined;
+    if (typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code)) return { stage, code };
+  }
+  const name = "name" in error ? error.name : undefined;
+  if (name === "AbortError") return { stage, code: "ABORT_ERR" };
+  if (name === "TimeoutError") return { stage, code: "ETIMEDOUT" };
+  return { stage };
 }
 
 export async function modelsRequest(

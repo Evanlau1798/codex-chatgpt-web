@@ -464,7 +464,7 @@ test("fresh-conversation control is translated and enforces Original automatic m
     messageOf: String, platformLabel: String, languages: require("../electron/languages.json"),
     biggerContextSwitchState: contextMode.biggerContextSwitchState,
   };
-  for (const name of ["ContentSurface", "SectionHeading", "NoticeRow", "Icon", "DoctorSummary", "BrandMark", "ApiAccessCard"]) sandbox[name] = name;
+  for (const name of ["ContentSurface", "SectionHeading", "NoticeRow", "Icon", "DoctorSummary", "BrandMark", "ApiAccessCard", "PrimaryButton", "SecondaryButton"]) sandbox[name] = name;
   const settings = fs.readFileSync(path.join(launcherRoot, "src/settings-surface.tsx"), "utf8");
   vm.runInNewContext(transpile(settings.slice(settings.indexOf("export function SettingsSurface(")), "settings.tsx"), sandbox);
   const render = sandbox.exports.SettingsSurface;
@@ -481,7 +481,10 @@ test("fresh-conversation control is translated and enforces Original automatic m
       ["manual", true, true, false], ["automatic", false, false, false], ["automatic", true, true, true],
     ]) {
       const tree = render({ copy, devProfile: false, language, configureInteractionMode() {}, setError() {}, browser: null,
-        snapshot: { state: { browserInteractionMode: mode, coreSetupComplete: configured, experimentalFreshConversationPerTurn: enabled, useEnhancedWebSessionMode: enhanced } },
+        snapshot: {
+          connectorNames: { automatic: "Codex Native2", manual: "Codex Zero Risk" },
+          state: { browserInteractionMode: mode, coreSetupComplete: configured, experimentalFreshConversationPerTurn: enabled, useEnhancedWebSessionMode: enhanced },
+        },
         updateState: value => { saved = value; },
       });
       const row = visit(tree).find(node => node.type?.name === "SettingRow" && node.props.label === copy.freshConversation);
@@ -498,4 +501,49 @@ test("fresh-conversation control is translated and enforces Original automatic m
       }
     }
   }
+});
+
+test("plugin rename invalidates verification only after success and rejects active browser work", async () => {
+  const vm = require("node:vm");
+  const handlers = new Map();
+  const state = { mcpSetupComplete: true, mcpGuideStep: 0 };
+  const events = [];
+  let fail = true, calls = 0;
+  const browserHost = { activeTraceId: "busy", currentOperation: () => null };
+  vm.runInNewContext(electronMain.slice(
+    electronMain.indexOf('handle("launcher:connector-name",'),
+    electronMain.indexOf('handle("launcher:browser-interaction-mode",'),
+  ), {
+    handle: (name, handler) => handlers.set(name, handler), browserHost,
+    runtimeHost: {
+      setConnectorNameSuffix: async () => { calls++; if (fail) throw new Error("setup failed"); return { changed: true }; },
+      browserConnectorName: () => "Codex Work",
+      setupConnectorName: mode => mode === "manual" ? "Codex Zero Risk" : "Codex Work",
+    },
+    stateStore: { read: () => state, update: patch => Object.assign(state, patch) },
+    send: (channel, body) => events.push({ channel, body }),
+  });
+  const rename = handlers.get("launcher:connector-name");
+  await assert.rejects(rename(null, "Work"), /Finish active ChatGPT turns/);
+  assert.equal(calls, 0);
+  browserHost.activeTraceId = null;
+  await assert.rejects(rename(null, "Work"), /setup failed/);
+  assert.equal(state.mcpSetupComplete, true);
+  assert.equal(events.length, 0);
+  fail = false;
+  await rename(null, "Work");
+  assert.equal(state.mcpSetupComplete, false);
+  assert.equal(state.mcpGuideStep, 2);
+  assert.equal(events[0].channel, "launcher:connector-names-changed");
+  assert.equal(events[0].body.connectorNames.manual, "Codex Zero Risk");
+  assert.equal(events[1].channel, "launcher:state-changed");
+});
+
+test("plugin name editor keeps the Codex prefix and submits only the editable suffix", () => {
+  const settings = fs.readFileSync(path.join(launcherRoot, "src/settings-surface.tsx"), "utf8");
+  assert.match(settings, /currentPluginName\.slice\(6\)/);
+  assert.match(settings, /<span aria-hidden="true">Codex<\/span>/);
+  assert.match(settings, /maxLength=\{74\}/);
+  assert.match(settings, /setConnectorNameSuffix\(nameSuffix\.trim\(\)\)/);
+  assert.match(settings, /setConfirmNameChange\(true\)/);
 });

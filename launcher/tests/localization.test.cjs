@@ -13,6 +13,7 @@ const languageTypes = read("launcher", "src", "types.ts");
 const electronMain = read("launcher", "electron", "main.cjs");
 const stateSource = read("launcher", "electron", "state.cjs");
 const languages = JSON.parse(read("launcher", "electron", "languages.json"));
+const loadI18nModule = () => require("../src/i18n.ts");
 
 test("every declared launcher language is wired across state, IPC, onboarding, and Settings", () => {
   assert.deepEqual(Object.keys(languages), ["en", "zh-CN", "zh-TW", "ja", "ko"]);
@@ -48,4 +49,19 @@ test("runtime health messages are localized without rewriting unknown failures",
   assert.match(appSource, /localizeRuntimeMessage\(copy, operation\.message, undefined, language\)/);
   assert.match(read("launcher", "src", "app-shared.tsx"), /localizeRuntimeMessage\(copy, check\.message, check\.id, language\)/);
   assert.match(read("launcher", "src", "settings-surface.tsx"), /<DoctorSummary copy=\{copy\} language=\{language\} report=\{doctor\}/);
+});
+
+
+test("plugin setup and Zero Risk instructions show configured names in every language", () => {
+  const { copyFor } = loadI18nModule();
+  const names = { automatic: "Codex Work", manual: "Codex Manual" };
+  for (const language of Object.keys(languages)) {
+    const copy = copyFor(language, names);
+    for (const key of ["manualMcpStepThreeBody", "manualConnectorNotice", "manualPromptInstruction", "manualPromptWaiting"]) {
+      assert.ok(copy[key].includes(names.manual), `${language}: ${key}`);
+    }
+    assert.ok(copy.connectorMigrationNotice.includes(names.automatic));
+    assert.ok(copy.pluginNameWarning.length > 0);
+    assert.equal(copyFor(language).manualPromptInstruction.includes("Codex Manual"), false);
+  }
 });

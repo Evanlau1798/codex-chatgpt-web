@@ -271,6 +271,53 @@ test("captured power response keeps its Markdown ledger through final rendering"
   expect(buffer.finish().markdown).toEndWith("STREAM\\_END\\_927");
 });
 
+test("reported code-block containers preserve code while their localized toolbar changes", async () => {
+  // #631 supplied the finished structure: a generic DIV around
+  // [data-markdown-copy="code-block"] > DIV > CODE, without a PRE.
+  // Exercise changing UI text inside that container through the production extraction callback.
+  const code = '  first = "コード"\n\n  print(first)\n  # ```\n';
+  for (const block of ["div", "pre"]) {
+    for (const label of ["コード", "Code", "代码"]) {
+      const html = (toolbar: string, value = code) => `<section id="turn" data-turn-key="response">
+        <div data-content-search-unit-key="response:assistant"><h4 data-conversation-role="assistant">ChatGPT said:</h4>
+        <div data-markdown-text-style="assistant-message">
+          <p data-start="0" data-end="10">Example</p>
+          <div data-start="12" data-end="100"><${block} data-markdown-copy="code-block">
+            ${toolbar}<div class="overflow-auto p-2"><code class="language-python whitespace-pre block"><span>${value}</span></code></div>
+          </${block}></div>
+          <p data-start="102" data-end="120">Done.</p>
+        </div></div></section>`;
+      const during = await snapshot(html(`<div>${label}<button>Copy</button></div>`));
+      const after = await snapshot(html(""));
+      expect(during.markdownSegments[1]?.text).toBe(code.trim());
+      expect(after.markdownSegments[1]?.text).toBe(code.trim());
+      expect(during.markdownSegments[1]).toMatchObject({ sourceStart: 12, sourceEnd: 100 });
+      const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
+      buffer.observe(during.markdownSegments, 0);
+      buffer.observe(after.markdownSegments, 1000);
+      expect(buffer.currentSnapshotIsConsistent()).toBeTrue();
+      expect(buffer.finish().markdown).toBe(`Example\n\n\`\`\`python\n${code}\`\`\`\n\nDone.`);
+
+      // Ignore the toolbar, never an actual change to code already sent to Codex.
+      const changed = await snapshot(html("", code.replace("print(first)", "print(other)")));
+      buffer.observe(changed.markdownSegments, 2000);
+      expect(() => buffer.finish()).toThrow("ChatGPT changed a completed text block");
+    }
+  }
+});
+
+test("ordinary prose, inline code and legacy fenced code keep their meaning", async () => {
+  const response = await snapshot(`<section id="turn" data-turn="assistant">
+    <div data-message-author-role="assistant"><div class="markdown">
+      <p>Code: <code>/tmp/file.ts</code></p>
+      <pre data-start="30" data-end="80"><code class="language-text">/tmp/file.ts\n\n[[note]]\n\`\`\`\nend</code></pre>
+      <p>Done.</p>
+    </div></div></section>`);
+  const buffer = new ChatGptMarkdownBuffer();
+  buffer.observe(response.markdownSegments, 0);
+  expect(buffer.finish().markdown).toBe("Code: [/tmp/file.ts](</tmp/file.ts>)\n\n````text\n/tmp/file.ts\n\n[[note]]\n```\nend\n````\n\nDone.");
+});
+
 test("DIL response extraction preserves ownership, commentary and completion boundaries", async () => {
   for (const html of [
     smokeHtml.replace('data-message-author-role="assistant"', 'data-message-author-role="user"'),

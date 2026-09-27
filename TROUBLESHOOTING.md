@@ -174,7 +174,7 @@ Video walkthroughs:
 
 Browser-only mode needs no connector. Full harness mode requires all of the following:
 
-- a newly created connector named exactly **Codex Native2**;
+- a newly created connector with the exact name shown in the launcher (**Codex Native2** by default);
 - **Developer Mode** enabled in ChatGPT;
 - the exact Tunnel selected with **Authentication: None**;
 - the connector and Tunnel on the same OpenAI account as the ChatGPT workspace;
@@ -233,6 +233,20 @@ Start-Process (Join-Path $install "Codex Web GPT.exe")
 For a portable copy, use its executable path instead. Retry **Connect harness** once. This enables
 [Node's system CA support](https://nodejs.org/api/cli.html#node_use_system_ca1); certificate verification
 stays enabled. If it still fails, export a safe log. Do not set `NODE_TLS_REJECT_UNAUTHORIZED=0`.
+
+### ChatGPT will not reuse a deleted plugin's name
+
+In the launcher, open **Settings → Plugin name**, change the part after **Codex**, and confirm.
+For example, replace **Native2** with **Work** to get **Codex Work**. Create a new plugin using
+the exact name shown in **MCP**, then verify it again. Only the current mode's name changes;
+the tunnel credentials and ChatGPT login are kept. Do not rename the retired
+**Codex Native** plugin to reuse its old schema.
+
+### Zero Risk: the prompt was not sent
+
+Confirm **Sent** only after ChatGPT accepts the prompt. If sending is blocked, choose an available
+model yourself. **Copy prompt** gives you a fresh handoff timer before Sent and remains available
+after Sent until the plugin starts. Copying does not send another message or change the model.
 
 ### ChatGPT shows `Error creating connector`
 

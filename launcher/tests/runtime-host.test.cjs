@@ -510,3 +510,42 @@ test("fresh-conversation preference uses production and DEV setup without forcin
     assert.equal(fixture.invocation(), undefined);
   }
 });
+
+
+for (const development of [false, true]) test(`plugin renaming uses transactional ${development ? "DEV" : "production"} setup without changing credentials or refreshing models`, async () => {
+  const factory = development ? devHostFor : hostFor;
+  const fixture = factory({ mode: "full", appName: "Codex Work", automaticAppName: "Codex Work", manualAppName: "Codex Zero Risk" });
+  assert.equal(fixture.host.setupConnectorName("manual"), "Codex Zero Risk");
+  assert.equal(fixture.host.setupConnectorName("automatic"), "Codex Work");
+  assert.equal(fixture.host.browserConnectorName(), "Codex Work");
+  assert.equal(fixture.host.mcpConnectorName(), "Codex Work");
+  assert.deepEqual(await fixture.host.setConnectorNameSuffix("Work"), { changed: false });
+  assert.equal(fixture.invocation(), undefined);
+  await fixture.host.setConnectorNameSuffix("Home");
+  const args = fixture.invocation().args;
+  assert.equal(args[args.indexOf("--connector-name-suffix") + 1], "Home");
+  for (const unwanted of ["--refresh-account-capabilities", "--tunnel-id", "--runtime-key-file"]) assert.equal(args.includes(unwanted), false);
+  await assert.rejects(fixture.host.setConnectorNameSuffix(""), /part after Codex/);
+  await assert.rejects(fixture.host.setConnectorNameSuffix("Zero Risk"), /must differ/);
+  await assert.rejects(fixture.host.setConnectorNameSuffix("Native"), /retired/);
+  await assert.rejects(fixture.host.setConnectorNameSuffix("bad\nname"), /part after Codex/);
+});
+
+test("renaming rolls back the saved name if the new runtime fails", async () => {
+  const config = { mode: "full", browserHost: "launcher", appName: "Codex Old", automaticAppName: "Codex Old" };
+  const fixture = hostFor(config);
+  const host = fixture.host;
+  host.runSetup = RuntimeHost.prototype.runSetup;
+  host.captureSetupCheckpoint = () => structuredClone(config);
+  host.setupCheckpointChanged = () => true;
+  host.restoreSetupCheckpoint = checkpoint => { Object.assign(config, checkpoint); };
+  host.restorePreviousRuntime = async () => {};
+  host.run = async (_name, args) => {
+    if (!args.includes("--preflight-only")) Object.assign(config, { automaticAppName: "Codex New", appName: "Codex New" });
+    return { stdout: "" };
+  };
+  host.supervisor.startIfConfigured = async () => ({ status: "failed", detail: "fixture failure" });
+  await assert.rejects(host.setConnectorNameSuffix("New"), /fixture failure/);
+  assert.equal(config.automaticAppName, "Codex Old");
+  assert.equal(config.appName, "Codex Old");
+});

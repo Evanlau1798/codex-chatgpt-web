@@ -498,6 +498,8 @@ class RuntimeHost {
 
   setBrowserInteractionMode(...args) { return setupOperations.setBrowserInteractionMode.apply(this, args); }
 
+  setConnectorNameSuffix(...args) { return setupOperations.setConnectorNameSuffix.apply(this, args); }
+
   runDevSetup(...args) { return setupOperations.runDevSetup.apply(this, args); }
 
   runSetup(...args) {

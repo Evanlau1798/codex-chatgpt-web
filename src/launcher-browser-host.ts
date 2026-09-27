@@ -403,7 +403,7 @@ export async function notifyLauncherTurn(
       ? LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS
       : LAUNCHER_TURN_START_TIMEOUT_MS,
   signal?: AbortSignal,
-): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean; cancelledByUser?: boolean; authenticationBlocked?: boolean; trackUsage?: boolean }> {
+): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean; cancelledByUser?: boolean; authenticationRequired?: boolean; trackUsage?: boolean }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -449,10 +449,13 @@ export async function notifyLauncherTurn(
       if (typeof body.cancelledByUser !== "boolean") {
         throw new Error("Launcher browser control channel returned an invalid turn release result");
       }
-      if (body.authenticationBlocked !== undefined && typeof body.authenticationBlocked !== "boolean") {
+      if (body.authenticationRequired !== undefined && typeof body.authenticationRequired !== "boolean") {
         throw new Error("Launcher browser control channel returned an invalid authentication state");
       }
-      return { cancelledByUser: body.cancelledByUser, ...(body.authenticationBlocked === true ? { authenticationBlocked: true } : {}) };
+      return {
+        cancelledByUser: body.cancelledByUser,
+        ...(body.authenticationRequired === true ? { authenticationRequired: true } : {}),
+      };
     }
     return {};
   } catch (error) {

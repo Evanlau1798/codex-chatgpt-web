@@ -37,6 +37,8 @@ async function fixture() {
   const host = Object.assign(Object.create(BrowserHost.prototype), {
     logger, turnTabs: new Map([[tab.id, tab]]), closedTurnOwners: new Map(), userCancelledTurnOwners: new Map(),
     syncPowerSaveBlocker() {}, syncViewVisibility() {}, publishState() {}, snapshot() { return {}; },
+    setState(next: Record<string, unknown>) { Object.assign(host.state, next); },
+    state: { authenticated: true, status: "running" }, reauthenticationRequired: false, authenticationRevision: 0,
     writeDescriptor() {}, hide() {},
     beginTurn: async () => { starts++; return { surfaceId: "a".repeat(32), reused: false }; },
     removeTurnTab: () => { host.turnTabs.delete(tab.id); },
@@ -72,7 +74,7 @@ for (const event of ["will-navigate", "will-redirect"]) {
         modelId: "gpt-5.6-sol", reasoning: "high", onTextDelta() {},
         capabilities: { localToolsEnabled: true, solAvailable: true, proAvailable: false },
       }).catch((error: unknown) => error);
-      expect(error).toMatchObject({ code: "chatgpt_session_expired", status: 401,
+      expect(error).toMatchObject({ code: "chatgpt_sign_in_required", status: 401,
         errorType: "authentication_error", retryable: false });
       expect(chatGptSessionFailureDisposition(error)).toBe("replay");
       expect(f.starts()).toBe(1);
@@ -90,7 +92,7 @@ test("authentication navigation does not bypass helper ownership or change manua
     f.tab.interactionMode = "manual";
     f.contents.emit("will-redirect", { preventDefault() { prevented++; } }, "https://chatgpt.com/auth/login");
     expect(prevented).toBe(0);
-    expect(f.tab.authenticationBlocked).toBeUndefined();
+    expect(f.tab.authenticationRequired).toBeUndefined();
     f.tab.interactionMode = "automatic";
     f.contents.emit("will-redirect", { preventDefault() { prevented++; } }, "https://chatgpt.com/auth/login");
     await expect(f.host.endTurn(f.tab.traceId, process.pid + 1, "failed", false)).rejects.toThrow("ownership mismatch");
@@ -104,7 +106,7 @@ for (const cancelled of [false, true]) {
     const original = new Error("unrelated navigation failure");
     f.worker.runBrowserTurn = async () => {
       if (cancelled) {
-        f.tab.authenticationBlocked = true;
+        f.tab.authenticationRequired = true;
         f.host.userCancelledTurnOwners.set(f.tab.traceId, process.pid);
       }
       throw original;
@@ -120,12 +122,12 @@ for (const cancelled of [false, true]) {
   });
 }
 
-test("an authentication-blocked tab cannot be retained as a successful conversation", async () => {
+test("an authentication-required tab cannot be retained as a successful conversation", async () => {
   const f = await fixture();
   try {
-    f.tab.authenticationBlocked = true;
+    f.tab.authenticationRequired = true;
     const result = await f.host.endTurn(f.tab.traceId, process.pid, "completed", false, undefined, true, true);
-    expect(result).toMatchObject({ authenticationBlocked: true, cancelledByUser: false });
+    expect(result).toMatchObject({ authenticationRequired: true, cancelledByUser: false });
     expect(f.tab.status).toBe("error");
     expect(f.host.turnTabs.size).toBe(0);
   } finally { await f.close(); }
@@ -136,7 +138,7 @@ test("native cancellation wins over an authentication redirect observed during c
   const controller = new AbortController();
   const aborted = new DOMException("native cancellation", "AbortError");
   f.worker.runBrowserTurn = async () => {
-    f.tab.authenticationBlocked = true;
+    f.tab.authenticationRequired = true;
     controller.abort(aborted);
     throw aborted;
   };

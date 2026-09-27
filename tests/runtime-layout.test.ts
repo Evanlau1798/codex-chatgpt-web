@@ -18,6 +18,7 @@ import {
   providerConfig,
   resolveBrokerEndpoint,
   runtimeCommandForProcess,
+  validateConnectorNameSuffix,
 } from "../src/config";
 import { removeLegacyRuntimeArtifacts } from "../src/service";
 import { processRunning } from "../src/process";
@@ -429,4 +430,52 @@ test("skill attachments config defaults off, reaches the adapter, and rejects in
   config.appName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
   persist();
   expect(() => loadConfig()).toThrow("Zero Risk does not support Skills as files");
+});
+
+test("the whole name after Codex is editable and only the selected mode changes", () => {
+  for (const suffix of ["Native2", "Work", "DEV", "研究_2", "a".repeat(74)]) {
+    expect(validateConnectorNameSuffix(suffix)).toBe(suffix);
+    const names = resolveInteractionConnectorIdentities("automatic", "production", {}, suffix);
+    expect(names.appName).toBe(`Codex ${suffix}`);
+    expect(names.manualAppName).toBe("Codex Zero Risk");
+    expect(names.appName.length).toBeLessThanOrEqual(80);
+    const manual = resolveInteractionConnectorIdentities("manual", "production", names, "Manual");
+    expect(manual.automaticAppName).toBe(names.automaticAppName);
+    expect(manual.appName).toBe("Codex Manual");
+    expect(resolveInteractionConnectorIdentities("automatic", "production", manual).appName).toBe(names.automaticAppName);
+  }
+  for (const suffix of [null, 5, "", "x".repeat(75), " Work", "Work ", "x\ny", "x`y", "x@y", "--flag"]) {
+    expect(() => validateConnectorNameSuffix(suffix)).toThrow("part after Codex");
+  }
+  expect(() => validateConnectorNameSuffix("Native")).toThrow("retired");
+  expect(() => resolveInteractionConnectorIdentities("automatic", "production", {}, "Zero Risk")).toThrow("must differ");
+});
+
+test("stored names survive config loading without an additional naming preference", () => {
+  const root = join(tmpdir(), `cgw-name-config-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const config = {
+    ...defaultConfig("full"), browserHost: "launcher" as const,
+    browserHostDescriptorPath: join(root, "launcher.json"),
+    tunnel: { binaryPath: join(root, "tunnel"), tunnelId: `tunnel_${"a".repeat(32)}`,
+      runtimeKeyFile: join(root, "key"), profileDir: root, profileName: "test", alias: "test" },
+    ...resolveInteractionConnectorIdentities("automatic", "production", {}, "Work"),
+  };
+  for (const mode of ["automatic", "manual"] as const) {
+    Object.assign(config, { browserInteractionMode: mode }, resolveInteractionConnectorIdentities(mode, "production", config));
+    writeFileSync(join(root, "config.json"), JSON.stringify(config));
+    expect(loadConfig().appName).toBe(mode === "manual" ? "Codex Zero Risk" : "Codex Work");
+    expect(loadConfigForSetup().automaticAppName).toBe("Codex Work");
+  }
+  config.automaticAppName = "Codex Native2 - Work";
+  writeFileSync(join(root, "config.json"), JSON.stringify(config));
+  expect(loadConfigForSetup().automaticAppName).toBe("Codex Native2 - Work");
+  writeFileSync(join(root, "config.json"), JSON.stringify({ ...config, manualAppName: "Another plugin" }));
+  expect(() => loadConfig()).toThrow("must start with Codex");
+  writeFileSync(join(root, "config.json"), JSON.stringify({
+    ...config, automaticAppName: "Codex Zero Risk", manualAppName: "Codex Manual", appName: "Codex Manual",
+  }));
+  expect(loadConfigForSetup().automaticAppName).toBe("Codex Zero Risk");
 });
