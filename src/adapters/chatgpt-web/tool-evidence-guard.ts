@@ -6,9 +6,12 @@ const MAX_ERROR_EVIDENCE = 8;
 
 const ENGLISH_CAUSAL_CLAIM = /(?:tool|command|execution|invocation|action|request|helper).{0,100}(?:blocked|rejected|denied|refused|prevented|stopped|did not execute).{0,100}(?:safety|security|policy|approval|permission|guardrail)|(?:safety|security|policy|approval|permission|guardrail).{0,100}(?:blocked|rejected|denied|refused|prevented|stopped).{0,100}(?:tool|command|execution|invocation|action|request|helper)/i;
 const CHINESE_CAUSAL_CLAIM = /(?:工具|命令|執行|呼叫|操作|請求|helper).{0,60}(?:安全|資安|政策|規則|審核|批准|權限).{0,60}(?:擋下|攔下|阻擋|攔截|拒絕|阻止|禁止|未執行|沒有執行)|(?:安全|資安|政策|規則|審核|批准|權限).{0,60}(?:擋下|攔下|阻擋|攔截|拒絕|阻止|禁止).{0,60}(?:工具|命令|執行|呼叫|操作|請求|helper)/i;
+const FRENCH_CAUSAL_CLAIM = /(?:outil|commande|ex[ée]cution|appel|action|requ[êe]te|helper).{0,100}(?:bloqu[ée]|rejet[ée]|refus[ée]|emp[êe]ch[ée]|interdit|pas [ée]t[ée] ex[ée]cut[ée]).{0,100}(?:s[ée]curit[ée]|politique|approbation|autorisation|permission|garde[- ]fou)|(?:s[ée]curit[ée]|politique|approbation|autorisation|permission|garde[- ]fou).{0,100}(?:bloqu[ée]|rejet[ée]|refus[ée]|emp[êe]ch[ée]|interdit).{0,100}(?:outil|commande|ex[ée]cution|appel|action|requ[êe]te|helper)/i;
 const ENGLISH_NEGATED_ATTRIBUTION = /\b(?:cannot|can't|could not|couldn't|should not|shouldn't|must not|mustn't|do not|don't)\b.{0,100}\b(?:say|claim|infer|conclude|attribute|determine|name)\b/i;
 const CHINESE_NEGATED_ATTRIBUTION = /(?:不能|無法|不應|不可|不該|不得).{0,50}(?:說|聲稱|宣稱|推斷|歸因|確認|命名)|(?:不能|無法).{0,20}判定.{0,10}是否/i;
+const FRENCH_NEGATED_ATTRIBUTION = /(?:\bne\b|n['’]).{0,50}(?:pas|jamais).{0,100}(?:affirmer|dire|conclure|attribuer|d[ée]duire|confirmer|d[ée]terminer)|(?:\bne\b|n['’]).{0,30}(?:pas|jamais).{0,20}(?:bloqu[ée]|rejet[ée]|refus[ée]|emp[êe]ch[ée]|interdit)/i;
 const SAFETY_ERROR_EVIDENCE = /(?:safety|security|policy|approval|permission|guardrail|blocked|rejected|denied|refused)|(?:安全|資安|政策|規則|審核|批准|權限|擋下|攔下|阻擋|攔截|拒絕|禁止)/i;
+const FRENCH_SAFETY_ERROR_EVIDENCE = /(?:s[ée]curit[ée]|politique|approbation|autorisation|permission|garde[- ]fou|bloqu[ée]|rejet[ée]|refus[ée]|interdit)/i;
 
 const CORRECTION_PROMPT = [
   "Your previous response attributed a local tool action to a safety, security, policy, approval, or permission cause that is not supported by the returned Native tool evidence.",
@@ -25,7 +28,8 @@ function contentText(content: CodexToolResultMessage["content"]): string {
 
 export function hasUnsupportedNativeToolCauseClaim(text: string): boolean {
   if (ENGLISH_NEGATED_ATTRIBUTION.test(text) || CHINESE_NEGATED_ATTRIBUTION.test(text)) return false;
-  return ENGLISH_CAUSAL_CLAIM.test(text) || CHINESE_CAUSAL_CLAIM.test(text);
+  return ENGLISH_CAUSAL_CLAIM.test(text) || CHINESE_CAUSAL_CLAIM.test(text)
+    || (FRENCH_CAUSAL_CLAIM.test(text) && !FRENCH_NEGATED_ATTRIBUTION.test(text));
 }
 
 export class ChatGptToolEvidenceGuard {
@@ -58,6 +62,6 @@ export class ChatGptToolEvidenceGuard {
   }
 
   private hasSupportingErrorEvidence(): boolean {
-    return this.errorEvidence.some(text => SAFETY_ERROR_EVIDENCE.test(text));
+    return this.errorEvidence.some(text => SAFETY_ERROR_EVIDENCE.test(text) || FRENCH_SAFETY_ERROR_EVIDENCE.test(text));
   }
 }
