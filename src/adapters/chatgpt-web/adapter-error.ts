@@ -48,6 +48,18 @@ export function chatGptSessionExpiredError(): ChatGptWebAdapterError {
   });
 }
 
+export function chatGptAuthenticationRedirectError(status: "authenticated" | "signed-out" | "unknown"): ChatGptWebAdapterError {
+  if (status === "signed-out") return chatGptSessionExpiredError();
+  return new ChatGptWebAdapterError(status === "authenticated"
+    ? "ChatGPT redirected to sign-in although its saved session is still authenticated. Open ChatGPT in Codex Web GPT and retry the task."
+    : "ChatGPT redirected to sign-in, but its session could not be verified. Open ChatGPT in Codex Web GPT and check the connection before retrying.", {
+    status: 502, errorType: "server_error",
+    code: status === "authenticated" ? "chatgpt_authentication_redirect" : "chatgpt_authentication_unverified",
+    // Only the browser worker may retry a verified redirect, once and before Send.
+    retryable: false,
+  });
+}
+
 export function chatGptRetainedSurfaceUnavailableError(cause: unknown): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(CHATGPT_RETAINED_SURFACE_UNAVAILABLE, {
     status: 502,

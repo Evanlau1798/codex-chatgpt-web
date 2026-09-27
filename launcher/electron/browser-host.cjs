@@ -717,7 +717,7 @@ class BrowserHost {
       if (tab.interactionMode === "manual" || !allowedAuthUrl(url)) return;
       event.preventDefault();
       tab.authenticationBlocked = true;
-      tab.message = "ChatGPT requires a fresh sign-in; finish this turn, then sign in from Setup";
+      tab.message = "ChatGPT redirected to sign-in; the saved session must be verified";
       this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
       this.publishState?.(this.snapshot());
     };
@@ -1860,7 +1860,24 @@ class BrowserHost {
     this.removeTurnTab(tab, false);
     if (hideAfterTurn && !this.activeTraceId) this.hide();
     this.logger.info("browser.tab_released", { tabId: tab.id, traceId, status: tab.status });
-    return { cancelledByUser, ...(authenticationBlocked ? { authenticationBlocked: true } : {}) };
+    if (!authenticationBlocked || cancelledByUser || status === "aborted") {
+      return { cancelledByUser, ...(authenticationBlocked ? { authenticationBlocked: true } : {}) };
+    }
+    // A blocked auth navigation is not proof that the saved session expired. Verify
+    // through the same authenticated endpoint as the normal session probe, after
+    // releasing the failed tab. Never navigate an auth flow or touch another turn.
+    const authenticationRevision = this.authenticationRevision;
+    let authenticationStatus = "unknown";
+    try {
+      const session = this.view.webContents.session;
+      const result = await readChatGptAuthSession(session.fetch.bind(session), CHATGPT_ORIGIN, CHATGPT_AUTH_SESSION_TIMEOUT_MS);
+      if (!this.destroyed && browserInteractionModeFor(this) === "automatic"
+        && authenticationRevision === this.authenticationRevision && !result.sessionCheckError) {
+        authenticationStatus = result.sessionAuthenticated ? "authenticated" : "signed-out";
+      }
+    } catch { /* Unavailable verification is not evidence of a signed-out session. */ }
+    this.logger.info("browser.turn_authentication_verified", { traceId, authenticationStatus });
+    return { cancelledByUser, authenticationBlocked: true, authenticationStatus };
   }
 
   beginManualTurn(...args) { return this.manualTurns.begin(...args); }

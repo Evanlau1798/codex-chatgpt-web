@@ -5,6 +5,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { expandUserPath, stripUtf8Bom } from "./config";
 import { assertLauncherLoopbackEndpoint } from "./launcher-loopback-endpoint";
 import { processRunning } from "./process";
+import { parseLauncherTurnRelease } from "./launcher-turn-release";
 
 export const LAUNCHER_BROWSER_HOST_KIND = "codex-web-gpt-launcher";
 export const LAUNCHER_BROWSER_IDLE_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
@@ -403,7 +404,8 @@ export async function notifyLauncherTurn(
       ? LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS
       : LAUNCHER_TURN_START_TIMEOUT_MS,
   signal?: AbortSignal,
-): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean; cancelledByUser?: boolean; authenticationBlocked?: boolean; trackUsage?: boolean }> {
+): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean; cancelledByUser?: boolean; authenticationBlocked?: boolean;
+  authenticationStatus?: "authenticated" | "signed-out" | "unknown"; trackUsage?: boolean }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -446,13 +448,7 @@ export async function notifyLauncherTurn(
       };
     }
     if (activity.phase === "end") {
-      if (typeof body.cancelledByUser !== "boolean") {
-        throw new Error("Launcher browser control channel returned an invalid turn release result");
-      }
-      if (body.authenticationBlocked !== undefined && typeof body.authenticationBlocked !== "boolean") {
-        throw new Error("Launcher browser control channel returned an invalid authentication state");
-      }
-      return { cancelledByUser: body.cancelledByUser, ...(body.authenticationBlocked === true ? { authenticationBlocked: true } : {}) };
+      return parseLauncherTurnRelease(body);
     }
     return {};
   } catch (error) {

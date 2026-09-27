@@ -146,7 +146,7 @@ import {
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
-import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptRetainedSurfaceUnavailableError, chatGptSessionExpiredError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
+import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptAuthenticationRedirectError, chatGptBrowserTabClosedError, chatGptRetainedSurfaceUnavailableError, chatGptSessionExpiredError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, readChatGptUpstreamFailureUiState, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { CHATGPT_CONNECTOR_MENTION_ROW_SELECTOR, chatGptConnectorMentionRowHighlighted, openChatGptConnectorPlusMenu } from "./connector-plus-menu";
@@ -1148,9 +1148,10 @@ export class ChatGptBrowserWorker {
         turn.capabilities,
       ).localTools;
       const canRetryFreshSurface = error instanceof ChatGptWebAdapterError
-        && (error.code === "chatgpt_surface_changed" || error.code === "chatgpt_connector_unavailable")
-        && error.retryable
-        && (!adapterOwnsRecovery || error.code === "chatgpt_connector_unavailable")
+        && (error.code === "chatgpt_authentication_redirect"
+          || ((error.code === "chatgpt_surface_changed" || error.code === "chatgpt_connector_unavailable")
+            && error.retryable
+            && (!adapterOwnsRecovery || error.code === "chatgpt_connector_unavailable")))
         && !sendActivated
         && !submitted
         && !turn.abortSignal?.aborted;
@@ -3667,10 +3668,12 @@ export class ChatGptBrowserWorker {
           ...(terminalMessage ? { message: terminalMessage } : {}),
         });
         if (release.cancelledByUser) throw chatGptBrowserTabClosedError();
-        if (release.authenticationBlocked && !turn.abortSignal?.aborted) throw chatGptSessionExpiredError();
+        if (release.authenticationBlocked && !turn.abortSignal?.aborted) {
+          throw chatGptAuthenticationRedirectError(release.authenticationStatus ?? "unknown");
+        }
       } catch (controlError) {
         if (controlError instanceof ChatGptWebAdapterError
-          && ["client_cancelled", "chatgpt_session_expired"].includes(controlError.code)) {
+          && ["client_cancelled", "chatgpt_session_expired", "chatgpt_authentication_redirect", "chatgpt_authentication_unverified"].includes(controlError.code)) {
           throw controlError;
         }
         if (!originalError) throw controlError;

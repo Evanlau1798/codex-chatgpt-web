@@ -156,19 +156,31 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
 
 test("launcher release validates the owned authentication flag without coercion", async () => {
   let authenticationBlocked: unknown = true;
+  let authenticationStatus: unknown;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0,
-    fetch: () => Response.json({ ok: true, cancelledByUser: false, authenticationBlocked }),
+    fetch: () => Response.json({ ok: true, cancelledByUser: false, authenticationBlocked, authenticationStatus }),
   });
   try {
     const path = descriptorFile(`http://127.0.0.1:${server.port}`);
     const end = () => notifyLauncherTurn(path, {
       phase: "end", traceId: "auth_test_trace", helperPid: process.pid, status: "failed",
     });
-    await expect(end()).resolves.toEqual({ cancelledByUser: false, authenticationBlocked: true });
+    await expect(end()).resolves.toEqual({ cancelledByUser: false, authenticationBlocked: true, authenticationStatus: "unknown" });
+    for (const status of ["authenticated", "signed-out", "unknown"] as const) {
+      authenticationStatus = status;
+      await expect(end()).resolves.toEqual({ cancelledByUser: false, authenticationBlocked: true, authenticationStatus: status });
+    }
+    for (const status of [true, false, null, "true", "expired", {}, []]) {
+      authenticationStatus = status;
+      await expect(end()).rejects.toThrow("invalid authentication evidence");
+    }
+    authenticationStatus = undefined;
     authenticationBlocked = "true";
     await expect(end()).rejects.toThrow("invalid authentication state");
     authenticationBlocked = false;
     await expect(end()).resolves.toEqual({ cancelledByUser: false });
+    authenticationStatus = "authenticated";
+    await expect(end()).rejects.toThrow("invalid authentication evidence");
   } finally { await server.stop(true); }
 });
 
