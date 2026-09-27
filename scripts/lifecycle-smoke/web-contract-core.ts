@@ -27,6 +27,19 @@ const capabilityKeys = [
 
 export type WebContractCapture = Record<(typeof capabilityKeys)[number], boolean>;
 
+export function webContractCandidateSurfaceIds(
+  primarySurfaceId: string,
+  surfaceIds: string[],
+  initialSurfaceIds: ReadonlySet<string>,
+  retainedSurfaceId?: string,
+): string[] {
+  if (retainedSurfaceId) {
+    return retainedSurfaceId !== primarySurfaceId && surfaceIds.includes(retainedSurfaceId)
+      ? [retainedSurfaceId] : [];
+  }
+  return surfaceIds.filter(surfaceId => surfaceId !== primarySurfaceId && !initialSurfaceIds.has(surfaceId));
+}
+
 export function responseHasFinalProjection(payload: unknown): boolean {
   const output = payload && typeof payload === "object" && !Array.isArray(payload)
     && Array.isArray((payload as { output?: unknown }).output)
@@ -42,19 +55,80 @@ export function responseHasFinalProjection(payload: unknown): boolean {
 
 export async function findWebContractSurface(
   surfaceIds: string[],
-  inspect: (surfaceId: string) => Promise<{ ownsCanary: boolean; userTurns: number }>,
+  inspect: (surfaceId: string) => Promise<{ ownsCanary: boolean; userTurns: number } | undefined>,
 ): Promise<{ surfaceId: string; userTurns: number }> {
   const owned: { surfaceId: string; userTurns: number }[] = [];
   for (const surfaceId of surfaceIds) {
-    try {
-      const observation = await inspect(surfaceId);
-      if (observation.ownsCanary) owned.push({ surfaceId, userTurns: observation.userTurns });
-    } catch {
-      // An unrelated turn may close while its browser surface is being inspected.
-    }
+    const observation = await inspect(surfaceId);
+    if (observation?.ownsCanary) owned.push({ surfaceId, userTurns: observation.userTurns });
   }
+  if (owned.length === 0) throw new WebContractSurfaceMissingError();
   if (owned.length !== 1) throw new Error(`Web contract expected one owned retained surface; found ${owned.length}`);
   return owned[0]!;
+}
+
+export class WebContractSurfaceMissingError extends Error {
+  constructor() {
+    super("Web contract expected one owned retained surface; found 0");
+    this.name = "WebContractSurfaceMissingError";
+  }
+}
+
+export class WebContractSurfaceDeadlineError extends Error {
+  constructor() {
+    super("Web contract retained surface discovery deadline exceeded");
+    this.name = "WebContractSurfaceDeadlineError";
+  }
+}
+
+export async function waitForWebContractSurface(
+  surfaceIds: () => string[],
+  inspect: (
+    surfaceId: string,
+    remainingMs: number,
+    signal: AbortSignal,
+  ) => Promise<{ ownsCanary: boolean; userTurns: number } | undefined>,
+  options: {
+    timeoutMs?: number;
+    now?: () => number;
+    pause?: (delayMs: number) => Promise<void>;
+  } = {},
+): Promise<{ surfaceId: string; userTurns: number }> {
+  const now = options.now ?? Date.now;
+  const pause = options.pause ?? (delayMs => Bun.sleep(delayMs));
+  const deadline = now() + (options.timeoutMs ?? 5_000);
+  while (true) {
+    try {
+      const candidates = surfaceIds();
+      if (candidates.length === 0) throw new WebContractSurfaceMissingError();
+      if (candidates.length !== 1) {
+        throw new Error(`Web contract expected one retained surface candidate; found ${candidates.length}`);
+      }
+      const remainingMs = deadline - now();
+      if (remainingMs <= 0) throw new WebContractSurfaceDeadlineError();
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(new WebContractSurfaceDeadlineError()),
+        remainingMs,
+      );
+      timer.unref?.();
+      try {
+        const observation = await findWebContractSurface(
+          candidates,
+          surfaceId => inspect(surfaceId, remainingMs, controller.signal),
+        );
+        if (controller.signal.aborted || deadline - now() <= 0) throw new WebContractSurfaceDeadlineError();
+        return observation;
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (error) {
+      if (!(error instanceof WebContractSurfaceMissingError)) throw error;
+      const delayMs = Math.min(100, deadline - now());
+      if (delayMs <= 0) throw new WebContractSurfaceDeadlineError();
+      await pause(delayMs);
+    }
+  }
 }
 
 export async function runWebContractTurns(

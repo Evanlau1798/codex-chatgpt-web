@@ -82,7 +82,7 @@ function handleSocket(socket: Socket, dispatch: BrokerDispatch): void {
 
 export function startTurnBrokerServer(socketPath: string, dispatch: BrokerDispatch): Promise<Server> {
   return new Promise<Server>((resolveStart, rejectStart) => {
-    const windowsPipe = isWindowsPipeEndpoint(socketPath);
+    const windowsPipe = process.platform === "win32" || isWindowsPipeEndpoint(socketPath);
     if (!windowsPipe) {
       const encodedLength = Buffer.byteLength(socketPath);
       if (encodedLength > MAX_UNIX_SOCKET_PATH_BYTES) {

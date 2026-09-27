@@ -7,7 +7,7 @@ import { VERSION } from "./version";
 import { effectiveExperimentalBiggerContext } from "./context-mode";
 import {
   CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-  isLegacyChatGptConnectorName, resolveInteractionConnectorIdentities, tunnelConfigForInteractionMode,
+  resolveInteractionConnectorIdentities, tunnelConfigForInteractionMode,
   validateCurrentConnectorName,
   type AppConfig, type RuntimeMode, type TunnelConfig,
 } from "./config-interaction";
@@ -327,7 +327,8 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (typeof automaticAppName !== "string" || !automaticAppName.trim() || automaticAppName.length > 80) {
     throw new Error(`Invalid automaticAppName in ${path}`);
   }
-  if (!isLegacyChatGptConnectorName(automaticAppName)) validateCurrentConnectorName(automaticAppName);
+  // Persisted Automatic identities may predate the current setup naming rule. New names are
+  // validated by resolveInteractionConnectorIdentities; keep existing custom connectors usable.
   validateCurrentConnectorName(manualAppName);
   if (automaticAppName === manualAppName) {
     throw new Error(`Automatic and Zero Risk connector names must differ in ${path}; rerun setup`);

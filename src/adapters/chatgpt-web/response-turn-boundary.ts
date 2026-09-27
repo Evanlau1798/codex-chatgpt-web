@@ -99,6 +99,11 @@ export async function readChatGptTurnIdentities(
   return identities;
 }
 
+export async function countChatGptTurnRoots(turns: Pick<Locator, "evaluateAll">): Promise<number> {
+  return await turns.evaluateAll(elements => elements.filter((element, index) =>
+    !elements.some((candidate, candidateIndex) => candidateIndex !== index && candidate.contains(element))).length);
+}
+
 export function chatGptNewTurnIdentity(
   initial: readonly string[],
   current: readonly string[],

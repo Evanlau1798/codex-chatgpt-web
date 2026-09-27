@@ -53,7 +53,7 @@ export const CHATGPT_USER_TURN_SELECTOR = [
   '[data-testid^="conversation-turn-"][data-turn="user"]:not([data-turn-key] *)',
   '[data-testid^="conversation-turn-"][data-message-author-role="user"]:not([data-turn-key] *)',
   '[data-testid^="conversation-turn-"]:has([data-message-author-role="user"]):not([data-turn-key] *)',
-  '[data-turn-key]:has([data-user-message-bubble])',
+  '[data-turn-key]:has([data-user-message-bubble], [data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])',
 ].join(", ");
 
 export function isTemporaryChatGptUrl(value: string): boolean {

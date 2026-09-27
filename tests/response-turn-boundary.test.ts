@@ -1,16 +1,51 @@
 import { expect, test } from "bun:test";
+import { CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
 import {
   activateChatGptSendControl,
   bindChatGptAssistantTurn,
   chatGptAssistantTurnChanged,
   chatGptNewTurnIdentity,
   chatGptSubmissionEvidence,
+  countChatGptTurnRoots,
   locateChatGptAssistantTurn,
   ChatGptTurnIdentityAmbiguityError,
   readChatGptAssistantTurnState,
   readChatGptTurnIdentities,
   reconcileChatGptAssistantTurnBinding,
 } from "../src/adapters/chatgpt-web/response-turn-boundary";
+
+test("logical turn counts collapse nested legacy and grouped roots", async () => {
+  const { createWindow } = require("@mixmark-io/domino") as {
+    createWindow(html: string): { document: Document };
+  };
+  const document = createWindow(`
+    <article data-testid="conversation-turn-1"><div data-message-author-role="user">
+      <section data-turn-key="one"><div data-user-message-bubble></div></section>
+    </div></article>
+    <article data-testid="conversation-turn-2"><div data-message-author-role="user">
+      <section data-turn-key="two"><div data-user-message-bubble></div></section>
+    </div></article>
+  `).document;
+  const nodes = [...document.querySelectorAll(
+    '[data-testid^="conversation-turn-"]:has([data-message-author-role="user"]), [data-turn-key]:has([data-user-message-bubble])',
+  )];
+  const turns = {
+    evaluateAll: async (callback: (elements: Element[]) => unknown) => callback(nodes),
+  };
+  expect(nodes).toHaveLength(4);
+  expect(await countChatGptTurnRoots(turns as never)).toBe(2);
+});
+
+test("grouped completed turns remain user-submission evidence when the user bubble is hidden", async () => {
+  const { createWindow } = require("@mixmark-io/domino") as {
+    createWindow(html: string): { document: Document };
+  };
+  const document = createWindow(
+    '<div data-turn-key="one"><h4 data-conversation-role="assistant"></h4></div>',
+  ).document;
+  const nodes = [...document.querySelectorAll(CHATGPT_USER_TURN_SELECTOR)];
+  expect(nodes).toHaveLength(1);
+});
 
 test("duplicate DOM turn identities are classified as transient observation ambiguity", async () => {
   const turns = {

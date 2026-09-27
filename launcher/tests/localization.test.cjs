@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const ts = require("typescript");
 
 const launcherRoot = path.resolve(__dirname, "..");
 const repositoryRoot = path.resolve(launcherRoot, "..");
@@ -13,7 +14,21 @@ const languageTypes = read("launcher", "src", "types.ts");
 const electronMain = read("launcher", "electron", "main.cjs");
 const stateSource = read("launcher", "electron", "state.cjs");
 const languages = JSON.parse(read("launcher", "electron", "languages.json"));
-const loadI18nModule = () => require("../src/i18n.ts");
+const loadI18nModule = () => {
+  const modules = {};
+  const load = file => {
+    const exportsObject = {};
+    new Function("exports", "require", ts.transpileModule(read("launcher", "src", file), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS },
+    }).outputText)(exportsObject, name => modules[name]);
+    return exportsObject;
+  };
+  modules["./zero-risk-copy"] = load("zero-risk-copy.ts");
+  modules["./i18n-ja"] = load("i18n-ja.ts");
+  modules["./i18n-ko"] = load("i18n-ko.ts");
+  modules["./i18n-zh-tw"] = load("i18n-zh-tw.ts");
+  return load("i18n.ts");
+};
 
 test("every declared launcher language is wired across state, IPC, onboarding, and Settings", () => {
   assert.deepEqual(Object.keys(languages), ["en", "zh-CN", "zh-TW", "ja", "ko"]);

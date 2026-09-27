@@ -37,8 +37,11 @@ export async function callTurnBroker<T>(
     const socket = createConnection(socketPath);
     let buffered = "";
     let settled = false;
+    let responseAccepted = false;
     let response: BrokerResponse | undefined;
-    const onAbort = () => finishError(new DOMException("turn broker call aborted", "AbortError"));
+    const onAbort = () => {
+      if (!responseAccepted) finishError(new DOMException("turn broker call aborted", "AbortError"));
+    };
     const cleanup = () => signal?.removeEventListener("abort", onAbort);
     const finishError = (error: Error) => {
       if (settled) return;
@@ -62,19 +65,27 @@ export async function callTurnBroker<T>(
     };
     const timer = timeoutMs === null
       ? undefined
-      : setTimeout(() => finishError(new TurnBrokerTimeoutError()), timeoutMs);
+      : setTimeout(() => {
+        if (!responseAccepted) finishError(new TurnBrokerTimeoutError());
+      }, timeoutMs);
     socket.setEncoding("utf8");
     if (signal?.aborted) {
       finishError(new DOMException("turn broker call aborted", "AbortError"));
       return;
     }
     signal?.addEventListener("abort", onAbort, { once: true });
-    socket.once("error", error => finishError(new Error(`ChatGPT web turn broker unavailable: ${error.message}`)));
-    socket.once("end", () => {
-      socket.destroy();
-      finishResponse();
+    socket.once("error", error => {
+      if (!responseAccepted) finishError(new Error(`ChatGPT web turn broker unavailable: ${error.message}`));
     });
-    socket.once("close", finishResponse);
+    socket.once("end", () => {
+      if (response) responseAccepted = true;
+      socket.end();
+      setImmediate(finishResponse);
+    });
+    socket.once("close", () => {
+      if (response) responseAccepted = true;
+      setImmediate(finishResponse);
+    });
     socket.once("connect", () => socket.write(`${JSON.stringify({ id, ...wireRequest })}\n`));
     socket.on("data", chunk => {
       if (settled || response) return;
@@ -103,6 +114,7 @@ export async function callTurnBroker<T>(
         return;
       }
       response = parsed;
+      responseAccepted = true;
       if (settleOnResponseFrame) {
         finishResponse();
         socket.destroy();

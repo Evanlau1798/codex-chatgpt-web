@@ -56,7 +56,11 @@ export function resolveInteractionConnectorIdentities(
   const defaultAutomatic = profile === "development" ? DEV_CHATGPT_CONNECTOR_NAME : CHATGPT_CONNECTOR_NAME;
   let automaticAppName = existing.automaticAppName ?? defaultAutomatic;
   let manualAppName = existing.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME;
-  if (isLegacyChatGptConnectorName(automaticAppName)) automaticAppName = defaultAutomatic;
+  if (isLegacyChatGptConnectorName(automaticAppName)) {
+    automaticAppName = defaultAutomatic;
+  } else if (suffix === undefined) {
+    try { validateCurrentConnectorName(automaticAppName); } catch { automaticAppName = defaultAutomatic; }
+  }
   if (suffix !== undefined) {
     const name = `Codex ${validateConnectorNameSuffix(suffix)}`;
     if (interactionMode === "manual") manualAppName = name;

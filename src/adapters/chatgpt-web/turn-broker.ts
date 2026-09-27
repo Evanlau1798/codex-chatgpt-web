@@ -503,7 +503,7 @@ export class TurnBroker implements TurnBrokerOwner {
     })
       .then(server => {
         this.server = server;
-        if (!isWindowsPipeEndpoint(this.socketPath)) {
+        if (process.platform !== "win32" && !isWindowsPipeEndpoint(this.socketPath)) {
           const { dev, ino } = lstatSync(this.socketPath);
           this.socketIdentity = { dev, ino };
         }
