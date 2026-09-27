@@ -46,7 +46,10 @@ function request(root: string): CodexParsedRequest {
   };
 }
 
-test("ordinary Codex tool turns retry unsupported safety-block claims before finalizing", async () => {
+test.each([
+  "The E2E helper invocation was blocked by OpenAI safety checks before it ran.",
+  "La commande a été bloquée par les contrôles de sécurité avant son exécution.",
+])("ordinary Codex tool turns retry unsupported safety-block claims before finalizing: %s", async claim => {
   const root = join(tmpdir(), `cgw-tool-evidence-${process.pid}-${Date.now()}`);
   mkdirSync(root, { recursive: true });
   const socketPath = process.platform === "win32"
@@ -77,7 +80,7 @@ test("ordinary Codex tool turns retry unsupported safety-block claims before fin
   try {
     await createChatGptWebAdapter(provider).runTurn!(request(root), { headers: new Headers() }, () => {});
     const retry = await captured?.retryPromptForAnswer?.(
-      "The E2E helper invocation was blocked by OpenAI safety checks before it ran.",
+      claim,
       1,
     );
     expect(retry).toMatchObject({ replaceCandidate: true });
@@ -89,7 +92,10 @@ test("ordinary Codex tool turns retry unsupported safety-block claims before fin
   }
 });
 
-test("unsupported safety-block commentary is withheld and forces a corrected answer", async () => {
+test.each([
+  "最終 candidate 的完整 E2E helper 呼叫被工具安全檢查擋下，因此實際沒有執行。",
+  "La commande a été bloquée par les contrôles de sécurité avant son exécution.",
+])("unsupported safety-block commentary is withheld and forces a corrected answer: %s", async claim => {
   const root = join(tmpdir(), `cgw-tool-evidence-commentary-${process.pid}-${Date.now()}`);
   mkdirSync(root, { recursive: true });
   const socketPath = process.platform === "win32"
@@ -113,7 +119,7 @@ test("unsupported safety-block commentary is withheld and forces a corrected ans
   worker.run = async turn => {
     const prepared = await turn.prepare();
     prepared.release();
-    turn.onCommentary?.("最終 candidate 的完整 E2E helper 呼叫被工具安全檢查擋下，因此實際沒有執行。");
+    turn.onCommentary?.(claim);
     retry = await turn.retryPromptForAnswer?.("Gate 20 remains open.", 1);
     turn.onTextDelta("Gate 20 remains open because the E2E action did not execute.");
     return "Gate 20 remains open because the E2E action did not execute.";
@@ -128,7 +134,7 @@ test("unsupported safety-block commentary is withheld and forces a corrected ans
     expect(retry).toMatchObject({ replaceCandidate: true });
     expect(events.some(event => event.type === "text_delta"
       && event.phase === "commentary"
-      && event.text.includes("安全檢查擋下"))).toBe(false);
+      && event.text.includes(claim))).toBe(false);
   } finally {
     worker.run = originalRun;
     await TurnBroker.forSocket(socketPath).close();
@@ -183,4 +189,58 @@ test("repeated unsupported blocking claims fail closed after bounded corrections
   expect(guard.retryPromptForAnswer(claim)).toMatchObject({ replaceCandidate: true });
   expect(guard.retryPromptForAnswer(claim)).toMatchObject({ replaceCandidate: true });
   expect(() => guard.retryPromptForAnswer(claim)).toThrow("repeatedly attributed");
+});
+
+test("French cause detection distinguishes unsupported attribution from neutral and negated statements", () => {
+  for (const claim of [
+    "La commande a été bloquée par une politique de sécurité.",
+    "L’exécution a été refusée faute d’autorisation.",
+    "La politique de sécurité a bloqué l’appel de l’outil.",
+    "L'execution de la commande a ete rejetee par les controles de securite.",
+    "La commande n’a pas été exécutée à cause des permissions.",
+  ]) expect(hasUnsupportedNativeToolCauseClaim(claim)).toBe(true);
+
+  for (const statement of [
+    "Le test n’a pas été exécuté et sa cause reste non confirmée.",
+    "La commande a réussi et a affiché les autorisations du fichier.",
+    "La commande a échoué : fichier introuvable.",
+    "Sans erreur retournée, je ne peux pas affirmer que la commande a été bloquée par la sécurité.",
+    "Je n’ai pas de preuve permettant d’attribuer le refus de la commande à une politique de sécurité.",
+    "La commande n’a pas été bloquée par une politique de sécurité.",
+  ]) expect(hasUnsupportedNativeToolCauseClaim(statement)).toBe(false);
+
+  // Adding a French negation must not suppress an existing English classification.
+  expect(hasUnsupportedNativeToolCauseClaim(
+    "Je ne peux pas affirmer autre chose. The command was blocked by a security policy.",
+  )).toBe(true);
+});
+
+test("returned French permission errors remain visible without retrying an actual denial", () => {
+  for (const message of [
+    "Exécution refusée par la politique de sécurité locale.",
+    "Accès refusé : autorisation requise.",
+    "Execution bloquee : approbation refusee.",
+  ]) {
+    const guard = new ChatGptToolEvidenceGuard();
+    guard.observeToolResult({ role: "toolResult", toolCallId: "call_fr_denial", toolName: "shell_command",
+      content: [{ type: "text", text: message }], isError: true, timestamp: 1 });
+    const claim = "La commande a été bloquée par la politique de sécurité.";
+    expect(guard.shouldEmitCommentary(claim)).toBe(true);
+    expect(guard.retryPromptForAnswer(claim)).toBeUndefined();
+    expect(guard.retryPromptForAnswer("The command was blocked by a security policy.")).toBeUndefined();
+  }
+});
+
+test("French unsupported claims use the same bounded corrections and require a real error", () => {
+  for (const result of [{ isError: true, content: "Fichier introuvable." },
+    { isError: false, content: "La sortie décrit une politique de sécurité." }]) {
+    const guard = new ChatGptToolEvidenceGuard();
+    guard.observeToolResult({ role: "toolResult", toolCallId: "call_fr_other", toolName: "shell_command",
+      timestamp: 1, ...result });
+    const claim = "La commande a été bloquée par la politique de sécurité.";
+    expect(guard.shouldEmitCommentary(claim)).toBe(false);
+    expect(guard.retryPromptForAnswer("Le test n’a pas été exécuté.")).toMatchObject({ replaceCandidate: true });
+    expect(guard.retryPromptForAnswer(claim)).toMatchObject({ replaceCandidate: true });
+    expect(() => guard.retryPromptForAnswer(claim)).toThrow("repeatedly attributed");
+  }
 });
