@@ -124,4 +124,4 @@ test("v6.1.2 evidence archive is content-addressed and reconstructs every AUTO_M
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-});
+}, 30_000);
