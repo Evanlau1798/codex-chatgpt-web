@@ -332,6 +332,28 @@ test("reported code-block containers preserve code while their localized toolbar
   }
 });
 
+test("deferred compact Markdown accepts final projection changes before emitting the summary", () => {
+  const initial = [
+    {
+      key: "0:p", tag: "p", html: "<p>Draft summary</p>", text: "Draft summary",
+      sourceStart: 0, sourceEnd: 13, streamable: true,
+    },
+    {
+      key: "14:p", tag: "p", html: "<p>Tail</p>", text: "Tail",
+      sourceStart: 14, sourceEnd: 18, streamable: false,
+    },
+  ];
+  const completed = [
+    { ...initial[0]!, html: "<p>Final summary</p>", text: "Final summary" },
+    initial[1]!,
+  ];
+  const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0, "markdown", false);
+
+  expect(buffer.observe(initial, 0)).toBe("");
+  expect(buffer.observe(completed, 1_000)).toBe("");
+  expect(buffer.finish().markdown).toBe("Final summary\n\nTail");
+});
+
 test("writing card controls cannot rewrite delivered content, but edited email text still can", async () => {
   const html = (toolbar: string, body = "Hello <strong>Alex</strong>.") => `<section id="turn"><div class="markdown">
     <p data-start="0" data-end="10">Drafts</p>

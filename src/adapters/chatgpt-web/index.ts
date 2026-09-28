@@ -249,16 +249,17 @@ export function createChatGptWebAdapter(
             return automaticStartRuntime(...args);
           }
         : startRuntime;
+      const browserCompaction = parsed._compactionRequest === true || parsed._localCompactionRequest === true;
       const toolPolicy = effectiveChatGptToolPolicy(parsed); const turnCapabilities = manualRequest
         ? configuredCapabilities
-        : parsed._compactionRequest
+        : browserCompaction
           ? { ...configuredCapabilities, localToolsEnabled: false }
           : { ...configuredCapabilities, localToolsEnabled: configuredCapabilities.localToolsEnabled && toolPolicy.tools.length > 0 };
       const mode = manualRequest
         ? { localTools: true }
         : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
       if (toolPolicy.requireTool && !mode.localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
-      const structuredOutputValidator = parsed._compactionRequest
+      const structuredOutputValidator = browserCompaction
         ? undefined
         : createChatGptStructuredOutputValidator(parsed.options.outputFormat);
       const bufferStructuredOutput = structuredOutputValidator !== undefined;

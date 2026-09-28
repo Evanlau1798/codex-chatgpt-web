@@ -229,6 +229,7 @@ export class ChatGptMarkdownBuffer {
     private readonly transform: (markdown: string) => string = markdown => markdown,
     private readonly stabilityMs = 750,
     private readonly outputFormat: "markdown" | "visible-text" = "markdown",
+    private readonly streamDuringObservation = true,
   ) {
     if (!Number.isFinite(stabilityMs) || stabilityMs < 0) {
       throw new Error("ChatGPT Markdown stability window must be a non-negative finite number");
@@ -243,6 +244,7 @@ export class ChatGptMarkdownBuffer {
     }
     this.consistencyError = undefined;
     this.latest = reconciled.map(segment => ({ ...segment }));
+    if (!this.streamDuringObservation) return "";
 
     const visibleCandidates = new Set<string>();
     for (const segment of reconciled) {

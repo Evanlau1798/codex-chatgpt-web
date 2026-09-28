@@ -4492,7 +4492,12 @@ export class ChatGptBrowserWorker {
         const latency = new ChatGptTurnLatencyDiagnostics(turn.traceId, sentAt);
         const visibleTrace = new ChatGptVisibleTraceTracker();
         const markdownOwnership = new ChatGptMarkdownOwnershipTracker();
-        const markdownBuffer = new ChatGptMarkdownBuffer(undefined, undefined, turn.outputFormat);
+        const markdownBuffer = new ChatGptMarkdownBuffer(
+          undefined,
+          undefined,
+          turn.outputFormat,
+          turn.compaction !== true,
+        );
         let progressChars = 0;
         let progressToolEpoch = -1;
         const progressStatuses = new Set<string>();
