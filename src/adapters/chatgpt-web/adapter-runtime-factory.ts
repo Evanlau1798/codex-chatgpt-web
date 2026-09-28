@@ -181,7 +181,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       : steering
         ? browserSteeringRetry(steering, traceId, evidenceRetry, takeBrokerSteering, isClaudeClientSession(checkpointInput.parsed))
         : lunaSafetyRetry ?? evidenceRetry;
-    const retryPromptForAnswer = taskAnswerRetry ? (answer: string, attempt: number) => (
+    const retryPromptForAnswer = !finalizationOnly && taskAnswerRetry ? (answer: string, attempt: number) => (
       chatGptTurnSessions.find(runtimeExecutionKey)?.runtime.compactionRequested
         ? undefined : taskAnswerRetry(answer, attempt)
     ) : undefined;

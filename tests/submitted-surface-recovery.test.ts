@@ -226,6 +226,7 @@ test("rebuilds a submitted missing-final turn as a fresh finalization-only surfa
       expect(token).toBeUndefined();
       expect(turn.nativeConnector).toBeUndefined();
       expect(turn.externalProgress).toBeUndefined();
+      expect(turn.retryPromptForAnswer).toBeUndefined();
       expect(prepared.modelInputText ?? prepared.text).toContain("CANONICAL_RECOVERY_RESULT");
       expect(prepared.modelInputText ?? prepared.text).toContain("Continue after the V2 boundary");
       expect(prepared.modelInputText ?? prepared.text).toContain("final-answer recovery");
@@ -241,6 +242,7 @@ test("rebuilds a submitted missing-final turn as a fresh finalization-only surfa
   try {
     const adapter = createChatGptWebAdapter(provider);
     const first = initialRequest();
+    ((first._rawBody as { client_metadata: Record<string, unknown> }).client_metadata).claude_subagent = true;
     const firstEvents: AdapterEvent[] = [];
     await adapter.runTurn!(first, { headers: new Headers() }, event => firstEvents.push(event));
     const call = firstEvents.find(
