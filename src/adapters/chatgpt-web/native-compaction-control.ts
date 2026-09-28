@@ -33,7 +33,7 @@ function compactionControlBinding(transaction: CompactionTransactionHandle): str
     `Call codex_tool_call exactly once with ${JSON.stringify({
       turn_token: transaction.token,
       wire_name: CODEX_COMPACTION_CONTROL_WIRE_NAME,
-      arguments: { handoff_id: transaction.handoffId, summary: "<complete checkpoint summary>" },
+      arguments: { handoff_id: transaction.handoffId, summary: "<complete context summary>" },
     })}.`,
   ];
 }
@@ -89,9 +89,11 @@ export function structuredCompactionHandoffInstruction(
 ): string {
   return [
     "Automatic Codex context compaction has started. Stop ordinary task work and do not call any more work tools.",
+    "This is the normal context handoff, not a No Context Window recovery checkpoint.",
+    "Your only response must be the single codex_tool_call specified below. Do not render the context summary as ordinary assistant text.",
     COMPACT_PROMPT,
     ...compactionControlBinding(transaction),
-    "After the control call returns submitted=true, call no more tools. The bridge will close this one-purpose Web response after accepting the checkpoint.",
+    "After the control call returns submitted=true, call no more tools. The bridge will close this one-purpose Web response after accepting the context summary.",
     "If the call is rejected or fails, stop and report its actual error. Do not retry through another tool or claim the summary was submitted without submitted=true.",
   ].join("\n");
 }

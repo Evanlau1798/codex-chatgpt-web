@@ -128,6 +128,17 @@ test("REG-04: uses one exact direct edit for the short generated structured comp
   expect(editor.commands).toEqual(["insertText"]);
 });
 
+test("structured compaction requests one control handoff instead of an ordinary recovery checkpoint", () => {
+  const prompt = structuredCompactionHandoffInstruction({
+    token: "control-token-0123456789abcdef",
+    handoffId: "handoff-id-0123456789abcdef",
+  });
+  expect(prompt).toContain("This is the normal context handoff, not a No Context Window recovery checkpoint.");
+  expect(prompt).toContain("Do not render the context summary as ordinary assistant text.");
+  expect(prompt).toContain('"summary":"<complete context summary>"');
+  expect(prompt).not.toContain("<complete checkpoint summary>");
+});
+
 test("inserts the incident-sized multiline structured prompt with one exact native text edit", async () => {
   const prompt = structuredMarkdownRestorationProbeText();
   const editor = await insertWithFakeEditor(prompt);
