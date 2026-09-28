@@ -48,6 +48,7 @@ export const sharedLifecycleTests = [
   "tests/compaction-budget.test.ts",
   "tests/compact-replacement-budget.test.ts",
   "tests/retained-compaction-handoff.test.ts",
+  "tests/turn-broker-compaction.test.ts",
   "tests/turn-broker-lifecycle.test.ts",
   "tests/lifecycle-sim-evidence.test.ts",
   "tests/lifecycle-sim-codex-evidence.test.ts",

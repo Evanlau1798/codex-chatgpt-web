@@ -13,6 +13,7 @@ export type LauncherHelperMessage =
   | { type: "event"; id: string; event: "tunneled_output_reset"; requestId: number; finalSequence: number }
   | { type: "event"; id: string; event: "tunneled_output_seal"; requestId: number; afterSequence: number; expectedRevision: number }
   | { type: "event"; id: string; event: "prepared_selected"; reused: boolean }
+  | { type: "event"; id: string; event: "compaction_boundary_retention_armed"; armed: boolean }
   | { type: "event"; id: string; event: "answer"; text: string; attempt: number }
   | {
       type: "event";
@@ -166,6 +167,12 @@ function parseEvent(message: Record<string, unknown> & { id: string }): Launcher
       throw new Error("Launcher browser helper prepared-selection event is invalid");
     }
     return { type: "event", id: message.id, event, reused: message.reused };
+  }
+  if (event === "compaction_boundary_retention_armed") {
+    if (typeof message.armed !== "boolean") {
+      throw new Error("Launcher browser helper compaction-boundary retention acknowledgement is invalid");
+    }
+    return { type: "event", id: message.id, event, armed: message.armed };
   }
   if (!["heartbeat", "send_activated", "submitted", "retry_submitted", "reasoning", "commentary", "text"].includes(String(event))) {
     throw new Error("Launcher browser helper emitted an unknown event");

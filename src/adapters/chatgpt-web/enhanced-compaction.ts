@@ -22,7 +22,8 @@ import { estimateChatGptWebUsage } from "./usage";
 import { extractChatGptTurnIdentity } from "./environment";
 
 interface EnhancedCompactionOptions {
-  worker: Pick<ChatGptBrowserWorker, "run"> & Partial<Pick<ChatGptBrowserWorker, "requestPreemptiveRetry">>;
+  worker: Pick<ChatGptBrowserWorker, "run">
+    & Partial<Pick<ChatGptBrowserWorker, "requestPreemptiveRetry" | "armCompactionBoundaryRetention">>;
   parsed: CodexParsedRequest;
   broker: TurnBroker;
   executionNamespace: string;
@@ -109,12 +110,16 @@ export async function runEnhancedCompaction(
       }
       let raw: string | undefined;
       if (source.isActive() && source.runtime.mode === "tools") {
+        const sourceTraceId = source.traceId;
         const settled = await settleActiveCompactionSource(
           parsed,
           source,
           broker,
           operationSignal,
           handoffTimeoutMs,
+          sourceTraceId && worker.armCompactionBoundaryRetention
+            ? () => worker.armCompactionBoundaryRetention!(sourceTraceId)
+            : undefined,
         );
         preserveFinal = !settled.compactionInstructionDelivered;
         raw = settled.handoff;

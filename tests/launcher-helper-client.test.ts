@@ -644,6 +644,95 @@ test("checkpoint preemption uses a non-aborting helper control frame", async () 
   }]);
 });
 
+test("persistent helper acknowledges compaction-boundary retention before terminal settlement", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-launcher-helper-compaction-retention-"));
+  roots.push(root);
+  const helper = join(root, "helper.cjs");
+  writeFileSync(helper, `
+    const readline = require("node:readline").createInterface({ input: process.stdin });
+    const send = value => process.stdout.write(JSON.stringify(value) + "\\n");
+    const active = new Set();
+    send({ type: "ready" });
+    readline.on("line", line => {
+      const message = JSON.parse(line);
+      if (message.type === "shutdown") process.exit(0);
+      if (message.type === "run") {
+        active.add(message.id);
+        send({ type: "event", id: message.id, event: "prepared_selected", reused: false });
+        return;
+      }
+      if (message.type === "prepared_selected_ack" && active.has(message.id)) {
+        send({ type: "event", id: message.id, event: "submitted" });
+        return;
+      }
+      if (message.type === "arm_compaction_boundary_retention") {
+        const armed = active.has(message.id);
+        setImmediate(() => send({
+          type: "event", id: message.id, event: "compaction_boundary_retention_armed", armed,
+        }));
+        return;
+      }
+      if (message.type === "abort" && active.delete(message.id)) {
+        send({ type: "error", id: message.id, name: "AbortError", message: "aborted" });
+      }
+    });
+  `, { mode: 0o700 });
+  const descriptorPath = join(root, "launcher.json");
+  writeFileSync(descriptorPath, `${JSON.stringify({
+    version: 3,
+    kind: LAUNCHER_BROWSER_HOST_KIND,
+    profile: "production",
+    pid: process.pid,
+    endpoint: "http://127.0.0.1:39001",
+    control: {
+      endpoint: "http://127.0.0.1:39002",
+      token: "launcher-control-token-0123456789abcdefghijklmnop",
+    },
+    helper: { executable: process.execPath, script: helper },
+    partition: "persist:codex-web-gpt-chatgpt",
+    idleUrl: LAUNCHER_BROWSER_IDLE_URL,
+    surfaceId: "launcher_surface_id_0123456789AB",
+    surfaceTargets: { launcher_surface_id_0123456789AB: "native-owned-target" },
+    createdAt: new Date().toISOString(),
+  })}\n`, { mode: 0o600 });
+  const client = new LauncherBrowserHelperClient({
+    appName: "Codex Native",
+    browserHost: "launcher",
+    browserHostDescriptorPath: descriptorPath,
+    browserHelperScriptPath: helper,
+    storageStatePath: join(root, "unused-state.json"),
+    chromeExecutablePath: join(root, "unused-chrome"),
+    turnTimeoutMs: 60_000,
+    headed: true,
+    autoApproveToolCalls: false,
+    useSavedChats: true,
+  });
+  let submitted!: () => void;
+  const submission = new Promise<void>(resolve => { submitted = resolve; });
+  const controller = new AbortController();
+  try {
+    const run = client.run({
+      traceId: "compact-retention-456",
+      modelId: "gpt-5.6-sol",
+      reasoning: "high",
+      capabilities: { localToolsEnabled: true, solAvailable: true, proAvailable: false },
+      retainConversation: true,
+      conversationKey: "b".repeat(64),
+      abortSignal: controller.signal,
+      prepare: async () => ({ text: "inspect", images: [], release() {} }),
+      onSubmitted: submitted,
+      onTextDelta() {},
+    });
+    await submission;
+    await Bun.sleep(0);
+    await expect(client.armCompactionBoundaryRetention("compact-retention-456")).resolves.toBeTrue();
+    controller.abort();
+    await expect(run).rejects.toMatchObject({ name: "AbortError" });
+  } finally {
+    await client.close();
+  }
+});
+
 test("structured helper errors preserve the ChatGPT adapter failure contract", async () => {
   const client = new LauncherBrowserHelperClient({
     appName: "Codex Native",

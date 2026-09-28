@@ -6,7 +6,7 @@ import type { BrokerToolResult, TurnBroker } from "./turn-broker";
 import type { ChatGptTurnSession } from "./turn-execution";
 import { activeCompactionToolResultInstruction } from "./native-compaction-control";
 import type { CompactionTransactionHandle } from "./compaction-transaction";
-import { ChatGptCompactionHandoffAccepted } from "./adapter-error";
+import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
 
 export const LATEST_USER_PROMPT_MARKER = "CODEX_LATEST_USER_PROMPT_JSON";
 export const MAX_COMPACTION_HANDOFF_TIMEOUT_MS = 5 * 60_000;
@@ -120,6 +120,7 @@ export async function settleActiveCompactionSource(
   broker: TurnBroker,
   signal?: AbortSignal,
   timeoutMs = MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+  armCompactionBoundaryRetention?: () => Promise<boolean>,
 ): Promise<{ answer: string; compactionInstructionDelivered: boolean; handoff?: string }> {
   return source.runExclusive(async () => {
     if (signal?.aborted) { source.cancel(abortReason(signal)); throw abortReason(signal); }
@@ -157,6 +158,18 @@ export async function settleActiveCompactionSource(
           if (source.isActive()) source.cancel(new ChatGptCompactionHandoffAccepted());
         }, () => {},
       );
+      if (armCompactionBoundaryRetention
+        && !await withCompactionAbort(armCompactionBoundaryRetention(), signal)) {
+        throw new ChatGptWebAdapterError(
+          "The active ChatGPT browser turn could not preserve its retained conversation for compaction handoff.",
+          {
+            status: 409,
+            errorType: "invalid_request_error",
+            code: "compaction_handoff_unavailable",
+            retryable: false,
+          },
+        );
+      }
       source.runtime.compactionRequested = true;
       broker.requestCompaction(token, interruptedByActiveCompaction(transaction), () => {
         compactionInstructionDelivered = true;
@@ -168,9 +181,19 @@ export async function settleActiveCompactionSource(
         source.markResultDelivered(request.callId, result);
       }
       const outcome = await withCompactionAbort(source.browserOutcome, signal);
+      const stoppedAtCompactionBoundary = compactionInstructionDelivered
+        && outcome.type === "error"
+        && outcome.error instanceof ChatGptWebAdapterError
+        && outcome.error.code === "chatgpt_completion_evidence_missing"
+        && outcome.error.retryable === true
+        && source.runtime.text.value().length === 0;
       if (outcome.type === "error"
         && !(handoffAccepted && (outcome.error instanceof ChatGptCompactionHandoffAccepted
-          || (outcome.error instanceof DOMException && outcome.error.name === "AbortError")))) throw outcome.error;
+          || (outcome.error instanceof DOMException && outcome.error.name === "AbortError")))
+        && !stoppedAtCompactionBoundary) throw outcome.error;
+      if (stoppedAtCompactionBoundary) {
+        console.info("[chatgpt-web] active compaction source settled at the handoff boundary without final text");
+      }
       await withCompactionAbort(source.physicalSettlement, signal);
       return {
         answer: outcome.type === "final" ? outcome.answer : "",

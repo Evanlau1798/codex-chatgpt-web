@@ -51,6 +51,7 @@ export type BrowserHelperInputMessage = BrowserHelperRunMessage | MaintenanceMes
   | { type: "tunneled_output_reset_ack"; id: string; requestId: number; reset: boolean }
   | { type: "tunneled_output_seal_ack"; id: string; requestId: number; sealed: boolean }
   | { type: "preempt_retry"; id: string; prompt: string }
+  | { type: "arm_compaction_boundary_retention"; id: string }
   | { type: "progress"; id: string; snapshot: ChatGptExternalTurnProgressSnapshot }
   | { type: "abort"; id: string; reason?: "compaction_handoff_accepted" }
   | { type: "shutdown" };

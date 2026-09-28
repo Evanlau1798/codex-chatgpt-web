@@ -47,7 +47,7 @@ interface ChatGptRuntimeFactoryOptions {
 }
 
 export type ChatGptRuntimeWorker = Pick<ChatGptBrowserWorker, "run">
-  & Partial<Pick<ChatGptBrowserWorker, "requestPreemptiveRetry">>;
+  & Partial<Pick<ChatGptBrowserWorker, "requestPreemptiveRetry" | "armCompactionBoundaryRetention">>;
 
 export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOptions) {
   const {

@@ -13,6 +13,7 @@ import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import {
   ChatGptCompactionHandoffAccepted,
   ChatGptWebAdapterError,
+  chatGptCompletionEvidenceError,
   chatGptRetainedSurfaceUnavailableError,
 } from "../src/adapters/chatgpt-web/adapter-error";
 import { CompactionTransactionStore } from "../src/adapters/chatgpt-web/compaction-transaction";
@@ -37,7 +38,7 @@ function fixture(active = false, tools = false) {
     trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), conversationKey: chatGptConversationKey(parsed, key),
     usageInput: parsed, cancel: () => browser.resolve("cancelled"),
     release: async () => { releasing.resolve(); await release.promise; },
-  }));
+  }), undefined, undefined, undefined, "active-source-trace");
   const options = {
     worker: { run: async () => { throw new Error("unexpected handoff surface"); } },
     parsed, broker: {} as TurnBroker, executionNamespace: key,
@@ -49,13 +50,15 @@ function fixture(active = false, tools = false) {
   return { key, source, options, release, releasing, cleanup, browser };
 }
 
-for (const stoppedWithoutHandoff of [false, true]) test(`active compact avoids preemption and reserves another message for a stopped source (missing checkpoint: ${stoppedWithoutHandoff})`, async () => {
+for (const sourceSettlement of ["handoff", "final", "missing_completion_evidence"] as const) test(`active compact avoids preemption and reserves another message for a stopped source (${sourceSettlement})`, async () => {
   const f = fixture(true, true);
+  const stoppedWithoutHandoff = sourceSettlement !== "handoff";
   const store = new CompactionTransactionStore();
   const boundary = deferred<string>();
   const events: AdapterEvent[] = [];
   let starts = 0;
   let preemptions = 0;
+  let retentionArms = 0;
   let fallbackCalls = 0;
   let workerCalls = 0;
   const submit = (instruction: string) => {
@@ -68,6 +71,7 @@ for (const stoppedWithoutHandoff of [false, true]) test(`active compact avoids p
     waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
     abortCompactionTransaction: (token: string) => store.abort(token),
     requestCompaction: (_token: string, result: { content: { text: string }[] }, delivered?: () => void) => {
+      expect(retentionArms).toBe(1);
       boundary.resolve(result.content[0]!.text); delivered?.(); return 1;
     },
     compactionDeliveryCount: () => 1, revoke() {},
@@ -80,7 +84,12 @@ for (const stoppedWithoutHandoff of [false, true]) test(`active compact avoids p
       const prepared = await turn.prepare();
       try { submit(prepared.text); return "turn complete"; } finally { prepared.release(); }
     },
-      requestPreemptiveRetry: () => { preemptions++; return true; } },
+      requestPreemptiveRetry: () => { preemptions++; return true; },
+      armCompactionBoundaryRetention: async traceId => {
+        expect(traceId).toBe("active-source-trace");
+        retentionArms++;
+        return true;
+      } },
     startFallback: async () => { fallbackCalls++; return "Fallback checkpoint."; },
     emit: event => { events.push(event); },
   }).then(result => ({ result }), error => ({ error }));
@@ -88,12 +97,19 @@ for (const stoppedWithoutHandoff of [false, true]) test(`active compact avoids p
     const instruction = await boundary.promise;
     expect(instruction).toContain("codex.control.compaction_handoff");
     expect(preemptions).toBe(0);
+    expect(retentionArms).toBe(1);
     expect(f.source.runtime.compactionRequested).toBeTrue();
-    if (!stoppedWithoutHandoff) submit(instruction);
+    if (sourceSettlement === "handoff") submit(instruction);
     await new Promise<void>(resolve => setImmediate(resolve));
     expect(events).toEqual([]);
     expect(f.source.isActive()).toBe(stoppedWithoutHandoff);
-    if (stoppedWithoutHandoff) f.browser.resolve("compact turn had started");
+    if (sourceSettlement === "final") f.browser.resolve("compact turn had started");
+    if (sourceSettlement === "missing_completion_evidence") {
+      f.browser.reject(chatGptCompletionEvidenceError(
+        "ChatGPT stopped after native tool work without a final answer or usable completion evidence",
+        false,
+      ));
+    }
     await f.releasing.promise;
     expect(events).toEqual([]);
     f.release.resolve();

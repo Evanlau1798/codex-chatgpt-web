@@ -374,6 +374,16 @@ input.on("line", line => {
         message: "Browser helper could not preempt the active generation for same-surface retry",
       });
     }
+  } else if (message.type === "arm_compaction_boundary_retention") {
+    const worker = activeWorkers.get(message.id);
+    void Promise.resolve(worker?.armCompactionBoundaryRetention(message.id) ?? false).then(armed => {
+      writeProtocol({
+        type: "event",
+        id: message.id,
+        event: "compaction_boundary_retention_armed",
+        armed,
+      });
+    });
   } else if (message.type === "send_activated_ack") {
     sendActivationWaiters.get(message.id)?.resolve();
     sendActivationWaiters.delete(message.id);

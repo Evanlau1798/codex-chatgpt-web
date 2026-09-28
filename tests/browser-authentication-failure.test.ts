@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runInNewContext } from "node:vm";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
-import { chatGptSessionFailureDisposition } from "../src/adapters/chatgpt-web/adapter-error";
+import { chatGptCompletionEvidenceError, chatGptSessionFailureDisposition } from "../src/adapters/chatgpt-web/adapter-error";
 import { LAUNCHER_BROWSER_HOST_KIND, LAUNCHER_BROWSER_IDLE_URL } from "../src/launcher-browser-host";
 
 const require = createRequire(import.meta.url);
@@ -131,6 +131,41 @@ test("an authentication-required tab cannot be retained as a successful conversa
     expect(f.tab.status).toBe("error");
     expect(f.host.turnTabs.size).toBe(0);
   } finally { await f.close(); }
+});
+
+test("an armed compact boundary retains the launcher conversation when final evidence is intentionally absent", async () => {
+  const f = await fixture();
+  const previousHelperProcess = process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
+  process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = "1";
+  f.worker.activeRuns = new Map([[f.tab.traceId, new Promise<string>(() => {})]]);
+  f.worker.compactionBoundaryRetentions = new Set();
+  f.worker.finalizingRuns = new Set();
+  f.worker.runBrowserTurn = async () => {
+    throw chatGptCompletionEvidenceError(
+      "ChatGPT stopped after native tool work without a final answer or usable completion evidence",
+      false,
+    );
+  };
+  try {
+    expect(await f.worker.armCompactionBoundaryRetention(f.tab.traceId)).toBeTrue();
+    const error = await f.worker.runExclusive({
+      traceId: f.tab.traceId,
+      modelId: "gpt-5.6-sol",
+      reasoning: "high",
+      retainConversation: true,
+      nativeConnector: true,
+      capabilities: { localToolsEnabled: true, solAvailable: true, proAvailable: false },
+    }).catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ code: "chatgpt_completion_evidence_missing", retryable: true });
+    expect(f.host.turnTabs.size).toBe(1);
+    expect(f.tab.status).toBe("ready");
+    expect(f.logs.join("\n")).toContain("browser.tab_retained");
+    expect(f.logs.join("\n")).not.toContain("browser.tab_released");
+  } finally {
+    if (previousHelperProcess === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
+    else process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = previousHelperProcess;
+    await f.close();
+  }
 });
 
 test("native cancellation wins over an authentication redirect observed during cleanup", async () => {

@@ -9,7 +9,22 @@ interface PendingFixture {
   sent?: boolean;
   answerCompletionSealed?: boolean;
   localFailure?: Error;
+  compactionBoundaryRetention?: { resolve: (armed: boolean) => void; timer: ReturnType<typeof setTimeout> };
 }
+
+test("compaction-boundary retention waits for the owning helper acknowledgement", async () => {
+  const { client, internal, child, sent } = fixture();
+  const traceId = "compact-retention-123";
+  internal.pending.set(traceId, { turn: turn(traceId), resolve() {}, reject() {}, sent: true });
+
+  const armed = client.armCompactionBoundaryRetention(traceId);
+  await Bun.sleep(0);
+  expect(sent).toEqual([{ type: "arm_compaction_boundary_retention", id: traceId }]);
+  internal.handleLine(child, JSON.stringify({
+    type: "event", id: traceId, event: "compaction_boundary_retention_armed", armed: true,
+  }));
+  await expect(armed).resolves.toBeTrue();
+});
 
 interface ClientFixture {
   child?: unknown;

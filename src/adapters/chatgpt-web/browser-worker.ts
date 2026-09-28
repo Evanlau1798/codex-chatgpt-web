@@ -1060,6 +1060,7 @@ export class ChatGptBrowserWorker {
   private readonly activeRuns = new Map<string, Promise<string>>();
   private readonly preemptiveRetries = new Map<string, string>();
   private readonly preemptedRuns = new Set<string>();
+  private readonly compactionBoundaryRetentions = new Set<string>();
   private readonly finalizingRuns = new Set<string>();
 
   private constructor(private readonly config: ResolvedBrowserConfig) {}
@@ -1102,6 +1103,7 @@ export class ChatGptBrowserWorker {
       if (this.activeRuns.get(turn.traceId) === run) this.activeRuns.delete(turn.traceId);
       this.preemptiveRetries.delete(turn.traceId);
       this.preemptedRuns.delete(turn.traceId);
+      this.compactionBoundaryRetentions.delete(turn.traceId);
       this.finalizingRuns.delete(turn.traceId);
     }).catch(() => {});
     return run;
@@ -1115,6 +1117,16 @@ export class ChatGptBrowserWorker {
     if (this.preemptedRuns.has(traceId)) return false;
     this.preemptedRuns.add(traceId);
     this.preemptiveRetries.set(traceId, prompt);
+    return true;
+  }
+
+  async armCompactionBoundaryRetention(traceId: string): Promise<boolean> {
+    if (!this.activeRuns.has(traceId) || this.finalizingRuns.has(traceId)) return false;
+    const useHelper = this.config.browserHost === "launcher"
+      && process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS !== "1";
+    if (useHelper) return await this.launcherHelper?.armCompactionBoundaryRetention(traceId) === true;
+    if (this.compactionBoundaryRetentions.has(traceId)) return false;
+    this.compactionBoundaryRetentions.add(traceId);
     return true;
   }
 
@@ -3635,12 +3647,20 @@ export class ChatGptBrowserWorker {
       );
     } catch (error) {
       originalError = error;
-      terminal = error instanceof ChatGptCompactionHandoffAccepted
+      const retainCompactionBoundary = turn.retainConversation === true
+        && this.compactionBoundaryRetentions.has(turn.traceId)
+        && error instanceof ChatGptWebAdapterError
+        && error.code === "chatgpt_completion_evidence_missing"
+        && error.retryable === true;
+      terminal = error instanceof ChatGptCompactionHandoffAccepted || retainCompactionBoundary
         ? "completed"
         : (error instanceof DOMException && error.name === "AbortError")
         || (error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")
         ? "aborted"
         : "failed";
+      if (retainCompactionBoundary) {
+        console.info(`[chatgpt-web] browser turn ${turn.traceId} retained after settling at the active compaction boundary`);
+      }
       terminalMessage = error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500);
       throw error;
     } finally {
