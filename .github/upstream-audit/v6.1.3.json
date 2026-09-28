@@ -28,6 +28,8 @@
     "prior": {
       "release": "v6.1.2",
       "ledgerPath": ".github/upstream-audit/v6.1.2.json",
+      "ledgerBlob": "daa2e3407d66e1df041775d6b0a562e3397f8b7c",
+      "ledgerDigestCanonicalization": "utf8-crlf",
       "ledgerSha256": "165988ae10414d9e65ce8ef7ae09ea3450c51af3ebb60c80d699929a4fb03f0a",
       "evidencePath": ".github/upstream-audit/v6.1.2-evidence.tar.gz",
       "evidenceSha256": "1290288c903f2e2a38c3e2582bc99143c0e16a8d7f3367a8bb31cdbb46be0136"

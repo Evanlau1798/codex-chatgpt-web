@@ -30,6 +30,8 @@ const ledger = JSON.parse(readFileSync(
     autoMergeTrees: Record<string, string>;
     prior: {
       ledgerPath: string;
+      ledgerBlob: string;
+      ledgerDigestCanonicalization: string;
       ledgerSha256: string;
       evidencePath: string;
       evidenceSha256: string;
@@ -61,6 +63,37 @@ function tarEntries(archive: Buffer): Map<string, Buffer> {
   }
   return entries;
 }
+
+function evidenceDigest(path: string, content: Buffer): string {
+  let bytes = content;
+  if (path.endsWith(".json")) {
+    let missingCarriageReturns = 0;
+    for (let index = 0; index < content.length; index += 1) {
+      if (content[index] === 0x0a && (index === 0 || content[index - 1] !== 0x0d)) {
+        missingCarriageReturns += 1;
+      }
+    }
+    if (missingCarriageReturns > 0) {
+      bytes = Buffer.allocUnsafe(content.length + missingCarriageReturns);
+      let output = 0;
+      for (let index = 0; index < content.length; index += 1) {
+        if (content[index] === 0x0a && (index === 0 || content[index - 1] !== 0x0d)) bytes[output++] = 0x0d;
+        bytes[output++] = content[index]!;
+      }
+    }
+  }
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+test("v6.1.3 prior ledger digest is independent of checkout line endings", () => {
+  const path = ".github/upstream-audit/v6.1.2.json";
+  expect(evidenceDigest(path, Buffer.from("{\n  \"release\": \"v6.1.2\"\n}\n"))).toBe(
+    evidenceDigest(path, Buffer.from("{\r\n  \"release\": \"v6.1.2\"\r\n}\r\n")),
+  );
+  expect(evidenceDigest(path, Buffer.from([0x80]))).not.toBe(
+    evidenceDigest(path, Buffer.from([0x81])),
+  );
+});
 
 test("v6.1.3 audit closes the exact linear upstream path, hunk, and test delta", () => {
   expect(ledger.baseline).toBe("dbc95c1a4210fa3ea44b8587fbd7a5cd193d0226");
@@ -99,13 +132,16 @@ test("v6.1.3 audit closes the exact linear upstream path, hunk, and test delta",
 test("v6.1.3 evidence is content-addressed, references v6.1.2, and reconstructs AUTO_MERGE", () => {
   const archive = readFileSync(resolve(root, ledger.evidence.path));
   expect(createHash("sha256").update(archive).digest("hex")).toBe(ledger.evidence.sha256);
-  for (const [path, digest] of [
-    [ledger.evidence.prior.ledgerPath, ledger.evidence.prior.ledgerSha256],
-    [ledger.evidence.prior.evidencePath, ledger.evidence.prior.evidenceSha256],
-  ]) {
-    const content = readFileSync(resolve(root, path));
-    expect(createHash("sha256").update(content).digest("hex"), path).toBe(digest);
-  }
+  expect(ledger.evidence.prior.ledgerDigestCanonicalization).toBe("utf8-crlf");
+  expect(git(["rev-parse", `${ledger.baseline}:${ledger.evidence.prior.ledgerPath}`]))
+    .toBe(ledger.evidence.prior.ledgerBlob);
+  const priorLedger = spawnSync("git", ["cat-file", "blob", ledger.evidence.prior.ledgerBlob], { cwd: root });
+  expect(priorLedger.status).toBe(0);
+  expect(evidenceDigest(ledger.evidence.prior.ledgerPath, priorLedger.stdout))
+    .toBe(ledger.evidence.prior.ledgerSha256);
+  const priorEvidence = readFileSync(resolve(root, ledger.evidence.prior.evidencePath));
+  expect(createHash("sha256").update(priorEvidence).digest("hex"))
+    .toBe(ledger.evidence.prior.evidenceSha256);
 
   const entries = tarEntries(archive);
   for (const required of [
