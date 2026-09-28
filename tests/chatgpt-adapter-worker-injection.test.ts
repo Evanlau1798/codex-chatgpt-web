@@ -597,6 +597,8 @@ test("Automatic Web rechecks account safety immediately before runtime start", a
 });
 
 test("duration drain maps enhanced compaction back to the captured source trace", async () => {
+  const root = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "cgw-safety-drain-"));
+  const socket = defaultBrokerEndpoint(root);
   const admissions: { traceId: string; activeTraceIds: string[] }[] = [];
   const retained = new Set<string>();
   const safety = {
@@ -630,7 +632,7 @@ test("duration drain maps enhanced compaction back to the captured source trace"
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: "browser://safety-compact-drain",
-    chatgptWeb: { localToolsEnabled: true, useEnhancedWebSessionMode: true },
+    chatgptWeb: { localToolsEnabled: true, useEnhancedWebSessionMode: true, brokerSocketPath: socket },
   };
   const parsed: CodexParsedRequest = {
     modelId: CHATGPT_WEB_MODEL_ID,
@@ -680,6 +682,8 @@ test("duration drain maps enhanced compaction back to the captured source trace"
     }));
   } finally {
     chatGptTurnSessions.clear();
+    await TurnBroker.forSocket(socket).close();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -719,7 +723,8 @@ test("a ChatGPT rate-limit failure pauses Automatic Web even without a proactive
 });
 
 test("Enhanced compaction rate limits update account safety", async () => {
-  const root = mkdtempSync(join(tmpdir(), "cgw-safety-compact-rate-"));
+  const root = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "cgw-safety-rate-"));
+  const socket = defaultBrokerEndpoint(root);
   const safety = new ChatGptAccountSafety(join(root, "state.json"));
   const worker = {
     async run(): Promise<string> {
@@ -746,12 +751,13 @@ test("Enhanced compaction rate limits update account safety", async () => {
   try {
     await createChatGptWebAdapter({
       adapter: "chatgpt-web", baseUrl: "browser://safety-compact-rate",
-      chatgptWeb: { localToolsEnabled: true, useEnhancedWebSessionMode: true },
+      chatgptWeb: { localToolsEnabled: true, useEnhancedWebSessionMode: true, brokerSocketPath: socket },
     }, { worker, accountSafety: safety } as never).runTurn!(parsed, { headers: new Headers() }, event => events.push(event));
     expect(safety.status(undefined, undefined, [])).toMatchObject({ state: "PAUSED", reason: "rate_limit" });
     expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "rate_limit_exceeded", status: 429 }));
   } finally {
     chatGptTurnSessions.clear();
+    await TurnBroker.forSocket(socket).close();
     rmSync(root, { recursive: true, force: true });
   }
 });
