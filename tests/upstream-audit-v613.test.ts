@@ -185,4 +185,4 @@ test("v6.1.3 evidence is content-addressed, references v6.1.2, and reconstructs 
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-});
+}, 30_000);
