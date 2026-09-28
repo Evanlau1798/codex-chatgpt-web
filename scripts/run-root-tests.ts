@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 
@@ -68,47 +68,31 @@ async function runFile(file: string): Promise<void> {
   }
 }
 
-async function runWorkerBatch(start: number, count: number, statusPath: string): Promise<void> {
-  try {
-    const files = listRootTestFiles().slice(start, start + count);
-    if (files.length === 0) throw new Error(`Root test worker received an empty batch at ${start}`);
-    for (const file of files) await runFile(file);
-    writeFileSync(statusPath, "passed", "utf8");
-  } catch (error) {
-    writeFileSync(statusPath, "test-failed", "utf8");
-    throw error;
-  }
+async function runWorkerBatch(start: number, count: number): Promise<void> {
+  const files = listRootTestFiles().slice(start, start + count);
+  if (files.length === 0) throw new Error(`Root test worker received an empty batch at ${start}`);
+  for (const file of files) await runFile(file);
 }
 
 async function runBatch(start: number, count: number): Promise<void> {
-  const statusRoot = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-root-batch-"));
-  const statusPath = join(statusRoot, "status.txt");
-  let exitCode: number;
-  let status = "";
-  try {
-    const child = Bun.spawn([
-      process.execPath,
-      import.meta.path,
-      "--worker-start",
-      String(start),
-      "--worker-count",
-      String(count),
-      "--worker-status",
-      statusPath,
-    ], {
-      cwd: projectRoot,
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-      env: process.env,
-    });
-    exitCode = await child.exited;
-    if (existsSync(statusPath)) status = readFileSync(statusPath, "utf8").trim();
-  } finally {
-    rmSync(statusRoot, { recursive: true, force: true });
+  const child = Bun.spawn([
+    process.execPath,
+    import.meta.path,
+    "--worker-start",
+    String(start),
+    "--worker-count",
+    String(count),
+  ], {
+    cwd: projectRoot,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+    env: process.env,
+  });
+  const exitCode = await child.exited;
+  if (exitCode !== 0) {
+    throw new Error(`Root test batch failed (${exitCode}): ${start}-${start + count - 1}`);
   }
-  if (exitCode === 0 && status === "passed") return;
-  throw new Error(`Root test batch failed (${exitCode}, status=${status || "missing"}): ${start}-${start + count - 1}`);
 }
 
 function argumentValue(name: string): string | undefined {
@@ -119,12 +103,11 @@ function argumentValue(name: string): string | undefined {
 if (import.meta.main) {
   const workerStart = argumentValue("--worker-start");
   const workerCount = argumentValue("--worker-count");
-  const workerStatus = argumentValue("--worker-status");
-  if (workerStart !== undefined || workerCount !== undefined || workerStatus !== undefined) {
-    if (workerStart === undefined || workerCount === undefined || workerStatus === undefined) {
+  if (workerStart !== undefined || workerCount !== undefined) {
+    if (workerStart === undefined || workerCount === undefined) {
       throw new Error("Root test worker arguments are incomplete");
     }
-    await runWorkerBatch(Number(workerStart), Number(workerCount), workerStatus);
+    await runWorkerBatch(Number(workerStart), Number(workerCount));
   } else {
     const files = listRootTestFiles();
     if (files.length === 0) throw new Error("No root TypeScript test files were found");

@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { listRootTestFiles, rootTestBatches } from "./run-root-tests";
 
 const root = resolve(import.meta.dir, "..");
 let verbose = false;
@@ -21,6 +22,22 @@ export function writeBufferedOutput(
     write(output.slice(offset, end));
     offset = end;
   }
+}
+
+export function rootTestBatchCommands(files: string[], batchSize?: number): string[][] {
+  let start = 0;
+  return rootTestBatches(files, batchSize).map(batch => {
+    const command = [
+      "run",
+      "scripts/run-root-tests.ts",
+      "--worker-start",
+      String(start),
+      "--worker-count",
+      String(batch.length),
+    ];
+    start += batch.length;
+    return command;
+  });
 }
 
 export async function run(args: string[], showOutput = verbose): Promise<void> {
@@ -44,6 +61,12 @@ export async function run(args: string[], showOutput = verbose): Promise<void> {
   if (exitCode !== 0) throw new Error(`Verification command failed (${exitCode}): ${label}`);
 }
 
+async function runRootTests(): Promise<void> {
+  const files = listRootTestFiles();
+  if (files.length === 0) throw new Error("No root TypeScript test files were found");
+  for (const command of rootTestBatchCommands(files)) await run(command);
+}
+
 async function main(): Promise<void> {
   const scratch = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-verify-"));
   const runtimeBundle = join(scratch, "runtime");
@@ -54,7 +77,7 @@ async function main(): Promise<void> {
     await run(["run", "audit"]);
     await run(["run", "launcher:audit"]);
     await run(["run", "typecheck"]);
-    await run(["run", "test"]);
+    await runRootTests();
     await run(["run", "launcher:typecheck"]);
     await run(["run", "launcher:test"]);
     if (liveWeb) await run(["run", "lifecycle:sim", "--lane=all"]);

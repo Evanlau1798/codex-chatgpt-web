@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { writeBufferedOutput } from "../scripts/verify";
+import { rootTestBatchCommands, writeBufferedOutput } from "../scripts/verify";
 
 const repo = resolve(import.meta.dir, "..");
 const verifyModule = pathToFileURL(resolve(repo, "scripts", "verify.ts")).href;
@@ -61,4 +61,12 @@ test("release verification splits buffered output into runner-safe writes", () =
   expect(writes.some(chunk => /[\uD800-\uDBFF]$/.test(chunk))).toBeFalse();
   expect(writes.some(chunk => /^[\uDC00-\uDFFF]/.test(chunk))).toBeFalse();
   expect(writes.join("")).toBe(output);
+});
+
+test("release verification launches root tests through bounded worker processes", () => {
+  expect(rootTestBatchCommands(["a", "b", "c", "d", "e"], 2)).toEqual([
+    ["run", "scripts/run-root-tests.ts", "--worker-start", "0", "--worker-count", "2"],
+    ["run", "scripts/run-root-tests.ts", "--worker-start", "2", "--worker-count", "2"],
+    ["run", "scripts/run-root-tests.ts", "--worker-start", "4", "--worker-count", "1"],
+  ]);
 });
