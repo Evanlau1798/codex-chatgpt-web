@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatGptCompletionEvidenceError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
+import { EnhancedRecoveryCheckpointStore } from "../src/adapters/chatgpt-web/enhanced-recovery-checkpoint";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
@@ -177,8 +178,10 @@ test("original Web session mode does not install same-conversation recovery", as
   }
 });
 
-test("rebuilds a submitted missing-final turn as a fresh finalization-only surface", async () => {
-  const socketPath = brokerTestEndpoint(`cgw-submitted-recovery-${process.pid}-${Date.now()}`);
+for (const largeRecovery of [false, true]) test(
+  `rebuilds a submitted missing-final turn as a fresh finalization-only ${largeRecovery ? "multipart " : ""}surface`,
+  async () => {
+  const socketPath = brokerTestEndpoint(`cgw-submitted-recovery-${largeRecovery}-${process.pid}-${Date.now()}`);
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: "browser://submitted-recovery",
@@ -192,6 +195,10 @@ test("rebuilds a submitted missing-final turn as a fresh finalization-only surfa
   };
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const originalRun = worker.run.bind(worker);
+  const checkpointStore = new EnhancedRecoveryCheckpointStore();
+  const applyCheckpoint = spyOn(checkpointStore, "apply");
+  const shouldCheckpoint = spyOn(checkpointStore, "shouldCheckpoint");
+  const commitCheckpoint = spyOn(checkpointStore, "commit");
   const turnTokens: string[] = [];
   let browserStarts = 0;
 
@@ -227,10 +234,14 @@ test("rebuilds a submitted missing-final turn as a fresh finalization-only surfa
       expect(turn.nativeConnector).toBeUndefined();
       expect(turn.externalProgress).toBeUndefined();
       expect(turn.retryPromptForAnswer).toBeUndefined();
-      expect(prepared.modelInputText ?? prepared.text).toContain("CANONICAL_RECOVERY_RESULT");
-      expect(prepared.modelInputText ?? prepared.text).toContain("Continue after the V2 boundary");
-      expect(prepared.modelInputText ?? prepared.text).toContain("final-answer recovery");
-      expect(prepared.modelInputText ?? prepared.text).toContain("Do not call any tool");
+      expect(prepared.multipart?.parts.length).toBe(largeRecovery ? 2 : undefined);
+      const preparedContext = prepared.multipart?.parts.join("\n") ?? prepared.modelInputText ?? prepared.text;
+      expect(preparedContext).toContain("CANONICAL_RECOVERY_RESULT");
+      expect(preparedContext).toContain("Continue after the V2 boundary");
+      expect(prepared.multipart?.commit ?? prepared.text).toContain("final-answer recovery");
+      expect(prepared.multipart?.commit ?? prepared.text).toContain("Do not call any tool");
+      expect(`${preparedContext}\n${prepared.multipart?.commit ?? prepared.text}`)
+        .not.toContain("submit_recovery_checkpoint");
       const answer = "Recovered final answer.";
       turn.onTextDelta(answer);
       return answer;
@@ -240,7 +251,7 @@ test("rebuilds a submitted missing-final turn as a fresh finalization-only surfa
   };
 
   try {
-    const adapter = createChatGptWebAdapter(provider);
+    const adapter = createChatGptWebAdapter(provider, { enhancedRecoveryCheckpointStore: checkpointStore });
     const first = initialRequest();
     ((first._rawBody as { client_metadata: Record<string, unknown> }).client_metadata).claude_subagent = true;
     const firstEvents: AdapterEvent[] = [];
@@ -253,6 +264,11 @@ test("rebuilds a submitted missing-final turn as a fresh finalization-only surfa
     const continuation = structuredClone(first);
     continuation._canonicalContextComplete = true;
     continuation.context.messages.push(
+      ...(largeRecovery ? Array.from({ length: 24 }, (_, index) => ({
+        role: "user" as const,
+        content: `canonical recovery record ${index}: ${"word ".repeat(5_000)}`,
+        timestamp: 10 + index,
+      })) : []),
       {
         role: "assistant",
         content: [{ type: "toolCall", id: call!.id, name: "exec_command", arguments: { cmd: "inspect" } }],
@@ -298,9 +314,15 @@ test("rebuilds a submitted missing-final turn as a fresh finalization-only surfa
       { type: "text_delta", text: "Recovered final answer.", phase: "final_answer" },
     ]);
     expect(finalEvents.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+    expect(applyCheckpoint).not.toHaveBeenCalled();
+    expect(shouldCheckpoint).not.toHaveBeenCalled();
+    expect(commitCheckpoint).not.toHaveBeenCalled();
     await expect(callTurnBroker(socketPath, { method: "claim", token: turnTokens[0]! }))
       .rejects.toThrow("already finished");
   } finally {
+    applyCheckpoint.mockRestore();
+    shouldCheckpoint.mockRestore();
+    commitCheckpoint.mockRestore();
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
     await TurnBroker.forSocket(socketPath).close();
   }

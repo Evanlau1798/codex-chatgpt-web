@@ -27,7 +27,7 @@ import {
   chatGptTurnSessions,
   type ChatGptTurnRuntime,
 } from "./turn-execution";
-import { resolveBiggerContextMultipartParts } from "./usage";
+import { resolveBiggerContextMultipartParts, resolveEnhancedRecoveryMultipartParts } from "./usage";
 
 interface ChatGptRuntimeFactoryOptions {
   provider: CodexProviderConfig;
@@ -89,6 +89,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       : { parsed, applied: false };
     const experimentalMultipartParts = experimentalBiggerContext
       ? resolveBiggerContextMultipartParts(checkpointInput.parsed, turnCapabilities, experimentalSkillAttachments)
+      : useEnhancedWebSessionMode && finalizationOnly
+        ? resolveEnhancedRecoveryMultipartParts(checkpointInput.parsed, turnCapabilities, experimentalSkillAttachments)
       : undefined;
     const tunneledOutput = shouldUseEnhancedOutputTunnel(parsed, {
       requested: nativeControlConnector && useEnhancedOutputTunnel,

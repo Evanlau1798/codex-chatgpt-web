@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { compiledChatGptWebMessages, estimateChatGptWebImageTokens, estimateCompiledChatGptWebInputTokens } from "../src/adapters/chatgpt-web/input-tokens";
 import { CHATGPT_WEB_LUNA_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
-import { resolveBiggerContextMultipartParts, chatGptUsageInputForRound, estimateChatGptWebInputTokens, estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
+import { resolveBiggerContextMultipartParts, resolveEnhancedRecoveryMultipartParts, chatGptUsageInputForRound, estimateChatGptWebInputTokens, estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
 import type { CodexParsedRequest } from "../src/types";
 
 const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true };
@@ -52,6 +52,18 @@ test("usage includes the Native2 and enhanced output tunnel contracts actually s
   );
 
   expect(usage.inputTokens).toBe(estimateCompiledChatGptWebInputTokens(actual, parsed.modelId, [token]));
+});
+
+test("Enhanced finalization recovery stages canonical history above one browser message without shrinking its context window", () => {
+  const parsed = request("");
+  parsed._chatgptFinalizationOnly = true;
+  parsed.context.messages = Array.from({ length: 24 }, (_, index) => ({
+    role: "user" as const,
+    content: `canonical record ${index}: ${"word ".repeat(5_000)}`,
+    timestamp: index + 1,
+  }));
+
+  expect(resolveEnhancedRecoveryMultipartParts(parsed, capabilities)).toBe(2);
 });
 test("multipart selection accounts for whole-record and composer fit before submission", () => {
   const plus = { ...capabilities, extraHighAvailable: false, proAvailable: false };

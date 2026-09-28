@@ -110,32 +110,85 @@ export function resolveBiggerContextMultipartParts(
   const inline = compile();
   const inputTokens = estimateCompiledChatGptWebInputTokens(inline, parsed.modelId);
   const initialParts = biggerContextPartCount(inputTokens, autoCompactTokenLimit, false);
-  const fits = (compiled: CompiledChatGptWebPrompt): boolean => {
-    const messages = compiledChatGptWebMessages(compiled);
-    const stagingEffort = capabilities.proAvailable ? "max" : "medium";
-    for (const [index, text] of messages.entries()) {
-      const final = index === messages.length - 1;
-      const effort = final ? mode.effort : stagingEffort;
-      const { browserComposerCharLimit } = resolveChatGptWebTransportLimits(
-        CHATGPT_WEB_BACKEND_MODEL, effort, capabilities,
-      );
-      if (browserComposerCharLimit !== undefined && text.length > browserComposerCharLimit) return false;
-      const budget = resolveChatGptWebMessageTokenBudget(
-        CHATGPT_WEB_BACKEND_MODEL,
-        effort,
-        capabilities,
-        final ? estimateChatGptWebImageTokens(compiled) + skillFileTokens(compiled.skillFiles, parsed.modelId) : 0,
-      );
-      if (estimateTokens(text, parsed.modelId) > budget) return false;
-    }
-    return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId)
-      < contextWindow * Math.min(messages.length, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER);
-  };
+  const fits = (compiled: CompiledChatGptWebPrompt): boolean => multipartPromptFits(
+    compiled,
+    parsed,
+    capabilities,
+    mode.effort,
+    messages => contextWindow * Math.min(messages, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER),
+  );
   if (initialParts === undefined && fits(inline)) return undefined;
   if (initialParts !== CHATGPT_BIGGER_CONTEXT_PARTS && fits(compile(2))) return 2;
   if (fits(compile(CHATGPT_BIGGER_CONTEXT_PARTS))) return CHATGPT_BIGGER_CONTEXT_PARTS;
   throw new ChatGptWebAdapterError(
     "No Bigger Context partition can carry every whole record within the measured message limits. Compact the task before retrying.",
+    { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+  );
+}
+
+function multipartPromptFits(
+  compiled: CompiledChatGptWebPrompt,
+  parsed: CodexParsedRequest,
+  capabilities: ChatGptWebCapabilities,
+  effort: ReturnType<typeof resolveChatGptWebModelMode>["effort"],
+  inputLimit: (messageCount: number) => number,
+): boolean {
+  const messages = compiledChatGptWebMessages(compiled);
+  const stagingEffort = capabilities.proAvailable ? "max" : "medium";
+  for (const [index, text] of messages.entries()) {
+    const final = index === messages.length - 1;
+    const messageEffort = final ? effort : stagingEffort;
+    const { browserComposerCharLimit } = resolveChatGptWebTransportLimits(
+      CHATGPT_WEB_BACKEND_MODEL, messageEffort, capabilities,
+    );
+    if (browserComposerCharLimit !== undefined && text.length > browserComposerCharLimit) return false;
+    const budget = resolveChatGptWebMessageTokenBudget(
+      CHATGPT_WEB_BACKEND_MODEL,
+      messageEffort,
+      capabilities,
+      final ? estimateChatGptWebImageTokens(compiled) + skillFileTokens(compiled.skillFiles, parsed.modelId) : 0,
+    );
+    if (estimateTokens(text, parsed.modelId) > budget) return false;
+  }
+  return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId)
+    < inputLimit(messages.length);
+}
+
+/** Rebuild a lost Enhanced finalization surface within its existing 256K/272K model window. */
+export function resolveEnhancedRecoveryMultipartParts(
+  parsed: CodexParsedRequest,
+  capabilities: ChatGptWebCapabilities,
+  experimentalSkillAttachments = false,
+): ChatGptWebMultipartPartCount | undefined {
+  if (parsed._chatgptFinalizationOnly !== true) {
+    throw new Error("Enhanced recovery multipart transport is valid only for finalization recovery");
+  }
+  if (isChatGptWebZeroRiskBackendModel(parsed.modelId) || parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID) {
+    throw new Error("Enhanced recovery multipart transport is unavailable for this model");
+  }
+  const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
+  const { contextWindow } = resolveChatGptWebContextLimits(
+    CHATGPT_WEB_BACKEND_MODEL,
+    mode.effort,
+    { ...capabilities, experimentalBiggerContext: false },
+    true,
+  );
+  const compile = (parts?: ChatGptWebMultipartPartCount): CompiledChatGptWebPrompt => (
+    compileChatGptWebPrompt(parsed, capabilities, undefined, {
+      experimentalMultipartParts: parts,
+      experimentalSkillAttachments,
+    })
+  );
+  const fits = (compiled: CompiledChatGptWebPrompt): boolean => multipartPromptFits(
+    compiled, parsed, capabilities, mode.effort, () => contextWindow,
+  );
+  const inline = compile();
+  if (fits(inline)) return undefined;
+  for (const parts of [2, CHATGPT_BIGGER_CONTEXT_PARTS] as const) {
+    if (fits(compile(parts))) return parts;
+  }
+  throw new ChatGptWebAdapterError(
+    "The complete Enhanced recovery context cannot fit the selected model window. Compact the task before retrying.",
     { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
   );
 }

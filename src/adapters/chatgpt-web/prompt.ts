@@ -59,7 +59,7 @@ export interface CompiledChatGptWebPrompt {
   text: string;
   images: ChatGptWebPromptImage[];
   skillFiles?: ChatGptSkillFile[];
-  /** Transactional transport when Bigger Context is explicitly enabled. */
+  /** Transactional transport for Bigger Context or a large Enhanced finalization recovery. */
   multipart?: ChatGptWebMultipartPrompt;
   /** Native2 archive metadata used only when the visible browser message exceeds measured limits. */
   turnToken?: string;

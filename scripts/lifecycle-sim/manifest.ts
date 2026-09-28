@@ -39,6 +39,7 @@ export const sharedLifecycleTests = [
   "tests/browser-worker-retained-connector.test.ts",
   "tests/prompt-fast-insertion.test.ts",
   "tests/compaction-browser-recovery.test.ts",
+  "tests/submitted-surface-recovery.test.ts",
   "tests/browser-tunneled-fallback.test.ts",
   "tests/structured-compaction-handoff.test.ts",
   "tests/turn-progress-retirement.test.ts",

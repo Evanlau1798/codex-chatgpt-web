@@ -22,6 +22,11 @@ let v2CompactCalls = 0;
 const inputs: unknown[][] = [];
 const marker = "PRESERVE_ORIGINAL_USER_REQUEST";
 const answer = "Original work remains available.";
+const duringCompact = "COMMAND_SUBMITTED_DURING_COMPACTION";
+let markCompactionStarted!: () => void;
+let releaseCompaction!: () => void;
+const compactionStarted = new Promise<void>(resolveStarted => { markCompactionStarted = resolveStarted; });
+const compactionReleased = new Promise<void>(resolveReleased => { releaseCompaction = resolveReleased; });
 const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
   const path = new URL(request.url).pathname;
   if (path === "/v1/models") return Response.json(catalog);
@@ -43,6 +48,8 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
     }
     return responseRequest(request, config, () => ({ name: compacting ? "oversized-summary" : "scripted-answer", async runTurn(_p, _s, emit) {
       if (compacting) {
+        markCompactionStarted();
+        await compactionReleased;
         emit({ type: "error", message: "Compaction summary exceeded the fixture budget", status: 400,
           errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false });
         return;
@@ -81,7 +88,7 @@ const output = (async () => {
       const message = JSON.parse(line) as Rpc;
       messages.push(message);
       if (message.id !== undefined) {
-        if (message.error) pending.get(message.id)?.reject(new Error("Client RPC failed"));
+        if (message.error) pending.get(message.id)?.reject(new Error(`Client RPC failed: ${JSON.stringify(message.error)}`));
         else pending.get(message.id)?.resolve(message.result);
       }
     }
@@ -124,14 +131,25 @@ try {
   }
   await turn(marker);
   const since = messages.length;
-  await rpc("thread/compact/start", { threadId: thread.id });
+  const compact = rpc("thread/compact/start", { threadId: thread.id });
+  await compactionStarted;
+  const compactCommandAttempt = rpc("turn/start", {
+    threadId: thread.id,
+    input: [{ type: "text", text: duringCompact }],
+  }).then(() => undefined, error => error as Error);
+  releaseCompaction();
+  const compactCommandError = await compactCommandAttempt;
+  assert(compactCommandError?.message.includes("ActiveTurnNotSteerable { turn_kind: Compact }"),
+    "Command submitted during compaction must fail closed at the Codex boundary");
+  await compact;
   await wait(value => value.method === "turn/completed", since);
   assert.equal(v2CompactCalls, 1, "Compaction must use the Responses compaction_trigger path");
   assert.equal(legacyCompactCalls, 0, "Compaction must not fall back to the legacy compact endpoint");
   assert.equal(compactCalls, 1, "Oversized compaction must not retry");
   assert(messages.slice(since).some(value => value.method === "error"), "Client must expose the compact failure");
-  await turn("Continue the original work.");
+  await turn(duringCompact);
   const resumed = JSON.stringify(inputs.at(-1));
+  assert(resumed.includes(duringCompact), "Command submitted during compaction was discarded");
   assert(resumed.includes(marker), "Failed compaction discarded the original user request");
   assert(resumed.includes(answer), "Failed compaction discarded completed assistant history");
   assert(!resumed.includes("checkpoint checkpoint"), "Client installed failed replacement output");
