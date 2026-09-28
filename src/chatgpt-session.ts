@@ -40,8 +40,8 @@ export const CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR = [
 /** Resolve only inside the verified composer's form; multiple submitters are an error. */
 export const CHATGPT_SEND_BUTTON_SELECTOR = '[data-testid="send-button"], button[type="submit"]';
 export const CHATGPT_STOP_BUTTON_SELECTOR = '[data-testid="stop-button"], form[data-chatgpt-composer] button[type="button"][aria-label="Stop"]';
-// The new footer is shared with user messages. Response extraction additionally requires
-// this control to FOLLOW the last assistant answer, excluding the user's earlier footer.
+// The new footer is shared with user messages. Response extraction rejects controls owned by a
+// user content unit, then verifies their relationship to the bound assistant answer.
 export const CHATGPT_COMPLETION_ACTION_SELECTOR = 'button[data-testid="copy-turn-action-button"], [data-turn-key] .turn-action-controls button';
 export const CHATGPT_ASSISTANT_TURN_SELECTOR = [
   '[data-testid^="conversation-turn-"][data-turn="assistant"]:not([data-turn-key] *)',

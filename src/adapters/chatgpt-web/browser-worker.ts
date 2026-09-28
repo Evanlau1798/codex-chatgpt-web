@@ -3334,7 +3334,11 @@ export class ChatGptBrowserWorker {
         };
       })() : { boundaryProtocolPresent: false, lastNodePresent: false, animations: [] };
       const completionActions = [...root.querySelectorAll<HTMLElement>(completionActionSelector)]
-        .filter(renderedThroughRoot);
+        .filter(renderedThroughRoot)
+        .filter(candidate => {
+          const contentUnit = candidate.closest("[data-content-search-unit-key]");
+          return !contentUnit?.querySelector("[data-user-message-bubble]");
+        });
       // The bound assistant turn already excludes every older response. ChatGPT may place this
       // turn's footer controls before its final Markdown in DOM order while painting them below it.
       const completionAction = rendered

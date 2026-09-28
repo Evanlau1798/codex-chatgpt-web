@@ -171,6 +171,22 @@ test("a bound turn accepts completion controls rendered before its final Markdow
   expect(response.completionActionVisible).toBeTrue();
 });
 
+test("a bound turn does not mistake its earlier user footer for assistant completion", async () => {
+  const response = await snapshot(
+    '<section id="turn" data-turn-key="current"><div data-content-search-unit-key="current:0:user">'
+      + '<div data-user-message-bubble="true">Review this.</div><div class="turn-action-controls">'
+      + '<button>Copy prompt</button><button>Share prompt</button></div></div>'
+      + '<div data-content-search-unit-key="current:1:assistant"><h4 data-conversation-role="assistant"></h4>'
+      + '<div class="markdown"><p>Review is still projecting.</p></div></div></section>',
+  );
+  expect(response.visibleText).toBe("Review is still projecting.");
+  expect(response.completionActionVisible).toBeFalse();
+  const tracker = new ChatGptCompletionTracker();
+  const state = { ...response, running: false, currentText: response.visibleText, currentHtml: response.fullHtml };
+  expect(tracker.update(state, 1).status).toBe("waiting");
+  expect(tracker.update(state, 1 + CHATGPT_COMPLETION_SETTLE_MS).status).toBe("waiting");
+});
+
 test("multi-root answer settlement resets when an earlier answer root disappears", async () => {
   const response = await snapshot(
     '<section id="turn"><div class="markdown" id="first"><p>Review in progress.</p></div>'
