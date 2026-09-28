@@ -177,7 +177,7 @@ test("original Web session mode does not install same-conversation recovery", as
   }
 });
 
-test("keeps a submitted tool surface terminal after acceptance", async () => {
+test("rebuilds a submitted missing-final turn as a fresh finalization-only surface", async () => {
   const socketPath = brokerTestEndpoint(`cgw-submitted-recovery-${process.pid}-${Date.now()}`);
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
@@ -200,9 +200,9 @@ test("keeps a submitted tool surface terminal after acceptance", async () => {
     const prepared = await turn.prepare();
     try {
       const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
-      if (!token) throw new Error("turn token missing from compiled prompt");
-      turnTokens.push(token);
       if (browserStarts === 1) {
+        if (!token) throw new Error("turn token missing from compiled prompt");
+        turnTokens.push(token);
         turn.onSubmitted?.();
         const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
         const progress = turn.externalProgress;
@@ -221,10 +221,15 @@ test("keeps a submitted tool surface terminal after acceptance", async () => {
         await progress.acknowledgeToolBatch(snapshot.lastToolBatchRevision);
         const result = await resultPromise;
         expect(textOf(result)).toContain("CANONICAL_RECOVERY_RESULT");
-        throw chatGptWebSurfaceError("completion action disappeared after the tool result", false);
+        throw chatGptCompletionEvidenceError("final answer disappeared after the tool result", false);
       }
+      expect(token).toBeUndefined();
+      expect(turn.nativeConnector).toBeUndefined();
+      expect(turn.externalProgress).toBeUndefined();
       expect(prepared.modelInputText ?? prepared.text).toContain("CANONICAL_RECOVERY_RESULT");
       expect(prepared.modelInputText ?? prepared.text).toContain("Continue after the V2 boundary");
+      expect(prepared.modelInputText ?? prepared.text).toContain("final-answer recovery");
+      expect(prepared.modelInputText ?? prepared.text).toContain("Do not call any tool");
       const answer = "Recovered final answer.";
       turn.onTextDelta(answer);
       return answer;
@@ -284,15 +289,13 @@ test("keeps a submitted tool surface terminal after acceptance", async () => {
     const finalEvents: AdapterEvent[] = [];
     await adapter.runTurn!(continuation, { headers: new Headers() }, event => finalEvents.push(event));
 
-    expect(browserStarts).toBe(1);
+    expect(browserStarts).toBe(2);
     expect(new Set(turnTokens).size).toBe(1);
     expect(finalEvents.filter(event => event.type === "tool_call_start")).toEqual([]);
-    expect(finalEvents.filter(event => event.type === "text_delta")).toEqual([]);
-    expect(finalEvents.at(-1)).toMatchObject({
-      type: "error",
-      code: "chatgpt_submitted_turn_failed",
-      retryable: false,
-    });
+    expect(finalEvents.filter(event => event.type === "text_delta")).toEqual([
+      { type: "text_delta", text: "Recovered final answer.", phase: "final_answer" },
+    ]);
+    expect(finalEvents.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
     await expect(callTurnBroker(socketPath, { method: "claim", token: turnTokens[0]! }))
       .rejects.toThrow("already finished");
   } finally {

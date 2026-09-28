@@ -75,13 +75,15 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
   ): ChatGptTurnRuntime => {
     const toolPolicy = effectiveChatGptToolPolicy(parsed);
     const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
-    const nativeControlConnector = useEnhancedWebSessionMode && configuredCapabilities.localToolsEnabled;
-    if (toolPolicy.requireTool && !mode.localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
+    const finalizationOnly = parsed._chatgptFinalizationOnly === true;
+    const localTools = mode.localTools && !finalizationOnly;
+    const nativeControlConnector = useEnhancedWebSessionMode && configuredCapabilities.localToolsEnabled && !finalizationOnly;
+    if (toolPolicy.requireTool && !localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
     const identity = extractChatGptTurnIdentity(parsed);
-    const captureLunaCheckpoint = parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !parsed._compactionRequest && Boolean(identity.threadId && identity.turnId);
+    const captureLunaCheckpoint = !finalizationOnly && parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !parsed._compactionRequest && Boolean(identity.threadId && identity.turnId);
     const captureEnhancedCheckpoint = useEnhancedWebSessionMode
       && provider.chatgptWeb?.experimentalNoAutoCompact === true
-      && parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID && !parsed._compactionRequest;
+      && parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID && !parsed._compactionRequest && !finalizationOnly;
     const checkpointInput = captureLunaCheckpoint ? lunaCheckpointStore.apply(parsed)
       : captureEnhancedCheckpoint ? enhancedRecoveryCheckpointStore.apply(parsed)
       : { parsed, applied: false };
@@ -90,7 +92,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       : undefined;
     const tunneledOutput = shouldUseEnhancedOutputTunnel(parsed, {
       requested: nativeControlConnector && useEnhancedOutputTunnel,
-      localTools: mode.localTools,
+      localTools,
       toolCount: toolPolicy.tools.length,
       luna: parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID,
       captureLunaCheckpoint,
@@ -125,7 +127,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     const trace = new ChatGptTraceFeed();
     const text = new ChatGptTextFeed();
     const externalProgress = new ChatGptExternalTurnProgress();
-    const steering = captureLunaCheckpoint ? undefined : new ChatGptSteeringFeed();
+    const steering = captureLunaCheckpoint || finalizationOnly ? undefined : new ChatGptSteeringFeed();
     const lunaSafetySteering = captureLunaCheckpoint ? new ChatGptSteeringFeed() : undefined;
     const finalAnswerAdmissionFeed = steering ?? lunaSafetySteering;
     const finalAnswerAdmission = finalAnswerAdmissionFeed ? {
@@ -135,7 +137,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     let activeToken: string | undefined;
     let browserOwnerSettled = false;
     let toolResultDelivered = false;
-    const toolEvidence = mode.localTools && !parsed._compactionRequest ? new ChatGptToolEvidenceGuard() : undefined;
+    const toolEvidence = localTools && !parsed._compactionRequest ? new ChatGptToolEvidenceGuard() : undefined;
     const submission: NonNullable<ChatGptTurnRuntime["submission"]> = { phase: "prepared" };
     let runtimeExecutionKey: string;
     try {
@@ -152,7 +154,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         await upstreamRetry?.(answer, attempt) ?? toolEvidence.retryPromptForAnswer(answer)
       )
       : upstreamRetry;
-    const retainConversation = requestedRetention && !experimentalFreshConversationPerTurn;
+    const retainConversation = requestedRetention && !experimentalFreshConversationPerTurn && !finalizationOnly;
     let conversationKey: string | undefined;
     try {
       conversationKey = retainConversation ? chatGptConversationKey(checkpointInput.parsed, executionNamespace) : undefined;
@@ -183,12 +185,13 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       chatGptTurnSessions.find(runtimeExecutionKey)?.runtime.compactionRequested
         ? undefined : taskAnswerRetry(answer, attempt)
     ) : undefined;
-    const retryPromptForError = createChatGptSameSurfaceRetry({ traceId, executionKey: runtimeExecutionKey, enhancedMode: useEnhancedWebSessionMode, abortSignal: browserAbort.signal });
+    const retryPromptForError = finalizationOnly ? undefined
+      : createChatGptSameSurfaceRetry({ traceId, executionKey: runtimeExecutionKey, enhancedMode: useEnhancedWebSessionMode, abortSignal: browserAbort.signal });
     const emitCommentary = (value: string, continuation?: boolean): void => {
       if (toolEvidence && !toolEvidence.shouldEmitCommentary(value)) return;
       trace.push({ kind: "commentary", text: value, ...(continuation ? { continuation: true } : {}) });
     };
-    if (!mode.localTools) {
+    if (!localTools) {
       const base = {
         modelId: parsed.modelId,
         ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),

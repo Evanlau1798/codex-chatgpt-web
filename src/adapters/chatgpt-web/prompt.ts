@@ -148,8 +148,9 @@ export function compileChatGptWebPrompt(
   const mode = manualControl
     ? { localTools: true, effort: "low" as const, displayLabel: "Zero Risk" as const }
     : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
+  const finalizationOnly = parsed._chatgptFinalizationOnly === true;
   const toolPolicy = effectiveChatGptToolPolicy(parsed);
-  const localTools = manualControl || (mode.localTools && toolPolicy.tools.length > 0);
+  const localTools = manualControl || (!finalizationOnly && mode.localTools && toolPolicy.tools.length > 0);
   const transportLimits = manualControl ? {} : resolveChatGptWebTransportLimits(
     parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_BACKEND_MODEL : CHATGPT_WEB_BACKEND_MODEL,
     mode.effort,
@@ -241,6 +242,12 @@ export function compileChatGptWebPrompt(
       "This is a Codex history-compaction checkpoint, not a normal task turn.",
       "Do not call local or ChatGPT-native tools. Summarize only the supplied task context according to the final compaction instruction.",
       "Return only the checkpoint summary that the next model needs to resume the task.",
+    ]
+    : finalizationOnly
+    ? [
+      "This is a final-answer recovery from complete canonical task history after all prior work tools finished.",
+      "Do not call any tool, repeat any completed action, or claim new local evidence.",
+      "Use the supplied messages and tool results to synthesize the complete user-facing final answer now.",
     ]
     : localTools
     ? [
@@ -334,7 +341,11 @@ export function compileChatGptWebPrompt(
       "The task context is complete. Produce the requested checkpoint summary now without calling tools.",
       "</codex_transport_resume>",
     ]
-    : manualControl ? [
+    : finalizationOnly ? [
+      "<codex_transport_resume>",
+      "The canonical task history and settled tool results are complete. Return the final answer now without calling tools.",
+      "</codex_transport_resume>",
+    ] : manualControl ? [
       "<codex_transport_resume>",
       retainedResume
         ? "The retained conversation and this turn's incremental context are complete. Execute the latest active user request now."

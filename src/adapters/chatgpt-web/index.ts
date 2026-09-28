@@ -55,6 +55,15 @@ export function chatGptWebTraceId(provider: CodexProviderConfig, parsed: CodexPa
 
 export const CHATGPT_WEB_ADAPTER_HEARTBEAT_MS = 10_000;
 
+function finalizationRecoveryRequest(parsed: CodexParsedRequest): CodexParsedRequest {
+  return {
+    ...parsed,
+    context: { ...parsed.context, tools: [] },
+    options: { ...parsed.options, toolChoice: "none" },
+    _chatgptFinalizationOnly: true,
+  };
+}
+
 class ChatGptAccountSafetyAdmissionError extends ChatGptWebAdapterError {}
 
 export function createChatGptWebAdapter(
@@ -339,16 +348,16 @@ export function createChatGptWebAdapter(
       try {
         await session.runExclusive(async () => { session.observeCanonicalRequest(parsed); });
         for (;;) {
-          let recoveredResultCount: number | undefined;
+          let recoveryPlan: ReturnType<ChatGptSurfaceRecoveryTracker["recoveryPlan"]>;
           await session.runExclusive(async () => {
           const settled = session.settledOutcome();
           if (settled) {
             if (settled.type === "error") {
-              recoveredResultCount = surfaceRecovery.recoverableResultCount(
+              recoveryPlan = surfaceRecovery.recoveryPlan(
                 settled.error, session, parsed, surfaceRecoveries, incoming.abortSignal,
                 durableRecoveryCheckpoint(),
               );
-              if (recoveredResultCount !== undefined) return;
+              if (recoveryPlan !== undefined) return;
               const submittedError = submittedBrowserFailure(
                 session,
                 incoming.abortSignal?.aborted === true,
@@ -517,9 +526,9 @@ export function createChatGptWebAdapter(
                   stallTimeoutMs,
                 ), incoming.abortSignal);
               } catch (error) {
-                recoveredResultCount = surfaceRecovery.recoverableResultCount(error, session, parsed,
+                recoveryPlan = surfaceRecovery.recoveryPlan(error, session, parsed,
                   surfaceRecoveries, incoming.abortSignal, durableRecoveryCheckpoint());
-                if (recoveredResultCount !== undefined) return;
+                if (recoveryPlan !== undefined) return;
                 throw error;
               }
               if (next.type === "trace") {
@@ -560,11 +569,11 @@ export function createChatGptWebAdapter(
                 session.setFinalEvents(roundEvents);
                 if (turnToken) await brokerOwner.revoke(turnToken);
                 if (next.outcome.type === "error") {
-                  recoveredResultCount = surfaceRecovery.recoverableResultCount(
+                  recoveryPlan = surfaceRecovery.recoveryPlan(
                     next.outcome.error, session, parsed, surfaceRecoveries, incoming.abortSignal,
                     durableRecoveryCheckpoint(),
                   );
-                  if (recoveredResultCount !== undefined) return;
+                  if (recoveryPlan !== undefined) return;
                   const submittedError = submittedBrowserFailure(session, incoming.abortSignal?.aborted === true, next.outcome.error);
                   if (submittedError) throw submittedError;
                   throw next.outcome.error;
@@ -610,16 +619,18 @@ export function createChatGptWebAdapter(
             toolWaitAbort.abort();
           }
           });
-          if (recoveredResultCount === undefined) break;
+          if (recoveryPlan === undefined) break;
           surfaceRecoveries += 1;
+          const recoveryInput = recoveryPlan.finalizationOnly ? finalizationRecoveryRequest(parsed) : parsed;
           console.warn(
-            `[chatgpt-web] browser turn ${traceId} rebuilding tool surface from canonical state`
+            `[chatgpt-web] browser turn ${traceId} rebuilding surface from canonical state`
             + ` generation=${surfaceRecoveries} contextMessages=${parsed.context.messages.length}`
-            + ` completedResults=${recoveredResultCount}`,
+            + ` completedResults=${recoveryPlan.canonicalResultCount}`
+            + ` finalizationOnly=${recoveryPlan.finalizationOnly}`,
           );
           await chatGptTurnSessions.retireAndWait(executionKey, incoming.abortSignal);
-          session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
-            () => startRuntimeForTurn(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
+          session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, recoveryInput,
+            () => startRuntimeForTurn(recoveryInput, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
           await session.runExclusive(async () => { session.observeCanonicalRequest(parsed); });
         }
         if (useEnhancedWebSessionMode && parsed._localCompactionRequest) { const key = chatGptConversationKey(parsed, executionNamespace); if (key) await chatGptTurnSessions.retireConversationAndWait(key); }

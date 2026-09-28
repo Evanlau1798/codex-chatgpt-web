@@ -391,7 +391,6 @@ test("same-surface recovery requires complete canonical state and no pending eff
 
 test.each([
   ["surface changed", chatGptWebSurfaceError("surface changed", false)],
-  ["completion evidence missing", chatGptCompletionEvidenceError("completion evidence disappeared", false)],
   ["upstream server error", new ChatGptWebAdapterError("upstream failed", {
     status: 502,
     errorType: "server_error",
@@ -412,6 +411,28 @@ test.each([
   });
   expect(chatGptSurfaceRecoveryDecision(failure, tools, completeRequest(), 0))
     .toMatchObject({ eligible: false, reason: "submission_activated" });
+});
+
+test("an accepted turn with complete tool results may rebuild only as a finalization surface", () => {
+  const tools = new ChatGptTurnSession({
+    mode: "tools",
+    token: Promise.resolve("turn_accepted_finalization"),
+    browser: new Promise<string>(() => {}),
+    trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(),
+    submission: { phase: "accepted" },
+    externalProgress: new ChatGptExternalTurnProgress(),
+    cancel: () => {},
+  });
+  const request = completeRequest(["call_done"], ["call_done"]);
+  expect(chatGptSurfaceRecoveryDecision(
+    chatGptCompletionEvidenceError("final missing", false), tools, request, 0,
+  )).toMatchObject({ eligible: true, finalizationOnly: true, canonicalResultCount: 1 });
+
+  tools.setOutstanding([{ callId: "call_pending", wireName: "exec_command", freeform: false, arguments: {} }]);
+  expect(chatGptSurfaceRecoveryDecision(
+    chatGptCompletionEvidenceError("final missing", false), tools, request, 0,
+  )).toMatchObject({ eligible: false, reason: "tool_results_incomplete" });
 });
 
 test("same-surface recovery rejects partial final output, aborts, and unrelated failures", () => {
