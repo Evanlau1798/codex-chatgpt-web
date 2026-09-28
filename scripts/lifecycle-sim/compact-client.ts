@@ -137,8 +137,8 @@ try {
     threadId: thread.id,
     input: [{ type: "text", text: duringCompact }],
   }).then(() => undefined, error => error as Error);
-  releaseCompaction();
   const compactCommandError = await compactCommandAttempt;
+  releaseCompaction();
   assert(compactCommandError?.message.includes("ActiveTurnNotSteerable { turn_kind: Compact }"),
     "Command submitted during compaction must fail closed at the Codex boundary");
   await compact;
