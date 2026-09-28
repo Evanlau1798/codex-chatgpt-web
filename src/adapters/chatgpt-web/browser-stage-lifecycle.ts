@@ -97,12 +97,12 @@ export async function waitForOperationalChatGptViewport(
         page.evaluate(() => ({ width: innerWidth, height: innerHeight })), timeout,
       ]), signal);
       check();
-      if (remaining() <= 0) throw new ChatGptViewportReadinessError("unknown");
       if (!Number.isFinite(dimensions.width) || !Number.isFinite(dimensions.height)) {
         throw new ChatGptViewportReadinessError("unknown");
       }
       if (dimensions.width >= CHATGPT_MIN_OPERATIONAL_VIEWPORT.width
         && dimensions.height >= CHATGPT_MIN_OPERATIONAL_VIEWPORT.height) return;
+      if (remaining() <= 0) throw new ChatGptViewportReadinessError("viewport_pending", dimensions);
     } catch (error) {
       check();
       if (error instanceof ChatGptViewportReadinessError) throw error;

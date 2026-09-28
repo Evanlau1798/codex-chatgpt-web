@@ -128,6 +128,17 @@ test("responsive small viewport is distinguished from a renderer that never resp
   expect(reads).toBe(1);
 });
 
+test("a viewport read that crosses its deadline preserves responsive dimensions", async () => {
+  await expect(waitForOperationalChatGptViewport(page(async () => {
+    const deadline = performance.now() + 10;
+    while (performance.now() < deadline) {}
+    return { width: 100, height: 200 };
+  }), undefined, 5)).rejects.toMatchObject({
+    kind: "viewport_pending",
+    dimensions: { width: 100, height: 200 },
+  });
+});
+
 test("closed target and unknown transport failures are not transient readiness", async () => {
   await expect(waitForOperationalChatGptViewport(page(async () => ({ width: 800, height: 600 }), () => true)))
     .rejects.toMatchObject({ kind: "target_closed" });
