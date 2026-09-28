@@ -98,6 +98,7 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     browserStarts += 1;
     const prepared = await turn.prepare();
+    const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
     prepared.release();
     turn.onSubmitted?.();
     const retry = await turn.retryPromptForError?.(
@@ -105,6 +106,17 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
       1,
     );
     observedRetry = retry;
+    if (!compacting) {
+      if (!token) throw new Error("turn token missing from compiled prompt");
+      let rejected = "";
+      try {
+        const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
+        await callTurnBroker(socketPath, { method: "release", bindingId: claimed.bindingId });
+      } catch (error) {
+        rejected = error instanceof Error ? error.message : String(error);
+      }
+      expect(rejected).toContain("work tools are closed during final-answer recovery");
+    }
     observedCorrection = await turn.retryPromptForAnswer?.("The tool was blocked by safety policy.", 1);
     const answer = "Recovered in the retained conversation.";
     turn.onTextDelta(answer);

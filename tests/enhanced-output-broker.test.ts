@@ -102,6 +102,31 @@ test("final output waits for work settlement and blocks later work until reset",
   }
 });
 
+test("final-answer recovery atomically closes work tools while keeping final output available", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-output-finalization-"));
+  const socket = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socket);
+  const owner = new RemoteTurnBroker(socket);
+  try {
+    const token = await broker.register(environment(root), undefined, "output-finalization-test", undefined, true);
+    const activityId = "activity_1234567890123456";
+    await callTurnBroker(socket, { method: "claim", token, activityId });
+    assert.equal(await owner.beginFinalizationOnly(token), false);
+    await callTurnBroker(socket, { method: "activity_complete", token, activityId });
+    assert.equal(await owner.beginFinalizationOnly(token), true);
+    assert.equal(await owner.beginFinalizationOnly(token), true);
+    await assert.rejects(callTurnBroker(socket, {
+      method: "claim", token, activityId: "activity_abcdefghijklmnop",
+    }), /work tools are closed during final-answer recovery/);
+    expect(await submitNativeOutputControl(
+      socket, token, { kind: "final", text: "Recovered final." }, undefined,
+    )).toMatchObject({ accepted: true });
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("DOM fallback seal rejects new work before completion is committed", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-output-sealed-work-"));
   const socket = defaultBrokerEndpoint(root);

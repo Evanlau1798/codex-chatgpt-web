@@ -128,6 +128,7 @@ export class TurnBroker implements TurnBrokerOwner {
       outputWaiters: new Set(),
       outputResumeAfter: 0,
       outputSealed: false,
+      finalizationOnly: false,
       retirementWaiters: new Set(),
     };
     this.channels.set(token, channel);
@@ -271,6 +272,18 @@ export class TurnBroker implements TurnBrokerOwner {
       console.info(`[chatgpt-web] broker trace=${channel.traceId} committed browser completion revision=${revision}`);
     }
     return committed;
+  }
+
+  beginFinalizationOnly(token: string): boolean {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    if (!channel.outputEnabled || channel.completionCommitted || channel.outputFinalSequence !== undefined) return false;
+    if (channel.invocations.size > 0 || channel.queuedCallIds.length > 0 || channel.activities.size > 0) return false;
+    if (channel.finalizationOnly) return true;
+    channel.finalizationOnly = true;
+    channel.activityRevision += 1;
+    return true;
   }
 
   waitForRetirement(token: string, signal?: AbortSignal): Promise<void> {

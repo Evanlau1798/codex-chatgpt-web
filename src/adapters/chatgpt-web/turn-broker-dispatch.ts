@@ -74,6 +74,7 @@ export async function dispatchTurnBrokerRequest(
     compactionDeliveryCount: owner.compactionDeliveryCount.bind(owner),
     beginCompletionFence: owner.beginCompletionFence.bind(owner),
     commitCompletionFence: owner.commitCompletionFence.bind(owner),
+    beginFinalizationOnly: owner.beginFinalizationOnly.bind(owner),
     nextOutput: owner.nextOutput.bind(owner),
     resetOutput: owner.resetOutput.bind(owner),
     sealOutput: owner.sealOutput.bind(owner),
@@ -141,6 +142,9 @@ async function claim(request: BrokerRequest, signal: AbortSignal, state: Dispatc
       + " This Codex Native action can no longer run."
       : "turn token is invalid, expired, or revoked");
   }
+  if (activeChannel.finalizationOnly) {
+    throw new Error("Codex Native work tools are closed during final-answer recovery; call codex.control.output with kind=final");
+  }
   if (activeChannel.safe) {
     if (contract !== "safe") throw new Error("Zero Risk request id requires the Zero Risk MCP contract");
     if (activeChannel.safe.state === "awaiting_start" && !activeChannel.safe.launcherSent) {
@@ -197,6 +201,9 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
   assertSafeHarnessRunning(binding.channel);
   if (binding.channel.outputSealed) {
     throw new Error("Codex Native work cannot start after DOM fallback was sealed");
+  }
+  if (binding.channel.finalizationOnly) {
+    throw new Error("Codex Native work tools are closed during final-answer recovery; call codex.control.output with kind=final");
   }
   if (binding.channel.outputFinalSequence !== undefined) {
     throw new Error("Codex Native work cannot start while the final answer is pending");

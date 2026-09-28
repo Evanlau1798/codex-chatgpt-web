@@ -77,6 +77,7 @@ export interface TurnChannel {
   outputResumeAfter: number;
   outputFinalSequence?: number;
   outputSealed: boolean;
+  finalizationOnly: boolean;
   safe?: SafeTurnControl;
 }
 

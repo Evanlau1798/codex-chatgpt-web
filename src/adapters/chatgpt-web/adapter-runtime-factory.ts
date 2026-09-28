@@ -188,7 +188,15 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         ? undefined : taskAnswerRetry(answer, attempt)
     ) : undefined;
     const retryPromptForError = finalizationOnly ? undefined
-      : createChatGptSameSurfaceRetry({ traceId, executionKey: runtimeExecutionKey, enhancedMode: useEnhancedWebSessionMode, abortSignal: browserAbort.signal });
+      : createChatGptSameSurfaceRetry({
+          traceId,
+          executionKey: runtimeExecutionKey,
+          enhancedMode: useEnhancedWebSessionMode,
+          abortSignal: browserAbort.signal,
+          beginFinalizationOnly: async () => activeToken
+            ? brokerOwner.beginFinalizationOnly(activeToken)
+            : false,
+        });
     const emitCommentary = (value: string, continuation?: boolean): void => {
       if (toolEvidence && !toolEvidence.shouldEmitCommentary(value)) return;
       trace.push({ kind: "commentary", text: value, ...(continuation ? { continuation: true } : {}) });

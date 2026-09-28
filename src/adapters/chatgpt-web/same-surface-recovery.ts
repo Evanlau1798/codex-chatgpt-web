@@ -55,6 +55,7 @@ export function createChatGptSameSurfaceRetry(options: {
   executionKey: string;
   enhancedMode: boolean;
   abortSignal: AbortSignal;
+  beginFinalizationOnly?: () => boolean | Promise<boolean>;
   upstream?: (error: unknown) => string | undefined;
 }): ErrorRetry | undefined {
   if (!options.enhancedMode) return undefined;
@@ -81,8 +82,8 @@ export function createChatGptSameSurfaceRetry(options: {
         + ` unresolvedSuperseded=${decision.unresolvedSupersededCount}`,
       );
     }
-    return decision.eligible
-      ? { text: CHATGPT_SAME_SURFACE_RECOVERY_PROMPT, replaceCandidate: true }
-      : undefined;
+    if (!decision.eligible) return undefined;
+    if (options.beginFinalizationOnly && !await options.beginFinalizationOnly()) return undefined;
+    return { text: CHATGPT_SAME_SURFACE_RECOVERY_PROMPT, replaceCandidate: true };
   };
 }
