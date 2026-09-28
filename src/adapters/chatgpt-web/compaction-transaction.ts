@@ -45,12 +45,16 @@ export class CompactionTransactionStore {
       kind: beforeAccept ? "recovery" : "compaction",
       ...(beforeAccept ? { beforeAccept } : {}),
     };
-    transaction.timer = setTimeout(() => {
-      this.finishError(transaction, new Error("compaction transaction timed out"));
-    }, ttlMs);
-    transaction.timer.unref?.();
+    this.armTimeout(transaction, ttlMs);
     this.transactions.set(transaction.token, transaction);
     return { token: transaction.token, handoffId: transaction.handoffId };
+  }
+
+  refresh(token: string, ttlMs: number): void {
+    const transaction = this.transactions.get(token);
+    if (!transaction) throw new Error("compaction control token is invalid, expired, or consumed");
+    if (transaction.state !== "pending") return;
+    this.armTimeout(transaction, ttlMs);
   }
 
   submit(token: string, handoffId: string, summary: string, kind: "compaction" | "recovery" = "compaction"): void {
@@ -120,6 +124,17 @@ export class CompactionTransactionStore {
     transaction.waiter?.resolve(summary);
     transaction.waiter = undefined;
     return summary;
+  }
+
+  private armTimeout(transaction: CompactionTransaction, ttlMs: number): void {
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+      throw new Error("compaction transaction TTL must be a positive finite number");
+    }
+    if (transaction.timer) clearTimeout(transaction.timer);
+    transaction.timer = setTimeout(() => {
+      this.finishError(transaction, new Error("compaction transaction timed out"));
+    }, ttlMs);
+    transaction.timer.unref?.();
   }
 
   private finishError(transaction: CompactionTransaction, error: Error): void {

@@ -184,6 +184,10 @@ export class TurnBroker implements TurnBrokerOwner {
     this.compactionTransactions.abort(token);
   }
 
+  refreshCompactionTransaction(token: string, ttlMs: number): void {
+    this.compactionTransactions.refresh(token, ttlMs);
+  }
+
   revokeCompactionTransactions(traceId: string): void {
     this.compactionTransactions.abortTrace(traceId);
   }

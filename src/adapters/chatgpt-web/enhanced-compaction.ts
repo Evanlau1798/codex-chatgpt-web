@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { AdapterEvent, CodexParsedRequest } from "../../types";
-import { ChatGptWebAdapterError } from "./adapter-error";
+import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adapter-error";
 import type { ChatGptBrowserWorker } from "./browser-worker";
 import {
   canonicalizeCompactionHandoff,
@@ -11,6 +11,7 @@ import {
   withCompactionAbort,
 } from "./compaction-handoff";
 import type { ChatGptWebCapabilities } from "./model";
+import { structuredCompactionHandoffInstruction } from "./native-compaction-control";
 import {
   requestRetainedCompactionHandoff,
   RetainedCompactionSourceUnavailableError,
@@ -33,7 +34,8 @@ interface EnhancedCompactionOptions {
   abortSignal?: AbortSignal;
   timeoutMs?: number;
   requireAutomaticAdmission?: (traceId: string) => void;
-  startFallback: (traceId: string, signal: AbortSignal, onProgress: () => void, retainOwnershipUntil: (settlement: Promise<void>) => void) => Promise<string>;
+  startFallback: (traceId: string, signal: AbortSignal, onProgress: () => void,
+    retainOwnershipUntil: (settlement: Promise<void>) => void, controlInstruction: string) => Promise<string>;
   emit: (event: AdapterEvent) => void;
 }
 
@@ -73,6 +75,7 @@ export async function runEnhancedCompaction(
     );
     const deadline = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let fallbackTransaction: Awaited<ReturnType<TurnBroker["beginCompactionTransaction"]>> | undefined;
     const armDeadline = (): void => {
       if (deadline.signal.aborted) return;
       if (timer) clearTimeout(timer);
@@ -81,6 +84,9 @@ export async function runEnhancedCompaction(
         handoffTimeoutMs,
       );
       timer.unref?.();
+      if (fallbackTransaction) {
+        broker.refreshCompactionTransaction(fallbackTransaction.token, MAX_COMPACTION_HANDOFF_TIMEOUT_MS);
+      }
     };
     armDeadline();
     const operationSignal = AbortSignal.any([deadline.signal, operatorSignal]);
@@ -91,10 +97,42 @@ export async function runEnhancedCompaction(
       operationSignal.throwIfAborted();
       console.warn(`[chatgpt-web] retained compaction fallback=${reason}`);
       armDeadline();
-      const raw = await startFallback(`${traceId}_fallback`, operationSignal, armDeadline, retainOwnershipUntil);
-      const canonical = canonicalizeCompactionHandoff(parsed, raw);
-      if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");
-      return canonical;
+      const browserAbort = new AbortController();
+      const abortBrowser = () => browserAbort.abort(operationSignal.reason);
+      if (operationSignal.aborted) abortBrowser();
+      else operationSignal.addEventListener("abort", abortBrowser, { once: true });
+      try {
+        // Multipart prompt stages refresh the operation deadline, while the one-shot control token
+        // cannot be reissued after it has been embedded in the final browser message.
+        const pending = broker.beginCompactionTransaction(`${traceId}_fallback`, MAX_COMPACTION_HANDOFF_TIMEOUT_MS);
+        void pending.then(late => {
+          if (operationSignal.aborted && fallbackTransaction !== late) broker.abortCompactionTransaction(late.token);
+        }, () => {});
+        fallbackTransaction = await withCompactionAbort(pending, operationSignal);
+        const browser = startFallback(
+          `${traceId}_fallback`,
+          AbortSignal.any([operationSignal, browserAbort.signal]),
+          armDeadline,
+          retainOwnershipUntil,
+          structuredCompactionHandoffInstruction(fallbackTransaction),
+        );
+        const accepted = broker.waitForCompactionHandoff(fallbackTransaction.token, operationSignal);
+        const browserWithoutHandoff = browser.then<never>(() => {
+          throw new ChatGptWebAdapterError(
+            "ChatGPT finished without sending the context summary to Codex. Check its response for a refusal or tool error.",
+            { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_missing", retryable: false },
+          );
+        });
+        const raw = await withCompactionAbort(Promise.race([accepted, browserWithoutHandoff]), operationSignal);
+        browserAbort.abort(new ChatGptCompactionHandoffAccepted());
+        void browser.catch(() => {});
+        const canonical = canonicalizeCompactionHandoff(parsed, raw);
+        if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");
+        return canonical;
+      } finally {
+        if (fallbackTransaction) broker.abortCompactionTransaction(fallbackTransaction.token);
+        operationSignal.removeEventListener("abort", abortBrowser);
+      }
     };
     try {
       await chatGptTurnSessions.waitForRetirement(responseExecutionKey, operationSignal);

@@ -71,7 +71,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     environment: ReturnType<typeof extractChatGptTurnEnvironment> | undefined,
     traceId: string,
     turnCapabilities: ChatGptWebCapabilities,
-    hooks: { onCompactionProgress?: () => void } = {},
+    hooks: { onCompactionProgress?: () => void; compactionControlInstruction?: string } = {},
   ): ChatGptTurnRuntime => {
     const toolPolicy = effectiveChatGptToolPolicy(parsed);
     const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
@@ -79,6 +79,9 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     const browserCompaction = parsed._compactionRequest === true || parsed._localCompactionRequest === true;
     const localTools = mode.localTools && !finalizationOnly;
     const nativeControlConnector = useEnhancedWebSessionMode && configuredCapabilities.localToolsEnabled && !finalizationOnly;
+    if (hooks.compactionControlInstruction && (!browserCompaction || !nativeControlConnector)) {
+      throw new Error("Structured compaction control requires an Enhanced browser compaction turn");
+    }
     if (toolPolicy.requireTool && !localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
     const identity = extractChatGptTurnIdentity(parsed);
     const captureLunaCheckpoint = !finalizationOnly && parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !browserCompaction && Boolean(identity.threadId && identity.turnId);
@@ -105,6 +108,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       captureLunaCheckpoint,
       ...(experimentalSkillAttachments ? { experimentalSkillAttachments: true } : {}),
       nativeControlConnector,
+      ...(hooks.compactionControlInstruction ? { compactionControlInstruction: hooks.compactionControlInstruction } : {}),
       ...(tunneledOutput ? { useEnhancedOutputTunnel: true } : {}),
       ...(experimentalMultipartParts === undefined ? {} : { experimentalMultipartParts }),
     };

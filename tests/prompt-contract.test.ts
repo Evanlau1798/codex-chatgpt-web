@@ -285,6 +285,27 @@ test("compaction prompts are isolated summarization turns without local or nativ
   expect(compiled.text).not.toContain("missing local-computer bridge");
 });
 
+test.each([undefined, 6] as const)("connector-backed compaction has one control-only completion contract (parts=%s)", parts => {
+  const compact = request("high");
+  compact._compactionRequest = true;
+  const control = "Submit the summary through codex.control.compaction_handoff exactly once.";
+  const compiled = compileChatGptWebPrompt(
+    compact,
+    { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+    undefined,
+    {
+      nativeControlConnector: true,
+      compactionControlInstruction: control,
+      ...(parts ? { experimentalMultipartParts: parts } : {}),
+    },
+  );
+
+  expect(compiled.text).toContain(control);
+  expect(compiled.text).not.toContain("Produce the requested checkpoint summary now without calling tools.");
+  expect(compiled.text).not.toContain("Return only the answer that the outer Codex task should receive.");
+  expect(compiled.text).toContain("Submit the checkpoint through the one-shot control operation now.");
+});
+
 test("Web compaction trims only the oldest history until the browser request fits", () => {
   const compact = request("high");
   compact._compactionRequest = true;
