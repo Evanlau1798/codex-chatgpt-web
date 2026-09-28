@@ -45,6 +45,9 @@ test("candidate Web smoke drains before shutdown and bounds the live subprocess"
   expect(shutdownAt).toBeGreaterThan(drainAt);
   expect(script).toContain("new RemoteTurnBroker(current.brokerSocketPath)");
   expect(script).toContain("requireRetainedConversation: round === 1");
+  expect(script).toContain("AbortSignal.timeout(WEB_CONTRACT_TURN_TIMEOUT_MS)");
+  expect(script).toContain("await withAbort(worker.run({");
+  expect(script).toContain("abortSignal,");
   expect(script).toContain('"--external-connector-contract-verified"');
   expect(script).not.toContain("WEB_CONTRACT_EXTERNAL_CONNECTOR_CONTRACT");
   expect(script).toContain("WEB_CONTRACT_PROBE_TIMEOUT_MS + 2 * WEB_CONTRACT_TURN_TIMEOUT_MS + 30_000");
