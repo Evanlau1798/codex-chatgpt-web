@@ -3335,9 +3335,12 @@ export class ChatGptBrowserWorker {
       })() : { boundaryProtocolPresent: false, lastNodePresent: false, animations: [] };
       const completionActions = [...root.querySelectorAll<HTMLElement>(completionActionSelector)]
         .filter(renderedThroughRoot);
+      // The bound assistant turn already excludes every older response. ChatGPT may place this
+      // turn's footer controls before its final Markdown in DOM order while painting them below it.
       const completionAction = rendered
         ? completionActions.find(candidate => !rendered.contains(candidate)
           && Boolean(rendered.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING))
+          ?? (!options.running ? completionActions.at(-1) : undefined)
         : completionActions.at(-1);
       const structuredResponsePresent = root.querySelector(".markdown, .puik-root.not-markdown") !== null;
       const plainTextFallback = renderedRoots.length === 0 && !structuredResponsePresent && completionAction ? (() => {
@@ -3531,6 +3534,7 @@ export class ChatGptBrowserWorker {
     }, {
       completionActionSelector: CHATGPT_COMPLETION_ACTION_SELECTOR,
       stoppedThinkingLabels: [...CHATGPT_STOPPED_THINKING_LABELS],
+      running,
     }, { timeout: 2_000 }).catch(() => {
       if (responseTurn.page().isClosed()) {
         throw chatGptBrowserTabClosedError();

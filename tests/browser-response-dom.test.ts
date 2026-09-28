@@ -32,7 +32,7 @@ type Snapshot = {
 
 // Execute the production page callback, with only missing Domino browser APIs supplied.
 async function snapshot(html: string, later?: { afterMs: number; selector: string; text?: string; remove?: boolean; remount?: boolean },
-  observe?: (state: Snapshot) => void): Promise<Snapshot> {
+  observe?: (state: Snapshot) => void, running = false): Promise<Snapshot> {
   const { createWindow } = require("@mixmark-io/domino");
   const window = createWindow(html);
   let now = 1_000;
@@ -72,9 +72,9 @@ async function snapshot(html: string, later?: { afterMs: number; selector: strin
       page: () => ({ isClosed: () => false }),
     } as unknown as Locator;
     const worker = Object.create(ChatGptBrowserWorker.prototype) as {
-      responseDomSnapshot(locator: Locator): Promise<Snapshot>;
+      responseDomSnapshot(locator: Locator, ownership?: undefined, running?: boolean): Promise<Snapshot>;
     };
-    let result = await worker.responseDomSnapshot(locator);
+    let result = await worker.responseDomSnapshot(locator, undefined, running);
     observe?.(result);
     if (later) {
       now += later.afterMs;
@@ -86,7 +86,7 @@ async function snapshot(html: string, later?: { afterMs: number; selector: strin
         root!.textContent = later.text!;
         for (const observer of observers) if (observer.root === root) observer.notify();
       }
-      result = await worker.responseDomSnapshot(locator);
+      result = await worker.responseDomSnapshot(locator, undefined, running);
       observe?.(result);
     }
     expect(errors).toEqual([]);
@@ -159,6 +159,16 @@ test("multi-root answer settlement tracks mutations in every contributing answer
   expect(response.visibleText).toContain("Review in progress.");
   expect(response.completionActionVisible).toBeTrue();
   expect(response.projection.lastMutationAt).toBe(4_000);
+});
+
+test("a bound turn accepts completion controls rendered before its final Markdown", async () => {
+  const response = await snapshot(
+    '<section id="turn" data-turn-key="current"><div class="turn-action-controls"><button>Copy</button><button>More</button></div>'
+      + '<div data-content-search-unit-key="final"><h4 data-conversation-role="assistant"></h4>'
+      + '<div class="markdown"><p>Review complete.</p></div></div></section>',
+  );
+  expect(response.visibleText).toBe("Review complete.");
+  expect(response.completionActionVisible).toBeTrue();
 });
 
 test("multi-root answer settlement resets when an earlier answer root disappears", async () => {
@@ -238,7 +248,7 @@ test("captured DIL smoke response reaches Markdown delivery and stable completio
 test("captured power UI excludes the user footer during streaming and completes the assistant answer", async () => {
   // Captured from the same live DEV turn on 2026-09-25. The user already has Copy/Share
   // controls while the assistant streams; both live under one data-turn-key.
-  const streaming = await snapshot(powerStreamingHtml);
+  const streaming = await snapshot(powerStreamingHtml, undefined, undefined, true);
   expect(streaming.visibleText).toContain("How a Rainbow Begins");
   expect(streaming.visibleText).not.toContain("No tools or apps");
   expect(streaming.completionActionVisible).toBeFalse();
@@ -262,7 +272,7 @@ test("captured power UI excludes the user footer during streaming and completes 
 });
 
 test("captured power response keeps its Markdown ledger through final rendering", async () => {
-  const streaming = await snapshot(powerStreamingHtml);
+  const streaming = await snapshot(powerStreamingHtml, undefined, undefined, true);
   const complete = await snapshot(powerCompleteHtml);
   const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
   buffer.observe(streaming.markdownSegments, 0);
