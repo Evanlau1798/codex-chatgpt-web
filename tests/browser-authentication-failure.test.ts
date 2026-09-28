@@ -61,12 +61,12 @@ async function fixture() {
 }
 
 for (const event of ["will-navigate", "will-redirect"]) {
-  test(`${event} authentication failure survives cleanup as nonretryable owned failure`, async () => {
+  test(`${event} provider authentication failure survives cleanup as nonretryable owned failure`, async () => {
     const f = await fixture();
     let prevented = 0;
     f.worker.runBrowserTurn = async () => {
       f.contents.emit(event, { preventDefault() { prevented++; } },
-        "https://chatgpt.com/auth/login?secret=do-not-log");
+        "https://accounts.google.com/o/oauth2/v2/auth?secret=do-not-log");
       throw new Error("page.goto: net::ERR_ABORTED");
     };
     try {
@@ -95,6 +95,8 @@ test("authentication navigation does not bypass helper ownership or change manua
     expect(f.tab.authenticationRequired).toBeUndefined();
     f.tab.interactionMode = "automatic";
     f.contents.emit("will-redirect", { preventDefault() { prevented++; } }, "https://chatgpt.com/auth/login");
+    expect(prevented).toBe(0);
+    expect(f.tab.authenticationRequired).toBeUndefined();
     await expect(f.host.endTurn(f.tab.traceId, process.pid + 1, "failed", false)).rejects.toThrow("ownership mismatch");
     expect(f.host.turnTabs.size).toBe(1);
   } finally { await f.close(); }

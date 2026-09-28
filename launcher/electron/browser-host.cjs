@@ -142,7 +142,7 @@ function normalizeBounds(bounds) {
   };
 }
 
-function allowedAuthUrl(value) {
+function chatGptAuthUrl(value) {
   let parsed;
   try {
     parsed = new URL(value);
@@ -150,11 +150,21 @@ function allowedAuthUrl(value) {
     return false;
   }
   if (parsed.protocol !== "https:") return false;
-  if (parsed.hostname === "chatgpt.com") {
-    return parsed.pathname === "/auth"
-      || parsed.pathname.startsWith("/auth/")
-      || parsed.pathname === "/login";
+  if (parsed.hostname !== "chatgpt.com") return false;
+  return parsed.pathname === "/auth"
+    || parsed.pathname.startsWith("/auth/")
+    || parsed.pathname === "/login";
+}
+
+function allowedAuthUrl(value) {
+  if (chatGptAuthUrl(value)) return true;
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
   }
+  if (parsed.protocol !== "https:") return false;
   return AUTH_PROVIDER_HOSTS.has(parsed.hostname);
 }
 
@@ -716,6 +726,10 @@ class BrowserHost {
     });
     const blockAuthenticationNavigation = (event, url, _inPlace, mainFrame) => {
       if (mainFrame === false || tab.interactionMode === "manual" || !allowedAuthUrl(url)) return;
+      // ChatGPT can transiently route a valid shared session through its own auth
+      // endpoint before returning to the requested conversation. Let that redirect
+      // settle; a final auth document below is still treated as signed out.
+      if (chatGptAuthUrl(url)) return;
       event.preventDefault();
       this.markTurnAuthenticationRequired(tab);
     };
@@ -749,6 +763,10 @@ class BrowserHost {
       this.syncViewVisibility();
       if (tab.interactionMode === "manual") {
         this.publishState?.(this.snapshot());
+        return;
+      }
+      if (chatGptAuthUrl(tab.url)) {
+        this.markTurnAuthenticationRequired(tab);
         return;
       }
       if (tab.initializingSurface) return;

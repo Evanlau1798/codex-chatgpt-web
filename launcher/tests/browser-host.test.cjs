@@ -905,6 +905,45 @@ test("authentication windows stay inside the launcher-owned browser partition", 
   assert.doesNotMatch(source, /loginWithSystemBrowser|captureSystemBrowserLogin|system_login_started/);
 });
 
+test("automatic turns allow transient ChatGPT auth redirects and block only settled login surfaces", () => {
+  const contents = new EventEmitter();
+  let currentUrl = "https://chatgpt.com/?temporary-chat=true";
+  contents.setWindowOpenHandler = () => {};
+  contents.getURL = () => currentUrl;
+  const blocked = [];
+  const host = Object.assign(Object.create(BrowserHost.prototype), {
+    logger: { info() {}, warn() {}, error() {} },
+    manualTurns: { navigation() {} },
+    publishState() {},
+    snapshot() { return {}; },
+    syncViewVisibility() {},
+    markTurnAuthenticationRequired(tab) { blocked.push(tab.url); },
+  });
+  const tab = {
+    id: "automatic-auth-redirect",
+    traceId: "automatic-auth-redirect",
+    interactionMode: "automatic",
+    initializingSurface: false,
+    view: { webContents: contents },
+  };
+  host.bindTurnContents(tab);
+
+  let prevented = false;
+  contents.emit("will-redirect", { preventDefault: () => { prevented = true; } },
+    "https://chatgpt.com/auth/login", false, true);
+  assert.equal(prevented, false);
+  assert.deepEqual(blocked, []);
+
+  contents.emit("will-redirect", { preventDefault: () => { prevented = true; } },
+    "https://accounts.google.com/o/oauth2/v2/auth", false, true);
+  assert.equal(prevented, true);
+  assert.equal(blocked.length, 1);
+
+  currentUrl = "https://chatgpt.com/auth/login";
+  contents.emit("did-finish-load");
+  assert.equal(blocked.length, 2);
+});
+
 test("concurrent authentication probes share the same navigation and allow the next refresh", async () => {
   let probes = 0;
   let navigations = 0;

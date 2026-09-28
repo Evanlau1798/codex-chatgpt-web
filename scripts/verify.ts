@@ -4,6 +4,24 @@ import { join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "..");
 let verbose = false;
+const OUTPUT_CHUNK_SIZE = 16_384;
+
+export function writeBufferedOutput(
+  output: string,
+  write: (chunk: string) => unknown,
+  chunkSize = OUTPUT_CHUNK_SIZE,
+): void {
+  for (let offset = 0; offset < output.length;) {
+    let end = Math.min(output.length, offset + chunkSize);
+    if (end < output.length
+      && output.charCodeAt(end - 1) >= 0xD800 && output.charCodeAt(end - 1) <= 0xDBFF
+      && output.charCodeAt(end) >= 0xDC00 && output.charCodeAt(end) <= 0xDFFF) {
+      end = end - offset === 1 ? end + 1 : end - 1;
+    }
+    write(output.slice(offset, end));
+    offset = end;
+  }
+}
 
 export async function run(args: string[], showOutput = verbose): Promise<void> {
   const label = `bun ${args.join(" ")}`;
@@ -20,8 +38,8 @@ export async function run(args: string[], showOutput = verbose): Promise<void> {
     new Response(child.stderr).text(),
   ]);
   if (showOutput || exitCode !== 0) {
-    if (stdout) process.stdout.write(stdout);
-    if (stderr) process.stderr.write(stderr);
+    if (stderr) writeBufferedOutput(stderr, chunk => process.stderr.write(chunk));
+    if (stdout) writeBufferedOutput(stdout, chunk => process.stdout.write(chunk));
   }
   if (exitCode !== 0) throw new Error(`Verification command failed (${exitCode}): ${label}`);
 }

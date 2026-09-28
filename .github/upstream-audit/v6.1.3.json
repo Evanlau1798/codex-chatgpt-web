@@ -21,7 +21,7 @@
   },
   "evidence": {
     "path": ".github/upstream-audit/v6.1.3-evidence.tar.gz",
-    "sha256": "e4328a201f4b37c71ce0675c61655968ee32ee92f2d6ad5b35509958d370785b",
+    "sha256": "1555fadf6ef2877f0a063abdd17d4966e5b6e148d7b4bc87215e8201e5703ab8",
     "autoMergeTrees": {
       "v6.1.3": "2440593711ddf8066d5cf39f3bd09391ec386355"
     },
