@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import type { ChatGptRuntimeWorker } from "../src/adapters/chatgpt-web/adapter-runtime-factory";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
-import { callTurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
+import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { defaultBrokerEndpoint, defaultConfig } from "../src/config";
 import { SUMMARY_PREFIX } from "../src/responses/compaction";
@@ -221,8 +221,7 @@ test("the deterministic lane composes production routing, adapter, broker, compa
 }, 20_000);
 
 test("Enhanced manual compact returns its summary through the one-shot control channel", async () => {
-  const root = join(tmpdir(), `cgw-production-enhanced-compact-${process.pid}-${Date.now()}`);
-  mkdirSync(root, { recursive: true });
+  const root = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "cgw-ec-"));
   const config = defaultConfig("full");
   config.port = 0;
   config.proAvailable = true;
@@ -284,6 +283,7 @@ test("Enhanced manual compact returns its summary through the one-shot control c
   } finally {
     chatGptTurnSessions.clear();
     await server.stop(true);
+    await TurnBroker.forSocket(config.brokerSocketPath).close();
     rmSync(root, { recursive: true, force: true });
   }
 }, 20_000);
