@@ -76,6 +76,7 @@ for (const pill of ["missing", "selected", "unrecoverable"] as const) test.each(
     selectConnector: workerMethods.selectConnector,
     ensureConnectorSurface: async () => {},
     clearChatGptComposerState: async () => { calls.push("cleanup"); },
+    attachedPromptText: async () => "",
     connectorIsSelected: async () => {
       calls.push(selected ? "verified" : "missing");
       return selected;

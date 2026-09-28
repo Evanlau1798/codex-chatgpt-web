@@ -34,11 +34,6 @@ export function synchronizeVersionMetadata(root: string): string[] {
       pattern: /^(\s*"version"\s*:\s*)"[^"\r\n]*"/m,
       replacement: `$1${JSON.stringify(version)}`,
     },
-    {
-      path: "scripts/install.sh",
-      pattern: /^VERSION="\$\{CODEX_CHATGPT_WEB_VERSION:-[^}\r\n]+\}"$/m,
-      replacement: `VERSION="\${CODEX_CHATGPT_WEB_VERSION:-${version}}"`,
-    },
   ];
   const changed: string[] = [];
   for (const target of targets) {
@@ -68,7 +63,6 @@ function checkVersion(root: string): void {
   const expected = [
     ["src/version.ts", 'from "../package.json" with { type: "json" }'],
     ["src/adapters/chatgpt-web/mcp-server.ts", "version: VERSION"],
-    ["scripts/install.sh", `VERSION=\"\${CODEX_CHATGPT_WEB_VERSION:-${packageVersion}}\"`],
     ["README.md", `requires Bun ${bunRevision}.`],
     ["scripts/install.sh", "Bun.md"],
     ["scripts/generate-third-party-notices.ts", "CODEX_CHATGPT_WEB_EMBEDDED_BUN_VERSION"],
@@ -79,6 +73,9 @@ function checkVersion(root: string): void {
   for (const [path, needle] of expected) {
     if (!readFileSync(resolve(root, path), "utf8").includes(needle)) throw new Error(`${path} is not synchronized to ${packageVersion}`);
   }
+  const installer = readFileSync(resolve(root, "scripts/install.sh"), "utf8");
+  const installerVersion = /^VERSION="\$\{CODEX_CHATGPT_WEB_VERSION:-(\d+\.\d+\.\d+-Enhanced\.\d+)\}"$/m.exec(installer)?.[1];
+  if (!installerVersion) throw new Error("scripts/install.sh must default to a published Enhanced release");
   const releaseWorkflow = readFileSync(resolve(root, ".github/workflows/release.yml"), "utf8");
   for (const arch of ["amd64", "arm64"]) {
     if (!releaseWorkflow.includes(`runtime_asset: codex-chatgpt-web-linux-${arch}.tar.gz`)) {

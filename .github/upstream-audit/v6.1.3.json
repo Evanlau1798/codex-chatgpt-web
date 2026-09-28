@@ -1,0 +1,148 @@
+{
+  "schema": 2,
+  "release": "v6.1.3",
+  "baseline": "dbc95c1a4210fa3ea44b8587fbd7a5cd193d0226",
+  "semanticBaseline": "2d73f626290a5062825bb595dabb89aaf88d16c5",
+  "upstream": "fa2d2c6c24926078b46eedb2186f69f2e8d548d7",
+  "tag": {
+    "object": "2222375348e8b679099cc3869be6a329b36c908a",
+    "commit": "fa2d2c6c24926078b46eedb2186f69f2e8d548d7",
+    "signed": false
+  },
+  "automaticMergeTree": "2440593711ddf8066d5cf39f3bd09391ec386355",
+  "mergeCommand": "git -c rerere.enabled=false merge --strategy=ort --no-ff --no-commit fa2d2c6c24926078b46eedb2186f69f2e8d548d7",
+  "coverage": {
+    "paths": 30,
+    "hunks": 57,
+    "changedTests": 12,
+    "mappedPaths": 30,
+    "pending": 0,
+    "missing": 0
+  },
+  "evidence": {
+    "path": ".github/upstream-audit/v6.1.3-evidence.tar.gz",
+    "sha256": "e14cc6b0673bd1a3c5bcb425c446e4245d63c6cd37ef8af14599f0d4010058b6",
+    "autoMergeTrees": {
+      "v6.1.3": "2440593711ddf8066d5cf39f3bd09391ec386355"
+    },
+    "prior": {
+      "release": "v6.1.2",
+      "ledgerPath": ".github/upstream-audit/v6.1.2.json",
+      "ledgerSha256": "165988ae10414d9e65ce8ef7ae09ea3450c51af3ebb60c80d699929a4fb03f0a",
+      "evidencePath": ".github/upstream-audit/v6.1.2-evidence.tar.gz",
+      "evidenceSha256": "1290288c903f2e2a38c3e2582bc99143c0e16a8d7f3367a8bb31cdbb46be0136"
+    }
+  },
+  "pathGroups": [
+    {
+      "area": "release metadata and documentation",
+      "classification": "adapted",
+      "paths": [
+        "README.ja.md",
+        "README.ko.md",
+        "README.md",
+        "README.zh-CN.md",
+        "TROUBLESHOOTING.md",
+        "launcher/package.json",
+        "package.json",
+        "scripts/install.sh",
+        "src/version.ts"
+      ],
+      "summary": "Applied v6.1.3 documentation and metadata while retaining Enhanced versioning, fork download links, and an unpublished-candidate notice. src/version.ts reads the authoritative Enhanced version from package.json; scripts/install.sh remains pinned to the latest published Enhanced release until publication."
+    },
+    {
+      "area": "composer ownership and response projection",
+      "classification": "adapted",
+      "paths": [
+        "src/adapters/chatgpt-web/browser-worker.ts",
+        "tests/browser-response-dom.test.ts",
+        "tests/browser-turn-binding.test.ts",
+        "tests/browser-worker-contract.test.ts",
+        "tests/composer-insert.test.ts"
+      ],
+      "summary": "Clears stale drafts after connector selection, suspends missing-response timing during generation, permits unfinished response rebinding, and preserves writing-card bodies plus Enhanced compact retention. The removed composer-insert regression is mapped into browser-worker-contract.test.ts."
+    },
+    {
+      "area": "model picker and effort diagnostics",
+      "classification": "adapted",
+      "paths": [
+        "src/adapters/chatgpt-web/model-selection.ts",
+        "tests/chatgpt-effort-browser.test.ts",
+        "tests/chatgpt-model-selection.test.ts"
+      ],
+      "summary": "Reuses the open picker without the Escape/reopen race and maps upstream diagnostics into the fork's split browser-diagnostics module."
+    },
+    {
+      "area": "validated session plan limits",
+      "classification": "adapted",
+      "paths": [
+        "src/adapters/chatgpt-web/limits.ts",
+        "tests/chatgpt-limits-browser.test.ts",
+        "tests/chatgpt-limits.test.ts"
+      ],
+      "summary": "Uses validated session plan codes for Pro and ProLite without Billing UI interaction and rejects stale, redirected, account-changing, or plan-changing observations."
+    },
+    {
+      "area": "loaded-page authentication refresh",
+      "classification": "integrated",
+      "paths": [
+        "launcher/electron/browser-host.cjs",
+        "launcher/tests/browser-host.test.cjs"
+      ],
+      "summary": "Refreshes authentication against the already loaded launcher page while preserving the fork's browser ownership and passkey boundaries."
+    },
+    {
+      "area": "launcher startup IPC ordering",
+      "classification": "adapted",
+      "paths": [
+        "launcher/electron/main.cjs",
+        "launcher/tests/renderer-wiring.test.cjs"
+      ],
+      "summary": "Blocks runtime-mutating IPC until authentication refresh, startup, and failure recovery settle while leaving read-only state available."
+    },
+    {
+      "area": "Windows system trust and packaging",
+      "classification": "adapted",
+      "paths": [
+        "launcher/electron/runtime-supervisor.cjs",
+        "launcher/electron/runtime.cjs",
+        "launcher/electron/windows-trust.cjs",
+        "launcher/tests/packaging-contract.test.cjs",
+        "launcher/tests/windows-trust.test.cjs",
+        "scripts/build-runtime-bundle.ts"
+      ],
+      "summary": "Adds Windows system CA roots without replacing explicit trust settings and applies the same environment to runtime, supervisor, and packaged bundle paths."
+    }
+  ],
+  "changedTests": [
+    "launcher/tests/browser-host.test.cjs",
+    "launcher/tests/packaging-contract.test.cjs",
+    "launcher/tests/renderer-wiring.test.cjs",
+    "launcher/tests/windows-trust.test.cjs",
+    "tests/browser-response-dom.test.ts",
+    "tests/browser-turn-binding.test.ts",
+    "tests/browser-worker-contract.test.ts",
+    "tests/chatgpt-effort-browser.test.ts",
+    "tests/chatgpt-limits-browser.test.ts",
+    "tests/chatgpt-limits.test.ts",
+    "tests/chatgpt-model-selection.test.ts",
+    "tests/composer-insert.test.ts"
+  ],
+  "resolutions": [
+    {
+      "area": "Enhanced session and compaction",
+      "classification": "retained-stronger",
+      "summary": "Kept retained-session and accepted structured-compaction settlement behavior while integrating the new composer and response ownership fixes."
+    },
+    {
+      "area": "removed upstream test",
+      "classification": "adapted",
+      "summary": "Did not revive tests/composer-insert.test.ts; its stale-draft obligation is exercised through the maintained browser worker contract suite."
+    },
+    {
+      "area": "provenance",
+      "classification": "recorded",
+      "summary": "The annotated upstream tag and peeled commit are unsigned; exact object identities and the original AUTO_MERGE tree are preserved without claiming signature verification."
+    }
+  ]
+}

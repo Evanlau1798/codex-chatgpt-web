@@ -306,6 +306,47 @@ test("reported code-block containers preserve code while their localized toolbar
   }
 });
 
+test("writing card controls cannot rewrite delivered content, but edited email text still can", async () => {
+  const html = (toolbar: string, body = "Hello <strong>Alex</strong>.") => `<section id="turn"><div class="markdown">
+    <p data-start="0" data-end="10">Drafts</p>
+    <div data-markdown-copy="rich-block" data-start="12" data-end="200">
+      <div>${toolbar}<button>Copy</button></div>
+      <div data-markdown-copy-content="true"><p>${body}</p><p>See <a href="https://example.com/">details</a>.</p>
+        <pre><code class="language-text">line 1\n  line 2</code></pre></div>
+      <footer>Email format</footer>
+    </div><p data-start="202" data-end="220">Done.</p></div></section>`;
+  const during = await snapshot(html("メール"));
+  const complete = await snapshot(html(""));
+  expect(during.markdownSegments).toEqual(complete.markdownSegments);
+  expect(during.markdownSegments.map(segment => segment.text).join("\n")).not.toContain("メール");
+  expect(during.markdownSegments.map(segment => segment.text).join("\n")).not.toContain("Email format");
+  const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
+  buffer.observe(during.markdownSegments, 0);
+  buffer.observe(complete.markdownSegments, 1000);
+  const output = buffer.finish().markdown;
+  expect(output).toContain("Hello **Alex**.");
+  expect(output).toContain("[details](https://example.com/)");
+  expect(output).toContain("line 1\n  line 2");
+  buffer.observe((await snapshot(html("", "Hello Sam."))).markdownSegments, 2000);
+  expect(() => buffer.finish()).toThrow("ChatGPT changed a completed text block");
+});
+
+test("nested writing cards keep the outer prose and cards without a unique body lose nothing", async () => {
+  const response = await snapshot(`<section id="turn"><div class="markdown">
+    <div data-markdown-copy="rich-block"><p>Outer prose</p>
+      <div data-markdown-copy="rich-block"><div>Toolbar</div>
+        <div data-markdown-copy-content="true"><p>Inner body</p></div></div></div>
+    <div data-markdown-copy="rich-block"><div data-markdown-copy-content="true">First</div>
+      <div data-markdown-copy-content="true">Second</div></div>
+    <p>End</p></div></section>`);
+  const text = response.markdownSegments.map(segment => segment.text).join("\n");
+  expect(text).toContain("Outer prose");
+  expect(text).toContain("Inner body");
+  expect(text).toContain("First");
+  expect(text).toContain("Second");
+  expect(text).not.toContain("Toolbar");
+});
+
 test("ordinary prose, inline code and legacy fenced code keep their meaning", async () => {
   const response = await snapshot(`<section id="turn" data-turn="assistant">
     <div data-message-author-role="assistant"><div class="markdown">

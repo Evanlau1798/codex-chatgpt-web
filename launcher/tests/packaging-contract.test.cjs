@@ -360,6 +360,7 @@ test("Windows packages embed the checksummed Bun baseline runtime for CPUs witho
   );
   assert.match(builder, /CODEX_CHATGPT_WEB_EMBEDDED_BUN/);
   assert.match(builder, /Embedded Bun must be/);
+  assert.match(builder, /if not defined NODE_USE_SYSTEM_CA set "NODE_USE_SYSTEM_CA=1"/);
   assert.match(baseline, /bun-windows-x64-baseline\.zip/);
   assert.match(baseline, /SHASUMS256\.txt/);
   assert.match(baseline, /Get-FileHash[^\n]+SHA256/);

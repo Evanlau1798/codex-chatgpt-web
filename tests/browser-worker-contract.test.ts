@@ -1046,10 +1046,56 @@ test("repeated connector verification reuses its selected pill before clearing t
     activeComposer: async () => selectedComposer,
     connectorIsSelected: async () => true,
     ensureConnectorSurface: (ChatGptBrowserWorker.prototype as any).ensureConnectorSurface,
+    attachedPromptText: async () => "",
   }, page, async checkpoint => { checkpoints.push(checkpoint); })).resolves.toBe(selectedComposer);
 
   expect(fillCalls).toBe(0);
   expect(checkpoints).toEqual(["personalization-already-enabled", "connector-already-selected"]);
+});
+
+test("selected connector clears a restored draft before attaching another request", async () => {
+  const calls: string[] = [];
+  let selected = true;
+  const selectedConnector = { waitFor: async () => { calls.push("selected"); } };
+  const menuRow = {
+    waitFor: async () => { calls.push("menu"); },
+    count: async () => 1,
+    getAttribute: async () => "",
+  };
+  const menuRows = {
+    filter: (options: { visible?: boolean }) => options.visible
+      ? { count: async () => 1 }
+      : menuRow,
+  };
+  const composer = {
+    fill: async () => { calls.push("fill"); },
+    focus: async () => { calls.push("focus"); },
+    pressSequentially: async () => { calls.push("mention"); },
+    press: async (key: string) => {
+      calls.push(key);
+      if (key === "Enter") selected = true;
+    },
+  };
+  const selectedComposer = { selected: true };
+  const page = {
+    getByText: () => ({}),
+    locator: () => menuRows,
+  };
+  const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
+    selectConnector(page: unknown): Promise<unknown>;
+  }).selectConnector;
+
+  await expect(selectConnector.call({
+    config: { appName: "Codex Native2 DEV" },
+    ensureConnectorSurface: async () => {},
+    activeComposer: async () => selected ? selectedComposer : composer,
+    connectorIsSelected: async () => selected,
+    attachedPromptText: async () => "old draft",
+    clearChatGptComposerState: async () => { calls.push("clear"); selected = false; },
+    selectedConnectorControl: () => selectedConnector,
+  }, page)).resolves.toBe(selectedComposer);
+
+  expect(calls).toEqual(["clear", "fill", "fill", "focus", "mention", "menu", "Enter", "selected"]);
 });
 
 test("connector selection retriggers the complete mention after a fresh-page hydration miss", async () => {
@@ -2902,7 +2948,7 @@ test("browser DOM health fails closed on a vanished or empty ChatGPT response", 
   const missing = new ChatGptTurnDomHealthTracker(1_000, 500);
   const absent = {
     responsePresent: false,
-    running: true,
+    running: false,
     currentText: "",
     completionActionVisible: false,
   };
@@ -2938,6 +2984,17 @@ test("browser DOM health fails closed on a vanished or empty ChatGPT response", 
     ...completedWithoutMarker,
     completionActionVisible: true,
   }, 1_751)).toBeUndefined();
+});
+
+test("visible generation suspends DOM health and restarts its grace when Stop disappears", () => {
+  const tracker = new ChatGptTurnDomHealthTracker(1_000, 500);
+  const absent = { responsePresent: false, running: false, currentText: "", completionActionVisible: false };
+  expect(tracker.update(absent, 0)).toBeUndefined();
+  expect(tracker.update({ ...absent, running: true }, 500)).toBeUndefined();
+  expect(tracker.update({ ...absent, running: true }, 60_000)).toBeUndefined();
+  expect(tracker.update(absent, 61_000)).toBeUndefined();
+  expect(tracker.update(absent, 61_999)).toBeUndefined();
+  expect(tracker.update(absent, 62_000)).toContain("did not create a response DOM");
 });
 
 test("stalled-turn diagnostics record DOM metrics without response or overlay content", () => {
@@ -3043,7 +3100,7 @@ test("suspending DOM health for proven MCP progress restarts the missing-respons
   const tracker = new ChatGptTurnDomHealthTracker(1_000, 500);
   const absent = {
     responsePresent: false,
-    running: true,
+    running: false,
     currentText: "",
     completionActionVisible: false,
   };
@@ -3068,7 +3125,7 @@ test("clearing the missing-response window preserves whether a response was ever
     currentText: "partial",
     completionActionVisible: false,
   };
-  const absent = { ...present, responsePresent: false, currentText: "" };
+  const absent = { ...present, responsePresent: false, running: false, currentText: "" };
 
   expect(tracker.update(present, 1_000)).toBeUndefined();
   expect(tracker.update(absent, 1_500)).toBeUndefined();
@@ -3135,7 +3192,7 @@ test("live external progress still records that a response DOM was observed", ()
   const tracker = new ChatGptTurnDomHealthTracker(1_000, 500);
   const absent = {
     responsePresent: false,
-    running: true,
+    running: false,
     currentText: "",
     completionActionVisible: false,
   };

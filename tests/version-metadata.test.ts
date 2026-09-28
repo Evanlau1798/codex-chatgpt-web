@@ -10,7 +10,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-test("release metadata synchronizes derived launcher and installer versions", () => {
+test("release metadata synchronizes the candidate launcher without retargeting the published installer", () => {
   const root = mkdtempSync(join(tmpdir(), "codex-version-metadata-"));
   roots.push(root);
   mkdirSync(join(root, "launcher"));
@@ -29,12 +29,11 @@ test("release metadata synchronizes derived launcher and installer versions", ()
 
   expect(synchronizeVersionMetadata(root).sort()).toEqual([
     "launcher/package.json",
-    "scripts/install.sh",
   ]);
   expect(JSON.parse(readFileSync(join(root, "launcher", "package.json"), "utf8")).version)
     .toBe("5.0.6-Enhanced.9");
   expect(readFileSync(join(root, "scripts", "install.sh"), "utf8"))
-    .toContain('VERSION="${CODEX_CHATGPT_WEB_VERSION:-5.0.6-Enhanced.9}"');
+    .toContain('VERSION="${CODEX_CHATGPT_WEB_VERSION:-5.0.6-Enhanced.1}"');
   expect(synchronizeVersionMetadata(root)).toEqual([]);
 });
 

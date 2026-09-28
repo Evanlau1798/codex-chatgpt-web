@@ -16,6 +16,7 @@ const {
 } = require("./process-tree.cjs");
 const { runtimeInvocation } = require("./runtime-command.cjs");
 const { normalizeContextModes } = require("./context-mode.cjs");
+const { windowsTrustEnvironment } = require("./windows-trust.cjs");
 
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_PER_WINDOW = 5;
@@ -551,7 +552,7 @@ class RuntimeSupervisor {
       const key = daemonApiKey(this.coreHome);
       if (key) env.CODEX_CHATGPT_WEB_API_KEY = key;
     }
-    return env;
+    return windowsTrustEnvironment(env, this.platform);
   }
 
   spawnChild(name, invocation, config) {

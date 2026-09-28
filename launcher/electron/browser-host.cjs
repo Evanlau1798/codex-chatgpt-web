@@ -1036,7 +1036,20 @@ class BrowserHost {
       let revision;
       do {
         revision = this.authenticationRevision;
-        const session = this.view.webContents.session;
+        const contents = this.view.webContents;
+        if (contents.isDestroyed()) return;
+        if (contents.getURL().startsWith(`${CHATGPT_ORIGIN}/`)) {
+          // The loaded page verifies its own session. A separate native request can
+          // be rejected even while that session works; do not race the two clients.
+          // Any probe started before this cookie change must settle without publishing.
+          if (this.authenticationProbe) await this.authenticationProbe;
+          if (this.destroyed || this.reauthenticationRequired || browserInteractionModeFor(this) !== "automatic") return;
+          if (revision !== this.authenticationRevision) continue;
+          await this.probeAuthentication();
+          continue;
+        }
+        // The idle host has no ChatGPT document; use its shared browser session.
+        const session = contents.session;
         const result = await readChatGptAuthSession(session.fetch.bind(session), CHATGPT_ORIGIN, CHATGPT_AUTH_SESSION_TIMEOUT_MS);
         if (this.destroyed || browserInteractionModeFor(this) !== "automatic") return;
         if (revision !== this.authenticationRevision) continue;

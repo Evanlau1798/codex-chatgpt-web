@@ -946,7 +946,7 @@ test("shared session changes refresh hidden sign-in state without navigating any
     state: { authenticated: true, status: "ready" },
     turnTabs: new Map(),
     getBrowserInteractionMode: () => mode,
-    view: { webContents: { session: {
+    view: { webContents: { isDestroyed: () => false, getURL: () => IDLE_BROWSER_URL, session: {
       cookies,
       fetch: async (url, options) => {
         requests.push({ url, options });
@@ -990,12 +990,13 @@ test("a later sign-out wins over pending native and page authentication probes",
   let finishNative;
   let finishPage;
   let requests = 0;
+  let url = "https://chatgpt.com/?temporary-chat=true";
   const updates = [];
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     authenticationRevision: 0, state: { authenticated: false },
     turnTabs: new Map(),
     view: { webContents: {
-      getURL: () => "https://chatgpt.com/?temporary-chat=true", isDestroyed: () => false,
+      getURL: () => url, isDestroyed: () => false,
       executeJavaScript: () => new Promise(resolve => { finishPage = resolve; }),
       session: { fetch: async url => {
         requests += 1;
@@ -1007,6 +1008,7 @@ test("a later sign-out wins over pending native and page authentication probes",
     snapshot() { return this.state; }, logger: { info() {}, warn() {} },
   });
   const page = fixture.probeAuthentication();
+  url = IDLE_BROWSER_URL;
   const first = fixture.refreshAuthenticationFromSession();
   const second = fixture.refreshAuthenticationFromSession();
   assert.equal(first, second);
@@ -1017,6 +1019,66 @@ test("a later sign-out wins over pending native and page authentication probes",
   assert.equal(requests, 2);
   assert.equal(updates.length, 1);
   assert.equal(fixture.state.authenticated, false);
+  assert.equal(updates.some(update => update.authenticated === true), false);
+});
+
+test("session changes use the open page after invalidating an older check", async () => {
+  for (const result of [
+    { sessionAuthenticated: true, expected: "ready" },
+    { sessionAuthenticated: false, expected: "signed-out" },
+    { sessionAuthenticated: false, sessionCheckError: "HTTP 403", expected: "error" },
+  ]) {
+    let finishOld;
+    let pageChecks = 0;
+    const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+      authenticationRevision: 0, state: { authenticated: false }, turnTabs: new Map(),
+      view: { webContents: {
+        getURL: () => "https://chatgpt.com/?temporary-chat=true", isDestroyed: () => false,
+        executeJavaScript: async () => {
+          pageChecks++;
+          if (pageChecks === 1) await new Promise(resolve => { finishOld = resolve; });
+          return { composer: true, temporary: true, readyState: "complete", ...result };
+        },
+        session: { fetch: async () => { assert.fail("A loaded ChatGPT page owns session verification"); } },
+      } },
+      setState(patch) { this.state = { ...this.state, ...patch }; },
+      snapshot() { return this.state; }, logger: { info() {}, warn() {} },
+    });
+    const old = fixture.probeAuthentication();
+    const refresh = fixture.refreshAuthenticationFromSession();
+    finishOld();
+    await Promise.all([old, refresh]);
+    assert.equal(pageChecks, 2);
+    assert.equal(fixture.state.authenticated, result.sessionAuthenticated);
+    assert.equal(fixture.state.status, result.expected);
+  }
+});
+
+test("sign-out during a refreshed page check rejects its earlier signed-in result", async () => {
+  let finishPage;
+  let pageChecks = 0;
+  const updates = [];
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    authenticationRevision: 0, state: { authenticated: false }, turnTabs: new Map(),
+    view: { webContents: {
+      getURL: () => "https://chatgpt.com/?temporary-chat=true", isDestroyed: () => false,
+      executeJavaScript: async () => {
+        const check = ++pageChecks;
+        if (check === 1) await new Promise(resolve => { finishPage = resolve; });
+        return { sessionAuthenticated: check === 1, readyState: "complete", composer: true, temporary: true };
+      },
+      session: { fetch: async () => { assert.fail("Must use the loaded page"); } },
+    } },
+    setState(patch) { updates.push(patch); this.state = { ...this.state, ...patch }; },
+    snapshot() { return this.state; }, logger: { info() {}, warn() {} },
+  });
+  const first = fixture.refreshAuthenticationFromSession();
+  const second = fixture.refreshAuthenticationFromSession();
+  finishPage();
+  await Promise.all([first, second]);
+  assert.equal(pageChecks, 2);
+  assert.equal(fixture.state.authenticated, false);
+  assert.equal(fixture.state.status, "signed-out");
   assert.equal(updates.some(update => update.authenticated === true), false);
 });
 

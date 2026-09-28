@@ -121,6 +121,10 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
       expect(observedCorrection).toBeUndefined();
     } else {
       expect(observedRetry).toMatchObject({ text: CHATGPT_SAME_SURFACE_RECOVERY_PROMPT, replaceCandidate: true });
+      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("codex.control.output");
+      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("kind=final");
+      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("Do not call any work tool");
+      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("Do not write ordinary assistant prose");
       expect(observedCorrection).toBeDefined();
     }
 
