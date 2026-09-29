@@ -38,3 +38,22 @@ test("a DOM progress signal wakes the trace wait without emitting synthetic text
   await expect(withStallTimeout(waiting, 20)).resolves.toBeUndefined();
   expect(trace.drain()).toEqual([]);
 });
+
+test("hidden ownership liveness keeps repeated adapter waits alive without output", async () => {
+  const trace = new ChatGptTraceFeed();
+  const started = Date.now();
+  for (let index = 0; index < 4; index += 1) {
+    const waiting = withStallTimeout(trace.wait(), 20);
+    await Bun.sleep(8);
+    trace.signalProgress();
+    await expect(waiting).resolves.toBeUndefined();
+  }
+  expect(Date.now() - started).toBeGreaterThanOrEqual(25);
+  expect(trace.drain()).toEqual([]);
+});
+
+test("a silent trace still reaches the adapter inactivity timeout", async () => {
+  const trace = new ChatGptTraceFeed();
+  await expect(withStallTimeout(trace.wait(), 10)).rejects.toThrow("Upstream made no progress for 10ms");
+  expect(trace.drain()).toEqual([]);
+});

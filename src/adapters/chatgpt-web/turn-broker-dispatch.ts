@@ -75,6 +75,8 @@ export async function dispatchTurnBrokerRequest(
     beginCompletionFence: owner.beginCompletionFence.bind(owner),
     commitCompletionFence: owner.commitCompletionFence.bind(owner),
     beginFinalizationOnly: owner.beginFinalizationOnly.bind(owner),
+    cancelFinalizationOnly: owner.cancelFinalizationOnly.bind(owner),
+    armFinalizationOutput: owner.armFinalizationOutput.bind(owner),
     nextOutput: owner.nextOutput.bind(owner),
     resetOutput: owner.resetOutput.bind(owner),
     sealOutput: owner.sealOutput.bind(owner),
@@ -94,10 +96,20 @@ export async function dispatchTurnBrokerRequest(
     if (typeof request.outputText !== "string") throw new Error("Codex Native output text is required");
     const channel = state.channels.get(request.token);
     if (!channel) throw new Error("turn token is invalid, expired, or revoked");
-    if (request.outputKind === "final" && state.contexts.hasIncomplete(request.token)) {
-      throw new Error("Read and verify the complete Codex context archive before submitting final output");
+    let submitted: ReturnType<typeof submitTurnOutput>;
+    try {
+      if (request.outputKind === "final" && state.contexts.hasIncomplete(request.token)) {
+        throw new Error("Read and verify the complete Codex context archive before submitting final output");
+      }
+      submitted = submitTurnOutput(channel, request.outputKind!, request.outputText);
+    } catch (error) {
+      const kind = ["commentary", "reasoning", "final"].includes(request.outputKind!) ? request.outputKind : "invalid";
+      console.warn(`[chatgpt-web] broker trace=${channel.traceId} output rejected kind=${kind} chars=${request.outputText.length}`
+        + ` activeActivities=${channel.activities.size} pendingTools=${channel.invocations.size} finalizationOnly=${channel.finalizationOnly}`
+        + ` outputSealed=${channel.outputSealed} finalAccepted=${channel.outputFinalSequence !== undefined}`
+        + ` contextIncomplete=${state.contexts.hasIncomplete(request.token)}`);
+      throw error;
     }
-    const submitted = submitTurnOutput(channel, request.outputKind!, request.outputText);
     console.info(`[chatgpt-web] broker trace=${channel.traceId} output accepted kind=${submitted.event.kind}`
       + ` sequence=${submitted.event.sequence} chars=${submitted.event.text.length} duplicate=${submitted.duplicate}`);
     return { accepted: true, sequence: submitted.event.sequence, duplicate: submitted.duplicate };

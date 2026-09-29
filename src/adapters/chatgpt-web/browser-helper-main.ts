@@ -364,6 +364,27 @@ input.on("line", line => {
       completionFences.end(message.id);
       abortControllers.get(message.id)?.abort();
     }
+  } else if (message.type === "finalization_begin_ack") {
+    try { completionFences.resolveFinalization(message.id, message.requestId, message.started); }
+    catch (error) {
+      writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
+      completionFences.end(message.id);
+      abortControllers.get(message.id)?.abort();
+    }
+  } else if (message.type === "finalization_cancel_ack") {
+    try { completionFences.resolveFinalizationCancel(message.id, message.requestId, message.cancelled); }
+    catch (error) {
+      writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
+      completionFences.end(message.id);
+      abortControllers.get(message.id)?.abort();
+    }
+  } else if (message.type === "finalization_output_arm_ack") {
+    try { completionFences.resolveFinalizationOutput(message.id, message.requestId, message.armed); }
+    catch (error) {
+      writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
+      completionFences.end(message.id);
+      abortControllers.get(message.id)?.abort();
+    }
   } else if (message.type === "preempt_retry") {
     const worker = activeWorkers.get(message.id);
     if (typeof message.prompt !== "string" || !message.prompt.trim()
@@ -474,4 +495,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "answer-before-completion", "luna-safety-retry-v1", "tunneled-output-v1", "skill-attachments", "visible-text-output-v1"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "finalization-cas-v1", "finalization-cancel-v1", "finalization-output-arm-v1", "multipart-stage-ack", "answer-before-completion", "luna-safety-retry-v1", "tunneled-output-v1", "skill-attachments", "visible-text-output-v1"] });

@@ -6,20 +6,20 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-mac-arm64.dmg"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-linux-x64.AppImage"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-mac-x64.dmg">macOS Intel</a> · <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">すべてのリリース</a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">macOS Intel</a> · <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">最新リリース</a>
 </p>
 
 <p align="center">
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **開発候補版：`6.1.3-Enhanced.1`。** ダウンロードボタンは公開済みの Enhanced パッケージを指します。このブランチはリリース公開を意味しません。
+> **開発候補版：`6.1.3-Enhanced.2`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。このブランチだけではリリースは公開されません。
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">トラブルシューティング</a> · <a href="SECURITY.md">セキュリティ</a> · <a href="CONTRIBUTING.md">コントリビューション</a>

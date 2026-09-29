@@ -16,7 +16,7 @@ import {
 import { opaqueId, type BrokerToolRequest, type BrokerToolResult, type BrokerTurnOutputEvent } from "./turn-broker-protocol";
 import { TurnContextStore } from "./turn-context-store";
 import { beginTurnCompletionFence, commitTurnCompletionFence } from "./turn-broker-completion";
-import { rejectTurnOutputWaiters, resetTurnOutput, sealTurnOutput, waitForTurnOutput } from "./turn-broker-output";
+import { publishPendingFinalizationOutput, rejectTurnOutputWaiters, resetTurnOutput, sealTurnOutput, waitForTurnOutput } from "./turn-broker-output";
 import { logToolDelivery, rejectTurnChannel, takeQueuedTools } from "./turn-broker-queue";
 import {
   assertSafeHarnessRunning,
@@ -129,6 +129,7 @@ export class TurnBroker implements TurnBrokerOwner {
       outputResumeAfter: 0,
       outputSealed: false,
       finalizationOnly: false,
+      finalizationOutputArmed: false,
       retirementWaiters: new Set(),
     };
     this.channels.set(token, channel);
@@ -278,15 +279,47 @@ export class TurnBroker implements TurnBrokerOwner {
     return committed;
   }
 
-  beginFinalizationOnly(token: string): boolean {
+  beginFinalizationOnly(token: string, expectedActivityRevision: number): boolean {
     this.prune();
     const channel = this.channels.get(token);
     if (!channel) throw new Error("turn token is invalid or expired");
+    if (channel.activityRevision !== expectedActivityRevision) return false;
     if (!channel.outputEnabled || channel.completionCommitted || channel.outputFinalSequence !== undefined) return false;
     if (channel.invocations.size > 0 || channel.queuedCallIds.length > 0 || channel.activities.size > 0) return false;
     if (channel.finalizationOnly) return true;
     channel.finalizationOnly = true;
+    channel.finalizationOutputArmed = false;
+    channel.finalizationPendingOutput = undefined;
     channel.activityRevision += 1;
+    return true;
+  }
+
+  cancelFinalizationOnly(token: string, expectedActivityRevision: number): boolean {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    if (channel.activityRevision !== expectedActivityRevision || !channel.finalizationOnly
+      || channel.finalizationOutputArmed) return false;
+    if (channel.completionCommitted || channel.outputFinalSequence !== undefined
+      || channel.invocations.size > 0 || channel.queuedCallIds.length > 0 || channel.activities.size > 0) return false;
+    channel.finalizationOnly = false;
+    channel.finalizationOutputArmed = false;
+    channel.activityRevision += 1;
+    publishPendingFinalizationOutput(channel);
+    return true;
+  }
+
+  armFinalizationOutput(token: string, expectedActivityRevision: number): boolean {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    if (channel.activityRevision !== expectedActivityRevision || !channel.finalizationOnly) return false;
+    if (!channel.outputEnabled || channel.completionCommitted || channel.outputFinalSequence !== undefined) return false;
+    if (channel.invocations.size > 0 || channel.queuedCallIds.length > 0 || channel.activities.size > 0) return false;
+    if (channel.finalizationOutputArmed) return true;
+    channel.finalizationOutputArmed = true;
+    channel.activityRevision += 1;
+    publishPendingFinalizationOutput(channel);
     return true;
   }
 

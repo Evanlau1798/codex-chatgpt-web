@@ -7,12 +7,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS,
+  CODEX_CONTEXT_ARCHIVE_OUTPUT_TOKENS,
   prepareChatGptWebContext,
 } from "../src/adapters/chatgpt-web/context-bootstrap";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
+import { estimateTokens } from "../src/lib/token-estimate";
 
 const contextText = (messages: Array<Record<string, unknown>>): string => [
   "Act as the model backend for the Codex task encoded below.",
@@ -344,8 +346,8 @@ test("large recovery archives use bounded complete MCP pages without losing cont
   const root = mkdtempSync(join(tmpdir(), "cgw-context-chunks-"));
   const socketPath = defaultBrokerEndpoint(root);
   const broker = TurnBroker.forSocket(socketPath);
-  const omittedA = `OMITTED_A_${"z".repeat(300_000)}`;
-  const omittedB = `OMITTED_B_${"y".repeat(300_000)}`;
+  const omittedA = `OMITTED_A_${"z".repeat(60_000)}`;
+  const omittedB = `OMITTED_B_${"y".repeat(60_000)}`;
   const fullText = contextText([
     { role: "user", content: omittedA },
     { role: "assistant", content: omittedB },
@@ -369,6 +371,7 @@ test("large recovery archives use bounded complete MCP pages without losing cont
     });
     const firstText = (first.content as Array<{ text: string }>)[0]?.text ?? "";
     expect(firstText.length).toBeLessThanOrEqual(66_000);
+    expect(estimateTokens(firstText)).toBeLessThanOrEqual(CODEX_CONTEXT_ARCHIVE_OUTPUT_TOKENS);
     expect(firstText).toContain("index=0 total=");
     expect(firstText).toContain("next_query=__codex_context__:1");
     const retriedFirst = await client.callTool({
@@ -390,6 +393,7 @@ test("large recovery archives use bounded complete MCP pages without losing cont
       expect(page.isError).not.toBe(true);
       const text = (page.content as Array<{ text: string }>)[0]?.text ?? "";
       expect(text.length).toBeLessThanOrEqual(66_000);
+      expect(estimateTokens(text)).toBeLessThanOrEqual(CODEX_CONTEXT_ARCHIVE_OUTPUT_TOKENS);
       expect(text).toContain(`CODEX_CONTEXT_ARCHIVE_END index=${index}`);
       pages.push(text);
     }
@@ -410,7 +414,7 @@ test("a single oversized archive record is transported as valid reconstructable 
   const root = mkdtempSync(join(tmpdir(), "cgw-context-record-fragments-"));
   const socketPath = defaultBrokerEndpoint(root);
   const broker = TurnBroker.forSocket(socketPath);
-  const largeContent = `${"😀\\\"markdown\n".repeat(55_000)}END`;
+  const largeContent = `${"😀\\\"markdown\n".repeat(6_000)}END`;
   const expectedRecord = { kind: "message", index: 0, value: { role: "user", content: largeContent } };
   const fullText = contextText([
     expectedRecord.value,
@@ -438,6 +442,7 @@ test("a single oversized archive record is transported as valid reconstructable 
       });
       expect(result.isError).not.toBe(true);
       const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+      expect(estimateTokens(text)).toBeLessThanOrEqual(CODEX_CONTEXT_ARCHIVE_OUTPUT_TOKENS);
       const end = text.lastIndexOf("\nCODEX_CONTEXT_ARCHIVE_END");
       chunks.push(text.slice(text.indexOf("\n") + 1, end));
       if (text.includes("next_query=null")) break;

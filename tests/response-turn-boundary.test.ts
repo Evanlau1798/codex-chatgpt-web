@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
 import {
   activateChatGptSendControl,
+  activateOwnedChatGptSendControl,
+  ChatGptOwnedSendStateUnknownError,
   bindChatGptAssistantTurn,
   chatGptAssistantTurnChanged,
   chatGptNewTurnIdentity,
@@ -12,6 +14,7 @@ import {
   readChatGptAssistantTurnState,
   readChatGptTurnIdentities,
   reconcileChatGptAssistantTurnBinding,
+  clearOwnedChatGptComposerControl,
 } from "../src/adapters/chatgpt-web/response-turn-boundary";
 
 test("logical turn counts collapse nested legacy and grouped roots", async () => {
@@ -147,12 +150,44 @@ test("submission evidence uses the persistent logical baseline instead of displa
   })).toBe("assistant_turn");
 });
 
+test("fresh Temporary Chat navigation with a cleared composer proves submission acceptance", () => {
+  const state = {
+    initialUserTurnCount: 0,
+    userTurnCount: 0,
+    initialAssistantTurnCount: 0,
+    assistantTurnCount: 0,
+    initialTurnIdentities: [],
+    userIdentities: [],
+    responseIdentities: [],
+    generationRunning: false,
+    initialPageUrl: "https://chatgpt.com/?temporary-chat=true",
+    currentPageUrl: "https://chatgpt.com/c/compact-turn?temporary-chat=true",
+    composerTextLength: 0,
+    submissionRequestObserved: true,
+  };
+  expect(chatGptSubmissionEvidence(state)).toBe("conversation_navigation");
+  expect(chatGptSubmissionEvidence({ ...state, submissionRequestObserved: false })).toBeUndefined();
+  expect(chatGptSubmissionEvidence({ ...state, composerTextLength: 1 })).toBeUndefined();
+  expect(chatGptSubmissionEvidence({
+    ...state,
+    initialPageUrl: "https://chatgpt.com/c/existing?temporary-chat=true",
+  })).toBeUndefined();
+  expect(chatGptSubmissionEvidence({
+    ...state,
+    initialPageUrl: "https://chatgpt.com/?temporary-chat=true&extra=1",
+  })).toBeUndefined();
+  expect(chatGptSubmissionEvidence({
+    ...state,
+    initialPageUrl: "https://chatgpt.com/?temporary-chat=true#state",
+  })).toBeUndefined();
+});
+
 test("send control uses semantic keyboard activation", async () => {
   const activations: string[] = [];
   await activateChatGptSendControl({
-    press: async key => { activations.push(key); },
-  });
-  expect(activations).toEqual(["Enter"]);
+    press: async key => { activations.push(`press:${key}`); },
+  }, undefined, () => { activations.push("observe"); });
+  expect(activations).toEqual(["observe", "press:Enter"]);
 });
 
 test("Send delegates its timeout and cancellation to the outer stage", async () => {
@@ -168,6 +203,266 @@ test("Send delegates its timeout and cancellation to the outer stage", async () 
     },
   }, owner.signal);
   await expect(result).rejects.toBe(owner.signal.reason);
+});
+
+test("owned recovery cleanup preserves a draft that replaced the recovery prompt", async () => {
+  const { createWindow } = require("@mixmark-io/domino") as {
+    createWindow(html: string): { document: Document };
+  };
+  const document = createWindow('<div id="composer" contenteditable="true">Recovery prompt</div>').document;
+  const composer = document.querySelector("#composer")!;
+  const locator = {
+    evaluate: async (callback: (element: Element, input: string) => boolean, input: string) => {
+      composer.textContent = "User draft";
+      return callback(composer, input);
+    },
+  };
+
+  expect(await clearOwnedChatGptComposerControl(locator as never, "Recovery prompt")).toBeFalse();
+  expect(composer.textContent).toBe("User draft");
+});
+
+test("owned recovery Send rejects a late DOM final in the same renderer transaction", async () => {
+  const { createWindow } = require("@mixmark-io/domino") as {
+    createWindow(html: string): { document: Document; Event: typeof Event; HTMLButtonElement: typeof HTMLButtonElement };
+  };
+  const window = createWindow(`
+    <article id="response"><div>tool result</div></article>
+    <form><div id="composer" contenteditable="true">Recovery prompt</div><button id="send">Send</button></form>
+  `);
+  const composer = window.document.querySelector("#composer")!;
+  const response = window.document.querySelector("#response")!;
+  const button = window.document.querySelector("#send") as HTMLButtonElement;
+  let clicks = 0;
+  button.addEventListener("click", event => { event.preventDefault(); clicks += 1; });
+  const locator = {
+    evaluate: async (callback: (element: Element, input: unknown) => boolean, input: unknown) => {
+      response.innerHTML += "<p>Late final</p>";
+      return callback(composer, input);
+    },
+  };
+
+  expect(await activateOwnedChatGptSendControl(locator as never, "Recovery prompt", "#send", {
+    responseSelector: "#response",
+    responseHtml: "<div>tool result</div>",
+    stopButtonSelector: "#stop",
+    deadlineAt: Date.now() + 10_000,
+  })).toBeFalse();
+  expect(clicks).toBe(0);
+});
+
+test("owned recovery Send rechecks DOM at the cancellable Playwright click boundary", async () => {
+  const { createWindow } = require("@mixmark-io/domino") as {
+    createWindow(html: string): { document: Document; Event: typeof Event; HTMLButtonElement: typeof HTMLButtonElement };
+  };
+  const window = createWindow(`
+    <article id="response"><div>tool result</div></article>
+    <form><div id="composer" contenteditable="true">Recovery prompt</div><button id="send">Send</button></form>
+  `);
+  const composer = window.document.querySelector("#composer")!;
+  const response = window.document.querySelector("#response")!;
+  const button = window.document.querySelector("#send") as HTMLButtonElement;
+  const form = button.closest("form")!;
+  let applicationClicks = 0;
+  form.addEventListener("click", event => { event.preventDefault(); applicationClicks += 1; });
+  const locator = {
+    evaluate: async (callback: (element: Element, input: unknown) => unknown, input: unknown) => callback(composer, input),
+    locator: () => ({ locator: () => ({ click: async () => {
+      response.innerHTML += "<p>Late final</p>";
+      button.click();
+    } }) }),
+  };
+
+  expect(await activateOwnedChatGptSendControl(locator as never, "Recovery prompt", "#send", {
+    responseSelector: "#response",
+    responseHtml: "<div>tool result</div>",
+    stopButtonSelector: "#stop",
+    deadlineAt: Date.now() + 10_000,
+  })).toBeFalse();
+  expect(applicationClicks).toBe(0);
+});
+
+test("owned recovery Send scopes every comma-separated selector branch to its nonce", async () => {
+  const { createWindow } = require("@mixmark-io/domino") as {
+    createWindow(html: string): { document: Document; HTMLButtonElement: typeof HTMLButtonElement };
+  };
+  const window = createWindow(`
+    <article id="response"><div>tool result</div></article>
+    <form><div id="composer" contenteditable="true">Recovery prompt</div>
+      <button data-testid="send-button">Send</button><button type="submit">Alternate</button>
+    </form>
+  `);
+  const composer = window.document.querySelector("#composer")!;
+  const form = composer.closest("form")!;
+  let applicationClicks = 0;
+  form.addEventListener("click", event => { event.preventDefault(); applicationClicks += 1; });
+  const locator = {
+    evaluate: async (callback: (element: Element, input: unknown) => unknown, input: unknown) => callback(composer, input),
+    locator: () => ({ locator: (selector: string) => ({ click: async () => {
+      const replacement = window.document.createElement("button");
+      replacement.setAttribute("data-testid", "send-button");
+      form.querySelector('[data-testid="send-button"]')!.replaceWith(replacement);
+      composer.textContent = "User draft";
+      (form.querySelector(selector) as HTMLButtonElement | null)?.click();
+    } }) }),
+  };
+
+  expect(await activateOwnedChatGptSendControl(
+    locator as never,
+    "Recovery prompt",
+    '[data-testid="send-button"], button[type="submit"]',
+    {
+      responseSelector: "#response",
+      responseHtml: "<div>tool result</div>",
+      stopButtonSelector: "#stop",
+      deadlineAt: Date.now() + 10_000,
+    },
+  )).toBeFalse();
+  expect(applicationClicks).toBe(0);
+});
+
+test("owned recovery Send keeps its accepted receipt when the button remounts", async () => {
+  const { createWindow } = require("@mixmark-io/domino") as {
+    createWindow(html: string): { document: Document; HTMLButtonElement: typeof HTMLButtonElement };
+  };
+  const window = createWindow(`
+    <article id="response"><div>tool result</div></article>
+    <form><div id="composer" contenteditable="true">Recovery prompt</div><button id="send">Send</button></form>
+  `);
+  const composer = window.document.querySelector("#composer")!;
+  const form = composer.closest("form")!;
+  form.addEventListener("click", event => {
+    event.preventDefault();
+    composer.textContent = "";
+    (event.target as Element).replaceWith(window.document.createElement("button"));
+  });
+  const locator = {
+    evaluate: async (callback: (element: Element, input: unknown) => unknown, input: unknown) => callback(composer, input),
+    locator: () => ({ locator: (selector: string) => ({ click: async () => {
+      (form.querySelector(selector) as HTMLButtonElement | null)?.click();
+    } }) }),
+  };
+
+  expect(await activateOwnedChatGptSendControl(locator as never, "Recovery prompt", "#send", {
+    responseSelector: "#response",
+    responseHtml: "<div>tool result</div>",
+    stopButtonSelector: "#stop",
+    deadlineAt: Date.now() + 10_000,
+  })).toBeTrue();
+  expect(composer.textContent).toBe("");
+});
+
+test("owned recovery Send reports unknown state when its receipt read fails after click", async () => {
+  let evaluations = 0;
+  let clicks = 0;
+  const locator = {
+    evaluate: async () => {
+      evaluations += 1;
+      if (evaluations === 1) return true;
+      throw new Error("renderer receipt unavailable");
+    },
+    locator: () => ({ locator: () => ({ click: async () => { clicks += 1; } }) }),
+  };
+
+  await expect(activateOwnedChatGptSendControl(locator as never, "Recovery prompt", "#send", {
+    responseSelector: "#response",
+    responseHtml: "<div>tool result</div>",
+    stopButtonSelector: "#stop",
+    deadlineAt: Date.now() + 10_000,
+  })).rejects.toBeInstanceOf(ChatGptOwnedSendStateUnknownError);
+  expect(clicks).toBe(1);
+});
+
+test("owned recovery Send reports unknown state when its receipt disappears after click", async () => {
+  const { createWindow } = require("@mixmark-io/domino") as {
+    createWindow(html: string): { document: Document; HTMLButtonElement: typeof HTMLButtonElement };
+  };
+  const window = createWindow(`
+    <article id="response"><div>tool result</div></article>
+    <form><div id="composer" contenteditable="true">Recovery prompt</div><button id="send">Send</button></form>
+  `);
+  const composer = window.document.querySelector("#composer")!;
+  const button = window.document.querySelector("#send") as HTMLButtonElement;
+  let clicks = 0;
+  button.addEventListener("click", event => { event.preventDefault(); clicks += 1; });
+  const locator = {
+    evaluate: async (
+      callback: (element: Element, input: unknown) => boolean | undefined,
+      input: unknown,
+    ) => callback(composer, input),
+    locator: () => ({ locator: () => ({ click: async () => {
+      button.click();
+      delete (window.document as Document & Record<string, unknown>).__codexRecoverySendGuards;
+    } }) }),
+  };
+
+  await expect(activateOwnedChatGptSendControl(locator as never, "Recovery prompt", "#send", {
+    responseSelector: "#response",
+    responseHtml: "<div>tool result</div>",
+    stopButtonSelector: "#stop",
+    deadlineAt: Date.now() + 10_000,
+  })).rejects.toBeInstanceOf(ChatGptOwnedSendStateUnknownError);
+  expect(clicks).toBe(1);
+});
+
+test("owned recovery Send obeys an abort raised while renderer activation is pending", async () => {
+  const { createWindow } = require("@mixmark-io/domino") as {
+    createWindow(html: string): { document: Document; Event: typeof Event; HTMLButtonElement: typeof HTMLButtonElement };
+  };
+  const window = createWindow(`
+    <article id="response"><div>tool result</div></article>
+    <form><div id="composer" contenteditable="true">Recovery prompt</div><button id="send">Send</button></form>
+  `);
+  const composer = window.document.querySelector("#composer")!;
+  const button = window.document.querySelector("#send") as HTMLButtonElement;
+  const owner = new AbortController();
+  let clicks = 0;
+  button.addEventListener("click", event => { event.preventDefault(); clicks += 1; });
+  const locator = {
+    evaluate: async (
+      callback: (element: Element, input: unknown) => boolean,
+      input: unknown,
+      _options: { signal?: AbortSignal },
+    ) => {
+      owner.abort(new DOMException("send stage expired", "AbortError"));
+      // Playwright Locator.evaluate does not forward AbortSignal to the renderer call.
+      return callback(composer, input);
+    },
+    locator: () => ({
+      locator: () => ({
+        click: async ({ signal }: { signal?: AbortSignal }) => signal?.throwIfAborted(),
+      }),
+    }),
+  };
+
+  await expect(activateOwnedChatGptSendControl(locator as never, "Recovery prompt", "#send", {
+    responseSelector: "#response",
+    responseHtml: "<div>tool result</div>",
+    stopButtonSelector: "#stop",
+    deadlineAt: Date.now() + 10_000,
+  }, owner.signal)).rejects.toBe(owner.signal.reason);
+  expect(clicks).toBe(0);
+  expect(button.hasAttribute("data-codex-recovery-send")).toBeFalse();
+  const registry = (window.document as Document & Record<string, unknown>).__codexRecoverySendGuards as Record<string, unknown>;
+  expect(Object.keys(registry)).toHaveLength(0);
+});
+
+test("owned recovery Send does not activate after its stage deadline", async () => {
+  let evaluated = false;
+  const locator = {
+    evaluate: async (callback: (element: Element, input: unknown) => boolean, input: unknown) => {
+      evaluated = true;
+      return callback({} as Element, input);
+    },
+  };
+
+  expect(await activateOwnedChatGptSendControl(locator as never, "Recovery prompt", "#send", {
+    responseSelector: "#response",
+    responseHtml: "",
+    stopButtonSelector: "#stop",
+    deadlineAt: Date.now() - 1,
+  })).toBeFalse();
+  expect(evaluated).toBeTrue();
 });
 
 test("assistant identity detects a virtualized retained response without count growth", () => {

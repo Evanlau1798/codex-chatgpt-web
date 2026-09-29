@@ -6,6 +6,8 @@ import type { TurnBroker } from "./turn-broker";
 // Keep model-facing pages bounded; fresh recovery stalled rereading a 514K-character page.
 // This is our transport budget, not a claim about ChatGPT's undocumented response ceiling.
 export const CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS = 64 * 1_024;
+export const CODEX_CONTEXT_ARCHIVE_CHUNK_TOKENS = 7_000;
+export const CODEX_CONTEXT_ARCHIVE_OUTPUT_TOKENS = 8_000;
 /**
  * Current ChatGPT Lexical composers reject an append once one uninterrupted text run reaches the
  * observed 15,999 UTF-16-unit boundary even though the complete message remains well below its
@@ -13,6 +15,7 @@ export const CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS = 64 * 1_024;
  */
 export const CHATGPT_STABLE_COMPOSER_TEXT_RUN_CHARS = 12_288;
 const ARCHIVE_ENTRY_CHARS = CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS - 1;
+const ARCHIVE_ENTRY_TOKENS = 6_000;
 const ARCHIVE_FRAGMENT_DATA_CHARS = Math.floor((ARCHIVE_ENTRY_CHARS - 512) / 6);
 const CONTEXT_OPEN = "<codex_context_json>\n";
 const CONTEXT_CLOSE = "\n</codex_context_json>";
@@ -44,28 +47,50 @@ interface ArchiveRecord {
 
 function archiveRecordLines(record: ArchiveRecord): string[] {
   const serialized = JSON.stringify(record);
-  if (serialized.length <= ARCHIVE_ENTRY_CHARS) return [serialized];
+  if (serialized.length <= ARCHIVE_ENTRY_CHARS && estimateTokens(serialized) <= ARCHIVE_ENTRY_TOKENS) {
+    return [serialized];
+  }
+  const sha256 = createHash("sha256").update(serialized).digest("hex");
+  const renderFragment = (fragment: string, part: number, parts: number): string => JSON.stringify({
+    kind: "record_fragment",
+    recordKind: record.kind,
+    index: record.index,
+    part,
+    parts,
+    sha256,
+    data: fragment,
+  });
   const data: string[] = [];
   for (let offset = 0; offset < serialized.length;) {
-    let end = Math.min(serialized.length, offset + ARCHIVE_FRAGMENT_DATA_CHARS);
-    if (end < serialized.length
-      && /[\uD800-\uDBFF]/.test(serialized[end - 1]!)
-      && /[\uDC00-\uDFFF]/.test(serialized[end]!)) end -= 1;
+    const maxEnd = Math.min(serialized.length, offset + ARCHIVE_FRAGMENT_DATA_CHARS);
+    let low = offset + 1;
+    let high = maxEnd;
+    let end = offset;
+    while (low <= high) {
+      const midpoint = Math.floor((low + high) / 2);
+      let candidateEnd = midpoint;
+      if (candidateEnd < serialized.length
+        && /[\uD800-\uDBFF]/.test(serialized[candidateEnd - 1]!)
+        && /[\uDC00-\uDFFF]/.test(serialized[candidateEnd]!)) candidateEnd -= 1;
+      if (candidateEnd <= offset) {
+        low = midpoint + 1;
+        continue;
+      }
+      const candidate = renderFragment(serialized.slice(offset, candidateEnd), 999_999, 999_999);
+      if (candidate.length <= ARCHIVE_ENTRY_CHARS && estimateTokens(candidate) <= ARCHIVE_ENTRY_TOKENS) {
+        end = candidateEnd;
+        low = midpoint + 1;
+      } else {
+        high = midpoint - 1;
+      }
+    }
+    if (end === offset) throw new Error("ChatGPT Web context fragment cannot fit the MCP archive token limit");
     data.push(serialized.slice(offset, end));
     offset = end;
   }
-  const sha256 = createHash("sha256").update(serialized).digest("hex");
   return data.map((fragment, part) => {
-    const line = JSON.stringify({
-      kind: "record_fragment",
-      recordKind: record.kind,
-      index: record.index,
-      part,
-      parts: data.length,
-      sha256,
-      data: fragment,
-    });
-    if (line.length > ARCHIVE_ENTRY_CHARS) {
+    const line = renderFragment(fragment, part, data.length);
+    if (line.length > ARCHIVE_ENTRY_CHARS || estimateTokens(line) > ARCHIVE_ENTRY_TOKENS) {
       throw new Error("ChatGPT Web context fragment exceeds the MCP archive entry limit");
     }
     return line;

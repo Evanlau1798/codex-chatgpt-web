@@ -9,6 +9,19 @@ import { chatGptTurnSessions } from "./turn-execution";
 type ErrorRetry = NonNullable<BrowserTurn["retryPromptForError"]>;
 type ErrorRetryResult = Awaited<ReturnType<ErrorRetry>>;
 
+export function chatGptSameSurfaceRecoveryPrompt(token: string): string {
+  return [
+    CHATGPT_SAME_SURFACE_RECOVERY_PROMPT,
+    "<codex_native_turn_binding>",
+    `turn_token ${token}`,
+    "</codex_native_turn_binding>",
+    "Call codex_tool_call directly with the following payload, replacing only the text placeholder with your entire answer. Do not use input or look up this control in inventory:",
+    JSON.stringify({ turn_token: token, wire_name: "codex.control.output", arguments: { kind: "final", text: "<complete user-facing answer>" } }),
+    "After accepted=true, end immediately without further calls or prose.",
+  // Keep this owned control in one paragraph: Lexical textContent omits paragraph separators.
+  ].join(" ");
+}
+
 export function chatGptTerminalErrorRetryPrompt(
   error: Error,
   attempt: number,
@@ -54,11 +67,12 @@ export function createChatGptSameSurfaceRetry(options: {
   traceId: string;
   executionKey: string;
   enhancedMode: boolean;
+  outputTunnel: boolean;
+  turnToken: () => string | undefined;
   abortSignal: AbortSignal;
-  beginFinalizationOnly?: () => boolean | Promise<boolean>;
   upstream?: (error: unknown) => string | undefined;
 }): ErrorRetry | undefined {
-  if (!options.enhancedMode) return undefined;
+  if (!options.enhancedMode || !options.outputTunnel) return undefined;
   let diagnosticLogged = false;
   return async (error, attempt) => {
     const upstream = await options.upstream?.(error);
@@ -83,7 +97,8 @@ export function createChatGptSameSurfaceRetry(options: {
       );
     }
     if (!decision.eligible) return undefined;
-    if (options.beginFinalizationOnly && !await options.beginFinalizationOnly()) return undefined;
-    return { text: CHATGPT_SAME_SURFACE_RECOVERY_PROMPT, replaceCandidate: true };
+    const token = options.turnToken();
+    if (!token) return undefined;
+    return { text: chatGptSameSurfaceRecoveryPrompt(token), replaceCandidate: true };
   };
 }

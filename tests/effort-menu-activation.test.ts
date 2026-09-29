@@ -5,9 +5,14 @@ import {
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 
-function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
+function fixture(
+  openWith: "click" | "pointerdown" | "none" | "hidden-slider",
+  ignoredEscapeCalls: ReadonlySet<number> = new Set(),
+) {
   let opened = false;
   let expanded = openWith === "hidden-slider";
+  let escapeCalls = 0;
+  let pointerActivated = false;
   const events: string[] = [];
   const clickOptions: unknown[] = [];
   const hidden = {
@@ -43,13 +48,15 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
     },
     click: async (options: unknown) => {
       clickOptions.push(options);
-      events.push("click"); expanded = true; opened = openWith === "click";
+      events.push("click"); expanded = true;
+      opened = openWith === "click" || (openWith === "pointerdown" && pointerActivated);
     },
     press: async () => { events.push("control-enter"); },
     dispatchEvent: async (event: string, detail: unknown) => {
       expect(event).toBe("pointerdown");
       expect(detail).toEqual({ button: 0, buttons: 1, pointerType: "mouse", isPrimary: true });
       events.push("pointerdown"); opened = openWith === "pointerdown"; expanded = true;
+      pointerActivated ||= opened;
     },
   };
   const page = {
@@ -71,7 +78,10 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider") {
       };
       return hiddenAlert;
     },
-    keyboard: { press: async (key: string) => { events.push(key); expanded = false; } },
+    keyboard: { press: async (key: string) => {
+      events.push(key);
+      if (key === "Escape" && !ignoredEscapeCalls.has(++escapeCalls)) expanded = false;
+    } },
   };
   return { page, control, owned, slider, events, clickOptions };
 }
@@ -117,6 +127,19 @@ test("production model selection uses the opened slider instead of stale global 
   })).resolves.toMatchObject({ uiEffortIndex: 1 });
   expect(f.events).toEqual(["click", "Escape", "click", "Escape"]);
 });
+
+test("production model selection retries one ignored effort-menu close", async () => {
+  // The first Escape clears the ghost click before pointerdown activation. The
+  // second is the first post-selection close and is ignored by the live UI.
+  const f = fixture("pointerdown", new Set([2]));
+  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    activeComposer: async () => ({ isEditable: async () => true, locator: () => ({ locator: () => f.control }) }),
+  });
+  await expect(worker.selectModelAndEffort(f.page, CHATGPT_WEB_MODEL_ID, "medium", {
+    localToolsEnabled: true, solAvailable: true, proAvailable: true,
+  })).resolves.toMatchObject({ uiEffortIndex: 1 });
+  expect(f.events).toEqual(["click", "Escape", "pointerdown", "Escape", "Escape", "click", "Escape"]);
+}, 10_000);
 
 test.each([false, true])("activation failure retains structured error classification (late 429: %s)", async limited => {
   const f = fixture("none");

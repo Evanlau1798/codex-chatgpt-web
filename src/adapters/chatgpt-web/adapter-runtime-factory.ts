@@ -197,10 +197,9 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
           traceId,
           executionKey: runtimeExecutionKey,
           enhancedMode: useEnhancedWebSessionMode,
+          outputTunnel: tunneledOutput,
+          turnToken: () => activeToken,
           abortSignal: browserAbort.signal,
-          beginFinalizationOnly: async () => activeToken
-            ? brokerOwner.beginFinalizationOnly(activeToken)
-            : false,
         });
     const emitCommentary = (value: string, continuation?: boolean): void => {
       if (toolEvidence && !toolEvidence.shouldEmitCommentary(value)) return;
@@ -236,7 +235,25 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         ...(browserCompaction ? { compaction: true } : {}),
         onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
         onCommentary: emitCommentary,
+        onHeartbeat: () => trace.signalProgress(),
         onProgress: () => trace.signalProgress(),
+        beginFinalizationOnly: async expectedActivityRevision => {
+          const started = activeToken
+            ? await brokerOwner.beginFinalizationOnly(activeToken, expectedActivityRevision)
+            : false;
+          if (started) submission.phase = "send_activated";
+          return started;
+        },
+        cancelFinalizationOnly: async expectedActivityRevision => {
+          const cancelled = activeToken
+            ? await brokerOwner.cancelFinalizationOnly(activeToken, expectedActivityRevision)
+            : false;
+          if (cancelled) submission.phase = "accepted";
+          return cancelled;
+        },
+        armFinalizationOutput: async expectedActivityRevision => activeToken
+          ? await brokerOwner.armFinalizationOutput(activeToken, expectedActivityRevision)
+          : false,
         onSendActivated: () => { submission.phase = "send_activated"; },
         onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
         ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),
@@ -328,7 +345,25 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       ...(finalAnswerAdmission ? { finalAnswerAdmission } : {}),
       onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: emitCommentary,
+      onHeartbeat: () => trace.signalProgress(),
       onProgress: () => trace.signalProgress(),
+      beginFinalizationOnly: async expectedActivityRevision => {
+        const started = activeToken
+          ? await brokerOwner.beginFinalizationOnly(activeToken, expectedActivityRevision)
+          : false;
+        if (started) submission.phase = "send_activated";
+        return started;
+      },
+      cancelFinalizationOnly: async expectedActivityRevision => {
+        const cancelled = activeToken
+          ? await brokerOwner.cancelFinalizationOnly(activeToken, expectedActivityRevision)
+          : false;
+        if (cancelled) submission.phase = "accepted";
+        return cancelled;
+      },
+      armFinalizationOutput: async expectedActivityRevision => activeToken
+        ? await brokerOwner.armFinalizationOutput(activeToken, expectedActivityRevision)
+        : false,
       onSendActivated: () => { submission.phase = "send_activated"; },
       onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
         ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),

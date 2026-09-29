@@ -4,7 +4,7 @@ import type { ChatGptRetryPrompt } from "./steering";
 
 type FenceEvent = Extract<LauncherHelperMessage, {
   type: "event";
-  event: "tool_batch_observed" | "completion_fence_begin" | "completion_fence_commit";
+  event: "tool_batch_observed" | "completion_fence_begin" | "completion_fence_commit" | "finalization_begin" | "finalization_cancel" | "finalization_output_arm";
 }>;
 
 export function assertLauncherHelperFenceFeatures(turn: BrowserTurn, features: Set<string>): void {
@@ -13,6 +13,15 @@ export function assertLauncherHelperFenceFeatures(turn: BrowserTurn, features: S
   }
   if (turn.tunneledOutput && !features.has("tunneled-output-v1")) {
     throw new Error("Launcher browser helper does not support tunneled Web output; update or restart the launcher");
+  }
+  if (turn.beginFinalizationOnly && !features.has("finalization-cas-v1")) {
+    throw new Error("Launcher browser helper does not support finalization CAS; update or restart the launcher");
+  }
+  if (turn.cancelFinalizationOnly && !features.has("finalization-cancel-v1")) {
+    throw new Error("Launcher browser helper does not support finalization cancellation; update or restart the launcher");
+  }
+  if (turn.armFinalizationOutput && !features.has("finalization-output-arm-v1")) {
+    throw new Error("Launcher browser helper does not support finalization output arming; update or restart the launcher");
   }
   if ((turn.retryPromptForAnswer || turn.finalAnswerAdmission) && !features.has("answer-before-completion")) {
     throw new Error("Launcher browser helper does not select answer retries before committing completion; update or restart the launcher");
@@ -43,6 +52,47 @@ export function handleLauncherHelperFenceEvent(
   if (message.event === "tool_batch_observed") {
     if (!turn.externalProgress) return fail(new Error("Browser helper reported a tool boundary without progress"));
     void turn.externalProgress.acknowledgeToolBatch(message.revision).catch(error => fail(errorOf(error)));
+    return;
+  }
+  if (message.event === "finalization_begin") {
+    if (!turn.beginFinalizationOnly) return fail(new Error("Browser helper requested finalization CAS for an unsupported turn"));
+    if (turn.finalAnswerAdmission?.seal() === false) {
+      void send({ type: "finalization_begin_ack", id: message.id, requestId: message.requestId, started: false })
+        .catch(error => fail(errorOf(error)));
+      return;
+    }
+    void Promise.resolve(turn.beginFinalizationOnly(message.expectedRevision))
+      .then(started => {
+        if (!started) turn.finalAnswerAdmission?.reopen();
+        return active() ? send({
+          type: "finalization_begin_ack", id: message.id, requestId: message.requestId, started,
+        }) : undefined;
+      })
+      .catch(error => { turn.finalAnswerAdmission?.reopen(); fail(errorOf(error)); });
+    return;
+  }
+  if (message.event === "finalization_cancel") {
+    if (!turn.cancelFinalizationOnly) return fail(new Error("Browser helper requested finalization cancellation for an unsupported turn"));
+    void Promise.resolve(turn.cancelFinalizationOnly(message.expectedRevision))
+      .then(cancelled => {
+        turn.finalAnswerAdmission?.reopen();
+        return active() ? send({
+          type: "finalization_cancel_ack", id: message.id, requestId: message.requestId, cancelled,
+        }) : undefined;
+      })
+      .catch(error => { turn.finalAnswerAdmission?.reopen(); fail(errorOf(error)); });
+    return;
+  }
+  if (message.event === "finalization_output_arm") {
+    if (!turn.armFinalizationOutput) return fail(new Error("Browser helper requested final output arming for an unsupported turn"));
+    void Promise.resolve(turn.armFinalizationOutput(message.expectedRevision))
+      .then(armed => {
+        turn.finalAnswerAdmission?.reopen();
+        return active() ? send({
+          type: "finalization_output_arm_ack", id: message.id, requestId: message.requestId, armed,
+        }) : undefined;
+      })
+      .catch(error => { turn.finalAnswerAdmission?.reopen(); fail(errorOf(error)); });
     return;
   }
   const fence = turn.completionFence;

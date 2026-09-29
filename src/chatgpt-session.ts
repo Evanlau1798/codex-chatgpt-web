@@ -39,7 +39,13 @@ export const CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR = [
 ].join(", ");
 /** Resolve only inside the verified composer's form; multiple submitters are an error. */
 export const CHATGPT_SEND_BUTTON_SELECTOR = '[data-testid="send-button"], button[type="submit"]';
-export const CHATGPT_STOP_BUTTON_SELECTOR = '[data-testid="stop-button"], form[data-chatgpt-composer] button[type="button"][aria-label="Stop"]';
+export const CHATGPT_STOP_BUTTON_SELECTOR = [
+  '[data-testid="stop-button"]',
+  'form[data-chatgpt-composer] button[type="button"][aria-label="Stop"]',
+  // The current composer omits the test id and localizes its label. Bind the observed stop
+  // glyph inside the verified composer, excluding send arrows and unrelated page controls.
+  'form[data-chatgpt-composer] button[type="button"]:has(svg.icon-primary-action path[d="M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"])',
+].join(", ");
 // The new footer is shared with user messages. Response extraction rejects controls owned by a
 // user content unit, then verifies their relationship to the bound assistant answer.
 export const CHATGPT_COMPLETION_ACTION_SELECTOR = 'button[data-testid="copy-turn-action-button"], [data-turn-key] .turn-action-controls button';

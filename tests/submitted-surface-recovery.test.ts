@@ -88,6 +88,7 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
   let browserStarts = 0;
   let observedRetry: unknown;
   let observedCorrection: unknown;
+  let preparedToken: string | undefined;
   const originalFind = chatGptTurnSessions.find.bind(chatGptTurnSessions);
   const find = spyOn(chatGptTurnSessions, "find").mockImplementation(key => {
     const session = originalFind(key);
@@ -99,6 +100,7 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
     browserStarts += 1;
     const prepared = await turn.prepare();
     const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
+    preparedToken = token;
     prepared.release();
     turn.onSubmitted?.();
     const retry = await turn.retryPromptForError?.(
@@ -106,19 +108,9 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
       1,
     );
     observedRetry = retry;
-    if (!compacting) {
-      if (!token) throw new Error("turn token missing from compiled prompt");
-      let rejected = "";
-      try {
-        const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
-        await callTurnBroker(socketPath, { method: "release", bindingId: claimed.bindingId });
-      } catch (error) {
-        rejected = error instanceof Error ? error.message : String(error);
-      }
-      expect(rejected).toContain("work tools are closed during final-answer recovery");
-    }
-    observedCorrection = await turn.retryPromptForAnswer?.("The tool was blocked by safety policy.", 1);
+    if (!compacting && !token) throw new Error("turn token missing from compiled prompt");
     const answer = "Recovered in the retained conversation.";
+    observedCorrection = await turn.retryPromptForAnswer?.("The tool was blocked by safety policy.", 1);
     turn.onTextDelta(answer);
     return answer;
   };
@@ -128,12 +120,15 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
     request._canonicalContextComplete = true;
     const events: AdapterEvent[] = [];
     await createChatGptWebAdapter(provider).runTurn!(request, { headers: new Headers() }, event => events.push(event));
-
     if (compacting) {
       expect(observedRetry).toBeUndefined();
       expect(observedCorrection).toBeUndefined();
     } else {
-      expect(observedRetry).toMatchObject({ text: CHATGPT_SAME_SURFACE_RECOVERY_PROMPT, replaceCandidate: true });
+      expect(observedRetry).toMatchObject({ replaceCandidate: true });
+      const retryText = (observedRetry as { text: string }).text;
+      expect(retryText).toContain(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT);
+      expect(retryText).toContain(`<codex_native_turn_binding> turn_token ${preparedToken} </codex_native_turn_binding>`);
+      expect(retryText).toContain(JSON.stringify({turn_token:preparedToken,wire_name:"codex.control.output",arguments:{kind:"final",text:"<complete user-facing answer>"}}));
       expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("codex.control.output");
       expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("kind=final");
       expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("Do not call any work tool");

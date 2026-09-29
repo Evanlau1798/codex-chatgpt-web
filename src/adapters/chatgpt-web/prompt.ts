@@ -431,11 +431,11 @@ export function compileChatGptWebPrompt(
           ...skillContract,
           ...transportContract,
           ...outputControlContract,
-          ...tunneledOutputContract,
           ...manualControlContract,
           ...checkpointContract,
           answerContract,
           ...transportResume,
+          ...tunneledOutputContract,
         ].join("\n"),
       };
       const imageTokens = images.reduce((sum, image) => sum + chatGptWebImageTokenReserve(image.detail), 0);
@@ -476,7 +476,6 @@ export function compileChatGptWebPrompt(
       ...skillContract,
       ...transportContract,
       ...outputControlContract,
-      ...tunneledOutputContract,
       ...manualControlContract,
       ...checkpointContract,
       answerContract,
@@ -494,6 +493,7 @@ export function compileChatGptWebPrompt(
             : "Produce the requested checkpoint summary now without calling tools.",
         "</codex_transport_resume>",
       ] : transportResume),
+      ...tunneledOutputContract,
     ].join("\n");
     return { text, images, ...(skillFiles.length ? { skillFiles } : {}),
       ...(turnToken ? { turnToken } : {}), ...(bootstrapLimits ? { bootstrapLimits } : {}) };

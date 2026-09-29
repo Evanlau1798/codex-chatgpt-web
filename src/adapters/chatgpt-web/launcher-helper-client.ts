@@ -283,10 +283,15 @@ export class LauncherBrowserHelperClient {
     if (!pending) return;
     if (message.type === "event") {
       const fenceEvent = message.event === "tool_batch_observed" || message.event === "completion_fence_begin"
-        || message.event === "completion_fence_commit" || message.event === "tunneled_output_reset" || message.event === "tunneled_output_seal";
+        || message.event === "completion_fence_commit" || message.event === "finalization_begin"
+        || message.event === "finalization_cancel"
+        || message.event === "finalization_output_arm"
+        || message.event === "tunneled_output_reset" || message.event === "tunneled_output_seal";
       if (pending.localFailure && !fenceEvent) return;
       if (message.event === "tool_batch_observed" || message.event === "completion_fence_begin"
-        || message.event === "completion_fence_commit") {
+        || message.event === "completion_fence_commit" || message.event === "finalization_begin"
+        || message.event === "finalization_cancel"
+        || message.event === "finalization_output_arm") {
         handleLauncherHelperFenceEvent(message, pending.turn, () => this.pending.get(message.id) === pending,
           value => this.send(value), error => this.abortWithLocalFailure(message.id, error, pending), committed => {
             if (!committed && pending.answerCompletionSealed) {

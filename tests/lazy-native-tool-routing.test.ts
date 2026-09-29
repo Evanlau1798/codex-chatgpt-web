@@ -137,7 +137,7 @@ test("the final context archive chunk resumes bound Native2 tool discovery", asy
     tools: [readTool],
   };
   const turnToken = await broker.register(environment, 60_000, "context-resume-test", undefined, true);
-  const archive = `${"A".repeat(CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS - 1)}\n${"B".repeat(CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS - 1)}\n`;
+  const archive = `${"A".repeat(20_000)}\n${"B".repeat(20_000)}\n`;
   const contextToken = await broker.registerContext(archive, 60_000, "context-resume-test", turnToken);
   const client = await clientFor(socketPath);
 

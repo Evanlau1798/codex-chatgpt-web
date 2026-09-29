@@ -136,11 +136,13 @@ test("browser turn orchestration retains owned prompt insertion and semantic sub
   expect(runBrowserTurn).toContain("this.attachPromptWithCompactionRetry(");
   expect(runBrowserTurn).toContain('.locator("xpath=ancestor::form[1]")');
   expect(runBrowserTurn).toContain('.locator(CHATGPT_SEND_BUTTON_SELECTOR)');
-  expect(runBrowserTurn).toContain("await activateChatGptSendControl(sendButton, stageSignal)");
+  expect(runBrowserTurn).toContain(
+    "await activateChatGptSendControl(sendButton, stageSignal, () => submissionRejection.activate())",
+  );
   expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
     .toBeGreaterThanOrEqual(0);
   expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
-    .toBeLessThan(runBrowserTurn.indexOf("await activateChatGptSendControl(sendButton, stageSignal)"));
+    .toBeLessThan(runBrowserTurn.indexOf("await activateChatGptSendControl(sendButton, stageSignal"));
   expect(runBrowserTurn).toContain("await this.waitForSubmissionAccepted(");
   expect(workerSource).not.toMatch(/\bclipboard\b|pbcopy|pbpaste/i);
 });
@@ -1820,20 +1822,29 @@ test("only a size rejection of the current owned browser submission is non-retry
   const old = makeRequest();
   page.emit("request", old);
   observer.begin(page as unknown as Page);
+  expect(observer.ownedSubmissionRequestObserved()).toBeFalse();
   respond(old);
+  const beforeActivation = makeRequest();
+  page.emit("request", beforeActivation);
+  respond(beforeActivation);
+  expect(observer.ownedSubmissionRequestObserved()).toBeFalse();
+  observer.activate();
   for (const request of [makeRequest("https://other.example/backend-api/f/conversation"),
     makeRequest("https://chatgpt.com/backend-api/sentinel"), makeRequest(undefined, {})]) {
     page.emit("request", request); respond(request);
   }
   expect(bodyReads).toBe(0);
   const successful = makeRequest(); page.emit("request", successful); respond(successful, "message_length_exceeds_limit", 200);
+  expect(observer.ownedSubmissionRequestObserved()).toBeTrue();
   const unfamiliar = makeRequest(); page.emit("request", unfamiliar); respond(unfamiliar, "unknown_error");
   expect(await observer.failure()).toBeUndefined();
   const current = makeRequest(); page.emit("request", current); respond(current);
   expect(await observer.failure()).toMatchObject({
     status: 400, code: "context_length_exceeded", errorType: "invalid_request_error", retryable: false,
   });
+  expect(observer.ownedSubmissionRequestObserved()).toBeTrue();
   observer.begin(page as unknown as Page);
+  expect(observer.ownedSubmissionRequestObserved()).toBeFalse();
   expect(await observer.failure()).toBeUndefined();
   respond(current);
   expect(await observer.failure()).toBeUndefined();
@@ -1887,6 +1898,7 @@ test("upstream failure diagnostics retain only owned request statuses and failur
     method: () => "POST", url: () => url, frame: () => owner,
   });
   observer.begin(page as unknown as Page);
+  observer.activate();
   const foreign = request("https://other.example/backend-api/f/conversation");
   page.emit("request", foreign);
   page.emit("response", { request: () => foreign, status: () => 500 });

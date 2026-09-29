@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { BrowserHelperFenceRegistry } from "../src/adapters/chatgpt-web/browser-helper-fence";
 import { BrowserHelperOutputRegistry } from "../src/adapters/chatgpt-web/browser-helper-output";
-import { assertLauncherHelperFenceFeatures } from "../src/adapters/chatgpt-web/launcher-helper-fence";
+import { assertLauncherHelperFenceFeatures, handleLauncherHelperFenceEvent } from "../src/adapters/chatgpt-web/launcher-helper-fence";
 import { forwardLauncherHelperProgress } from "../src/adapters/chatgpt-web/launcher-helper-progress";
 import { parseLauncherHelperMessage } from "../src/adapters/chatgpt-web/launcher-helper-protocol";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
@@ -26,6 +26,14 @@ test("legacy helpers remain usable only for turns without external MCP progress"
     { tunneledOutput: {} } as BrowserTurn,
     new Set(["progress", "tool-boundary-ack", "completion-fence"]),
   )).toThrow("does not support tunneled Web output");
+  expect(() => assertLauncherHelperFenceFeatures(
+    { beginFinalizationOnly: async () => true } as unknown as BrowserTurn,
+    new Set(["completion-fence"]),
+  )).toThrow("finalization CAS");
+  expect(() => assertLauncherHelperFenceFeatures(
+    { cancelFinalizationOnly: async () => true } as unknown as BrowserTurn,
+    new Set(["finalization-cas-v1"]),
+  )).toThrow("finalization cancellation");
 });
 
 test("helper protocol validates tool boundaries and completion requests", () => {
@@ -41,6 +49,12 @@ test("helper protocol validates tool boundaries and completion requests", () => 
   expect(() => parseLauncherHelperMessage(JSON.stringify({
     type: "event", id: "trace_123", event: "tunneled_output_seal", requestId: 2, afterSequence: 0,
   }))).toThrow("output seal is invalid");
+  expect(parseLauncherHelperMessage(JSON.stringify({
+    type: "event", id: "trace_123", event: "finalization_begin", requestId: 3, expectedRevision: 4,
+  }))).toMatchObject({ event: "finalization_begin", requestId: 3, expectedRevision: 4 });
+  expect(parseLauncherHelperMessage(JSON.stringify({
+    type: "event", id: "trace_123", event: "finalization_cancel", requestId: 4, expectedRevision: 5,
+  }))).toMatchObject({ event: "finalization_cancel", requestId: 4, expectedRevision: 5 });
 });
 
 test("helper fence registry correlates begin and commit acknowledgements", async () => {
@@ -95,6 +109,98 @@ test("browser helper mirrors ordered output and acknowledges final reset", async
   registry.resolveSeal("trace_123", sealFrame.requestId, true);
   await expect(sealed).resolves.toBeTrue();
   registry.end("trace_123");
+});
+
+test("helper fence registry correlates finalization CAS acknowledgements", async () => {
+  const sent: unknown[] = [];
+  const registry = new BrowserHelperFenceRegistry(message => { sent.push(message); return true; }, () => {});
+  const transport = registry.start("trace_123", true) as BrowserTurn;
+  const pending = transport.beginFinalizationOnly!(7);
+  const frame = sent[0] as { requestId: number };
+  expect(sent[0]).toMatchObject({ event: "finalization_begin", expectedRevision: 7 });
+  (registry as unknown as { resolveFinalization(id: string, requestId: number, started: boolean): void })
+    .resolveFinalization("trace_123", frame.requestId, true);
+  await expect(pending).resolves.toBeTrue();
+  const confirmation = transport.armFinalizationOutput!(8);
+  const confirmationFrame = sent[1] as { requestId: number };
+  expect(sent[1]).toMatchObject({ event: "finalization_output_arm", expectedRevision: 8 });
+  registry.resolveFinalizationOutput("trace_123", confirmationFrame.requestId, true);
+  await expect(confirmation).resolves.toBeTrue();
+  registry.end("trace_123");
+});
+
+test("helper fence registry correlates finalization cancellation acknowledgements", async () => {
+  const sent: unknown[] = [];
+  const registry = new BrowserHelperFenceRegistry(message => { sent.push(message); return true; }, () => {});
+  const transport = registry.start("trace_123", true) as BrowserTurn;
+  const pending = transport.cancelFinalizationOnly!(8);
+  const frame = sent[0] as { requestId: number };
+  expect(sent[0]).toMatchObject({ event: "finalization_cancel", expectedRevision: 8 });
+  registry.resolveFinalizationCancel("trace_123", frame.requestId, true);
+  await expect(pending).resolves.toBeTrue();
+  registry.end("trace_123");
+});
+
+test("launcher helper forwards finalization CAS to the daemon turn", async () => {
+  const sent: unknown[] = [];
+  let sealed = 0;
+  let reopened = 0;
+  const turn = {
+    beginFinalizationOnly: async (revision: number) => revision === 9,
+    finalAnswerAdmission: {
+      seal: () => { sealed += 1; return true; },
+      reopen: () => { reopened += 1; },
+    },
+  } as BrowserTurn;
+  handleLauncherHelperFenceEvent(
+    { type: "event", id: "trace_123", event: "finalization_begin", requestId: 4, expectedRevision: 9 },
+    turn,
+    () => true,
+    async message => { sent.push(message); },
+    error => { throw error; },
+  );
+  await Bun.sleep(0);
+  expect(sent).toEqual([{ type: "finalization_begin_ack", id: "trace_123", requestId: 4, started: true }]);
+  expect(sealed).toBe(1);
+  expect(reopened).toBe(0);
+});
+
+test("launcher helper arms final output only after the recovery browser submission", async () => {
+  const sent: unknown[] = [];
+  let reopened = 0;
+  const turn = {
+    armFinalizationOutput: async (revision: number) => revision === 10,
+    finalAnswerAdmission: { seal: () => true, reopen: () => { reopened += 1; } },
+  } as BrowserTurn;
+  handleLauncherHelperFenceEvent(
+    { type: "event", id: "trace_123", event: "finalization_output_arm", requestId: 5, expectedRevision: 10 },
+    turn,
+    () => true,
+    async message => { sent.push(message); },
+    error => { throw error; },
+  );
+  await Bun.sleep(0);
+  expect(sent).toEqual([{ type: "finalization_output_arm_ack", id: "trace_123", requestId: 5, armed: true }]);
+  expect(reopened).toBe(1);
+});
+
+test("launcher helper reopens daemon admission when unsent finalization is cancelled", async () => {
+  const sent: unknown[] = [];
+  let reopened = 0;
+  const turn = {
+    cancelFinalizationOnly: async (revision: number) => revision === 10,
+    finalAnswerAdmission: { seal: () => true, reopen: () => { reopened += 1; } },
+  } as BrowserTurn;
+  handleLauncherHelperFenceEvent(
+    { type: "event", id: "trace_123", event: "finalization_cancel", requestId: 6, expectedRevision: 10 },
+    turn,
+    () => true,
+    async message => { sent.push(message); },
+    error => { throw error; },
+  );
+  await Bun.sleep(0);
+  expect(sent).toEqual([{ type: "finalization_cancel_ack", id: "trace_123", requestId: 6, cancelled: true }]);
+  expect(reopened).toBe(1);
 });
 
 test("ending a browser helper output mirror rejects a pending reset", async () => {

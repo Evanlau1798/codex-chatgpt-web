@@ -47,6 +47,9 @@ export type BrowserHelperInputMessage = BrowserHelperRunMessage | MaintenanceMes
   | { type: "send_activated_ack"; id: string }
   | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision: number | null }
   | { type: "completion_fence_commit_ack"; id: string; requestId: number; committed: boolean }
+  | { type: "finalization_begin_ack"; id: string; requestId: number; started: boolean }
+  | { type: "finalization_cancel_ack"; id: string; requestId: number; cancelled: boolean }
+  | { type: "finalization_output_arm_ack"; id: string; requestId: number; armed: boolean }
   | { type: "tunneled_output"; id: string; output: BrokerTurnOutputEvent }
   | { type: "tunneled_output_reset_ack"; id: string; requestId: number; reset: boolean }
   | { type: "tunneled_output_seal_ack"; id: string; requestId: number; sealed: boolean }

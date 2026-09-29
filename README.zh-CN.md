@@ -6,20 +6,20 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-mac-arm64.dmg"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-linux-x64.AppImage"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-mac-x64.dmg">macOS Intel</a> · <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">所有版本</a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">macOS Intel</a> · <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">最新版本</a>
 </p>
 
 <p align="center">
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **开发候选版：`6.1.3-Enhanced.1`。** 下载按钮仍指向已发布的 Enhanced 安装包；此分支不代表已经发版。
+> **开发候选版：`6.1.3-Enhanced.2`。** 下载按钮会始终打开最新发布的 Enhanced 版本；仅更新此分支不会发布版本。
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">故障排除</a> · <a href="SECURITY.md">安全</a> · <a href="CONTRIBUTING.md">贡献</a>

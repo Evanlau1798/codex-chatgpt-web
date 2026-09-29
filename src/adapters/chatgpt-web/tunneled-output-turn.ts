@@ -30,8 +30,10 @@ interface TunnelOptions {
   attempt: number;
   pollMs?: number;
   fallbackGraceMs?: number;
+  missingResponseGraceMs?: number;
+  terminalEvidenceGraceMs?: number;
   /** Inspect an empty stopped response while its output epoch is still open. */
-  beforeDomFallback?(stoppedMs: number): Promise<"observe" | ChatGptRetryPrompt | undefined>;
+  beforeDomFallback?(stoppedMs: number): Promise<"observe" | "terminal" | "nonterminal" | ChatGptRetryPrompt | undefined>;
 }
 
 export type ChatGptTunneledOutputDecision =
@@ -45,11 +47,15 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
   const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
   const pollMs = options.pollMs ?? 250;
   const fallbackGraceMs = options.fallbackGraceMs ?? 2_000;
+  const missingResponseGraceMs = options.missingResponseGraceMs ?? 60_000;
+  const terminalEvidenceGraceMs = options.terminalEvidenceGraceMs ?? 60_000;
   let sequence = options.afterSequence ?? 0;
   let pending = waitForOutput(options.output, sequence, signal);
   let final: BrokerTurnOutputEvent | undefined;
   let fenceRevision: number | undefined;
   let stoppedWithoutFinalSince: number | undefined;
+  let missingResponseSince: number | undefined;
+  let terminalEvidenceSince: number | undefined;
   let stoppedWithNativeFinalSince: number | undefined;
   let preemptiveRetry: string | undefined;
   let stopRequested = false;
@@ -59,6 +65,8 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
     pending = waitForOutput(options.output, sequence, signal);
     fenceRevision = undefined;
     stoppedWithoutFinalSince = undefined;
+    missingResponseSince = undefined;
+    terminalEvidenceSince = undefined;
     stoppedWithNativeFinalSince = undefined;
     options.onProgress?.();
     if (event.kind === "commentary") options.onCommentary?.(event.text);
@@ -92,8 +100,24 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
         return { status: "retry", retry: { text: preemptiveRetry }, lastSequence: sequence };
       }
       if (!final) {
-        if (!observed.responsePresent || observed.running || observed.toolCallsInFlight) stoppedWithoutFinalSince = undefined;
-        else stoppedWithoutFinalSince ??= Date.now();
+        if (observed.running || observed.toolCallsInFlight) {
+          stoppedWithoutFinalSince = undefined;
+          missingResponseSince = undefined;
+          terminalEvidenceSince = undefined;
+        } else if (!observed.responsePresent) {
+          stoppedWithoutFinalSince = undefined;
+          terminalEvidenceSince = undefined;
+          missingResponseSince ??= Date.now();
+          if (Date.now() - missingResponseSince >= missingResponseGraceMs) {
+            throw tunneledFallbackError(
+              "ChatGPT did not create a response DOM after the message was sent",
+              "chatgpt_response_dom_missing",
+            );
+          }
+        } else {
+          missingResponseSince = undefined;
+          stoppedWithoutFinalSince ??= Date.now();
+        }
         if (stoppedWithoutFinalSince !== undefined && Date.now() - stoppedWithoutFinalSince >= fallbackGraceMs) {
           const settled = await Promise.race([pending, delay(pollMs)]);
           if (settled.kind === "output") { acceptOutput(settled.event); continue; }
@@ -123,10 +147,28 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
             preemptiveRetry ??= options.takePreemptiveRetry?.();
             if (preemptiveRetry) continue;
             if ("error" in admission) throw admission.error;
+            if (admission.retry === "nonterminal") {
+              terminalEvidenceSince ??= Date.now();
+              if (Date.now() - terminalEvidenceSince >= terminalEvidenceGraceMs) {
+                throw tunneledFallbackError(
+                  "ChatGPT stopped without producing terminal completion evidence",
+                  "chatgpt_completion_evidence_missing",
+                );
+              }
+              continue;
+            }
+            if (admission.retry === "terminal") {
+              terminalEvidenceSince = undefined;
+              continue;
+            }
             if (admission.retry === "observe") continue;
             if (admission.retry) {
               options.completionAdmission?.reopen();
-              return { status: "retry", retry: admission.retry, lastSequence: sequence };
+              return {
+                status: "retry",
+                retry: { ...admission.retry, expectedActivityRevision: sealRevision },
+                lastSequence: sequence,
+              };
             }
           }
           if (!await options.output.seal(sequence, sealRevision)) {

@@ -3,8 +3,12 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import * as z from "zod/v4";
 import { namespacedToolName, type CodexTool } from "../../types";
 import { VERSION } from "../../version";
+import { estimateTokens } from "../../lib/token-estimate";
 import type { ChatGptTurnEnvironment } from "./environment";
-import { CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS } from "./context-bootstrap";
+import {
+  CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS,
+  CODEX_CONTEXT_ARCHIVE_OUTPUT_TOKENS,
+} from "./context-bootstrap";
 import { formatContextArchiveChunk } from "./context-archive-response";
 import {
   assertClaudeBashCommand,
@@ -384,9 +388,13 @@ export async function runChatGptMcpServer(options: {
           index: requestedIndex,
           chunkChars: CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS,
         }, 5_000, extra.signal);
+        const text = formatContextArchiveChunk(archive);
+        if (estimateTokens(text) > CODEX_CONTEXT_ARCHIVE_OUTPUT_TOKENS) {
+          throw new Error("Codex context archive page exceeds the Native tool output budget");
+        }
         return { content: [{
           type: "text" as const,
-          text: formatContextArchiveChunk(archive),
+          text,
         }] };
       }
       return withTurn("codex_tool_inventory", requestId, extra, claimed => {

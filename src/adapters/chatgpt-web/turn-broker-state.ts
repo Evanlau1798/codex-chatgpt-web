@@ -1,4 +1,5 @@
 import type { ChatGptTurnEnvironment } from "./environment";
+import { estimateTokens } from "../../lib/token-estimate";
 import type { AgentWait } from "./turn-broker-agent-wait";
 import type { BrokerToolRequest, BrokerToolResult, BrokerTurnOutputEvent } from "./turn-broker-protocol";
 
@@ -78,6 +79,8 @@ export interface TurnChannel {
   outputFinalSequence?: number;
   outputSealed: boolean;
   finalizationOnly: boolean;
+  finalizationOutputArmed: boolean;
+  finalizationPendingOutput?: BrokerTurnOutputEvent;
   safe?: SafeTurnControl;
 }
 
@@ -109,19 +112,27 @@ export function steeringResult(instruction: string): BrokerToolResult {
   }] };
 }
 
-export function completeArchiveChunks(text: string, limit: number): string[] {
+export function completeArchiveChunks(text: string, limit: number, tokenLimit = Number.POSITIVE_INFINITY): string[] {
+  if (!Number.isFinite(limit) || limit < 1 || tokenLimit < 1) {
+    throw new Error("context archive chunk limits must be positive");
+  }
   const lines = text.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   const chunks: string[] = [];
   let current = "";
+  let currentTokens = 0;
   for (const line of lines) {
-    if (line.length > limit) {
-      throw new Error(`context archive entry requires ${line.length} characters and exceeds the MCP chunk limit`);
+    const lineTokens = estimateTokens(line);
+    if (line.length > limit || lineTokens > tokenLimit) {
+      throw new Error(`context archive entry requires ${line.length} characters and ${lineTokens} tokens and exceeds the MCP chunk limit`);
     }
-    if (current && current.length + line.length > limit) {
+    if (current && (current.length + line.length > limit
+      || currentTokens + lineTokens > tokenLimit)) {
       chunks.push(current);
       current = "";
+      currentTokens = 0;
     }
     current += line;
+    currentTokens += lineTokens;
   }
   if (current) chunks.push(current);
   return chunks;
