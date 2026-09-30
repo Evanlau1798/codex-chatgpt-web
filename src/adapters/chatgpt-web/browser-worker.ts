@@ -46,8 +46,10 @@ import {
 import {
   CHATGPT_LUNA_BROWSER_INPUT_TOKEN_BUDGET,
   compiledChatGptWebMaxMessageChars,
+  estimateChatGptWebImageTokens,
   estimateCompiledChatGptWebMessageTokens,
 } from "./input-tokens";
+import { CHATGPT_WEB_PLATFORM_RESERVE_TOKENS } from "../../chatgpt-web-models";
 import { CHATGPT_MAX_INPUT_IMAGES, type CompiledChatGptWebPrompt, type ChatGptWebPromptImage } from "./prompt";
 import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import { ChatGptVisibleTraceTracker, type ChatGptVisibleTraceBlock } from "./visible-trace-tracker";
@@ -3938,11 +3940,16 @@ export class ChatGptBrowserWorker {
         turn.capabilities,
         requestedMode.effort,
       );
-      const estimatedInputTokens = estimateCompiledChatGptWebInputTokens(
-        prepared.modelInputText ? { ...prepared, text: prepared.modelInputText } : prepared,
-        turn.modelId,
-      );
       const estimatedMessageTokens = estimateCompiledChatGptWebMessageTokens(prepared, turn.modelId);
+      // Only an identical single message can share its exact count. Archive canonical
+      // history and multipart acknowledgements still require their separate accounting.
+      const estimatedInputTokens = !prepared.multipart
+        && (!prepared.modelInputText || prepared.modelInputText === prepared.text)
+        ? CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + estimatedMessageTokens + estimateChatGptWebImageTokens(prepared)
+        : estimateCompiledChatGptWebInputTokens(
+          prepared.modelInputText ? { ...prepared, text: prepared.modelInputText } : prepared,
+          turn.modelId,
+        );
       if (!multipartTransport) {
         assertChatGptWebInputWithinLimits(
           estimatedInputTokens,

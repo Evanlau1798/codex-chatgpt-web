@@ -28,7 +28,7 @@ test("REG-04: short generated structured compaction uses one exact literal paste
   await editor.run(prompt, { options: { forceStructuredDirect: true } });
   expect(editor.read()).toBe(prompt);
   expect(editor.pastes).toEqual([prompt]);
-  expect(editor.verified).toEqual(["", prompt, prompt]);
+  expect(editor.verified).toEqual(["", prompt]);
 });
 
 test("structured compaction requests one control handoff instead of an ordinary recovery checkpoint", () => {
@@ -62,7 +62,7 @@ for (const [name, prompt] of [
     expect(editor.pastes.join("")).toBe(prompt);
     expect(editor.pastes.every(value => value.length <= CHATGPT_LITERAL_PASTE_CHUNK_CHARS)).toBeTrue();
     expect(editor.verified[0]).toBe("");
-    expect(editor.verified.slice(1, -1)).toEqual(editor.pastes.map((_, index) => editor.pastes.slice(0, index + 1).join("")));
+    expect(editor.verified.slice(1, -1)).toEqual(editor.pastes.slice(0, -1).map((_, index) => editor.pastes.slice(0, index + 1).join("")));
     expect(editor.verified.at(-1)).toBe(prompt);
     expect(editor.reanchors).toBe(1);
     expect(editor.element.querySelectorAll("img, script")).toHaveLength(0);
@@ -107,15 +107,12 @@ test("nonempty fresh composer is rejected before an editor mutation", async () =
 
 test("final settled readback rejects delayed editor drift without resending", async () => {
   const prompt = "short *literal* fixture";
-  const editor = literalPasteComposer();
-  await expect(editor.run(prompt, {
-    verify: async expected => {
-      await editor.verify(expected);
-      if (expected === prompt) queueMicrotask(() => editor.setText(prompt.slice(0, -1) + "!"));
-    },
-  })).rejects.toThrow("integrity mismatch");
+  const editor = literalPasteComposer({ onPaste: () => {
+    setTimeout(() => editor.setText(prompt.slice(0, -1) + "!"), 0);
+  } });
+  await expect(editor.run(prompt)).rejects.toThrow("integrity mismatch");
   expect(editor.pastes).toEqual([prompt]);
-  expect(editor.verified).toEqual(["", prompt, prompt]);
+  expect(editor.verified).toEqual(["", prompt]);
   expect(editor.reanchors).toBe(0);
 });
 

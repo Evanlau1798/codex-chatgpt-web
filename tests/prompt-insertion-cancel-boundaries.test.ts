@@ -40,7 +40,7 @@ test("an already cancelled empty insertion does not report success", async () =>
   assert.deepEqual(probe.calls, []);
 });
 
-for (const abortAt of ["verify-1", "acquire", "focus", "edit-1", "verify-2", "verify-3", "reanchor"]) {
+for (const abortAt of ["verify-1", "acquire", "focus", "edit-1", "verify-2", "reanchor"]) {
   test(`short literal insertion stops at cancellation boundary ${abortAt}`, async () => {
     const probe = cancellationProbe(abortAt, "plain fixture", { forceStructuredDirect: true });
     await assert.rejects(probe.run, error => error === probe.reason);
@@ -52,7 +52,7 @@ for (const abortAt of ["verify-1", "acquire", "focus", "edit-1", "verify-2", "ve
 for (const [abortAt, edits] of [
   ["verify-1", 0], ["acquire", 0], ["focus", 0], ["edit-1", 1],
   ["verify-2", 1], ["edit-2", 2], ["verify-3", 2], ["verify-4", 3],
-  ["verify-5", 3], ["reanchor", 3],
+  ["reanchor", 3],
 ] as const) {
   test(`multi-paste insertion stops at ${abortAt} after ${edits} settled edits`, async () => {
     const probe = cancellationProbe(abortAt, "x".repeat(CHATGPT_LITERAL_PASTE_CHUNK_CHARS * 2 + 1));
@@ -73,9 +73,9 @@ test("cancellation after literal prefix verification prevents the next native pa
 });
 
 test("cancellation at final full readback prevents the final caret action", async () => {
-  const probe = cancellationProbe("verify-3", "plain_fixture");
+  const probe = cancellationProbe("verify-2", "plain_fixture");
   await assert.rejects(probe.run, error => error === probe.reason);
-  assert.equal(probe.calls.at(-1), "verify-3");
+  assert.equal(probe.calls.at(-1), "verify-2");
   assert.equal(probe.calls.includes("reanchor"), false);
   assert.equal(probe.editor.pastes.length, 1);
 });

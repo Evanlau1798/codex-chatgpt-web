@@ -114,5 +114,5 @@ test("a short fresh harness is attached once as literal text without marker repl
     reanchor: async () => {},
   });
   expect(inputs).toEqual([prompt]);
-  expect(verified).toEqual(["", prompt, prompt]);
+  expect(verified).toEqual(["", prompt]);
 });

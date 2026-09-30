@@ -113,13 +113,10 @@ test("trailing surrogate and delimiters require no subsequent replacement mutati
 
 test("asynchronous remount drift is rejected by final readback without restoring or resending", async () => {
   const prompt = "\uF8FF literal *tail*";
-  const editor = literalPasteComposer();
-  await expect(editor.run(prompt, {
-    verify: async expected => {
-      await editor.verify(expected);
-      if (expected === prompt) setTimeout(() => { editor.remount(); editor.setText("changed"); }, 0);
-    },
-  })).rejects.toThrow("integrity mismatch");
+  const editor = literalPasteComposer({ onPaste: () => {
+    setTimeout(() => { editor.remount(); editor.setText("changed"); }, 0);
+  } });
+  await expect(editor.run(prompt)).rejects.toThrow("integrity mismatch");
   expect(editor.pastes).toEqual([prompt]);
   expect(editor.reanchors).toBe(0);
 });

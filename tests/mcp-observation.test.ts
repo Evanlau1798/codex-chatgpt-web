@@ -1,10 +1,49 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import * as z from "zod/v4";
 import { observeMcpToolCalls } from "../src/adapters/chatgpt-web/mcp-observation";
+
+test("Native final observations separate handler time from transport write without exposing payload", async () => {
+  const events: Array<Record<string, unknown>> = [];
+  let now = 100;
+  const clock = spyOn(performance, "now").mockImplementation(() => now);
+  const message = { jsonrpc: "2.0" as const, id: "private-request-id", method: "tools/call",
+    params: { name: "codex_tool_call", arguments: { turn_token: "private-token",
+      wire_name: "codex.control.output", arguments: { kind: "final", text: "private-answer" } } } };
+  const reply = { jsonrpc: "2.0" as const, id: message.id, result: {
+    content: [{ type: "text", text: "private-answer" }], structuredContent: { accepted: true, sequence: 1 } } };
+  let sent: unknown;
+  const transport: Transport = { start: async () => {}, close: async () => {},
+    send: async value => { sent = value; now += 7; } };
+  try {
+    observeMcpToolCalls(transport, new Set(["codex_tool_call"]), event => events.push(event));
+    transport.onmessage?.(message);
+    now += 20;
+    await transport.send(reply);
+    expect(sent).toBe(reply);
+    expect(events[0]).toMatchObject({ event: "call_received", output_kind: "final" });
+    expect(events[1]).toMatchObject({ event: "reply_sent", output_kind: "final",
+      handler_elapsed_ms: 20, send_elapsed_ms: 7, elapsed_ms: 27 });
+    for (const secret of [message.id, "private-token", "private-answer"]) expect(JSON.stringify(events)).not.toContain(secret);
+  } finally { clock.mockRestore(); }
+});
+
+test.each([null, "private-invalid-value", { wire_name: "private-other-control", arguments: { kind: "final" } },
+  { wire_name: "codex.control.output", arguments: null },
+  { wire_name: "codex.control.output", arguments: { kind: "private-invalid-kind" } },
+])("unvalidated payloads cannot leak into output timing labels", async args => {
+  const events: Array<Record<string, unknown>> = [];
+  const transport: Transport = { start: async () => {}, close: async () => {}, send: async () => {} };
+  observeMcpToolCalls(transport, new Set(["codex_tool_call"]), event => events.push(event));
+  transport.onmessage?.({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "codex_tool_call", arguments: args } });
+  await transport.send({ jsonrpc: "2.0", id: 1, result: {} });
+  expect(events).toHaveLength(2);
+  expect(events.every(event => !("output_kind" in event))).toBeTrue();
+  expect(JSON.stringify(events)).not.toContain("private");
+});
 
 test("MCP observations separate pre-handler validation and returned tool errors without recording content", async () => {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
