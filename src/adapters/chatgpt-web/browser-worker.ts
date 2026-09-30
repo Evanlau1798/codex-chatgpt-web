@@ -55,6 +55,7 @@ import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
 import {
   CHATGPT_COMPLETION_SETTLE_MS,
   ChatGptCompletionTracker,
+  ChatGptMissingPostToolAnswerError,
   type ChatGptFinalProjectionState,
 } from "./completion-tracker";
 import type { ChatGptRetryPrompt } from "./steering";
@@ -4273,6 +4274,7 @@ export class ChatGptBrowserWorker {
       let recoveryExpectedActivityRevision: number | undefined;
       let recoveryToolBatchRevision: number | undefined;
       let recoveryObservationBaseline: ChatGptAssistantTurnState | undefined;
+      let recoveryCompletionTracker: ChatGptCompletionTracker | undefined;
       let recoveryInsertionCancelled = false;
       for (let responseAttempt = 1; ; responseAttempt += 1) {
         recoveryInsertionCancelled = false;
@@ -4329,6 +4331,9 @@ export class ChatGptBrowserWorker {
         };
         const resumeRecoveryObservation = (): void => {
           recoveryObservationOnly = true;
+          // No new response was sent: retain the original post-tool projection proof.
+          completionTracker = recoveryCompletionTracker ?? completionTracker;
+          recoveryCompletionTracker = undefined;
           initialResponseTurn = recoveryObservationBaseline ?? initialResponseTurn;
           responseTurn = responseTurns.nth(initialResponseTurn.count);
           initialToolBatchRevision = recoveryToolBatchRevision ?? initialToolBatchRevision;
@@ -4641,22 +4646,30 @@ export class ChatGptBrowserWorker {
               }
               const progress = turn.externalProgress?.snapshot();
               if (!snapshot.responsePresent || running || chatGptExternalToolCallsAreInFlight(progress)) return "observe";
+              let missingAnswerMessage: string | undefined;
               if (snapshot.visibleText.trim()) {
-                const completion = completionTracker.update({
-                  responsePresent: true, running: false,
-                  currentText: snapshot.visibleText, currentHtml: snapshot.fullHtml,
-                  completionActionVisible: snapshot.completionActionVisible,
-                  projection: snapshot.projection,
-                });
-                if (completion.status === "stalled") {
-                  throw new ChatGptWebAdapterError(
-                    `ChatGPT final Markdown projection stopped before completion (${JSON.stringify(completion.diagnostic)})`,
-                    { status: 502, errorType: "server_error", code: "chatgpt_final_projection_stalled",
-                      retryable: false, retireSession: true },
-                  );
+                try {
+                  const completion = completionTracker.update({
+                    responsePresent: true, running: false,
+                    currentText: snapshot.visibleText, currentHtml: snapshot.fullHtml,
+                    completionActionVisible: snapshot.completionActionVisible,
+                    projection: snapshot.projection,
+                  });
+                  if (completion.status === "stalled") {
+                    throw new ChatGptWebAdapterError(
+                      `ChatGPT final Markdown projection stopped before completion (${JSON.stringify(completion.diagnostic)})`,
+                      { status: 502, errorType: "server_error", code: "chatgpt_final_projection_stalled",
+                        retryable: false, retireSession: true },
+                    );
+                  }
+                  if (completion.status === "complete") return undefined;
+                  return snapshot.completionActionVisible ? "terminal" : "nonterminal";
+                } catch (error) {
+                  if (!(error instanceof ChatGptMissingPostToolAnswerError)) throw error;
+                  // A pre-tool projection is not a final. Keep the tunnel open for the same
+                  // guarded, single-shot recovery used by an empty stopped response.
+                  missingAnswerMessage = error.message;
                 }
-                if (completion.status === "complete") return undefined;
-                return snapshot.completionActionVisible ? "terminal" : "nonterminal";
               }
               // Recent completed tools protect an empty DOM, not a bound visible final answer.
               if (chatGptExternalProgressSuppressesDomHealth(progress, Date.now())) return "observe";
@@ -4664,7 +4677,7 @@ export class ChatGptBrowserWorker {
               const composers = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
               const composerVisibleCount = await composers.count();
               const failure = chatGptCompletionEvidenceFailure(
-                "ChatGPT stopped after native tool work without a final answer or usable completion evidence",
+                missingAnswerMessage ?? "ChatGPT stopped after native tool work without a final answer or usable completion evidence",
                 answerBuffer.deliveredChars() > 0,
                 {
                   responsePresent: snapshot.responsePresent, bindingPresent: true,
@@ -4697,6 +4710,7 @@ export class ChatGptBrowserWorker {
                 }
                 throw failure.error;
               }
+              const recoveryText = snapshot.visibleText;
               beforeRecoveryInsertion = async composer => {
                 const latest = await readChatGptAssistantTurnState(responseTurns);
                 const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible();
@@ -4714,7 +4728,7 @@ export class ChatGptBrowserWorker {
                 const progress = turn.externalProgress?.snapshot();
                 const pendingSteering = this.takePreemptiveRetry(turn.traceId);
                 if (pendingSteering) preemptiveRetryPrompt ??= pendingSteering;
-                if (snapshot.visibleText.trim() || snapshot.stoppedThinkingVisible || running
+                if (snapshot.visibleText !== recoveryText || snapshot.stoppedThinkingVisible || running
                   || chatGptExternalToolCallsAreInFlight(progress) || pendingSteering) {
                   recoveryInsertionCancelled = true;
                   return false;
@@ -4732,7 +4746,7 @@ export class ChatGptBrowserWorker {
                 const pendingSteering = this.takePreemptiveRetry(turn.traceId);
                 if (pendingSteering) preemptiveRetryPrompt ??= pendingSteering;
                 return latest.lastId === current.lastId && latest.count === current.count
-                  && snapshot.responsePresent && !snapshot.visibleText.trim() && !snapshot.stoppedThinkingVisible
+                  && snapshot.responsePresent && snapshot.visibleText === recoveryText && !snapshot.stoppedThinkingVisible
                   && !running && !pendingSteering && turn.abortSignal?.aborted !== true
                   && responseHtml === confirmedResponseHtml
                   ? {
@@ -5365,7 +5379,8 @@ export class ChatGptBrowserWorker {
         recoveryExpectedActivityRevision = retryPrompt.expectedActivityRevision;
         recoveryToolBatchRevision = retryPrompt.expectedActivityRevision === undefined
           ? undefined
-          : turn.externalProgress?.snapshot().lastToolBatchRevision;
+          : initialToolBatchRevision;
+        recoveryCompletionTracker = retryPrompt.expectedActivityRevision === undefined ? undefined : completionTracker;
         if (responsePrompt === activeCompactionToolResultInstruction()) {
           console.info(`[chatgpt-web] browser turn ${turn.traceId} compaction source settlement action=send_control_response attempt=${responseAttempt + 1}`);
         } else {

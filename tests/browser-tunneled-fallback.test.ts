@@ -23,6 +23,7 @@ async function runFixture(options: {
   pastToolBatch?: boolean; retained?: boolean; tunneledRetry?: "answer" | "preemptive";
   compactionSettlement?: boolean;
   emptyStopped?: boolean; recoveryFails?: boolean; composerBusy?: boolean; stoppedThinking?: boolean;
+  postToolRecovery?: boolean;
   composerBusyAfterAdmission?: boolean;
   boundRecoveryParagraphs?: boolean;
   localizedGeneration?: boolean;
@@ -44,11 +45,13 @@ async function runFixture(options: {
   delayedSecondBatch?: boolean;
   finalAfterToolWithoutAssistantTurn?: boolean;
   unsettledBaseline?: boolean;
+  settledPreToolProjection?: boolean;
   slowTerminalProjection?: boolean;
   untunneled?: boolean;
   conversationRoute?: string;
   initialRoute?: string;
 } = {}) {
+  const recoverable = options.emptyStopped || options.postToolRecovery;
   const diagnostics = mkdtempSync(join(tmpdir(), "boole-browser-"));
   const progress = new ChatGptExternalTurnProgress();
   const actions: string[] = [];
@@ -58,7 +61,8 @@ async function runFixture(options: {
   const info = spyOn(console, "info").mockImplementation(message => { logs.push(`info:${message}`); });
   const warn = spyOn(console, "warn").mockImplementation(message => { logs.push(`warn:${message}`); });
   const controller = new AbortController();
-  const guard = setTimeout(() => controller.abort(new Error("fixture did not settle")), options.recentToolProgress || options.missingAssistantTurn ? 4_000 : 10_000);
+  const guard = setTimeout(() => controller.abort(new Error("fixture did not settle")),
+    (options.recentToolProgress || options.missingAssistantTurn) && !recoverable ? 4_000 : 10_000);
   let now = Date.now();
   const clock = spyOn(Date, "now").mockImplementation(() => now);
   let submitted = 0;
@@ -218,7 +222,7 @@ async function runFixture(options: {
     attachPromptWithCompactionRetry: async (...args: any[]) => {
       const bindConnector = args[2];
       expect(bindConnector).toBe(!options.retained && submitted === 0);
-      if (options.emptyStopped && submitted > 0) {
+      if (recoverable && submitted > 0) {
         if (options.toolBatchAtRecoveryInsertion && !actions.includes("recovery-tool-started")) {
           progress.recordToolBatch(1);
           actions.push("recovery-tool-started");
@@ -284,15 +288,17 @@ async function runFixture(options: {
         recoveryGuardSent = true;
         composerText = "";
          submitted++;
+         if (options.postToolRecovery && submitted === 2 && options.recoveryFails) text = "";
          if (options.finalDuringRecoverySubmission) submitTurnOutput(channel, "final", FINAL);
          actions.push("send");
       },
       press: async () => {
         if (submitted > 0) composerText = "";
         submitted++;
+        if (options.postToolRecovery && submitted === 2 && options.recoveryFails) text = "";
         if (options.pastToolBatch) text = FINAL;
         if (options.compactionSettlement && submitted === 2) text = "CODEX_COMPACTION_SOURCE_SETTLED";
-        if (options.emptyStopped && submitted === 2 && !options.recoveryFails) {
+        if (recoverable && submitted === 2 && !options.recoveryFails) {
           submitTurnOutput(channel, "final", FINAL);
         }
         actions.push("send");
@@ -318,8 +324,10 @@ async function runFixture(options: {
         responsePresent: !(options.missingBaseline && progress.snapshot().activeToolCalls),
         visibleText: projectedText, fullHtml: projectedText, plainTextFallback: projectedText,
         markdownSegments: [], markdownRoots: [], traceBlocks: [], nativeToolCandidates: [],
-        completionActionVisible: !options.emptyStopped || actions.includes("late-dom-final"),
-        globalCompletionActionVisible: !options.emptyStopped || actions.includes("late-dom-final"),
+        completionActionVisible: !options.emptyStopped || actions.includes("late-dom-final")
+          || Boolean(options.settledPreToolProjection && progress.snapshot().activeToolCalls),
+        globalCompletionActionVisible: !options.emptyStopped || actions.includes("late-dom-final")
+          || Boolean(options.settledPreToolProjection && progress.snapshot().activeToolCalls),
         stoppedThinkingVisible: options.stoppedThinking === true,
         projection: { rootId: "current-final", boundaryProtocolPresent: false,
           lastNodePresent: true, lastMutationAt: options.unsettledBaseline ? now : 1, animations: [] },
@@ -350,6 +358,7 @@ async function runFixture(options: {
     },
     onCommentary: text => { commentary.push(text); },
     retryPromptForError: async (error, attempt) => {
+      if (!recoverable) return undefined;
       if (pendingSecondBatch) actions.push("recovery-before-delayed-tool");
       if (options.emptyStopped) recoveryDecisionAgeMs = now - lastToolResultAt;
       const session = {
@@ -419,14 +428,14 @@ async function runFixture(options: {
       channel.finalizationOutputArmed = true;
       channel.activityRevision = 3;
       publishPendingFinalizationOutput(channel);
-      if (options.emptyStopped && submitted === 2 && !options.recoveryFails) {
+      if (recoverable && submitted === 2 && !options.recoveryFails) {
         submitTurnOutput(channel, "final", FINAL);
       }
       return true;
     },
     tunneledOutput: options.untunneled ? undefined : {
       next: (after, signal) => {
-        if (options.emptyStopped) {
+        if (recoverable) {
           if (!batch) batch = progress.recordToolBatch(1);
           return waitForTurnOutput(channel, after, signal);
         }
@@ -473,7 +482,7 @@ async function runFixture(options: {
   expect(pendingReaders).toBe(0);
   expect(channel.outputWaiters.size).toBe(0);
   expect(actions.filter(a => a === "release")).toHaveLength(1);
-  if (!options.emptyStopped) {
+  if (!recoverable) {
     expect(actions.filter(a => a === "send")).toHaveLength(options.tunneledRetry ? 2 : 1);
     expect(actions.filter(a => a === "submitted")).toHaveLength(options.tunneledRetry ? 2 : 1);
   }
@@ -738,7 +747,7 @@ test("a user draft at atomic recovery submission is preserved and never sent", a
 });
 
 test("a DOM final appearing after finalization CAS cancels recovery before atomic Send", async () => {
-  const result = await runFixture({ emptyStopped: true, lateDomFinalAfterFinalizationCas: true });
+  const result = await runFixture({ emptyStopped: true, settledPreToolProjection: true, lateDomFinalAfterFinalizationCas: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.actions).toContain("late-dom-final");
@@ -845,7 +854,7 @@ test("pending steering cancels missing-final recovery and sends only the steerin
 });
 
 test("a late DOM final cancels an attached recovery prompt and returns through stable fallback", async () => {
-  const result = await runFixture({ emptyStopped: true, lateDomFinalBeforeRecoverySend: true });
+  const result = await runFixture({ emptyStopped: true, settledPreToolProjection: true, lateDomFinalBeforeRecoverySend: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.deltas).toEqual([FINAL]);
@@ -898,6 +907,84 @@ test("DOM fallback still rejects an unchanged pre-tool answer", async () => {
   expect(result.deltas).toEqual([]);
   expect(result.actions).not.toContain("fence-commit");
 });
+
+test("a stopped pre-tool projection recovers once through Native final instead of throwing outside recovery", async () => {
+  const result = await runFixture({ stale: true, postToolRecovery: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.deltas).toEqual([FINAL]);
+  expect(result.actions).toContain("recovery:eligible");
+  expect(result.actions.filter(a => a === "send")).toHaveLength(2);
+  expect(result.actions.filter(a => a === "tool-dispatched")).toHaveLength(1);
+  expect(result.actions).not.toContain("output-seal");
+});
+
+test("a new DOM final cancels stale-projection recovery before send", async () => {
+  const result = await runFixture({ stale: true, postToolRecovery: true, lateDomFinalBeforeRecoverySend: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.deltas).toEqual([FINAL]);
+  expect(result.actions).toContain("late-dom-final");
+  expect(result.actions.filter(a => a === "send")).toHaveLength(1);
+});
+
+test("stale-projection recovery preserves an occupied composer", async () => {
+  const result = await runFixture({ stale: true, postToolRecovery: true, composerBusy: true });
+  expect(result.error).toMatchObject({ code: "chatgpt_surface_changed" });
+  expect(result.actions).not.toContain("recovery:eligible");
+  expect(result.actions.filter(a => a === "send")).toHaveLength(1);
+  expect(result.deltas).toEqual([]);
+});
+
+test.each([
+  "lateFinalBeforeRecoverySend", "lateDomFinalAfterFinalizationCas",
+  "generationResumesBeforeRecoveryInsertion", "toolBatchAtRecoveryInsertion",
+] as const)("stale-projection recovery is cancelled by %s without sending twice", async race => {
+  const result = await runFixture({ stale: true, postToolRecovery: true, [race]: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.deltas).toEqual([FINAL]);
+  expect(result.actions.filter(a => a === "send")).toHaveLength(1);
+});
+
+test("stale-projection recovery is single-shot when its new response is empty", async () => {
+  const result = await runFixture({ stale: true, postToolRecovery: true, recoveryFails: true });
+  expect(result.error).toMatchObject({ code: "chatgpt_completion_evidence_missing", retryable: false });
+  expect(result.actions).toContain("recovery:already_recovered");
+  expect(result.actions.filter(a => a === "send")).toHaveLength(2);
+  expect(result.deltas).toEqual([]);
+});
+
+test("cancelled stale recovery retains its pre-tool completion baseline", async () => {
+  const result = await runFixture({ stale: true, postToolRecovery: true, finalizationRevisionChanged: true });
+  expect(result.answer).toBeUndefined();
+  expect(result.deltas).toEqual([]);
+  expect(result.actions).not.toContain("output-seal");
+  expect(result.actions.filter(a => a === "send")).toHaveLength(1);
+});
+
+test.each(["lateDomFinalBeforeRecoverySend", "lateDomFinalAfterFinalizationCas"] as const)(
+  "an unknown pre-tool projection stays untrusted after cancelled recovery at %s", async race => {
+    const result = await runFixture({ emptyStopped: true, [race]: true });
+    expect(result.error).toMatchObject({ code: "chatgpt_completion_evidence_missing", retryable: false });
+    expect(result.answer).toBeUndefined();
+    expect(result.deltas).toEqual([]);
+    expect(result.actions).not.toContain("output-seal");
+    expect(result.actions.filter(a => a === "send")).toHaveLength(1);
+  },
+);
+
+test.each(["missingBaseline", "missingAssistantTurn", "unsettledBaseline"] as const)(
+  "an unknown pre-tool baseline from %s requires recovered Native final", async baseline => {
+    const result = await runFixture({ postToolRecovery: true, [baseline]: true });
+    expect(result.error).toBeUndefined();
+    expect(result.answer).toBe(FINAL);
+    expect(result.deltas).toEqual([FINAL]);
+    expect(result.actions).toContain("recovery:eligible");
+    expect(result.actions.filter(a => a === "send")).toHaveLength(2);
+    expect(result.actions).not.toContain("output-seal");
+  },
+);
 
 test("an explicit tunneled final without work tools needs no rich DOM traversal", async () => {
   const result = await runFixture({ tunneledFinal: true });
