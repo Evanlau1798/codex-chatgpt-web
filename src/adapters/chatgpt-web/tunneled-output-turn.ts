@@ -59,6 +59,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
   let stoppedWithNativeFinalSince: number | undefined;
   let preemptiveRetry: string | undefined;
   let stopRequested = false;
+  let observeImmediately = false;
   let lastHeartbeat = 0;
   const acceptOutput = (event: BrokerTurnOutputEvent): void => {
     sequence = event.sequence;
@@ -71,18 +72,21 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
     options.onProgress?.();
     if (event.kind === "commentary") options.onCommentary?.(event.text);
     else if (event.kind === "reasoning") options.onReasoning?.(event.text);
-    else final = event;
+    else { final = event; observeImmediately = true; }
   };
   try {
     for (;;) {
       options.signal?.throwIfAborted();
       if (options.deadline !== undefined && Date.now() >= options.deadline) throw new Error("ChatGPT web turn timed out");
       if (Date.now() - lastHeartbeat >= 10_000) { options.onHeartbeat?.(); lastHeartbeat = Date.now(); }
-      const raced = await Promise.race([pending, delay(pollMs)]);
-      if (raced.kind === "output") {
-        acceptOutput(raced.event);
-        continue;
+      if (!observeImmediately) {
+        const raced = await Promise.race([pending, delay(pollMs)]);
+        if (raced.kind === "output") {
+          acceptOutput(raced.event);
+          continue;
+        }
       }
+      observeImmediately = false;
 
       const observed = await options.observe();
       preemptiveRetry ??= options.takePreemptiveRetry?.();
@@ -192,6 +196,9 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
       }
       if (options.completionFence && fenceRevision === undefined) {
         fenceRevision = await options.completionFence.begin();
+        // Confirm browser state again across the broker round trip, without an
+        // idle poll. Generation, tools, abort and revision races still invalidate it.
+        observeImmediately = fenceRevision !== undefined;
         continue;
       }
       const decision = await decideChatGptFinalAnswer({

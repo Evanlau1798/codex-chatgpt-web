@@ -2034,19 +2034,19 @@ export class ChatGptBrowserWorker {
       .locator("xpath=ancestor::form[1]")
       .locator(CHATGPT_SEND_BUTTON_SELECTOR);
     await sendButton.waitFor({ state: "visible", timeout: browserStageTimeouts.send });
-    await settleChatGptUi();
-    const sendEnableDeadline = Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
+    let sendEnableDeadline: number | undefined;
     for (;;) {
       if (abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       if (page.isClosed()) throw chatGptBrowserTabClosedError();
       await throwIfChatGptSessionFailureAlert(page);
       await throwIfChatGptRateLimitDialog(page);
       if (await sendButton.isEnabled()) break;
-      if (Date.now() >= sendEnableDeadline) {
+      if (sendEnableDeadline !== undefined && Date.now() >= sendEnableDeadline) {
         await captureDiagnostic?.("send-disabled");
         throw new Error("ChatGPT send button remained disabled after the complete prompt was attached");
       }
       await settleChatGptUi();
+      sendEnableDeadline ??= Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
     }
     if (expectedPrompt !== undefined) {
       const preserveLeading = chatGptPromptPreservesLeading(insertionPlan ?? planChatGptPromptInsertion(expectedPrompt, {
@@ -4474,19 +4474,19 @@ export class ChatGptBrowserWorker {
           .locator("xpath=ancestor::form[1]")
           .locator(CHATGPT_SEND_BUTTON_SELECTOR);
         await sendButton.waitFor({ state: "visible", timeout: browserStageTimeouts.send });
-        await settleChatGptUi();
-        const sendEnableDeadline = Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
+        let sendEnableDeadline: number | undefined;
         for (;;) {
           if (stageSignal.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
           if (page.isClosed()) throw chatGptBrowserTabClosedError();
           await throwIfChatGptSessionFailureAlert(page);
           await throwIfChatGptRateLimitDialog(page);
           if (await sendButton.isEnabled()) break;
-          if (Date.now() >= sendEnableDeadline) {
+          if (sendEnableDeadline !== undefined && Date.now() >= sendEnableDeadline) {
             await diagnostics.capture(page, "send-disabled");
             throw new Error("ChatGPT send button remained disabled after the complete prompt was attached");
           }
           await settleChatGptUi();
+          sendEnableDeadline ??= Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
         }
         const localToolsAtSend = (turn.nativeConnector === true || mode.localTools)
           && !(reuseConversation || responseAttempt > 1);

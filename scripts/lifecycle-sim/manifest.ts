@@ -49,6 +49,8 @@ export const sharedLifecycleTests = [
   "tests/browser-tunneled-fallback.test.ts",
   "tests/localized-stop-control.test.ts",
   "tests/enhanced-output-tunnel.test.ts",
+  "tests/native-final-latency.test.ts",
+  "tests/send-readiness-latency.test.ts",
   "tests/enhanced-output-broker.test.ts",
   "tests/chatgpt-adapter-worker-injection.test.ts",
   "tests/stall-timeout.test.ts",
