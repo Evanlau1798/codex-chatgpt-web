@@ -100,7 +100,8 @@ test.each([
     },
     assertPromptAttached: async (_page: unknown, text: string) => {
       if (multipart) expect(text.endsWith("Summarize")).toBeTrue();
-      else expect(text).toBe("Summarize the context");
+      else expect(text).toBe(!reused && (requiredRetained || tools)
+        ? " Summarize the context" : "Summarize the context");
       actions.push("verify");
     },
     ensureConnectorSurface: async () => { throw new Error("retained binding must not reopen connector discovery"); },

@@ -1,111 +1,29 @@
 import { expect, test } from "bun:test";
-import { insertChatGptComposerPlainText } from "../src/adapters/chatgpt-web/prompt-caret";
+import { CHATGPT_LITERAL_PASTE_CHUNK_CHARS } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import {
-  STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS,
-  structuredMarkdownRestorationProbeText,
+  STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS, structuredMarkdownRestorationProbeText,
 } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
+import { literalPasteComposer } from "./fixtures/literal-paste-composer";
 
-test("restores a structured Native2 prompt with exact single-marker edits", async () => {
-  const { createDocument } = require("@mixmark-io/domino") as {
-    createDocument: (html: string) => Document;
-  };
-  const prompt = structuredMarkdownRestorationProbeText();
-  expect(prompt).toHaveLength(STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS);
+// Retired right-to-left single-marker offsets, replacement-range size, 128-edit batches
+// and per-batch yields. Their semantic replacements are exact structured readback,
+// bounded public paste transactions, remount tolerance and zero restoration mutations.
+test("structured Native2 prompt survives bounded literal pastes and editor remounts", async () => {
+  const probe = structuredMarkdownRestorationProbeText();
+  expect(probe).toHaveLength(STRUCTURED_MARKDOWN_RESTORATION_PROBE_CHARS);
+  const prompt = probe.repeat(Math.ceil((CHATGPT_LITERAL_PASTE_CHUNK_CHARS * 2 + 1) / probe.length));
   expect(prompt).toContain("```json\n");
   expect(prompt).toContain("<environment_context>\n");
-
-  const document = createDocument('<div id="composer"></div>') as Document & {
-    createRange: () => Range;
-    execCommand: (command: string, showUi: boolean, value: string) => boolean;
-  };
-  let composerElement = document.getElementById("composer")!;
-  let text = document.createTextNode("");
-  composerElement.appendChild(text);
-  Object.defineProperty(document, "activeElement", { configurable: true, get: () => composerElement });
-  let selected = { start: 0, end: 0 };
-  let longestRestoration = 0;
-  let restorationEdits = 0;
-  const restorationOffsets: number[] = [];
-  const batchSizes: number[] = [];
-  let zeroDelayYields = 0;
-  const originalSetTimeout = globalThis.setTimeout;
-  document.createRange = () => {
-    let start = 0;
-    let end = 0;
-    return {
-      setStart: (_node: Node, offset: number) => { start = offset; },
-      setEnd: (_node: Node, offset: number) => { end = offset; },
-      get startOffset() { return start; },
-      get endOffset() { return end; },
-    } as unknown as Range;
-  };
-  document.execCommand = (command, _showUi, value) => {
-    if (command !== "insertText" || typeof value !== "string") return false;
-    const replacedChars = selected.end - selected.start;
-    let inserted = value;
-    if (replacedChars > 0) {
-      restorationEdits += 1;
-      restorationOffsets.push(selected.start);
-      longestRestoration = Math.max(longestRestoration, replacedChars);
-      // Lexical may rewrite a multi-marker range even though execCommand reports success.
-      if (replacedChars > 1) inserted = value.slice(1);
-    }
-    text.data = `${text.data.slice(0, selected.start)}${inserted}${text.data.slice(selected.end)}`;
-    selected = { start: selected.start + inserted.length, end: selected.start + inserted.length };
-    return true;
-  };
-
-  const previous = {
-    document: globalThis.document,
-    NodeFilter: globalThis.NodeFilter,
-    window: globalThis.window,
-  };
-  Object.assign(globalThis, {
-    document,
-    NodeFilter: { SHOW_TEXT: 4 },
-    window: {
-      getSelection: () => ({
-        get isCollapsed() { return selected.start === selected.end; },
-        get anchorNode() { return text; },
-        get focusNode() { return text; },
-        removeAllRanges: () => {},
-        addRange: (range: Range) => { selected = { start: range.startOffset, end: range.endOffset }; },
-      }),
-    },
-  });
-  const composer = {
-    focus: async () => {},
-    evaluate: async (callback: (element: HTMLElement, input: unknown) => unknown, input: unknown) => {
-      const editsBefore = restorationEdits;
-      const result = await callback(composerElement, input);
-      if (typeof input === "object" && input !== null && !Array.isArray(input)) {
-        batchSizes.push(restorationEdits - editsBefore);
-        const replacement = document.createElement("div");
-        text = document.createTextNode(text.data);
-        replacement.appendChild(text);
-        composerElement.parentNode?.replaceChild(replacement, composerElement);
-        composerElement = replacement;
-      }
-      return result;
-    },
-  };
-
-  try {
-    globalThis.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
-      if (timeout === 0) zeroDelayYields += 1;
-      return originalSetTimeout(handler, timeout, ...args);
-    }) as typeof setTimeout;
-    await insertChatGptComposerPlainText(composer as never, prompt);
-    expect(text.data).toBe(prompt);
-    expect(restorationEdits).toBeGreaterThan(128);
-    expect(longestRestoration).toBe(1);
-    expect(restorationOffsets.every((offset, index) => index === 0 || offset < restorationOffsets[index - 1]!))
-      .toBeTrue();
-    expect(batchSizes.length).toBeGreaterThan(1);
-    expect(batchSizes.every(size => size > 0 && size <= 128)).toBeTrue();
-    expect(zeroDelayYields).toBeGreaterThanOrEqual(batchSizes.length);
-  } finally {
-    globalThis.setTimeout = originalSetTimeout;
-    Object.assign(globalThis, previous);
-  }
+  let remounts = 0;
+  const editor = literalPasteComposer({ onPaste: () => { editor.remount(); remounts += 1; } });
+  await editor.run(prompt);
+  expect(editor.read()).toBe(prompt);
+  expect(editor.pastes.join("")).toBe(prompt);
+  expect(editor.pastes.every(value => value.length <= CHATGPT_LITERAL_PASTE_CHUNK_CHARS)).toBeTrue();
+  expect(remounts).toBe(editor.pastes.length);
+  expect(remounts).toBe(3);
+  expect(editor.verified.slice(1, -1)).toEqual(editor.pastes.map((_, i) => editor.pastes.slice(0, i + 1).join("")));
+  expect(editor.verified.at(-1)).toBe(prompt);
+  expect(editor.snapshots.at(-1)).toMatchObject({ restorationBatches: 0, remainingMarkers: 0,
+    nativeEditAttempts: editor.pastes.length, nativeEditAccepted: editor.pastes.length });
 });

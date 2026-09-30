@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { runInNewContext } from "node:vm";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptStartupPagePool } from "../src/adapters/chatgpt-web/startup-page-pool";
 import { chatGptCompletionEvidenceError, chatGptSessionFailureDisposition } from "../src/adapters/chatgpt-web/adapter-error";
 import { LAUNCHER_BROWSER_HOST_KIND, LAUNCHER_BROWSER_IDLE_URL } from "../src/launcher-browser-host";
 
@@ -19,6 +20,54 @@ runInNewContext(readFileSync(source, "utf8"), {
 });
 const { BrowserHost } = hostModule.exports;
 const { BrowserControlServer } = require("../launcher/electron/control-server.cjs");
+
+test("accepted work prepares a standby before completion, while compact preserves it for the handoff successor", async () => {
+  const f = await fixture();
+  const previous = process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
+  process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = "1";
+  let primes = 0, releases = 0;
+  const turn: any = { traceId: f.tab.traceId, modelId: "gpt-5.6-sol", modelFamily: "5.6", reasoning: "high",
+    nativeConnector: true, allowStartupPreparation: true, capabilities: { localToolsEnabled: true, solAvailable: true },
+    prepare: async () => ({ text: "harness", images: [] }), onSubmitted() {} };
+  f.worker.primeStartupPage = async () => { primes++; };
+  f.worker.runBrowserTurn = async (observed: any) => {
+    await observed.prepare();
+    await observed.onSubmitted();
+    expect(primes).toBe(1); // Actual browser work has not completed yet.
+    return "answer";
+  };
+  try {
+    await f.worker.runExclusive(turn);
+    const key = f.worker.startupPageKey(turn);
+    await f.worker.startupPages.prime(key, "prefix", async () => ({ surfaceId: "b".repeat(32), prefix: "prefix",
+      pauseHeartbeat() {}, async release() { releases++; } }));
+    f.tab.traceId = "compact_trace";
+    f.host.turnTabs.set(f.tab.id, f.tab);
+    f.worker.runBrowserTurn = async () => "structured handoff";
+    await f.worker.runExclusive({ ...turn, traceId: f.tab.traceId, compaction: true });
+    expect(releases).toBe(0);
+    f.tab.traceId = "successor_trace";
+    f.host.turnTabs.set(f.tab.id, f.tab);
+    f.host.beginTurn = async (...args: any[]) => {
+      expect(args[8].surfaceId).toBe("b".repeat(32));
+      return { surfaceId: args[8].surfaceId, reused: false, startupPrepared: true };
+    };
+    f.worker.runBrowserTurn = async (_turn: any, _surface: string, _previous: unknown,
+      reused: boolean, _usage: boolean, startup: any) => {
+      expect(reused).toBe(false);
+      expect(startup.surfaceId).toBe("b".repeat(32));
+      return "handoff successor";
+    };
+    await f.worker.runExclusive({ ...turn, traceId: f.tab.traceId });
+    expect(releases).toBe(1);
+    expect(f.worker.startupPages.take(key)).toBeUndefined();
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
+    else process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = previous;
+    await f.worker.startupPages.cancel();
+    await f.close();
+  }
+});
 
 // Real launcher navigation binding, end ownership, control HTTP and worker finally;
 // only the Electron page and its navigation result are substituted.
@@ -44,7 +93,8 @@ async function fixture() {
     removeTurnTab: () => { host.turnTabs.delete(tab.id); },
   });
   host.bindTurnContents(tab);
-  const server = new BrowserControlServer({ logger, getBrowserHost: () => host, getPreferences: () => ({}) });
+  const server = new BrowserControlServer({ logger, getBrowserHost: () => host,
+    getPreferences: () => ({ experimentalPreparedWebSession: true }) });
   await server.start();
   const descriptor = join(root, "launcher.json");
   writeFileSync(descriptor, JSON.stringify({ version: 3, kind: LAUNCHER_BROWSER_HOST_KIND,
@@ -54,6 +104,7 @@ async function fixture() {
     surfaceId: "a".repeat(32), surfaceTargets: { ["a".repeat(32)]: "target" }, createdAt: new Date().toISOString(),
   }), { mode: 0o600 });
   const worker: any = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    startupPages: new ChatGptStartupPagePool(),
     config: { browserHost: "launcher", browserHostDescriptorPath: descriptor, appName: "Codex Native2" },
   });
   return { tab, host, logs, worker, contents, starts: () => starts,

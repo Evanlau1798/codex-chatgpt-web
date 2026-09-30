@@ -8,12 +8,6 @@ import type { TurnBroker } from "./turn-broker";
 export const CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS = 64 * 1_024;
 export const CODEX_CONTEXT_ARCHIVE_CHUNK_TOKENS = 7_000;
 export const CODEX_CONTEXT_ARCHIVE_OUTPUT_TOKENS = 8_000;
-/**
- * Current ChatGPT Lexical composers reject an append once one uninterrupted text run reaches the
- * observed 15,999 UTF-16-unit boundary even though the complete message remains well below its
- * measured total limit. Apply the same 95%-then-4K alignment policy as the overall bootstrap.
- */
-export const CHATGPT_STABLE_COMPOSER_TEXT_RUN_CHARS = 12_288;
 const ARCHIVE_ENTRY_CHARS = CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS - 1;
 const ARCHIVE_ENTRY_TOKENS = 6_000;
 const ARCHIVE_FRAGMENT_DATA_CHARS = Math.floor((ARCHIVE_ENTRY_CHARS - 512) / 6);
@@ -97,15 +91,8 @@ function archiveRecordLines(record: ArchiveRecord): string[] {
   });
 }
 
-function longestTextRunChars(text: string): number {
-  let longest = 0;
-  for (const run of text.split(/\r\n|[\n\r\u2028\u2029]/)) longest = Math.max(longest, run.length);
-  return longest;
-}
-
 function withinLimits(text: string, limits: { chars: number; tokens?: number }): boolean {
   return text.length <= limits.chars
-    && longestTextRunChars(text) <= CHATGPT_STABLE_COMPOSER_TEXT_RUN_CHARS
     && (limits.tokens === undefined || estimateTokens(text) <= limits.tokens);
 }
 

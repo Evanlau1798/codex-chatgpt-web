@@ -370,7 +370,7 @@ test("Luna turns without a retained conversation never send connector identity a
   const connectorIdentity = runExclusive.indexOf("connectorIdentity: this.config.appName");
   expect(connectorIdentity).toBeGreaterThan(-1);
   expect(runExclusive.slice(connectorIdentity - 260, connectorIdentity)).toContain("turn.conversationKey");
-  expect(runExclusive.slice(connectorIdentity - 420, connectorIdentity)).toContain("const nativeConnector = turn.nativeConnector === true || localTools");
+  expect(runExclusive.slice(0, connectorIdentity)).toContain("const nativeConnector = turn.nativeConnector === true || localTools");
 });
 
 test("connector verification proves the current schema with an actual connector tool call", () => {
@@ -587,19 +587,20 @@ test("new ChatGPT chats select the requested effort and submit the first real tu
   expect(promptAttachment).toBeGreaterThan(requestedSelection);
 });
 
-test("enhanced Web session mode alone raises browser concurrency from five to six", () => {
+test("without Account Safety the Web page ceiling defaults to six in either context mode", () => {
   const provider = { adapter: "chatgpt-web" as const, baseUrl: "browser://chatgpt" };
-  expect(resolveBrowserConfig(provider).maxBrowserTabs).toBe(5);
+  expect(resolveBrowserConfig(provider).maxBrowserTabs).toBe(6);
   expect(resolveBrowserConfig({
     ...provider,
     chatgptWeb: { useEnhancedWebSessionMode: true },
   }).maxBrowserTabs).toBe(6);
 });
 
-test("configured Automatic Web concurrency respects Standard and Enhanced ceilings", () => {
+test("Account Safety concurrency applies only while its session limit is enabled", () => {
   const provider = { adapter: "chatgpt-web" as const, baseUrl: "browser://chatgpt" };
-  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 3 } }).maxBrowserTabs).toBe(3);
-  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 6 } }).maxBrowserTabs).toBe(5);
+  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 3 } }).maxBrowserTabs).toBe(6);
+  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 3, automaticWebSessionLimitMinutes: 300 } }).maxBrowserTabs).toBe(3);
+  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 6, automaticWebSessionLimitMinutes: 300 } }).maxBrowserTabs).toBe(6);
   expect(resolveBrowserConfig({
     ...provider,
     chatgptWeb: { maxBrowserTabs: 6, useEnhancedWebSessionMode: true },

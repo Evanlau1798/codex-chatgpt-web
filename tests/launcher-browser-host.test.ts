@@ -19,6 +19,34 @@ import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker
 
 const roots: string[] = [];
 
+test("claimed startup cleanup failure still settles the newly acquired real turn", async () => {
+  const events: Array<{ phase: string; traceId: string }> = [];
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+    const body = await req.json() as { phase: string; traceId: string };
+    events.push(body);
+    return Response.json(body.phase === "start"
+      ? { surfaceId: "a".repeat(32), reused: false, connectorBound: true, startupPrepared: true }
+      : { cancelledByUser: false, authenticationRequired: false });
+  } });
+  const prior = process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
+  process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = "1";
+  try {
+    const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+      config: { browserHost: "launcher", browserHostDescriptorPath: descriptorFile(`http://127.0.0.1:${server.port}`) },
+      startupPages: { take: () => ({ surfaceId: "a".repeat(32), release: async () => { throw new Error("startup cleanup failed"); } }) },
+      runBrowserTurn: async () => { throw new Error("must not run after failed cleanup"); },
+    });
+    await expect(worker.runExclusive({ traceId: "claim-cleanup", modelId: "gpt-5.6-sol", reasoning: "high",
+      modelFamily: "5.6", nativeConnector: true, allowStartupPreparation: true,
+      capabilities: { localToolsEnabled: true, solAvailable: true } })).rejects.toThrow("startup cleanup failed");
+    expect(events.filter(e => e.phase === "end" && e.traceId === "claim-cleanup")).toHaveLength(1);
+  } finally {
+    if (prior === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
+    else process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = prior;
+    server.stop(true);
+  }
+});
+
 test("a blocked sign-in replaces an opaque navigation abort with a non-retryable session error", async () => {
   let needsSignIn: unknown = true;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {

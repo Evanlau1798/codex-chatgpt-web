@@ -107,6 +107,7 @@ export class LauncherBrowserHelperClient {
             ...(turn.modelFamily ? { modelFamily: turn.modelFamily } : {}),
             capabilities: turn.capabilities,
             ...(turn.nativeConnector ? { nativeConnector: true } : {}),
+            ...(turn.allowStartupPreparation ? { allowStartupPreparation: true } : {}),
             ...(turn.prepareResume ? { resumeAvailable: true } : {}),
             ...(turn.retainConversation ? { retainConversation: true } : {}),
             ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),

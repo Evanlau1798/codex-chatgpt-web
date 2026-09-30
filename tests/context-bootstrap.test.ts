@@ -58,7 +58,7 @@ test("bounded specialist instructions remain byte-for-byte inline", async () => 
   }
 });
 
-test("a single oversized serialized text run uses the archive below the total bootstrap limit", async () => {
+test("literal paste keeps an exact serialized text run inline below the total transport limit", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-context-text-run-"));
   const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
   const turnToken = await broker.register({
@@ -87,12 +87,10 @@ test("a single oversized serialized text run uses the archive below the total bo
       bootstrapLimits: { chars: 94_208, tokens: 94_208 },
     }, true, 60_000, "text-run-test");
 
-    expect(prepared.transport).toBe("native2-archive");
-    expect(Math.max(...prepared.text.split(/\r?\n/).map(line => line.length))).toBeLessThanOrEqual(12_288);
-    expect(prepared.text).not.toContain("x".repeat(12_289));
-    expect(prepared.archiveChars).toBeGreaterThan(20_049);
-    expect(prepared.text).not.toContain("record_fragment entries");
-    expect(prepared.text).toContain("runtime computes the SHA-256");
+    expect(prepared.transport).toBe("inline");
+    expect(prepared.text).toBe(fullText);
+    expect(prepared.archiveChars).toBeUndefined();
+    expect(prepared.modelInputText).toBeUndefined();
     prepared.release();
   } finally {
     broker.revoke(turnToken);
@@ -131,10 +129,12 @@ test("large advertised tool inventories remain complete through the context arch
 
   let client: Client | undefined;
   try {
-    expect(Math.max(...compiled.text.split(/\r?\n/).map(line => line.length))).toBeGreaterThan(12_288);
+    // Exercise a real total transport boundary, independent of the retired append-only text-run limit.
+    compiled.bootstrapLimits = { chars: 16_384, tokens: 16_384 };
+    expect(compiled.text.length).toBeGreaterThan(16_384);
     const prepared = await prepareChatGptWebContext(broker, compiled, true, 60_000, "tool-inventory-test");
     expect(prepared.transport).toBe("native2-archive");
-    expect(Math.max(...prepared.text.split(/\r?\n/).map(line => line.length))).toBeLessThanOrEqual(12_288);
+    expect(prepared.text.length).toBeLessThanOrEqual(16_384);
 
     const contextToken = prepared.text.match(/context_[A-Za-z0-9_-]{32}/)?.[0];
     expect(contextToken).toBeDefined();

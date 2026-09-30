@@ -14,7 +14,7 @@ export interface BrowserHelperRunMessage {
     autoApproveToolCalls: boolean;
     useSavedChats?: boolean;
     experimentalNoAutoCompact?: boolean;
-    /** Candidate only: replace large guarded insertions; preserve existing direct inline routes. */
+    /** Legacy configuration accepted for compatibility; all prompts use literal paste. */
     experimentalComposerPlainText?: boolean;
   };
   turn: {
@@ -24,6 +24,7 @@ export interface BrowserHelperRunMessage {
     modelFamily?: "5.6" | "6";
     capabilities: ChatGptWebCapabilities;
     nativeConnector?: boolean;
+    allowStartupPreparation?: boolean;
     resumeAvailable?: boolean;
     retainConversation?: boolean;
     requireRetainedConversation?: boolean;

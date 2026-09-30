@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { validateSkillFiles } from "./skill-attachments";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page, type Request, type Response } from "playwright-core";
-import { detectChatGptLimitsPlan, prepareChatGptLimitsSubmission, readChatGptUsageModel, type ChatGptUsageModel } from "./limits";
+import { detectChatGptLimitsPlan, prepareChatGptLimitsSubmission, readChatGptUsageAccount, readChatGptUsageModel, type ChatGptUsageModel } from "./limits";
 import {
   atomicWriteFile,
   CHATGPT_CONNECTOR_NAME,
@@ -154,7 +154,7 @@ import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowse
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, readChatGptUpstreamFailureUiState, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { CHATGPT_CONNECTOR_MENTION_ROW_SELECTOR, chatGptConnectorMentionRowHighlighted, openChatGptConnectorPlusMenu } from "./connector-plus-menu";
-import { assertChatGptModelFamily, selectChatGptModelFamily } from "./model-selection";
+import { assertChatGptModelFamily, chatGptModelFamilyMatches, selectChatGptModelFamily } from "./model-selection";
 import {
   ChatGptBrowserObservationTimeoutError,
   ChatGptObservationRecoveryEpisode,
@@ -180,6 +180,10 @@ import {
 import { insertChatGptPromptText } from "./prompt-insertion";
 import { chatGptPromptPreservesLeading, planChatGptPromptInsertion, type ChatGptPromptInsertionPlan } from "./prompt-insertion-plan";
 import { ChatGptCandidateAttachmentBudget } from "./prompt-candidate-budget";
+import { ChatGptStartupPagePool } from "./startup-page-pool";
+import { prepareChatGptStartupPage, type PreparedChatGptStartupPage } from "./startup-page-resource";
+import { chatGptStartupHarnessPrefix } from "./startup-harness-prefix";
+import { discardLauncherStartupPages } from "./startup-page-control";
 import {
   CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS,
   chatGptPromptAttachmentTimeoutMs,
@@ -698,6 +702,8 @@ export interface BrowserTurn {
   capabilities: ChatGptWebCapabilities;
   /** Attach the Native2 connector for bridge control without granting outer Codex work capability. */
   nativeConnector?: boolean;
+  /** Parent admission permits an unsent speculative page; never enables it for compaction. */
+  allowStartupPreparation?: boolean;
   prepare: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   prepareResume?: () => Promise<CompiledChatGptWebPrompt & { release: () => void }>;
   retainConversation?: boolean;
@@ -921,6 +927,10 @@ interface ChatGptResponseDomSnapshot {
   nativeToolCandidates: ChatGptNativeToolCandidate[];
 }
 
+export async function discardChatGptStartupPages(): Promise<void> {
+  for (const worker of workers.values()) await worker.discardStartupPage();
+}
+
 function chatGptCompletionEvidenceRecovered(
   snapshot: Pick<ChatGptResponseDomSnapshot, "responsePresent" | "visibleText" | "completionActionVisible">,
 ): boolean {
@@ -1009,10 +1019,8 @@ export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBro
     autoApproveToolCalls: configured.autoApproveToolCalls === true,
     experimentalNoAutoCompact: configured.experimentalNoAutoCompact === true,
     ...(configured.experimentalComposerPlainText ? { experimentalComposerPlainText: true } : {}),
-    maxBrowserTabs: Math.min(
-      configured.maxBrowserTabs ?? MAX_CHATGPT_BROWSER_TABS,
-      configured.useEnhancedWebSessionMode === true ? MAX_CHATGPT_BROWSER_TABS : ORIGINAL_CHATGPT_BROWSER_TABS,
-    ),
+    maxBrowserTabs: configured.automaticWebSessionLimitMinutes !== undefined
+      ? configured.maxBrowserTabs ?? MAX_CHATGPT_BROWSER_TABS : MAX_CHATGPT_BROWSER_TABS,
     useSavedChats: configured.useSavedChats === true,
   };
 }
@@ -1070,6 +1078,9 @@ export function chatGptPromptFilePayloads(
 }
 
 export class ChatGptBrowserWorker {
+  private lastSelectedModel?: SelectedChatGptWebModelMode;
+  private readonly startupPages = new ChatGptStartupPagePool<PreparedChatGptStartupPage>();
+  private closing = false;
   static forProvider(provider: CodexProviderConfig): ChatGptBrowserWorker {
     const config = resolveBrowserConfig(provider);
     const key = JSON.stringify(config);
@@ -1246,6 +1257,8 @@ export class ChatGptBrowserWorker {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
+    await this.startupPages.cancel();
     if (this.launcherHelper) {
       const helper = this.launcherHelper;
       this.launcherHelper = undefined;
@@ -1262,6 +1275,39 @@ export class ChatGptBrowserWorker {
     // not close the launcher-owned Electron process. Always release that connection and its
     // artifact directory instead of leaking one per timeout/helper lifecycle.
     if (browser) await browser.close();
+  }
+
+  async discardStartupPage(): Promise<void> {
+    await this.startupPages.cancel();
+    if (this.launcherHelper && this.config.browserHostDescriptorPath) {
+      await discardLauncherStartupPages(this.config.browserHostDescriptorPath);
+    }
+  }
+
+  private startupPageKey(turn: BrowserTurn): string {
+    return JSON.stringify([turn.modelId, turn.reasoning ?? "high", turn.modelFamily, turn.capabilities]);
+  }
+
+  private async primeStartupPage(turn: BrowserTurn, prepared: CompiledChatGptWebPrompt, trackUsage: boolean): Promise<void> {
+    if (this.closing || turn.abortSignal?.aborted || turn.compaction || prepared.multipart) return;
+    const prefix = chatGptStartupHarnessPrefix(prepared.text);
+    if (!prefix) return;
+    const { modelId, reasoning, capabilities, modelFamily } = turn;
+    await this.startupPages.maintain(this.startupPageKey(turn), ` ${prefix}`, signal => prepareChatGptStartupPage({
+      descriptorPath: this.config.browserHostDescriptorPath!, connectorIdentity: this.config.appName,
+      prefix: ` ${prefix}`,
+      prepare: async (page, signal) => {
+        await this.prepareChatSurface(page, undefined, this.config.useSavedChats);
+        signal.throwIfAborted();
+        const mode = await this.selectModelAndEffort(page, modelId, reasoning, capabilities,
+          undefined, trackUsage, modelFamily);
+        signal.throwIfAborted();
+        const operation = new ChatGptPromptOperation(signal).budget(90_000);
+        await this.attachPrompt(page, prefix, true, undefined, signal, false, { triggerAttempts: 0 },
+          mode.thinkEnabled, false, false, undefined, { traceId: "startup", stage: "startup_harness", operation });
+        return mode;
+      },
+    }, signal));
   }
 
   private async runStage<T>(
@@ -1439,6 +1485,21 @@ export class ChatGptBrowserWorker {
     const composer = await this.activeComposer(page);
     const composerForm = composer.locator("xpath=ancestor::form[1]");
     const uiEffortIndex = mode.uiEffortIndex;
+    const cached = this.lastSelectedModel;
+    if (cached?.selection && modelFamily && cached.modelFamily === modelFamily
+      && cached.modelId === mode.modelId && cached.effort === mode.effort
+      && (!trackUsage || cached.usageModel !== undefined)
+      && chatGptModelFamilyMatches([cached.selection.label], modelFamily, mode.effort)) {
+      const controls = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).filter({ visible: true });
+      if (await controls.count() === 1 && (await controls.innerText()).trim() === cached.selection.label
+        && await controls.getAttribute("aria-expanded") === "false" && await composer.isEditable()) {
+        const selected = { ...mode, modelFamily, selection: { url: page.url(), label: cached.selection.label },
+          ...(trackUsage && cached.usageModel ? { usageModel: cached.usageModel } : {}) };
+        await this.assertSelectedEffort(page, selected, false);
+        await captureDiagnostic?.("effort-selection-cache-verified");
+        return selected;
+      }
+    }
     if (uiEffortIndex === null) {
       await settleChatGptUi();
       await throwIfChatGptRateLimitDialog(page);
@@ -1598,6 +1659,7 @@ export class ChatGptBrowserWorker {
     await settleChatGptUi();
     await this.assertSelectedEffort(page, selectedMode, false);
     await captureDiagnostic?.("effort-selection-confirmed");
+    this.lastSelectedModel = selectedMode;
     return selectedMode;
   }
 
@@ -1617,7 +1679,8 @@ export class ChatGptBrowserWorker {
         "ChatGPT did not retain the selected effort in its ready composer; the message was not submitted",
       );
     }
-    if (verifyFamily && mode.modelFamily && mode.uiEffortIndex !== null) {
+    if (verifyFamily && mode.modelFamily && mode.uiEffortIndex !== null
+      && !chatGptModelFamilyMatches([mode.selection.label], mode.modelFamily, mode.effort)) {
       const menu = await activateChatGptEffortMenu(page, control);
       try {
         await assertChatGptModelFamily(menu, mode.modelFamily, mode.effort, mode.uiEffortIndex);
@@ -2586,7 +2649,7 @@ export class ChatGptBrowserWorker {
     largeStructuredDirect = false,
     forceStructuredDirect = false,
     beforeRecoveryInsertion?: (composer: Locator) => Promise<boolean | void>,
-    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation; insertionPlan?: ChatGptPromptInsertionPlan; candidateBudget?: ChatGptCandidateAttachmentBudget },
+    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation; insertionPlan?: ChatGptPromptInsertionPlan; candidateBudget?: ChatGptCandidateAttachmentBudget; preparedPrefix?: string },
   ): Promise<void> {
     await throwIfChatGptRateLimitDialog(page);
     const parent = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
@@ -2595,17 +2658,29 @@ export class ChatGptBrowserWorker {
       largeStructuredDirect, forceStructuredDirect,
       candidatePlainText: this.config?.experimentalComposerPlainText === true,
     });
-    const candidateBudget = diagnosticContext?.candidateBudget ?? (this.config?.experimentalComposerPlainText
-      ? new ChatGptCandidateAttachmentBudget(insertionPlan, parent.now) : undefined);
+    const candidateBudget = diagnosticContext?.candidateBudget
+      ?? new ChatGptCandidateAttachmentBudget(insertionPlan, parent.now);
     const op = candidateBudget
       ? new ChatGptPromptOperation(abortSignal, () => Math.min(parent.timeLeft(), candidateBudget.remainingMs()), parent.now)
       : parent;
-    diagnosticContext = { traceId: diagnosticContext?.traceId ?? "unscoped",
+    diagnosticContext = { ...diagnosticContext, traceId: diagnosticContext?.traceId ?? "unscoped",
       stage: diagnosticContext?.stage ?? "prompt_attachment", operation: op, insertionPlan, candidateBudget };
     op.check();
     let mutationStarted = false;
     try {
       if (forceStructuredDirect) await captureDiagnostic?.("retained-compaction-direct-insertion");
+      if (localTools && diagnosticContext.preparedPrefix && insertionText.startsWith(diagnosticContext.preparedPrefix)) {
+        const composer = await this.activeComposer(page, 30_000, abortSignal, op);
+        const observed = await this.attachedPromptText(page, abortSignal, op, true);
+        if (this.promptTextEquivalent(diagnosticContext.preparedPrefix, observed)
+          && await this.connectorIsSelected(composer, abortSignal)) {
+          mutationStarted = true;
+          await this.insertPromptText(page, insertionText, abortSignal, false, false, diagnosticContext, true);
+          await this.assertPromptAttached(page, insertionText, abortSignal, op, true);
+          return;
+        }
+      }
+      diagnosticContext.preparedPrefix = undefined;
       if (!localTools) {
         const composer = await this.activeComposer(page, 30_000, abortSignal, op);
         // Playwright's multiline fill maps through an input action that ChatGPT's Lexical editor can
@@ -2725,11 +2800,11 @@ export class ChatGptBrowserWorker {
     largeStructuredDirect = false,
     forceStructuredDirect = false,
     beforeRecoveryInsertion?: (composer: Locator) => Promise<boolean | void>,
-    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation; insertionPlan?: ChatGptPromptInsertionPlan; candidateBudget?: ChatGptCandidateAttachmentBudget },
+    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation; insertionPlan?: ChatGptPromptInsertionPlan; candidateBudget?: ChatGptCandidateAttachmentBudget; preparedPrefix?: string },
   ): Promise<void> {
     // One deadline owner covers the existing initial + at most one safe compaction repair.
     // Neither reset nor a second attachment gets a fresh candidate hard budget.
-    if (this.config?.experimentalComposerPlainText) {
+    {
       const parent = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
       const insertionPlan = diagnosticContext?.insertionPlan ?? planChatGptPromptInsertion(
         localTools ? ` ${prompt}` : prompt,
@@ -2739,7 +2814,7 @@ export class ChatGptBrowserWorker {
         ?? new ChatGptCandidateAttachmentBudget(insertionPlan, parent.now);
       const operation = new ChatGptPromptOperation(abortSignal,
         () => Math.min(parent.timeLeft(), candidateBudget.remainingMs()), parent.now);
-      diagnosticContext = { traceId: diagnosticContext?.traceId ?? "unscoped",
+      diagnosticContext = { ...diagnosticContext, traceId: diagnosticContext?.traceId ?? "unscoped",
         stage: diagnosticContext?.stage ?? "prompt_attachment", operation, insertionPlan, candidateBudget };
     }
     let retryAvailable = compaction;
@@ -2808,7 +2883,7 @@ export class ChatGptBrowserWorker {
     abortSignal?: AbortSignal,
     largeStructuredDirect = false,
     forceStructuredDirect = false,
-    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation; insertionPlan?: ChatGptPromptInsertionPlan; candidateBudget?: ChatGptCandidateAttachmentBudget },
+    diagnosticContext?: { traceId: string; stage: string; operation?: ChatGptPromptOperation; insertionPlan?: ChatGptPromptInsertionPlan; candidateBudget?: ChatGptCandidateAttachmentBudget; preparedPrefix?: string },
     connectorSelected = false,
   ): Promise<void> {
     const op = diagnosticContext?.operation ?? new ChatGptPromptOperation(abortSignal);
@@ -2816,7 +2891,7 @@ export class ChatGptBrowserWorker {
       largeStructuredDirect, forceStructuredDirect,
       candidatePlainText: this.config?.experimentalComposerPlainText === true,
     });
-    const existingText = connectorSelected && insertionPlan.strategy !== "guarded-chunked"
+    const existingText = connectorSelected
       ? await this.attachedPromptText(page, abortSignal, op, true) : "";
     await insertChatGptPromptText(text, abortSignal, {
       composer: () => this.activeComposer(page, 30_000, abortSignal, op),
@@ -2824,7 +2899,7 @@ export class ChatGptBrowserWorker {
         chatGptPromptPreservesLeading(insertionPlan)),
       reanchor: () => this.reanchorPromptCaret(page, abortSignal, op),
       connectorSelected,
-      existingPrefix: existingText === " " ? " " : undefined,
+      existingPrefix: diagnosticContext?.preparedPrefix ?? (existingText === " " ? " " : undefined),
       onProgress: snapshot => {
         diagnosticContext?.candidateBudget?.observe(snapshot);
         console.info(`[chatgpt-web] browser turn ${diagnosticContext?.traceId ?? "unscoped"}`
@@ -3689,6 +3764,29 @@ export class ChatGptBrowserWorker {
       turn.capabilities,
     ).localTools;
     const nativeConnector = turn.nativeConnector === true || localTools;
+    const helperProcess = process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS === "1";
+    const canWarm = helperProcess
+      && turn.allowStartupPreparation === true && nativeConnector && Boolean(turn.modelFamily) && !turn.compaction;
+    const startup = canWarm ? this.startupPages.take(this.startupPageKey(turn)) : undefined;
+    if (helperProcess && !startup && !turn.compaction) await this.startupPages.cancel();
+    let startupInput: CompiledChatGptWebPrompt | undefined;
+    const observedTurn: BrowserTurn = canWarm ? {
+      ...turn,
+      prepare: async () => { const prepared = await turn.prepare(); startupInput = prepared; return prepared; },
+      onSubmitted: async () => {
+        await turn.onSubmitted?.();
+        if (startupInput && lease.startupAllowed === true) primeStartup();
+      },
+      ...(turn.prepareResume ? { prepareResume: async () => {
+        const prepared = await turn.prepareResume!(); startupInput = prepared; return prepared;
+      } } : {}),
+    } : turn;
+
+    const primeStartup = () => {
+      void this.primeStartupPage(turn, startupInput!, lease.trackUsage === true).catch(error => {
+        console.info(`[chatgpt-web] startup preparation unavailable (${error instanceof Error ? error.name : "unknown"}); the next request will use normal preparation`);
+      });
+    };
 
     const lease = await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
       phase: "start",
@@ -3697,12 +3795,15 @@ export class ChatGptBrowserWorker {
       ...(turn.conversationKey ? { conversationKey: turn.conversationKey } : {}),
       ...(nativeConnector ? { connectorIdentity: this.config.appName } : {}),
       ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
-    }, undefined, turn.abortSignal).catch(error => {
+      ...(startup ? { startupSurfaceId: startup.surfaceId } : {}),
+      ...(canWarm ? { allowStartupPreparation: true } : {}),
+    }, undefined, turn.abortSignal).catch(async error => {
+      try { await startup?.release(); }
+      catch { console.warn("[chatgpt-web] startup cleanup failed after rejected acquisition"); }
       if (error instanceof LauncherBrowserTurnCancelledError) throw chatGptBrowserTabClosedError();
       throw error;
     });
     const surfaceId = lease.surfaceId;
-    if (!surfaceId) throw new Error("Launcher did not lease a browser tab for the ChatGPT turn");
     let terminal: "completed" | "failed" | "aborted" = "completed";
     let terminalMessage: string | undefined;
     let originalError: unknown;
@@ -3728,6 +3829,8 @@ export class ChatGptBrowserWorker {
       });
     };
     try {
+      await startup?.release();
+      if (!surfaceId) throw new Error("Launcher did not lease a browser tab for the ChatGPT turn");
       if (turn.requireRetainedConversation && lease.reused !== true) {
         throw new Error("The retained ChatGPT conversation is no longer available");
       }
@@ -3736,11 +3839,12 @@ export class ChatGptBrowserWorker {
       heartbeatTimer = setInterval(sendHeartbeat, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS);
       heartbeatTimer.unref?.();
       return await this.runBrowserTurn(
-        turn,
+        observedTurn,
         surfaceId,
         undefined,
         reuseConversation,
         lease.trackUsage === true,
+        lease.startupPrepared === true ? startup : undefined,
       );
     } catch (error) {
       originalError = error;
@@ -3779,6 +3883,9 @@ export class ChatGptBrowserWorker {
             { status: 401, errorType: "authentication_error", code: "chatgpt_sign_in_required", retryable: false },
           );
         }
+        if (!originalError && terminal === "completed" && canWarm && startupInput && lease.startupAllowed === true) {
+          primeStartup();
+        }
       } catch (controlError) {
         if (controlError instanceof ChatGptWebAdapterError
           && ["client_cancelled", "chatgpt_sign_in_required"].includes(controlError.code)) {
@@ -3798,6 +3905,7 @@ export class ChatGptBrowserWorker {
     maintenancePage?: Page,
     reuseConversation = false,
     trackUsage = false,
+    startup?: PreparedChatGptStartupPage,
   ): Promise<string> {
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     if ((turn.captureLunaCheckpoint === true) !== (turn.onLunaCheckpoint !== undefined)) {
@@ -3969,6 +4077,15 @@ export class ChatGptBrowserWorker {
       }
       // A retained lease proves the connector binding, not the current model selection.
       // Reconcile the live control before every submission, including retained continuations.
+      if (startup) {
+        const account = await readChatGptUsageAccount(page).catch(() => undefined);
+        if (!account || account.accountKey !== startup.account.accountKey || account.planType !== startup.account.planType
+          || account.personal !== startup.account.personal || account.needsAttention) {
+          startup = undefined;
+          this.lastSelectedModel = undefined;
+          await this.clearChatGptComposerState(page);
+        }
+      }
       const selectStagingMode = () => (
         this.selectModelAndEffort(
           page,
@@ -3980,7 +4097,17 @@ export class ChatGptBrowserWorker {
           turn.modelFamily,
         )
       );
-      let mode = await this.runStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, selectStagingMode);
+      let mode = await this.runStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, async () => {
+        if (startup && !multipartTransport) {
+          try { await this.assertSelectedEffort(page, startup.selection); return startup.selection; }
+          catch (error) {
+            if (!(error instanceof ChatGptWebAdapterError)
+              || !["upstream_server_error", "model_version_unavailable"].includes(error.code)) throw error;
+            startup = undefined;
+          }
+        }
+        return selectStagingMode();
+      });
       await diagnostics.capture(page, "effort-selection-complete");
 
       // One receipt per physical Send, not per native tool call or stream attachment.
@@ -4228,7 +4355,7 @@ export class ChatGptBrowserWorker {
                   // Connector access persists in this bound conversation without another mention.
                   const localTools = (turn.nativeConnector === true || mode.localTools)
                     && !(reuseConversation || responseAttempt > 1);
-                  if (this.config.experimentalComposerPlainText && !candidateAttachment) {
+                  if (!candidateAttachment) {
                     const insertionPlan = planChatGptPromptInsertion(localTools ? ` ${responsePrompt}` : responsePrompt, {
                       largeStructuredDirect: Boolean(multipartTransport) || prepared.transport === "inline",
                       forceStructuredDirect: turn.compaction === true && turn.requireRetainedConversation === true,
@@ -4253,7 +4380,8 @@ export class ChatGptBrowserWorker {
                     Boolean(multipartTransport) || prepared.transport === "inline",
                     turn.compaction === true && turn.requireRetainedConversation === true,
                     beforeRecoveryInsertion,
-                    { traceId: turn.traceId, stage: "prompt_attachment", operation, ...candidateAttachment },
+                    { traceId: turn.traceId, stage: "prompt_attachment", operation, ...candidateAttachment,
+                      ...(startup && responseAttempt === 1 && !multipartTransport ? { preparedPrefix: startup.prefix } : {}) },
                   );
                 },
                 turn.abortSignal,

@@ -22,10 +22,29 @@ export function readChatGptPromptText(
   element: HTMLElement | SVGElement,
   options?: { preserveLeading?: boolean },
 ): string {
-  const clone = element.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll('[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]')
-    .forEach(part => part.remove());
-  const text = [...clone.childNodes].map(child => child.textContent ?? "").join("\n");
+  const ignored = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]';
+  const blocks: string[] = [];
+  for (const child of Array.from(element.childNodes)) {
+    if (child.nodeType !== 1) { blocks.push(child.textContent ?? ""); continue; }
+    if ((child as Element).matches(ignored)) continue;
+    const parts: string[] = [];
+    // Read without cloning or repeatedly replacing siblings: each node is visited once.
+    const pending: Node[] = [child];
+    while (pending.length) {
+      const node = pending.pop()!;
+      if (node.nodeType === 3 || node.nodeType === 4) { parts.push(node.textContent ?? ""); continue; }
+      if (node.nodeType !== 1) continue;
+      const part = node as Element;
+      if (part.matches(ignored)) continue;
+      if (part.tagName === "BR") {
+        if (!part.classList.contains("ProseMirror-trailingBreak")) parts.push("\n");
+        continue;
+      }
+      for (let index = node.childNodes.length - 1; index >= 0; index--) pending.push(node.childNodes[index]!);
+    }
+    blocks.push(parts.join(""));
+  }
+  const text = blocks.join("\n");
   return options?.preserveLeading ? text : text.trimStart();
 }
 

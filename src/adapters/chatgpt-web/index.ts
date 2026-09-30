@@ -7,7 +7,7 @@ import type { ProviderAdapter } from "../base";
 import { ChatGptWebAdapterError, chatGptSessionFailureDisposition, isChatGptPromptIntegrityMismatch } from "./adapter-error";
 import { chatGptAdapterRuntimeConfig, chatGptAutomaticUsagePromptOptions } from "./adapter-runtime-config";
 import { createChatGptRuntimeStarter, type ChatGptRuntimeWorker } from "./adapter-runtime-factory";
-import { ChatGptBrowserWorker } from "./browser-worker";
+import { ChatGptBrowserWorker, discardChatGptStartupPages } from "./browser-worker";
 import { codexToolResultsById } from "./compaction-handoff";
 import { runEnhancedCompaction } from "./enhanced-compaction";
 import { runManualCompaction } from "./manual-compaction";
@@ -112,6 +112,8 @@ export function createChatGptWebAdapter(
     executionNamespace,
     lunaCheckpointStore,
     enhancedRecoveryCheckpointStore,
+    allowStartupPreparation: () => !manualInteraction
+      && accountSafety.status(automaticWebSessionLimitCount, automaticWebSessionLimitMinutes, activeSafetyTraceIds()).state === "NORMAL",
   });
   const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
   const accountSafety = dependencies.accountSafety ?? chatGptAccountSafety();
@@ -137,7 +139,10 @@ export function createChatGptWebAdapter(
       : error.code === "chatgpt_account_safety_stop"
         ? "account_security"
         : undefined;
-    if (reason) queueSafetySteering(accountSafety.trigger(reason, activeSafetyTraceIds()));
+    if (reason) {
+      queueSafetySteering(accountSafety.trigger(reason, activeSafetyTraceIds()));
+      void discardChatGptStartupPages().catch(() => console.warn("[chatgpt-web] startup cleanup after safety stop failed"));
+    }
   };
   const requireAutomaticAdmission = (parsed: CodexParsedRequest, targetTraceId: string) => {
     const admission = accountSafety.admit(

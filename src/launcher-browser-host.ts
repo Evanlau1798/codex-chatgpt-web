@@ -365,7 +365,9 @@ type LauncherUsageReceipt = {
 export type LauncherTurnActivity =
   | (LauncherTurnIdentity & { phase: "usage"; receipt?: LauncherUsageReceipt; trackingError?: "account-unavailable" })
   | (LauncherTurnIdentity & { phase: "start"; conversationKey?: string; connectorIdentity?: string;
-      requireRetainedConversation?: boolean })
+      requireRetainedConversation?: boolean; startupPreparation?: boolean; startupSurfaceId?: string;
+      allowStartupPreparation?: boolean })
+  | (LauncherTurnIdentity & { phase: "prepared" })
   | (LauncherTurnIdentity & { phase: "heartbeat"; refreshViewport?: boolean })
   | (LauncherTurnIdentity & {
       phase: "end"; status: "completed" | "failed" | "aborted";
@@ -387,7 +389,7 @@ export async function notifyLauncherTurn(
       ? LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS
       : LAUNCHER_TURN_START_TIMEOUT_MS,
   signal?: AbortSignal,
-): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean; cancelledByUser?: boolean; authenticationRequired?: boolean; trackUsage?: boolean }> {
+): Promise<{ surfaceId?: string; reused?: boolean; startupPrepared?: boolean; startupAllowed?: boolean; connectorBound?: boolean; cancelledByUser?: boolean; authenticationRequired?: boolean; trackUsage?: boolean }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -422,7 +424,14 @@ export async function notifyLauncherTurn(
       if (body.connectorBound !== undefined && typeof body.connectorBound !== "boolean") {
         throw new Error("Launcher browser control channel returned an invalid connector state");
       }
-      return { surfaceId: body.surfaceId, reused: body.reused === true, ...(body.connectorBound === true ? { connectorBound: true } : {}), trackUsage: body.trackUsage === true };
+      if (body.startupPrepared !== undefined && typeof body.startupPrepared !== "boolean") {
+        throw new Error("Launcher browser control channel returned an invalid startup state");
+      }
+      if (body.startupAllowed !== undefined && typeof body.startupAllowed !== "boolean") throw new Error("Invalid launcher startup admission");
+      return { surfaceId: body.surfaceId, reused: body.reused === true, ...(body.startupPrepared === true ? { startupPrepared: true } : {}), ...(body.startupAllowed === true ? { startupAllowed: true } : {}), ...(body.connectorBound === true ? { connectorBound: true } : {}), trackUsage: body.trackUsage === true };
+    }
+    if (activity.phase === "prepared" && body.prepared !== true) {
+      throw new Error("Launcher did not acknowledge startup preparation");
     }
     if (activity.phase === "end") {
       if (typeof body.cancelledByUser !== "boolean") {

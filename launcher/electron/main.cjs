@@ -1063,10 +1063,13 @@ function registerIpc({ logger, stateStore }) {
     return syncFreshConversationPreference(stateStore, runtimeHost.runtimeConfigSnapshot().config);
   });
   handle("launcher:set-preference", (_event, key, value) => {
-    if (key !== "keepRunningOnClose" && key !== "showBrowserDuringTurns" && key !== "lockBrowserDuringTurns") {
+    if (key !== "keepRunningOnClose" && key !== "showBrowserDuringTurns" && key !== "lockBrowserDuringTurns"
+      && key !== "experimentalPreparedWebSession") {
       throw new Error("Unknown preference");
     }
     const state = stateStore.update({ [key]: value === true });
+    if (key === "experimentalPreparedWebSession" && value !== true) browserHost?.discardStartupPages();
+    send("launcher:state-changed", state);
     if (key === "lockBrowserDuringTurns") browserHost?.setInteractionLocked(value === true);
     return state;
   });
@@ -1269,6 +1272,10 @@ async function start() {
     getConnectorName: () => runtimeHost.browserConnectorName(),
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
     getUseSavedChats: () => runtimeHost.runtimeConfigSnapshot().config?.useSavedChats === true,
+    getMaxBrowserTabs: () => {
+      const config = runtimeHost.runtimeConfigSnapshot().config;
+      return Number.isInteger(config?.automaticWebSessionLimitMinutes) ? config.maxBrowserTabs ?? 6 : 6;
+    },
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
     loginWithPasskey: () => runtimeHost.capturePasskeyLogin(),

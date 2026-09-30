@@ -18,6 +18,7 @@ import {
 } from "../../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_CONNECTOR_MENTION_ROW_SELECTOR, CHATGPT_SELECTED_CONNECTOR_SELECTOR, chatGptConnectorMentionRowHighlighted, openChatGptConnectorPlusMenu } from "../../src/adapters/chatgpt-web/connector-plus-menu";
 import { insertChatGptPromptText } from "../../src/adapters/chatgpt-web/prompt-insertion";
+import { readChatGptPromptText } from "../../src/adapters/chatgpt-web/prompt-text";
 import { ensureChatGptPersonalizedConnectorAccess } from "../../src/adapters/chatgpt-web/personalization";
 
 export const MARKDOWN_RESTORATION_PROBE_CHARS = 96_000;
@@ -38,12 +39,7 @@ async function activeComposer(page: Page, abortSignal?: AbortSignal): Promise<Lo
 }
 
 async function editableText(composer: Locator): Promise<string> {
-  return composer.evaluate((element, ignoredSelector) => {
-    const clone = element.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll(`${ignoredSelector}, [data-inline-selection-pill-cursor-target]`)
-      .forEach(part => part.remove());
-    return Array.from(clone.childNodes, child => child.textContent ?? "").join("\n").trimStart();
-  }, CHATGPT_SELECTED_CONNECTOR_SELECTOR, { timeout: 20_000 });
+  return composer.evaluate(readChatGptPromptText, undefined, { timeout: 20_000 });
 }
 
 export async function connectorState(composer: Locator): Promise<string[]> {

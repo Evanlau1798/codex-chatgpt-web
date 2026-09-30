@@ -319,6 +319,7 @@ class BrowserHost {
     profile = "production",
     publishState,
     getUseSavedChats = () => false,
+    getMaxBrowserTabs = () => MAX_BROWSER_TABS,
   }) {
     if (typeof getConnectorName !== "function") {
       throw new Error("Browser host connector-name resolver is unavailable");
@@ -334,6 +335,7 @@ class BrowserHost {
     this.getBrokerSocketPath = getBrokerSocketPath;
     this.getConnectorName = getConnectorName;
     this.getBrowserInteractionMode = getBrowserInteractionMode;
+    this.getMaxBrowserTabs = getMaxBrowserTabs;
     this.helper = helper;
     this.logger = logger;
     this.loginWithPasskey = loginWithPasskey;
@@ -525,6 +527,7 @@ class BrowserHost {
       loading: tab.loading === true,
       active: this.selectedTabId === tab.id,
       closable: true,
+      ...(tab.startupPreparation === true ? { startupPreparation: true } : {}),
       ...(tab.interactionMode === "manual" ? {
         interactionMode: "manual",
         manualState: tab.manualState,
@@ -546,13 +549,21 @@ class BrowserHost {
     return this.turnTabs.get(this.selectedTabId) || null;
   }
 
-  createTurnTab(traceId, helperPid, interactionLocked = true, conversationKey, connectorIdentity, manual = false, signal) {
+  maximumBrowserTabs() {
+    const value = this.getMaxBrowserTabs?.();
+    return value === undefined ? MAX_BROWSER_TABS : Number.isInteger(value)
+      ? Math.max(1, Math.min(MAX_BROWSER_TABS, value)) : 1;
+  }
+
+  createTurnTab(traceId, helperPid, interactionLocked = true, conversationKey, connectorIdentity, manual = false, signal, startupPreparation = false) {
     signal?.throwIfAborted();
-    if (this.turnTabs.size >= MAX_BROWSER_TABS
-      && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
-      throw new Error(
-        `ChatGPT Web already has ${MAX_BROWSER_TABS} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
-      );
+    const limit = BrowserHost.prototype.maximumBrowserTabs.call(this);
+    while (this.turnTabs.size >= limit) {
+      if (!BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
+        throw new Error(
+          `ChatGPT Web already has ${limit} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
+        );
+      }
     }
     const id = randomBytes(12).toString("base64url");
     const surfaceId = randomBytes(24).toString("base64url");
@@ -577,6 +588,7 @@ class BrowserHost {
       conversationKey,
       connectorIdentity,
       connectorBound: false,
+      startupPreparation,
       helperPid,
       view,
       interactionShield,
@@ -667,6 +679,8 @@ class BrowserHost {
   }
 
   evictOldestReclaimableTurnTab() {
+    const startup = [...this.turnTabs.values()].find(tab => tab.startupPreparation === true);
+    if (startup) { this.removeTurnTab(startup, false); return true; }
     const terminalManual = [...this.turnTabs.values()]
       .filter(tab => tab.interactionMode === "manual"
         && tab.status === "error"
@@ -1203,7 +1217,7 @@ class BrowserHost {
             ...[...this.turnTabs.values()].map((tab) => this.tabSnapshot(tab)),
           ]
         : [homeTab],
-      maxTabs: MAX_BROWSER_TABS,
+      maxTabs: BrowserHost.prototype.maximumBrowserTabs.call(this),
     };
   }
 
@@ -1228,7 +1242,9 @@ class BrowserHost {
     if (tab.helperPid !== helperPid) {
       throw new Error(`Browser helper ownership mismatch: expected ${tab.helperPid}, received ${helperPid}`);
     }
-    if (tab.status !== "running") throw new Error(`Browser turn ${traceId} is no longer running`);
+    if (tab.status !== "running" && !(tab.status === "ready" && tab.startupPreparation === true)) {
+      throw new Error(`Browser turn ${traceId} is no longer running`);
+    }
     tab.lastHeartbeatAt = Date.now();
     if (refreshViewport) {
       tab.deviceEmulationDirty = true;
@@ -1466,7 +1482,7 @@ class BrowserHost {
   }
 
   setInteractionLocked(locked) {
-    for (const tab of this.turnTabs.values()) tab.interactionLocked = locked;
+    for (const tab of this.turnTabs.values()) tab.interactionLocked = tab.startupPreparation === true || locked;
     this.syncViewVisibility();
   }
 
@@ -1486,6 +1502,7 @@ class BrowserHost {
     this.manualTurns?.removed(tab, abortRunning ? "cancelled" : "failed");
     this.turnTabs.delete(tab.id);
     this.syncPowerSaveBlocker();
+    if (tab.startupPreparation === true) this.closedTurnOwners.set(tab.traceId, tab.helperPid);
     if (abortRunning && tab.status === "running") {
       this.closedTurnOwners.set(tab.traceId, tab.helperPid);
       tab.status = "aborted";
@@ -1768,7 +1785,31 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  async beginTurn(traceId, reveal, helperPid, interactionLocked = true, conversationKey, connectorIdentity, requireRetainedConversation = false, signal) {
+  markStartupPrepared(traceId, helperPid) {
+    const tab = [...this.turnTabs.values()].find(tab => tab.traceId === traceId);
+    if (!tab || tab.helperPid !== helperPid || tab.startupPreparation !== true || tab.authenticationRequired
+      || tab.status !== "running" || tab.bootstrapReady !== true || tab.interactionMode !== "automatic") {
+      throw new Error("Startup preparation ownership is no longer valid");
+    }
+    tab.startupReady = true;
+    tab.connectorBound = true;
+    tab.status = "ready";
+    tab.loading = false;
+    tab.message = "Harness prepared; waiting for a task";
+    tab.lastHeartbeatAt = Date.now();
+    this.syncPowerSaveBlocker();
+    this.publishState?.(this.snapshot());
+    return { prepared: true };
+  }
+
+  discardStartupPages() {
+    this.startupPreparationAllowed = false;
+    const tabs = [...this.turnTabs.values()].filter(tab => tab.startupPreparation === true);
+    for (const tab of tabs) this.removeTurnTab(tab, false);
+    return { closed: tabs.length };
+  }
+
+  async beginTurn(traceId, reveal, helperPid, interactionLocked = true, conversationKey, connectorIdentity, requireRetainedConversation = false, signal, startup) {
     signal?.throwIfAborted();
     if (this.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.manualOperation}`);
@@ -1798,13 +1839,20 @@ class BrowserHost {
     if (sameTrace?.status === "ready" && sameTrace !== exactRetained) {
       throw new Error(`ChatGPT browser turn ${traceId} is retained under different conversation metadata`);
     }
-    const existing = sameTrace?.status === "running" ? sameTrace : exactRetained;
+    const preparedTab = !requireRetainedConversation && startup?.surfaceId
+      ? [...this.turnTabs.values()].find(tab => tab.surfaceId === startup.surfaceId
+        && tab.startupPreparation === true && tab.startupReady === true && tab.status === "ready"
+        && tab.helperPid === helperPid && tab.connectorIdentity === connectorIdentity && !tab.authenticationRequired)
+      : undefined;
+    const existing = sameTrace?.status === "running" ? sameTrace : exactRetained ?? preparedTab;
     if (existing) {
       if (existing.initializingSurface) {
         await existing.initialization;
-        return this.beginTurn(traceId, reveal, helperPid, interactionLocked, conversationKey, connectorIdentity, requireRetainedConversation, signal);
+        return this.beginTurn(traceId, reveal, helperPid, interactionLocked, conversationKey, connectorIdentity, requireRetainedConversation, signal, startup);
       }
-      const reused = existing.status === "ready";
+      const startupPrepared = existing === preparedTab;
+      if (startup?.allowed === true) this.startupPreparationAllowed = true;
+      const reused = existing.status === "ready" && !startupPrepared;
       if (existing.status === "running" && existing.helperPid !== helperPid) {
         if (processRunning(existing.helperPid)) {
           throw new Error(`ChatGPT browser turn ${traceId} is owned by another helper process`);
@@ -1818,12 +1866,18 @@ class BrowserHost {
         });
       }
       existing.helperPid = helperPid;
+      if (startupPrepared) this.closedTurnOwners.set(existing.traceId, existing.helperPid);
       existing.traceId = traceId;
+      if (startupPrepared) {
+        existing.startupPreparation = false;
+        existing.startupReady = false;
+        existing.conversationKey = conversationKey;
+      }
       existing.interactionLocked = interactionLocked;
       existing.status = "running";
       existing.loading = true;
       existing.message = "ChatGPT is working";
-      if (!reused) {
+      if (!reused && !startupPrepared) {
         existing.bootstrapReady = false;
         existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
       }
@@ -1841,14 +1895,23 @@ class BrowserHost {
         surfaceId: existing.surfaceId,
         tabId: existing.id,
         reused,
+        ...(startupPrepared ? { startupPrepared: true } : {}),
         ...(existing.connectorBound === true ? { connectorBound: true } : {}),
       };
     }
     if (requireRetainedConversation) {
       throw new Error("The retained ChatGPT conversation is no longer available");
     }
-    const tab = await this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity, false, signal);
-    this.selectedTabId = tab.id;
+    if (startup?.preparing) {
+      if (this.startupPreparationAllowed === false
+        || this.turnTabs.size >= BrowserHost.prototype.maximumBrowserTabs.call(this)
+        || [...this.turnTabs.values()].some(tab => tab.startupPreparation === true)) {
+        throw new Error("Startup preparation has no available account-safety capacity");
+      }
+    } else if (startup?.allowed === true) this.startupPreparationAllowed = true;
+    const tab = await this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity, false, signal,
+      ...(startup?.preparing === true ? [true] : []));
+    if (startup?.preparing !== true) this.selectedTabId = tab.id;
     if (reveal) this.show({ activate: false });
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
@@ -1877,6 +1940,8 @@ class BrowserHost {
     const authenticationRequired = tab.authenticationRequired === true;
     if (authenticationRequired && status === "completed") status = "failed";
     tab.status = status === "completed" ? "ready" : status === "aborted" ? "aborted" : "error";
+    tab.startupPreparation = false;
+    tab.startupReady = false;
     this.syncPowerSaveBlocker();
     tab.message = status === "completed" ? "Task completed" : message || `ChatGPT turn ${status}`;
     tab.loading = false;

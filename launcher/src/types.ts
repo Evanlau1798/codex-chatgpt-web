@@ -23,6 +23,7 @@ export interface LauncherState {
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
   experimentalNoAutoCompact: boolean;
+  experimentalPreparedWebSession: boolean;
   keepRunningOnClose: boolean;
   showBrowserDuringTurns: boolean;
   lockBrowserDuringTurns: boolean;
@@ -71,6 +72,7 @@ export interface BrowserTabState {
   loading: boolean;
   active: boolean;
   closable: boolean;
+  startupPreparation?: boolean;
   interactionMode?: BrowserInteractionMode;
   manualState?: "awaiting-user" | "sent" | "running" | "completed" | "timed-out" | "cancelled" | "failed";
   manualDeadlineAt?: string;
@@ -224,7 +226,7 @@ export interface LauncherApi {
     targetMode: BrowserInteractionMode;
   }>;
   setPreference(
-    key: "keepRunningOnClose" | "showBrowserDuringTurns" | "lockBrowserDuringTurns",
+    key: "keepRunningOnClose" | "showBrowserDuringTurns" | "lockBrowserDuringTurns" | "experimentalPreparedWebSession",
     value: boolean,
   ): Promise<LauncherState>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;

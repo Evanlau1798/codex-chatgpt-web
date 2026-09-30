@@ -429,6 +429,14 @@ export function SettingsSurface({
             onChange={(enabled) => void setExperimentalNoAutoCompact(enabled)}
           />
         </SettingRow>
+        <SettingRow body={copy.preparedWebSessionBody} label={copy.preparedWebSession}>
+          <Switch
+            checked={snapshot.state.experimentalPreparedWebSession}
+            disabled={busy || snapshot.state.coreSetupComplete !== true || snapshot.state.browserInteractionMode !== "automatic"}
+            onChange={(enabled) => void api!.setPreference("experimentalPreparedWebSession", enabled)
+              .then(updateState).catch((cause) => setError(messageOf(cause)))}
+          />
+        </SettingRow>
         {snapshot.state.browserInteractionMode === "manual" ? (
           <SettingRow body={copy.zeroRiskModelSettingsBody} label={copy.zeroRiskModelSettings}>
             <ZeroRiskModelMenu

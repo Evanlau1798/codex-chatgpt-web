@@ -86,6 +86,9 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.nativeConnector !== undefined && typeof message.turn.nativeConnector !== "boolean") {
     throw new Error("Browser helper Native2 connector flag is invalid");
   }
+  if (message.turn.allowStartupPreparation !== undefined && typeof message.turn.allowStartupPreparation !== "boolean") {
+    throw new Error("Browser helper startup admission is invalid");
+  }
   if (message.turn.retainConversation !== undefined && typeof message.turn.retainConversation !== "boolean") {
     throw new Error("Browser helper conversation retention flag is invalid");
   }
@@ -148,6 +151,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.modelFamily ? { modelFamily: message.turn.modelFamily } : {}),
     capabilities: message.turn.capabilities,
     ...(message.turn.nativeConnector ? { nativeConnector: true } : {}),
+    ...(message.turn.allowStartupPreparation ? { allowStartupPreparation: true } : {}),
     prepare: prepareSelected,
     ...(message.turn.resumeAvailable ? { prepareResume: prepareSelected } : {}),
     ...(message.turn.retainConversation ? { retainConversation: true } : {}),

@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { ChatGptPromptDeadlineError, ChatGptPromptOperation } from "../src/adapters/chatgpt-web/prompt-operation";
 import { insertChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-insertion";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
-import { insertChatGptComposerGuardedText, clearChatGptComposerInput,
-  restoreChatGptPromptChunkBoundary, restoreChatGptPromptMarkdown, guardChatGptPromptMarkdown,
-  reanchorChatGptComposerCaret } from "../src/adapters/chatgpt-web/prompt-caret";
+import { clearChatGptComposerInput, reanchorChatGptComposerCaret } from "../src/adapters/chatgpt-web/prompt-caret";
+import { pasteChatGptComposerLiteralText } from "../src/adapters/chatgpt-web/composer-literal-paste";
+import { literalPasteComposer } from "./fixtures/literal-paste-composer";
 import { ChatGptPersistentBrowserStateError, runChatGptMutationCleanup } from "../src/browser-mutation";
 
 function deferred<T>() {
@@ -35,7 +35,7 @@ test("suspension refunds match the stage's awake-time clock", () => {
   expect(() => op.check()).toThrow(ChatGptPromptDeadlineError);
 });
 
-for (const helper of ["insert", "clear", "boundary", "markdown", "caret"] as const) {
+for (const helper of ["paste", "clear", "caret"] as const) {
   test(`${helper}: cancellation during focus/clear prevents the next editor operation`, async () => {
     const controller = new AbortController();
     const reason = new DOMException("fixture cancellation", "AbortError");
@@ -46,10 +46,9 @@ for (const helper of ["insert", "clear", "boundary", "markdown", "caret"] as con
       evaluate: async () => { evaluations += 1; return true; },
       press: async () => { presses += 1; },
     } as never;
-    const run = helper === "insert" ? () => insertChatGptComposerGuardedText(composer, "text", controller.signal)
+    // Boundary/Markdown restoration exports retired; paste keeps their stop-before-edit contract.
+    const run = helper === "paste" ? () => pasteChatGptComposerLiteralText(composer, "text", controller.signal)
       : helper === "clear" ? () => clearChatGptComposerInput(composer, controller.signal)
-      : helper === "boundary" ? () => restoreChatGptPromptChunkBoundary(composer, { marker: "\ue000", value: " " }, controller.signal)
-      : helper === "markdown" ? () => restoreChatGptPromptMarkdown(composer, "a_b\n", guardChatGptPromptMarkdown("a_b\n")!, controller.signal)
       : () => reanchorChatGptComposerCaret(composer, 2, controller.signal);
     await expect(run()).rejects.toBe(reason);
     expect(evaluations).toBe(0); expect(presses).toBe(0);
@@ -64,7 +63,7 @@ test("native edit receives the remaining budget after focus, not another full ti
     focus: async (options: { timeout: number }) => { budgets.push(options.timeout); remaining = 7; },
     evaluate: async (_reader: unknown, _input: unknown, options: { timeout: number }) => { budgets.push(options.timeout); return true; },
   } as never;
-  await insertChatGptComposerGuardedText(composer, "fixture", undefined, false, undefined, op);
+  await pasteChatGptComposerLiteralText(composer, "fixture", undefined, undefined, op);
   expect(budgets).toEqual([50, 7]);
 });
 
@@ -84,7 +83,7 @@ test("a caret lost before the native edit is reanchored once without duplicating
     verify: async () => {},
     reanchor: async () => { reanchors += 1; },
   });
-  expect([insertEvaluations, reanchors]).toEqual([2, 1]);
+  expect([insertEvaluations, reanchors]).toEqual([2, 2]);
 });
 
 test("a rejected native edit is never retried as a caret failure", async () => {
@@ -101,18 +100,31 @@ test("a rejected native edit is never retried as a caret failure", async () => {
     verify: async () => {},
     reanchor: async () => { reanchors += 1; },
   }))
-    .rejects.toThrow("rejected the bounded plain-text edit");
+    .rejects.toThrow("rejected the literal plain-text paste");
   expect([evaluations, reanchors]).toEqual([1, 0]);
 });
 
 test("expired parent prevents a new native edit after successful focus", async () => {
   let remaining = 10; let edits = 0;
   const op = new ChatGptPromptOperation(undefined, () => remaining);
-  await expect(insertChatGptComposerGuardedText({
+  await expect(pasteChatGptComposerLiteralText({
     focus: async () => { remaining = 0; },
     evaluate: async () => { edits += 1; return true; },
-  } as never, "fixture", undefined, false, undefined, op)).rejects.toBeInstanceOf(ChatGptPromptDeadlineError);
+  } as never, "fixture", undefined, undefined, op)).rejects.toBeInstanceOf(ChatGptPromptDeadlineError);
   expect(edits).toBe(0);
+});
+
+test("deadline expiry after a settled public paste prevents readback, following edits and final caret work", async () => {
+  let remaining = 50;
+  const editor = literalPasteComposer({ onPaste: () => { remaining = 0; } });
+  const operation = new ChatGptPromptOperation(undefined, () => remaining);
+  await expect(editor.run("x".repeat(32_001), { operation })).rejects.toBeInstanceOf(ChatGptPromptDeadlineError);
+  expect(editor.pastes).toHaveLength(1);
+  expect(editor.read()).toBe(editor.pastes[0]!);
+  expect(editor.verified).toEqual([""]);
+  expect(editor.reanchors).toBe(0);
+  await Bun.sleep(0);
+  expect(editor.pastes).toHaveLength(1);
 });
 
 test("a cancelled read returns boundedly and ignores a later successful value", async () => {

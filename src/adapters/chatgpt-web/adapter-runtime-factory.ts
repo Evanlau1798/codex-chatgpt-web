@@ -44,6 +44,7 @@ interface ChatGptRuntimeFactoryOptions {
   executionNamespace: string;
   lunaCheckpointStore: ChatGptLunaCheckpointStore;
   enhancedRecoveryCheckpointStore: EnhancedRecoveryCheckpointStore;
+  allowStartupPreparation?: () => boolean;
 }
 
 export type ChatGptRuntimeWorker = Pick<ChatGptBrowserWorker, "run">
@@ -233,6 +234,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         traceId,
         ...(nativeControlConnector ? { nativeConnector: true } : {}),
         ...(browserCompaction ? { compaction: true } : {}),
+        ...(options.allowStartupPreparation?.() && !browserCompaction ? { allowStartupPreparation: true } : {}),
         onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
         onCommentary: emitCommentary,
         onHeartbeat: () => trace.signalProgress(),
@@ -321,6 +323,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       reasoning: parsed.options.reasoning,
       capabilities: turnCapabilities,
       ...(browserCompaction ? { compaction: true } : {}),
+      ...(options.allowStartupPreparation?.() && !browserCompaction ? { allowStartupPreparation: true } : {}),
       prepare: () => prepareWith(checkpointInput.parsed, "full"),
       ...(resumeInput ? { prepareResume: () => prepareWith(resumeInput, "resume") } : {}),
       ...(retainConversation ? { retainConversation: true } : {}),
