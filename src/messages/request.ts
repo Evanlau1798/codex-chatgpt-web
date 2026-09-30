@@ -103,10 +103,21 @@ function xml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-function workingDirectory(system: string): string {
-  const match = system.match(/^\s*-?\s*(?:Primary )?working directory:\s*(.+?)\s*$/mi);
-  const candidate = match?.[1]?.replace(/^`|`$/g, "").trim();
-  return candidate && isAbsolute(candidate) ? candidate : cwd();
+function workingDirectory(system: string, messages: unknown[]): string {
+  // Current Claude Code sends per-turn machine context as message-level system
+  // content, separately from its stable top-level system prompt. Prefer the latest
+  // explicit system context; user/tool text must never choose this workspace.
+  const contexts = messages.flatMap(raw => {
+    const message = object(raw, "message");
+    return message.role === "system" ? [textBlocks(message.content)] : [];
+  }).reverse();
+  contexts.push(system);
+  for (const context of contexts) {
+    const match = context.match(/^\s*-?\s*(?:Primary )?working directory:\s*(.+?)\s*$/mi);
+    const candidate = match?.[1]?.replace(/^`|`$/g, "").trim();
+    if (candidate && isAbsolute(candidate)) return candidate;
+  }
+  return cwd();
 }
 
 function environment(turnId: string, root: string): Json {
@@ -263,7 +274,7 @@ export function translateClaudeMessages(
   const turnId = claudeAgentTurnId(agent);
   const system = textBlocks(request.system);
   const auxiliaryResponse = claudeTitleResponse(request, system);
-  const root = workingDirectory(system);
+  const root = workingDirectory(system, request.messages);
   const input: Json[] = [];
   const suppressedByInstruction = new Map<string, number>();
   let suppressedSteeringReplays = 0;
