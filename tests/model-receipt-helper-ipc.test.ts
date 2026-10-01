@@ -99,10 +99,32 @@ test("helper receipt protocol accepts only the bounded provider-private shape", 
     cdp: { status: "unavailable" as const, parsedEvents: 0, decodedBytes: 0 },
     totalParsedEvents: 0,
     totalDecodedBytes: 0,
+    traces: [{
+      source: "cdp" as const,
+      transport: "cdp_stream" as const,
+      terminal: "loading_failed" as const,
+      failureCode: "network_loading_failed" as const,
+      frames: [{
+        class: "delta" as const,
+        keys: ["p", "o", "v"],
+        unknownKeyCount: 0,
+        operation: "replace" as const,
+        path: "known_metadata_field" as const,
+        valueShape: "primitive" as const,
+        fields: { resolved_model_slug: "gpt-6-pro" },
+      }],
+      droppedFrames: 0,
+      doneMarkers: 0,
+      assistantMessageFrames: 0,
+      replayComplete: false,
+    }],
   } };
   expect(assertChatGptModelReceiptDiagnostic(lifecycle, value.traceId)).toMatchObject({ page: lifecycle.page });
   expect(() => assertChatGptModelReceiptDiagnostic({ ...lifecycle, page: { ...lifecycle.page, rejected: 33 } }, value.traceId)).toThrow();
   expect(() => assertChatGptModelReceiptDiagnostic({ ...lifecycle, parser: { ...lifecycle.parser, cdp: { status: "unknown", parsedEvents: 0, decodedBytes: 0 } } }, value.traceId)).toThrow();
+  const trace = lifecycle.parser.traces[0]!;
+  expect(() => assertChatGptModelReceiptDiagnostic({ ...lifecycle, parser: { ...lifecycle.parser, traces: [{ ...trace, replayComplete: true }] } }, value.traceId)).toThrow();
+  expect(() => assertChatGptModelReceiptDiagnostic({ ...lifecycle, parser: { ...lifecycle.parser, traces: [{ ...trace, frames: [{ ...trace.frames[0], fragment: { authorization: "secret" } }] }] } }, value.traceId)).toThrow();
 });
 
 test("real helper boundary replays run fields through worker event and daemon callback", async () => {

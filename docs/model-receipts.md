@@ -30,14 +30,29 @@ served/message/conversation evidence must agree; otherwise no receipt is emitted
 The page fallback announces a per-invocation nonce before reading the response and requires a
 matching activated main-frame request, so a response initiated before activation cannot attach to
 a later Send.
+
+Diagnostics retain bounded, privacy-filtered metadata envelope fragments for real record/replay:
+known `message`/`mapping`/`data`/`v` nesting, exact known metadata delta paths, enum states, safe
+assistant/server model fields, and consistently hashed IDs. Prompts, answers, content/parts,
+attachments, tool arguments, credentials, URLs, and unknown key names are never recorded.
+`replayComplete` is false when frames or required metadata are dropped, redacted, or truncated;
+`replayChatGptMetadataTrace()` refuses such recordings instead of reconstructing missing frames.
+This does not change production parser authority or infer a served model from structural traces.
+
+Complete sanitized diagnostics are stored under the private config directory's
+`diagnostics/model-receipts/` with unique filenames, mode `0600`, and a 1 MiB file ceiling. The
+launcher log receives a short filename/SHA-256/byte-count reference, avoiding its 16 KiB string
+limit. IO/size/privacy failures remain telemetry-only and fail closed. Recording is currently
+unavailable on Windows because POSIX mode bits cannot establish Windows ACL privacy.
 After a full-frame navigation, the worker awaits page-capture reinstall before Send activation;
 diagnostics expose only bounded page lifecycle counters and an enum rejection reason.
 They also expose bounded parser status/event/decoded-byte counts per capture source, never raw
-frames or response keys.
+response bodies or unknown response key names.
 
 Each activated Send also emits one bounded diagnostic outcome through the same helper transport,
 including unavailable-CDP, missing-metadata, conflict, bounded, and resolved outcomes. These
-diagnostics contain counters and reason codes only; they never substitute a served model.
+diagnostics contain bounded counters, enums, safe metadata, and private recording references;
+they never substitute a served model.
 
 The production observer uses the exact `https://chatgpt.com/backend-api/f/conversation` URL. The
 offline CDP integration test supplies a loopback URL only through an explicit constructor seam for

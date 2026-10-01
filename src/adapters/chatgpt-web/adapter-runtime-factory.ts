@@ -16,6 +16,7 @@ import { createChatGptSameSurfaceRetry } from "./same-surface-recovery";
 import { browserSteeringRetry, retainedConversationResumeRequest } from "./steering";
 import { ChatGptToolEvidenceGuard } from "./tool-evidence-guard";
 import type { ChatGptModelReceipt, ChatGptModelReceiptDiagnostic } from "./model-receipt";
+import { recordChatGptMetadataDiagnostic } from "./model-receipt-artifact";
 import { assertChatGptToolRequirementSatisfied, effectiveChatGptToolPolicy } from "./tool-policy";
 import { ChatGptExternalTurnProgress } from "./turn-progress";
 import { TurnBroker, type TurnBrokerOwner } from "./turn-broker";
@@ -67,7 +68,7 @@ function logChatGptModelReceipt(receipt: ChatGptModelReceipt): void {
 }
 
 function logChatGptModelReceiptDiagnostic(diagnostic: ChatGptModelReceiptDiagnostic): void {
-  console.info(`[chatgpt-web] model_receipt_diagnostic ${JSON.stringify(diagnostic)}`);
+  console.info(`[chatgpt-web] model_receipt_diagnostic ${JSON.stringify(recordChatGptMetadataDiagnostic(diagnostic))}`);
 }
 
 export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOptions) {

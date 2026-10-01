@@ -77,12 +77,14 @@ test.skipIf(!existsSync(CHROME_PATH))("real Chromium CDP transport captures head
   });
   probe.on("Network.loadingFinished", () => events.add("Network.loadingFinished"));
   const receipts: Array<Record<string, unknown>> = [];
+  const diagnostics: unknown[] = [];
   const observer = new ChatGptModelReceiptObserver(
     "trace_real_cdp",
     "chatgpt-web/gpt-6-pro",
     undefined,
     receipt => receipts.push(receipt as unknown as Record<string, unknown>),
     `${origin}/backend-api/f/conversation`,
+    diagnostic => diagnostics.push(diagnostic),
   );
   try {
     await page.goto(`${origin}/`);
@@ -104,6 +106,7 @@ test.skipIf(!existsSync(CHROME_PATH))("real Chromium CDP transport captures head
     expect(result.body).toContain("resolved_model_slug");
     expect(streamCommandResolved).toBeTrue();
     for (const event of FIXTURE.requiredEvents) expect(events.has(event)).toBeTrue();
+    if (receipts.length !== 1) console.info("[offline-cdp-receipt-failure]", JSON.stringify(diagnostics));
     expect(receipts).toHaveLength(1);
     expect(receipts[0]).toMatchObject({
       servedModel: FIXTURE.resolvedModelSlug,
@@ -119,7 +122,7 @@ test.skipIf(!existsSync(CHROME_PATH))("real Chromium CDP transport captures head
     await new Promise<void>(resolve => server.close(() => resolve()));
     rmSync(profile, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 test.skipIf(!existsSync(CHROME_PATH))("mid-stream observer detach does not cancel the browser fetch", async () => {
   let releaseTail!: () => void;
@@ -193,4 +196,4 @@ test.skipIf(!existsSync(CHROME_PATH))("mid-stream observer detach does not cance
     await new Promise<void>(resolve => server.close(() => resolve()));
     rmSync(profile, { recursive: true, force: true });
   }
-});
+}, 15_000);

@@ -101,11 +101,58 @@ export interface ChatGptModelReceiptParserSource {
   parsedEvents: number;
   decodedBytes: number;
 }
+export type ChatGptModelReceiptFrameClass = "message" | "delta" | "stream_metadata" | "batch" | "unknown";
+export type ChatGptModelReceiptFrameRole = "assistant" | "user" | "other" | "missing";
+export type ChatGptModelReceiptFrameShape = "object" | "array" | "primitive" | "absent";
+export type ChatGptModelReceiptDeltaOperation = "add" | "append" | "replace" | "remove" | "other" | "missing";
+export type ChatGptModelReceiptDeltaPath =
+  | "message_author_role" | "message_id" | "message_metadata" | "known_metadata_field" | "other" | "missing";
+export type ChatGptModelReceiptTraceTerminal =
+  | "pending" | "reader_end" | "reader_error" | "loading_finished" | "loading_failed" | "bounded";
+export type ChatGptModelReceiptTraceTransport = "cdp_stream" | "page_tee";
+export type ChatGptMetadataReplayValue = string | number | boolean | null | ChatGptMetadataReplayValue[] | { [key: string]: ChatGptMetadataReplayValue };
+export interface ChatGptModelReceiptFrameRecord {
+  class: ChatGptModelReceiptFrameClass;
+  keys: readonly string[];
+  unknownKeyCount: number;
+  role?: ChatGptModelReceiptFrameRole;
+  operation?: ChatGptModelReceiptDeltaOperation;
+  path?: ChatGptModelReceiptDeltaPath;
+  valueShape?: ChatGptModelReceiptFrameShape;
+  batchCount?: number;
+  messageCount?: number;
+  mappingCount?: number;
+  mappingKeyHashes?: readonly string[];
+  ids?: { conversationIdHash?: string; messageIdHash?: string };
+  fields?: Partial<Record<ModelField, string>>;
+  /** Original allowlisted envelope hierarchy, with content omitted and identifiers hashed. */
+  fragment?: ChatGptMetadataReplayValue;
+  fragmentComplete?: boolean;
+  nested?: readonly {
+    container: "data" | "v" | "message" | "author" | "metadata";
+    shape: ChatGptModelReceiptFrameShape;
+    role?: ChatGptModelReceiptFrameRole;
+    count?: number;
+    fields?: Partial<Record<ModelField, string>>;
+  }[];
+}
+export interface ChatGptModelReceiptCaptureTrace {
+  source: "cdp" | "page";
+  transport: ChatGptModelReceiptTraceTransport;
+  terminal: ChatGptModelReceiptTraceTerminal;
+  failureCode?: ChatGptModelReceiptFailureCode;
+  frames: readonly ChatGptModelReceiptFrameRecord[];
+  droppedFrames: number;
+  doneMarkers: number;
+  assistantMessageFrames: number;
+  replayComplete: boolean;
+}
 export interface ChatGptModelReceiptParserDiagnostics {
   cdp?: ChatGptModelReceiptParserSource;
   page?: ChatGptModelReceiptParserSource;
   totalParsedEvents: number;
   totalDecodedBytes: number;
+  traces?: readonly ChatGptModelReceiptCaptureTrace[];
 }
 
 export interface ChatGptModelReceiptDiagnostic {
@@ -123,6 +170,7 @@ export interface ChatGptModelReceiptDiagnostic {
   failureStage?: ChatGptModelReceiptFailureStage;
   failureCode?: ChatGptModelReceiptFailureCode;
   page?: ChatGptModelReceiptPageLifecycle;
+  recording?: { status: "written"; file: string; sha256: string; bytes: number } | { status: "unavailable"; reason: "bounded" | "io_failed" | "unsupported_platform" };
   parser?: ChatGptModelReceiptParserDiagnostics;
   transport?: {
     mimeType: "text/event-stream" | "json" | "other";
@@ -159,6 +207,67 @@ const RECEIPT_PAGE_REJECTIONS = new Set<ChatGptModelReceiptPageRejection>([
   "binding_unavailable", "install_failed", "source_frame", "stale_token", "unknown_event",
   "not_activated", "sealed", "no_owned_request", "body_hash_mismatch", "capture_cap", "invalid_response",
 ]);
+const TRACE_FRAME_CLASSES = new Set<ChatGptModelReceiptFrameClass>(["message", "delta", "stream_metadata", "batch", "unknown"]);
+const TRACE_ROLES = new Set<ChatGptModelReceiptFrameRole>(["assistant", "user", "other", "missing"]);
+const TRACE_SHAPES = new Set<ChatGptModelReceiptFrameShape>(["object", "array", "primitive", "absent"]);
+const TRACE_OPERATIONS = new Set<ChatGptModelReceiptDeltaOperation>(["add", "append", "replace", "remove", "other", "missing"]);
+const TRACE_PATHS = new Set<ChatGptModelReceiptDeltaPath>([
+  "message_author_role", "message_id", "message_metadata", "known_metadata_field", "other", "missing",
+]);
+const TRACE_TERMINALS = new Set<ChatGptModelReceiptTraceTerminal>([
+  "pending", "reader_end", "reader_error", "loading_finished", "loading_failed", "bounded",
+]);
+const TRACE_TRANSPORTS = new Set<ChatGptModelReceiptTraceTransport>(["cdp_stream", "page_tee"]);
+const REPLAY_KEYS = new Set(["type", "p", "o", "v", "data", "patches", "batch", "message", "messages", "mapping", "author", "role", "id", "conversation_id", "message_id", "metadata", "server_ste_metadata", "status", "end_turn", ...MODEL_FIELDS]);
+const REPLAY_TYPES = new Set(["server_ste_metadata", "message", "delta", "delta_encoding", "message_stream_complete", "conversation_detail_metadata", "error", "unknown"]);
+const REPLAY_ROLES = new Set(["assistant", "user", "system", "tool", "other"]);
+const REPLAY_OPERATIONS = new Set(["add", "append", "replace", "remove", "patch", "unknown"]);
+const REPLAY_STATUSES = new Set(["in_progress", "finished_successfully", "finished_partial", "interrupted", "failed", "error", "unknown"]);
+const REPLAY_PATHS = new Set(["", "/redacted", "/message/[redacted]", "/message", "/message/author", "/message/author/role", "/message/id", "/message/metadata", "/message/status", "/message/end_turn", ...MODEL_FIELDS.map(field => `/message/metadata/${field}`)]);
+const REPLAY_MAX_NODES = 128;
+const REPLAY_MAX_DEPTH = 8;
+
+function safeTraceModelValue(value: unknown): string | undefined {
+  const safe = boundedPrimitive(value);
+  return safe && !/^(?:sk-|tunnel_|Bearer|eyJ)|^[a-f0-9]{24,}$/i.test(safe) ? safe : undefined;
+}
+
+function validateReplayFragment(value: unknown): boolean {
+  let nodes = 0;
+  const walk = (node: unknown, key = "", depth = 0, mapping = false, path = ""): boolean => {
+    if (++nodes > REPLAY_MAX_NODES || depth > REPLAY_MAX_DEPTH) return false;
+    if (node === null || typeof node === "boolean" || typeof node === "number") {
+      return (key === "v" || key === "end_turn" || TRACE_MODEL_FIELDS.has(key as ModelField)) && (typeof node !== "number" || Number.isFinite(node));
+    }
+    if (typeof node === "string") {
+      if (["id", "conversation_id", "message_id"].includes(key) || key === "v" && path === "/message/id") return node === "!redacted-invalid" || SAFE_RECEIPT_HASH.test(node);
+      if (key === "role" || key === "v" && path === "/message/author/role") return REPLAY_ROLES.has(node);
+      if (key === "type") return REPLAY_TYPES.has(node);
+      if (key === "o") return REPLAY_OPERATIONS.has(node);
+      if (key === "p") return REPLAY_PATHS.has(node);
+      if (key === "status" || key === "v" && path === "/message/status") return REPLAY_STATUSES.has(node);
+      if (TRACE_MODEL_FIELDS.has(key as ModelField) || key === "v" && /^\/message\/metadata\/(default_model_slug|requested_model_slug|model_slug|resolved_model_slug)$/.test(path)) {
+        return node === "!redacted-invalid" || safeTraceModelValue(node) !== undefined;
+      }
+      return false;
+    }
+    if (Array.isArray(node)) return node.length <= TRACE_MAX_NESTED && node.every(child => walk(child, key, depth + 1, false, path));
+    const object = recordObject(node);
+    if (!object || Object.keys(object).length > REPLAY_KEYS.size) return false;
+    const localPath = typeof object.p === "string" ? object.p : path;
+    return Object.entries(object).every(([childKey, child]) => (
+      mapping ? SAFE_RECEIPT_HASH.test(childKey) : REPLAY_KEYS.has(childKey)
+    ) && walk(child, childKey, depth + 1, childKey === "mapping", localPath));
+  };
+  return walk(value);
+}
+const TRACE_KEYS = new Set([
+  "type", "message", "messages", "mapping", "data", "v", "p", "o", "author", "role", "id",
+  "metadata", "conversation_id", "message_id", "server_ste_metadata", "patches", "batch",
+]);
+const TRACE_MODEL_FIELDS = new Set<ModelField>(MODEL_FIELDS);
+const TRACE_MAX_FRAMES = 32;
+const TRACE_MAX_NESTED = 8;
 
 /** Validate the narrow helper-wire shape; unknown keys are rejected to prevent payload leakage. */
 export function assertChatGptModelReceipt(value: unknown, expectedTraceId?: string): ChatGptModelReceipt {
@@ -196,7 +305,7 @@ export function assertChatGptModelReceiptDiagnostic(value: unknown, expectedTrac
   const diagnostic = value as Record<string, unknown>;
   const allowed = new Set([
     "kind", "version", "traceId", "physicalSend", "responseAttempt", "provenance", "outcome", "reason",
-    "ownedRequests", "cdpCaptures", "terminalCaptures", "failureStage", "failureCode", "page", "parser", "transport",
+    "ownedRequests", "cdpCaptures", "terminalCaptures", "failureStage", "failureCode", "page", "parser", "transport", "recording",
   ]);
   if ([...Object.keys(diagnostic)].some(key => !allowed.has(key))) throw new Error("ChatGPT model receipt diagnostic has an unsupported field");
   if (diagnostic.kind !== "chatgpt_model_receipt_diagnostic" || diagnostic.version !== CHATGPT_MODEL_RECEIPT_VERSION
@@ -223,6 +332,18 @@ export function assertChatGptModelReceiptDiagnostic(value: unknown, expectedTrac
   if (diagnostic.failureCode !== undefined && !RECEIPT_FAILURE_CODES.has(diagnostic.failureCode as ChatGptModelReceiptFailureCode)) {
     throw new Error("ChatGPT model receipt diagnostic failure code is invalid");
   }
+  if (diagnostic.recording !== undefined) {
+    const recording = recordObject(diagnostic.recording);
+    if (!recording || (recording.status === "written"
+      ? Object.keys(recording).some(key => !["status", "file", "sha256", "bytes"].includes(key))
+        || typeof recording.file !== "string" || !/^metadata-[a-f0-9]{12}-[0-9]+-[a-f0-9-]{36}\.json$/.test(recording.file)
+        || typeof recording.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(recording.sha256)
+        || !Number.isSafeInteger(recording.bytes) || Number(recording.bytes) < 0 || Number(recording.bytes) > 1_048_576
+      : recording.status !== "unavailable" || !["bounded", "io_failed", "unsupported_platform"].includes(String(recording.reason))
+        || Object.keys(recording).some(key => !["status", "reason"].includes(key)))) {
+      throw new Error("ChatGPT model receipt recording reference is invalid");
+    }
+  }
   if (diagnostic.page !== undefined) {
     const page = recordObject(diagnostic.page);
     const keys = ["installed", "rebindPending", "rebinds", "invocations", "starts", "terminals", "rejected", "rejection"];
@@ -236,7 +357,7 @@ export function assertChatGptModelReceiptDiagnostic(value: unknown, expectedTrac
   }
   if (diagnostic.parser !== undefined) {
     const parser = recordObject(diagnostic.parser);
-    const parserKeys = ["cdp", "page", "totalParsedEvents", "totalDecodedBytes"];
+    const parserKeys = ["cdp", "page", "totalParsedEvents", "totalDecodedBytes", "traces"];
     const validateSource = (value: unknown): boolean => {
       const source = recordObject(value);
       return Boolean(source && Object.keys(source).every(key => ["status", "parsedEvents", "decodedBytes"].includes(key))
@@ -255,6 +376,73 @@ export function assertChatGptModelReceiptDiagnostic(value: unknown, expectedTrac
       || !Number.isSafeInteger(parser.totalDecodedBytes) || Number(parser.totalDecodedBytes) < 0
       || Number(parser.totalDecodedBytes) > CHATGPT_MODEL_RECEIPT_MAX_BYTES * CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) {
       throw new Error("ChatGPT model receipt parser diagnostics are invalid");
+    }
+    if (parser.traces !== undefined) {
+      const traces = parser.traces;
+      const validateFrame = (value: unknown): boolean => {
+        const frame = recordObject(value);
+        if (!frame || Object.keys(frame).some(key => ![
+          "class", "keys", "unknownKeyCount", "role", "operation", "path", "valueShape", "batchCount",
+          "messageCount", "mappingCount", "mappingKeyHashes", "ids", "fields", "nested", "fragment", "fragmentComplete",
+        ].includes(key))) return false;
+        if (typeof frame.class !== "string" || !TRACE_FRAME_CLASSES.has(frame.class as ChatGptModelReceiptFrameClass)
+          || !Array.isArray(frame.keys) || frame.keys.length > TRACE_KEYS.size
+          || frame.keys.some(key => typeof key !== "string" || !TRACE_KEYS.has(key))
+          || !Number.isSafeInteger(frame.unknownKeyCount) || Number(frame.unknownKeyCount) < 0 || Number(frame.unknownKeyCount) > 64) return false;
+        if (frame.role !== undefined && (typeof frame.role !== "string" || !TRACE_ROLES.has(frame.role as ChatGptModelReceiptFrameRole))) return false;
+        if (frame.operation !== undefined && (typeof frame.operation !== "string" || !TRACE_OPERATIONS.has(frame.operation as ChatGptModelReceiptDeltaOperation))) return false;
+        if (frame.path !== undefined && (typeof frame.path !== "string" || !TRACE_PATHS.has(frame.path as ChatGptModelReceiptDeltaPath))) return false;
+        if (frame.valueShape !== undefined && (typeof frame.valueShape !== "string" || !TRACE_SHAPES.has(frame.valueShape as ChatGptModelReceiptFrameShape))) return false;
+        if (frame.fragment !== undefined && !validateReplayFragment(frame.fragment)) return false;
+        if (frame.fragmentComplete !== undefined && typeof frame.fragmentComplete !== "boolean") return false;
+        for (const key of ["batchCount", "messageCount", "mappingCount"]) {
+          if (frame[key] !== undefined && (!Number.isSafeInteger(frame[key]) || Number(frame[key]) < 0 || Number(frame[key]) > TRACE_MAX_NESTED)) return false;
+        }
+        if (frame.mappingKeyHashes !== undefined
+          && (!Array.isArray(frame.mappingKeyHashes) || frame.mappingKeyHashes.length > TRACE_MAX_NESTED
+            || frame.mappingKeyHashes.some(hash => typeof hash !== "string" || !SAFE_RECEIPT_HASH.test(hash)))) return false;
+        if (frame.ids !== undefined) {
+          const ids = recordObject(frame.ids);
+          if (!ids || Object.keys(ids).some(key => !["conversationIdHash", "messageIdHash"].includes(key))
+            || (ids.conversationIdHash !== undefined && (typeof ids.conversationIdHash !== "string" || !SAFE_RECEIPT_HASH.test(ids.conversationIdHash)))
+            || (ids.messageIdHash !== undefined && (typeof ids.messageIdHash !== "string" || !SAFE_RECEIPT_HASH.test(ids.messageIdHash)))) return false;
+        }
+        if (frame.fields !== undefined) {
+          const fields = recordObject(frame.fields);
+          if (!fields || Object.keys(fields).some(key => !TRACE_MODEL_FIELDS.has(key as ModelField)
+            || safeTraceModelValue(fields[key]) === undefined)) return false;
+        }
+        if (frame.nested !== undefined && (!Array.isArray(frame.nested) || frame.nested.length > TRACE_MAX_NESTED
+          || frame.nested.some(nested => {
+            const item = recordObject(nested);
+            if (!item || Object.keys(item).some(key => !["container", "shape", "role", "count", "fields"].includes(key))
+              || !["data", "v", "message", "author", "metadata"].includes(String(item.container))
+              || typeof item.shape !== "string" || !TRACE_SHAPES.has(item.shape as ChatGptModelReceiptFrameShape)
+              || (item.role !== undefined && !TRACE_ROLES.has(item.role as ChatGptModelReceiptFrameRole))
+              || (item.count !== undefined && (!Number.isSafeInteger(item.count) || Number(item.count) < 0 || Number(item.count) > TRACE_MAX_NESTED))) return true;
+            if (item.fields !== undefined) {
+              const fields = recordObject(item.fields);
+              if (!fields || Object.keys(fields).some(key => !TRACE_MODEL_FIELDS.has(key as ModelField)
+                || safeTraceModelValue(fields[key]) === undefined)) return true;
+            }
+            return false;
+          }))) return false;
+        return true;
+      };
+      if (!Array.isArray(traces) || traces.length > 2 || traces.some(trace => {
+        const value = recordObject(trace);
+        return !value || Object.keys(value).some(key => !["source", "transport", "terminal", "failureCode", "frames", "droppedFrames", "doneMarkers", "assistantMessageFrames", "replayComplete"].includes(key))
+          || value.source !== "cdp" && value.source !== "page"
+          || typeof value.transport !== "string" || !TRACE_TRANSPORTS.has(value.transport as ChatGptModelReceiptTraceTransport)
+          || typeof value.terminal !== "string" || !TRACE_TERMINALS.has(value.terminal as ChatGptModelReceiptTraceTerminal)
+          || (value.failureCode !== undefined && !RECEIPT_FAILURE_CODES.has(value.failureCode as ChatGptModelReceiptFailureCode))
+          || !Array.isArray(value.frames) || value.frames.length > TRACE_MAX_FRAMES || value.frames.some(frame => !validateFrame(frame))
+          || !Number.isSafeInteger(value.droppedFrames) || Number(value.droppedFrames) < 0
+          || !Number.isSafeInteger(value.doneMarkers) || Number(value.doneMarkers) < 0 || Number(value.doneMarkers) > TRACE_MAX_FRAMES
+          || !Number.isSafeInteger(value.assistantMessageFrames) || Number(value.assistantMessageFrames) < 0 || Number(value.assistantMessageFrames) > TRACE_MAX_FRAMES
+          || typeof value.replayComplete !== "boolean"
+          || value.replayComplete === true && (value.droppedFrames !== 0 || (value.frames as ChatGptModelReceiptFrameRecord[]).some(frame => frame.fragmentComplete !== true));
+      })) throw new Error("ChatGPT model receipt parser trace is invalid");
     }
   }
   if (diagnostic.transport !== undefined) {
@@ -329,6 +517,230 @@ export class ChatGptModelReceiptCollector {
   private deltaMessageId = false;
   private currentMessageId?: string;
   private messageContextConflict = false;
+  private readonly traceHead: ChatGptModelReceiptFrameRecord[] = [];
+  private readonly traceTail: ChatGptModelReceiptFrameRecord[] = [];
+  private traceDropped = 0;
+  private doneMarkers = 0;
+  private assistantMessageFrames = 0;
+  private replayRole: string | undefined;
+
+  private replayFragment(value: unknown): { fragment: ChatGptMetadataReplayValue; complete: boolean } {
+    let nodes = 0;
+    let complete = true;
+    const walk = (node: unknown, key = "", depth = 0, role = this.replayRole, server = false, path = ""): ChatGptMetadataReplayValue | undefined => {
+      if (++nodes > REPLAY_MAX_NODES || depth > REPLAY_MAX_DEPTH) { complete = false; return undefined; }
+      const modelValue = TRACE_MODEL_FIELDS.has(key as ModelField) || key === "v" && /^\/message\/metadata\/(default_model_slug|requested_model_slug|model_slug|resolved_model_slug)$/.test(path);
+      if (modelValue && role !== "assistant" && !server) { complete = false; return undefined; }
+      if (modelValue && typeof node === "object" && node !== null) return Array.isArray(node) ? [] : {};
+      if (node === null || typeof node === "boolean" || typeof node === "number") {
+        return key === "v" || key === "end_turn" || TRACE_MODEL_FIELDS.has(key as ModelField)
+          ? typeof node === "number" && !Number.isFinite(node) ? null : node : undefined;
+      }
+      if (typeof node === "string") {
+        if (["id", "conversation_id", "message_id"].includes(key) || key === "v" && path === "/message/id") return boundedIdentifier(node) ? digestIdentifier(node) : "!redacted-invalid";
+        if (key === "role" || key === "v" && path === "/message/author/role") {
+          if (key === "v") this.replayRole = REPLAY_ROLES.has(node) ? node : "other";
+          return REPLAY_ROLES.has(node) ? node : "other";
+        }
+        if (key === "type") return REPLAY_TYPES.has(node) ? node : "unknown";
+        if (key === "o") return REPLAY_OPERATIONS.has(node) ? node : "unknown";
+        if (key === "p") return REPLAY_PATHS.has(node) ? node : node.startsWith("/message") ? "/message/[redacted]" : "/redacted";
+        if (key === "status" || key === "v" && path === "/message/status") return REPLAY_STATUSES.has(node) ? node : "unknown";
+        if (TRACE_MODEL_FIELDS.has(key as ModelField) || key === "v" && /^\/message\/metadata\/(default_model_slug|requested_model_slug|model_slug|resolved_model_slug)$/.test(path)) {
+          if (role !== "assistant" && !server) return undefined;
+          const safe = safeTraceModelValue(node);
+          if (!safe && boundedPrimitive(node)) complete = false;
+          return safe ?? "!redacted-invalid";
+        }
+        return undefined;
+      }
+      if (Array.isArray(node)) {
+        if (node.length > TRACE_MAX_NESTED) complete = false;
+        return node.slice(0, TRACE_MAX_NESTED).map(child => walk(child, key, depth + 1, role, server, path) ?? {});
+      }
+      const object = recordObject(node);
+      if (!object) return undefined;
+      const author = recordObject(object.author);
+      const message = recordObject(object.message);
+      const messageAuthor = recordObject(message?.author);
+      const explicitRole = key === "metadata" || key === "server_ste_metadata" ? undefined : author?.role ?? object.role ?? messageAuthor?.role ?? message?.role;
+      const localRole = typeof explicitRole === "string" ? explicitRole : key === "metadata" ? role : this.replayRole ?? role;
+      if (typeof explicitRole === "string") this.replayRole = explicitRole;
+      const localServer = server || object.type === "server_ste_metadata" || "server_ste_metadata" in object;
+      const localPath = typeof object.p === "string" ? object.p : path;
+      const out: { [key: string]: ChatGptMetadataReplayValue } = {};
+      if (key === "mapping") {
+        const entries = Object.entries(object);
+        if (entries.length > TRACE_MAX_NESTED) complete = false;
+        for (const [id, child] of entries.slice(0, TRACE_MAX_NESTED)) {
+          const fragment = walk(child, "", depth + 1, localRole, localServer, localPath);
+          if (fragment !== undefined) out[digestIdentifier(id)!] = fragment;
+        }
+        return out;
+      }
+      for (const [childKey, child] of Object.entries(object)) {
+        if (!REPLAY_KEYS.has(childKey)) continue;
+        const fragment = walk(child, childKey, depth + 1, localRole, localServer, localPath);
+        if (fragment !== undefined) out[childKey] = fragment;
+      }
+      return out;
+    };
+    return { fragment: walk(value) ?? {}, complete };
+  }
+
+  private traceShape(value: unknown): ChatGptModelReceiptFrameShape {
+    if (value === undefined) return "absent";
+    if (Array.isArray(value)) return "array";
+    return recordObject(value) ? "object" : "primitive";
+  }
+
+  private traceRole(value: unknown): ChatGptModelReceiptFrameRole {
+    const object = recordObject(value);
+    const author = recordObject(object?.author);
+    const role = author?.role ?? object?.role;
+    return role === "assistant" ? "assistant" : role === "user" ? "user" : role === undefined ? "missing" : "other";
+  }
+
+  private traceFields(value: unknown, allow: boolean): Partial<Record<ModelField, string>> | undefined {
+    if (!allow) return undefined;
+    const object = recordObject(value);
+    if (!object) return undefined;
+    const fields: Partial<Record<ModelField, string>> = {};
+    for (const field of MODEL_FIELDS) {
+      const safe = safeTraceModelValue(object[field]);
+      if (safe) fields[field] = safe;
+    }
+    return Object.keys(fields).length > 0 ? fields : undefined;
+  }
+
+  private traceMessage(value: unknown): { role: ChatGptModelReceiptFrameRole; fields?: Partial<Record<ModelField, string>>; ids?: ChatGptModelReceiptFrameRecord["ids"] } {
+    const object = recordObject(value);
+    const role = this.traceRole(value);
+    if (!object) return { role };
+    const metadata = recordObject(object.metadata);
+    const allowFields = role === "assistant";
+    const fields = { ...this.traceFields(object, allowFields), ...this.traceFields(metadata, allowFields) };
+    const conversationIdHash = boundedIdentifier(object.conversation_id) ? digestIdentifier(boundedIdentifier(object.conversation_id)) : undefined;
+    const messageIdHash = boundedIdentifier(object.id) ? digestIdentifier(boundedIdentifier(object.id)) : undefined;
+    const ids = conversationIdHash || messageIdHash ? {
+      ...(conversationIdHash ? { conversationIdHash } : {}),
+      ...(messageIdHash ? { messageIdHash } : {}),
+    } : undefined;
+    return { role, ...(Object.keys(fields).length > 0 ? { fields } : {}), ...(ids ? { ids } : {}) };
+  }
+
+  private tracePath(value: unknown): ChatGptModelReceiptDeltaPath {
+    if (typeof value !== "string") return "missing";
+    if (value === "/message/author/role") return "message_author_role";
+    if (value === "/message/id") return "message_id";
+    if (value === "/message/metadata") return "message_metadata";
+    if (/^\/message\/metadata\/(default_model_slug|requested_model_slug|model_slug|resolved_model_slug)$/.test(value)) return "known_metadata_field";
+    return "other";
+  }
+
+  private traceOperation(value: unknown): ChatGptModelReceiptDeltaOperation {
+    return value === "add" || value === "append" || value === "replace" || value === "remove" ? value : value === undefined ? "missing" : "other";
+  }
+
+  private traceFrame(value: unknown): ChatGptModelReceiptFrameRecord {
+    const object = recordObject(value);
+    if (!object) return { class: "unknown", keys: [], unknownKeyCount: 0 };
+    const keys = [...TRACE_KEYS].filter(key => key in object);
+    const unknownKeyCount = Math.min(64, Object.keys(object).filter(key => !TRACE_KEYS.has(key)).length);
+    const isServerMetadata = object.type === "server_ste_metadata" || "server_ste_metadata" in object;
+    const isDelta = typeof object.p === "string" && "o" in object;
+    const isMessage = "message" in object || "messages" in object || "mapping" in object;
+    const isBatch = Array.isArray(object.data) || Array.isArray(object.patches) || Array.isArray(object.batch);
+    const record: ChatGptModelReceiptFrameRecord = {
+      class: isServerMetadata ? "stream_metadata" : isDelta ? "delta" : isMessage ? "message" : isBatch ? "batch" : "unknown",
+      keys,
+      unknownKeyCount,
+    };
+    const nested: Array<NonNullable<ChatGptModelReceiptFrameRecord["nested"]>[number]> = [];
+    for (const container of ["data", "v"] as const) {
+      if (!(container in object)) continue;
+      const value = object[container];
+      nested.push({ container, shape: this.traceShape(value), ...(Array.isArray(value) ? { count: Math.min(TRACE_MAX_NESTED, value.length) } : {}) });
+      const nestedObject = recordObject(value);
+      if (nestedObject?.message !== undefined) {
+        const message = this.traceMessage(nestedObject.message);
+        nested.push({ container: "message", shape: this.traceShape(nestedObject.message), role: message.role, ...(message.fields ? { fields: message.fields } : {}) });
+      }
+      if (nestedObject?.author !== undefined) nested.push({ container: "author", shape: this.traceShape(nestedObject.author), role: this.traceRole(nestedObject) });
+      if (nestedObject?.metadata !== undefined) nested.push({
+        container: "metadata",
+        shape: this.traceShape(nestedObject.metadata),
+        ...(isServerMetadata ? { fields: this.traceFields(nestedObject.metadata, true) } : {}),
+      });
+    }
+    if (object.message !== undefined) {
+      const message = this.traceMessage(object.message);
+      nested.push({ container: "message", shape: this.traceShape(object.message), role: message.role, ...(message.fields ? { fields: message.fields } : {}) });
+    }
+    if (object.author !== undefined) nested.push({ container: "author", shape: this.traceShape(object.author), role: this.traceRole(object) });
+    if (object.metadata !== undefined) nested.push({
+      container: "metadata",
+      shape: this.traceShape(object.metadata),
+      ...(isServerMetadata ? { fields: this.traceFields(object.metadata, true) } : {}),
+    });
+    if (nested.length > 0) record.nested = nested.slice(0, TRACE_MAX_NESTED);
+    if (isDelta) {
+      record.operation = this.traceOperation(object.o);
+      record.path = this.tracePath(object.p);
+      record.valueShape = this.traceShape(object.v);
+      if (record.path === "known_metadata_field" && (this.assistantMessageBound || (this.deltaAssistantRole && this.deltaMessageId))) {
+        const field = String(object.p).split("/").at(-1) as ModelField;
+        const safe = safeTraceModelValue(object.v);
+        if (TRACE_MODEL_FIELDS.has(field) && safe) record.fields = { [field]: safe };
+      }
+    }
+    if (isServerMetadata) record.fields = this.traceFields(object.server_ste_metadata ?? object.metadata ?? object, true);
+    const messageValues: unknown[] = [];
+    if (object.message !== undefined) messageValues.push(object.message);
+    if (Array.isArray(object.messages)) messageValues.push(...object.messages.slice(0, TRACE_MAX_NESTED));
+    const mapping = recordObject(object.mapping);
+    if (mapping) {
+      const mappingEntries = Object.entries(mapping).slice(0, TRACE_MAX_NESTED);
+      record.mappingCount = Math.min(TRACE_MAX_NESTED, Object.keys(mapping).length);
+      record.mappingKeyHashes = mappingEntries.map(([key]) => digestIdentifier(key)!);
+      messageValues.push(...mappingEntries.map(([, entry]) => recordObject(entry)?.message));
+    }
+    if (messageValues.length > 0) {
+      record.messageCount = Math.min(TRACE_MAX_NESTED, messageValues.length);
+      const first = this.traceMessage(messageValues[0]);
+      record.role = first.role;
+      record.fields = record.fields ?? first.fields;
+      record.ids = first.ids;
+      if (first.role === "assistant") this.assistantMessageFrames = Math.min(TRACE_MAX_FRAMES, this.assistantMessageFrames + 1);
+    } else if (isDelta) record.role = this.deltaAssistantRole ? "assistant" : "missing";
+    const data = object.data ?? object.v;
+    if (Array.isArray(data) || Array.isArray(object.patches) || Array.isArray(object.batch)) {
+      record.batchCount = Math.min(TRACE_MAX_NESTED, (Array.isArray(data) ? data.length : 0)
+        + (Array.isArray(object.patches) ? object.patches.length : 0)
+        + (Array.isArray(object.batch) ? object.batch.length : 0));
+    }
+    return record;
+  }
+
+  private recordFrame(value: unknown): void {
+    const record = this.traceFrame(value);
+    const replay = this.replayFragment(value);
+    record.fragment = replay.fragment;
+    record.fragmentComplete = replay.complete;
+    if (this.traceHead.length < TRACE_MAX_FRAMES / 2) this.traceHead.push(record);
+    else if (this.traceTail.length < TRACE_MAX_FRAMES / 2) this.traceTail.push(record);
+    else { this.traceTail.shift(); this.traceTail.push(record); this.traceDropped += 1; }
+  }
+
+  diagnosticTrace(): { frames: readonly ChatGptModelReceiptFrameRecord[]; droppedFrames: number; doneMarkers: number; assistantMessageFrames: number; replayComplete: boolean } {
+    return {
+      frames: [...this.traceHead, ...this.traceTail],
+      droppedFrames: this.traceDropped,
+      doneMarkers: this.doneMarkers,
+      assistantMessageFrames: this.assistantMessageFrames,
+      replayComplete: this.traceDropped === 0 && [...this.traceHead, ...this.traceTail].every(frame => frame.fragmentComplete === true),
+    };
+  }
 
   markBounded(): void { this.bounded = true; }
 
@@ -374,7 +786,8 @@ export class ChatGptModelReceiptCollector {
     this.inspectKnownFields(metadata);
     // IDs are retained only long enough to hash them in the final receipt.
     if ("conversation_id" in metadata) this.addIdentifier(this.conversationIds, metadata.conversation_id);
-    if ("message_id" in metadata) this.addIdentifier(this.messageIds, metadata.message_id);
+    // Stream metadata may reference the user submission. Only an explicitly
+    // assistant-authored message (or bound assistant delta) supplies its ID.
   }
 
   private inspectAssistantMessage(value: unknown): void {
@@ -382,7 +795,13 @@ export class ChatGptModelReceiptCollector {
     if (!message || !this.countNode()) return;
     const author = recordObject(message.author);
     const role = author?.role ?? message.role;
-    if (role !== "assistant") return;
+    if (role !== "assistant") {
+      this.assistantMessageBound = false;
+      this.deltaAssistantRole = false;
+      this.deltaMessageId = false;
+      this.currentMessageId = undefined;
+      return;
+    }
     this.assistantMessageBound = true;
     const messageId = boundedIdentifier(message.id);
     if (messageId && this.currentMessageId !== undefined && this.currentMessageId !== messageId) {
@@ -398,6 +817,10 @@ export class ChatGptModelReceiptCollector {
   private inspectFullEnvelope(value: Record<string, unknown>): void {
     // Full-message responses may expose a single message, a message list, or a mapping.
     const author = recordObject(value.author);
+    const ownMessage = recordObject(value.message);
+    const ownMessageAuthor = recordObject(ownMessage?.author);
+    const ownAssistant = author?.role === "assistant" || value.role === "assistant"
+      || ownMessageAuthor?.role === "assistant" || ownMessage?.role === "assistant";
     const hasMessageStructure = "message" in value || "messages" in value || "mapping" in value
       || author?.role === "assistant" || value.role === "assistant";
     if ("message" in value) this.inspectAssistantMessage(value.message);
@@ -414,13 +837,13 @@ export class ChatGptModelReceiptCollector {
         if (envelope?.message !== undefined) this.inspectAssistantMessage(envelope.message);
       }
     }
-    if (hasMessageStructure && this.assistantMessageBound) this.inspectMetadata(value.metadata);
+    if (hasMessageStructure && ownAssistant) this.inspectMetadata(value.metadata);
     // A message object can itself be the event payload.
-    if (author?.role === "assistant" || value.role === "assistant") this.inspectAssistantMessage(value);
-    if (hasMessageStructure && this.assistantMessageBound && typeof value.conversation_id === "string") {
+    if (author?.role !== undefined || value.role !== undefined) this.inspectAssistantMessage(value);
+    if (hasMessageStructure && ownAssistant && typeof value.conversation_id === "string") {
       this.addIdentifier(this.conversationIds, value.conversation_id);
     }
-    if (hasMessageStructure && this.assistantMessageBound) this.inspectKnownFields(value);
+    if (hasMessageStructure && ownAssistant) this.inspectKnownFields(value);
   }
 
   private inspectStreamMetadata(value: unknown): void {
@@ -429,7 +852,6 @@ export class ChatGptModelReceiptCollector {
     this.inspectKnownFields(metadata);
     this.inspectMetadata(metadata.metadata);
     if ("conversation_id" in metadata) this.addIdentifier(this.conversationIds, metadata.conversation_id);
-    if ("message_id" in metadata) this.addIdentifier(this.messageIds, metadata.message_id);
   }
 
   private inspectDelta(value: Record<string, unknown>): boolean {
@@ -437,11 +859,21 @@ export class ChatGptModelReceiptCollector {
     if (typeof value.o !== "string" || !new Set(["add", "append", "replace", "remove"]).has(value.o)) return true;
     const path = value.p.split("/").filter(Boolean);
     if (path[0] !== "message") return true;
-    if (path[1] === "author" && path[2] === "role" && value.v === "assistant") {
-      this.deltaAssistantRole = true;
+    if (path[1] === "author" && path[2] === "role") {
+      this.deltaAssistantRole = value.v === "assistant";
+      if (!this.deltaAssistantRole) {
+        this.assistantMessageBound = false;
+        this.deltaMessageId = false;
+        this.currentMessageId = undefined;
+      }
       return true;
     }
     if (path[1] === "id" && boundedIdentifier(value.v)) {
+      if (!this.assistantMessageBound && !this.deltaAssistantRole) {
+        this.deltaMessageId = false;
+        this.currentMessageId = undefined;
+        return true;
+      }
       this.deltaMessageId = true;
       const messageId = boundedIdentifier(value.v)!;
       if (this.currentMessageId !== undefined && this.currentMessageId !== messageId) this.messageContextConflict = true;
@@ -459,6 +891,37 @@ export class ChatGptModelReceiptCollector {
     return true;
   }
 
+  private inspectProviderEnvelope(value: unknown, depth = 0): void {
+    if (depth > REPLAY_MAX_DEPTH) { this.bounded = true; return; }
+    if (Array.isArray(value)) {
+      if (value.length > CHATGPT_MODEL_RECEIPT_MAX_EVENTS) this.bounded = true;
+      for (const child of value.slice(0, CHATGPT_MODEL_RECEIPT_MAX_EVENTS)) {
+        if (!this.countNode()) return;
+        this.inspectProviderEnvelope(child, depth + 1);
+      }
+      return;
+    }
+    const object = recordObject(value);
+    if (!object) return;
+    if (object.p === "/message" && ["add", "replace"].includes(String(object.o))) {
+      this.inspectAssistantMessage(object.v);
+      return;
+    }
+    if (this.inspectDelta(object)) return;
+    if (object.type === "server_ste_metadata" || "server_ste_metadata" in object) {
+      this.inspectStreamMetadata(object.server_ste_metadata ?? object.metadata ?? object);
+      return;
+    }
+    this.inspectFullEnvelope(object);
+    // Recorded ChatGPT wire frames wrap message snapshots and patch batches in
+    // `v`. Never descend through content, attachments, or a non-root patch value.
+    if (!("message" in object || "messages" in object || "mapping" in object || "author" in object)
+      && (object.p === undefined || object.p === "") && (recordObject(object.v) || Array.isArray(object.v))) {
+      if (!this.countNode()) return;
+      this.inspectProviderEnvelope(object.v, depth + 1);
+    }
+  }
+
   consumeJson(value: unknown): void {
     if (this.bounded || this.events >= CHATGPT_MODEL_RECEIPT_MAX_EVENTS) {
       this.bounded = true;
@@ -467,13 +930,9 @@ export class ChatGptModelReceiptCollector {
     const object = recordObject(value);
     if (!object) return;
     this.events += 1;
+    this.recordFrame(object);
     if (!this.countNode()) return;
-    if (this.inspectDelta(object)) return;
-    if (object.type === "server_ste_metadata" || "server_ste_metadata" in object) {
-      this.inspectStreamMetadata(object.server_ste_metadata ?? object.metadata ?? object);
-      return;
-    }
-    this.inspectFullEnvelope(object);
+    this.inspectProviderEnvelope(object);
   }
 
   /** Parse an SSE body incrementally. Non-data event lines are ignored. */
@@ -532,7 +991,11 @@ export class ChatGptModelReceiptCollector {
     if (this.sseData.length === 0) return;
     const data = this.sseData.join("\n");
     this.sseData = [];
-    if (data === "[DONE]" || data.length > CHATGPT_MODEL_RECEIPT_MAX_BYTES) return;
+    if (data === "[DONE]") {
+      this.doneMarkers = Math.min(TRACE_MAX_FRAMES, this.doneMarkers + 1);
+      return;
+    }
+    if (data.length > CHATGPT_MODEL_RECEIPT_MAX_BYTES) return;
     try { this.consumeJson(JSON.parse(data)); } catch { /* unrelated SSE event */ }
   }
 
@@ -568,6 +1031,17 @@ export class ChatGptModelReceiptCollector {
       ])],
     };
   }
+}
+
+/** Replays only complete, privacy-filtered metadata recordings; never invents dropped frames. */
+export function replayChatGptMetadataTrace(trace: Pick<ChatGptModelReceiptCaptureTrace, "frames" | "droppedFrames" | "replayComplete">): ChatGptModelObservation {
+  if (!trace.replayComplete || trace.droppedFrames !== 0 || trace.frames.length > TRACE_MAX_FRAMES
+    || trace.frames.some(frame => frame.fragmentComplete !== true || frame.fragment === undefined || !validateReplayFragment(frame.fragment))) {
+    throw new Error("ChatGPT metadata recording is incomplete or invalid and cannot be replayed");
+  }
+  const collector = new ChatGptModelReceiptCollector();
+  for (const frame of trace.frames) collector.consumeJson(frame.fragment);
+  return collector.finish();
 }
 
 export interface ChatGptModelReceiptSendContext {
@@ -664,6 +1138,7 @@ interface CdpCapture {
   failureStage?: ChatGptModelReceiptFailureStage;
   failureCode?: ChatGptModelReceiptFailureCode;
   transport?: ChatGptModelReceiptDiagnostic["transport"];
+  traceTerminal?: ChatGptModelReceiptTraceTerminal;
   tail: Promise<void>;
 }
 
@@ -805,6 +1280,13 @@ export class ChatGptModelReceiptObserver {
     };
     const cdp = source(active.captures.filter(capture => capture.source === "cdp"));
     const page = source(active.captures.filter(capture => capture.source === "page"));
+    const traces = active.captures.map(capture => ({
+      source: capture.source,
+      transport: capture.source === "cdp" ? "cdp_stream" as const : "page_tee" as const,
+      terminal: capture.traceTerminal ?? "pending" as const,
+      ...(capture.failureCode ? { failureCode: capture.failureCode } : {}),
+      ...capture.collector.diagnosticTrace(),
+    }));
     return {
       ...(cdp ? { cdp } : {}),
       ...(page ? { page } : {}),
@@ -816,6 +1298,7 @@ export class ChatGptModelReceiptObserver {
         CHATGPT_MODEL_RECEIPT_MAX_BYTES * CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES,
         active.captures.reduce((sum, capture) => sum + capture.seenEncodedBytes, 0),
       ),
+      ...(traces.length > 0 ? { traces } : {}),
     };
   }
   private readonly onRequest = (request: Request): void => {
@@ -848,6 +1331,7 @@ export class ChatGptModelReceiptObserver {
   private readonly onRequestFailed = (request: Request): void => {
     for (const capture of this.captures.values()) {
       if (capture.playwright?.request !== request) continue;
+      if (capture.source === "page") capture.traceTerminal = "reader_error";
       capture.failed = true;
       if (capture.source === "page") this.markPageTerminal(capture);
       else capture.terminal = true;
@@ -965,6 +1449,7 @@ export class ChatGptModelReceiptObserver {
       return true;
     }
     if (event.kind === "end") {
+      capture.traceTerminal = "reader_end";
       capture.tail = capture.tail.then(() => {
         if (!capture.failed && capture.contentType === "sse") capture.collector.consumeSseChunk(new Uint8Array(), true);
         else if (!capture.failed && capture.contentType === "json") capture.collector.consumeJsonChunk(new Uint8Array(), true);
@@ -980,6 +1465,7 @@ export class ChatGptModelReceiptObserver {
       return true;
     }
     if (event.kind === "bounded") {
+      capture.traceTerminal = "bounded";
       capture.bounded = true;
       capture.collector.markBounded();
       this.markPageTerminal(capture);
@@ -987,6 +1473,7 @@ export class ChatGptModelReceiptObserver {
       return false;
     }
     if (event.kind === "failed") {
+      capture.traceTerminal = "reader_error";
       capture.failed = true;
       this.markPageTerminal(capture);
       capture.failureStage = "data_received";
@@ -1097,6 +1584,7 @@ export class ChatGptModelReceiptObserver {
   private readonly onCdpFinished = (payload: CdpLoadingFinished): void => {
     const capture = this.captures.get(payload.requestId);
     if (!capture) return;
+    capture.traceTerminal = "loading_finished";
     capture.tail = capture.tail.then(() => {
       if (!capture.failed && capture.contentType === "sse") capture.collector.consumeSseChunk(new Uint8Array(), true);
       else if (!capture.failed && capture.contentType === "json") capture.collector.consumeJsonChunk(new Uint8Array(), true);
@@ -1113,6 +1601,7 @@ export class ChatGptModelReceiptObserver {
   private readonly onCdpFailed = (payload: CdpLoadingFailed): void => {
     const capture = this.captures.get(payload.requestId);
     if (!capture) return;
+    capture.traceTerminal = "loading_failed";
     capture.failed = true;
     capture.terminal = true;
     capture.failureStage = "loading_failed";
@@ -1248,10 +1737,17 @@ export class ChatGptModelReceiptObserver {
       capture,
       observation: capture.collector.finish(),
     }));
-    const resolvedPageObservations = observations.filter(({ capture, observation }) => capture.source === "page" && !capture.failed && capture.playwright && observation.status === "resolved");
-    const resolvedCdpObservations = observations.filter(({ capture, observation }) => capture.source === "cdp" && !capture.failed && capture.playwright && observation.status === "resolved");
-    const boundPageObservations = observations.filter(({ capture }) => capture.source === "page" && !capture.failed && capture.playwright);
-    const boundCdpObservations = observations.filter(({ capture }) => capture.source === "cdp" && !capture.failed && capture.playwright && capture.contentType);
+    const protocolEnded = (capture: CdpCapture): boolean => capture.contentType === "sse"
+      && capture.collector.diagnosticTrace().doneMarkers > 0 && !capture.bounded;
+    // The real recording has [DONE] before Chromium's late loadingFailed. This
+    // is transport cleanup, not a truncated provider message. Decoder failures,
+    // absent [DONE], bounded captures, and conflicting peer evidence still fail closed.
+    const usable = (capture: CdpCapture): boolean => !capture.failed
+      || capture.source === "cdp" && capture.failureCode === "network_loading_failed" && protocolEnded(capture);
+    const resolvedPageObservations = observations.filter(({ capture, observation }) => capture.source === "page" && (usable(capture) || protocolEnded(capture)) && capture.playwright && observation.status === "resolved");
+    const resolvedCdpObservations = observations.filter(({ capture, observation }) => capture.source === "cdp" && (usable(capture) || protocolEnded(capture)) && capture.playwright && observation.status === "resolved");
+    const boundPageObservations = observations.filter(({ capture }) => capture.source === "page" && (usable(capture) || protocolEnded(capture)) && capture.playwright);
+    const boundCdpObservations = observations.filter(({ capture }) => capture.source === "cdp" && (usable(capture) || protocolEnded(capture)) && capture.playwright && capture.contentType);
     if ((resolvedPageObservations.length > 0 && boundPageObservations.some(({ observation }) => observation.status !== "resolved"))
       || (resolvedCdpObservations.length > 0 && boundCdpObservations.some(({ observation }) => observation.status !== "resolved"))
       || (resolvedPageObservations.length > 0 && boundCdpObservations.length > 0 && resolvedCdpObservations.length === 0)
@@ -1271,9 +1767,10 @@ export class ChatGptModelReceiptObserver {
         return;
       }
     }
-    const selectedObservations = resolvedPageObservations.length > 0 ? resolvedPageObservations : resolvedCdpObservations;
+    const usablePages = resolvedPageObservations.filter(({ capture }) => usable(capture));
+    const selectedObservations = usablePages.length > 0 ? usablePages : resolvedCdpObservations.filter(({ capture }) => usable(capture));
     if (selectedObservations.length === 0 || selectedObservations.some(({ capture, observation }) => (
-      capture.failed || !capture.playwright || observation.status !== "resolved"
+      !usable(capture) || !capture.playwright || observation.status !== "resolved"
       || (capture.expectedConversationId !== undefined
         && observation.metadata.conversationId !== undefined
         && capture.expectedConversationId !== observation.metadata.conversationId)

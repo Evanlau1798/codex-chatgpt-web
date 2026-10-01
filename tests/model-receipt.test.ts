@@ -4,6 +4,7 @@ import {
   CHATGPT_MODEL_RECEIPT_MAX_EVENTS,
   ChatGptModelReceiptCollector,
   ChatGptModelReceiptObserver,
+  replayChatGptMetadataTrace,
 } from "../src/adapters/chatgpt-web/model-receipt";
 
 test("network observation uses bounded Chromium streaming, never response-body materialization", () => {
@@ -11,6 +12,54 @@ test("network observation uses bounded Chromium streaming, never response-body m
   expect(source).toContain("Network.streamResourceContent");
   expect(source).toContain("Network.dataReceived");
   expect(source).not.toContain("response.body()");
+});
+
+test("recorded real GPT-6 Pro v-envelope resolves the assistant without binding the user stream ID", () => {
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/chatgpt-gpt6-pro-metadata.recorded.json", import.meta.url), "utf8"));
+  const collector = new ChatGptModelReceiptCollector();
+  for (const frame of fixture.frames) collector.consumeJson(frame);
+  expect(collector.finish()).toMatchObject({ status: "resolved", metadata: {
+    resolvedModelSlug: "gpt-6-pro", modelSlug: "gpt-6-pro", defaultModelSlug: "gpt-6-pro",
+    messageId: fixture.frames[0].v.message.id,
+  } });
+});
+
+test("non-assistant snapshots and content-patch values cannot inherit assistant metadata authority", () => {
+  for (const payload of [
+    { message: { author: { role: "user" } }, metadata: { resolved_model_slug: "fake-user-model" } },
+    { p: "/message/content/parts/0", o: "replace", v: { message: { author: { role: "assistant" }, metadata: { resolved_model_slug: "fake-content-model" } } } },
+  ]) {
+    const collector = new ChatGptModelReceiptCollector();
+    collector.consumeJson({ message: { id: "assistant-context", author: { role: "assistant" }, metadata: {} } });
+    collector.consumeJson(payload);
+    expect(collector.finish().status).toBe("unavailable");
+  }
+  const delta = new ChatGptModelReceiptCollector();
+  delta.consumeJson({ message: { id: "assistant-context", author: { role: "assistant" } } });
+  delta.consumeJson({ p: "/message/author/role", o: "replace", v: "user" });
+  delta.consumeJson({ p: "/message/metadata/resolved_model_slug", o: "replace", v: "fake-user-model" });
+  expect(delta.finish().status).toBe("unavailable");
+});
+
+test("user system tool and unbound ID deltas never supply an assistant identity", () => {
+  for (const role of [undefined, "user", "system", "tool"]) {
+    const collector = new ChatGptModelReceiptCollector();
+    if (role !== undefined) collector.consumeJson({ p: "/message/author/role", o: "replace", v: role });
+    collector.consumeJson({ p: "/message/id", o: "replace", v: "non-assistant-id" });
+    collector.consumeJson({ type: "server_ste_metadata", metadata: { resolved_model_slug: "gpt-6-pro" } });
+    expect(collector.finish().metadata.messageId).toBeUndefined();
+  }
+});
+
+test("direct non-assistant snapshots clear the previous assistant delta authority", () => {
+  for (const role of ["user", "system", "tool"]) {
+    const collector = new ChatGptModelReceiptCollector();
+    collector.consumeJson({ author: { role: "assistant" }, id: "assistant-id" });
+    collector.consumeJson({ author: { role }, id: "non-assistant-id" });
+    collector.consumeJson({ p: "/message/metadata/resolved_model_slug", o: "replace", v: "fake-non-assistant-model" });
+    expect(collector.finish().status).toBe("unavailable");
+    expect(collector.finish().metadata.resolvedModelSlug).toBeUndefined();
+  }
 });
 
 test("full assistant-message metadata keeps requested/default/model/resolved separate", () => {
@@ -138,6 +187,103 @@ test("ordinary user/assistant prose and unrelated attachment metadata are ignore
   expect(collector.finish().status).toBe("unavailable");
 });
 
+test("sanitized frame recording preserves only bounded assistant metadata structure", () => {
+  const collector = new ChatGptModelReceiptCollector();
+  collector.consumeJson({
+    message: {
+      id: "message-private-id",
+      author: { role: "assistant" },
+      content: { parts: [{ text: "PRIVATE_PROMPT_OR_PROSE" }] },
+      metadata: { resolved_model_slug: "gpt-6-pro", prompt: "PRIVATE_PROMPT_OR_PROSE" },
+    },
+    data: [{ p: "/message/metadata/resolved_model_slug", o: "replace", v: "gpt-6-pro" }],
+    authorization: "Bearer PRIVATE_TOKEN",
+    url: "https://private.invalid/conversation",
+  });
+  const trace = collector.diagnosticTrace();
+  const serialized = JSON.stringify(trace);
+  expect(serialized).toContain("gpt-6-pro");
+  expect(serialized).not.toContain("PRIVATE_PROMPT_OR_PROSE");
+  expect(serialized).not.toContain("PRIVATE_TOKEN");
+  expect(serialized).not.toContain("private.invalid");
+  expect(serialized).not.toContain("message-private-id");
+  expect(trace.frames[0]).toMatchObject({ class: "message", role: "assistant", nested: expect.any(Array) });
+  expect(trace.frames[0]!.ids?.messageIdHash).toMatch(/^[a-f0-9]{24}$/);
+});
+
+test("sanitized frame recording retains first/last bounded shapes only", () => {
+  const collector = new ChatGptModelReceiptCollector();
+  for (let index = 0; index < CHATGPT_MODEL_RECEIPT_MAX_EVENTS + 20; index += 1) {
+    collector.consumeJson({ type: "unrelated", data: [{ index }] });
+  }
+  const trace = collector.diagnosticTrace();
+  expect(trace.frames.length).toBeLessThanOrEqual(32);
+  expect(trace.droppedFrames).toBeGreaterThan(0);
+  expect(JSON.stringify(trace)).not.toContain("index");
+  expect(trace.replayComplete).toBeFalse();
+  expect(() => replayChatGptMetadataTrace(trace)).toThrow("incomplete");
+});
+
+test("metadata replay preserves nested batch hierarchy and every message identity without content", () => {
+  const collector = new ChatGptModelReceiptCollector();
+  collector.consumeJson({ data: { v: [
+    { message: { id: "first-private-message", author: { role: "assistant" }, metadata: { resolved_model_slug: "gpt-6-pro" }, content: { parts: ["PRIVATE_ANSWER"] } } },
+    { message: { id: "second-private-message", author: { role: "assistant" }, metadata: { resolved_model_slug: "gpt-6-thinking" } } },
+  ] } });
+  const trace = collector.diagnosticTrace();
+  const fragment = trace.frames[0]!.fragment as any;
+  expect(fragment.data.v).toHaveLength(2);
+  expect(fragment.data.v[0].message.metadata.resolved_model_slug).toBe("gpt-6-pro");
+  expect(fragment.data.v[1].message.metadata.resolved_model_slug).toBe("gpt-6-thinking");
+  expect(fragment.data.v[0].message.id).not.toBe(fragment.data.v[1].message.id);
+  expect(JSON.stringify(trace)).not.toContain("PRIVATE_ANSWER");
+  expect(JSON.stringify(trace)).not.toContain("first-private-message");
+  expect(trace.replayComplete).toBeTrue();
+  // The current parser does not support this envelope; recording must not silently add authority.
+  expect(replayChatGptMetadataTrace(trace).status).toBe(collector.finish().status);
+  expect(collector.finish().status).toBe("unavailable");
+});
+
+test("metadata replay preserves exact delta field and malformed value type", () => {
+  const collector = new ChatGptModelReceiptCollector();
+  collector.consumeJson({ message: { id: "delta-private-id", author: { role: "assistant" }, metadata: {} } });
+  collector.consumeJson({ p: "/message/metadata/resolved_model_slug", o: "replace", v: 42 });
+  const trace = collector.diagnosticTrace();
+  expect(trace.frames[1]!.fragment).toEqual({ p: "/message/metadata/resolved_model_slug", o: "replace", v: 42 });
+  expect(replayChatGptMetadataTrace(trace).status).toBe("malformed");
+  expect(collector.finish().status).toBe("malformed");
+});
+
+test("metadata replay retains conflicts across all mapping entries and consistent hashed IDs", () => {
+  const collector = new ChatGptModelReceiptCollector();
+  collector.consumeJson({ mapping: {
+    "mapping-private-one": { message: { id: "private-one", author: { role: "assistant" }, metadata: { resolved_model_slug: "gpt-6-pro" } } },
+    "mapping-private-two": { message: { id: "private-two", author: { role: "assistant" }, metadata: { resolved_model_slug: "gpt-6-thinking" } } },
+  } });
+  const trace = collector.diagnosticTrace();
+  expect(trace.replayComplete).toBeTrue();
+  expect(Object.keys((trace.frames[0]!.fragment as any).mapping)).toHaveLength(2);
+  expect(JSON.stringify(trace)).not.toContain("private-one");
+  expect(replayChatGptMetadataTrace(trace).status).toBe("conflict");
+  expect(collector.finish().status).toBe("conflict");
+});
+
+test("sensitive or truncated metadata is explicitly non-replayable instead of reconstructed", () => {
+  const secret = "sk-private-credential-1234567890123456";
+  for (const role of ["user", "assistant"]) {
+    const collector = new ChatGptModelReceiptCollector();
+    collector.consumeJson({ message: { author: { role }, metadata: { resolved_model_slug: secret }, content: { parts: [secret] } } });
+    const trace = collector.diagnosticTrace();
+    expect(JSON.stringify(trace)).not.toContain(secret);
+    expect(trace.replayComplete).toBeFalse();
+    expect(() => replayChatGptMetadataTrace(trace)).toThrow("incomplete");
+  }
+  const clipped = new ChatGptModelReceiptCollector();
+  clipped.consumeJson({ data: Array.from({ length: 40 }, () => ({ message: { author: { role: "assistant" } } })) });
+  expect(clipped.diagnosticTrace().replayComplete).toBeFalse();
+  expect(() => replayChatGptMetadataTrace(clipped.diagnosticTrace())).toThrow("incomplete");
+});
+
 test("the collector stops at its event bound", () => {
   const collector = new ChatGptModelReceiptCollector();
   for (let index = 0; index < CHATGPT_MODEL_RECEIPT_MAX_EVENTS + 1; index += 1) {
@@ -188,6 +334,11 @@ class FakeCdp {
   }
   listenerCount(event: string) { return this.listeners.get(event)?.size ?? 0; }
   async detach() { this.detached = true; this.listeners.clear(); }
+}
+
+class FakeTeePage extends FakePage {
+  async exposeBinding() {}
+  async evaluate() {}
 }
 
 class FailingCdp extends FakeCdp {
@@ -246,6 +397,62 @@ function emitOwnedNetwork(page: FakePage, request: FakeRequest, requestId: strin
   });
   emitNetworkResponse(page, requestId, body, contentType);
 }
+
+test("recorded metadata survives a late transport abort only after an observed provider DONE marker", async () => {
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/chatgpt-gpt6-pro-metadata.recorded.json", import.meta.url), "utf8"));
+  for (const done of [false, true]) {
+    const page = new FakePage();
+    const receipts: any[] = [];
+    const diagnostics: any[] = [];
+    const observer = new ChatGptModelReceiptObserver("trace_recorded_abort", "chatgpt-web/gpt-6-pro", undefined, value => receipts.push(value), undefined, value => diagnostics.push(value));
+    await observer.attach(page as never);
+    observer.beginSend({ responseAttempt: 1 });
+    observer.activate();
+    const request = new FakeRequest(page, { model: "gpt-6-pro" });
+    page.emit("request", request);
+    page.cdp.emit("Network.requestWillBeSent", { requestId: "recorded", frameId: "main", request: { method: "POST", url: request.url(), postData: request.postData() } });
+    page.cdp.emit("Network.responseReceived", { requestId: "recorded", response: { status: 200, headers: { "content-type": "text/event-stream" } } });
+    const body = fixture.frames.map((frame: unknown) => `data: ${JSON.stringify(frame)}\n\n`).join("") + (done ? "data: [DONE]\n\n" : "");
+    page.cdp.emit("Network.dataReceived", { requestId: "recorded", data: Buffer.from(body).toString("base64") });
+    page.cdp.emit("Network.loadingFailed", { requestId: "recorded" });
+    await observer.flushCurrent();
+    expect(receipts).toHaveLength(done ? 1 : 0);
+    if (done) expect(receipts[0]).toMatchObject({ servedModel: "gpt-6-pro", source: "network.resolved_model_slug" });
+    else expect(diagnostics[0]).toMatchObject({ outcome: "unavailable", reason: "stream_failed" });
+    await observer.dispose();
+  }
+});
+
+test("two DONE-terminated sources retain agreement checks after the recorded late abort", async () => {
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/chatgpt-gpt6-pro-metadata.recorded.json", import.meta.url), "utf8"));
+  for (const conflict of [false, true]) {
+    const page = new FakeTeePage();
+    const receipts: any[] = [];
+    const diagnostics: any[] = [];
+    const observer = new ChatGptModelReceiptObserver("trace_two_source_abort", "chatgpt-web/gpt-6-pro", undefined, value => receipts.push(value), undefined, value => diagnostics.push(value));
+    await observer.attach(page as never);
+    observer.beginSend({ responseAttempt: 1 });
+    observer.activate();
+    const request = new FakeRequest(page, { model: "gpt-6-pro" });
+    page.emit("request", request);
+    page.cdp.emit("Network.requestWillBeSent", { requestId: "paired", frameId: "main", request: { method: "POST", url: request.url(), postData: request.postData() } });
+    page.cdp.emit("Network.responseReceived", { requestId: "paired", response: { status: 200, headers: { "content-type": "text/event-stream" } } });
+    const body = fixture.frames.map((frame: unknown) => `data: ${JSON.stringify(frame)}\n\n`).join("") + "data: [DONE]\n\n";
+    page.cdp.emit("Network.dataReceived", { requestId: "paired", data: Buffer.from(body).toString("base64") });
+    const token = (observer as unknown as { pageCaptureToken: string }).pageCaptureToken;
+    expect(typeof token).toBe("string");
+    expect(await observer.onPageCapture({ token, id: "paired-page", kind: "invoke" })).toBeTrue();
+    expect(await observer.onPageCapture({ token, id: "paired-page", kind: "start", status: 200, contentType: "text/event-stream" })).toBeTrue();
+    await observer.onPageCapture({ token, id: "paired-page", kind: "chunk", data: Buffer.from(conflict ? body.replaceAll("gpt-6-pro", "gpt-5-pro") : body).toString("base64") });
+    await observer.onPageCapture({ token, id: "paired-page", kind: "failed" });
+    page.cdp.emit("Network.loadingFailed", { requestId: "paired" });
+    await observer.flushCurrent();
+    expect(receipts).toHaveLength(conflict ? 0 : 1);
+    if (conflict) expect(diagnostics[0].reason).toBe("conflicting_metadata");
+    else expect(receipts[0].servedModel).toBe("gpt-6-pro");
+    await observer.dispose();
+  }
+});
 
 test("observer rejects stale/foreign responses and emits one hashed receipt per physical Send", async () => {
   const page = new FakePage();

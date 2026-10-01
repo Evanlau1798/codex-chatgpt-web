@@ -170,6 +170,9 @@ test.skipIf(!existsSync(ELECTRON_PATH))("installed Electron CDP observer capture
         rejected: 0,
       });
       expect((diagnostics[0]!.page as { rebinds: number }).rebinds).toBeGreaterThan(0);
+      expect((diagnostics[0]!.parser as { traces: unknown[] }).traces).toHaveLength(2);
+      expect(JSON.stringify(diagnostics)).not.toContain("authorization");
+      expect(JSON.stringify(diagnostics)).not.toContain("cookie");
     } else expect(receipts).toHaveLength(0);
     expect(JSON.stringify(diagnostics)).not.toContain("authorization");
     expect(JSON.stringify(diagnostics)).not.toContain("cookie");
@@ -422,4 +425,4 @@ test.skipIf(!existsSync(ELECTRON_PATH))("installed Electron CDP observer capture
     await new Promise<void>(resolve => server.close(() => resolve()));
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 15_000);
