@@ -1,0 +1,14 @@
+{
+  "transport": "Chromium CDP Network.streamResourceContent/dataReceived",
+  "responseContentType": "text/event-stream",
+  "contentLengthHeader": false,
+  "requiredEvents": [
+    "Network.requestWillBeSent",
+    "Network.responseReceived",
+    "Network.dataReceived",
+    "Network.loadingFinished"
+  ],
+  "assistantMessageId": "message-fixture",
+  "conversationId": "conversation-fixture",
+  "resolvedModelSlug": "gpt-6-pro"
+}

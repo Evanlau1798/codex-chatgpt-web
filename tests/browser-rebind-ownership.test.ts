@@ -52,15 +52,23 @@ function rebindFixture(viewport: "pending" | "failed" | "ready", connectMode: "n
       let turnConnection = old;
       let page;
       let diagnosticPage;
+      const modelReceiptPages = [];
       const submissionRejection = { noteRebind() {} };
+      const modelReceipts = {
+        attach: async (replacementPage) => {
+          if (turnConnection === old) throw new Error("model receipt attached before replacement ownership");
+          modelReceiptPages.push(replacementPage);
+        },
+      };
       ${source.slice(start, end)}
-      return { run: rebindLauncherPage, cleanup: async () => { await turnConnection?.close(); } };
+      return { run: rebindLauncherPage, cleanup: async () => { await turnConnection?.close(); }, modelReceiptPages };
     }
   `);
   const factory = new Function(...Object.keys(dependencies), `${body}; return factory;`)(...Object.values(dependencies));
   return { ...factory.call(worker) as {
     run(attempt: number, cause: Error, signal?: AbortSignal): Promise<void>;
     cleanup(): Promise<void>;
+    modelReceiptPages: unknown[];
   }, closed, acquired, connecting, releaseConnect, viewportReads: () => viewportReads };
 }
 
@@ -75,6 +83,7 @@ test("aborting rebind viewport preparation closes the unowned replacement connec
   // The stage abort may win its race before the action's failure cleanup settles.
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(fixture.closed).toEqual(["old", "replacement"]);
+  expect(fixture.modelReceiptPages).toEqual([]);
 });
 
 test("failed viewport preparation closes replacement before propagating the error", async () => {
@@ -82,12 +91,14 @@ test("failed viewport preparation closes replacement before propagating the erro
   await expect(fixture.run(1, new Error("stalled read"))).rejects.toThrow("operational viewport");
   await fixture.cleanup();
   expect(fixture.closed).toEqual(["old", "replacement"]);
+  expect(fixture.modelReceiptPages).toEqual([]);
 });
 
 test("successful rebind transfers replacement ownership to terminal cleanup", async () => {
   const fixture = rebindFixture("ready");
   await fixture.run(1, new Error("stalled read"));
   expect(fixture.closed).toEqual(["old"]);
+  expect(fixture.modelReceiptPages).toHaveLength(1);
   await fixture.cleanup();
   expect(fixture.closed).toEqual(["old", "replacement"]);
 });
@@ -105,6 +116,7 @@ test("a connect resolving after cancellation closes itself without adopting the 
   await fixture.cleanup();
   expect(fixture.closed).toEqual(["old", "replacement"]);
   expect(fixture.viewportReads()).toBe(0);
+  expect(fixture.modelReceiptPages).toEqual([]);
 });
 
 test("a changed target mapping closes the replacement and never observes another owner", async () => {
@@ -113,4 +125,5 @@ test("a changed target mapping closes the replacement and never observes another
   await fixture.cleanup();
   expect(fixture.closed).toEqual(["old", "replacement"]);
   expect(fixture.viewportReads()).toBe(0);
+  expect(fixture.modelReceiptPages).toEqual([]);
 });

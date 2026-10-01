@@ -624,6 +624,11 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
       ownedSubmissionRequestObserved: () => false,
       failure: async () => undefined,
     },
+    modelReceipts: {
+      beginSend() {},
+      activate() {},
+      flushCurrent: async () => {},
+    },
     first, next, initial, events, ChatGptPromptOperation, connectorAttemptBudget: { remaining: 3 },
     turn: {
       traceId: `production-${lane}-rebind`, externalProgress: progress,
