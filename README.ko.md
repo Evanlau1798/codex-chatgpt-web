@@ -77,6 +77,22 @@ irm https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/in
 
 Zero Risk는 ChatGPT 페이지를 읽거나 조작하지 않습니다. 모델과 `Codex Zero Risk` 커넥터를 직접 선택하고, 준비된 프롬프트를 붙여넣어 전송한 다음 런처에서 **Sent**를 확인하세요. 이름이 **(Web)** 으로 끝나는 자동 모델은 Codex에서 지원하는 Effort를 선택할 수 있습니다. 각 컨텍스트 한도를 유지하기 위해 Instant와 각 Pro 버전은 별도 항목으로 제공됩니다. 기존 작업에 저장된 이전 모델 항목은 원래의 고정 모드를 유지합니다.
 
+### Fast startup (실험적)
+
+`6.1.3-Enhanced.2`에서는 **Settings**에서 **Fast startup**을 선택할 수 있습니다. 마지막으로
+검증한 모델과 harness 초안이 있는 미전송 대기 페이지를 준비하고, 요청 시 계정, 모델, 초안을
+다시 확인한 뒤 현재 요청을 삽입합니다. 준비만으로 메시지를 보내지는 않습니다. 작업을 우선하며
+페이지 한도에 여유가 있을 때만 대기 페이지를 준비합니다. Account Safety의 **Maximum concurrency**를
+따르고, 해당 제한이 꺼져 있으면 기본 한도는 여섯 session입니다. 완료 후 TTL로 유지되는 페이지는
+대기 페이지가 아닙니다.
+
+Native2는 작업 중 진행 상황을 스트리밍할 수 있지만, 완전한 최종 답변은 output tunnel을 통해
+한 번만 원자적으로 확정합니다. 시작 및 최종 확정 진단으로 로컬 준비 시간과 ChatGPT 대기 시간을
+구분할 수 있습니다.
+
+**후보 버전의 알려진 제한:** 이어지는 요청이 전송 전 모델 검증에서 간헐적으로 실패할 수 있습니다.
+진단을 추가했으며 근본 원인은 계속 조사 중입니다.
+
 ### 대화 설정, Limits 및 API
 
 **Save chats in ChatGPT**는 기본적으로 꺼져 있으며 Codex／Claude 작업 대화를 저장할 수 있습니다. API 직접 전송과 native tool bridge는 항상 Temporary Chat을 사용하고 `store:true`를 거부합니다. 설정을 꺼도 기존 기록은 삭제되지 않습니다.

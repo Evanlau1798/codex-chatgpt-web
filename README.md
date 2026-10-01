@@ -170,6 +170,22 @@ ChatGPT page and never sends a prompt for you. The launcher prepares and copies 
 choose the model, effort, and `Codex Zero Risk` connector, then paste and send it yourself. This
 removes the account risk specifically associated with ChatGPT web automation.
 
+### Fast startup (experimental)
+
+`6.1.3-Enhanced.2` adds **Fast startup**, an opt-in switch in **Settings**. It prepares an
+unsent standby Web page with the last verified model and a harness draft, then inserts the
+current request after checking the account, model, and draft again. Preparation does not send
+a message. Real tasks take priority; a standby page is prepared only when the page limit has room.
+Account Safety's **Maximum concurrency** applies, with six sessions as the default when that
+limit is disabled. Completed pages retained by TTL are not standby pages.
+
+Native2 progress can stream while work is running; the complete final answer is committed
+once through the output tunnel. Startup and final-settlement diagnostics help distinguish
+local preparation time from time spent waiting for ChatGPT.
+
+**Known candidate limitation:** a sporadic continuation can fail model verification before
+Send. Additional diagnostics are included; the root cause remains under investigation.
+
 ### Enhanced Web session mode
 
 This setting is enabled by default for new Enhanced fork installations and affects only
