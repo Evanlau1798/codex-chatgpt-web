@@ -17,6 +17,7 @@ export const codexLifecycleTests = [
 ] as const;
 
 export const claudeLifecycleTests = [
+  "tests/claude-working-directory.test.ts",
   "tests/claude-compact-agents.test.ts",
   "tests/claude-steering-replay.test.ts",
   "tests/claude-session-abort.test.ts",

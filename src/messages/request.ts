@@ -106,13 +106,14 @@ function xml(value: string): string {
 function workingDirectory(system: string, messages: unknown[]): string {
   // Current Claude Code sends per-turn machine context as message-level system
   // content, separately from its stable top-level system prompt. Prefer the latest
-  // explicit system context; user/tool text must never choose this workspace.
-  const contexts = messages.flatMap(raw => {
+  // system context, then the top-level prompt; never revive an older workspace.
+  // User/tool text must never choose this workspace.
+  let latestSystem = "";
+  for (const raw of messages) {
     const message = object(raw, "message");
-    return message.role === "system" ? [textBlocks(message.content)] : [];
-  }).reverse();
-  contexts.push(system);
-  for (const context of contexts) {
+    if (message.role === "system") latestSystem = textBlocks(message.content);
+  }
+  for (const context of [latestSystem, system]) {
     const match = context.match(/^\s*-?\s*(?:Primary )?working directory:\s*(.+?)\s*$/mi);
     const candidate = match?.[1]?.replace(/^`|`$/g, "").trim();
     if (candidate && isAbsolute(candidate)) return candidate;
