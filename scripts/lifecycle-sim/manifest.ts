@@ -47,6 +47,7 @@ export const sharedLifecycleTests = [
   "tests/startup-prompt-attachment.test.ts",
   "tests/startup-page-pool.test.ts",
   "tests/model-startup-cache.test.ts",
+  "tests/model-selection-diagnostics.test.ts",
   "tests/model-readiness-batch.test.ts",
   "tests/prepared-prompt-readback.test.ts",
   "tests/startup-connection-transfer.test.ts",

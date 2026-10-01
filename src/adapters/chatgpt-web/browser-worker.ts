@@ -1676,12 +1676,17 @@ export class ChatGptBrowserWorker {
     return selectedMode;
   }
 
-  private async assertSelectedEffort(page: Page, mode: SelectedChatGptWebModelMode, verifyFamily = true): Promise<void> {
+  private async assertSelectedEffort(page: Page, mode: SelectedChatGptWebModelMode, verifyFamily = true, traceId?: string): Promise<void> {
     if (!mode.selection) return;
     const composer = await this.activeComposer(page);
     const controls = composer.locator("xpath=ancestor::form[1]")
       .locator(CHATGPT_EFFORT_CONTROL_SELECTOR).filter({ visible: true });
-    if (page.url() !== mode.selection.url || !mode.selection.label || await controls.count() !== 1) {
+    const urlMatches = page.url() === mode.selection.url;
+    let controlCount: number | undefined;
+    if (!urlMatches || !mode.selection.label || (controlCount = await controls.count()) !== 1) {
+      console.warn(`[chatgpt-web] selected_effort_failure=${JSON.stringify({
+        traceId, phase: "surface", urlMatches, controlCount: controlCount ?? null, labelPresent: Boolean(mode.selection.label),
+      })}`);
       throw chatGptModelControlUnavailableAdapterError("ChatGPT changed the selected model's browser surface before submission");
     }
     const control = controls.first();
@@ -1689,6 +1694,10 @@ export class ChatGptBrowserWorker {
       control.innerText(), control.getAttribute("aria-expanded"), composer.isEditable(),
     ]);
     if (label.trim() !== mode.selection.label || expanded !== "false" || !editable) {
+      console.warn(`[chatgpt-web] selected_effort_failure=${JSON.stringify({
+        traceId, phase: "selection", labelMatches: label.trim() === mode.selection.label,
+        expandedClosed: expanded === "false", composerEditable: editable,
+      })}`);
       throw chatGptModelControlUnavailableAdapterError(
         "ChatGPT did not retain the selected effort in its ready composer; the message was not submitted",
       );
@@ -1699,10 +1708,16 @@ export class ChatGptBrowserWorker {
       try {
         await assertChatGptModelFamily(menu, mode.modelFamily, mode.effort, mode.uiEffortIndex);
       } finally {
-        await this.closeEffortMenu(page, control);
+        try {
+          await this.closeEffortMenu(page, control);
+        } catch (error) {
+          console.warn(`[chatgpt-web] selected_effort_failure=${JSON.stringify({ traceId, phase: "family-close" })}`);
+          throw error;
+        }
       }
       if (page.url() !== mode.selection.url || (await control.innerText()).trim() !== mode.selection.label
         || await control.getAttribute("aria-expanded") !== "false" || !await composer.isEditable()) {
+        console.warn(`[chatgpt-web] selected_effort_failure=${JSON.stringify({ traceId, phase: "family" })}`);
         throw chatGptModelControlUnavailableAdapterError("ChatGPT changed the model while checking its family before submission");
       }
     }
@@ -4129,7 +4144,7 @@ export class ChatGptBrowserWorker {
       );
       let mode = await this.runStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, async () => {
         if (startup && !multipartTransport) {
-          try { await this.assertSelectedEffort(page, startup.selection); return startup.selection; }
+          try { await this.assertSelectedEffort(page, startup.selection, true, turn.traceId); return startup.selection; }
           catch (error) {
             if (!(error instanceof ChatGptWebAdapterError)
               || !["upstream_server_error", "model_version_unavailable"].includes(error.code)) throw error;
@@ -4220,7 +4235,7 @@ export class ChatGptBrowserWorker {
               checkpoint => diagnostics.capture(page, `multipart-${index + 1}-${checkpoint}`),
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
               async () => {
-                await this.assertSelectedEffort(page, mode);
+                await this.assertSelectedEffort(page, mode, true, turn.traceId);
                 submissionRejection.begin(page);
               },
               undefined,
@@ -4534,7 +4549,7 @@ export class ChatGptBrowserWorker {
           throw chatGptWebSurfaceError("ChatGPT connector was lost before prompt submission", false);
         }
         await diagnostics.capture(page, "send-ready");
-        await this.assertSelectedEffort(page, mode);
+        await this.assertSelectedEffort(page, mode, true, turn.traceId);
         if (recoveryExpectedActivityRevision !== undefined) {
           if ((await composer.textContent() ?? "") !== responsePrompt) {
             throw chatGptWebSurfaceError("ChatGPT recovery composer changed before submission", false);
