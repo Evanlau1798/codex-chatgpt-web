@@ -15,7 +15,7 @@ import { deferred } from "./runtime-lifecycle";
 import { createChatGptSameSurfaceRetry } from "./same-surface-recovery";
 import { browserSteeringRetry, retainedConversationResumeRequest } from "./steering";
 import { ChatGptToolEvidenceGuard } from "./tool-evidence-guard";
-import type { ChatGptModelReceipt } from "./model-receipt";
+import type { ChatGptModelReceipt, ChatGptModelReceiptDiagnostic } from "./model-receipt";
 import { assertChatGptToolRequirementSatisfied, effectiveChatGptToolPolicy } from "./tool-policy";
 import { ChatGptExternalTurnProgress } from "./turn-progress";
 import { TurnBroker, type TurnBrokerOwner } from "./turn-broker";
@@ -64,6 +64,10 @@ function logChatGptModelReceipt(receipt: ChatGptModelReceipt): void {
   // Provider-private Activity evidence. The receipt contains only allowlisted metadata and
   // hashed identifiers; it must never alter the public Responses `model` field or turn output.
   console.info(`[chatgpt-web] model_receipt ${JSON.stringify(receipt)}`);
+}
+
+function logChatGptModelReceiptDiagnostic(diagnostic: ChatGptModelReceiptDiagnostic): void {
+  console.info(`[chatgpt-web] model_receipt_diagnostic ${JSON.stringify(diagnostic)}`);
 }
 
 export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOptions) {
@@ -279,6 +283,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         onSendActivated: () => { submission.phase = "send_activated"; },
         onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
         onModelReceipt: logChatGptModelReceipt,
+        onModelReceiptDiagnostic: logChatGptModelReceiptDiagnostic,
         ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),
         onTextDelta: delta => text.push(delta),
         ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
@@ -393,6 +398,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       onSendActivated: () => { submission.phase = "send_activated"; },
       onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
       onModelReceipt: logChatGptModelReceipt,
+      onModelReceiptDiagnostic: logChatGptModelReceiptDiagnostic,
         ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),
       onTextDelta: delta => text.push(delta),
       ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),

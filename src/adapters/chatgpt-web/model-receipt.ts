@@ -11,6 +11,8 @@ export const CHATGPT_MODEL_RECEIPT_MAX_BYTES = 2_000_000;
 export const CHATGPT_MODEL_RECEIPT_MAX_EVENTS = 256;
 export const CHATGPT_MODEL_RECEIPT_MAX_NODES = 4_096;
 export const CHATGPT_MODEL_RECEIPT_MAX_FIELD_CHARS = 160;
+export const CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS = 32;
+export const CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES = 32;
 /** Telemetry-only cleanup budget after inference has already settled. */
 export const CHATGPT_MODEL_RECEIPT_TERMINAL_DRAIN_MS = 750;
 export const CHATGPT_CONVERSATION_URL = "https://chatgpt.com/backend-api/f/conversation";
@@ -67,6 +69,101 @@ export interface ChatGptModelReceipt {
 }
 
 export type ChatGptModelReceiptCallback = (receipt: ChatGptModelReceipt) => void;
+
+export type ChatGptModelReceiptDiagnosticReason =
+  | "cdp_unavailable" | "no_owned_request" | "no_cdp_capture" | "foreign_or_unbound"
+  | "stream_failed" | "missing_resolved_model" | "bounded" | "conflicting_metadata"
+  | "foreign_conversation" | "surface_rebound" | "terminal_drain_timeout" | "telemetry_error" | "receipt_emitted";
+
+export interface ChatGptModelReceiptDiagnostic {
+  kind: "chatgpt_model_receipt_diagnostic";
+  version: typeof CHATGPT_MODEL_RECEIPT_VERSION;
+  traceId: string;
+  physicalSend: number;
+  responseAttempt: number;
+  provenance: ChatGptModelReceipt["provenance"];
+  outcome: "resolved" | "unavailable";
+  reason: ChatGptModelReceiptDiagnosticReason;
+  ownedRequests: number;
+  cdpCaptures: number;
+  terminalCaptures: number;
+}
+
+export type ChatGptModelReceiptDiagnosticCallback = (diagnostic: ChatGptModelReceiptDiagnostic) => void;
+
+const RECEIPT_KEYS = new Set([
+  "kind", "version", "traceId", "physicalSend", "responseAttempt", "provenance",
+  "requestedModel", "backendContextModel", "browserRequestModel", "servedModel", "source",
+  "defaultModelSlug", "requestedModelSlug", "modelSlug", "conversationIdHash", "messageIdHash",
+]);
+const SAFE_RECEIPT_STRING = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/;
+const SAFE_RECEIPT_TRACE = /^[A-Za-z0-9_-]{6,128}$/;
+const SAFE_RECEIPT_HASH = /^[a-f0-9]{24}$/;
+const RECEIPT_DIAGNOSTIC_REASONS = new Set<ChatGptModelReceiptDiagnosticReason>([
+  "cdp_unavailable", "no_owned_request", "no_cdp_capture", "foreign_or_unbound", "stream_failed",
+  "missing_resolved_model", "bounded", "conflicting_metadata", "foreign_conversation", "surface_rebound",
+  "terminal_drain_timeout", "telemetry_error", "receipt_emitted",
+]);
+
+/** Validate the narrow helper-wire shape; unknown keys are rejected to prevent payload leakage. */
+export function assertChatGptModelReceipt(value: unknown, expectedTraceId?: string): ChatGptModelReceipt {
+  if (!recordObject(value)) throw new Error("ChatGPT model receipt is not an object");
+  const receipt = value as Record<string, unknown>;
+  if ([...Object.keys(receipt)].some(key => !RECEIPT_KEYS.has(key))) throw new Error("ChatGPT model receipt has an unsupported field");
+  if (receipt.kind !== "chatgpt_model_receipt" || receipt.version !== CHATGPT_MODEL_RECEIPT_VERSION
+    || typeof receipt.traceId !== "string" || !SAFE_RECEIPT_TRACE.test(receipt.traceId)
+    || !Number.isSafeInteger(receipt.physicalSend) || Number(receipt.physicalSend) <= 0
+    || !Number.isSafeInteger(receipt.responseAttempt) || Number(receipt.responseAttempt) <= 0
+    || !["initial", "response_retry", "multipart_stage", "surface_recovery"].includes(String(receipt.provenance))
+    || typeof receipt.requestedModel !== "string" || !SAFE_RECEIPT_STRING.test(receipt.requestedModel)
+    || typeof receipt.servedModel !== "string" || !SAFE_RECEIPT_STRING.test(receipt.servedModel)
+    || receipt.source !== "network.resolved_model_slug") {
+    throw new Error("ChatGPT model receipt has invalid required fields");
+  }
+  if (expectedTraceId !== undefined && receipt.traceId !== expectedTraceId) {
+    throw new Error("ChatGPT model receipt trace does not match its helper event");
+  }
+  for (const key of ["backendContextModel", "browserRequestModel", "defaultModelSlug", "requestedModelSlug", "modelSlug"]) {
+    if (receipt[key] !== undefined && (typeof receipt[key] !== "string" || !SAFE_RECEIPT_STRING.test(receipt[key]))) {
+      throw new Error(`ChatGPT model receipt field ${key} is invalid`);
+    }
+  }
+  for (const key of ["conversationIdHash", "messageIdHash"]) {
+    if (receipt[key] !== undefined && (typeof receipt[key] !== "string" || !SAFE_RECEIPT_HASH.test(receipt[key]))) {
+      throw new Error(`ChatGPT model receipt field ${key} is invalid`);
+    }
+  }
+  return receipt as unknown as ChatGptModelReceipt;
+}
+
+export function assertChatGptModelReceiptDiagnostic(value: unknown, expectedTraceId?: string): ChatGptModelReceiptDiagnostic {
+  if (!recordObject(value)) throw new Error("ChatGPT model receipt diagnostic is not an object");
+  const diagnostic = value as Record<string, unknown>;
+  const allowed = new Set([
+    "kind", "version", "traceId", "physicalSend", "responseAttempt", "provenance", "outcome", "reason",
+    "ownedRequests", "cdpCaptures", "terminalCaptures",
+  ]);
+  if ([...Object.keys(diagnostic)].some(key => !allowed.has(key))) throw new Error("ChatGPT model receipt diagnostic has an unsupported field");
+  if (diagnostic.kind !== "chatgpt_model_receipt_diagnostic" || diagnostic.version !== CHATGPT_MODEL_RECEIPT_VERSION
+    || typeof diagnostic.traceId !== "string" || !SAFE_RECEIPT_TRACE.test(diagnostic.traceId)
+    || !Number.isSafeInteger(diagnostic.physicalSend) || Number(diagnostic.physicalSend) <= 0
+    || !Number.isSafeInteger(diagnostic.responseAttempt) || Number(diagnostic.responseAttempt) <= 0
+    || !["initial", "response_retry", "multipart_stage", "surface_recovery"].includes(String(diagnostic.provenance))
+    || diagnostic.outcome !== "resolved" && diagnostic.outcome !== "unavailable"
+    || typeof diagnostic.reason !== "string" || !RECEIPT_DIAGNOSTIC_REASONS.has(diagnostic.reason as ChatGptModelReceiptDiagnosticReason)
+    || !Number.isSafeInteger(diagnostic.ownedRequests) || Number(diagnostic.ownedRequests) < 0
+    || !Number.isSafeInteger(diagnostic.cdpCaptures) || Number(diagnostic.cdpCaptures) < 0
+    || !Number.isSafeInteger(diagnostic.terminalCaptures) || Number(diagnostic.terminalCaptures) < 0
+    || Number(diagnostic.ownedRequests) > CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS
+    || Number(diagnostic.cdpCaptures) > CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES
+    || Number(diagnostic.terminalCaptures) > CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) {
+    throw new Error("ChatGPT model receipt diagnostic has invalid fields");
+  }
+  if (expectedTraceId !== undefined && diagnostic.traceId !== expectedTraceId) {
+    throw new Error("ChatGPT model receipt diagnostic trace does not match its helper event");
+  }
+  return diagnostic as unknown as ChatGptModelReceiptDiagnostic;
+}
 
 function recordObject(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -393,6 +490,8 @@ interface ActiveSend extends ChatGptModelReceiptSendContext {
   resolveDrain: () => void;
   drainResolved: boolean;
   draining: boolean;
+  diagnosticEmitted: boolean;
+  bounded: boolean;
 }
 
 interface CdpRequestWillBeSent {
@@ -502,6 +601,10 @@ export class ChatGptModelReceiptObserver {
     if (!this.page || !active?.activated || request.method() !== "POST"
       || request.url() !== this.conversationUrl
       || request.frame() !== this.page.mainFrame()) return;
+    if (active.requests.length >= CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS) {
+      active.bounded = true;
+      return;
+    }
     const requestContext = requestModelAndConversation(request);
     const entry: OwnedRequest = {
       request,
@@ -531,6 +634,10 @@ export class ChatGptModelReceiptObserver {
       || request.url !== this.conversationUrl
       || payload.frameId === undefined || payload.frameId !== this.mainFrameId
     ) return;
+    if (active.captures.length >= CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) {
+      active.bounded = true;
+      return;
+    }
     const context = requestContextFromPostData(request.postData);
     const capture: CdpCapture = {
       requestId: payload.requestId,
@@ -644,7 +751,27 @@ export class ChatGptModelReceiptObserver {
     active.resolveDrain();
   }
 
-  private discardSend(active: ActiveSend): void {
+  private emitDiagnostic(active: ActiveSend, outcome: "resolved" | "unavailable", reason: ChatGptModelReceiptDiagnosticReason): void {
+    if (!active.activated || active.diagnosticEmitted) return;
+    active.diagnosticEmitted = true;
+    const diagnostic: ChatGptModelReceiptDiagnostic = {
+      kind: "chatgpt_model_receipt_diagnostic",
+      version: CHATGPT_MODEL_RECEIPT_VERSION,
+      traceId: this.traceId,
+      physicalSend: active.physicalSend,
+      responseAttempt: active.responseAttempt,
+      provenance: active.provenance!,
+      outcome,
+      reason,
+      ownedRequests: active.requests.length,
+      cdpCaptures: active.captures.length,
+      terminalCaptures: active.captures.filter(capture => capture.terminal).length,
+    };
+    try { this.onDiagnostic?.(diagnostic); } catch (error) { noteTelemetryFailure("diagnostic-callback", error); }
+  }
+
+  private discardSend(active: ActiveSend, reason?: ChatGptModelReceiptDiagnosticReason): void {
+    if (reason) this.emitDiagnostic(active, "unavailable", reason);
     active.emitted = true;
     for (const capture of active.captures) {
       if (this.captures.get(capture.requestId) === capture) this.captures.delete(capture.requestId);
@@ -659,13 +786,20 @@ export class ChatGptModelReceiptObserver {
       await this.maybeEmitUnsafe(active);
     } catch (error) {
       noteTelemetryFailure("settlement", error);
-      try { this.discardSend(active); } catch (discardError) { noteTelemetryFailure("cleanup", discardError); }
+      try { this.discardSend(active, "telemetry_error"); } catch (discardError) { noteTelemetryFailure("cleanup", discardError); }
     }
   }
 
   private async maybeEmitUnsafe(active: ActiveSend): Promise<void> {
     if (!active.sealed || active.emitted || active.draining) return;
+    if (active.bounded) {
+      this.discardSend(active, "bounded");
+      return;
+    }
     if (active.captures.length === 0) {
+      this.emitDiagnostic(active, "unavailable", this.cdp
+        ? active.requests.length > 0 ? "no_cdp_capture" : "no_owned_request"
+        : "cdp_unavailable");
       this.resolveDrain(active);
       return;
     }
@@ -687,14 +821,25 @@ export class ChatGptModelReceiptObserver {
         && observation.metadata.conversationId !== undefined
         && capture.expectedConversationId !== observation.metadata.conversationId)
     ))) {
-      this.discardSend(active);
+      const reason: ChatGptModelReceiptDiagnosticReason = active.captures.some(capture => capture.failed)
+        ? "stream_failed"
+        : active.captures.some(capture => !capture.playwright)
+          ? "foreign_or_unbound"
+          : active.captures.some(capture => capture.collector.finish().status === "bounded")
+            ? "bounded"
+            : active.captures.some(capture => capture.expectedConversationId !== undefined
+              && capture.collector.finish().metadata.conversationId !== undefined
+              && capture.expectedConversationId !== capture.collector.finish().metadata.conversationId)
+              ? "foreign_conversation"
+              : "missing_resolved_model";
+      this.discardSend(active, reason);
       return;
     }
     const resolvedObservations = observations.map(({ observation }) => observation);
     const served = new Set(resolvedObservations.map(observation => observation.metadata.resolvedModelSlug).filter((value): value is string => value !== undefined));
     const messages = new Set(resolvedObservations.map(observation => observation.metadata.messageId).filter((value): value is string => value !== undefined));
     if (served.size !== 1 || messages.size > 1) {
-      this.discardSend(active);
+      this.discardSend(active, "conflicting_metadata");
       return;
     }
     const observation = resolvedObservations[0]!;
@@ -718,6 +863,7 @@ export class ChatGptModelReceiptObserver {
       ...(observation.metadata.messageId ? { messageIdHash: digestIdentifier(observation.metadata.messageId) } : {}),
     };
     try { this.onReceipt?.(receipt); } catch { /* diagnostics are never turn-critical */ }
+    this.emitDiagnostic(active, "resolved", "receipt_emitted");
     this.discardSend(active);
   };
 
@@ -725,9 +871,10 @@ export class ChatGptModelReceiptObserver {
     private readonly traceId: string,
     private readonly requestedModel: string,
     private readonly backendContextModel: string | undefined,
-    private readonly onReceipt?: ChatGptModelReceiptCallback,
-    private readonly conversationUrl = CHATGPT_CONVERSATION_URL,
-  ) {}
+  private readonly onReceipt?: ChatGptModelReceiptCallback,
+  private readonly conversationUrl = CHATGPT_CONVERSATION_URL,
+  private readonly onDiagnostic?: ChatGptModelReceiptDiagnosticCallback,
+) {}
 
   async attach(page: Page): Promise<void> {
     if (this.page === page) return;
@@ -736,7 +883,7 @@ export class ChatGptModelReceiptObserver {
       await this.flushCurrent();
       if (previous?.activated && previous.sealed && !previous.emitted) {
         this.surfaceRecoveryPending = true;
-        this.discardSend(previous);
+        this.discardSend(previous, "surface_rebound");
       }
       this.detach();
     }
@@ -803,6 +950,8 @@ export class ChatGptModelReceiptObserver {
       resolveDrain,
       drainResolved: false,
       draining: false,
+      diagnosticEmitted: false,
+      bounded: false,
     };
     this.sends.add(this.active);
   }
@@ -821,7 +970,7 @@ export class ChatGptModelReceiptObserver {
       await this.maybeEmit(active);
     } catch (error) {
       noteTelemetryFailure("flush", error);
-      try { this.discardSend(active); } catch (discardError) { noteTelemetryFailure("flush-cleanup", discardError); }
+      try { this.discardSend(active, "telemetry_error"); } catch (discardError) { noteTelemetryFailure("flush-cleanup", discardError); }
     }
   }
 
@@ -843,7 +992,7 @@ export class ChatGptModelReceiptObserver {
       noteTelemetryFailure("dispose", error);
     } finally {
       try {
-        for (const send of [...this.sends]) this.discardSend(send);
+    for (const send of [...this.sends]) this.discardSend(send, "terminal_drain_timeout");
         this.detach();
         this.captures.clear();
         this.sends.clear();

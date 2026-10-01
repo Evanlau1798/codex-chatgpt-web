@@ -445,3 +445,28 @@ test("a page rebind seals the old attempt and marks the next physical Send as su
   expect(receipts).toHaveLength(1);
   expect(receipts[0]).toMatchObject({ responseAttempt: 2, provenance: "surface_recovery" });
 });
+
+test("every activated Send gets one safe diagnostic outcome when CDP or metadata is unavailable", async () => {
+  const noCdp = new ChatGptModelReceiptObserver("trace_no_cdp", "chatgpt-web/gpt-6-pro", undefined, undefined, undefined, diagnostic => {
+    (noCdpDiagnostics as any[]).push(diagnostic);
+  });
+  const noCdpDiagnostics: unknown[] = [];
+  await noCdp.attach({ on() {}, off() {}, mainFrame() { return {}; } } as never);
+  noCdp.beginSend({ responseAttempt: 1 });
+  noCdp.activate();
+  await noCdp.flushCurrent();
+  await noCdp.dispose();
+  expect(noCdpDiagnostics).toMatchObject([{ outcome: "unavailable", reason: "cdp_unavailable" }]);
+
+  const page = new FakePage();
+  const missingDiagnostics: unknown[] = [];
+  const missing = new ChatGptModelReceiptObserver("trace_no_metadata", "chatgpt-web/gpt-6-pro", undefined, undefined, undefined, diagnostic => missingDiagnostics.push(diagnostic));
+  await missing.attach(page as never);
+  missing.beginSend({ responseAttempt: 1 });
+  missing.activate();
+  const request = new FakeRequest(page, { model: "gpt-6-pro" });
+  emitOwnedNetwork(page, request, "missing", `data: {"message":{"author":{"role":"assistant"},"content":{"parts":["no model metadata"]}}}\n\n`);
+  await missing.flushCurrent();
+  await missing.dispose();
+  expect(missingDiagnostics).toMatchObject([{ outcome: "unavailable", reason: "missing_resolved_model" }]);
+});

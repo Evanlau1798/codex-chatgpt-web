@@ -24,6 +24,10 @@ inference and never retries or cancels the request. Only the current activated
 `POST /backend-api/f/conversation` is eligible. Receipts are one-per-physical-Send, retain retry
 attempt and provenance, and hash conversation/message identifiers before logging.
 
+Each activated Send also emits one bounded diagnostic outcome through the same helper transport,
+including unavailable-CDP, missing-metadata, conflict, bounded, and resolved outcomes. These
+diagnostics contain counters and reason codes only; they never substitute a served model.
+
 The production observer uses the exact `https://chatgpt.com/backend-api/f/conversation` URL. The
 offline CDP integration test supplies a loopback URL only through an explicit constructor seam for
 its self-owned fixture; it does not broaden the production predicate.

@@ -205,6 +205,7 @@ import {
   ChatGptModelReceiptObserver,
   type ChatGptModelReceipt,
   type ChatGptModelReceiptCallback,
+  type ChatGptModelReceiptDiagnosticCallback,
 } from "./model-receipt";
 
 export {
@@ -732,6 +733,8 @@ export interface BrowserTurn {
   onSubmitted?: () => void | Promise<void>;
   /** Provider-private network model receipt; it never changes the public Responses model field. */
   onModelReceipt?: ChatGptModelReceiptCallback;
+  /** Provider-private bounded outcome diagnostic; it contains no response text or payload. */
+  onModelReceiptDiagnostic?: ChatGptModelReceiptDiagnosticCallback;
   onMultipartStageAcknowledged?: (stageIndex: number) => void | Promise<void>;
   /** Release the unselected full/resume transport after the launcher resolves the retained lease. */
   onPreparedSelected?: (reused: boolean) => void | Promise<void>;
@@ -3947,6 +3950,8 @@ export class ChatGptBrowserWorker {
       turn.requestedModel ?? turn.modelId,
       turn.backendContextModel ?? (turn.requestedModel !== turn.modelId ? turn.modelId : undefined),
       turn.onModelReceipt,
+      undefined,
+      turn.onModelReceiptDiagnostic,
     );
     try {
       if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
