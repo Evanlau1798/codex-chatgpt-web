@@ -145,6 +145,7 @@ import {
   LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS,
   LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS,
   notifyLauncherTurn,
+  type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
 import {
   CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER,
@@ -1494,13 +1495,17 @@ export class ChatGptBrowserWorker {
       && (!trackUsage || cached.usageModel !== undefined)
       && chatGptModelFamilyMatches([cached.selection.label], modelFamily, mode.effort)) {
       const controls = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).filter({ visible: true });
-      if (await controls.count() === 1 && (await controls.innerText()).trim() === cached.selection.label
-        && await controls.getAttribute("aria-expanded") === "false" && await composer.isEditable()) {
-        const selected = { ...mode, modelFamily, selection: { url: page.url(), label: cached.selection.label },
-          ...(trackUsage && cached.usageModel ? { usageModel: cached.usageModel } : {}) };
-        await this.assertSelectedEffort(page, selected, false);
-        await captureDiagnostic?.("effort-selection-cache-verified");
-        return selected;
+      if (await controls.count() === 1) {
+        const [label, expanded, editable] = await Promise.all([
+          controls.innerText(), controls.getAttribute("aria-expanded"), composer.isEditable(),
+        ]);
+        if (label.trim() === cached.selection.label && expanded === "false" && editable) {
+          const selected = { ...mode, modelFamily, selection: { url: page.url(), label: cached.selection.label },
+            ...(trackUsage && cached.usageModel ? { usageModel: cached.usageModel } : {}) };
+          await this.assertSelectedEffort(page, selected, false);
+          await captureDiagnostic?.("effort-selection-cache-verified");
+          return selected;
+        }
       }
     }
     if (uiEffortIndex === null) {
@@ -1675,9 +1680,10 @@ export class ChatGptBrowserWorker {
       throw chatGptModelControlUnavailableAdapterError("ChatGPT changed the selected model's browser surface before submission");
     }
     const control = controls.first();
-    if ((await control.innerText()).trim() !== mode.selection.label
-      || await control.getAttribute("aria-expanded") !== "false"
-      || !await composer.isEditable()) {
+    const [label, expanded, editable] = await Promise.all([
+      control.innerText(), control.getAttribute("aria-expanded"), composer.isEditable(),
+    ]);
+    if (label.trim() !== mode.selection.label || expanded !== "false" || !editable) {
       throw chatGptModelControlUnavailableAdapterError(
         "ChatGPT did not retain the selected effort in its ready composer; the message was not submitted",
       );
@@ -2894,7 +2900,9 @@ export class ChatGptBrowserWorker {
       largeStructuredDirect, forceStructuredDirect,
       candidatePlainText: this.config?.experimentalComposerPlainText === true,
     });
-    const existingText = connectorSelected
+    // The writer verifies a supplied warm prefix before any paste. Reading it
+    // here too cannot establish additional evidence for the later mutation.
+    const existingText = connectorSelected && !diagnosticContext?.preparedPrefix
       ? await this.attachedPromptText(page, abortSignal, op, true) : "";
     await insertChatGptPromptText(text, abortSignal, {
       composer: () => this.activeComposer(page, 30_000, abortSignal, op),
@@ -3807,6 +3815,7 @@ export class ChatGptBrowserWorker {
       throw error;
     });
     const surfaceId = lease.surfaceId;
+    let startupConnection: LauncherBrowserConnection | undefined;
     let terminal: "completed" | "failed" | "aborted" = "completed";
     let terminalMessage: string | undefined;
     let originalError: unknown;
@@ -3832,6 +3841,7 @@ export class ChatGptBrowserWorker {
       });
     };
     try {
+      if (lease.startupPrepared === true && startup && startup.surfaceId === surfaceId) startupConnection = startup.takeConnection?.();
       await startup?.release();
       if (!surfaceId) throw new Error("Launcher did not lease a browser tab for the ChatGPT turn");
       if (turn.requireRetainedConversation && lease.reused !== true) {
@@ -3848,6 +3858,7 @@ export class ChatGptBrowserWorker {
         reuseConversation,
         lease.trackUsage === true,
         lease.startupPrepared === true ? startup : undefined,
+        startupConnection,
       );
     } catch (error) {
       originalError = error;
@@ -3869,6 +3880,10 @@ export class ChatGptBrowserWorker {
       throw error;
     } finally {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
+      // Also covers failures before runBrowserTurn reaches its connection owner.
+      await startupConnection?.browser.close().catch(error => {
+        console.warn(`[chatgpt-web] prepared transport cleanup failed (${error instanceof Error ? error.name : "unknown"})`);
+      });
       try {
         const release = await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
           phase: "end",
@@ -3909,6 +3924,7 @@ export class ChatGptBrowserWorker {
     reuseConversation = false,
     trackUsage = false,
     startup?: PreparedChatGptStartupPage,
+    startupConnection?: LauncherBrowserConnection,
   ): Promise<string> {
     if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
     if ((turn.captureLunaCheckpoint === true) !== (turn.onLunaCheckpoint !== undefined)) {
@@ -3980,6 +3996,7 @@ export class ChatGptBrowserWorker {
           browserStageTimeouts.browserPage,
           launcherSurfaceId,
           abortSignal,
+          startupConnection,
         );
         if (abortSignal.aborted) {
           await connection.browser.close().catch(() => {});
@@ -4597,7 +4614,9 @@ export class ChatGptBrowserWorker {
           }
           recoveryExpectedActivityRevision = undefined;
         } else {
+          console.info(`[chatgpt-web] browser turn ${turn.traceId} send_control phase=activating`);
           await activateChatGptSendControl(sendButton, stageSignal, () => submissionRejection.activate());
+          console.info(`[chatgpt-web] browser turn ${turn.traceId} send_control phase=settled`);
         }
         const evidence = await this.waitForSubmissionAccepted(
           page,
