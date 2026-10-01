@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { CDPSession, Page, Request } from "playwright-core";
 
 /**
@@ -74,6 +74,11 @@ export type ChatGptModelReceiptDiagnosticReason =
   | "cdp_unavailable" | "no_owned_request" | "no_cdp_capture" | "foreign_or_unbound"
   | "stream_failed" | "missing_resolved_model" | "bounded" | "conflicting_metadata"
   | "foreign_conversation" | "surface_rebound" | "terminal_drain_timeout" | "telemetry_error" | "receipt_emitted";
+export type ChatGptModelReceiptFailureStage =
+  | "playwright_requestfailed" | "response_stream" | "data_received" | "loading_finished" | "loading_failed";
+export type ChatGptModelReceiptFailureCode =
+  | "request_failed" | "stream_resource_content_rejected" | "collector_or_decoder_failed"
+  | "network_loading_failed";
 
 export interface ChatGptModelReceiptDiagnostic {
   kind: "chatgpt_model_receipt_diagnostic";
@@ -87,6 +92,16 @@ export interface ChatGptModelReceiptDiagnostic {
   ownedRequests: number;
   cdpCaptures: number;
   terminalCaptures: number;
+  failureStage?: ChatGptModelReceiptFailureStage;
+  failureCode?: ChatGptModelReceiptFailureCode;
+  transport?: {
+    mimeType: "text/event-stream" | "json" | "other";
+    fromServiceWorker: boolean;
+    fromDiskCache: boolean;
+    fromPrefetchCache: boolean;
+    fromEarlyHints: boolean;
+    fromMemoryCache: boolean;
+  };
 }
 
 export type ChatGptModelReceiptDiagnosticCallback = (diagnostic: ChatGptModelReceiptDiagnostic) => void;
@@ -103,6 +118,12 @@ const RECEIPT_DIAGNOSTIC_REASONS = new Set<ChatGptModelReceiptDiagnosticReason>(
   "cdp_unavailable", "no_owned_request", "no_cdp_capture", "foreign_or_unbound", "stream_failed",
   "missing_resolved_model", "bounded", "conflicting_metadata", "foreign_conversation", "surface_rebound",
   "terminal_drain_timeout", "telemetry_error", "receipt_emitted",
+]);
+const RECEIPT_FAILURE_STAGES = new Set<ChatGptModelReceiptFailureStage>([
+  "playwright_requestfailed", "response_stream", "data_received", "loading_finished", "loading_failed",
+]);
+const RECEIPT_FAILURE_CODES = new Set<ChatGptModelReceiptFailureCode>([
+  "request_failed", "stream_resource_content_rejected", "collector_or_decoder_failed", "network_loading_failed",
 ]);
 
 /** Validate the narrow helper-wire shape; unknown keys are rejected to prevent payload leakage. */
@@ -141,7 +162,7 @@ export function assertChatGptModelReceiptDiagnostic(value: unknown, expectedTrac
   const diagnostic = value as Record<string, unknown>;
   const allowed = new Set([
     "kind", "version", "traceId", "physicalSend", "responseAttempt", "provenance", "outcome", "reason",
-    "ownedRequests", "cdpCaptures", "terminalCaptures",
+    "ownedRequests", "cdpCaptures", "terminalCaptures", "failureStage", "failureCode", "transport",
   ]);
   if ([...Object.keys(diagnostic)].some(key => !allowed.has(key))) throw new Error("ChatGPT model receipt diagnostic has an unsupported field");
   if (diagnostic.kind !== "chatgpt_model_receipt_diagnostic" || diagnostic.version !== CHATGPT_MODEL_RECEIPT_VERSION
@@ -161,6 +182,21 @@ export function assertChatGptModelReceiptDiagnostic(value: unknown, expectedTrac
   }
   if (expectedTraceId !== undefined && diagnostic.traceId !== expectedTraceId) {
     throw new Error("ChatGPT model receipt diagnostic trace does not match its helper event");
+  }
+  if (diagnostic.failureStage !== undefined && !RECEIPT_FAILURE_STAGES.has(diagnostic.failureStage as ChatGptModelReceiptFailureStage)) {
+    throw new Error("ChatGPT model receipt diagnostic failure stage is invalid");
+  }
+  if (diagnostic.failureCode !== undefined && !RECEIPT_FAILURE_CODES.has(diagnostic.failureCode as ChatGptModelReceiptFailureCode)) {
+    throw new Error("ChatGPT model receipt diagnostic failure code is invalid");
+  }
+  if (diagnostic.transport !== undefined) {
+    const transport = recordObject(diagnostic.transport);
+    const keys = ["mimeType", "fromServiceWorker", "fromDiskCache", "fromPrefetchCache", "fromEarlyHints", "fromMemoryCache"];
+    if (!transport || Object.keys(transport).some(key => !keys.includes(key))
+      || !["text/event-stream", "json", "other"].includes(String(transport.mimeType))
+      || keys.slice(1).some(key => typeof transport[key] !== "boolean")) {
+      throw new Error("ChatGPT model receipt diagnostic transport is invalid");
+    }
   }
   return diagnostic as unknown as ChatGptModelReceiptDiagnostic;
 }
@@ -476,7 +512,9 @@ interface OwnedRequest {
   request: Request;
   requestModel?: string;
   expectedConversationId?: string;
+  requestBodyHash?: string;
   cdp?: CdpCapture;
+  pageCapture?: CdpCapture;
 }
 
 interface ActiveSend extends ChatGptModelReceiptSendContext {
@@ -492,6 +530,7 @@ interface ActiveSend extends ChatGptModelReceiptSendContext {
   draining: boolean;
   diagnosticEmitted: boolean;
   bounded: boolean;
+  pageInvocationIds: Map<string, string | undefined>;
 }
 
 interface CdpRequestWillBeSent {
@@ -504,7 +543,16 @@ interface CdpFrameNavigated { frame?: { id?: string; parentId?: string } }
 
 interface CdpResponseReceived {
   requestId: string;
-  response?: { status?: number; headers?: Record<string, unknown> };
+  response?: {
+    status?: number;
+    headers?: Record<string, unknown>;
+    mimeType?: string;
+    fromServiceWorker?: boolean;
+    fromDiskCache?: boolean;
+    fromPrefetchCache?: boolean;
+    fromEarlyHints?: boolean;
+    fromMemoryCache?: boolean;
+  };
 }
 
 interface CdpDataReceived {
@@ -515,11 +563,23 @@ interface CdpDataReceived {
 interface CdpLoadingFinished { requestId: string }
 interface CdpLoadingFailed { requestId: string }
 
+interface PageFetchCaptureEvent {
+  token?: unknown;
+  id?: unknown;
+  kind?: unknown;
+  status?: unknown;
+  contentType?: unknown;
+  bodyHash?: unknown;
+  data?: unknown;
+}
+
 interface CdpCapture {
   requestId: string;
   send: ActiveSend;
+  source: "cdp" | "page";
   requestModel?: string;
   expectedConversationId?: string;
+  requestBodyHash?: string;
   collector: ChatGptModelReceiptCollector;
   playwright?: OwnedRequest;
   contentType?: "json" | "sse";
@@ -528,6 +588,9 @@ interface CdpCapture {
   failed: boolean;
   bounded: boolean;
   seenEncodedBytes: number;
+  failureStage?: ChatGptModelReceiptFailureStage;
+  failureCode?: ChatGptModelReceiptFailureCode;
+  transport?: ChatGptModelReceiptDiagnostic["transport"];
   tail: Promise<void>;
 }
 
@@ -581,6 +644,40 @@ function noteTelemetryFailure(scope: string, error: unknown): void {
   }
 }
 
+interface PageBindingRegistry {
+  installed: boolean;
+  active?: { observer: WeakRef<ChatGptModelReceiptObserver>; token: string };
+}
+
+const PAGE_BINDING_REGISTRIES = new WeakMap<Page, PageBindingRegistry>();
+
+function requestBodyHash(postData: string | null | undefined): string {
+  if (postData === null || postData === undefined) return "missing";
+  if (postData.length > CHATGPT_MODEL_RECEIPT_MAX_BYTES) return "oversized";
+  return createHash("sha256").update(postData).digest("hex");
+}
+
+function requestFingerprint(method: string, url: string, postData: string | null | undefined): string {
+  const bodyHash = requestBodyHash(postData);
+  return `${method.toUpperCase()}|${url}|${bodyHash}`;
+}
+
+function playwrightRequestFingerprint(request: Request): string {
+  try {
+    return requestFingerprint(request.method(), request.url(), request.postData());
+  } catch {
+    return requestFingerprint(request.method(), request.url(), undefined);
+  }
+}
+
+function playwrightRequestBodyHash(request: Request): string {
+  try {
+    return requestBodyHash(request.postData());
+  } catch {
+    return requestBodyHash(undefined);
+  }
+}
+
 /**
  * Uses Chromium's Network.streamResourceContent/dataReceived path instead of Playwright's
  * materializing Response.body(). Only an activated, main-frame conversation POST can bind to a
@@ -591,16 +688,26 @@ export class ChatGptModelReceiptObserver {
   private page?: Page;
   private cdp?: CDPSession;
   private mainFrameId?: string;
+  private pageCaptureToken?: string;
   private active?: ActiveSend;
   private nextPhysicalSend = 0;
   private surfaceRecoveryPending = false;
   private readonly sends = new Set<ActiveSend>();
   private readonly captures = new Map<string, CdpCapture>();
+  /** Requests observed before the current activation are stale, even if their response arrives later. */
+  private readonly preActivationRequestFingerprints = new Set<string>();
+  private readonly observedBeforeActivation = new Set<string>();
   private readonly onRequest = (request: Request): void => {
     const active = this.active;
-    if (!this.page || !active?.activated || request.method() !== "POST"
+    if (!this.page || request.method() !== "POST"
       || request.url() !== this.conversationUrl
       || request.frame() !== this.page.mainFrame()) return;
+    const fingerprint = playwrightRequestFingerprint(request);
+    if (!active?.activated) {
+      if (fingerprint !== undefined) this.observedBeforeActivation.add(fingerprint);
+      return;
+    }
+    if (fingerprint !== undefined && this.preActivationRequestFingerprints.has(fingerprint)) return;
     if (active.requests.length >= CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS) {
       active.bounded = true;
       return;
@@ -608,6 +715,7 @@ export class ChatGptModelReceiptObserver {
     const requestContext = requestModelAndConversation(request);
     const entry: OwnedRequest = {
       request,
+      requestBodyHash: playwrightRequestBodyHash(request),
       ...(requestContext.model ? { requestModel: requestContext.model } : {}),
       ...(requestContext.conversationId ?? active.expectedConversationId
         ? { expectedConversationId: requestContext.conversationId ?? active.expectedConversationId }
@@ -621,8 +729,109 @@ export class ChatGptModelReceiptObserver {
       if (capture.playwright?.request !== request) continue;
       capture.failed = true;
       capture.terminal = true;
+      capture.failureStage = "playwright_requestfailed";
+      capture.failureCode = "request_failed";
       void this.maybeEmit(capture.send).catch(error => noteTelemetryFailure("requestfailed", error));
     }
+  };
+  readonly onPageCapture = async (value: unknown): Promise<boolean> => {
+    const event = recordObject(value) as PageFetchCaptureEvent | undefined;
+    if (!event || event.token !== this.pageCaptureToken || typeof event.kind !== "string" || typeof event.id !== "string") return false;
+    const active = this.active;
+    if (event.kind === "invoke") {
+      if (!active?.activated || active.sealed || active.pageInvocationIds.size >= CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS) return false;
+      if (event.bodyHash !== undefined && (typeof event.bodyHash !== "string"
+        || (event.bodyHash !== "oversized" && !/^[a-f0-9]{64}$/.test(event.bodyHash)))) return false;
+      active.pageInvocationIds.set(event.id, event.bodyHash as string | undefined);
+      return true;
+    }
+    if (event.kind === "abandon") {
+      active?.pageInvocationIds.delete(event.id);
+      return false;
+    }
+    if (event.kind === "start") {
+      if (!active?.activated || active.sealed || !active.pageInvocationIds.has(event.id)) {
+        if (active && active.activated && active.captures.length >= CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) active.bounded = true;
+        return false;
+      }
+      const requestBodyHash = active.pageInvocationIds.get(event.id);
+      active.pageInvocationIds.delete(event.id);
+      // A page nonce is not enough by itself: require the corresponding
+      // Playwright main-frame request (and, when available, its bounded body
+      // hash) before allowing the observation branch to bind.
+      if (active.requests.length === 0
+        || (requestBodyHash !== undefined && !active.requests.some(request => request.requestBodyHash === requestBodyHash && !request.pageCapture))
+        || active.captures.length >= CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) {
+        if (active && active.activated && active.captures.length >= CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) active.bounded = true;
+        return false;
+      }
+      const contentType = event.contentType === "text/event-stream" ? "sse"
+        : event.contentType === "json" ? "json" : undefined;
+      if (!contentType || !Number.isInteger(event.status) || Number(event.status) < 200 || Number(event.status) >= 300) return false;
+      const capture: CdpCapture = {
+        requestId: `page:${event.id}`,
+        send: active,
+        source: "page",
+        ...(requestBodyHash !== undefined ? { requestBodyHash } : {}),
+        collector: new ChatGptModelReceiptCollector(),
+        contentType,
+        responseSeen: true,
+        terminal: false,
+        failed: false,
+        bounded: false,
+        seenEncodedBytes: 0,
+        tail: Promise.resolve(),
+      };
+      active.captures.push(capture);
+      this.captures.set(capture.requestId, capture);
+      this.bind(active);
+      return true;
+    }
+    const capture = this.captures.get(`page:${event.id}`);
+    if (!capture || capture.source !== "page") return false;
+    if (event.kind === "chunk" && typeof event.data === "string") {
+      const encoded = event.data;
+      if (!this.reserveEncodedChunk(capture, encoded)) return false;
+      capture.tail = capture.tail.then(() => this.consumeCaptureChunk(capture, encoded)).catch(error => {
+        capture.failed = true;
+        capture.terminal = true;
+        capture.failureStage = "data_received";
+        capture.failureCode = "collector_or_decoder_failed";
+        noteTelemetryFailure("page-data-chunk", error);
+      });
+      return true;
+    }
+    if (event.kind === "end") {
+      capture.tail = capture.tail.then(() => {
+        if (!capture.failed && capture.contentType === "sse") capture.collector.consumeSseChunk(new Uint8Array(), true);
+        else if (!capture.failed && capture.contentType === "json") capture.collector.consumeJsonChunk(new Uint8Array(), true);
+        capture.terminal = true;
+      }).catch(error => {
+        capture.failed = true;
+        capture.terminal = true;
+        capture.failureStage = "loading_finished";
+        capture.failureCode = "collector_or_decoder_failed";
+        noteTelemetryFailure("page-loading-finished", error);
+      });
+      void capture.tail.then(() => this.maybeEmit(capture.send), error => noteTelemetryFailure("page-loading-tail", error));
+      return true;
+    }
+    if (event.kind === "bounded") {
+      capture.bounded = true;
+      capture.collector.markBounded();
+      capture.terminal = true;
+      void this.maybeEmit(capture.send).catch(error => noteTelemetryFailure("page-bounded", error));
+      return false;
+    }
+    if (event.kind === "failed") {
+      capture.failed = true;
+      capture.terminal = true;
+      capture.failureStage = "data_received";
+      capture.failureCode = "collector_or_decoder_failed";
+      void this.maybeEmit(capture.send).catch(error => noteTelemetryFailure("page-failed", error));
+      return false;
+    }
+    return false;
   };
   private readonly onCdpFrameNavigated = (payload: CdpFrameNavigated): void => {
     if (payload.frame?.parentId === undefined && payload.frame?.id) this.mainFrameId = payload.frame.id;
@@ -634,6 +843,8 @@ export class ChatGptModelReceiptObserver {
       || request.url !== this.conversationUrl
       || payload.frameId === undefined || payload.frameId !== this.mainFrameId
     ) return;
+    const fingerprint = requestFingerprint(request.method, request.url, request.postData);
+    if (fingerprint !== undefined && this.preActivationRequestFingerprints.has(fingerprint)) return;
     if (active.captures.length >= CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) {
       active.bounded = true;
       return;
@@ -642,6 +853,8 @@ export class ChatGptModelReceiptObserver {
     const capture: CdpCapture = {
       requestId: payload.requestId,
       send: active,
+      source: "cdp",
+      requestBodyHash: requestBodyHash(request.postData),
       ...(context.model ? { requestModel: context.model } : {}),
       ...(context.conversationId ?? active.expectedConversationId
         ? { expectedConversationId: context.conversationId ?? active.expectedConversationId }
@@ -664,6 +877,16 @@ export class ChatGptModelReceiptObserver {
     capture.responseSeen = true;
     const status = payload.response?.status ?? 0;
     const contentType = cdpHeader(payload.response?.headers, "content-type") ?? "";
+    const mimeType = contentType.includes("text/event-stream") ? "text/event-stream"
+      : contentType.includes("json") ? "json" : "other";
+    capture.transport = {
+      mimeType,
+      fromServiceWorker: payload.response?.fromServiceWorker === true,
+      fromDiskCache: payload.response?.fromDiskCache === true,
+      fromPrefetchCache: payload.response?.fromPrefetchCache === true,
+      fromEarlyHints: payload.response?.fromEarlyHints === true,
+      fromMemoryCache: payload.response?.fromMemoryCache === true,
+    };
     if (status >= 200 && status < 300 && contentType.includes("text/event-stream")) capture.contentType = "sse";
     else if (status >= 200 && status < 300 && contentType.includes("json")) capture.contentType = "json";
     else return;
@@ -675,6 +898,8 @@ export class ChatGptModelReceiptObserver {
         }
       } catch {
         capture.failed = true;
+        capture.failureStage = "response_stream";
+        capture.failureCode = "stream_resource_content_rejected";
       }
     }).catch(error => {
       capture.failed = true;
@@ -685,12 +910,14 @@ export class ChatGptModelReceiptObserver {
   };
   private readonly onCdpData = (payload: CdpDataReceived): void => {
     const capture = this.captures.get(payload.requestId);
-    if (!capture || !capture.contentType || !payload.data) return;
+    if (!capture || capture.failed || !capture.contentType || !payload.data) return;
     if (!this.reserveEncodedChunk(capture, payload.data)) return;
     capture.tail = capture.tail.then(() => this.consumeCaptureChunk(capture, payload.data!))
       .catch(error => {
         capture.failed = true;
         capture.terminal = true;
+        capture.failureStage = "data_received";
+        capture.failureCode = "collector_or_decoder_failed";
         noteTelemetryFailure("data-chunk", error);
       });
   };
@@ -698,12 +925,14 @@ export class ChatGptModelReceiptObserver {
     const capture = this.captures.get(payload.requestId);
     if (!capture) return;
     capture.tail = capture.tail.then(() => {
-      if (capture.contentType === "sse") capture.collector.consumeSseChunk(new Uint8Array(), true);
-      else if (capture.contentType === "json") capture.collector.consumeJsonChunk(new Uint8Array(), true);
+      if (!capture.failed && capture.contentType === "sse") capture.collector.consumeSseChunk(new Uint8Array(), true);
+      else if (!capture.failed && capture.contentType === "json") capture.collector.consumeJsonChunk(new Uint8Array(), true);
       capture.terminal = true;
     }).catch(error => {
       capture.failed = true;
       capture.terminal = true;
+      capture.failureStage = "loading_finished";
+      capture.failureCode = "collector_or_decoder_failed";
       noteTelemetryFailure("loading-finished", error);
     });
     void capture.tail.then(() => this.maybeEmit(capture.send), error => noteTelemetryFailure("loading-tail", error));
@@ -713,6 +942,8 @@ export class ChatGptModelReceiptObserver {
     if (!capture) return;
     capture.failed = true;
     capture.terminal = true;
+    capture.failureStage = "loading_failed";
+    capture.failureCode = "network_loading_failed";
     void this.maybeEmit(capture.send).catch(error => noteTelemetryFailure("loading-failed", error));
   };
 
@@ -736,11 +967,24 @@ export class ChatGptModelReceiptObserver {
 
   private bind(active: ActiveSend): void {
     for (const request of active.requests) {
-      if (request.cdp) continue;
-      const capture = active.captures.find(candidate => !candidate.playwright && contextsMatch(request, candidate));
-      if (!capture) continue;
-      request.cdp = capture;
-      capture.playwright = request;
+      if (!request.cdp) {
+        const capture = active.captures.find(candidate => candidate.source === "cdp" && !candidate.playwright
+          && (!candidate.requestBodyHash || !request.requestBodyHash || candidate.requestBodyHash === request.requestBodyHash)
+          && contextsMatch(request, candidate));
+        if (capture) {
+          request.cdp = capture;
+          capture.playwright = request;
+        }
+      }
+      if (!request.pageCapture) {
+        const capture = active.captures.find(candidate => candidate.source === "page" && !candidate.playwright
+          && (!candidate.requestBodyHash || !request.requestBodyHash || candidate.requestBodyHash === request.requestBodyHash)
+          && contextsMatch(request, candidate));
+        if (capture) {
+          request.pageCapture = capture;
+          capture.playwright = request;
+        }
+      }
     }
   }
 
@@ -751,7 +995,7 @@ export class ChatGptModelReceiptObserver {
     active.resolveDrain();
   }
 
-  private emitDiagnostic(active: ActiveSend, outcome: "resolved" | "unavailable", reason: ChatGptModelReceiptDiagnosticReason): void {
+  private emitDiagnostic(active: ActiveSend, outcome: "resolved" | "unavailable", reason: ChatGptModelReceiptDiagnosticReason, failedCapture?: CdpCapture): void {
     if (!active.activated || active.diagnosticEmitted) return;
     active.diagnosticEmitted = true;
     const diagnostic: ChatGptModelReceiptDiagnostic = {
@@ -764,20 +1008,24 @@ export class ChatGptModelReceiptObserver {
       outcome,
       reason,
       ownedRequests: active.requests.length,
-      cdpCaptures: active.captures.length,
+      cdpCaptures: active.captures.filter(capture => capture.source === "cdp").length,
       terminalCaptures: active.captures.filter(capture => capture.terminal).length,
+      ...(failedCapture?.failureStage ? { failureStage: failedCapture.failureStage } : {}),
+      ...(failedCapture?.failureCode ? { failureCode: failedCapture.failureCode } : {}),
+      ...(failedCapture?.transport ? { transport: failedCapture.transport } : {}),
     };
     try { this.onDiagnostic?.(diagnostic); } catch (error) { noteTelemetryFailure("diagnostic-callback", error); }
   }
 
-  private discardSend(active: ActiveSend, reason?: ChatGptModelReceiptDiagnosticReason): void {
-    if (reason) this.emitDiagnostic(active, "unavailable", reason);
+  private discardSend(active: ActiveSend, reason?: ChatGptModelReceiptDiagnosticReason, failedCapture?: CdpCapture): void {
+    if (reason) this.emitDiagnostic(active, "unavailable", reason, failedCapture);
     active.emitted = true;
     for (const capture of active.captures) {
       if (this.captures.get(capture.requestId) === capture) this.captures.delete(capture.requestId);
     }
     active.captures = [];
     active.requests = [];
+    active.pageInvocationIds.clear();
     this.resolveDrain(active);
   }
 
@@ -803,7 +1051,7 @@ export class ChatGptModelReceiptObserver {
       this.resolveDrain(active);
       return;
     }
-    if (active.requests.some(request => !request.cdp) || active.captures.some(capture => !capture.terminal)) return;
+    if (active.requests.some(request => !request.cdp && !request.pageCapture) || active.captures.some(capture => !capture.terminal)) return;
     active.draining = true;
     await Promise.all(active.captures.map(capture => capture.tail));
     if (active.emitted) {
@@ -815,13 +1063,38 @@ export class ChatGptModelReceiptObserver {
       capture,
       observation: capture.collector.finish(),
     }));
-    if (observations.length === 0 || observations.some(({ capture, observation }) => (
+    const resolvedPageObservations = observations.filter(({ capture, observation }) => capture.source === "page" && !capture.failed && capture.playwright && observation.status === "resolved");
+    const resolvedCdpObservations = observations.filter(({ capture, observation }) => capture.source === "cdp" && !capture.failed && capture.playwright && observation.status === "resolved");
+    const boundPageObservations = observations.filter(({ capture }) => capture.source === "page" && !capture.failed && capture.playwright);
+    const boundCdpObservations = observations.filter(({ capture }) => capture.source === "cdp" && !capture.failed && capture.playwright && capture.contentType);
+    if ((resolvedPageObservations.length > 0 && boundPageObservations.some(({ observation }) => observation.status !== "resolved"))
+      || (resolvedCdpObservations.length > 0 && boundCdpObservations.some(({ observation }) => observation.status !== "resolved"))
+      || (resolvedPageObservations.length > 0 && boundCdpObservations.length > 0 && resolvedCdpObservations.length === 0)
+      || (resolvedCdpObservations.length > 0 && boundPageObservations.length > 0 && resolvedPageObservations.length === 0)) {
+      this.discardSend(active, "conflicting_metadata");
+      return;
+    }
+    if (resolvedPageObservations.length > 0 && resolvedCdpObservations.length > 0) {
+      const evidence = (observation: ChatGptModelObservation): string => JSON.stringify({
+        served: observation.metadata.resolvedModelSlug,
+        message: observation.metadata.messageId,
+        conversation: observation.metadata.conversationId,
+      });
+      const pageEvidence = evidence(resolvedPageObservations[0]!.observation);
+      if (resolvedCdpObservations.some(({ observation }) => evidence(observation) !== pageEvidence)) {
+        this.discardSend(active, "conflicting_metadata");
+        return;
+      }
+    }
+    const selectedObservations = resolvedPageObservations.length > 0 ? resolvedPageObservations : resolvedCdpObservations;
+    if (selectedObservations.length === 0 || selectedObservations.some(({ capture, observation }) => (
       capture.failed || !capture.playwright || observation.status !== "resolved"
       || (capture.expectedConversationId !== undefined
         && observation.metadata.conversationId !== undefined
         && capture.expectedConversationId !== observation.metadata.conversationId)
     ))) {
-      const reason: ChatGptModelReceiptDiagnosticReason = active.captures.some(capture => capture.failed)
+      const failedCapture = active.captures.find(capture => capture.failed);
+      const reason: ChatGptModelReceiptDiagnosticReason = failedCapture
         ? "stream_failed"
         : active.captures.some(capture => !capture.playwright)
           ? "foreign_or_unbound"
@@ -832,10 +1105,10 @@ export class ChatGptModelReceiptObserver {
               && capture.expectedConversationId !== capture.collector.finish().metadata.conversationId)
               ? "foreign_conversation"
               : "missing_resolved_model";
-      this.discardSend(active, reason);
+      this.discardSend(active, reason, failedCapture);
       return;
     }
-    const resolvedObservations = observations.map(({ observation }) => observation);
+    const resolvedObservations = selectedObservations.map(({ observation }) => observation);
     const served = new Set(resolvedObservations.map(observation => observation.metadata.resolvedModelSlug).filter((value): value is string => value !== undefined));
     const messages = new Set(resolvedObservations.map(observation => observation.metadata.messageId).filter((value): value is string => value !== undefined));
     if (served.size !== 1 || messages.size > 1) {
@@ -863,9 +1136,205 @@ export class ChatGptModelReceiptObserver {
       ...(observation.metadata.messageId ? { messageIdHash: digestIdentifier(observation.metadata.messageId) } : {}),
     };
     try { this.onReceipt?.(receipt); } catch { /* diagnostics are never turn-critical */ }
-    this.emitDiagnostic(active, "resolved", "receipt_emitted");
+    // Preserve a bounded transport failure alongside a successful page-local
+    // fallback so live diagnostics explain why CDP evidence was unavailable;
+    // the failure never becomes a turn error or a model fallback.
+    this.emitDiagnostic(active, "resolved", "receipt_emitted", active.captures.find(capture => capture.failed));
     this.discardSend(active);
   };
+
+  private async installPageCapture(page: Page): Promise<void> {
+    if (typeof page.exposeBinding !== "function") return;
+    const token = randomUUID();
+    let registry = PAGE_BINDING_REGISTRIES.get(page);
+    if (!registry) {
+      registry = { installed: false };
+      PAGE_BINDING_REGISTRIES.set(page, registry);
+    }
+    try {
+      if (!registry.installed) {
+        await page.exposeBinding("__codexModelReceiptDispatch", (source, event) => {
+          const sourceRecord = recordObject(source);
+          if (!sourceRecord || sourceRecord.frame !== page.mainFrame()) return false;
+          const eventRecord = recordObject(event);
+          if (!eventRecord || Object.keys(eventRecord).some(key => !["token", "id", "kind", "status", "contentType", "bodyHash", "data"].includes(key))) return false;
+          const active = registry!.active;
+          const observer = active?.observer.deref();
+          if (!active || !observer || active.token !== eventRecord.token) return false;
+          return observer.onPageCapture(event);
+        });
+        registry.installed = true;
+      }
+      // A Page can be rebound to a new observer without the old observer being
+      // disposed first.  Remove the old wrapper before publishing the new token;
+      // the page-side uninstall is identity-checked and therefore cannot clobber
+      // a fetch wrapper installed by application code after ours.
+      await page.evaluate(() => {
+        const root = globalThis as typeof globalThis & { __codexModelReceiptCaptureState?: { uninstall?: () => void } };
+        root.__codexModelReceiptCaptureState?.uninstall?.();
+      });
+      registry.active = { observer: new WeakRef(this), token };
+      await page.evaluate(({ url, token, maxBytes }) => {
+        const root = globalThis as typeof globalThis & {
+          __codexModelReceiptDispatch?: (event: unknown) => Promise<boolean>;
+          __codexModelReceiptCaptureState?: { wrapper: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>; uninstall: () => void };
+        };
+        const originalFetch = window.fetch;
+        let sequence = 0;
+        const encode = (value: Uint8Array): string => {
+          let binary = "";
+          for (let index = 0; index < value.length; index += 0x8000) {
+            binary += String.fromCharCode(...value.subarray(index, Math.min(value.length, index + 0x8000)));
+          }
+          return btoa(binary);
+        };
+        const requestBodyHash = (body: BodyInit | null | undefined): Promise<string | undefined> => {
+          if (typeof body !== "string") return Promise.resolve(undefined);
+          if (body.length > maxBytes) return Promise.resolve("oversized");
+          if (!globalThis.crypto?.subtle) return Promise.resolve(undefined);
+          return globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)).then(value => {
+            const bytes = new Uint8Array(value);
+            return [...bytes].map(byte => byte.toString(16).padStart(2, "0")).join("");
+          }, () => undefined);
+        };
+        const binding = root.__codexModelReceiptDispatch;
+        const wrapped = async function(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+          const requestUrl = typeof input === "string"
+            ? new URL(input, location.href).href
+            : input instanceof Request ? input.url : String(input);
+          const requestMethod = (init?.method ?? (typeof input !== "string" && input instanceof Request ? input.method : "GET")).toUpperCase();
+          const eligibleInvocation = requestUrl === url && requestMethod === "POST" && Boolean(binding);
+          const id = eligibleInvocation ? `${token}_${++sequence}` : undefined;
+          // Announce invocation before the network response. The detached
+          // binding never gates the original fetch; it only gives Node a nonce
+          // and bounded request-body identity for later ownership matching.
+          const invocation = eligibleInvocation
+            ? requestBodyHash(init?.body).then(bodyHash => binding!({
+              token,
+              id,
+              kind: "invoke",
+              ...(bodyHash !== undefined ? { bodyHash } : {}),
+            }))
+              .then(value => value === true, () => false)
+            : Promise.resolve(false);
+          const abandonInvocation = (): void => {
+            if (id === undefined || !binding) return;
+            void invocation.then(accepted => {
+              if (accepted) void binding({ token, id, kind: "abandon" }).catch(() => {});
+            });
+          };
+          let response: Response;
+          try {
+            response = await originalFetch.call(window, input, init);
+          } catch (error) {
+            abandonInvocation();
+            throw error;
+          }
+          if (!eligibleInvocation || response.url !== url || id === undefined || !binding) {
+            abandonInvocation();
+            return response;
+          }
+          const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+          const mediaType = contentType.includes("text/event-stream") ? "text/event-stream"
+            : contentType.includes("json") ? "json" : "other";
+          let accepted = false;
+          let decisionDone = false;
+          let boundedReported = false;
+          let failedReported = false;
+          const decision = invocation.then(invoked => invoked
+            ? binding({ token, id, kind: "start", status: response.status, contentType: mediaType })
+              .then(value => value === true, () => false)
+            : false, () => false)
+            .then(value => { accepted = value; decisionDone = true; }, () => { accepted = false; decisionDone = true; });
+          const reportBounded = (): void => {
+            if (boundedReported) return;
+            boundedReported = true;
+            void binding({ token, id, kind: "bounded" }).catch(() => {});
+          };
+          const reportFailed = (): void => {
+            if (failedReported) return;
+            failedReported = true;
+            void binding({ token, id, kind: "failed" }).catch(() => {});
+          };
+          const reportFailedAfterDecision = (): void => {
+            if (decisionDone && accepted) reportFailed();
+            else if (!decisionDone) void decision.then(() => { if (accepted) reportFailed(); });
+          };
+          void (async () => {
+            const pending: Array<{ data: string; decodedBytes: number; encodedBytes: number }> = [];
+            let pendingDecodedBytes = 0;
+            let pendingEncodedBytes = 0;
+            let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+            const flushPending = async (): Promise<void> => {
+              if (!accepted) return;
+              for (const item of pending.splice(0)) await binding({ token, id, kind: "chunk", data: item.data });
+              pendingDecodedBytes = 0;
+              pendingEncodedBytes = 0;
+            };
+            try {
+              reader = response.clone().body?.getReader();
+              if (!reader) { reportFailedAfterDecision(); return; }
+              let seen = 0;
+              for (;;) {
+                const next = await reader.read();
+                if (next.done) break;
+                const bytes = next.value?.byteLength ?? 0;
+                if (seen + bytes > maxBytes || pendingDecodedBytes + bytes > maxBytes) {
+                  await reader.cancel();
+                  if (decisionDone && accepted) reportBounded();
+                  else if (!decisionDone) void decision.then(() => { if (accepted) reportBounded(); });
+                  return;
+                }
+                seen += bytes;
+                if (!next.value?.byteLength) continue;
+                const data = encode(next.value);
+                if (!decisionDone) {
+                  if (pendingEncodedBytes + data.length > maxBytes) {
+                    await reader.cancel();
+                    if (decisionDone && accepted) reportBounded();
+                    else if (!decisionDone) void decision.then(() => { if (accepted) reportBounded(); });
+                    return;
+                  }
+                  pending.push({ data, decodedBytes: bytes, encodedBytes: data.length });
+                  pendingDecodedBytes += bytes;
+                  pendingEncodedBytes += data.length;
+                  continue;
+                }
+                if (!accepted) { await reader.cancel(); return; }
+                await flushPending();
+                await binding({ token, id, kind: "chunk", data });
+              }
+              await decision;
+              if (!accepted) { await reader.cancel(); return; }
+              await flushPending();
+              await binding({ token, id, kind: "end" });
+            } catch {
+              // The reader belongs only to the observation clone.  Always
+              // cancel it after a binding/reader failure so a stalled or
+              // rejected telemetry path cannot retain the tee backlog or
+              // cancel the original fetch branch.
+              await reader?.cancel().catch(() => {});
+              reportFailedAfterDecision();
+            }
+          })();
+          return response;
+        };
+        Object.assign(wrapped, originalFetch);
+        window.fetch = wrapped as typeof window.fetch;
+        root.__codexModelReceiptCaptureState = {
+          wrapper: wrapped,
+          uninstall: () => {
+            if (window.fetch === wrapped) window.fetch = originalFetch;
+            if (root.__codexModelReceiptCaptureState?.wrapper === wrapped) delete root.__codexModelReceiptCaptureState;
+          },
+        };
+      }, { url: this.conversationUrl, token, maxBytes: CHATGPT_MODEL_RECEIPT_MAX_BYTES });
+      this.pageCaptureToken = token;
+    } catch (error) {
+      registry.active = undefined;
+      noteTelemetryFailure("page-capture-install", error);
+    }
+  }
 
   constructor(
     private readonly traceId: string,
@@ -885,7 +1354,7 @@ export class ChatGptModelReceiptObserver {
         this.surfaceRecoveryPending = true;
         this.discardSend(previous, "surface_rebound");
       }
-      this.detach();
+      await this.detach();
     }
     const candidate = page as Page & {
       on?: (event: string, listener: (value: unknown) => void) => void;
@@ -924,6 +1393,7 @@ export class ChatGptModelReceiptObserver {
     this.page = page;
     candidate.on("request", this.onRequest);
     candidate.on("requestfailed", this.onRequestFailed);
+    await this.installPageCapture(page);
   }
 
   beginSend(context: ChatGptModelReceiptSendContext): void {
@@ -935,6 +1405,12 @@ export class ChatGptModelReceiptObserver {
       ? "surface_recovery"
       : context.provenance ?? (context.responseAttempt > 1 ? "response_retry" : "initial");
     this.surfaceRecoveryPending = false;
+    for (const fingerprint of this.observedBeforeActivation) this.preActivationRequestFingerprints.add(fingerprint);
+    this.observedBeforeActivation.clear();
+    if (this.preActivationRequestFingerprints.size > CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS * 2) {
+      const oldest = this.preActivationRequestFingerprints.values().next().value as string | undefined;
+      if (oldest !== undefined) this.preActivationRequestFingerprints.delete(oldest);
+    }
     let resolveDrain!: () => void;
     const drain = new Promise<void>(resolve => { resolveDrain = resolve; });
     this.active = {
@@ -952,12 +1428,15 @@ export class ChatGptModelReceiptObserver {
       draining: false,
       diagnosticEmitted: false,
       bounded: false,
+      pageInvocationIds: new Map(),
     };
     this.sends.add(this.active);
   }
 
   activate(): void {
     if (!this.active) throw new Error("ChatGPT model receipt observer has no active Send");
+    for (const fingerprint of this.observedBeforeActivation) this.preActivationRequestFingerprints.add(fingerprint);
+    this.observedBeforeActivation.clear();
     this.active.activated = true;
   }
 
@@ -992,8 +1471,8 @@ export class ChatGptModelReceiptObserver {
       noteTelemetryFailure("dispose", error);
     } finally {
       try {
-    for (const send of [...this.sends]) this.discardSend(send, "terminal_drain_timeout");
-        this.detach();
+        for (const send of [...this.sends]) this.discardSend(send, "terminal_drain_timeout");
+        await this.detach();
         this.captures.clear();
         this.sends.clear();
         this.active = undefined;
@@ -1003,15 +1482,20 @@ export class ChatGptModelReceiptObserver {
     }
   }
 
-  detach(): void {
+  async detach(): Promise<void> {
+    const boundPage = this.page;
+    const candidate = this.page as (Page & {
+      off?: (event: string, listener: (value: unknown) => void) => void;
+    }) | undefined;
     try {
-      const candidate = this.page as (Page & {
-        off?: (event: string, listener: (value: unknown) => void) => void;
-      }) | undefined;
       if (candidate?.off) {
         candidate.off("request", this.onRequest);
         candidate.off("requestfailed", this.onRequestFailed);
       }
+    } catch (error) {
+      noteTelemetryFailure("detach-page-listeners", error);
+    }
+    try {
       if (this.cdp) {
         this.cdp.off("Page.frameNavigated", this.onCdpFrameNavigated);
         this.cdp.off("Network.requestWillBeSent", this.onCdpRequest);
@@ -1019,14 +1503,27 @@ export class ChatGptModelReceiptObserver {
         this.cdp.off("Network.dataReceived", this.onCdpData);
         this.cdp.off("Network.loadingFinished", this.onCdpFinished);
         this.cdp.off("Network.loadingFailed", this.onCdpFailed);
-        void this.cdp.detach().catch(error => noteTelemetryFailure("detach", error));
+        await this.cdp.detach().catch(error => noteTelemetryFailure("detach", error));
       }
     } catch (error) {
-      noteTelemetryFailure("detach", error);
+      noteTelemetryFailure("detach-cdp", error);
+    }
+    try {
+      if (this.page && this.pageCaptureToken) {
+        await this.page.evaluate(() => {
+          const root = globalThis as typeof globalThis & { __codexModelReceiptCaptureState?: { uninstall?: () => void } };
+          root.__codexModelReceiptCaptureState?.uninstall?.();
+        }).catch(error => noteTelemetryFailure("page-capture-uninstall", error));
+      }
+    } catch (error) {
+      noteTelemetryFailure("detach-page-capture", error);
     } finally {
+      const registry = boundPage ? PAGE_BINDING_REGISTRIES.get(boundPage) : undefined;
+      if (registry?.active?.observer.deref() === this) registry.active = undefined;
       this.page = undefined;
       this.cdp = undefined;
       this.mainFrameId = undefined;
+      this.pageCaptureToken = undefined;
     }
   }
 

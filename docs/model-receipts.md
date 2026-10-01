@@ -20,9 +20,16 @@ DOM attributes, HTTP status, assistant/user prose, attachment metadata, and a mi
 through strict allowlists and bounded event/node/byte limits; response bodies are never
 materialized by the observer. A completed browser answer may be followed by a bounded 750 ms
 telemetry-only terminal drain so `Network.loadingFinished` can settle; this drain is separate from
-inference and never retries or cancels the request. Only the current activated
+inference and never retries or cancels the request. Electron targets whose CDP stream command
+rejects use a reversible, page-local `fetch` clone/tee as the bounded fallback; the original fetch
+and response body remain untouched. Only the current activated
 `POST /backend-api/f/conversation` is eligible. Receipts are one-per-physical-Send, retain retry
 attempt and provenance, and hash conversation/message identifiers before logging.
+When both CDP and page-local observations terminate for one owned POST, their resolved
+served/message/conversation evidence must agree; otherwise no receipt is emitted.
+The page fallback announces a per-invocation nonce before reading the response and requires a
+matching activated main-frame request, so a response initiated before activation cannot attach to
+a later Send.
 
 Each activated Send also emits one bounded diagnostic outcome through the same helper transport,
 including unavailable-CDP, missing-metadata, conflict, bounded, and resolved outcomes. These

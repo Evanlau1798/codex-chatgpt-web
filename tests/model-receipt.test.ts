@@ -397,7 +397,8 @@ test("a partial CDP initialization is detached without escaping attach", async (
 
 test("collector rejection is telemetry-only and does not reject the transport observer", async () => {
   const page = new FakePage();
-  const observer = new ChatGptModelReceiptObserver("trace_collector_failure", "chatgpt-web/gpt-6-pro", undefined);
+  const diagnostics: any[] = [];
+  const observer = new ChatGptModelReceiptObserver("trace_collector_failure", "chatgpt-web/gpt-6-pro", undefined, undefined, undefined, diagnostic => diagnostics.push(diagnostic));
   const original = ChatGptModelReceiptCollector.prototype.consumeSseChunk;
   ChatGptModelReceiptCollector.prototype.consumeSseChunk = () => { throw new Error("fixture decoder failure"); };
   try {
@@ -407,6 +408,7 @@ test("collector rejection is telemetry-only and does not reject the transport ob
     const request = new FakeRequest(page, { model: "gpt-6-pro" });
     emitOwnedNetwork(page, request, "collector-failure", resolvedSse("gpt-6-pro"));
     await observer.flushCurrent();
+    expect(diagnostics).toMatchObject([{ outcome: "unavailable", reason: "stream_failed", failureStage: "data_received", failureCode: "collector_or_decoder_failed" }]);
   } finally {
     ChatGptModelReceiptCollector.prototype.consumeSseChunk = original;
     await observer.dispose();
