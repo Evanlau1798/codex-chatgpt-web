@@ -177,12 +177,19 @@ test("macOS passkey sign-in is additive to the unchanged embedded login action",
   assert.match(browserHostSource, /await this\.waitForAuthenticated\(60_000\)[\s\S]*?runSessionInspection\(false\)/);
 });
 
-test("MCP connection remains unavailable until the model catalog is verified", () => {
+test("MCP connection requires a verified Codex catalog or current Claude setup", () => {
   assert.match(
     appSource,
-    /manualInteraction \|\| configuringInactiveMode \|\| snapshot\.state\.codexCatalogVerified\s+\? copy\.mcpStepTwoHint : copy\.mcpCatalogRequired/,
+    /manualInteraction \|\| configuringInactiveMode \|\| hasVerifiedClientIntegration\(snapshot\.state\)\s+\? copy\.mcpStepTwoHint : copy\.mcpCatalogRequired/,
   );
-  assert.match(appSource, /\|\| \(!manualInteraction && !configuringInactiveMode && !snapshot\.state\.codexCatalogVerified\)/);
+  assert.match(appSource, /\|\| \(!manualInteraction && !configuringInactiveMode && !hasVerifiedClientIntegration\(snapshot\.state\)\)/);
+  const body = appSource.match(/function hasVerifiedClientIntegration\(state: LauncherState\): boolean \{([\s\S]*?)\n\}/)[1];
+  const verified = new Function("state", body);
+  assert.equal(verified({ codexCatalogVerified: true, claudeSetupComplete: false }), true);
+  assert.equal(verified({ codexCatalogVerified: false, claudeSetupComplete: true }), true);
+  assert.equal(verified({ codexCatalogVerified: false, claudeSetupComplete: false }), false);
+  assert.equal(verified({}), false);
+  assert.equal(verified({ codexCatalogVerified: "true", claudeSetupComplete: "true" }), false);
 });
 
 test("MCP navigation remains locked while an operation is active", () => {

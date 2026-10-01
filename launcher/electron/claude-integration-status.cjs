@@ -41,8 +41,13 @@ function reconcileClaudeSetupState(status) {
   };
 }
 
+function hasRuntimeClient({ codexRouteActive, claudeIntegrationStatus }) {
+  return codexRouteActive === true || claudeIntegrationStatus === "current";
+}
+
 module.exports = {
   CLAUDE_STEERING_HOOK_EVENTS,
   inspectClaudeIntegrationStatus,
   reconcileClaudeSetupState,
+  hasRuntimeClient,
 };

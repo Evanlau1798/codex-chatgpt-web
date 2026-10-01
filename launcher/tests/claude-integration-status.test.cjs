@@ -6,6 +6,7 @@ const test = require("node:test");
 const {
   inspectClaudeIntegrationStatus,
   reconcileClaudeSetupState,
+  hasRuntimeClient,
 } = require("../electron/claude-integration-status.cjs");
 
 const EVENTS = ["UserPromptSubmit", "PostToolUse", "PostToolUseFailure"];
@@ -116,4 +117,17 @@ test("wires actual hook status into snapshot and the reinstall action", () => {
   assert.match(main, /runtimeHost\?\.claudeIntegrationStatus\(\)/);
   assert.match(main, /stateStore\.update\(claude\)/);
   assert.match(app, /claudeSetupComplete \|\| snapshot\.state\.claudeSetupOutdated/);
+});
+
+test("keeps the Messages runtime available for Claude without reconnecting Codex", () => {
+  assert.equal(hasRuntimeClient({ codexRouteActive: false, claudeIntegrationStatus: "current" }), true);
+  for (const status of ["missing", "outdated", "unknown"]) {
+    assert.equal(hasRuntimeClient({ codexRouteActive: false, claudeIntegrationStatus: status }), false);
+  }
+  assert.equal(hasRuntimeClient({ codexRouteActive: true, claudeIntegrationStatus: "missing" }), true);
+  const main = fs.readFileSync(path.join(__dirname, "../electron/main.cjs"), "utf8");
+  assert.match(main, /hasRuntimeClient\(\{\s*codexRouteActive: route\.active,\s*claudeIntegrationStatus: runtimeHost\.claudeIntegrationStatus\(\)/);
+  const app = fs.readFileSync(path.join(__dirname, "../src/App.tsx"), "utf8");
+  assert.match(app, /function hasVerifiedClientIntegration/);
+  assert.match(app, /state\.codexCatalogVerified === true \|\| state\.claudeSetupComplete === true/);
 });
