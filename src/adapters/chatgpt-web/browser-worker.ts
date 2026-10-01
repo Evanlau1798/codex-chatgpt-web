@@ -326,7 +326,10 @@ export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
       hasText: /Suspicious activity detected|偵測到可疑活動|检测到可疑活动|不審なアクティビティが検出されました|의심스러운 활동이 감지되었습니다/i,
     })
     .last();
-  if (await accountSafetyAlert.isVisible().catch(() => false)) {
+  const dialog = chatGptRateLimitDialog(page);
+  const accountSafetyVisible = accountSafetyAlert.isVisible().catch(() => false);
+  const rateLimitVisible = dialog.isVisible().catch(() => false);
+  if (await accountSafetyVisible) {
     throw new ChatGptWebAdapterError(
       "ChatGPT reported suspicious activity. Automatic Web is stopped until you acknowledge the account-safety warning.",
       {
@@ -338,8 +341,7 @@ export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
       },
     );
   }
-  const dialog = chatGptRateLimitDialog(page);
-  if (!await dialog.isVisible().catch(() => false)) return;
+  if (!await rateLimitVisible) return;
 
   const acknowledge = dialog.getByRole("button", { name: /^(?:Got it|知道了|了解|알겠습니다|확인)$/i }).last();
   if (await acknowledge.isVisible().catch(() => false)) {
@@ -383,10 +385,12 @@ const chatGptExpiredSessionAlert = (page: Page): Locator => page
   .last();
 
 export async function throwIfChatGptSessionFailureAlert(page: Page): Promise<void> {
-  if (await chatGptExpiredSessionAlert(page).isVisible().catch(() => false)) {
+  const expired = chatGptExpiredSessionAlert(page).isVisible().catch(() => false);
+  const subscriptionUnavailable = chatGptSubscriptionFailureAlert(page).isVisible().catch(() => false);
+  if (await expired) {
     throw chatGptSessionExpiredError();
   }
-  if (!await chatGptSubscriptionFailureAlert(page).isVisible().catch(() => false)) return;
+  if (!await subscriptionUnavailable) return;
   throw new ChatGptWebAdapterError(
     "ChatGPT could not load the account subscription. Reload ChatGPT inside the launcher and retry; sign out only if the error persists.",
     { status: 503, errorType: "server_error", code: "chatgpt_subscription_unavailable", retryable: true },
@@ -402,14 +406,15 @@ export async function throwIfChatGptTerminalErrorAlert(
   completedAnswerVisible = false,
 ): Promise<void> {
   if (completedAnswerVisible) return;
-  if (await scope.getByTestId("regenerate-thread-error-button").last().isVisible().catch(() => false)) {
+  const regenerateError = scope.getByTestId("regenerate-thread-error-button").last().isVisible().catch(() => false);
+  const terminalError = chatGptTerminalErrorAlert(scope).isVisible().catch(() => false);
+  if (await regenerateError) {
     throw new ChatGptWebAdapterError(
       "ChatGPT displayed an error for this response. Check the ChatGPT tab for the exact error, then retry the turn.",
       { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
     );
   }
-  const alert = chatGptTerminalErrorAlert(scope);
-  if (!await alert.isVisible().catch(() => false)) return;
+  if (!await terminalError) return;
   throw new ChatGptWebAdapterError(
     "ChatGPT ended the turn with 'Something went wrong'. Retry the turn.",
     { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
@@ -4865,6 +4870,7 @@ export class ChatGptBrowserWorker {
             },
             onProgress: turn.onProgress,
             onHeartbeat: turn.onHeartbeat,
+            onFinalTiming: timing => console.info(`[chatgpt-web] browser turn ${turn.traceId} native_final_timing=${JSON.stringify(timing)}`),
             signal: turn.abortSignal,
             deadline,
           });
