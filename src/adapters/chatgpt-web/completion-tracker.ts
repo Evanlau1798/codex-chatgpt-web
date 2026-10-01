@@ -1,5 +1,11 @@
 export const CHATGPT_COMPLETION_SETTLE_MS = 2_000;
 export const CHATGPT_COMPLETION_PROJECTION_STALL_MS = 60_000;
+export class ChatGptMissingPostToolAnswerError extends Error {
+  constructor() {
+    super("ChatGPT completed without producing a final answer after its last Codex tool call");
+    this.name = "ChatGptMissingPostToolAnswerError";
+  }
+}
 export interface ChatGptProjectionAnimation {
   playState: string;
   currentTime: number | null;
@@ -136,7 +142,7 @@ export class ChatGptCompletionTracker {
       }
       this.missingPostToolAnswerSince ??= now;
       if (now - this.missingPostToolAnswerSince >= this.missingPostToolAnswerMs) {
-        throw new Error("ChatGPT completed without producing a final answer after its last Codex tool call");
+        throw new ChatGptMissingPostToolAnswerError();
       }
       return { status: "waiting" };
     }

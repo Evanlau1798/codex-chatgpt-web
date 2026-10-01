@@ -13,8 +13,8 @@ test("model selection recognizes Latest in the launcher languages without accept
         waitFor: async () => { throw new Error("Requested family is absent"); },
       }),
       locator: () => ({ count: async () => 1, getAttribute: async () => "true" }),
-    } } as unknown as Parameters<typeof selectChatGptModelFamily>[1];
-    const selection = selectChatGptModelFamily({} as Parameters<typeof selectChatGptModelFamily>[0], menu, "6", async () => menu);
+    } } as unknown as Parameters<typeof selectChatGptModelFamily>[0];
+    const selection = selectChatGptModelFamily(menu, "6", async () => menu);
     if (accepted) expect(await selection).toBe(menu);
     else await expect(selection).rejects.toThrow("could not be selected and verified");
   }

@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import {
-  chatGptLimitsPlanFromHeadings,
   chatGptUsageModelFromAnnouncements,
   detectChatGptLimitsPlan,
   prepareChatGptLimitsSubmission,
@@ -8,12 +7,14 @@ import {
   supportsChatGptUsageTracking,
 } from "../src/adapters/chatgpt-web/limits";
 
-test("Limits requires an unambiguous current Pro tier instead of a badge or advertised price", () => {
-  expect(chatGptLimitsPlanFromHeadings(["Billing", "ChatGPT Pro 20x", "Transaction history"])).toBe("pro_200");
-  expect(chatGptLimitsPlanFromHeadings(["ChatGPT Pro 5x"])).toBe("pro_100");
-  for (const headings of [["Pro"], ["$200"], ["ChatGPT Plus"], ["ChatGPT Pro"],
-    ["ChatGPT Pro 5x", "ChatGPT Pro 20x"], ["Upgrade to ChatGPT Pro 20x"]]) {
-    expect(() => chatGptLimitsPlanFromHeadings(headings)).toThrow("Could not distinguish");
+test("Limits reads exact personal account tiers without inspecting billing UI", async () => {
+  for (const [planType, expected] of [["pro", "pro_200"], ["prolite", "pro_100"], ["promax", "unsupported"], ["free", "unsupported"]] as const) {
+    const page = {
+      url: () => "https://chatgpt.com/",
+      evaluate: async () => ({ userId: "u", accountId: "a", planType, structure: "personal", needsAttention: false }),
+      getByRole: () => { throw new Error("Plan detection must not inspect or change the UI"); },
+    };
+    expect((await detectChatGptLimitsPlan(page as never)).plan).toBe(expected);
   }
 });
 

@@ -16,7 +16,7 @@ import {
 import { opaqueId, type BrokerToolRequest, type BrokerToolResult, type BrokerTurnOutputEvent } from "./turn-broker-protocol";
 import { TurnContextStore } from "./turn-context-store";
 import { beginTurnCompletionFence, commitTurnCompletionFence } from "./turn-broker-completion";
-import { rejectTurnOutputWaiters, resetTurnOutput, sealTurnOutput, waitForTurnOutput } from "./turn-broker-output";
+import { publishPendingFinalizationOutput, rejectTurnOutputWaiters, resetTurnOutput, sealTurnOutput, waitForTurnOutput } from "./turn-broker-output";
 import { logToolDelivery, rejectTurnChannel, takeQueuedTools } from "./turn-broker-queue";
 import {
   assertSafeHarnessRunning,
@@ -72,6 +72,7 @@ export class TurnBroker implements TurnBrokerOwner {
   private acceptingExternalOwners = true;
   private server?: Server;
   private startPromise?: Promise<void>;
+  private socketIdentity?: { dev: number; ino: number };
 
   private constructor(readonly socketPath: string) {}
 
@@ -127,6 +128,8 @@ export class TurnBroker implements TurnBrokerOwner {
       outputWaiters: new Set(),
       outputResumeAfter: 0,
       outputSealed: false,
+      finalizationOnly: false,
+      finalizationOutputArmed: false,
       retirementWaiters: new Set(),
     };
     this.channels.set(token, channel);
@@ -180,6 +183,10 @@ export class TurnBroker implements TurnBrokerOwner {
 
   abortCompactionTransaction(token: string): void {
     this.compactionTransactions.abort(token);
+  }
+
+  refreshCompactionTransaction(token: string, ttlMs: number): void {
+    this.compactionTransactions.refresh(token, ttlMs);
   }
 
   revokeCompactionTransactions(traceId: string): void {
@@ -270,6 +277,50 @@ export class TurnBroker implements TurnBrokerOwner {
       console.info(`[chatgpt-web] broker trace=${channel.traceId} committed browser completion revision=${revision}`);
     }
     return committed;
+  }
+
+  beginFinalizationOnly(token: string, expectedActivityRevision: number): boolean {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    if (channel.activityRevision !== expectedActivityRevision) return false;
+    if (!channel.outputEnabled || channel.completionCommitted || channel.outputFinalSequence !== undefined) return false;
+    if (channel.invocations.size > 0 || channel.queuedCallIds.length > 0 || channel.activities.size > 0) return false;
+    if (channel.finalizationOnly) return true;
+    channel.finalizationOnly = true;
+    channel.finalizationOutputArmed = false;
+    channel.finalizationPendingOutput = undefined;
+    channel.activityRevision += 1;
+    return true;
+  }
+
+  cancelFinalizationOnly(token: string, expectedActivityRevision: number): boolean {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    if (channel.activityRevision !== expectedActivityRevision || !channel.finalizationOnly
+      || channel.finalizationOutputArmed) return false;
+    if (channel.completionCommitted || channel.outputFinalSequence !== undefined
+      || channel.invocations.size > 0 || channel.queuedCallIds.length > 0 || channel.activities.size > 0) return false;
+    channel.finalizationOnly = false;
+    channel.finalizationOutputArmed = false;
+    channel.activityRevision += 1;
+    publishPendingFinalizationOutput(channel);
+    return true;
+  }
+
+  armFinalizationOutput(token: string, expectedActivityRevision: number): boolean {
+    this.prune();
+    const channel = this.channels.get(token);
+    if (!channel) throw new Error("turn token is invalid or expired");
+    if (channel.activityRevision !== expectedActivityRevision || !channel.finalizationOnly) return false;
+    if (!channel.outputEnabled || channel.completionCommitted || channel.outputFinalSequence !== undefined) return false;
+    if (channel.invocations.size > 0 || channel.queuedCallIds.length > 0 || channel.activities.size > 0) return false;
+    if (channel.finalizationOutputArmed) return true;
+    channel.finalizationOutputArmed = true;
+    channel.activityRevision += 1;
+    publishPendingFinalizationOutput(channel);
+    return true;
   }
 
   waitForRetirement(token: string, signal?: AbortSignal): Promise<void> {
@@ -461,16 +512,21 @@ export class TurnBroker implements TurnBrokerOwner {
     const server = this.server;
     this.server = undefined;
     this.startPromise = undefined;
-    brokers.delete(this.socketPath);
+    if (brokers.get(this.socketPath) === this) brokers.delete(this.socketPath);
     if (server?.listening) {
       await new Promise<void>((resolveClose, rejectClose) => server.close(error => {
         if (!error || (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING") resolveClose();
         else rejectClose(error);
       }));
     }
-    if (!isWindowsPipeEndpoint(this.socketPath)
-      && existsSync(this.socketPath)
-      && lstatSync(this.socketPath).isSocket()) unlinkSync(this.socketPath);
+    const identity = this.socketIdentity;
+    this.socketIdentity = undefined;
+    if (identity && existsSync(this.socketPath)) {
+      const current = lstatSync(this.socketPath);
+      if (current.isSocket() && current.dev === identity.dev && current.ino === identity.ino) {
+        unlinkSync(this.socketPath);
+      }
+    }
   }
 
   private start(): Promise<void> {
@@ -495,7 +551,13 @@ export class TurnBroker implements TurnBrokerOwner {
         completeSafeTurn: (requestId, finalAnswer) => this.completeSafeTurn(requestId, finalAnswer),
       });
     })
-      .then(server => { this.server = server; });
+      .then(server => {
+        this.server = server;
+        if (process.platform !== "win32" && !isWindowsPipeEndpoint(this.socketPath)) {
+          const { dev, ino } = lstatSync(this.socketPath);
+          this.socketIdentity = { dev, ino };
+        }
+      });
     return this.startPromise;
   }
 

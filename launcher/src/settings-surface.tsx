@@ -47,6 +47,10 @@ export function SettingsSurface({
   const [busy, setBusy] = useState(false);
   const [turnsCancelled, setTurnsCancelled] = useState(false);
   const [integrationRemoved, setIntegrationRemoved] = useState(false);
+  const currentPluginName = snapshot.connectorNames[snapshot.state.browserInteractionMode];
+  const [nameSuffix, setNameSuffix] = useState(currentPluginName.slice(6));
+  const [confirmNameChange, setConfirmNameChange] = useState(false);
+  const proposedName = `Codex ${nameSuffix.trim()}`;
   const [maxBrowserTabs, setMaxBrowserTabs] = useState(snapshot.state.maxBrowserTabs);
   const [sessionLimitEnabled, setSessionLimitEnabled] = useState(snapshot.state.automaticWebSessionLimitEnabled);
   const [sessionLimitCount, setSessionLimitCount] = useState(snapshot.state.automaticWebSessionLimitCount);
@@ -69,6 +73,11 @@ export function SettingsSurface({
     snapshot.state.automaticWebSessionLimitCount,
     snapshot.state.automaticWebSessionLimitMinutes,
   ]);
+
+  useEffect(() => {
+    setNameSuffix(currentPluginName.slice(6));
+    setConfirmNameChange(false);
+  }, [currentPluginName]);
 
   useEffect(() => {
     if (snapshot.state.browserInteractionMode !== "automatic" || snapshot.state.coreSetupComplete !== true) {
@@ -271,6 +280,19 @@ export function SettingsSurface({
       setBusy(false);
     }
   };
+  const changePluginName = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      updateState(await api!.setConnectorNameSuffix(nameSuffix.trim()));
+      setConfirmNameChange(false);
+      configureInteractionMode(snapshot.state.browserInteractionMode);
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const setZeroRiskPro = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
@@ -405,6 +427,14 @@ export function SettingsSurface({
             checked={snapshot.state.experimentalNoAutoCompact}
             disabled={busy || snapshot.state.coreSetupComplete !== true}
             onChange={(enabled) => void setExperimentalNoAutoCompact(enabled)}
+          />
+        </SettingRow>
+        <SettingRow body={copy.preparedWebSessionBody} label={copy.preparedWebSession}>
+          <Switch
+            checked={snapshot.state.experimentalPreparedWebSession}
+            disabled={busy || snapshot.state.coreSetupComplete !== true || snapshot.state.browserInteractionMode !== "automatic"}
+            onChange={(enabled) => void api!.setPreference("experimentalPreparedWebSession", enabled)
+              .then(updateState).catch((cause) => setError(messageOf(cause)))}
           />
         </SettingRow>
         {snapshot.state.browserInteractionMode === "manual" ? (
@@ -593,6 +623,31 @@ export function SettingsSurface({
             onChange={(enabled) => void setManualInteraction(enabled)}
           />
         </SettingRow>
+        <div className="plugin-name-setting">
+          <SettingRow body={copy.pluginNameBody} label={copy.pluginName}>
+            <div className="plugin-name-input">
+              <span aria-hidden="true">Codex</span>
+              <input
+                aria-label={copy.pluginName}
+                disabled={busy || !snapshot.state.coreSetupComplete}
+                maxLength={74}
+                onChange={event => { setNameSuffix(event.target.value); setConfirmNameChange(false); }}
+                value={nameSuffix}
+              />
+            </div>
+          </SettingRow>
+          <code>{proposedName}</code>
+          {confirmNameChange ? <>
+            <p>{copy.pluginNameWarning}</p>
+            <div className="manual-turn-actions">
+              <SecondaryButton disabled={busy} onClick={() => setConfirmNameChange(false)}>{copy.previous}</SecondaryButton>
+              <PrimaryButton disabled={busy} onClick={() => void changePluginName()}>{copy.pluginNameConfirm}</PrimaryButton>
+            </div>
+          </> : <SecondaryButton
+            disabled={busy || !snapshot.state.coreSetupComplete || !nameSuffix.trim() || proposedName === currentPluginName}
+            onClick={() => setConfirmNameChange(true)}
+          >{copy.pluginNameChange}</SecondaryButton>}
+        </div>
         <SettingRow body={devProfile ? copy.devKeepRunningBody : copy.keepRunningOnCloseBody} label={copy.keepRunningOnClose}>
           <Switch
             checked={snapshot.state.keepRunningOnClose}
@@ -691,6 +746,26 @@ export function SettingsSurface({
         </span>
       </div>
     </ContentSurface>
+  );
+}
+
+function PrimaryButton({ children, disabled = false, onClick }: {
+  children: ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return <button className="button-primary" disabled={disabled} onClick={onClick} type="button">{children}</button>;
+}
+
+function SecondaryButton({ children, disabled = false, onClick }: {
+  children: ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button className="button-secondary" disabled={disabled} onClick={onClick} type="button">
+      <span>{children}</span>
+    </button>
   );
 }
 

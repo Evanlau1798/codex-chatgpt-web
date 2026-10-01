@@ -136,11 +136,13 @@ test("browser turn orchestration retains owned prompt insertion and semantic sub
   expect(runBrowserTurn).toContain("this.attachPromptWithCompactionRetry(");
   expect(runBrowserTurn).toContain('.locator("xpath=ancestor::form[1]")');
   expect(runBrowserTurn).toContain('.locator(CHATGPT_SEND_BUTTON_SELECTOR)');
-  expect(runBrowserTurn).toContain("await activateChatGptSendControl(sendButton, stageSignal)");
+  expect(runBrowserTurn).toContain(
+    "await activateChatGptSendControl(sendButton, stageSignal, () => submissionRejection.activate())",
+  );
   expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
     .toBeGreaterThanOrEqual(0);
   expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
-    .toBeLessThan(runBrowserTurn.indexOf("await activateChatGptSendControl(sendButton, stageSignal)"));
+    .toBeLessThan(runBrowserTurn.indexOf("await activateChatGptSendControl(sendButton, stageSignal"));
   expect(runBrowserTurn).toContain("await this.waitForSubmissionAccepted(");
   expect(workerSource).not.toMatch(/\bclipboard\b|pbcopy|pbpaste/i);
 });
@@ -368,7 +370,7 @@ test("Luna turns without a retained conversation never send connector identity a
   const connectorIdentity = runExclusive.indexOf("connectorIdentity: this.config.appName");
   expect(connectorIdentity).toBeGreaterThan(-1);
   expect(runExclusive.slice(connectorIdentity - 260, connectorIdentity)).toContain("turn.conversationKey");
-  expect(runExclusive.slice(connectorIdentity - 420, connectorIdentity)).toContain("const nativeConnector = turn.nativeConnector === true || localTools");
+  expect(runExclusive.slice(0, connectorIdentity)).toContain("const nativeConnector = turn.nativeConnector === true || localTools");
 });
 
 test("connector verification proves the current schema with an actual connector tool call", () => {
@@ -585,19 +587,20 @@ test("new ChatGPT chats select the requested effort and submit the first real tu
   expect(promptAttachment).toBeGreaterThan(requestedSelection);
 });
 
-test("enhanced Web session mode alone raises browser concurrency from five to six", () => {
+test("without Account Safety the Web page ceiling defaults to six in either context mode", () => {
   const provider = { adapter: "chatgpt-web" as const, baseUrl: "browser://chatgpt" };
-  expect(resolveBrowserConfig(provider).maxBrowserTabs).toBe(5);
+  expect(resolveBrowserConfig(provider).maxBrowserTabs).toBe(6);
   expect(resolveBrowserConfig({
     ...provider,
     chatgptWeb: { useEnhancedWebSessionMode: true },
   }).maxBrowserTabs).toBe(6);
 });
 
-test("configured Automatic Web concurrency respects Standard and Enhanced ceilings", () => {
+test("Account Safety concurrency applies only while its session limit is enabled", () => {
   const provider = { adapter: "chatgpt-web" as const, baseUrl: "browser://chatgpt" };
-  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 3 } }).maxBrowserTabs).toBe(3);
-  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 6 } }).maxBrowserTabs).toBe(5);
+  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 3 } }).maxBrowserTabs).toBe(6);
+  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 3, automaticWebSessionLimitMinutes: 300 } }).maxBrowserTabs).toBe(3);
+  expect(resolveBrowserConfig({ ...provider, chatgptWeb: { maxBrowserTabs: 6, automaticWebSessionLimitMinutes: 300 } }).maxBrowserTabs).toBe(6);
   expect(resolveBrowserConfig({
     ...provider,
     chatgptWeb: { maxBrowserTabs: 6, useEnhancedWebSessionMode: true },
@@ -1046,10 +1049,56 @@ test("repeated connector verification reuses its selected pill before clearing t
     activeComposer: async () => selectedComposer,
     connectorIsSelected: async () => true,
     ensureConnectorSurface: (ChatGptBrowserWorker.prototype as any).ensureConnectorSurface,
+    attachedPromptText: async () => "",
   }, page, async checkpoint => { checkpoints.push(checkpoint); })).resolves.toBe(selectedComposer);
 
   expect(fillCalls).toBe(0);
   expect(checkpoints).toEqual(["personalization-already-enabled", "connector-already-selected"]);
+});
+
+test("selected connector clears a restored draft before attaching another request", async () => {
+  const calls: string[] = [];
+  let selected = true;
+  const selectedConnector = { waitFor: async () => { calls.push("selected"); } };
+  const menuRow = {
+    waitFor: async () => { calls.push("menu"); },
+    count: async () => 1,
+    getAttribute: async () => "",
+  };
+  const menuRows = {
+    filter: (options: { visible?: boolean }) => options.visible
+      ? { count: async () => 1 }
+      : menuRow,
+  };
+  const composer = {
+    fill: async () => { calls.push("fill"); },
+    focus: async () => { calls.push("focus"); },
+    pressSequentially: async () => { calls.push("mention"); },
+    press: async (key: string) => {
+      calls.push(key);
+      if (key === "Enter") selected = true;
+    },
+  };
+  const selectedComposer = { selected: true };
+  const page = {
+    getByText: () => ({}),
+    locator: () => menuRows,
+  };
+  const selectConnector = (ChatGptBrowserWorker.prototype as unknown as {
+    selectConnector(page: unknown): Promise<unknown>;
+  }).selectConnector;
+
+  await expect(selectConnector.call({
+    config: { appName: "Codex Native2 DEV" },
+    ensureConnectorSurface: async () => {},
+    activeComposer: async () => selected ? selectedComposer : composer,
+    connectorIsSelected: async () => selected,
+    attachedPromptText: async () => "old draft",
+    clearChatGptComposerState: async () => { calls.push("clear"); selected = false; },
+    selectedConnectorControl: () => selectedConnector,
+  }, page)).resolves.toBe(selectedComposer);
+
+  expect(calls).toEqual(["clear", "fill", "fill", "focus", "mention", "menu", "Enter", "selected"]);
 });
 
 test("connector selection retriggers the complete mention after a fresh-page hydration miss", async () => {
@@ -1780,20 +1829,29 @@ test("only a size rejection of the current owned browser submission is non-retry
   const old = makeRequest();
   page.emit("request", old);
   observer.begin(page as unknown as Page);
+  expect(observer.ownedSubmissionRequestObserved()).toBeFalse();
   respond(old);
+  const beforeActivation = makeRequest();
+  page.emit("request", beforeActivation);
+  respond(beforeActivation);
+  expect(observer.ownedSubmissionRequestObserved()).toBeFalse();
+  observer.activate();
   for (const request of [makeRequest("https://other.example/backend-api/f/conversation"),
     makeRequest("https://chatgpt.com/backend-api/sentinel"), makeRequest(undefined, {})]) {
     page.emit("request", request); respond(request);
   }
   expect(bodyReads).toBe(0);
   const successful = makeRequest(); page.emit("request", successful); respond(successful, "message_length_exceeds_limit", 200);
+  expect(observer.ownedSubmissionRequestObserved()).toBeTrue();
   const unfamiliar = makeRequest(); page.emit("request", unfamiliar); respond(unfamiliar, "unknown_error");
   expect(await observer.failure()).toBeUndefined();
   const current = makeRequest(); page.emit("request", current); respond(current);
   expect(await observer.failure()).toMatchObject({
     status: 400, code: "context_length_exceeded", errorType: "invalid_request_error", retryable: false,
   });
+  expect(observer.ownedSubmissionRequestObserved()).toBeTrue();
   observer.begin(page as unknown as Page);
+  expect(observer.ownedSubmissionRequestObserved()).toBeFalse();
   expect(await observer.failure()).toBeUndefined();
   respond(current);
   expect(await observer.failure()).toBeUndefined();
@@ -1847,6 +1905,7 @@ test("upstream failure diagnostics retain only owned request statuses and failur
     method: () => "POST", url: () => url, frame: () => owner,
   });
   observer.begin(page as unknown as Page);
+  observer.activate();
   const foreign = request("https://other.example/backend-api/f/conversation");
   page.emit("request", foreign);
   page.emit("response", { request: () => foreign, status: () => 500 });
@@ -2954,7 +3013,7 @@ test("browser DOM health fails closed on a vanished or empty ChatGPT response", 
   const missing = new ChatGptTurnDomHealthTracker(1_000, 500);
   const absent = {
     responsePresent: false,
-    running: true,
+    running: false,
     currentText: "",
     completionActionVisible: false,
   };
@@ -2990,6 +3049,17 @@ test("browser DOM health fails closed on a vanished or empty ChatGPT response", 
     ...completedWithoutMarker,
     completionActionVisible: true,
   }, 1_751)).toBeUndefined();
+});
+
+test("visible generation suspends DOM health and restarts its grace when Stop disappears", () => {
+  const tracker = new ChatGptTurnDomHealthTracker(1_000, 500);
+  const absent = { responsePresent: false, running: false, currentText: "", completionActionVisible: false };
+  expect(tracker.update(absent, 0)).toBeUndefined();
+  expect(tracker.update({ ...absent, running: true }, 500)).toBeUndefined();
+  expect(tracker.update({ ...absent, running: true }, 60_000)).toBeUndefined();
+  expect(tracker.update(absent, 61_000)).toBeUndefined();
+  expect(tracker.update(absent, 61_999)).toBeUndefined();
+  expect(tracker.update(absent, 62_000)).toContain("did not create a response DOM");
 });
 
 test("stalled-turn diagnostics record DOM metrics without response or overlay content", () => {
@@ -3095,7 +3165,7 @@ test("suspending DOM health for proven MCP progress restarts the missing-respons
   const tracker = new ChatGptTurnDomHealthTracker(1_000, 500);
   const absent = {
     responsePresent: false,
-    running: true,
+    running: false,
     currentText: "",
     completionActionVisible: false,
   };
@@ -3120,7 +3190,7 @@ test("clearing the missing-response window preserves whether a response was ever
     currentText: "partial",
     completionActionVisible: false,
   };
-  const absent = { ...present, responsePresent: false, currentText: "" };
+  const absent = { ...present, responsePresent: false, running: false, currentText: "" };
 
   expect(tracker.update(present, 1_000)).toBeUndefined();
   expect(tracker.update(absent, 1_500)).toBeUndefined();
@@ -3187,7 +3257,7 @@ test("live external progress still records that a response DOM was observed", ()
   const tracker = new ChatGptTurnDomHealthTracker(1_000, 500);
   const absent = {
     responsePresent: false,
-    running: true,
+    running: false,
     currentText: "",
     completionActionVisible: false,
   };

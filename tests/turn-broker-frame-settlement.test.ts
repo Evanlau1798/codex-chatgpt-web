@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import type { callTurnBroker as CallTurnBroker } from "../src/adapters/chatgpt-web/turn-broker-client";
 
-// Exercise the shipped parser and settlement callbacks with explicit physical-close events.
+// Exercise the shipped parser and settlement callbacks with explicit server-EOF events.
 // Real Windows pipe transport is separately covered by turn-broker-lifecycle and manual tool turns.
 const source = readFileSync(new URL("../src/adapters/chatgpt-web/turn-broker-client.ts", import.meta.url), "utf8");
 const body = source.slice(source.indexOf("export class TurnBrokerTimeoutError")).replaceAll("export ", "");
@@ -35,13 +35,18 @@ for (const unbounded of [false, true]) test(`broker complete frame settlement (u
       expect(await call).toEqual({ ready: true });
       expect(socket.destroyed).toBe(true);
     } else {
-      expect(socket.ended).toBe(true);
+      expect(socket.ended).toBe(false);
+      expect(settled).toBe(false);
+      socket.emit("error", new Error("late socket error"));
+      abort.abort();
       expect(settled).toBe(false);
       socket.emit("end");
-      await setImmediate();
+      expect(socket.ended).toBe(true);
       expect(settled).toBe(false);
-      socket.emit("close");
+      expect(socket.destroyed).toBe(false);
+      await setImmediate();
       expect(await call).toEqual({ ready: true });
+      expect(socket.destroyed).toBe(false);
     }
   } finally {
     abort.abort();

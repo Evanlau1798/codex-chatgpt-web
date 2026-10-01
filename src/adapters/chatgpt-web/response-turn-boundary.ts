@@ -1,5 +1,8 @@
 import type { Locator } from "playwright-core";
-import { chatGptAssistantTurnSelector } from "../../chatgpt-session";
+import {
+  chatGptAssistantTurnSelector,
+  isTemporaryChatGptTurnUrl,
+} from "../../chatgpt-session";
 
 export interface ChatGptAssistantTurnState {
   count: number;
@@ -18,6 +21,7 @@ export type ChatGptSubmissionEvidence =
   | "user_turn"
   | "assistant_turn"
   | "generation_running"
+  | "conversation_navigation"
   | "mcp_tool_call";
 
 export class ChatGptTurnIdentityAmbiguityError extends Error {
@@ -30,9 +34,171 @@ export class ChatGptTurnIdentityAmbiguityError extends Error {
 export async function activateChatGptSendControl(
   sendButton: Pick<Locator, "press">,
   signal?: AbortSignal,
+  onActivate?: () => void,
 ): Promise<void> {
   // The outer stage owns the budget; submission evidence remains the completion authority.
+  onActivate?.();
   await sendButton.press("Enter", { noWaitAfter: true, timeout: 0, signal });
+}
+
+export class ChatGptOwnedSendStateUnknownError extends Error {
+  constructor(cause: unknown) {
+    super("ChatGPT recovery Send may have been submitted before its receipt became unavailable", { cause });
+    this.name = "ChatGptOwnedSendStateUnknownError";
+  }
+}
+
+export interface ChatGptOwnedSendGuard {
+  responseSelector: string;
+  responseHtml: string;
+  stopButtonSelector: string;
+  deadlineAt: number;
+}
+
+/** Clear only the recovery prompt still owned by this turn. */
+export async function clearOwnedChatGptComposerControl(
+  composer: Pick<Locator, "evaluate">,
+  expectedPrompt: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  signal?.throwIfAborted();
+  return composer.evaluate((element, expected) => {
+    const clone = element.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]')
+      .forEach(part => part.remove());
+    const observed = [...clone.childNodes].map(child => child.textContent ?? "").join("\n").trimStart();
+    if (observed !== expected) return false;
+    element.replaceChildren();
+    const EventConstructor = element.ownerDocument.defaultView?.Event ?? Event;
+    element.dispatchEvent(new EventConstructor("input", { bubbles: true }));
+    return true;
+  }, expectedPrompt, { signal, timeout: 0 });
+}
+
+/** Verify prompt, bound response and generation, then click Send in one renderer task. */
+export async function activateOwnedChatGptSendControl(
+  composer: Pick<Locator, "evaluate" | "locator">,
+  expectedPrompt: string,
+  sendButtonSelector: string,
+  guard: ChatGptOwnedSendGuard,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  signal?.throwIfAborted();
+  const nonce = `recovery-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  const installed = await composer.evaluate((element, input) => {
+    const validate = (): boolean => {
+      if (Date.now() > input.guard.deadlineAt) return false;
+      const clone = element.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll('[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]')
+        .forEach(part => part.remove());
+      const observed = [...clone.childNodes].map(child => child.textContent ?? "").join("\n").trimStart();
+      if (observed !== input.expectedPrompt) return false;
+      const response = element.ownerDocument.querySelectorAll(input.guard.responseSelector);
+      if (response.length !== 1 || response[0]!.innerHTML !== input.guard.responseHtml) return false;
+      const view = element.ownerDocument.defaultView;
+      return ![...element.ownerDocument.querySelectorAll<HTMLElement>(input.guard.stopButtonSelector)]
+        .some(candidate => {
+          const style = view?.getComputedStyle(candidate);
+          return candidate.isConnected && !candidate.hidden && candidate.getAttribute("aria-hidden") !== "true"
+            && style?.display !== "none" && style?.visibility !== "hidden";
+        });
+    };
+    if (!validate()) return false;
+    const button = element.closest("form")?.querySelector<HTMLElement>(input.sendButtonSelector);
+    if (!button || button.getAttribute("aria-disabled") === "true"
+      || (button.tagName === "BUTTON" && (button as HTMLButtonElement).disabled)) return false;
+    const key = "__codexRecoverySendGuard";
+    const registryKey = "__codexRecoverySendGuards";
+    type GuardState = { nonce: string; allowed?: boolean; listener?: EventListener; button: HTMLElement };
+    const documentRecord = element.ownerDocument as Document & Record<string, unknown>;
+    const registry = (documentRecord[registryKey] ??= Object.create(null)) as Record<string, GuardState>;
+    const guarded = button as HTMLElement & Record<string, unknown>;
+    const previous = guarded[key] as GuardState | undefined;
+    if (previous?.listener) button.removeEventListener("click", previous.listener, true);
+    if (previous) delete registry[previous.nonce];
+    const state: GuardState = { nonce: input.nonce, button };
+    const listener: EventListener = event => {
+      state.allowed = validate();
+      button.removeEventListener("click", listener, true);
+      if (button.getAttribute("data-codex-recovery-send") === input.nonce) {
+        button.removeAttribute("data-codex-recovery-send");
+      }
+      if (!state.allowed) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    };
+    state.listener = listener;
+    registry[input.nonce] = state;
+    guarded[key] = state;
+    button.setAttribute("data-codex-recovery-send", input.nonce);
+    button.addEventListener("click", listener, true);
+    return true;
+  }, { expectedPrompt, sendButtonSelector, guard, nonce }, { timeout: 0 });
+  if (!installed) return false;
+  const guardedButton = composer.locator("xpath=ancestor::form[1]")
+    .locator(`:is(${sendButtonSelector})[data-codex-recovery-send="${nonce}"]`);
+  if (signal?.aborted) {
+    await cleanupOwnedSendGuard(composer, nonce);
+    signal.throwIfAborted();
+  }
+  try {
+    await guardedButton.click({ noWaitAfter: true, timeout: 0, signal });
+  } catch (error) {
+    await cleanupOwnedSendGuard(composer, nonce).catch(() => {});
+    throw new ChatGptOwnedSendStateUnknownError(error);
+  }
+  let receipt: boolean | undefined;
+  try {
+    receipt = await composer.evaluate((element, input) => {
+    const key = "__codexRecoverySendGuard";
+    const registryKey = "__codexRecoverySendGuards";
+    type GuardState = { nonce: string; allowed?: boolean; listener?: EventListener; button: HTMLElement };
+    const documentRecord = element.ownerDocument as Document & Record<string, unknown>;
+    const registry = documentRecord[registryKey] as Record<string, GuardState> | undefined;
+    const state = registry?.[input.nonce];
+    if (!state) return undefined;
+    delete registry![input.nonce];
+    const button = state.button;
+    if (state.listener) button.removeEventListener("click", state.listener, true);
+    const guarded = button as HTMLElement & Record<string, unknown>;
+    if (guarded[key] === state) delete guarded[key];
+    if (button.getAttribute("data-codex-recovery-send") === input.nonce) {
+      button.removeAttribute("data-codex-recovery-send");
+    }
+    return state.allowed === true;
+    }, { nonce }, { timeout: 0 });
+  } catch (error) {
+    await cleanupOwnedSendGuard(composer, nonce).catch(() => {});
+    throw new ChatGptOwnedSendStateUnknownError(error);
+  }
+  if (receipt === undefined) {
+    throw new ChatGptOwnedSendStateUnknownError(new Error("ChatGPT recovery Send receipt disappeared after click"));
+  }
+  return receipt;
+}
+
+async function cleanupOwnedSendGuard(
+  composer: Pick<Locator, "evaluate">,
+  nonce: string,
+): Promise<void> {
+  await composer.evaluate((element, input) => {
+    const key = "__codexRecoverySendGuard";
+    const registryKey = "__codexRecoverySendGuards";
+    type GuardState = { nonce: string; listener?: EventListener; button: HTMLElement };
+    const documentRecord = element.ownerDocument as Document & Record<string, unknown>;
+    const registry = documentRecord[registryKey] as Record<string, GuardState> | undefined;
+    const state = registry?.[input.nonce];
+    if (!state) return;
+    delete registry![input.nonce];
+    const button = state.button;
+    if (state.listener) button.removeEventListener("click", state.listener, true);
+    const guarded = button as HTMLElement & Record<string, unknown>;
+    if (guarded[key] === state) delete guarded[key];
+    if (button.getAttribute("data-codex-recovery-send") === input.nonce) {
+      button.removeAttribute("data-codex-recovery-send");
+    }
+  }, { nonce }, { timeout: 0 }).catch(() => {});
 }
 
 export async function readChatGptAssistantTurnState(
@@ -97,6 +263,11 @@ export async function readChatGptTurnIdentities(
     throw new ChatGptTurnIdentityAmbiguityError("conversation");
   }
   return identities;
+}
+
+export async function countChatGptTurnRoots(turns: Pick<Locator, "evaluateAll">): Promise<number> {
+  return await turns.evaluateAll(elements => elements.filter((element, index) =>
+    !elements.some((candidate, candidateIndex) => candidateIndex !== index && candidate.contains(element))).length);
 }
 
 export function chatGptNewTurnIdentity(
@@ -185,11 +356,16 @@ export function chatGptSubmissionEvidence(state: {
   userIdentities?: readonly string[];
   responseIdentities?: readonly string[];
   generationRunning: boolean;
+  initialPageUrl?: string;
+  currentPageUrl?: string;
+  composerTextLength?: number;
+  submissionRequestObserved?: boolean;
 }): ChatGptSubmissionEvidence | undefined {
   if (state.initialTurnIdentities && state.userIdentities && state.responseIdentities) {
     if (chatGptNewTurnIdentity(state.initialTurnIdentities, state.userIdentities)) return "user_turn";
     if (chatGptNewTurnIdentity(state.initialTurnIdentities, state.responseIdentities)) return "assistant_turn";
-    return state.generationRunning ? "generation_running" : undefined;
+    if (state.generationRunning) return "generation_running";
+    return freshTemporaryChatNavigationAccepted(state) ? "conversation_navigation" : undefined;
   }
   if (state.userTurnCount > state.initialUserTurnCount) return "user_turn";
   if (chatGptAssistantTurnChanged(
@@ -197,5 +373,32 @@ export function chatGptSubmissionEvidence(state: {
     { count: state.assistantTurnCount, ...(state.assistantTurnId ? { lastId: state.assistantTurnId } : {}) },
   )) return "assistant_turn";
   if (state.generationRunning) return "generation_running";
+  if (freshTemporaryChatNavigationAccepted(state)) return "conversation_navigation";
   return undefined;
+}
+
+function freshTemporaryChatNavigationAccepted(state: {
+  initialPageUrl?: string;
+  currentPageUrl?: string;
+  composerTextLength?: number;
+  submissionRequestObserved?: boolean;
+}): boolean {
+  return state.composerTextLength === 0
+    && state.submissionRequestObserved === true
+    && typeof state.initialPageUrl === "string"
+    && typeof state.currentPageUrl === "string"
+    && isExactTemporaryChatGptRootUrl(state.initialPageUrl)
+    && isTemporaryChatGptTurnUrl(state.currentPageUrl);
+}
+
+function isExactTemporaryChatGptRootUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.origin === "https://chatgpt.com"
+      && url.pathname === "/"
+      && url.search === "?temporary-chat=true"
+      && url.hash === "";
+  } catch {
+    return false;
+  }
 }

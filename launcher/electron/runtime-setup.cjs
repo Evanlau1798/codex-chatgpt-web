@@ -2,7 +2,7 @@
 const path = require("node:path");
 const fs = require("node:fs");
 const { randomBytes } = require("node:crypto");
-const { isLegacyConnectorName, validateConnectorName } = require("./connector-identity.cjs");
+const { isLegacyConnectorName, validateConnectorName, validateConnectorNameSuffix } = require("./connector-identity.cjs");
 const { assertBiggerContextChangeAllowed } = require("./context-mode.cjs");
 const CORE_SETUP_TIMEOUT_MS = 5 * 60_000;
 const MCP_SETUP_TIMEOUT_MS = 10 * 60_000;
@@ -531,6 +531,36 @@ module.exports = {
       ? await this.runDevSetup("browser-interaction-mode", args, options)
       : await this.runSetup("browser-interaction-mode", args, options);
     return { configured: true, mode, stdout: result.stdout };
+  },
+
+  async setConnectorNameSuffix(value) {
+    const suffix = validateConnectorNameSuffix(value);
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Set up the launcher before changing the plugin name");
+    const mode = this.browserInteractionMode();
+    const name = `Codex ${suffix}`;
+    if (name === this.setupConnectorName(mode)) return { changed: false };
+    if (name === this.setupConnectorName(mode === "manual" ? "automatic" : "manual")) {
+      throw new Error("Automatic and Zero Risk connector names must differ");
+    }
+    const args = [
+      ...(this.launcherProfile === "development" ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--connector-name-suffix", suffix,
+      "--acknowledge-unofficial",
+      ...(this.launcherProfile === "production" ? ["--replace-codex-route", "--restart-service"] : []),
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const options = {
+      message: "Changing the plugin name",
+      successMessage: "Plugin name changed; complete MCP setup with the new name",
+      timeoutMs: current.mode === "full" ? MCP_SETUP_TIMEOUT_MS : CORE_SETUP_TIMEOUT_MS,
+    };
+    if (this.launcherProfile === "development") await this.runDevSetup("connector-name", args, options);
+    else await this.runSetup("connector-name", args, options);
+    return { changed: true };
   },
 
   async runDevSetup(name, args, options) {

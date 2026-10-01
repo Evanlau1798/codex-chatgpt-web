@@ -6,20 +6,20 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-mac-arm64.dmg"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-linux-x64.AppImage"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-mac-x64.dmg">macOS Intel</a> · <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">すべてのリリース</a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">macOS Intel</a> · <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">最新リリース</a>
 </p>
 
 <p align="center">
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **開発候補版：`6.1.1-Enhanced.1`。** ダウンロードボタンは公開済みの Enhanced パッケージを指します。このブランチはリリース公開を意味しません。
+> **開発候補版：`6.1.3-Enhanced.2`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。このブランチだけではリリースは公開されません。
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">トラブルシューティング</a> · <a href="SECURITY.md">セキュリティ</a> · <a href="CONTRIBUTING.md">コントリビューション</a>
@@ -156,6 +156,21 @@ Enhanced の自動ツールターンでは、**Web Agent 出力を MCP Tunnel �
 ない場合は、同じページで完了済みの応答を検証して prompt の再送は行いません。Enhanced を無効に
 するか Zero Risk を選ぶと、設定値を保持したままこの転送経路を無効にします。
 
+### Fast startup（実験的）
+
+`6.1.3-Enhanced.2` では **Settings** から **Fast startup** を有効にできます。最後に検証した
+モデルと harness の下書きを持つ未送信の待機ページを準備し、リクエスト時にアカウント、
+モデル、下書きを再検証してから現在のリクエストを挿入します。準備だけでは送信しません。
+実行中のタスクを優先し、ページ上限に空きがある場合のみ待機ページを準備します。
+Account Safety の **Maximum concurrency** に従い、この制限が無効の場合は最大六 session
+が既定です。完了後に TTL で保持されているページは待機ページではありません。
+
+Native2 の進捗はストリーミングできますが、完全な最終回答は output tunnel で一度だけ
+原子的に確定します。起動と最終確定の診断で、ローカル準備と ChatGPT の待機時間を区別できます。
+
+**候補版の既知の制限：** 継続時に送信前のモデル検証が失敗することがあります。
+診断を追加していますが、根本原因は引き続き調査中です。
+
 ### 会話設定、Limits と API
 
 **Save chats in ChatGPT** は既定で無効です。Codex／Claude のタスク会話を保存できますが、API の直接送信と native tool bridge は常に Temporary Chat を使い、`store:true` を拒否します。無効化しても既存の履歴は削除しません。
@@ -199,11 +214,12 @@ ChatGPT のツール呼び出しを現在の Codex タスクへ接続します�
    Tunnel と通常の API キーを作成します。キーの作成は無料で、モデル API クレジットを消費しません。
 3. Tunnel ID と API キーを貼り付け、**ハーネスを接続**を押します。
 4. ChatGPT の設定で **Developer Mode** を有効にします。**Tunnel** を使う**新しい**コネクタを作成し、
-   対象の Tunnel を選択して、**Authentication** を **None**、名前を正確に **Codex Native2** に設定します。
-5. **Codex Native2** の **Permissions** で **Allow all actions** を選択します。
+   対象の Tunnel を選択して、**Authentication** を **None**、名前をランチャーに表示された正確な名前
+   （既定は **Codex Native2**）に設定します。
+5. 表示されたコネクタの **Permissions** で **Allow all actions** を選択します。
    **Allow low-risk actions** では、コマンドとパッチがこのランタイムへ到達する前にブロックされます。
    外側の Codex ハーネスでは、引き続きサンドボックスと承認が適用されます。
-6. **ランタイムを検証**を実行し、**Codex Native2** が接続済みで利用可能であることを確認します。
+6. **ランタイムを検証**を実行し、表示されたコネクタが接続済みで利用可能であることを確認します。
 
 書き込み／変更操作には、ChatGPT ワークスペースと管理者ポリシー側での許可も必要です。
 [Developer Mode と MCP アプリ](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)を参照してください。

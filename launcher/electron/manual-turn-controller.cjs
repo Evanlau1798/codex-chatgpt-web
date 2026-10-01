@@ -197,6 +197,10 @@ class ManualTurnController {
     const tab = this.host.turnTabs.get(tabId);
     if (!tab || tab.interactionMode !== "manual" || !tab.prompt) throw new Error("Manual prompt is unavailable");
     this.clipboard.writeText(tab.prompt);
+    if (tab.manualState === "awaiting-user") {
+      this.arm(tab);
+      this.host.publishState?.(this.host.snapshot());
+    }
     return this.host.snapshot();
   }
 
@@ -212,7 +216,6 @@ class ManualTurnController {
     tab.manualDeadlineAt = null;
     tab.manualState = "sent";
     tab.sentAt = new Date().toISOString();
-    tab.prompt = null;
     tab.message = "Prompt sent; waiting for the Codex harness";
     this.notify(tab.manualWaiters, { status: "sent", sentAt: tab.sentAt });
     this.host.publishState?.(this.host.snapshot());
@@ -225,7 +228,7 @@ class ManualTurnController {
       throw new Error(`Zero Risk turn ${traceId} was not confirmed as sent`);
     }
     clearTimeout(tab.manualTimer);
-    Object.assign(tab, { manualState: "running", manualDeadlineAt: null, message: "ChatGPT is working" });
+    Object.assign(tab, { manualState: "running", manualDeadlineAt: null, prompt: null, message: "ChatGPT is working" });
     this.host.publishState?.(this.host.snapshot());
     return this.host.snapshot();
   }

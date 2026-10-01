@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const ts = require("typescript");
 
 const launcherRoot = path.resolve(__dirname, "..");
 const repositoryRoot = path.resolve(launcherRoot, "..");
@@ -13,6 +14,22 @@ const languageTypes = read("launcher", "src", "types.ts");
 const electronMain = read("launcher", "electron", "main.cjs");
 const stateSource = read("launcher", "electron", "state.cjs");
 const languages = JSON.parse(read("launcher", "electron", "languages.json"));
+const loadI18nModule = () => {
+  const modules = {};
+  const load = file => {
+    const exportsObject = {};
+    new Function("exports", "require", ts.transpileModule(read("launcher", "src", file), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS },
+    }).outputText)(exportsObject, name => modules[name]);
+    return exportsObject;
+  };
+  modules["./zero-risk-copy"] = load("zero-risk-copy.ts");
+  modules["./i18n-ja"] = load("i18n-ja.ts");
+  modules["./i18n-ko"] = load("i18n-ko.ts");
+  modules["./i18n-zh-tw"] = load("i18n-zh-tw.ts");
+  modules["./i18n-fr"] = load("i18n-fr.ts");
+  return load("i18n.ts");
+};
 
 test("every declared launcher language is wired across state, IPC, onboarding, and Settings", () => {
   assert.deepEqual(Object.keys(languages), ["en", "zh-CN", "zh-TW", "ja", "ko", "fr"]);
@@ -23,6 +40,7 @@ test("every declared launcher language is wired across state, IPC, onboarding, a
   assert.match(i18nSource, /import \{ ja \} from "\.\/i18n-ja"/);
   assert.match(i18nSource, /import \{ ko \} from "\.\/i18n-ko"/);
   assert.match(i18nSource, /import \{ zhTW \} from "\.\/i18n-zh-tw"/);
+  assert.match(i18nSource, /import \{ fr \} from "\.\/i18n-fr"/);
   assert.match(read("launcher", "src", "i18n-ja.ts"), /export const ja: Record<keyof Copy, string> = \{/);
   assert.match(i18nSource, /if \(language === "ja"\) return ja as Copy;/);
   assert.match(i18nSource, /if \(language === "zh-TW"\) return \{ \.\.\.en, \.\.\.zhTW \} as Copy;/);
@@ -48,4 +66,19 @@ test("runtime health messages are localized without rewriting unknown failures",
   assert.match(appSource, /localizeRuntimeMessage\(copy, operation\.message, undefined, language\)/);
   assert.match(read("launcher", "src", "app-shared.tsx"), /localizeRuntimeMessage\(copy, check\.message, check\.id, language\)/);
   assert.match(read("launcher", "src", "settings-surface.tsx"), /<DoctorSummary copy=\{copy\} language=\{language\} report=\{doctor\}/);
+});
+
+
+test("plugin setup and Zero Risk instructions show configured names in every language", () => {
+  const { copyFor } = loadI18nModule();
+  const names = { automatic: "Codex Work", manual: "Codex Manual" };
+  for (const language of Object.keys(languages)) {
+    const copy = copyFor(language, names);
+    for (const key of ["manualMcpStepThreeBody", "manualConnectorNotice", "manualPromptInstruction", "manualPromptWaiting"]) {
+      assert.ok(copy[key].includes(names.manual), `${language}: ${key}`);
+    }
+    assert.ok(copy.connectorMigrationNotice.includes(names.automatic));
+    assert.ok(copy.pluginNameWarning.length > 0);
+    assert.equal(copyFor(language).manualPromptInstruction.includes("Codex Manual"), false);
+  }
 });

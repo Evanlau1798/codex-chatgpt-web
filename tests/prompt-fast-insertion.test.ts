@@ -1,422 +1,161 @@
 import { expect, test } from "bun:test";
-import { insertChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-insertion";
-import { insertChatGptComposerGuardedText } from "../src/adapters/chatgpt-web/prompt-caret";
-import { readChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-text";
 import { structuredCompactionHandoffInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
-import { CHATGPT_PROMPT_INSERT_CHUNK_CHARS } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
-import {
-  markdownRestorationProbeText,
-  structuredMarkdownRestorationProbeText,
-} from "../scripts/lifecycle-smoke/markdown-restoration-probe";
+import { CHATGPT_LITERAL_PASTE_CHUNK_CHARS } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
+import { markdownRestorationProbeText, structuredMarkdownRestorationProbeText } from "../scripts/lifecycle-smoke/markdown-restoration-probe";
+import { literalPasteComposer } from "./fixtures/literal-paste-composer";
 
-type FakeComposer = {
-  composer: { focus(): Promise<void>; evaluate(callback: (element: HTMLElement, input: unknown) => unknown, input: unknown): Promise<unknown> };
-  document: Document;
-  editCommands(): number;
-  commands: string[];
-  setText(value: string): void;
-  moveCaretToEnd(): void;
-  text(): string;
-};
-
-function fakeLexicalComposer(acceptEdit = true, onEdit?: () => void, rejectLargeText = false): FakeComposer {
-  const { createDocument } = require("@mixmark-io/domino") as { createDocument: (html: string) => Document };
-  const document = createDocument('<div id="composer"></div>') as Document & {
-    createRange(): Range;
-    execCommand(command: string, showUi: boolean, value?: string): boolean;
-  };
-  const composerElement = document.getElementById("composer")!;
-  const text = document.createTextNode("");
-  composerElement.appendChild(text);
-  let selected = { start: 0, end: 0 };
-  let editCommands = 0;
-  const commands: string[] = [];
-
-  document.createRange = () => {
-    let start = 0;
-    let end = 0;
-    return {
-      setStart: (_node: Node, offset: number) => { start = offset; },
-      setEnd: (_node: Node, offset: number) => { end = offset; },
-      collapse: () => { end = start; },
-      get startOffset() { return start; },
-      get endOffset() { return end; },
-    } as unknown as Range;
-  };
-  document.execCommand = (command, _showUi, value = "") => {
-    if (command !== "insertText" && command !== "insertHTML") return false;
-    editCommands += 1;
-    commands.push(command);
-    if (!acceptEdit) return false;
-    if (command === "insertText" && rejectLargeText && value.length > 32_000) return false;
-    if (command === "insertHTML") {
-      const fragment = createDocument(`<body>${value}</body>`).body;
-      const children = Array.from(fragment.children);
-      if (children.length === 1 && children[0]?.tagName === "P") {
-        expect(children[0].getAttribute("style")).toBe("white-space:pre-wrap");
-        expect(children[0].querySelectorAll("*").length).toBe(0);
-        // Current Lexical HTML paste flattens newlines inside a pre-wrapped paragraph.
-        value = (children[0].textContent ?? "").replaceAll("\n", " ");
-      } else {
-        expect([...fragment.querySelectorAll("*")].every(node => node.tagName === "DIV" || node.tagName === "BR"))
-          .toBeTrue();
-        expect([...fragment.querySelectorAll("*")].every(node => node.attributes.length === 0)).toBeTrue();
-        value = children.map(node => node.textContent ?? "").join("\n");
-      }
-    }
-    text.data = `${text.data.slice(0, selected.start)}${value}${text.data.slice(selected.end)}`;
-    selected.start += value.length;
-    selected.end = selected.start;
-    onEdit?.();
-    return true;
-  };
-  Object.defineProperty(document, "activeElement", { configurable: true, get: () => composerElement });
-
-  const selection = {
-    get isCollapsed() { return selected.start === selected.end; },
-    get anchorNode() { return text; },
-    get focusNode() { return text; },
-    removeAllRanges: () => {},
-    addRange: (range: Range) => { selected = { start: range.startOffset, end: range.endOffset }; },
-  };
-  const view = {
-    getSelection: () => selection,
-  };
-  Object.defineProperty(document, "defaultView", { configurable: true, value: view });
-
-  return {
-    composer: {
-      focus: async () => {},
-      evaluate: async (callback, input) => await callback(composerElement, input),
-    },
-    document,
-    editCommands: () => editCommands,
-    commands,
-    setText: value => { text.data = value; },
-    moveCaretToEnd: () => { selected = { start: text.data.length, end: text.data.length }; },
-    text: () => text.data,
-  };
-}
-
-async function insertWithFakeEditor(prompt: string, forceStructuredDirect = false, rejectLargeText = false): Promise<FakeComposer> {
-  const editor = fakeLexicalComposer(true, undefined, rejectLargeText);
-  const view = editor.document.defaultView!;
-  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
-  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: view });
-  try {
-    await insertChatGptPromptText(prompt, undefined, {
-      composer: async () => editor.composer as never,
-      verify: async expected => expect(editor.text()).toBe(expected),
-      reanchor: async () => {},
-    }, { largeStructuredDirect: !forceStructuredDirect, forceStructuredDirect });
-    return editor;
-  } finally {
-    Object.assign(globalThis, previous);
-  }
-}
-
-test("REG-04: uses one exact direct edit for the short generated structured compaction prompt", async () => {
-  const prompt = structuredCompactionHandoffInstruction({
-    token: "control-token-0123456789abcdef",
-    handoffId: "handoff-id-0123456789abcdef",
-  });
-  expect(prompt.length).toBeLessThan(CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 2);
-  expect(prompt.match(/[`*_#]/g)!.length).toBeGreaterThan(10);
-  const editor = await insertWithFakeEditor(prompt, true);
-  expect(editor.text()).toBe(prompt);
-  expect(editor.editCommands()).toBe(1);
-  expect(editor.commands).toEqual(["insertText"]);
-});
-
-test("inserts the incident-sized multiline structured prompt with one exact native text edit", async () => {
-  const prompt = structuredMarkdownRestorationProbeText();
-  const editor = await insertWithFakeEditor(prompt);
-  expect(editor.text()).toBe(prompt);
-  expect(editor.commands).toEqual(["insertText"]);
-});
-
-test("selected connector can replace a transient placeholder before exact post-insertion verification", async () => {
-  const prompt = compactSource;
-  const editor = fakeLexicalComposer(true, () => editor.setText(editor.text().replace("\u200B", "")));
-  editor.setText("\u200B");
-  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
-  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: editor.document.defaultView });
-  const verified: string[] = [];
-  try {
-    await insertChatGptPromptText(prompt, undefined, {
-      composer: async () => editor.composer as never,
-      verify: async expected => { verified.push(expected); expect(editor.text()).toBe(expected); },
-      reanchor: async () => {},
-      connectorSelected: true,
-    }, { largeStructuredDirect: true });
-    expect(verified).toEqual([prompt, prompt]);
-    expect(editor.editCommands()).toBe(1);
-  } finally {
-    Object.assign(globalThis, previous);
-  }
-});
-
-test("selected connector reuses its existing separator for a direct compact prompt", async () => {
-  const prompt = ` ${compactSource}`;
-  const editor = fakeLexicalComposer();
-  editor.setText(" ");
-  editor.moveCaretToEnd();
-  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
-  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: editor.document.defaultView });
-  try {
-    await insertChatGptPromptText(prompt, undefined, {
-      composer: async () => editor.composer as never,
-      verify: async expected => expect(editor.text()).toBe(expected),
-      reanchor: async () => {},
-      connectorSelected: true,
-      existingPrefix: " ",
-    }, { largeStructuredDirect: true });
-    expect(editor.text()).toBe(prompt);
-    expect(editor.editCommands()).toBe(1);
-  } finally {
-    Object.assign(globalThis, previous);
-  }
-});
-
-test("selected connector still rejects a placeholder that survives the editor edit", async () => {
-  const editor = fakeLexicalComposer();
-  editor.setText("\u200B");
-  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
-  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: editor.document.defaultView });
-  try {
-    await expect(insertChatGptPromptText(compactSource, undefined, {
-      composer: async () => editor.composer as never,
-      verify: async expected => expect(editor.text()).toBe(expected),
-      reanchor: async () => {},
-      connectorSelected: true,
-    }, { largeStructuredDirect: true })).rejects.toThrow();
-    expect(editor.editCommands()).toBe(1);
-  } finally {
-    Object.assign(globalThis, previous);
-  }
-});
-
-test("inserts incident-sized single-line Markdown through one escaped native fragment", async () => {
-  const prompt = markdownRestorationProbeText();
-  const editor = await insertWithFakeEditor(prompt, false, true);
-  expect(editor.text()).toBe(prompt);
-  expect(editor.commands).toEqual(["insertHTML"]);
-});
-
-test("keeps multiline HTML-like input, entities, whitespace and empty lines literal", async () => {
-  const prompt = "prefix\n" + (
-    '  literal\t\u00a0\uE000 😀 <img src=x onerror="throw 1"> &amp; &#13; <!--comment-->\n\n'
-    + "</div><script>throw 1</script>\u2028line\u2029next\n"
-  ).repeat(400) + "\n\n";
-  const editor = await insertWithFakeEditor(prompt);
-  expect(editor.text()).toBe(prompt);
-  expect(editor.commands).toEqual(["insertText"]);
-});
-
-test("removes the empty ProseMirror paragraph created before a pre-wrapped block", async () => {
-  const { createDocument } = require("@mixmark-io/domino") as { createDocument: (html: string) => Document };
-  const document = createDocument('<div id="composer"><p></p></div>') as Document & {
-    execCommand(command: string, showUi: boolean, value?: string): boolean;
-  };
-  const element = document.getElementById("composer")!;
-  const commands: string[] = [];
-  let selectedNode: Node | undefined;
-  document.createRange = () => ({ selectNode: (node: Node) => { selectedNode = node; } }) as Range;
-  document.execCommand = (command, _showUi, value = "") => {
-    commands.push(command);
-    if (command === "insertHTML") {
-      const fragment = createDocument(`<body>${value}</body>`).body;
-      element.innerHTML = `<p></p><p>${fragment.firstElementChild?.innerHTML ?? ""}</p>`;
-      return true;
-    }
-    if (command === "delete" && selectedNode === element.firstChild) {
-      const inserted = element.childNodes[1]?.textContent ?? "";
-      const split = inserted.indexOf("\n");
-      element.innerHTML = split < 0 ? "<p></p>" : "<p></p><p></p>";
-      element.childNodes[0]!.textContent = split < 0 ? inserted : inserted.slice(0, split);
-      if (split >= 0) element.childNodes[1]!.textContent = inserted.slice(split + 1);
-      return true;
-    }
-    return false;
-  };
-  Object.defineProperty(document, "activeElement", { configurable: true, get: () => element });
-  const selection = { isCollapsed: true, get anchorNode() { return element.firstChild; },
-    get focusNode() { return element.firstChild; }, removeAllRanges() {}, addRange() {} };
-  const previous = { document: globalThis.document, window: globalThis.window };
-  Object.assign(globalThis, { document, window: { getSelection: () => selection } });
-  const prompt = `  start <>&\n${"middle **bold** <tag>\n".repeat(2_000)}end`;
-  try {
-    await insertChatGptComposerGuardedText({
-      focus: async () => {}, evaluate: async (callback: Function, input: unknown) => callback(element, input),
-    } as never, prompt, undefined, "prewrap");
-    expect(readChatGptPromptText(element, { preserveLeading: true })).toBe(prompt);
-    expect(commands).toEqual(["insertHTML", "delete"]);
-  } finally {
-    Object.assign(globalThis, previous);
-  }
-});
-
-test("escapes one-line HTML-like input in the native fragment", async () => {
-  const prompt = '<script>throw 1</script> &amp; <img src=x onerror="throw 1"> '.repeat(700);
-  const editor = await insertWithFakeEditor(prompt, false, true);
-  expect(editor.text()).toBe(prompt);
-  expect(editor.commands).toEqual(["insertHTML"]);
-});
-
-test("keeps carriage returns on the existing exact native text path", async () => {
-  const editor = await insertWithFakeEditor(freshHistory);
-  expect(editor.text()).toBe(freshHistory);
-  expect(editor.commands).toEqual(["insertText"]);
-});
-
-test("keeps NUL in an oversized LF prompt on the exact native text path", async () => {
-  const prompt = `prefix\nA\u0000B${"literal ".repeat(5_000)}`;
-  const editor = await insertWithFakeEditor(prompt);
-  expect(editor.text()).toBe(prompt);
-  expect(editor.commands).toEqual(["insertText"]);
-});
-
-test("keeps the direct edit opt-in for callers that own an inline transport", async () => {
-  const prompt = `header\n${"x".repeat(40_000)}`;
-  const editor = fakeLexicalComposer();
-  const view = editor.document.defaultView!;
-  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
-  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: view });
-  try {
-    await insertChatGptPromptText(prompt, undefined, {
-      composer: async () => editor.composer as never,
-      verify: async expected => expect(editor.text()).toBe(expected),
-      reanchor: async () => {},
-    });
-    expect(editor.editCommands()).toBeGreaterThan(1);
-  } finally {
-    Object.assign(globalThis, previous);
-  }
-});
-
-test("fails closed when Lexical mutates the direct edit after its first readback", async () => {
-  const prompt = compactSource;
-  const editor = fakeLexicalComposer();
-  const view = editor.document.defaultView!;
-  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
-  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: view });
-  let fullReadbacks = 0;
-  try {
-    await expect(insertChatGptPromptText(prompt, undefined, {
-      composer: async () => editor.composer as never,
-      verify: async expected => {
-        expect(editor.text()).toBe(expected);
-        if (expected === prompt && ++fullReadbacks === 1) queueMicrotask(() => editor.setText(`${prompt.slice(0, -1)}!`));
-      },
-      reanchor: async () => {},
-    }, { largeStructuredDirect: true })).rejects.toThrow();
-    expect(fullReadbacks).toBe(1);
-  } finally {
-    Object.assign(globalThis, previous);
-  }
-});
-
-test("stops after a cancelled direct editor transaction settles", async () => {
-  const prompt = compactSource;
-  const controller = new AbortController();
-  const editor = fakeLexicalComposer(true, () => controller.abort());
-  const view = editor.document.defaultView!;
-  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
-  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: view });
-  let reanchored = false;
-  try {
-    await expect(insertChatGptPromptText(prompt, controller.signal, {
-      composer: async () => editor.composer as never,
-      verify: async expected => expect(editor.text()).toBe(expected),
-      reanchor: async () => { reanchored = true; },
-    }, { largeStructuredDirect: true })).rejects.toMatchObject({ name: "AbortError" });
-    expect(editor.text()).toBe(prompt);
-    expect(editor.editCommands()).toBe(1);
-    expect(reanchored).toBeFalse();
-  } finally {
-    Object.assign(globalThis, previous);
-  }
-});
-
+// Retired direct-text/direct-HTML/escaped fragment and empty-paragraph cleanup assertions:
+// the replacements below prove exact public paste readback, bounded edits and literal HTML.
+// Marker edit/batch counters are replaced by one accepted transaction per native paste.
 const freshHistory = (
   "<codex_context_json>\r\n"
   + '{"history":"user *literal* [link](target) `code`, tab:\\t, nbsp:\u00a0, pua:\uE000, emoji:\u{1F680}"}\r\n'
   + "</codex_context_json>\r\n"
 ).repeat(450);
-const compactSource = (
+const compactSourceBlock = (
   "<compact_task>Summarize this exact long source; do not continue the conversation.</compact_task>\n"
   + "## Historical turn\n- keep *constraints*\n- preserve `paths` and [evidence](local)\n"
-).repeat(600);
+);
+const compactSource = compactSourceBlock.repeat(Math.ceil((CHATGPT_LITERAL_PASTE_CHUNK_CHARS * 2 + 1) / compactSourceBlock.length));
+
+test("REG-04: short generated structured compaction uses one exact literal paste", async () => {
+  const prompt = structuredCompactionHandoffInstruction({
+    token: "control-token-0123456789abcdef", handoffId: "handoff-id-0123456789abcdef",
+  });
+  expect(prompt.length).toBeLessThan(CHATGPT_LITERAL_PASTE_CHUNK_CHARS);
+  expect(prompt.match(/[`*_#]/g)!.length).toBeGreaterThan(10);
+  const editor = literalPasteComposer();
+  await editor.run(prompt, { options: { forceStructuredDirect: true } });
+  expect(editor.read()).toBe(prompt);
+  expect(editor.pastes).toEqual([prompt]);
+  expect(editor.verified).toEqual(["", prompt]);
+});
+
+test("structured compaction requests one control handoff instead of an ordinary recovery checkpoint", () => {
+  const prompt = structuredCompactionHandoffInstruction({
+    token: "control-token-0123456789abcdef", handoffId: "handoff-id-0123456789abcdef",
+  });
+  expect(prompt).toContain("This is the normal context handoff, not a No Context Window recovery checkpoint.");
+  expect(prompt).toContain("Do not render the context summary as ordinary assistant text.");
+  expect(prompt).toContain('"summary":"<complete context summary>"');
+  expect(prompt).not.toContain("<complete checkpoint summary>");
+});
 
 for (const [name, prompt] of [
+  ["incident-sized multiline structured prompt", structuredMarkdownRestorationProbeText()],
+  ["incident-sized single-line Markdown", markdownRestorationProbeText()],
   ["fresh no-TTL full history", freshHistory],
   ["compact long source", compactSource],
+  ["literal HTML/entities and empty lines", "prefix\n" + (
+    '  literal\t\u00a0\uE000 😀 <img src=x onerror="throw 1"> &amp; &#13; <!--comment-->\n\n'
+    + "</div><script>throw 1</script>\u2028line\u2029next\n"
+  ).repeat(400) + "\n\n"],
+  ["single-line HTML-like content", '<script>throw 1</script> &amp; <img src=x onerror="throw 1"> '.repeat(700)],
+  ["oversized NUL/LF", "prefix\nA\u0000B" + "literal ".repeat(5000)],
+  ["leading whitespace and trailing LF", " \t\n\uFEFF\u2028\u2029" + "body *literal*\n".repeat(1500) + "\n\n"],
+  ["control/PUA/Unicode/lone surrogate", "\r\n\0\u0001\uE000\uF8FF\u2060👩‍💻e\u0301\uD800\uDC00"],
 ] as const) {
-  test(`uses one direct editor edit for ${name}`, async () => {
-    expect(prompt.length).toBeGreaterThan(32_000);
-    const editor = await insertWithFakeEditor(prompt);
-    expect(editor.text()).toBe(prompt);
-    expect(editor.editCommands()).toBe(1);
+  test(`preserves ${name} with bounded public paste transactions`, async () => {
+    const editor = literalPasteComposer();
+    await editor.run(prompt, { options: { largeStructuredDirect: true } });
+    expect(editor.read()).toBe(prompt);
+    expect(editor.pastes.join("")).toBe(prompt);
+    expect(editor.pastes.every(value => value.length <= CHATGPT_LITERAL_PASTE_CHUNK_CHARS)).toBeTrue();
+    expect(editor.verified[0]).toBe("");
+    expect(editor.verified.slice(1, -1)).toEqual(editor.pastes.slice(0, -1).map((_, index) => editor.pastes.slice(0, index + 1).join("")));
+    expect(editor.verified.at(-1)).toBe(prompt);
+    expect(editor.reanchors).toBe(1);
+    expect(editor.element.querySelectorAll("img, script")).toHaveLength(0);
   });
 }
 
-test("fails closed when the editor rejects an oversized structured edit", async () => {
+test("selected connector preserves its pill while an editor removes its transient placeholder", async () => {
   const prompt = compactSource;
-  const editor = fakeLexicalComposer(false);
-  const view = editor.document.defaultView!;
-  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
-  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: view });
-  try {
-    await expect(insertChatGptPromptText(prompt, undefined, {
-      composer: async () => editor.composer as never,
-      verify: async expected => expect(editor.text()).toBe(expected),
-      reanchor: async () => {},
-    }, { largeStructuredDirect: true })).rejects.toThrow("rejected the bounded plain-text edit");
-    expect(editor.text()).toBe("");
-    expect(editor.editCommands()).toBe(1);
-  } finally {
-    Object.assign(globalThis, previous);
-  }
+  const editor = literalPasteComposer({
+    initialText: "\u200B", connector: true,
+    onPaste: (_value, index) => { if (index === 1) editor.element.querySelector("p")!.firstChild!.nextSibling!.textContent = ""; },
+  });
+  await editor.run(prompt, { connectorSelected: true });
+  expect(editor.read()).toBe(prompt);
+  expect(editor.verified[0]).not.toBe("");
+  expect(editor.element.querySelector('[data-id="plugin:test"]')!.textContent).toBe("Codex Native2");
 });
 
-
-test("production edit counters distinguish exact marker edits from restoration batches", async () => {
-  const prompt = "header\n" + "*word* ".repeat(200) + "tail";
-  const editor = fakeLexicalComposer();
-  const snapshots: import("../src/adapters/chatgpt-web/prompt-insertion-metrics").ChatGptPromptInsertionSnapshot[] = [];
-  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
-  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: editor.document.defaultView });
-  try {
-    await insertChatGptPromptText(prompt, undefined, {
-      composer: async () => editor.composer as never,
-      verify: async expected => expect(editor.text()).toBe(expected),
-      reanchor: async () => {}, onProgress: snapshot => snapshots.push(snapshot),
-    });
-    const summary = snapshots.at(-1)!;
-    expect(summary.event).toBe("summary");
-    expect(summary.nativeEditAttempts).toBe(editor.editCommands());
-    expect(summary.nativeEditAccepted).toBe(401);
-    expect(summary.nativeEditCountsComplete).toBeTrue();
-    expect(summary.restorationBatches).toBe(4);
-    expect(summary.remainingMarkers).toBe(0);
-    expect(summary.verifiedUtf16Units).toBe(prompt.length);
-    expect(snapshots.length).toBeLessThan(20); // no per-marker logging
-    expect(JSON.stringify(snapshots)).not.toContain("word");
-  } finally { Object.assign(globalThis, previous); }
+test("selected connector reuses exactly one existing separator", async () => {
+  const prompt = " " + compactSource;
+  const editor = literalPasteComposer({ initialText: " ", connector: true });
+  await editor.run(prompt, { connectorSelected: true, existingPrefix: " " });
+  expect(editor.pastes.join("")).toBe(prompt.slice(1));
+  expect(editor.read()).toBe(prompt);
+  expect(editor.element.querySelector('[data-id="plugin:test"]')).not.toBeNull();
 });
 
-test("rejected native edits remain counted without false verification progress", async () => {
-  const editor = fakeLexicalComposer(false);
-  const snapshots: import("../src/adapters/chatgpt-web/prompt-insertion-metrics").ChatGptPromptInsertionSnapshot[] = [];
-  const previous = { document: globalThis.document, NodeFilter: globalThis.NodeFilter, window: globalThis.window };
-  Object.assign(globalThis, { document: editor.document, NodeFilter: { SHOW_TEXT: 4 }, window: editor.document.defaultView });
-  try {
-    await expect(insertChatGptPromptText("private fixture", undefined, {
-      composer: async () => editor.composer as never, verify: async () => {}, reanchor: async () => {},
-      onProgress: snapshot => snapshots.push(snapshot),
-    }, { forceStructuredDirect: true })).rejects.toThrow("rejected");
-    expect(snapshots.at(-1)).toMatchObject({ nativeEditAttempts: 1, nativeEditAccepted: 0,
-      verifiedUtf16Units: 0, insertedUtf16Units: 0, nativeEditCountsComplete: true });
-    expect(JSON.stringify(snapshots)).not.toContain("private fixture");
-  } finally { Object.assign(globalThis, previous); }
+test("selected connector rejects a surviving placeholder before any following paste", async () => {
+  const editor = literalPasteComposer({ initialText: "\u200B", connector: true });
+  await expect(editor.run(compactSource, { connectorSelected: true })).rejects.toThrow("integrity mismatch");
+  expect(editor.pastes).toHaveLength(1);
+  expect(editor.reanchors).toBe(0);
+});
+
+test("nonempty fresh composer is rejected before an editor mutation", async () => {
+  const editor = literalPasteComposer({ initialText: "existing user text" });
+  await expect(editor.run("new message")).rejects.toThrow("integrity mismatch");
+  expect(editor.pastes).toEqual([]);
+  expect(editor.read()).toBe("existing user text");
+  expect(editor.acquisitions).toBe(0);
+});
+
+test("final settled readback rejects delayed editor drift without resending", async () => {
+  const prompt = "short *literal* fixture";
+  const editor = literalPasteComposer({ onPaste: () => {
+    setTimeout(() => editor.setText(prompt.slice(0, -1) + "!"), 0);
+  } });
+  await expect(editor.run(prompt)).rejects.toThrow("integrity mismatch");
+  expect(editor.pastes).toEqual([prompt]);
+  expect(editor.verified).toEqual(["", prompt]);
+  expect(editor.reanchors).toBe(0);
+});
+
+test("cancelled native paste settles and never starts another paste or final caret action", async () => {
+  const controller = new AbortController();
+  const editor = literalPasteComposer({ onPaste: () => controller.abort() });
+  await expect(editor.run(compactSource, { signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+  expect(editor.pastes).toHaveLength(1);
+  expect(editor.read()).toBe(editor.pastes[0]!);
+  expect(editor.verified).toEqual([""]);
+  expect(editor.reanchors).toBe(0);
+});
+
+test("editor rejection is final, content-free and never switches to HTML/text", async () => {
+  const editor = literalPasteComposer({ acceptPaste: false });
+  const failure = await editor.run(compactSource).catch(error => error as Error);
+  if (!(failure instanceof Error)) throw new Error("Expected editor rejection");
+  expect(failure).toMatchObject({ code: "chatgpt_surface_changed", retireSession: true });
+  expect(failure.message).toContain("literal plain-text paste");
+  expect(failure.message).not.toContain("compact_task");
+  expect(editor.read()).toBe("");
+  expect(editor.pastes).toHaveLength(1);
+  expect(editor.reanchors).toBe(0);
+  await Bun.sleep(0);
+  expect(editor.pastes).toHaveLength(1);
+});
+
+test("production metrics count paste transactions without marker work or prompt content", async () => {
+  const prompt = "header\n" + "*word* ".repeat(5000) + "tail";
+  const editor = literalPasteComposer();
+  await editor.run(prompt);
+  expect(editor.snapshots.at(-1)).toMatchObject({
+    event: "summary", nativeEditAttempts: editor.pastes.length, nativeEditAccepted: editor.pastes.length,
+    nativeEditCountsComplete: true, restorationBatches: 0, remainingMarkers: 0,
+    verifiedUtf16Units: prompt.length, insertedUtf16Units: prompt.length,
+  });
+  expect(JSON.stringify(editor.snapshots)).not.toContain("word");
+});
+
+test("rejected paste is counted without false inserted or verified progress", async () => {
+  const editor = literalPasteComposer({ acceptPaste: false });
+  await expect(editor.run("private fixture")).rejects.toThrow("rejected");
+  expect(editor.snapshots.at(-1)).toMatchObject({ nativeEditAttempts: 1, nativeEditAccepted: 0,
+    verifiedUtf16Units: 0, insertedUtf16Units: 0, nativeEditCountsComplete: true });
+  expect(JSON.stringify(editor.snapshots)).not.toContain("private fixture");
 });

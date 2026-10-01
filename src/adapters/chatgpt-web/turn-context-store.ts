@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { completeArchiveChunks, type PendingContext, type TurnChannel } from "./turn-broker-state";
 import { MAX_BROKER_LINE_CHARS, opaqueId } from "./turn-broker-protocol";
+import { CODEX_CONTEXT_ARCHIVE_CHUNK_TOKENS } from "./context-bootstrap";
 
 export class TurnContextStore {
   private readonly contexts = new Map<string, PendingContext>();
@@ -56,7 +57,7 @@ export class TurnContextStore {
       throw new Error("context archive chunk size changed during retrieval");
     }
     context.chunkChars = chunkChars;
-    context.chunks ??= completeArchiveChunks(context.text, chunkChars!);
+    context.chunks ??= completeArchiveChunks(context.text, chunkChars!, CODEX_CONTEXT_ARCHIVE_CHUNK_TOKENS);
     const total = context.chunks.length;
     if (index! >= total) throw new Error("context archive chunk index is out of range");
     if (index! > context.nextChunk) throw new Error(`context archive chunk is out of order; expected ${context.nextChunk}`);
@@ -66,7 +67,7 @@ export class TurnContextStore {
       context.nextChunk += 1;
       context.complete = context.nextChunk === total;
     }
-    const sha256 = createHash("sha256").update(context.text).digest("hex");
+    const sha256 = context.sha256 ??= createHash("sha256").update(context.text).digest("hex");
     console.info(
       `[chatgpt-web] broker trace=${context.traceId} ${replayed ? "replayed" : "served"} context chunk=${index! + 1}/${total}`
       + ` chars=${chunk.length} complete=${context.complete}`,

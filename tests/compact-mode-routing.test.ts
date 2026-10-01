@@ -100,6 +100,8 @@ describe("compact mode routing", () => {
     const config = provider(true);
     config.baseUrl = `browser://enhanced-compact-rebuild-${process.pid}-${Date.now()}`;
     config.chatgptWeb!.localToolsEnabled = true;
+    const socketPath = defaultBrokerEndpoint(join(tmpdir(), `enhanced-compact-rebuild-${process.pid}-${Date.now()}`));
+    config.chatgptWeb!.brokerSocketPath = socketPath;
     const worker = ChatGptBrowserWorker.forProvider(config);
     const originalRun = worker.run.bind(worker);
     const summary = "Checkpoint summary rebuilt from the complete supplied Codex task context.";
@@ -110,8 +112,13 @@ describe("compact mode routing", () => {
       const prepared = await turn.prepare();
       preparedText = prepared.text;
       prepared.release();
-      turn.onTextDelta(summary);
-      return summary;
+      const token = /turn_token (control_\w+)/.exec(preparedText)![1]!;
+      const handoffId = /handoff_id (handoff_\w+)/.exec(preparedText)![1]!;
+      await callTurnBroker(socketPath, { method: "submit_compaction_handoff", token, handoffId, summary });
+      if (!turn.abortSignal?.aborted) {
+        await new Promise<void>((_resolve, reject) => turn.abortSignal?.addEventListener("abort", () => reject(turn.abortSignal?.reason), { once: true }));
+      }
+      throw turn.abortSignal?.reason;
     };
     const events: AdapterEvent[] = [];
 
@@ -126,6 +133,7 @@ describe("compact mode routing", () => {
       expect(browserTurn?.requireRetainedConversation).toBeUndefined();
       expect(browserTurn?.nativeConnector).toBe(true);
       expect(preparedText).toContain("This is a Codex history-compaction checkpoint");
+      expect(preparedText).toContain("codex.control.compaction_handoff");
       expect(preparedText).toContain("Inspect the project");
       expect(events.some(event => event.type === "text_delta" && event.text.includes(summary))).toBe(true);
       expect(events.some(event => event.type === "text_delta"
@@ -133,6 +141,7 @@ describe("compact mode routing", () => {
       expect(events.at(-1)).toMatchObject({ type: "done", endTurn: true });
     } finally {
       worker.run = originalRun;
+      await TurnBroker.forSocket(socketPath).close();
     }
   });
 
@@ -173,7 +182,15 @@ describe("compact mode routing", () => {
         responseExecutionKey,
         nativeConnectorAvailable: true,
         timeoutMs: 20,
-        startFallback: async () => "Fallback checkpoint summary.",
+        startFallback: async (_traceId, signal, _onProgress, _retainOwnershipUntil, instruction) => {
+          const token = /turn_token (control_\w+)/.exec(instruction)![1]!;
+          const handoffId = /handoff_id (handoff_\w+)/.exec(instruction)![1]!;
+          await callTurnBroker(socketPath, {
+            method: "submit_compaction_handoff", token, handoffId, summary: "Fallback checkpoint summary.",
+          });
+          if (!signal.aborted) await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+          throw signal.reason;
+        },
         emit: () => {},
       })).resolves.toBe("completed");
 
@@ -220,7 +237,15 @@ describe("compact mode routing", () => {
         responseExecutionKey,
         nativeConnectorAvailable: true,
         timeoutMs: 20,
-        startFallback: async () => "Fallback checkpoint summary.",
+        startFallback: async (_traceId, signal, _onProgress, _retainOwnershipUntil, instruction) => {
+          const token = /turn_token (control_\w+)/.exec(instruction)![1]!;
+          const handoffId = /handoff_id (handoff_\w+)/.exec(instruction)![1]!;
+          await callTurnBroker(socketPath, {
+            method: "submit_compaction_handoff", token, handoffId, summary: "Fallback checkpoint summary.",
+          });
+          if (!signal.aborted) await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+          throw signal.reason;
+        },
         emit: () => {},
       })).resolves.toBe("completed");
 

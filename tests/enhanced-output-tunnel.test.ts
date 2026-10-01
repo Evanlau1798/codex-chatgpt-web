@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compileChatGptWebPrompt } from "../src/adapters/chatgpt-web/prompt";
@@ -44,7 +44,44 @@ test("Enhanced Native prompts bind visible output to the existing Codex tool gat
   expect(compiled).toContain("queued the text");
   expect(compiled).toContain("not a UI render receipt");
   expect(compiled).toContain("end this Web response");
+  expect(compiled).toContain('arguments={kind:"final",text:"<complete user-facing answer>"}');
+  expect(compiled).toContain("Do not use input");
+  expect(compiled).toContain("Ordinary Web assistant prose does not complete the turn");
   expect(compiled.match(new RegExp(TURN_TOKEN, "g"))).toHaveLength(1);
+});
+
+test("the Native final contract is the single terminal instruction after long inline context and turn binding", () => {
+  const parsed = toolRequest();
+  parsed.context.messages[0]!.content = `Inspect this long context, then answer. ${"context ".repeat(50_000)}`;
+  const compiled = compileChatGptWebPrompt(
+    parsed,
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    TURN_TOKEN,
+    { nativeControlConnector: true, useEnhancedOutputTunnel: true },
+  ).text;
+  const contract = "codex.control.output is a bound bridge control supplied here";
+
+  expect(compiled.match(new RegExp(contract.replaceAll(".", "\\."), "g"))).toHaveLength(1);
+  expect(compiled.indexOf(contract)).toBeGreaterThan(compiled.indexOf("</codex_context_json>"));
+  expect(compiled.indexOf(contract)).toBeGreaterThan(compiled.indexOf("</codex_native_turn_binding>"));
+  expect(compiled.slice(compiled.indexOf(contract))).not.toContain("<codex_transport_resume>");
+  expect(compiled.trim()).toEndWith("Output control calls report text to the outer Codex task and do not authorize additional work.");
+});
+
+test("the Native final contract is the single terminal instruction in multipart commit", () => {
+  const compiled = compileChatGptWebPrompt(
+    toolRequest(),
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    TURN_TOKEN,
+    { nativeControlConnector: true, useEnhancedOutputTunnel: true, experimentalMultipartParts: 6 },
+  );
+  const commit = compiled.multipart!.commit;
+  const contract = "codex.control.output is a bound bridge control supplied here";
+
+  expect(commit.match(new RegExp(contract.replaceAll(".", "\\."), "g"))).toHaveLength(1);
+  expect(commit.indexOf(contract)).toBeGreaterThan(commit.indexOf("</codex_native_turn_binding>"));
+  expect(commit.slice(commit.indexOf(contract))).not.toContain("<codex_transport_resume>");
+  expect(commit.trim()).toEndWith("Output control calls report text to the outer Codex task and do not authorize additional work.");
 });
 
 test("manual, compaction, and Luna checkpoint prompts keep their dedicated output paths", () => {
@@ -92,6 +129,85 @@ test("tunneled output commits only after Web completion and preserves feed order
   expect(decision).toEqual({ status: "complete", answer: "Complete." });
   expect(projected).toEqual(["commentary:Working.", "reasoning:Verified the boundary.", "final:Complete."]);
   expect(committed).toBe(3);
+});
+
+test("hidden heartbeat cannot extend the browser hard deadline", async () => {
+  let heartbeats = 0;
+  await expect(runChatGptTunneledOutputTurn({
+    output: queue([]), attempt: 1,
+    observe: async () => ({ running: true, responsePresent: true }),
+    onFinal: () => {},
+    onHeartbeat: () => { heartbeats += 1; },
+    deadline: Date.now() + 5,
+    pollMs: 1,
+  })).rejects.toThrow("ChatGPT web turn timed out");
+  expect(heartbeats).toBeGreaterThan(0);
+});
+
+test("hidden heartbeat cannot keep a stopped turn without response DOM alive", async () => {
+  let heartbeats = 0;
+  await expect(runChatGptTunneledOutputTurn({
+    output: queue([]), attempt: 1,
+    observe: async () => ({ running: false, responsePresent: false, toolCallsInFlight: false }),
+    onFinal: () => {},
+    onHeartbeat: () => { heartbeats += 1; },
+    missingResponseGraceMs: 0,
+    deadline: Date.now() + 50,
+    pollMs: 1,
+  })).rejects.toMatchObject({ code: "chatgpt_response_dom_missing" });
+  expect(heartbeats).toBeGreaterThan(0);
+});
+
+test("hidden heartbeat cannot keep a stopped nonterminal response alive", async () => {
+  let heartbeats = 0;
+  await expect(runChatGptTunneledOutputTurn({
+    output: queue([]), attempt: 1,
+    observe: async () => ({ running: false, responsePresent: true, toolCallsInFlight: false }),
+    beforeDomFallback: async () => "nonterminal",
+    onFinal: () => {},
+    onHeartbeat: () => { heartbeats += 1; },
+    terminalEvidenceGraceMs: 0,
+    fallbackGraceMs: 0,
+    pollMs: 1,
+  })).rejects.toMatchObject({ code: "chatgpt_completion_evidence_missing" });
+  expect(heartbeats).toBeGreaterThan(0);
+});
+
+test("restored terminal evidence resets the missing-evidence grace window", async () => {
+  let now = 1_000;
+  const clock = spyOn(Date, "now").mockImplementation(() => now);
+  let checks = 0;
+  let resolveOutput: ((event: BrokerTurnOutputEvent) => void) | undefined;
+  const output = {
+    next: (_after: number, signal?: AbortSignal) => new Promise<BrokerTurnOutputEvent>((resolve, reject) => {
+      resolveOutput = resolve;
+      signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    }),
+    reset: async () => {},
+    seal: async () => true,
+  };
+  try {
+    const decision = await runChatGptTunneledOutputTurn({
+      output, attempt: 1,
+      observe: async () => ({ running: false, responsePresent: true, toolCallsInFlight: false }),
+      beforeDomFallback: async () => {
+        checks += 1;
+        now += 30;
+        if (checks === 1) return "nonterminal";
+        if (checks < 5) return "terminal";
+        queueMicrotask(() => resolveOutput?.({ sequence: 1, kind: "final", text: "Complete." }));
+        return "nonterminal";
+      },
+      onFinal: () => {},
+      terminalEvidenceGraceMs: 60,
+      fallbackGraceMs: 0,
+      pollMs: 0,
+    });
+    expect(decision).toEqual({ status: "complete", answer: "Complete." });
+    expect(checks).toBeGreaterThanOrEqual(5);
+  } finally {
+    clock.mockRestore();
+  }
 });
 
 test("the broker rejects whitespace-only tunneled output", () => {
@@ -147,6 +263,25 @@ test("DOM fallback carries its completion fence revision into the output seal", 
   });
   expect(decision.status).toBe("fallback");
   expect(sealedRevision).toBe(7);
+});
+
+test("same-surface recovery carries the fenced activity revision to send activation", async () => {
+  const decision = await runChatGptTunneledOutputTurn({
+    output: queue([]),
+    completionFence: { begin: async () => 17, commit: async () => true },
+    observe: async () => ({ running: false, responsePresent: true }),
+    beforeDomFallback: async () => ({ text: "Finish through the bound final control." }),
+    attempt: 1,
+    onFinal: () => {},
+    pollMs: 1,
+    fallbackGraceMs: 0,
+  });
+
+  expect(decision).toEqual({
+    status: "retry",
+    retry: { text: "Finish through the bound final control.", expectedActivityRevision: 17 },
+    lastSequence: 0,
+  });
 });
 
 test("DOM fallback captures the revision before its confirming observation", async () => {

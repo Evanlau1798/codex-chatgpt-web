@@ -21,6 +21,10 @@ interface PendingTurn {
   preemptiveRetryRequested?: boolean;
   progressForwarding?: AbortController;
   answerCompletionSealed?: boolean;
+  compactionBoundaryRetention?: {
+    resolve: (armed: boolean) => void;
+    timer: ReturnType<typeof setTimeout>;
+  };
 }
 export class LauncherBrowserHelperClient {
   private child?: ChildProcessWithoutNullStreams;
@@ -103,6 +107,7 @@ export class LauncherBrowserHelperClient {
             ...(turn.modelFamily ? { modelFamily: turn.modelFamily } : {}),
             capabilities: turn.capabilities,
             ...(turn.nativeConnector ? { nativeConnector: true } : {}),
+            ...(turn.allowStartupPreparation ? { allowStartupPreparation: true } : {}),
             ...(turn.prepareResume ? { resumeAvailable: true } : {}),
             ...(turn.retainConversation ? { retainConversation: true } : {}),
             ...(turn.requireRetainedConversation ? { requireRetainedConversation: true } : {}),
@@ -140,6 +145,32 @@ export class LauncherBrowserHelperClient {
       pending,
     ));
     return true;
+  }
+
+  async armCompactionBoundaryRetention(traceId: string): Promise<boolean> {
+    const pending = this.pending.get(traceId);
+    if (!pending?.sent || pending.localFailure || pending.compactionBoundaryRetention) return false;
+    return await new Promise<boolean>(resolve => {
+      const timer = setTimeout(() => {
+        if (pending.compactionBoundaryRetention?.timer !== timer) return;
+        pending.compactionBoundaryRetention = undefined;
+        resolve(false);
+      }, 5_000);
+      timer.unref?.();
+      pending.compactionBoundaryRetention = { resolve, timer };
+      void this.send({ type: "arm_compaction_boundary_retention", id: traceId }).catch(error => {
+        if (pending.compactionBoundaryRetention?.timer === timer) {
+          clearTimeout(timer);
+          pending.compactionBoundaryRetention = undefined;
+          resolve(false);
+        }
+        this.abortWithLocalFailure(
+          traceId,
+          error instanceof Error ? error : new Error(String(error)),
+          pending,
+        );
+      });
+    });
   }
 
   async close(): Promise<void> {
@@ -253,10 +284,15 @@ export class LauncherBrowserHelperClient {
     if (!pending) return;
     if (message.type === "event") {
       const fenceEvent = message.event === "tool_batch_observed" || message.event === "completion_fence_begin"
-        || message.event === "completion_fence_commit" || message.event === "tunneled_output_reset" || message.event === "tunneled_output_seal";
+        || message.event === "completion_fence_commit" || message.event === "finalization_begin"
+        || message.event === "finalization_cancel"
+        || message.event === "finalization_output_arm"
+        || message.event === "tunneled_output_reset" || message.event === "tunneled_output_seal";
       if (pending.localFailure && !fenceEvent) return;
       if (message.event === "tool_batch_observed" || message.event === "completion_fence_begin"
-        || message.event === "completion_fence_commit") {
+        || message.event === "completion_fence_commit" || message.event === "finalization_begin"
+        || message.event === "finalization_cancel"
+        || message.event === "finalization_output_arm") {
         handleLauncherHelperFenceEvent(message, pending.turn, () => this.pending.get(message.id) === pending,
           value => this.send(value), error => this.abortWithLocalFailure(message.id, error, pending), committed => {
             if (!committed && pending.answerCompletionSealed) {
@@ -282,6 +318,14 @@ export class LauncherBrowserHelperClient {
       }
       else if (message.event === "submitted") {
         this.invokeEventCallback(message.id, pending, () => pending.turn.onSubmitted?.());
+      }
+      else if (message.event === "compaction_boundary_retention_armed") {
+        const acknowledgement = pending.compactionBoundaryRetention;
+        if (acknowledgement) {
+          clearTimeout(acknowledgement.timer);
+          pending.compactionBoundaryRetention = undefined;
+          acknowledgement.resolve(message.armed);
+        }
       }
       else if (message.event === "multipart_stage_acknowledged") {
         this.invokeEventCallback(message.id, pending, () => acknowledgeLauncherMultipartStage(pending, message.stageIndex));
@@ -442,6 +486,11 @@ export class LauncherBrowserHelperClient {
       pending.turn.abortSignal.removeEventListener("abort", pending.abortListener);
     }
     pending.progressForwarding?.abort();
+    if (pending.compactionBoundaryRetention) {
+      clearTimeout(pending.compactionBoundaryRetention.timer);
+      pending.compactionBoundaryRetention.resolve(false);
+      pending.compactionBoundaryRetention = undefined;
+    }
     pending.prepared?.release();
     this.pending.delete(id);
   }

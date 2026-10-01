@@ -15,8 +15,68 @@ import {
   verifyLauncherBrowserConnector,
 } from "../src/launcher-browser-host";
 import type { Browser, BrowserContext, Page } from "playwright-core";
+import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 
 const roots: string[] = [];
+
+test("claimed startup cleanup failure still settles the newly acquired real turn", async () => {
+  const events: Array<{ phase: string; traceId: string }> = [];
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+    const body = await req.json() as { phase: string; traceId: string };
+    events.push(body);
+    return Response.json(body.phase === "start"
+      ? { surfaceId: "a".repeat(32), reused: false, connectorBound: true, startupPrepared: true }
+      : { cancelledByUser: false, authenticationRequired: false });
+  } });
+  const prior = process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
+  process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = "1";
+  try {
+    const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+      config: { browserHost: "launcher", browserHostDescriptorPath: descriptorFile(`http://127.0.0.1:${server.port}`) },
+      startupPages: { take: () => ({ surfaceId: "a".repeat(32), release: async () => { throw new Error("startup cleanup failed"); } }) },
+      runBrowserTurn: async () => { throw new Error("must not run after failed cleanup"); },
+    });
+    await expect(worker.runExclusive({ traceId: "claim-cleanup", modelId: "gpt-5.6-sol", reasoning: "high",
+      modelFamily: "5.6", nativeConnector: true, allowStartupPreparation: true,
+      capabilities: { localToolsEnabled: true, solAvailable: true } })).rejects.toThrow("startup cleanup failed");
+    expect(events.filter(e => e.phase === "end" && e.traceId === "claim-cleanup")).toHaveLength(1);
+  } finally {
+    if (prior === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
+    else process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = prior;
+    server.stop(true);
+  }
+});
+
+test("a blocked sign-in replaces an opaque navigation abort with a non-retryable session error", async () => {
+  let needsSignIn: unknown = true;
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
+    const activity = await req.json() as { phase: string };
+    return Response.json(activity.phase === "start"
+      ? { surfaceId: "a".repeat(32), reused: false, connectorBound: false }
+      : { cancelledByUser: false, authenticationRequired: needsSignIn });
+  } });
+  try {
+    const descriptor = descriptorFile(`http://127.0.0.1:${server.port}`);
+    const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+      config: { browserHost: "launcher", browserHostDescriptorPath: descriptor },
+      runBrowserTurn: async () => { throw new Error("page.goto: net::ERR_ABORTED"); },
+    });
+    const turn = {
+      traceId: "auth-redirect",
+      modelId: "gpt-5.6-sol",
+      reasoning: "high",
+      capabilities: { localToolsEnabled: false, solAvailable: true },
+    };
+    await expect(worker.runExclusive(turn)).rejects.toMatchObject({
+      status: 401, code: "chatgpt_sign_in_required", retryable: false,
+    });
+    needsSignIn = false;
+    await expect(worker.runExclusive(turn)).rejects.toThrow("page.goto: net::ERR_ABORTED");
+    needsSignIn = "true";
+    await expect(notifyLauncherTurn(descriptor, { phase: "end", traceId: "auth-redirect", helperPid: process.pid, status: "failed" }))
+      .rejects.toThrow("invalid authentication state");
+  } finally { server.stop(true); }
+});
 
 test("startup waits beyond five seconds and distinguishes its deadline from caller cancellation", async () => {
   let calls = 0;
@@ -155,32 +215,20 @@ test("launcher turn control sends authenticated lifecycle events", async () => {
 });
 
 test("launcher release validates the owned authentication flag without coercion", async () => {
-  let authenticationBlocked: unknown = true;
-  let authenticationStatus: unknown;
+  let authenticationRequired: unknown = true;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0,
-    fetch: () => Response.json({ ok: true, cancelledByUser: false, authenticationBlocked, authenticationStatus }),
+    fetch: () => Response.json({ ok: true, cancelledByUser: false, authenticationRequired }),
   });
   try {
     const path = descriptorFile(`http://127.0.0.1:${server.port}`);
     const end = () => notifyLauncherTurn(path, {
       phase: "end", traceId: "auth_test_trace", helperPid: process.pid, status: "failed",
     });
-    await expect(end()).resolves.toEqual({ cancelledByUser: false, authenticationBlocked: true, authenticationStatus: "unknown" });
-    for (const status of ["authenticated", "signed-out", "unknown"] as const) {
-      authenticationStatus = status;
-      await expect(end()).resolves.toEqual({ cancelledByUser: false, authenticationBlocked: true, authenticationStatus: status });
-    }
-    for (const status of [true, false, null, "true", "expired", {}, []]) {
-      authenticationStatus = status;
-      await expect(end()).rejects.toThrow("invalid authentication evidence");
-    }
-    authenticationStatus = undefined;
-    authenticationBlocked = "true";
+    await expect(end()).resolves.toEqual({ cancelledByUser: false, authenticationRequired: true });
+    authenticationRequired = "true";
     await expect(end()).rejects.toThrow("invalid authentication state");
-    authenticationBlocked = false;
+    authenticationRequired = false;
     await expect(end()).resolves.toEqual({ cancelledByUser: false });
-    authenticationStatus = "authenticated";
-    await expect(end()).rejects.toThrow("invalid authentication evidence");
   } finally { await server.stop(true); }
 });
 

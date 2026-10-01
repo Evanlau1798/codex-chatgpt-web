@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import type { ChatGptRuntimeWorker } from "../src/adapters/chatgpt-web/adapter-runtime-factory";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
-import { callTurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
+import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { defaultBrokerEndpoint, defaultConfig } from "../src/config";
 import { SUMMARY_PREFIX } from "../src/responses/compaction";
@@ -216,6 +216,74 @@ test("the deterministic lane composes production routing, adapter, broker, compa
   } finally {
     chatGptTurnSessions.clear();
     await server.stop(true);
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 20_000);
+
+test("Enhanced manual compact returns its summary through the one-shot control channel", async () => {
+  const root = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "cgw-ec-"));
+  const config = defaultConfig("full");
+  config.port = 0;
+  config.proAvailable = true;
+  config.useEnhancedWebSessionMode = true;
+  config.brokerSocketPath = defaultBrokerEndpoint(root);
+  const summary = "Deterministic Enhanced manual compact summary.";
+  let preparedText = "";
+  const worker = {
+    async run(turn: BrowserTurn): Promise<string> {
+      expect(turn.compaction).toBe(true);
+      expect(turn.nativeConnector).toBe(true);
+      const prepared = await turn.prepare();
+      preparedText = prepared.text;
+      prepared.release();
+      turn.onSendActivated?.();
+      turn.onSubmitted?.();
+      turn.onTextDelta("DOM_HANDOFF_MUST_NOT_BE_ACCEPTED");
+      const token = preparedText.match(/turn_token (control_[A-Za-z0-9_-]+)/)?.[1];
+      const handoffId = preparedText.match(/handoff_id (handoff_[A-Za-z0-9_-]+)/)?.[1];
+      if (!token || !handoffId) throw new Error("Enhanced manual compact has no one-shot control identity");
+      await callTurnBroker(config.brokerSocketPath, {
+        method: "submit_compaction_handoff",
+        token,
+        handoffId,
+        summary,
+      });
+      await new Promise<void>((_resolve, reject) => {
+        const fail = () => reject(turn.abortSignal?.reason ?? new DOMException("aborted", "AbortError"));
+        if (turn.abortSignal?.aborted) fail();
+        else turn.abortSignal?.addEventListener("abort", fail, { once: true });
+      });
+      throw new Error("Enhanced manual compact browser turn was not retired after handoff");
+    },
+    requestPreemptiveRetry: () => false,
+  };
+  const server = startProductionServer(config, root, worker);
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/responses/compact`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        model: "chatgpt-web/high",
+        prompt_cache_key: "enhanced-compact-thread",
+        client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "enhanced-compact-thread", turn_id: "enhanced-compact-turn" }) },
+        input: [{
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Compact the Enhanced production composition." }],
+          internal_chat_message_metadata_passthrough: { turn_id: "enhanced-compact-turn" },
+        }],
+      }),
+    });
+    const body = await response.text();
+    if (response.status !== 200) throw new Error(`Enhanced manual compact failed: HTTP ${response.status} ${body}`);
+    expect(preparedText).toContain("codex.control.compaction_handoff");
+    expect(body).toContain(`${SUMMARY_PREFIX}\\n${summary}`);
+    expect(body).not.toContain("DOM_HANDOFF_MUST_NOT_BE_ACCEPTED");
+  } finally {
+    chatGptTurnSessions.clear();
+    await server.stop(true);
+    await TurnBroker.forSocket(config.brokerSocketPath).close();
     rmSync(root, { recursive: true, force: true });
   }
 }, 20_000);

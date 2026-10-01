@@ -7,7 +7,7 @@ import type { ProviderAdapter } from "../base";
 import { ChatGptWebAdapterError, chatGptSessionFailureDisposition, isChatGptPromptIntegrityMismatch } from "./adapter-error";
 import { chatGptAdapterRuntimeConfig, chatGptAutomaticUsagePromptOptions } from "./adapter-runtime-config";
 import { createChatGptRuntimeStarter, type ChatGptRuntimeWorker } from "./adapter-runtime-factory";
-import { ChatGptBrowserWorker } from "./browser-worker";
+import { ChatGptBrowserWorker, discardChatGptStartupPages } from "./browser-worker";
 import { codexToolResultsById } from "./compaction-handoff";
 import { runEnhancedCompaction } from "./enhanced-compaction";
 import { runManualCompaction } from "./manual-compaction";
@@ -54,6 +54,15 @@ export function chatGptWebTraceId(provider: CodexProviderConfig, parsed: CodexPa
 }
 
 export const CHATGPT_WEB_ADAPTER_HEARTBEAT_MS = 10_000;
+
+function finalizationRecoveryRequest(parsed: CodexParsedRequest): CodexParsedRequest {
+  return {
+    ...parsed,
+    context: { ...parsed.context, tools: [] },
+    options: { ...parsed.options, toolChoice: "none" },
+    _chatgptFinalizationOnly: true,
+  };
+}
 
 class ChatGptAccountSafetyAdmissionError extends ChatGptWebAdapterError {}
 
@@ -103,6 +112,8 @@ export function createChatGptWebAdapter(
     executionNamespace,
     lunaCheckpointStore,
     enhancedRecoveryCheckpointStore,
+    allowStartupPreparation: () => !manualInteraction
+      && accountSafety.status(automaticWebSessionLimitCount, automaticWebSessionLimitMinutes, activeSafetyTraceIds()).state === "NORMAL",
   });
   const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
   const accountSafety = dependencies.accountSafety ?? chatGptAccountSafety();
@@ -128,7 +139,10 @@ export function createChatGptWebAdapter(
       : error.code === "chatgpt_account_safety_stop"
         ? "account_security"
         : undefined;
-    if (reason) queueSafetySteering(accountSafety.trigger(reason, activeSafetyTraceIds()));
+    if (reason) {
+      queueSafetySteering(accountSafety.trigger(reason, activeSafetyTraceIds()));
+      void discardChatGptStartupPages().catch(() => console.warn("[chatgpt-web] startup cleanup after safety stop failed"));
+    }
   };
   const requireAutomaticAdmission = (parsed: CodexParsedRequest, targetTraceId: string) => {
     const admission = accountSafety.admit(
@@ -240,16 +254,17 @@ export function createChatGptWebAdapter(
             return automaticStartRuntime(...args);
           }
         : startRuntime;
+      const browserCompaction = parsed._compactionRequest === true || parsed._localCompactionRequest === true;
       const toolPolicy = effectiveChatGptToolPolicy(parsed); const turnCapabilities = manualRequest
         ? configuredCapabilities
-        : parsed._compactionRequest
+        : browserCompaction
           ? { ...configuredCapabilities, localToolsEnabled: false }
           : { ...configuredCapabilities, localToolsEnabled: configuredCapabilities.localToolsEnabled && toolPolicy.tools.length > 0 };
       const mode = manualRequest
         ? { localTools: true }
         : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
       if (toolPolicy.requireTool && !mode.localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
-      const structuredOutputValidator = parsed._compactionRequest
+      const structuredOutputValidator = browserCompaction
         ? undefined
         : createChatGptStructuredOutputValidator(parsed.options.outputFormat);
       const bufferStructuredOutput = structuredOutputValidator !== undefined;
@@ -296,8 +311,11 @@ export function createChatGptWebAdapter(
             responseExecutionKey, nativeConnectorAvailable: configuredCapabilities.localToolsEnabled,
             abortSignal: incoming.abortSignal, timeoutMs,
             requireAutomaticAdmission: () => requireAutomaticAdmission(parsed, admissionTraceId), emit,
-            startFallback: async (fallbackTraceId, signal, onCompactionProgress, retainOwnershipUntil) => {
-              const runtime = startRuntimeForTurn(parsed, undefined, fallbackTraceId, turnCapabilities, { onCompactionProgress });
+            startFallback: async (fallbackTraceId, signal, onCompactionProgress, retainOwnershipUntil, compactionControlInstruction) => {
+              const runtime = startRuntimeForTurn(parsed, undefined, fallbackTraceId, turnCapabilities, {
+                onCompactionProgress,
+                compactionControlInstruction,
+              });
               const settlement = runtime.physicalSettlement ?? runtime.browser.then(() => undefined, () => undefined);
               retainOwnershipUntil(settlement);
               try {
@@ -339,16 +357,16 @@ export function createChatGptWebAdapter(
       try {
         await session.runExclusive(async () => { session.observeCanonicalRequest(parsed); });
         for (;;) {
-          let recoveredResultCount: number | undefined;
+          let recoveryPlan: ReturnType<ChatGptSurfaceRecoveryTracker["recoveryPlan"]>;
           await session.runExclusive(async () => {
           const settled = session.settledOutcome();
           if (settled) {
             if (settled.type === "error") {
-              recoveredResultCount = surfaceRecovery.recoverableResultCount(
+              recoveryPlan = surfaceRecovery.recoveryPlan(
                 settled.error, session, parsed, surfaceRecoveries, incoming.abortSignal,
                 durableRecoveryCheckpoint(),
               );
-              if (recoveredResultCount !== undefined) return;
+              if (recoveryPlan !== undefined) return;
               const submittedError = submittedBrowserFailure(
                 session,
                 incoming.abortSignal?.aborted === true,
@@ -517,9 +535,9 @@ export function createChatGptWebAdapter(
                   stallTimeoutMs,
                 ), incoming.abortSignal);
               } catch (error) {
-                recoveredResultCount = surfaceRecovery.recoverableResultCount(error, session, parsed,
+                recoveryPlan = surfaceRecovery.recoveryPlan(error, session, parsed,
                   surfaceRecoveries, incoming.abortSignal, durableRecoveryCheckpoint());
-                if (recoveredResultCount !== undefined) return;
+                if (recoveryPlan !== undefined) return;
                 throw error;
               }
               if (next.type === "trace") {
@@ -560,11 +578,11 @@ export function createChatGptWebAdapter(
                 session.setFinalEvents(roundEvents);
                 if (turnToken) await brokerOwner.revoke(turnToken);
                 if (next.outcome.type === "error") {
-                  recoveredResultCount = surfaceRecovery.recoverableResultCount(
+                  recoveryPlan = surfaceRecovery.recoveryPlan(
                     next.outcome.error, session, parsed, surfaceRecoveries, incoming.abortSignal,
                     durableRecoveryCheckpoint(),
                   );
-                  if (recoveredResultCount !== undefined) return;
+                  if (recoveryPlan !== undefined) return;
                   const submittedError = submittedBrowserFailure(session, incoming.abortSignal?.aborted === true, next.outcome.error);
                   if (submittedError) throw submittedError;
                   throw next.outcome.error;
@@ -610,16 +628,18 @@ export function createChatGptWebAdapter(
             toolWaitAbort.abort();
           }
           });
-          if (recoveredResultCount === undefined) break;
+          if (recoveryPlan === undefined) break;
           surfaceRecoveries += 1;
+          const recoveryInput = recoveryPlan.finalizationOnly ? finalizationRecoveryRequest(parsed) : parsed;
           console.warn(
-            `[chatgpt-web] browser turn ${traceId} rebuilding tool surface from canonical state`
+            `[chatgpt-web] browser turn ${traceId} rebuilding surface from canonical state`
             + ` generation=${surfaceRecoveries} contextMessages=${parsed.context.messages.length}`
-            + ` completedResults=${recoveredResultCount}`,
+            + ` completedResults=${recoveryPlan.canonicalResultCount}`
+            + ` finalizationOnly=${recoveryPlan.finalizationOnly}`,
           );
           await chatGptTurnSessions.retireAndWait(executionKey, incoming.abortSignal);
-          session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, parsed,
-            () => startRuntimeForTurn(parsed, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
+          session = await sessionForChatGptRequest(chatGptTurnSessions, executionKey, recoveryInput,
+            () => startRuntimeForTurn(recoveryInput, environment, traceId, turnCapabilities), executionNamespace, useEnhancedWebSessionMode, traceId, incoming.abortSignal);
           await session.runExclusive(async () => { session.observeCanonicalRequest(parsed); });
         }
         if (useEnhancedWebSessionMode && parsed._localCompactionRequest) { const key = chatGptConversationKey(parsed, executionNamespace); if (key) await chatGptTurnSessions.retireConversationAndWait(key); }

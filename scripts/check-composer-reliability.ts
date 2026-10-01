@@ -6,7 +6,8 @@ import { composerSyntheticFixtures } from "../tests/fixtures/composer-synthetic"
 import { insertChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-insertion";
 import { ChatGptPromptOperation } from "../src/adapters/chatgpt-web/prompt-operation";
 import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
-import { chatGptPromptAttachmentMismatch, insertChatGptComposerGuardedText, reanchorChatGptComposerCaret } from "../src/adapters/chatgpt-web/prompt-caret";
+import { chatGptPromptAttachmentMismatch, reanchorChatGptComposerCaret } from "../src/adapters/chatgpt-web/prompt-caret";
+import { pasteChatGptComposerLiteralText } from "../src/adapters/chatgpt-web/composer-literal-paste";
 import { chatGptPromptTextEquivalent, readChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-text";
 import { planChatGptPromptInsertion, type ChatGptPromptInsertionOptions } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import type { ChatGptPromptInsertionSnapshot } from "../src/adapters/chatgpt-web/prompt-insertion-metrics";
@@ -61,7 +62,25 @@ async function main(): Promise<void> {
       await context.route("**/*", route => route.abort());
       const page = await context.newPage();
       // Temporary empty context only. The supplied fixture text is never executable markup.
-      await page.setContent('<div id="prompt-textarea" contenteditable="true" style="white-space: pre-wrap"></div>');
+      await page.setContent('<div id="prompt-textarea" contenteditable="true" style="white-space: pre-wrap"><p></p></div>');
+      await page.evaluate(() => {
+        document.addEventListener("paste", event => {
+          const selection = window.getSelection();
+          if (!selection?.rangeCount || !event.clipboardData) return;
+          event.preventDefault();
+          const text = document.createTextNode(event.clipboardData.getData("text/plain"));
+          const range = selection.getRangeAt(0);
+          // Model the editor's paragraph boundary, not adjacent top-level text nodes
+          // that the production reader correctly treats as separate blocks.
+          const editor = document.getElementById("prompt-textarea")!;
+          if (range.startContainer === editor) {
+            range.selectNodeContents(editor.firstChild!); range.collapse(false);
+          }
+          range.deleteContents(); range.insertNode(text); range.setStartAfter(text); range.collapse(true);
+          selection.removeAllRanges(); selection.addRange(range);
+          event.target?.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      });
       if (fixture.remount) await page.evaluate(() => {
         document.addEventListener("input", () => {
           const editor = document.getElementById("prompt-textarea")!;
@@ -82,7 +101,7 @@ async function main(): Promise<void> {
           composer: async () => composer,
           verify: async expected => {
             readbacks++;
-            const observed = await op.read(() => composer.evaluate(readChatGptPromptText));
+            const observed = await op.read(() => composer.evaluate(readChatGptPromptText, { preserveLeading: true }));
             if (!chatGptPromptTextEquivalent(expected, observed)) {
               throw chatGptPromptAttachmentMismatch("Offline fixture rejected changed text", expected, observed);
             }
@@ -93,13 +112,13 @@ async function main(): Promise<void> {
           onProgress: value => { budget?.observe(value); if (value.event === "summary") summary = value; },
         }, fixture.options, op, plan);
         // Expected text is the independent fixture literal under the existing trimStart contract.
-        const expected = fixture.text.trimStart();
-        const observed = await composer.evaluate(readChatGptPromptText);
+        const expected = fixture.text;
+        const observed = await composer.evaluate(readChatGptPromptText, { preserveLeading: true });
         if (!chatGptPromptTextEquivalent(expected, observed)) throw new Error("Final fixture comparison failed");
         row.status = "PASS";
         // Mutate the actual DOM, then use the production reader and comparator. Never repair it.
         await composer.evaluate(element => { element.appendChild(document.createTextNode("\n")); });
-        if (chatGptPromptTextEquivalent(expected, await composer.evaluate(readChatGptPromptText))) {
+        if (chatGptPromptTextEquivalent(expected, await composer.evaluate(readChatGptPromptText, { preserveLeading: true }))) {
           falseAcceptances++;
           throw new Error("Injected LF corruption was accepted");
         }
@@ -127,17 +146,20 @@ async function main(): Promise<void> {
       const reason = new DOMException("Offline fixture cancellation", "AbortError");
       page.on("console", message => { if (message.text() === "fixture-edit-start") controller.abort(reason); });
       await page.evaluate(() => {
-        const original = document.execCommand.bind(document);
-        document.execCommand = (command, showUi, value) => {
+        document.addEventListener("paste", event => {
           console.debug("fixture-edit-start");
           const until = performance.now() + 100;
           while (performance.now() < until) { /* Deliberately hold the one native edit in this isolated fixture. */ }
-          return original(command, showUi, value);
-        };
+          event.preventDefault();
+          document.getElementById("prompt-textarea")!.appendChild(document.createTextNode(event.clipboardData!.getData("text/plain")));
+        });
       });
       let cancelled = false;
       try {
-        await insertChatGptComposerGuardedText(page.locator("#prompt-textarea"), "inert fixture", controller.signal);
+        const composer = page.locator("#prompt-textarea");
+        await composer.focus();
+        await composer.evaluate(element => { const range = document.createRange(); range.selectNodeContents(element); range.collapse(false); const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range); });
+        await pasteChatGptComposerLiteralText(composer, "inert fixture", controller.signal);
       } catch (error) {
         cancelled = controller.signal.aborted && error instanceof Error
           && (error === reason || error.name === "ChatGptPersistentBrowserStateError");

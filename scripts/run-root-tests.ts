@@ -4,6 +4,7 @@ import { join, relative, resolve } from "node:path";
 
 const projectRoot = resolve(import.meta.dir, "..");
 const MAX_BUN_CRASH_RETRIES = 2;
+const ROOT_TEST_BATCH_SIZE = 24;
 
 export function listRootTestFiles(testsDirectory = join(projectRoot, "tests")): string[] {
   return readdirSync(testsDirectory, { withFileTypes: true })
@@ -14,6 +15,15 @@ export function listRootTestFiles(testsDirectory = join(projectRoot, "tests")): 
 
 export function shouldRetryBunCrash(exitCode: number, attempt: number): boolean {
   return exitCode === 3 && attempt <= MAX_BUN_CRASH_RETRIES;
+}
+
+export function rootTestBatches<T>(items: T[], batchSize = ROOT_TEST_BATCH_SIZE): T[][] {
+  if (!Number.isInteger(batchSize) || batchSize < 1) throw new Error("Root test batch size must be positive");
+  const batches: T[][] = [];
+  for (let start = 0; start < items.length; start += batchSize) {
+    batches.push(items.slice(start, start + batchSize));
+  }
+  return batches;
 }
 
 export function rootTestEnvironment(
@@ -58,9 +68,54 @@ async function runFile(file: string): Promise<void> {
   }
 }
 
-if (import.meta.main) {
-  const files = listRootTestFiles();
-  if (files.length === 0) throw new Error("No root TypeScript test files were found");
+async function runWorkerBatch(start: number, count: number): Promise<void> {
+  const files = listRootTestFiles().slice(start, start + count);
+  if (files.length === 0) throw new Error(`Root test worker received an empty batch at ${start}`);
   for (const file of files) await runFile(file);
-  process.stdout.write(`\n[root-tests] ${files.length} files passed in isolated Bun processes\n`);
+}
+
+async function runBatch(start: number, count: number): Promise<void> {
+  const child = Bun.spawn([
+    process.execPath,
+    import.meta.path,
+    "--worker-start",
+    String(start),
+    "--worker-count",
+    String(count),
+  ], {
+    cwd: projectRoot,
+    stdin: "inherit",
+    stdout: "inherit",
+    stderr: "inherit",
+    env: process.env,
+  });
+  const exitCode = await child.exited;
+  if (exitCode !== 0) {
+    throw new Error(`Root test batch failed (${exitCode}): ${start}-${start + count - 1}`);
+  }
+}
+
+function argumentValue(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
+if (import.meta.main) {
+  const workerStart = argumentValue("--worker-start");
+  const workerCount = argumentValue("--worker-count");
+  if (workerStart !== undefined || workerCount !== undefined) {
+    if (workerStart === undefined || workerCount === undefined) {
+      throw new Error("Root test worker arguments are incomplete");
+    }
+    await runWorkerBatch(Number(workerStart), Number(workerCount));
+  } else {
+    const files = listRootTestFiles();
+    if (files.length === 0) throw new Error("No root TypeScript test files were found");
+    let start = 0;
+    for (const batch of rootTestBatches(files)) {
+      await runBatch(start, batch.length);
+      start += batch.length;
+    }
+    process.stdout.write(`\n[root-tests] ${files.length} files passed in isolated Bun processes\n`);
+  }
 }

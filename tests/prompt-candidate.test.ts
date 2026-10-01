@@ -1,25 +1,28 @@
 import { expect, test } from "bun:test";
-import { planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
+import { CHATGPT_LITERAL_PASTE_CHUNK_CHARS, planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import { ChatGptCandidateAttachmentBudget } from "../src/adapters/chatgpt-web/prompt-candidate-budget";
 import { ChatGptPromptInsertionMetrics } from "../src/adapters/chatgpt-web/prompt-insertion-metrics";
 import { resolveBrowserConfig } from "../src/adapters/chatgpt-web/browser-worker";
+import { literalPasteComposer } from "./fixtures/literal-paste-composer";
 import { providerConfig, defaultConfig } from "../src/config";
 
-for (const size of [15999, 16000, 16001, 32000, 32001, 330000]) {
-  test(`candidate preserves strict threshold at ${size}`, () => {
+// Retired candidate/direct-HTML thresholds: old options are compatibility inputs only.
+for (const size of [CHATGPT_LITERAL_PASTE_CHUNK_CHARS - 1, CHATGPT_LITERAL_PASTE_CHUNK_CHARS,
+  CHATGPT_LITERAL_PASTE_CHUNK_CHARS + 1, CHATGPT_LITERAL_PASTE_CHUNK_CHARS * 2,
+  CHATGPT_LITERAL_PASTE_CHUNK_CHARS * 2 + 1, 330000]) {
+  test(`candidate flags cannot change literal paste strategy at ${size}`, () => {
     const text = "x".repeat(size);
-    expect(planChatGptPromptInsertion(text).strategy).toBe("guarded-chunked");
-    expect(planChatGptPromptInsertion(text, { candidatePlainText: true }).strategy)
-      .toBe(size > 32000 ? "direct-text" : "guarded-chunked");
-    expect(planChatGptPromptInsertion(text, { largeStructuredDirect: true, candidatePlainText: true }).strategy)
-      .toBe(size > 32000 ? "direct-html" : "guarded-chunked");
+    const plan = planChatGptPromptInsertion(text);
+    expect(plan.strategy).toBe("literal-paste");
+    expect(planChatGptPromptInsertion(text, { candidatePlainText: true })).toEqual(plan);
+    expect(planChatGptPromptInsertion(text, { largeStructuredDirect: true, candidatePlainText: true })).toEqual(plan);
   });
 }
 for (const suffix of ["\r\n\0", "\u00a0\u2028", "\n```\n**[x](y)\n```\n", "👩‍💻e\u0301"]) {
   test(`candidate keeps literal input category ${JSON.stringify(suffix)}`, () => {
-    const text = "x".repeat(32001) + suffix;
+    const text = "x".repeat(CHATGPT_LITERAL_PASTE_CHUNK_CHARS * 2 + 1) + suffix;
     const plan = planChatGptPromptInsertion(text, { candidatePlainText: true });
-    expect(plan.strategy).toBe("direct-text");
+    expect(plan.strategy).toBe("literal-paste");
     expect(plan.utf16Units).toBe(text.length);
   });
 }
@@ -47,26 +50,29 @@ test("progress cannot refill a hard deadline or pass a no-progress limit", async
   now = 90000;
   expect(budget.remainingMs()).toBe(0);
 });
-test("marker reductions are progress even when verified length does not change", async () => {
+// Marker reductions are retired; each real paste settlement grants a bounded
+// readback window without refilling the original hard deadline.
+test("settled paste transactions grant readback time without replenishing the deadline", async () => {
   let now = 0;
   const plan = planChatGptPromptInsertion("*".repeat(100));
   const budget = new ChatGptCandidateAttachmentBudget(plan, () => now);
   const metrics = new ChatGptPromptInsertionMetrics(plan, s => budget.observe(s), () => now);
-  metrics.markers(100);
-  await metrics.run("markdown_restore", async () => {
-    now = 19000; metrics.markers(99);
-    expect(budget.remainingMs()).toBe(20000);
-    now = 38000; metrics.markers(98);
-    expect(budget.remainingMs()).toBe(20000);
-    now = 57000; metrics.markers(97);
-    expect(budget.remainingMs()).toBe(3000);
-  });
+  for (const time of [19000, 38000, 57000]) {
+    await metrics.run("insert", async () => {
+      metrics.editStarted();
+      now = time;
+      metrics.editSettled({ result: true, attempts: 1, accepted: 1 });
+      expect(budget.remainingMs()).toBe(20000);
+    });
+  }
+  now = 90000;
+  expect(budget.remainingMs()).toBe(0);
 });
 
-test("candidate never overrides an existing forced direct choice", () => {
+test("combined legacy flags retain the same normalized writer choice", () => {
   const text = "x".repeat(40000);
-  expect(planChatGptPromptInsertion(text, { candidatePlainText: true, forceStructuredDirect: true }).strategy).toBe("direct-html");
-  expect(planChatGptPromptInsertion(text + "\r", { candidatePlainText: true, largeStructuredDirect: true }).strategy).toBe("direct-text");
+  expect(planChatGptPromptInsertion(text, { candidatePlainText: true, forceStructuredDirect: true }).strategy).toBe("literal-paste");
+  expect(planChatGptPromptInsertion(text + "\r", { candidatePlainText: true, largeStructuredDirect: true }).strategy).toBe("literal-paste");
 });
 
 test("actual attachment caller shares its plan and remaining budget with staging and inline writers", async () => {
@@ -89,7 +95,7 @@ test("actual attachment caller shares its plan and remaining budget with staging
     await worker.attachPrompt(page, "x".repeat(33000), tools, undefined, undefined, false,
       { triggerAttempts: 0 }, false, inline, false, undefined, { traceId: "fixture", stage: "attachment", operation: parent });
   }
-  expect(seen.map(s => s.context.insertionPlan.strategy)).toEqual(["direct-text", "direct-text", "direct-html"]);
+  expect(seen.map(s => s.context.insertionPlan.strategy)).toEqual(["literal-paste", "literal-paste", "literal-paste"]);
   for (const value of seen) {
     expect(value.context.candidateBudget.plan).toBe(value.context.insertionPlan);
     expect(value.context.insertionPlan.utf16Units).toBe(value.text.length);
@@ -104,58 +110,45 @@ test("actual attachment caller shares its plan and remaining budget with staging
     { triggerAttempts: 0 }, false, true, false, undefined,
     { traceId: "fixture", stage: "attachment", operation: parent });
   expect(seen.slice(-2).map(value => value.context.insertionPlan.strategy))
-    .toEqual(["direct-text", "direct-text"]);
+    .toEqual(["literal-paste", "literal-paste"]);
   expect(asserted.slice(-2)).toEqual([
     { text: multiline, preserveLeading: true },
     { text: ` ${multiline}`, preserveLeading: true },
   ]);
 });
 
-test("worker reuses only one exact connector separator before direct insertion", async () => {
+test("worker reuses only one exact connector separator for short and bounded long insertion", async () => {
   const { ChatGptBrowserWorker } = await import("../src/adapters/chatgpt-web/browser-worker");
-  const longText = ` ${"x".repeat(33_000)}\nend`;
-  for (const before of [" ", "", "  ", "\u00a0"]) {
-    const edits: string[] = [];
-    const readbacks: Array<{ text: string; preserveLeading: boolean }> = [];
-    let reads = 0;
-    const composer = {
-      focus: async () => {},
-      evaluate: async (_callback: unknown, input: string | { text: string }) => {
-        edits.push(typeof input === "string" ? input : input.text);
-        return { result: true, attempts: 1, accepted: 1 };
-      },
-    };
-    const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
-      config: {},
-      attachedPromptText: async (_page: unknown, _signal: unknown, _op: unknown, preserveLeading: boolean) => {
-        expect(preserveLeading).toBeTrue();
-        reads += 1;
-        return before;
-      },
-      activeComposer: async () => composer,
-      waitForPromptChunkAttached: async (_page: unknown, text: string, _signal: unknown, _op: unknown,
-        preserveLeading: boolean) => { readbacks.push({ text, preserveLeading }); },
-      reanchorPromptCaret: async () => {},
-    });
-    await worker.insertPromptText({}, longText, undefined, true, false, undefined, true);
-    expect(reads).toBe(1);
-    expect(edits).toEqual([before === " " ? longText.slice(1) : longText]);
-    expect(readbacks).toEqual(Array(2).fill({ text: longText, preserveLeading: true }));
+  for (const text of [" short", " " + "x".repeat(CHATGPT_LITERAL_PASTE_CHUNK_CHARS * 2 + 1) + "\nend"]) {
+    for (const before of [" ", "", "  ", "\u00a0"]) {
+      const editor = literalPasteComposer({ initialText: before, connector: true });
+      let reads = 0;
+      const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+        config: {},
+        attachedPromptText: async (_page: unknown, _signal: unknown, _op: unknown, preserveLeading: boolean) => {
+          expect(preserveLeading).toBeTrue(); reads += 1; return editor.read();
+        },
+        activeComposer: async () => editor.composer,
+        waitForPromptChunkAttached: async (_page: unknown, expected: string, _signal: unknown, _op: unknown,
+          preserveLeading: boolean) => { expect(preserveLeading).toBeTrue(); await editor.verify(expected); },
+        reanchorPromptCaret: async () => editor.reanchor(),
+      });
+      const run = () => editor.withGlobals(() => worker.insertPromptText({}, text, undefined, true, false, undefined, true));
+      if (before === " " || before === "") {
+        await run();
+        expect(editor.pastes.join("")).toBe(before === " " ? text.slice(1) : text);
+        expect(editor.read()).toBe(text);
+        expect(editor.verified.at(-1)).toBe(text);
+      } else {
+        await expect(run()).rejects.toThrow("integrity mismatch");
+        expect(editor.pastes).toHaveLength(1);
+        expect(editor.reanchors).toBe(0);
+      }
+      expect(reads).toBe(1);
+      expect(editor.pastes.every(value => value.length <= CHATGPT_LITERAL_PASTE_CHUNK_CHARS)).toBeTrue();
+      expect(editor.element.querySelector('[data-id="plugin:test"]')!.textContent).toBe("Codex Native2");
+    }
   }
-
-  let reads = 0;
-  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
-    config: {},
-    attachedPromptText: async () => { reads += 1; return " "; },
-    activeComposer: async () => ({
-      focus: async () => {},
-      evaluate: async () => ({ result: true, attempts: 1, accepted: 1 }),
-    }),
-    waitForPromptChunkAttached: async () => {},
-    reanchorPromptCaret: async () => {},
-  });
-  await worker.insertPromptText({}, " short", undefined, false, false, undefined, true);
-  expect(reads).toBe(0);
 });
 
 test("existing safe compaction repair cannot refill the candidate deadline", async () => {
@@ -179,12 +172,97 @@ test("existing safe compaction repair cannot refill the candidate deadline", asy
   expect(contexts[0].candidateBudget).toBe(contexts[1].candidateBudget);
 });
 
-test("a single direct edit may settle after 20 seconds but cannot exceed its hard deadline", async () => {
+for (const legacyFlag of [undefined, false, true]) {
+  const name = legacyFlag === undefined ? "default config without flag" : `legacy flag ${legacyFlag}`;
+  test(`${name}: all attachment routes share finite hard and verified-stall budgets`, async () => {
+    const { ChatGptBrowserWorker } = await import("../src/adapters/chatgpt-web/browser-worker");
+    const { ChatGptPromptOperation } = await import("../src/adapters/chatgpt-web/prompt-operation");
+    let now = 0;
+    const contexts: any[] = [];
+    const config = defaultConfig();
+    if (legacyFlag !== undefined) config.experimentalComposerPlainText = legacyFlag;
+    const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+      config: resolveBrowserConfig(providerConfig(config)),
+      activeComposer: async () => ({ fill: async () => {}, focus: async () => {} }),
+      selectConnector: async () => ({ focus: async () => {} }),
+      insertPromptText: async (...args: any[]) => { contexts.push(args[5]); },
+      assertPromptAttached: async () => {},
+    });
+    const absentDialog = { filter: () => absentDialog, last: () => absentDialog, isVisible: async () => false };
+    const page = { keyboard: { press: async () => {} }, locator: () => absentDialog };
+    const parent = new ChatGptPromptOperation(undefined, () => 900_000 - now, () => now);
+    for (const [tools, inline] of [[false, false], [true, false], [false, true], [true, true]]) {
+      await worker.attachPrompt(page, "x".repeat(33_000), tools, undefined, undefined, false,
+        { triggerAttempts: 0 }, false, inline, false, undefined,
+        { traceId: "normalized-budget-fixture", stage: "attachment", operation: parent });
+    }
+    expect(contexts.map(context => context.operation.timeLeft())).toEqual([90_000, 90_000, 90_000, 90_000]);
+    for (const context of contexts) {
+      expect(context.candidateBudget).toBeInstanceOf(ChatGptCandidateAttachmentBudget);
+      expect(context.candidateBudget.plan).toBe(context.insertionPlan);
+      expect(context.insertionPlan.strategy).toBe("literal-paste");
+    }
+    const context = contexts[0];
+    const metrics = new ChatGptPromptInsertionMetrics(context.insertionPlan,
+      snapshot => context.candidateBudget.observe(snapshot), () => now);
+    await metrics.run("verify", async () => metrics.verified(1));
+    now = 19_000;
+    await metrics.run("verify", async () => metrics.verified(2));
+    expect(context.operation.timeLeft()).toBe(20_000);
+    now = 38_000;
+    await metrics.run("verify", async () => metrics.verified(2));
+    expect(context.operation.timeLeft()).toBe(1_000);
+    now = 39_000;
+    expect(() => context.operation.check()).toThrow("no verified progress");
+    now = 90_000;
+    expect(context.operation.timeLeft()).toBe(0);
+    expect(() => context.operation.check()).toThrow("remaining readiness budget");
+  });
+
+  test(`${name}: compaction retry retains one original attachment deadline`, async () => {
+    const { ChatGptBrowserWorker, ChatGptPromptAttachmentIntegrityError } = await import("../src/adapters/chatgpt-web/browser-worker");
+    const { ChatGptPromptOperation } = await import("../src/adapters/chatgpt-web/prompt-operation");
+    let now = 0;
+    const contexts: any[] = [];
+    const remaining: number[] = [];
+    const resetRemaining: number[] = [];
+    const config = defaultConfig();
+    if (legacyFlag !== undefined) config.experimentalComposerPlainText = legacyFlag;
+    const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+      config: resolveBrowserConfig(providerConfig(config)),
+      attachPrompt: async (...args: any[]) => {
+        const context = args.at(-1);
+        contexts.push(context); remaining.push(context.operation.timeLeft());
+        if (contexts.length === 1) {
+          now = 50_000;
+          throw new ChatGptPromptAttachmentIntegrityError("synthetic readiness failure");
+        }
+      },
+      currentSubmissionEvidence: async () => undefined,
+      resetCompactionComposerForRetry: async (_page: unknown, _baseline: unknown, _signal: unknown,
+        operation: any) => { resetRemaining.push(operation.timeLeft()); },
+    });
+    await worker.attachPromptWithCompactionRetry({}, "x".repeat(33_000), false, true,
+      { userTurns: 0, responseTurns: 0, initialTurnIdentities: [] }, undefined, undefined, false,
+      { triggerAttempts: 0 }, false, false, false, undefined,
+      { traceId: "normalized-retry-fixture", stage: "attachment",
+        operation: new ChatGptPromptOperation(undefined, () => 900_000 - now, () => now) });
+    expect(remaining).toEqual([90_000, 40_000]);
+    expect(resetRemaining).toEqual([40_000]);
+    expect(contexts[0].candidateBudget).toBeInstanceOf(ChatGptCandidateAttachmentBudget);
+    expect(contexts[1].candidateBudget).toBe(contexts[0].candidateBudget);
+    expect(contexts[1].insertionPlan).toBe(contexts[0].insertionPlan);
+    now = 90_000;
+    expect(contexts[1].operation.timeLeft()).toBe(0);
+  });
+}
+
+test("a single native paste may settle after 20 seconds but cannot exceed its hard deadline", async () => {
   let now = 0;
   const plan = planChatGptPromptInsertion("x".repeat(89_000), { candidatePlainText: true });
   const budget = new ChatGptCandidateAttachmentBudget(plan, () => now);
   const metrics = new ChatGptPromptInsertionMetrics(plan, snapshot => budget.observe(snapshot), () => now);
-  expect(plan.strategy).toBe("direct-text");
+  expect(plan.strategy).toBe("literal-paste");
   await metrics.run("insert", async () => {
     metrics.editStarted();
     now = 52_000;
@@ -196,7 +274,7 @@ test("a single direct edit may settle after 20 seconds but cannot exceed its har
   expect(budget.remainingMs()).toBe(0);
 });
 
-test("a failed direct edit does not leave the stall exemption active for a later attempt", async () => {
+test("a failed native paste does not leave the stall exemption active for a later attempt", async () => {
   let now = 0;
   const plan = planChatGptPromptInsertion("x".repeat(40_000), { candidatePlainText: true });
   const budget = new ChatGptCandidateAttachmentBudget(plan, () => now);
@@ -206,7 +284,7 @@ test("a failed direct edit does not leave the stall exemption active for a later
   expect(() => budget.remainingMs()).toThrow("no verified progress");
 });
 
-test("composer acquisition cannot borrow the direct native-edit stall exemption", async () => {
+test("composer acquisition cannot borrow the native-paste stall exemption", async () => {
   const { insertChatGptPromptText } = await import("../src/adapters/chatgpt-web/prompt-insertion");
   const { ChatGptPromptOperation } = await import("../src/adapters/chatgpt-web/prompt-operation");
   let now = 0;
@@ -226,7 +304,7 @@ test("composer acquisition cannot borrow the direct native-edit stall exemption"
   expect(nativeEdits).toBe(0);
 });
 
-test("a direct edit starting just before stall keeps a usable native mutation timeout", async () => {
+test("a native paste starting just before stall keeps a usable native mutation timeout", async () => {
   const { insertChatGptPromptText } = await import("../src/adapters/chatgpt-web/prompt-insertion");
   const { ChatGptPromptOperation } = await import("../src/adapters/chatgpt-web/prompt-operation");
   let now = 0;

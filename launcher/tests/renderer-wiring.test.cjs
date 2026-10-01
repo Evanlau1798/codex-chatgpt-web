@@ -12,6 +12,64 @@ const electronMain = fs.readFileSync(path.join(launcherRoot, "electron", "main.c
 const browserHostSource = fs.readFileSync(path.join(launcherRoot, "electron", "browser-host.cjs"), "utf8");
 const preloadSource = fs.readFileSync(path.join(launcherRoot, "electron", "preload.cjs"), "utf8");
 
+test("Bigger Context waits for startup and route recovery without invalidating healthy setup", async () => {
+  const vm = require("node:vm");
+  for (const fails of [false, true]) {
+    let completeAuthentication;
+    const startupAuthenticationRefresh = new Promise(resolve => { completeAuthentication = resolve; });
+    let finishRuntimeStartup;
+    const runtimeStartup = new Promise(resolve => { finishRuntimeStartup = resolve; });
+    let startupSettled = false;
+    const calls = [];
+    const handlers = new Map();
+    const config = { mode: "full", experimentalBiggerContext: false };
+    const state = { coreSetupComplete: true, codexCatalogVerified: true };
+    const stateStore = { read: () => state, update: patch => Object.assign(state, patch) };
+    const logger = { info() {}, error() {} };
+    const context = vm.createContext({
+      runtimeStartup, finishRuntimeStartup: () => { startupSettled = true; finishRuntimeStartup(); },
+      startupAuthenticationRefresh, logger, stateStore, IS_DEV_PROFILE: false,
+      ipcMain: { on() {} }, registerLoggedIpc: (_ipc, _logger, channel, handler) => handlers.set(channel, handler),
+      send() {}, publishOperation() {}, startCatalogVerificationMonitor() {}, stopCatalogVerificationMonitor() {},
+      syncFreshConversationPreference() {},
+      restoreCodexRouteAfterRuntimeFailure: async () => { calls.push("recovery"); return {}; },
+      limitsController: { snapshot: () => ({ enabled: false }) },
+      runtimeSupervisor: {
+        readConfig: () => config,
+        startIfConfigured: async () => {
+          calls.push("startup");
+          if (fails) throw new Error("actual startup failure");
+          return { status: "ready" };
+        },
+      },
+      runtimeHost: {
+        upgradeManagedRuntime: async () => ({ updated: false }),
+        runtimeConfigSnapshot: () => ({ configured: true, config }),
+        bridgeStatus: async () => ({ installed: false }),
+        setBiggerContext: async enabled => {
+          assert.equal(startupSettled, true, "settings must wait through startup recovery too");
+          calls.push("setting");
+          config.experimentalBiggerContext = enabled;
+          return { enabled };
+        },
+      },
+    });
+    vm.runInContext(electronMain.slice(electronMain.indexOf("function registerIpc("), electronMain.indexOf("async function requestQuit("))
+      + "\nregisterIpc({ logger, stateStore });", context);
+    const start = electronMain.indexOf("} else void (async () => {");
+    vm.runInContext(electronMain.slice(start + "} else ".length, electronMain.indexOf('  app.on("before-quit"', start)), context);
+    const setting = handlers.get("launcher:bigger-context")({}, true);
+    // Read-only UI remains usable while authentication/startup is pending.
+    assert.equal((await handlers.get("launcher:limits")()).enabled, false);
+    assert.deepEqual(calls, []);
+    completeAuthentication();
+    await setting;
+    assert.deepEqual(calls, fails ? ["startup", "recovery", "setting"] : ["startup", "setting"]);
+    assert.equal(state.experimentalBiggerContext, true);
+    assert.equal(state.coreSetupComplete, !fails, "only a real startup failure may invalidate setup");
+  }
+});
+
 test("embedded ChatGPT is measured only after its animated surface mounts", () => {
   assert.match(appSource, /const \[browserSlot, setBrowserSlot\] = useState<HTMLDivElement \| null>\(null\)/);
   assert.match(appSource, /setBrowserSurfaceActive\(browserSurfaceActive\)\.then\(\(\) => \{/);
@@ -181,7 +239,7 @@ test("saved ChatGPT authentication is refreshed before setup is presented", () =
   const refresh = electronMain.indexOf("browserHost.refreshAuthentication()");
   const upgrade = electronMain.indexOf("runtimeHost.upgradeManagedRuntime()");
   assert.ok(refresh >= 0 && upgrade > refresh, "runtime upgrade must follow saved-session refresh");
-  assert.match(electronMain.slice(refresh, upgrade), /await sessionRefresh;/);
+  assert.match(electronMain.slice(refresh, upgrade), /await startupAuthenticationRefresh;/);
   assert.match(appSource, /browser\?\.status === "loading" \? copy\.checkingSignIn/);
 });
 
@@ -464,7 +522,7 @@ test("fresh-conversation control is translated and enforces Original automatic m
     messageOf: String, platformLabel: String, languages: require("../electron/languages.json"),
     biggerContextSwitchState: contextMode.biggerContextSwitchState,
   };
-  for (const name of ["ContentSurface", "SectionHeading", "NoticeRow", "Icon", "DoctorSummary", "BrandMark", "ApiAccessCard"]) sandbox[name] = name;
+  for (const name of ["ContentSurface", "SectionHeading", "NoticeRow", "Icon", "DoctorSummary", "BrandMark", "ApiAccessCard", "PrimaryButton", "SecondaryButton"]) sandbox[name] = name;
   const settings = fs.readFileSync(path.join(launcherRoot, "src/settings-surface.tsx"), "utf8");
   vm.runInNewContext(transpile(settings.slice(settings.indexOf("export function SettingsSurface(")), "settings.tsx"), sandbox);
   const render = sandbox.exports.SettingsSurface;
@@ -481,7 +539,10 @@ test("fresh-conversation control is translated and enforces Original automatic m
       ["manual", true, true, false], ["automatic", false, false, false], ["automatic", true, true, true],
     ]) {
       const tree = render({ copy, devProfile: false, language, configureInteractionMode() {}, setError() {}, browser: null,
-        snapshot: { state: { browserInteractionMode: mode, coreSetupComplete: configured, experimentalFreshConversationPerTurn: enabled, useEnhancedWebSessionMode: enhanced } },
+        snapshot: {
+          connectorNames: { automatic: "Codex Native2", manual: "Codex Zero Risk" },
+          state: { browserInteractionMode: mode, coreSetupComplete: configured, experimentalFreshConversationPerTurn: enabled, useEnhancedWebSessionMode: enhanced },
+        },
         updateState: value => { saved = value; },
       });
       const row = visit(tree).find(node => node.type?.name === "SettingRow" && node.props.label === copy.freshConversation);
@@ -498,4 +559,49 @@ test("fresh-conversation control is translated and enforces Original automatic m
       }
     }
   }
+});
+
+test("plugin rename invalidates verification only after success and rejects active browser work", async () => {
+  const vm = require("node:vm");
+  const handlers = new Map();
+  const state = { mcpSetupComplete: true, mcpGuideStep: 0 };
+  const events = [];
+  let fail = true, calls = 0;
+  const browserHost = { activeTraceId: "busy", currentOperation: () => null };
+  vm.runInNewContext(electronMain.slice(
+    electronMain.indexOf('handle("launcher:connector-name",'),
+    electronMain.indexOf('handle("launcher:browser-interaction-mode",'),
+  ), {
+    handle: (name, handler) => handlers.set(name, handler), browserHost,
+    runtimeHost: {
+      setConnectorNameSuffix: async () => { calls++; if (fail) throw new Error("setup failed"); return { changed: true }; },
+      browserConnectorName: () => "Codex Work",
+      setupConnectorName: mode => mode === "manual" ? "Codex Zero Risk" : "Codex Work",
+    },
+    stateStore: { read: () => state, update: patch => Object.assign(state, patch) },
+    send: (channel, body) => events.push({ channel, body }),
+  });
+  const rename = handlers.get("launcher:connector-name");
+  await assert.rejects(rename(null, "Work"), /Finish active ChatGPT turns/);
+  assert.equal(calls, 0);
+  browserHost.activeTraceId = null;
+  await assert.rejects(rename(null, "Work"), /setup failed/);
+  assert.equal(state.mcpSetupComplete, true);
+  assert.equal(events.length, 0);
+  fail = false;
+  await rename(null, "Work");
+  assert.equal(state.mcpSetupComplete, false);
+  assert.equal(state.mcpGuideStep, 2);
+  assert.equal(events[0].channel, "launcher:connector-names-changed");
+  assert.equal(events[0].body.connectorNames.manual, "Codex Zero Risk");
+  assert.equal(events[1].channel, "launcher:state-changed");
+});
+
+test("plugin name editor keeps the Codex prefix and submits only the editable suffix", () => {
+  const settings = fs.readFileSync(path.join(launcherRoot, "src/settings-surface.tsx"), "utf8");
+  assert.match(settings, /currentPluginName\.slice\(6\)/);
+  assert.match(settings, /<span aria-hidden="true">Codex<\/span>/);
+  assert.match(settings, /maxLength=\{74\}/);
+  assert.match(settings, /setConnectorNameSuffix\(nameSuffix\.trim\(\)\)/);
+  assert.match(settings, /setConfirmNameChange\(true\)/);
 });

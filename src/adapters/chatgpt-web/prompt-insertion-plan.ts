@@ -1,20 +1,20 @@
-import { CHATGPT_PROMPT_INSERT_CHUNK_CHARS } from "./prompt-attachment-budget";
+/** Public plain paste avoids file conversion. Still bound every renderer transaction. */
+export const CHATGPT_LITERAL_PASTE_CHUNK_CHARS = 128_000;
 
-// Shared with the Markdown guard so workload counts cannot drift from its alphabet.
+// Shape-only diagnostics; delimiters never change the insertion route.
 export const CHATGPT_PROMPT_MARKDOWN_DELIMITERS = ["`", "*", "_", "~", "=", "[", ")"] as const;
 const MARKDOWN_DELIMITERS: ReadonlySet<string> = new Set(CHATGPT_PROMPT_MARKDOWN_DELIMITERS);
-const DIRECT_INSERT_MIN_CHARS = CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 2;
 const BOUNDARY_LOOKBACK_CHARS = 4_096;
 const WHITESPACE = /\s/u;
 
 export interface ChatGptPromptInsertionOptions {
   largeStructuredDirect?: boolean;
   forceStructuredDirect?: boolean;
-  /** Explicit pre-release opt-in, never inferred from payload or an API request. */
+  /** Retired selection flags accepted for internal compatibility; one writer handles all input. */
   candidatePlainText?: boolean;
 }
 
-export type ChatGptPromptInsertionStrategy = "guarded-chunked" | "direct-text" | "direct-html" | "direct-html-prewrap";
+export type ChatGptPromptInsertionStrategy = "literal-paste";
 
 /** Shape only: never retain prompt text, DOM, credentials, or a content fingerprint. */
 export interface ChatGptPromptInsertionPlan {
@@ -23,14 +23,14 @@ export interface ChatGptPromptInsertionPlan {
   /** CRLF is one boundary; CR, LF, U+2028 and U+2029 also separate text runs. */
   readonly lineCount: number;
   readonly maxLineUnits: number;
-  /** Potential guard replacements, not executed edits or existing private-use markers. */
+  /** Literal Markdown workload, not executed edits. */
   readonly markdownDelimiterCount: number;
   readonly hasCR: boolean;
   readonly hasNul: boolean;
 }
 
-export function chatGptPromptPreservesLeading(plan: ChatGptPromptInsertionPlan): boolean {
-  return plan.strategy === "direct-html-prewrap" || (plan.strategy === "direct-text" && plan.lineCount > 1);
+export function chatGptPromptPreservesLeading(_plan: ChatGptPromptInsertionPlan): boolean {
+  return true;
 }
 
 export function planChatGptPromptInsertion(
@@ -43,16 +43,8 @@ export function planChatGptPromptInsertion(
   let markdownDelimiterCount = 0;
   let hasCR = false;
   let hasNul = false;
-  let hasUnpairedSurrogate = false;
   for (let index = 0; index < text.length; index += 1) {
     const unit = text.charCodeAt(index);
-    if (unit >= 0xD800 && unit <= 0xDBFF) {
-      const next = text.charCodeAt(index + 1);
-      if (!(next >= 0xDC00 && next <= 0xDFFF)) hasUnpairedSurrogate = true;
-    } else if (unit >= 0xDC00 && unit <= 0xDFFF) {
-      const previous = text.charCodeAt(index - 1);
-      if (!(previous >= 0xD800 && previous <= 0xDBFF)) hasUnpairedSurrogate = true;
-    }
     if (MARKDOWN_DELIMITERS.has(text[index]!)) markdownDelimiterCount += 1;
     if (unit === 0) hasNul = true;
     if (unit === 13) hasCR = true;
@@ -66,18 +58,9 @@ export function planChatGptPromptInsertion(
     }
   }
   maxLineUnits = Math.max(maxLineUnits, lineUnits);
-  const legacyDirect = options?.forceStructuredDirect === true
-    || (options?.largeStructuredDirect === true && text.length > DIRECT_INSERT_MIN_CHARS);
-  // Preserve the direct inline route; the candidate replaces only large guarded work.
-  const candidate = options?.candidatePlainText === true && !legacyDirect && text.length > DIRECT_INSERT_MIN_CHARS;
-  const direct = candidate || legacyDirect;
-  // The updated composer turns LF inside a pre-wrapped HTML paragraph into spaces.
-  // Keep multiline text and HTML-sensitive code units on the exact native text route.
-  const strategy: ChatGptPromptInsertionStrategy = !direct
-    ? "guarded-chunked"
-    : text.length > DIRECT_INSERT_MIN_CHARS && !hasCR && !hasNul && !hasUnpairedSurrogate
-      ? lineCount === 1 && !candidate ? "direct-html" : "direct-text"
-      : "direct-text";
+  // Old flags remain accepted at internal call sites while the writer has one route.
+  // Clipboard text never passes through HTML parsing or Markdown restoration.
+  const strategy: ChatGptPromptInsertionStrategy = "literal-paste";
   return Object.freeze({
     strategy, utf16Units: text.length, lineCount, maxLineUnits,
     markdownDelimiterCount, hasCR, hasNul,
@@ -89,7 +72,7 @@ export function chatGptPromptInsertChunkEnd(text: string, offset: number): numbe
   if (!Number.isSafeInteger(offset) || offset < 0 || offset >= text.length) {
     throw new RangeError("Prompt chunk offset must identify an existing UTF-16 code unit");
   }
-  const hardEnd = Math.min(offset + CHATGPT_PROMPT_INSERT_CHUNK_CHARS, text.length);
+  const hardEnd = Math.min(offset + CHATGPT_LITERAL_PASTE_CHUNK_CHARS, text.length);
   if (hardEnd >= text.length) return hardEnd;
   for (let candidate = hardEnd; candidate >= Math.max(offset + 1, hardEnd - BOUNDARY_LOOKBACK_CHARS); candidate -= 1) {
     if (!WHITESPACE.test(text[candidate] ?? "")) continue;

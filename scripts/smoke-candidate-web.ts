@@ -9,6 +9,7 @@ import { closeChatGptBrowserWorkers, ChatGptBrowserWorker } from "../src/adapter
 import { verifyCurrentConnectorContract } from "../src/adapters/chatgpt-web/connector-contract";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { RemoteTurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { withAbort } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { releaseLauncherRetainedConversation } from "../src/launcher-browser-host";
 import { VERSION } from "../src/version";
 import {
@@ -67,7 +68,8 @@ export async function verifyLiveConnectorContract(current: AppConfig): Promise<v
       }, WEB_CONTRACT_TURN_TIMEOUT_MS, traceId);
       try {
         await verifyCurrentConnectorContract(current.appName, "native", async probe => {
-          await worker.run({
+          const abortSignal = AbortSignal.timeout(WEB_CONTRACT_TURN_TIMEOUT_MS);
+          await withAbort(worker.run({
             traceId,
             modelId: CHATGPT_WEB_MODEL_ID,
             reasoning: "medium",
@@ -77,8 +79,9 @@ export async function verifyLiveConnectorContract(current: AppConfig): Promise<v
             retainConversation: round === 0,
             requireRetainedConversation: round === 1,
             conversationKey,
+            abortSignal,
             onTextDelta: () => {},
-          });
+          }), abortSignal);
         }, reference);
       } finally {
         await broker.revoke(reference).catch(() => {});

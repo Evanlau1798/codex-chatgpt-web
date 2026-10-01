@@ -360,6 +360,7 @@ test("Windows packages embed the checksummed Bun baseline runtime for CPUs witho
   );
   assert.match(builder, /CODEX_CHATGPT_WEB_EMBEDDED_BUN/);
   assert.match(builder, /Embedded Bun must be/);
+  assert.match(builder, /if not defined NODE_USE_SYSTEM_CA set "NODE_USE_SYSTEM_CA=1"/);
   assert.match(baseline, /bun-windows-x64-baseline\.zip/);
   assert.match(baseline, /SHASUMS256\.txt/);
   assert.match(baseline, /Get-FileHash[^\n]+SHA256/);
@@ -392,6 +393,9 @@ test("libnotify preparation selects the SONAME library, not Meson symbol metadat
 
 test("release rebuild preserves an existing preview without changing Enhanced stable tags", () => {
   const { spawnSync } = require("node:child_process");
+  const bash = process.platform === "win32"
+    ? path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "bash.exe")
+    : "bash";
   const source = fs.readFileSync(path.join(repositoryRoot, ".github/workflows/release.yml"), "utf8");
   const start = source.indexOf("          release_flags=");
   const stop = source.indexOf('          gh release edit "$GITHUB_REF_NAME"', start);
@@ -402,7 +406,7 @@ test("release rebuild preserves an existing preview without changing Enhanced st
     ["v6.0.0-Enhanced.1", "false", "--prerelease=false --latest"],
     ["v6.0.0-rc.1-Enhanced.1", "false", "--prerelease --latest=false"],
   ]) {
-    const result = spawnSync("bash", ["-c", policy + '\nprintf "%s" "${release_flags[*]}"'], {
+    const result = spawnSync(bash, ["-c", policy + '\nprintf "%s" "${release_flags[*]}"'], {
       encoding: "utf8", env: { ...process.env, GITHUB_REF_NAME: tag, existing_prerelease: preview },
       timeout: 5000,
     });

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,6 +66,57 @@ test("the production adapter accepts an internal deterministic browser worker", 
   }
 });
 
+test("browser ownership heartbeat advances hidden adapter liveness without visible output", async () => {
+  const signal = spyOn(ChatGptTraceFeed.prototype, "signalProgress");
+  const events: AdapterEvent[] = [];
+  const worker = {
+    async run(turn: BrowserTurn): Promise<string> {
+      const prepared = await turn.prepare();
+      prepared.release();
+      const visibleEvents = events.length;
+      turn.onHeartbeat?.();
+      expect(events).toHaveLength(visibleEvents);
+      turn.onTextDelta("heartbeat answer");
+      return "heartbeat answer";
+    },
+    requestPreemptiveRetry: () => false,
+  };
+  const parsed: CodexParsedRequest = {
+    modelId: CHATGPT_WEB_MODEL_ID,
+    stream: false,
+    context: { messages: [{ role: "user", content: "Wait while the browser works.", timestamp: 1 }] },
+    options: { reasoning: "high" },
+    _rawBody: {
+      prompt_cache_key: "hidden-heartbeat-thread",
+      client_metadata: {
+        "x-codex-turn-metadata": JSON.stringify({
+          thread_id: "hidden-heartbeat-thread",
+          turn_id: "hidden-heartbeat-turn",
+        }),
+      },
+      input: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Wait while the browser works." }],
+        internal_chat_message_metadata_passthrough: { turn_id: "hidden-heartbeat-turn" },
+      }],
+    },
+  };
+  try {
+    await createChatGptWebAdapter({
+      adapter: "chatgpt-web",
+      baseUrl: "browser://hidden-heartbeat",
+      chatgptWeb: { localToolsEnabled: false, solAvailable: true, proAvailable: true },
+    }, { worker }).runTurn!(parsed, { headers: new Headers() }, event => events.push(event));
+    expect(signal).toHaveBeenCalled();
+    expect(events.filter(event => event.type === "text_delta").map(event => event.text).join(""))
+      .toContain("heartbeat answer");
+  } finally {
+    signal.mockRestore();
+    chatGptTurnSessions.clear();
+  }
+});
+
 test("archive reads advance production browser progress without fabricating a tool batch", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-archive-progress-"));
   const socket = defaultBrokerEndpoint(root);
@@ -77,6 +128,7 @@ test("archive reads advance production browser progress without fabricating a to
       const prepared = await turn.prepare();
       try {
         expect(prepared.transport).toBe("native2-archive");
+        expect(turn.retryPromptForError).toBeUndefined();
         const contextToken = prepared.text.match(/context_[a-f0-9]{32}/)?.[0];
         expect(contextToken).toBeString();
         const before = turn.externalProgress!.snapshot();
@@ -597,6 +649,8 @@ test("Automatic Web rechecks account safety immediately before runtime start", a
 });
 
 test("duration drain maps enhanced compaction back to the captured source trace", async () => {
+  const root = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "cgw-safety-drain-"));
+  const socket = defaultBrokerEndpoint(root);
   const admissions: { traceId: string; activeTraceIds: string[] }[] = [];
   const retained = new Set<string>();
   const safety = {
@@ -630,7 +684,7 @@ test("duration drain maps enhanced compaction back to the captured source trace"
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: "browser://safety-compact-drain",
-    chatgptWeb: { localToolsEnabled: true, useEnhancedWebSessionMode: true },
+    chatgptWeb: { localToolsEnabled: true, useEnhancedWebSessionMode: true, brokerSocketPath: socket },
   };
   const parsed: CodexParsedRequest = {
     modelId: CHATGPT_WEB_MODEL_ID,
@@ -680,6 +734,8 @@ test("duration drain maps enhanced compaction back to the captured source trace"
     }));
   } finally {
     chatGptTurnSessions.clear();
+    await TurnBroker.forSocket(socket).close();
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -719,7 +775,8 @@ test("a ChatGPT rate-limit failure pauses Automatic Web even without a proactive
 });
 
 test("Enhanced compaction rate limits update account safety", async () => {
-  const root = mkdtempSync(join(tmpdir(), "cgw-safety-compact-rate-"));
+  const root = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "cgw-safety-rate-"));
+  const socket = defaultBrokerEndpoint(root);
   const safety = new ChatGptAccountSafety(join(root, "state.json"));
   const worker = {
     async run(): Promise<string> {
@@ -746,12 +803,13 @@ test("Enhanced compaction rate limits update account safety", async () => {
   try {
     await createChatGptWebAdapter({
       adapter: "chatgpt-web", baseUrl: "browser://safety-compact-rate",
-      chatgptWeb: { localToolsEnabled: true, useEnhancedWebSessionMode: true },
+      chatgptWeb: { localToolsEnabled: true, useEnhancedWebSessionMode: true, brokerSocketPath: socket },
     }, { worker, accountSafety: safety } as never).runTurn!(parsed, { headers: new Headers() }, event => events.push(event));
     expect(safety.status(undefined, undefined, [])).toMatchObject({ state: "PAUSED", reason: "rate_limit" });
     expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "rate_limit_exceeded", status: 429 }));
   } finally {
     chatGptTurnSessions.clear();
+    await TurnBroker.forSocket(socket).close();
     rmSync(root, { recursive: true, force: true });
   }
 });

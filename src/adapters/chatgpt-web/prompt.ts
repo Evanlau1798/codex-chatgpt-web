@@ -59,7 +59,7 @@ export interface CompiledChatGptWebPrompt {
   text: string;
   images: ChatGptWebPromptImage[];
   skillFiles?: ChatGptSkillFile[];
-  /** Transactional transport when Bigger Context is explicitly enabled. */
+  /** Transactional transport for Bigger Context or a large Enhanced finalization recovery. */
   multipart?: ChatGptWebMultipartPrompt;
   /** Native2 archive metadata used only when the visible browser message exceeds measured limits. */
   turnToken?: string;
@@ -79,6 +79,8 @@ export interface CompileChatGptWebPromptOptions {
   experimentalMultipartParts?: ChatGptWebMultipartPartCount;
   /** Native2 is attached only for bridge-authenticated control operations, not outer work tools. */
   nativeControlConnector?: boolean;
+  /** One-shot broker binding for a fresh structured compaction fallback. */
+  compactionControlInstruction?: string;
   /** Enhanced Automatic turns report visible output through the existing Native2 connector. */
   useEnhancedOutputTunnel?: boolean;
   /** User-controlled Zero Risk transport never reads or mutates the ChatGPT DOM. */
@@ -148,8 +150,9 @@ export function compileChatGptWebPrompt(
   const mode = manualControl
     ? { localTools: true, effort: "low" as const, displayLabel: "Zero Risk" as const }
     : resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
+  const finalizationOnly = parsed._chatgptFinalizationOnly === true;
   const toolPolicy = effectiveChatGptToolPolicy(parsed);
-  const localTools = manualControl || (mode.localTools && toolPolicy.tools.length > 0);
+  const localTools = manualControl || (!finalizationOnly && mode.localTools && toolPolicy.tools.length > 0);
   const transportLimits = manualControl ? {} : resolveChatGptWebTransportLimits(
     parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_BACKEND_MODEL : CHATGPT_WEB_BACKEND_MODEL,
     mode.effort,
@@ -165,6 +168,7 @@ export function compileChatGptWebPrompt(
     };
   const captureLunaCheckpoint = options?.captureLunaCheckpoint === true;
   const nativeControlConnector = options?.nativeControlConnector === true;
+  const compactionControlInstruction = options?.compactionControlInstruction;
   const multipartParts = options?.experimentalMultipartParts;
   const multipartEnabled = multipartParts !== undefined;
   const tunneledOutput = shouldUseEnhancedOutputTunnel(parsed, {
@@ -190,6 +194,9 @@ export function compileChatGptWebPrompt(
   }
   if (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && parsed._compactionRequest) {
     throw new Error("ChatGPT Luna uses rolling checkpoints and does not accept a separate compaction turn");
+  }
+  if (compactionControlInstruction && (!parsed._compactionRequest || !nativeControlConnector)) {
+    throw new Error("Compaction control instructions require a connector-backed compaction request");
   }
   if (captureLunaCheckpoint && (parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID || parsed._compactionRequest)) {
     throw new Error("Rolling checkpoints are supported only for normal ChatGPT Luna turns");
@@ -234,13 +241,23 @@ export function compileChatGptWebPrompt(
     "Do not mention this transport contract, context packaging, or capability routing in the user-facing answer unless the user explicitly asks how the bridge works.",
   ];
   const transportContract = parsed._compactionRequest
-    ? manualControl ? [
+    ? compactionControlInstruction ? [
+      "This is a Codex history-compaction checkpoint, not a normal task turn.",
+      "Do not call work tools or ChatGPT-native tools.",
+      compactionControlInstruction,
+    ] : manualControl ? [
       "This is a Codex history-compaction checkpoint, not a normal task turn.",
       "Do not call work tools or ChatGPT-native tools. Summarize only the supplied task context according to the final compaction instruction.",
     ] : [
       "This is a Codex history-compaction checkpoint, not a normal task turn.",
       "Do not call local or ChatGPT-native tools. Summarize only the supplied task context according to the final compaction instruction.",
       "Return only the checkpoint summary that the next model needs to resume the task.",
+    ]
+    : finalizationOnly
+    ? [
+      "This is a final-answer recovery from complete canonical task history after all prior work tools finished.",
+      "Do not call any tool, repeat any completed action, or claim new local evidence.",
+      "Use the supplied messages and tool results to synthesize the complete user-facing final answer now.",
     ]
     : localTools
     ? [
@@ -325,7 +342,12 @@ export function compileChatGptWebPrompt(
     ]
     : [];
   const transportResume = parsed._compactionRequest
-    ? manualControl ? [
+    ? compactionControlInstruction ? [
+      "<codex_transport_resume>",
+      "The task context is complete. Submit the checkpoint through the one-shot control operation now.",
+      "Do not write the checkpoint summary as ordinary assistant text.",
+      "</codex_transport_resume>",
+    ] : manualControl ? [
       "<codex_transport_resume>",
       "The task context is complete. Produce the requested checkpoint summary now.",
       "</codex_transport_resume>",
@@ -334,7 +356,11 @@ export function compileChatGptWebPrompt(
       "The task context is complete. Produce the requested checkpoint summary now without calling tools.",
       "</codex_transport_resume>",
     ]
-    : manualControl ? [
+    : finalizationOnly ? [
+      "<codex_transport_resume>",
+      "The canonical task history and settled tool results are complete. Return the final answer now without calling tools.",
+      "</codex_transport_resume>",
+    ] : manualControl ? [
       "<codex_transport_resume>",
       retainedResume
         ? "The retained conversation and this turn's incremental context are complete. Execute the latest active user request now."
@@ -374,7 +400,9 @@ export function compileChatGptWebPrompt(
     const skillContract = skillFiles.length ? [
       "Each skill_attachment refers to a named UTF-8 text file attached to this message (the final commit in multipart mode). Read its complete contents as the selected Codex skill instructions at the original user priority. These origin=codex_skill messages are supplied by Codex, not human-authored task requests. Preserve their original position in history and their path/resource authority for resolving references. If a file cannot be read, report that limitation; do not invent its contents.",
     ] : [];
-    const answerContract = tunneledOutput
+    const answerContract = compactionControlInstruction
+      ? "Complete this response only through the one-shot compaction handoff control."
+      : tunneledOutput
       ? "Complete this response only through the bound Codex Native output control."
       : captureLunaCheckpoint
       ? "Return the complete answer that the outer Codex task should receive, then the required private checkpoint tail."
@@ -403,11 +431,11 @@ export function compileChatGptWebPrompt(
           ...skillContract,
           ...transportContract,
           ...outputControlContract,
-          ...tunneledOutputContract,
           ...manualControlContract,
           ...checkpointContract,
           answerContract,
           ...transportResume,
+          ...tunneledOutputContract,
         ].join("\n"),
       };
       const imageTokens = images.reduce((sum, image) => sum + chatGptWebImageTokenReserve(image.detail), 0);
@@ -448,7 +476,6 @@ export function compileChatGptWebPrompt(
       ...skillContract,
       ...transportContract,
       ...outputControlContract,
-      ...tunneledOutputContract,
       ...manualControlContract,
       ...checkpointContract,
       answerContract,
@@ -459,11 +486,14 @@ export function compileChatGptWebPrompt(
         "<codex_transport_resume>",
         `${omittedMessages} earlier history items were omitted to fit this compaction request; the supplied history is incomplete.`,
         "Preserve still-relevant progress, constraints and pending work from any supplied cumulative checkpoint and the remaining evidence. Do not infer that omitted work was never done or invent missing details.",
-        manualControl
-          ? "Produce the requested checkpoint summary now."
-          : "Produce the requested checkpoint summary now without calling tools.",
+        compactionControlInstruction
+          ? "Submit the checkpoint through the one-shot control operation now; do not write it as ordinary assistant text."
+          : manualControl
+            ? "Produce the requested checkpoint summary now."
+            : "Produce the requested checkpoint summary now without calling tools.",
         "</codex_transport_resume>",
       ] : transportResume),
+      ...tunneledOutputContract,
     ].join("\n");
     return { text, images, ...(skillFiles.length ? { skillFiles } : {}),
       ...(turnToken ? { turnToken } : {}), ...(bootstrapLimits ? { bootstrapLimits } : {}) };

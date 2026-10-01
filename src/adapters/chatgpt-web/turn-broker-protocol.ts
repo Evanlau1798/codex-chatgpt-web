@@ -32,6 +32,9 @@ export interface BrokerRequest {
     | "owner_next" | "owner_complete" | "owner_safe_wait_start" | "owner_safe_wait_completion"
     | "owner_request_compaction" | "owner_compaction_delivery_count" | "safe_start" | "safe_complete"
     | "owner_completion_fence_begin" | "owner_completion_fence_commit" | "owner_next_output"
+    | "owner_begin_finalization"
+    | "owner_cancel_finalization"
+    | "owner_arm_finalization_output"
     | "owner_reset_output" | "owner_seal_output" | "owner_wait_retirement" | "owner_revoke" | "activity_complete"
     | "start_agent_wait" | "read_agent_wait";
   waitId?: string;

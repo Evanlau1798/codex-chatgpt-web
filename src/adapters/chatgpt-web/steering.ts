@@ -18,6 +18,8 @@ export interface ChatGptRetryPrompt {
   replaceCandidate?: boolean;
   /** Internal account-safety continuation selected before a Luna checkpoint is finalized. */
   allowLunaCheckpointRetry?: boolean;
+  /** Completion-fence revision required to atomically enter finalization-only mode before send. */
+  expectedActivityRevision?: number;
 }
 type AnswerRetryValue = string | ChatGptRetryPrompt | undefined;
 type AnswerRetry = (answer: string, attempt: number) => AnswerRetryValue | Promise<AnswerRetryValue>;

@@ -181,15 +181,16 @@ export function createZeroRiskRuntimeStarter(options: ZeroRiskRuntimeOptions) {
             status: 409, errorType: "invalid_request_error", code: "manual_multipart_unsupported", retryable: false,
           });
         }
-        if (!parsed._compactionRequest) trace.push({
+        const browserCompaction = parsed._compactionRequest === true || parsed._localCompactionRequest === true;
+        if (!browserCompaction) trace.push({
           kind: "commentary",
-          text: "> **Action required in Zero Risk**\n>\n> Open the launcher, copy and paste the prompt into ChatGPT, add any images yourself because Zero Risk cannot transfer them, select the `Codex Zero Risk` plugin and the model you want, send the prompt, then confirm it was sent in the launcher.",
+          text: "> **Action required in Zero Risk**\n>\n> Open the launcher, copy and paste the prompt into ChatGPT, add any images yourself because Zero Risk cannot transfer them, select the plugin shown in the launcher and the model you want, send the prompt, then confirm it was sent in the launcher.",
         });
         launcherStartAttempted = true;
         await options.control.start(descriptorPath, {
           ...owner,
           prompt: full.text,
-          ...(parsed._compactionRequest ? { compaction: true as const } : {}),
+          ...(browserCompaction ? { compaction: true as const } : {}),
           ...(suffix ? { resumePrompt: suffix.text } : {}),
           ...(conversationKey ? { conversationKey } : {}),
         });

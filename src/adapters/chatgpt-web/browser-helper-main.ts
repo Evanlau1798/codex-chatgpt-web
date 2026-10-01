@@ -86,6 +86,9 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.nativeConnector !== undefined && typeof message.turn.nativeConnector !== "boolean") {
     throw new Error("Browser helper Native2 connector flag is invalid");
   }
+  if (message.turn.allowStartupPreparation !== undefined && typeof message.turn.allowStartupPreparation !== "boolean") {
+    throw new Error("Browser helper startup admission is invalid");
+  }
   if (message.turn.retainConversation !== undefined && typeof message.turn.retainConversation !== "boolean") {
     throw new Error("Browser helper conversation retention flag is invalid");
   }
@@ -148,6 +151,7 @@ async function run(message: RunMessage): Promise<void> {
     ...(message.turn.modelFamily ? { modelFamily: message.turn.modelFamily } : {}),
     capabilities: message.turn.capabilities,
     ...(message.turn.nativeConnector ? { nativeConnector: true } : {}),
+    ...(message.turn.allowStartupPreparation ? { allowStartupPreparation: true } : {}),
     prepare: prepareSelected,
     ...(message.turn.resumeAvailable ? { prepareResume: prepareSelected } : {}),
     ...(message.turn.retainConversation ? { retainConversation: true } : {}),
@@ -364,6 +368,27 @@ input.on("line", line => {
       completionFences.end(message.id);
       abortControllers.get(message.id)?.abort();
     }
+  } else if (message.type === "finalization_begin_ack") {
+    try { completionFences.resolveFinalization(message.id, message.requestId, message.started); }
+    catch (error) {
+      writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
+      completionFences.end(message.id);
+      abortControllers.get(message.id)?.abort();
+    }
+  } else if (message.type === "finalization_cancel_ack") {
+    try { completionFences.resolveFinalizationCancel(message.id, message.requestId, message.cancelled); }
+    catch (error) {
+      writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
+      completionFences.end(message.id);
+      abortControllers.get(message.id)?.abort();
+    }
+  } else if (message.type === "finalization_output_arm_ack") {
+    try { completionFences.resolveFinalizationOutput(message.id, message.requestId, message.armed); }
+    catch (error) {
+      writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
+      completionFences.end(message.id);
+      abortControllers.get(message.id)?.abort();
+    }
   } else if (message.type === "preempt_retry") {
     const worker = activeWorkers.get(message.id);
     if (typeof message.prompt !== "string" || !message.prompt.trim()
@@ -374,6 +399,16 @@ input.on("line", line => {
         message: "Browser helper could not preempt the active generation for same-surface retry",
       });
     }
+  } else if (message.type === "arm_compaction_boundary_retention") {
+    const worker = activeWorkers.get(message.id);
+    void Promise.resolve(worker?.armCompactionBoundaryRetention(message.id) ?? false).then(armed => {
+      writeProtocol({
+        type: "event",
+        id: message.id,
+        event: "compaction_boundary_retention_armed",
+        armed,
+      });
+    });
   } else if (message.type === "send_activated_ack") {
     sendActivationWaiters.get(message.id)?.resolve();
     sendActivationWaiters.delete(message.id);
@@ -464,4 +499,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "answer-before-completion", "luna-safety-retry-v1", "tunneled-output-v1", "skill-attachments", "visible-text-output-v1"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "finalization-cas-v1", "finalization-cancel-v1", "finalization-output-arm-v1", "multipart-stage-ack", "answer-before-completion", "luna-safety-retry-v1", "tunneled-output-v1", "skill-attachments", "visible-text-output-v1"] });

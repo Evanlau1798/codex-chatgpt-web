@@ -18,6 +18,7 @@ import {
 import { VERSION } from "./version";
 
 export interface SetupOptions {
+  connectorNameSuffix?: string;
   mode: RuntimeMode;
   integration?: "all" | "codex" | "claude";
   browserInteractionMode?: BrowserInteractionMode;
@@ -78,7 +79,12 @@ export function buildSetupConfig(
   const config = existing ? structuredClone(existing) : defaultConfig(options.mode);
   config.mode = options.mode;
   if (options.browserInteractionMode) config.browserInteractionMode = options.browserInteractionMode;
-  Object.assign(config, resolveInteractionConnectorIdentities(config.browserInteractionMode, profile));
+  Object.assign(config, resolveInteractionConnectorIdentities(
+    config.browserInteractionMode,
+    profile,
+    existing,
+    options.connectorNameSuffix,
+  ));
   if (options.subagentProtocol) config.subagentProtocol = options.subagentProtocol;
   config.releaseVersion = VERSION;
   config.runtimeCommand = currentRuntimeCommand();

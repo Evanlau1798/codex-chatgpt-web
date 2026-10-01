@@ -130,6 +130,7 @@ describe("Codex local compaction lifecycle", () => {
         expect(events.at(-1)).toMatchObject({ type: "done", endTurn: true });
       }
       expect(turns).toHaveLength(2);
+      expect(turns.every(turn => turn.compaction === true)).toBeTrue();
       expect(turns.every(turn => turn.retainConversation === true)).toBeTrue();
       expect(turns[0]!.conversationKey).toBe(turns[1]!.conversationKey);
     } finally {

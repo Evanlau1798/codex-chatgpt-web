@@ -80,11 +80,17 @@ test("final output waits for work settlement and blocks later work until reset",
   const owner = new RemoteTurnBroker(socket);
   try {
     const token = await broker.register(environment(root), undefined, "output-final-test", undefined, true);
+    const warnings = spyOn(console, "warn").mockImplementation(() => {});
     const activityId = "activity_1234567890123456";
     await callTurnBroker(socket, { method: "claim", token, activityId });
     await assert.rejects(callTurnBroker(socket, {
       method: "submit_output", token, outputKind: "final", outputText: "Too early.",
     }), /work tools are still active/);
+    const diagnostic = warnings.mock.calls.flat().join(" ");
+    warnings.mockRestore();
+    expect(diagnostic).toContain("output rejected kind=final chars=10 activeActivities=1 pendingTools=0 finalizationOnly=false");
+    expect(diagnostic).not.toContain(token);
+    expect(diagnostic).not.toContain("Too early.");
     await callTurnBroker(socket, { method: "activity_complete", token, activityId });
     const submitted = await callTurnBroker<{ sequence: number }>(socket, {
       method: "submit_output", token, outputKind: "final", outputText: "Settled.",
@@ -96,6 +102,60 @@ test("final output waits for work settlement and blocks later work until reset",
     expect(await callTurnBroker(socket, {
       method: "claim", token, activityId: "activity_abcdefghijklmnop",
     })).toMatchObject({ activityId: "activity_abcdefghijklmnop" });
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("final-answer recovery closes work tools and arms final output only after browser submission", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-output-finalization-"));
+  const socket = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socket);
+  const owner = new RemoteTurnBroker(socket);
+  try {
+    const token = await broker.register(environment(root), undefined, "output-finalization-test", undefined, true);
+    const activityId = "activity_1234567890123456";
+    await callTurnBroker(socket, { method: "claim", token, activityId });
+    assert.equal(await owner.beginFinalizationOnly(token, 0), false);
+    await callTurnBroker(socket, { method: "activity_complete", token, activityId });
+    const revision = await owner.beginCompletionFence(token);
+    assert.equal(typeof revision, "number");
+    assert.equal(await owner.beginFinalizationOnly(token, revision! - 1), false);
+    assert.equal(await owner.beginFinalizationOnly(token, revision!), true);
+    await assert.rejects(callTurnBroker(socket, {
+      method: "claim", token, activityId: "activity_abcdefghijklmnop",
+    }), /work tools are closed during final-answer recovery/);
+    expect(await submitNativeOutputControl(
+      socket, token, { kind: "final", text: "Recovered final." }, undefined,
+    )).toMatchObject({ accepted: true });
+    let delivered = false;
+    const pending = owner.nextOutput(token, 0).then(event => { delivered = true; return event; });
+    await Promise.resolve();
+    expect(delivered).toBeFalse();
+    assert.equal(await owner.armFinalizationOutput(token, revision! + 1), true);
+    expect(await pending).toMatchObject({ kind: "final", text: "Recovered final." });
+  } finally {
+    await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an unsubmitted final-answer recovery can reopen work tools with the exact revision", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-output-finalization-cancel-"));
+  const socket = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socket);
+  const owner = new RemoteTurnBroker(socket);
+  try {
+    const token = await broker.register(environment(root), undefined, "output-finalization-cancel-test", undefined, true);
+    const revision = await owner.beginCompletionFence(token);
+    assert.equal(typeof revision, "number");
+    assert.equal(await owner.beginFinalizationOnly(token, revision!), true);
+    assert.equal(await owner.cancelFinalizationOnly(token, revision! + 1), true);
+    assert.equal(await owner.cancelFinalizationOnly(token, revision! + 1), false);
+    expect(await submitNativeOutputControl(
+      socket, token, { kind: "final", text: "Late final remains admissible." }, undefined,
+    )).toMatchObject({ accepted: true });
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });

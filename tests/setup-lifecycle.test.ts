@@ -41,6 +41,8 @@ test("launcher setup reuses fresh per-model observations unless a refresh is req
 
   expect(launcherCapabilityProbeRequired(undefined)).toBe(true);
   expect(launcherCapabilityProbeRequired(verifiedLauncher as never)).toBe(false);
+  expect(launcherCapabilityProbeRequired({ ...verifiedLauncher, modelCapabilities: undefined } as never)).toBe(true);
+  expect(launcherCapabilityProbeRequired({ ...verifiedLauncher, modelCapabilities: { observedAt: 0, families: {} } } as never)).toBe(true);
   expect(launcherCapabilityProbeRequired({ ...verifiedLauncher, extraHighAvailable: undefined } as never)).toBe(true);
   expect(launcherCapabilityProbeRequired({
     browserHost: "launcher",
@@ -101,6 +103,7 @@ for (const development of [false, true]) for (const interaction of ["manual", "a
       const result = await (development ? setupDevProfile : setup)({ ...options, port,
         ...(interaction === "automatic" ? { experimentalFreshConversationPerTurn: true } : {}),
         useSavedChats: true,
+        connectorNameSuffix: "Work",
       });
       expect(calls).toEqual(development ? ["save"] : ["save", "integrate"]);
       expect(saved?.tunnel?.alias).toBe(`codex-chatgpt-web${development ? "-dev" : ""}${interaction === "manual" ? "-zero-risk" : ""}`);
@@ -108,6 +111,18 @@ for (const development of [false, true]) for (const interaction of ["manual", "a
       expect(result.connectorSetupRequired).toBe(true);
       expect(saved?.experimentalFreshConversationPerTurn).toBe(interaction === "automatic");
       expect(saved?.useSavedChats).toBe(true);
+      expect(saved?.appName).toBe("Codex Work");
+      expect(interaction === "manual" ? saved?.automaticAppName : saved?.manualAppName)
+        .toBe(interaction === "automatic" ? "Codex Zero Risk" : development ? "Codex Native2 DEV" : "Codex Native2");
+      // Unrelated setup and mode changes retain the suffix; clearing it is explicit.
+      const initial = structuredClone(saved!);
+      mocks.push(spyOn(configModule, "loadConfigForSetup").mockImplementation(() => structuredClone(initial)));
+      writeFileSync(join(root, "config.json"), JSON.stringify(initial));
+      await (development ? setupDevProfile : setup)({ ...options, port });
+      expect(saved?.appName).toBe(initial.appName);
+      await (development ? setupDevProfile : setup)({ ...options, port, connectorNameSuffix: interaction === "manual" ? "Zero Risk" : development ? "Native2 DEV" : "Native2" });
+      expect(saved?.appName).toBe(interaction === "manual" ? "Codex Zero Risk"
+        : development ? "Codex Native2 DEV" : "Codex Native2");
 
       calls.length = 0;
       mocks.push(spyOn(configModule, "saveConfig").mockImplementation(() => { throw new Error("config commit failed"); }));

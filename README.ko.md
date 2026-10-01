@@ -3,20 +3,20 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-mac-arm64.dmg"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-linux-x64.AppImage"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-mac-x64.dmg">macOS Intel</a> · <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">모든 릴리스</a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">macOS Intel</a> · <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">최신 릴리스</a>
 </p>
 
 <p align="center">
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **개발 후보: `6.1.1-Enhanced.1`.** 다운로드 버튼은 기존 Enhanced 릴리스 패키지를 가리킵니다. 이 브랜치는 새 릴리스의 게시를 의미하지 않습니다.
+> **개발 후보: `6.1.3-Enhanced.2`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다. 이 브랜치만으로 릴리스가 게시되지는 않습니다.
 
 <p align="center">
   <img src="assets/demo.gif" width="960" alt="네이티브 Codex 하네스를 사용하는 ChatGPT Web 실시간 턴">
@@ -77,6 +77,22 @@ irm https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest/download/in
 
 Zero Risk는 ChatGPT 페이지를 읽거나 조작하지 않습니다. 모델과 `Codex Zero Risk` 커넥터를 직접 선택하고, 준비된 프롬프트를 붙여넣어 전송한 다음 런처에서 **Sent**를 확인하세요. 이름이 **(Web)** 으로 끝나는 자동 모델은 Codex에서 지원하는 Effort를 선택할 수 있습니다. 각 컨텍스트 한도를 유지하기 위해 Instant와 각 Pro 버전은 별도 항목으로 제공됩니다. 기존 작업에 저장된 이전 모델 항목은 원래의 고정 모드를 유지합니다.
 
+### Fast startup (실험적)
+
+`6.1.3-Enhanced.2`에서는 **Settings**에서 **Fast startup**을 선택할 수 있습니다. 마지막으로
+검증한 모델과 harness 초안이 있는 미전송 대기 페이지를 준비하고, 요청 시 계정, 모델, 초안을
+다시 확인한 뒤 현재 요청을 삽입합니다. 준비만으로 메시지를 보내지는 않습니다. 작업을 우선하며
+페이지 한도에 여유가 있을 때만 대기 페이지를 준비합니다. Account Safety의 **Maximum concurrency**를
+따르고, 해당 제한이 꺼져 있으면 기본 한도는 여섯 session입니다. 완료 후 TTL로 유지되는 페이지는
+대기 페이지가 아닙니다.
+
+Native2는 작업 중 진행 상황을 스트리밍할 수 있지만, 완전한 최종 답변은 output tunnel을 통해
+한 번만 원자적으로 확정합니다. 시작 및 최종 확정 진단으로 로컬 준비 시간과 ChatGPT 대기 시간을
+구분할 수 있습니다.
+
+**후보 버전의 알려진 제한:** 이어지는 요청이 전송 전 모델 검증에서 간헐적으로 실패할 수 있습니다.
+진단을 추가했으며 근본 원인은 계속 조사 중입니다.
+
 ### 대화 설정, Limits 및 API
 
 **Save chats in ChatGPT**는 기본적으로 꺼져 있으며 Codex／Claude 작업 대화를 저장할 수 있습니다. API 직접 전송과 native tool bridge는 항상 Temporary Chat을 사용하고 `store:true`를 거부합니다. 설정을 꺼도 기존 기록은 삭제되지 않습니다.
@@ -122,9 +138,9 @@ inbound 포트를 열거나 라우터 포트 포워딩을 설정할 필요가 �
 
 1. 필수 설정을 완료하고 **MCP**를 연 다음 Tunnel과 일반 API 키를 생성하고
    **하네스 연결**을 누릅니다.
-2. ChatGPT **Developer Mode**를 활성화하고, **Tunnel** 방식의 새 커넥터를 만들고 이름을 정확히
-   **Codex Native2**로 지정합니다. **Authentication: None**과 **Allow all actions**를 사용합니다.
-3. **런타임 검증**을 실행해 **Codex Native2**가 연결되어 사용 가능한지 확인합니다.
+2. ChatGPT **Developer Mode**를 활성화하고, **Tunnel** 방식의 새 커넥터를 만든 뒤 런처에 표시된
+   정확한 이름(기본값 **Codex Native2**)을 지정합니다. **Authentication: None**과 **Allow all actions**를 사용합니다.
+3. **런타임 검증**을 실행해 표시된 커넥터가 연결되어 사용 가능한지 확인합니다.
 
 쓰기/수정 작업은 ChatGPT 작업 공간과 관리자 정책에서도 허용되어야 합니다.
 [Developer Mode와 MCP 앱](https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt)을

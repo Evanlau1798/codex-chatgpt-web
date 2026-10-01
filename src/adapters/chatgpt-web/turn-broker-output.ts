@@ -17,6 +17,26 @@ export function submitTurnOutput(
   }
   if (channel.safe) throw new Error("Zero Risk requests use the safe completion contract");
   if (channel.outputSealed) throw new Error("Codex Native output arrived after DOM fallback was sealed");
+  if (channel.finalizationOnly && !channel.finalizationOutputArmed) {
+    if (kind !== "final") {
+      throw new Error("Codex Native non-final output arrived while browser recovery submission was pending");
+    }
+    const pending = channel.finalizationPendingOutput;
+    if (pending) {
+      if (pending.text === text) return { event: pending, duplicate: true };
+      throw new Error("Codex Native output submitted conflicting final answers");
+    }
+    if (channel.completionCommitted || channel.activities.size > 0 || channel.invocations.size > 0) {
+      throw new Error("Codex Native final output cannot be accepted while work tools are still active");
+    }
+    if (channel.outputEvents.length >= MAX_OUTPUT_EVENTS
+      || channel.outputChars + text.length > MAX_OUTPUT_TOTAL_CHARS) {
+      throw new Error("Codex Native output exceeds the per-turn limit");
+    }
+    const event = { sequence: channel.outputEvents.length + 1, kind, text } satisfies BrokerTurnOutputEvent;
+    channel.finalizationPendingOutput = event;
+    return { event, duplicate: false };
+  }
   if (channel.outputFinalSequence !== undefined) {
     const final = channel.outputEvents[channel.outputFinalSequence - 1];
     if (kind === "final" && final?.text === text) return { event: final, duplicate: true };
@@ -33,12 +53,24 @@ export function submitTurnOutput(
     throw new Error("Codex Native output exceeds the per-turn limit");
   }
   const event = { sequence: channel.outputEvents.length + 1, kind, text } satisfies BrokerTurnOutputEvent;
+  publishTurnOutput(channel, event);
+  return { event, duplicate: false };
+}
+
+/** Publish a final held across the recovery click/IPC acknowledgement window. */
+export function publishPendingFinalizationOutput(channel: TurnChannel): void {
+  const event = channel.finalizationPendingOutput;
+  if (!event) return;
+  channel.finalizationPendingOutput = undefined;
+  publishTurnOutput(channel, event);
+}
+
+function publishTurnOutput(channel: TurnChannel, event: BrokerTurnOutputEvent): void {
   channel.outputEvents.push(event);
-  channel.outputChars += text.length;
-  if (kind === "final") channel.outputFinalSequence = event.sequence;
+  channel.outputChars += event.text.length;
+  if (event.kind === "final") channel.outputFinalSequence = event.sequence;
   channel.activityRevision += 1;
   resolveOutputWaiters(channel, event);
-  return { event, duplicate: false };
 }
 
 export function waitForTurnOutput(

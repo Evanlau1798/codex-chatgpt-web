@@ -142,7 +142,7 @@ function normalizeBounds(bounds) {
   };
 }
 
-function allowedAuthUrl(value) {
+function chatGptAuthUrl(value) {
   let parsed;
   try {
     parsed = new URL(value);
@@ -150,11 +150,21 @@ function allowedAuthUrl(value) {
     return false;
   }
   if (parsed.protocol !== "https:") return false;
-  if (parsed.hostname === "chatgpt.com") {
-    return parsed.pathname === "/auth"
-      || parsed.pathname.startsWith("/auth/")
-      || parsed.pathname === "/login";
+  if (parsed.hostname !== "chatgpt.com") return false;
+  return parsed.pathname === "/auth"
+    || parsed.pathname.startsWith("/auth/")
+    || parsed.pathname === "/login";
+}
+
+function allowedAuthUrl(value) {
+  if (chatGptAuthUrl(value)) return true;
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
   }
+  if (parsed.protocol !== "https:") return false;
   return AUTH_PROVIDER_HOSTS.has(parsed.hostname);
 }
 
@@ -309,6 +319,7 @@ class BrowserHost {
     profile = "production",
     publishState,
     getUseSavedChats = () => false,
+    getMaxBrowserTabs = () => MAX_BROWSER_TABS,
   }) {
     if (typeof getConnectorName !== "function") {
       throw new Error("Browser host connector-name resolver is unavailable");
@@ -324,6 +335,7 @@ class BrowserHost {
     this.getBrokerSocketPath = getBrokerSocketPath;
     this.getConnectorName = getConnectorName;
     this.getBrowserInteractionMode = getBrowserInteractionMode;
+    this.getMaxBrowserTabs = getMaxBrowserTabs;
     this.helper = helper;
     this.logger = logger;
     this.loginWithPasskey = loginWithPasskey;
@@ -353,6 +365,7 @@ class BrowserHost {
     this.loginOperation = null;
     this.sessionRefreshOperation = null;
     this.authenticationRevision = 0;
+    this.reauthenticationRequired = false;
     this.cloudflareChallengeRecovery = null;
     this.cloudflareChallengeRecoveryArmed = true;
     this.cloudflareChallengeRecoveryDelayMs = CLOUDFLARE_CHALLENGE_RECOVERY_DELAY_MS;
@@ -514,6 +527,7 @@ class BrowserHost {
       loading: tab.loading === true,
       active: this.selectedTabId === tab.id,
       closable: true,
+      ...(tab.startupPreparation === true ? { startupPreparation: true } : {}),
       ...(tab.interactionMode === "manual" ? {
         interactionMode: "manual",
         manualState: tab.manualState,
@@ -535,13 +549,21 @@ class BrowserHost {
     return this.turnTabs.get(this.selectedTabId) || null;
   }
 
-  createTurnTab(traceId, helperPid, interactionLocked = true, conversationKey, connectorIdentity, manual = false, signal) {
+  maximumBrowserTabs() {
+    const value = this.getMaxBrowserTabs?.();
+    return value === undefined ? MAX_BROWSER_TABS : Number.isInteger(value)
+      ? Math.max(1, Math.min(MAX_BROWSER_TABS, value)) : 1;
+  }
+
+  createTurnTab(traceId, helperPid, interactionLocked = true, conversationKey, connectorIdentity, manual = false, signal, startupPreparation = false) {
     signal?.throwIfAborted();
-    if (this.turnTabs.size >= MAX_BROWSER_TABS
-      && !BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
-      throw new Error(
-        `ChatGPT Web already has ${MAX_BROWSER_TABS} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
-      );
+    const limit = BrowserHost.prototype.maximumBrowserTabs.call(this);
+    while (this.turnTabs.size >= limit) {
+      if (!BrowserHost.prototype.evictOldestReclaimableTurnTab.call(this)) {
+        throw new Error(
+          `ChatGPT Web already has ${limit} browser tabs; close one before starting another turn to avoid excessive parallel traffic on the ChatGPT account`,
+        );
+      }
     }
     const id = randomBytes(12).toString("base64url");
     const surfaceId = randomBytes(24).toString("base64url");
@@ -566,6 +588,7 @@ class BrowserHost {
       conversationKey,
       connectorIdentity,
       connectorBound: false,
+      startupPreparation,
       helperPid,
       view,
       interactionShield,
@@ -656,6 +679,8 @@ class BrowserHost {
   }
 
   evictOldestReclaimableTurnTab() {
+    const startup = [...this.turnTabs.values()].find(tab => tab.startupPreparation === true);
+    if (startup) { this.removeTurnTab(startup, false); return true; }
     const terminalManual = [...this.turnTabs.values()]
       .filter(tab => tab.interactionMode === "manual"
         && tab.status === "error"
@@ -705,7 +730,7 @@ class BrowserHost {
     const contents = tab.view.webContents;
     contents.setWindowOpenHandler(({ url }) => {
       if (allowedAuthUrl(url)) {
-        this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
+        if (tab.interactionMode !== "manual") this.markTurnAuthenticationRequired(tab);
         return { action: "deny" };
       }
       let parsed;
@@ -713,13 +738,14 @@ class BrowserHost {
       if (parsed.protocol === "https:" || parsed.protocol === "http:") void shell.openExternal(parsed.toString());
       return { action: "deny" };
     });
-    const blockAuthenticationNavigation = (event, url) => {
-      if (tab.interactionMode === "manual" || !allowedAuthUrl(url)) return;
+    const blockAuthenticationNavigation = (event, url, _inPlace, mainFrame) => {
+      if (mainFrame === false || tab.interactionMode === "manual" || !allowedAuthUrl(url)) return;
+      // ChatGPT can transiently route a valid shared session through its own auth
+      // endpoint before returning to the requested conversation. Let that redirect
+      // settle; a final auth document below is still treated as signed out.
+      if (chatGptAuthUrl(url)) return;
       event.preventDefault();
-      tab.authenticationBlocked = true;
-      tab.message = "ChatGPT redirected to sign-in; the saved session must be verified";
-      this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
-      this.publishState?.(this.snapshot());
+      this.markTurnAuthenticationRequired(tab);
     };
     contents.on("will-navigate", blockAuthenticationNavigation);
     contents.on("will-redirect", blockAuthenticationNavigation);
@@ -751,6 +777,10 @@ class BrowserHost {
       this.syncViewVisibility();
       if (tab.interactionMode === "manual") {
         this.publishState?.(this.snapshot());
+        return;
+      }
+      if (chatGptAuthUrl(tab.url)) {
+        this.markTurnAuthenticationRequired(tab);
         return;
       }
       if (tab.initializingSurface) return;
@@ -807,6 +837,16 @@ class BrowserHost {
     contents.on("responsive", () => {
       this.logger.info("browser.tab_responsive", { tabId: tab.id, traceId: tab.traceId });
     });
+  }
+
+  markTurnAuthenticationRequired(tab) {
+    tab.authenticationRequired = true;
+    tab.loading = false;
+    tab.message = "ChatGPT requested sign-in. Open sign in in the launcher, then retry.";
+    this.reauthenticationRequired = true;
+    this.authenticationRevision = (this.authenticationRevision ?? 0) + 1;
+    this.setState({ authenticated: false, status: "signed-out", message: tab.message });
+    this.logger.warn("browser.turn_authentication_blocked", { tabId: tab.id, traceId: tab.traceId });
   }
 
   async configureAnnouncementDismissal(enabled) {
@@ -1021,17 +1061,31 @@ class BrowserHost {
   }
 
   refreshAuthenticationFromSession() {
-    if (this.destroyed || browserInteractionModeFor(this) !== "automatic") return Promise.resolve();
+    if (this.destroyed || this.reauthenticationRequired || browserInteractionModeFor(this) !== "automatic") return Promise.resolve();
     this.authenticationRevision = (this.authenticationRevision ?? 0) + 1;
     if (this.authenticationRefresh) return this.authenticationRefresh;
     const operation = (async () => {
       let revision;
       do {
         revision = this.authenticationRevision;
-        const session = this.view.webContents.session;
+        const contents = this.view.webContents;
+        if (contents.isDestroyed()) return;
+        if (contents.getURL().startsWith(`${CHATGPT_ORIGIN}/`)) {
+          // The loaded page verifies its own session. A separate native request can
+          // be rejected even while that session works; do not race the two clients.
+          // Any probe started before this cookie change must settle without publishing.
+          if (this.authenticationProbe) await this.authenticationProbe;
+          if (this.destroyed || this.reauthenticationRequired || browserInteractionModeFor(this) !== "automatic") return;
+          if (revision !== this.authenticationRevision) continue;
+          await this.probeAuthentication();
+          continue;
+        }
+        // The idle host has no ChatGPT document; use its shared browser session.
+        const session = contents.session;
         const result = await readChatGptAuthSession(session.fetch.bind(session), CHATGPT_ORIGIN, CHATGPT_AUTH_SESSION_TIMEOUT_MS);
         if (this.destroyed || browserInteractionModeFor(this) !== "automatic") return;
         if (revision !== this.authenticationRevision) continue;
+        if (this.reauthenticationRequired) return;
         const availability = this.activeTraceId || this.manualOperation ? {} : result.sessionCheckError
           ? { status: "error", message: result.sessionCheckError }
           : result.sessionAuthenticated
@@ -1041,7 +1095,7 @@ class BrowserHost {
       } while (revision !== this.authenticationRevision);
     })();
     const tracked = operation.catch(() => {
-      if (!this.destroyed && browserInteractionModeFor(this) === "automatic") {
+      if (!this.destroyed && !this.reauthenticationRequired && browserInteractionModeFor(this) === "automatic") {
         this.logger.warn("browser.session_refresh_failed");
         this.setState({ authenticated: false, ...(this.activeTraceId || this.manualOperation ? {} : {
           status: "error", message: "Could not check the ChatGPT session. Retry the session check.",
@@ -1143,7 +1197,7 @@ class BrowserHost {
     const state = selected
       ? {
           ...this.state,
-          status: selected.status,
+          status: selected.authenticationRequired ? "signed-out" : selected.status,
           message: selected.message,
           url: selected.url,
           title: selected.interactionMode === "manual" ? selected.label : selected.pageTitle,
@@ -1163,7 +1217,7 @@ class BrowserHost {
             ...[...this.turnTabs.values()].map((tab) => this.tabSnapshot(tab)),
           ]
         : [homeTab],
-      maxTabs: MAX_BROWSER_TABS,
+      maxTabs: BrowserHost.prototype.maximumBrowserTabs.call(this),
     };
   }
 
@@ -1188,7 +1242,9 @@ class BrowserHost {
     if (tab.helperPid !== helperPid) {
       throw new Error(`Browser helper ownership mismatch: expected ${tab.helperPid}, received ${helperPid}`);
     }
-    if (tab.status !== "running") throw new Error(`Browser turn ${traceId} is no longer running`);
+    if (tab.status !== "running" && !(tab.status === "ready" && tab.startupPreparation === true)) {
+      throw new Error(`Browser turn ${traceId} is no longer running`);
+    }
     tab.lastHeartbeatAt = Date.now();
     if (refreshViewport) {
       tab.deviceEmulationDirty = true;
@@ -1426,7 +1482,7 @@ class BrowserHost {
   }
 
   setInteractionLocked(locked) {
-    for (const tab of this.turnTabs.values()) tab.interactionLocked = locked;
+    for (const tab of this.turnTabs.values()) tab.interactionLocked = tab.startupPreparation === true || locked;
     this.syncViewVisibility();
   }
 
@@ -1446,6 +1502,7 @@ class BrowserHost {
     this.manualTurns?.removed(tab, abortRunning ? "cancelled" : "failed");
     this.turnTabs.delete(tab.id);
     this.syncPowerSaveBlocker();
+    if (tab.startupPreparation === true) this.closedTurnOwners.set(tab.traceId, tab.helperPid);
     if (abortRunning && tab.status === "running") {
       this.closedTurnOwners.set(tab.traceId, tab.helperPid);
       tab.status = "aborted";
@@ -1728,7 +1785,31 @@ class BrowserHost {
     return this.snapshot();
   }
 
-  async beginTurn(traceId, reveal, helperPid, interactionLocked = true, conversationKey, connectorIdentity, requireRetainedConversation = false, signal) {
+  markStartupPrepared(traceId, helperPid) {
+    const tab = [...this.turnTabs.values()].find(tab => tab.traceId === traceId);
+    if (!tab || tab.helperPid !== helperPid || tab.startupPreparation !== true || tab.authenticationRequired
+      || tab.status !== "running" || tab.bootstrapReady !== true || tab.interactionMode !== "automatic") {
+      throw new Error("Startup preparation ownership is no longer valid");
+    }
+    tab.startupReady = true;
+    tab.connectorBound = true;
+    tab.status = "ready";
+    tab.loading = false;
+    tab.message = "Harness prepared; waiting for a task";
+    tab.lastHeartbeatAt = Date.now();
+    this.syncPowerSaveBlocker();
+    this.publishState?.(this.snapshot());
+    return { prepared: true };
+  }
+
+  discardStartupPages() {
+    this.startupPreparationAllowed = false;
+    const tabs = [...this.turnTabs.values()].filter(tab => tab.startupPreparation === true);
+    for (const tab of tabs) this.removeTurnTab(tab, false);
+    return { closed: tabs.length };
+  }
+
+  async beginTurn(traceId, reveal, helperPid, interactionLocked = true, conversationKey, connectorIdentity, requireRetainedConversation = false, signal, startup) {
     signal?.throwIfAborted();
     if (this.manualOperation) {
       throw new Error(`ChatGPT browser is busy with ${this.manualOperation}`);
@@ -1758,13 +1839,20 @@ class BrowserHost {
     if (sameTrace?.status === "ready" && sameTrace !== exactRetained) {
       throw new Error(`ChatGPT browser turn ${traceId} is retained under different conversation metadata`);
     }
-    const existing = sameTrace?.status === "running" ? sameTrace : exactRetained;
+    const preparedTab = !requireRetainedConversation && startup?.surfaceId
+      ? [...this.turnTabs.values()].find(tab => tab.surfaceId === startup.surfaceId
+        && tab.startupPreparation === true && tab.startupReady === true && tab.status === "ready"
+        && tab.helperPid === helperPid && tab.connectorIdentity === connectorIdentity && !tab.authenticationRequired)
+      : undefined;
+    const existing = sameTrace?.status === "running" ? sameTrace : exactRetained ?? preparedTab;
     if (existing) {
       if (existing.initializingSurface) {
         await existing.initialization;
-        return this.beginTurn(traceId, reveal, helperPid, interactionLocked, conversationKey, connectorIdentity, requireRetainedConversation, signal);
+        return this.beginTurn(traceId, reveal, helperPid, interactionLocked, conversationKey, connectorIdentity, requireRetainedConversation, signal, startup);
       }
-      const reused = existing.status === "ready";
+      const startupPrepared = existing === preparedTab;
+      if (startup?.allowed === true) this.startupPreparationAllowed = true;
+      const reused = existing.status === "ready" && !startupPrepared;
       if (existing.status === "running" && existing.helperPid !== helperPid) {
         if (processRunning(existing.helperPid)) {
           throw new Error(`ChatGPT browser turn ${traceId} is owned by another helper process`);
@@ -1778,12 +1866,18 @@ class BrowserHost {
         });
       }
       existing.helperPid = helperPid;
+      if (startupPrepared) this.closedTurnOwners.set(existing.traceId, existing.helperPid);
       existing.traceId = traceId;
+      if (startupPrepared) {
+        existing.startupPreparation = false;
+        existing.startupReady = false;
+        existing.conversationKey = conversationKey;
+      }
       existing.interactionLocked = interactionLocked;
       existing.status = "running";
       existing.loading = true;
       existing.message = "ChatGPT is working";
-      if (!reused) {
+      if (!reused && !startupPrepared) {
         existing.bootstrapReady = false;
         existing.bootstrapDeadlineAt = Date.now() + TURN_TAB_BOOTSTRAP_TIMEOUT_MS;
       }
@@ -1801,14 +1895,23 @@ class BrowserHost {
         surfaceId: existing.surfaceId,
         tabId: existing.id,
         reused,
+        ...(startupPrepared ? { startupPrepared: true } : {}),
         ...(existing.connectorBound === true ? { connectorBound: true } : {}),
       };
     }
     if (requireRetainedConversation) {
       throw new Error("The retained ChatGPT conversation is no longer available");
     }
-    const tab = await this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity, false, signal);
-    this.selectedTabId = tab.id;
+    if (startup?.preparing) {
+      if (this.startupPreparationAllowed === false
+        || this.turnTabs.size >= BrowserHost.prototype.maximumBrowserTabs.call(this)
+        || [...this.turnTabs.values()].some(tab => tab.startupPreparation === true)) {
+        throw new Error("Startup preparation has no available account-safety capacity");
+      }
+    } else if (startup?.allowed === true) this.startupPreparationAllowed = true;
+    const tab = await this.createTurnTab(traceId, helperPid, interactionLocked, conversationKey, connectorIdentity, false, signal,
+      ...(startup?.preparing === true ? [true] : []));
+    if (startup?.preparing !== true) this.selectedTabId = tab.id;
     if (reveal) this.show({ activate: false });
     else this.syncViewVisibility();
     this.publishState?.(this.snapshot());
@@ -1834,9 +1937,11 @@ class BrowserHost {
       );
     }
     const cancelledByUser = this.userCancelledTurnOwners.get(traceId) === helperPid;
-    const authenticationBlocked = tab.authenticationBlocked === true;
-    if (authenticationBlocked && status === "completed") status = "failed";
+    const authenticationRequired = tab.authenticationRequired === true;
+    if (authenticationRequired && status === "completed") status = "failed";
     tab.status = status === "completed" ? "ready" : status === "aborted" ? "aborted" : "error";
+    tab.startupPreparation = false;
+    tab.startupReady = false;
     this.syncPowerSaveBlocker();
     tab.message = status === "completed" ? "Task completed" : message || `ChatGPT turn ${status}`;
     tab.loading = false;
@@ -1860,24 +1965,7 @@ class BrowserHost {
     this.removeTurnTab(tab, false);
     if (hideAfterTurn && !this.activeTraceId) this.hide();
     this.logger.info("browser.tab_released", { tabId: tab.id, traceId, status: tab.status });
-    if (!authenticationBlocked || cancelledByUser || status === "aborted") {
-      return { cancelledByUser, ...(authenticationBlocked ? { authenticationBlocked: true } : {}) };
-    }
-    // A blocked auth navigation is not proof that the saved session expired. Verify
-    // through the same authenticated endpoint as the normal session probe, after
-    // releasing the failed tab. Never navigate an auth flow or touch another turn.
-    const authenticationRevision = this.authenticationRevision;
-    let authenticationStatus = "unknown";
-    try {
-      const session = this.view.webContents.session;
-      const result = await readChatGptAuthSession(session.fetch.bind(session), CHATGPT_ORIGIN, CHATGPT_AUTH_SESSION_TIMEOUT_MS);
-      if (!this.destroyed && browserInteractionModeFor(this) === "automatic"
-        && authenticationRevision === this.authenticationRevision && !result.sessionCheckError) {
-        authenticationStatus = result.sessionAuthenticated ? "authenticated" : "signed-out";
-      }
-    } catch { /* Unavailable verification is not evidence of a signed-out session. */ }
-    this.logger.info("browser.turn_authentication_verified", { traceId, authenticationStatus });
-    return { cancelledByUser, authenticationBlocked: true, authenticationStatus };
+    return { cancelledByUser, ...(authenticationRequired ? { authenticationRequired: true } : {}) };
   }
 
   beginManualTurn(...args) { return this.manualTurns.begin(...args); }
@@ -1922,7 +2010,7 @@ class BrowserHost {
         this.show();
         this.logger.info("browser.login_opened");
         const current = this.view.webContents.getURL();
-        if (!current.startsWith(CHATGPT_ORIGIN)) {
+        if (this.reauthenticationRequired || !current.startsWith(CHATGPT_ORIGIN)) {
           await this.view.webContents.loadURL(TEMPORARY_CHAT_URL);
         }
         const session = await this.probeAuthentication();
@@ -2115,6 +2203,8 @@ class BrowserHost {
 
   async probeAuthentication() {
     requireAutomaticBrowserInspection(this, "ChatGPT authentication probe");
+    if (this.reauthenticationRequired
+      && !["ChatGPT login", "ChatGPT passkey login", "ChatGPT logout"].includes(this.manualOperation)) return this.snapshot();
     if (this.authenticationProbe) return this.authenticationProbe;
     // did-finish-load and the login polling loop can arrive together. Only one probe may
     // navigate the shared primary surface; overlapping loadURL calls abort one another.
@@ -2186,6 +2276,7 @@ class BrowserHost {
       // page probe after a sign-out/sign-in notification.
       if (revision !== this.authenticationRevision) return this.snapshot();
       if (result.sessionAuthenticated) {
+        this.reauthenticationRequired = false;
         if (this.authView && !this.authView.webContents.isDestroyed()) {
           this.closeAuthView(this.authView, true, false);
         }

@@ -43,7 +43,10 @@ test.each([
     keyboard: { press: async () => {} },
     locator: (selector: string) => selector.includes('.__menu-item[tabindex="0"]')
       ? { filter: () => row } : hidden,
-    url: () => { actions.push("observe"); throw finalResponse; } });
+    url: () => {
+      if (stage === "send") { actions.push("observe"); throw finalResponse; }
+      return "https://chatgpt.com/?temporary-chat=true";
+    } });
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics, ...(owned ? { browserHostDescriptorPath: "owned-descriptor" } : {}) },
     finalizingRuns: new Set<string>(),
@@ -97,7 +100,8 @@ test.each([
     },
     assertPromptAttached: async (_page: unknown, text: string) => {
       if (multipart) expect(text.endsWith("Summarize")).toBeTrue();
-      else expect(text).toBe("Summarize the context");
+      else expect(text).toBe(!reused && (requiredRetained || tools)
+        ? " Summarize the context" : "Summarize the context");
       actions.push("verify");
     },
     ensureConnectorSurface: async () => { throw new Error("retained binding must not reopen connector discovery"); },

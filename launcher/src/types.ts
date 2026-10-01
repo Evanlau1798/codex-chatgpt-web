@@ -23,6 +23,7 @@ export interface LauncherState {
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
   experimentalNoAutoCompact: boolean;
+  experimentalPreparedWebSession: boolean;
   keepRunningOnClose: boolean;
   showBrowserDuringTurns: boolean;
   lockBrowserDuringTurns: boolean;
@@ -71,6 +72,7 @@ export interface BrowserTabState {
   loading: boolean;
   active: boolean;
   closable: boolean;
+  startupPreparation?: boolean;
   interactionMode?: BrowserInteractionMode;
   manualState?: "awaiting-user" | "sent" | "running" | "completed" | "timed-out" | "cancelled" | "failed";
   manualDeadlineAt?: string;
@@ -212,6 +214,7 @@ export interface LauncherApi {
     replace?: boolean;
     interactionMode?: BrowserInteractionMode;
   }): Promise<{ ok: boolean; stdout: string }>;
+  setConnectorNameSuffix(suffix: string): Promise<LauncherState>;
   setMcpStep(step: number): Promise<LauncherState>;
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setFreshConversationPerTurn(enabled: boolean): Promise<LauncherState>;
@@ -223,7 +226,7 @@ export interface LauncherApi {
     targetMode: BrowserInteractionMode;
   }>;
   setPreference(
-    key: "keepRunningOnClose" | "showBrowserDuringTurns" | "lockBrowserDuringTurns",
+    key: "keepRunningOnClose" | "showBrowserDuringTurns" | "lockBrowserDuringTurns" | "experimentalPreparedWebSession",
     value: boolean,
   ): Promise<LauncherState>;
   setSidebarState(state: { open: boolean; width: number }): Promise<LauncherState>;
@@ -233,6 +236,7 @@ export interface LauncherApi {
   windowState(): Promise<{ fullScreen: boolean; maximized: boolean }>;
   windowControl(action: "close" | "minimize" | "zoom"): void;
   onWindowStateChanged(listener: (state: { fullScreen: boolean; maximized: boolean }) => void): () => void;
+  onConnectorNamesChanged(listener: (names: Pick<LauncherSnapshot, "connectorName" | "connectorNames">) => void): () => void;
   onStateChanged(listener: (state: LauncherState) => void): () => void;
   onBrowserState(listener: (state: BrowserState) => void): () => void;
   onOperation(listener: (state: OperationState) => void): () => void;

@@ -23,6 +23,9 @@ export interface TurnBrokerOwner {
   compactionDeliveryCount(token: string): number | Promise<number>;
   beginCompletionFence(token: string): number | undefined | Promise<number | undefined>;
   commitCompletionFence(token: string, revision: number): boolean | Promise<boolean>;
+  beginFinalizationOnly(token: string, expectedActivityRevision: number): boolean | Promise<boolean>;
+  cancelFinalizationOnly(token: string, expectedActivityRevision: number): boolean | Promise<boolean>;
+  armFinalizationOutput(token: string, expectedActivityRevision: number): boolean | Promise<boolean>;
   nextOutput(token: string, afterSequence: number, signal?: AbortSignal): Promise<BrokerTurnOutputEvent>;
   resetOutput(token: string, finalSequence: number): void | Promise<void>;
   sealOutput(token: string, afterSequence: number, expectedRevision: number): boolean | Promise<boolean>;
@@ -48,7 +51,7 @@ export function dispatchExternalOwnerRequest(
   signal?: AbortSignal,
 ): unknown | Promise<unknown> {
   if (request.method === "owner_status") {
-    return { protocolVersion: 6, acceptingExternalOwners: target.accepting() };
+    return { protocolVersion: 10, acceptingExternalOwners: target.accepting() };
   }
   if (request.method === "owner_register") {
     const environment = ownerEnvironment(request.environment);
@@ -116,6 +119,27 @@ export function dispatchExternalOwnerRequest(
     }
     return Promise.resolve(target.commitCompletionFence(request.token, request.revision!))
       .then(committed => ({ committed }));
+  }
+  if (request.method === "owner_begin_finalization") {
+    if (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision! < 0) {
+      throw new Error("turn finalization activity revision is invalid");
+    }
+    return Promise.resolve(target.beginFinalizationOnly(request.token, request.expectedRevision!))
+      .then(started => ({ started }));
+  }
+  if (request.method === "owner_cancel_finalization") {
+    if (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision! < 0) {
+      throw new Error("turn finalization cancellation revision is invalid");
+    }
+    return Promise.resolve(target.cancelFinalizationOnly(request.token, request.expectedRevision!))
+      .then(cancelled => ({ cancelled }));
+  }
+  if (request.method === "owner_arm_finalization_output") {
+    if (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision! < 0) {
+      throw new Error("turn finalization output revision is invalid");
+    }
+    return Promise.resolve(target.armFinalizationOutput(request.token, request.expectedRevision!))
+      .then(armed => ({ armed }));
   }
   if (request.method === "owner_next_output") {
     if (!Number.isSafeInteger(request.afterSequence) || request.afterSequence! < 0) {
@@ -191,7 +215,7 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
         + ` (${error instanceof Error ? error.message : String(error)})`,
       );
     }
-    if (status.protocolVersion !== 6) {
+    if (status.protocolVersion !== 10) {
       throw new Error(`Unsupported DEV turn-owner protocol version: ${String(status.protocolVersion)}`);
     }
     if (status.acceptingExternalOwners !== true) {
@@ -337,6 +361,42 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
       throw new Error("DEV turn owner received an invalid completion fence result");
     }
     return response.committed;
+  }
+
+  async beginFinalizationOnly(token: string, expectedActivityRevision: number): Promise<boolean> {
+    const response = await callTurnBroker<{ started?: unknown }>(this.socketPath, {
+      method: "owner_begin_finalization",
+      token,
+      expectedRevision: expectedActivityRevision,
+    });
+    if (typeof response.started !== "boolean") {
+      throw new Error("DEV turn owner received an invalid finalization result");
+    }
+    return response.started;
+  }
+
+  async cancelFinalizationOnly(token: string, expectedActivityRevision: number): Promise<boolean> {
+    const response = await callTurnBroker<{ cancelled?: unknown }>(this.socketPath, {
+      method: "owner_cancel_finalization",
+      token,
+      expectedRevision: expectedActivityRevision,
+    });
+    if (typeof response.cancelled !== "boolean") {
+      throw new Error("DEV turn owner received an invalid finalization cancellation result");
+    }
+    return response.cancelled;
+  }
+
+  async armFinalizationOutput(token: string, expectedActivityRevision: number): Promise<boolean> {
+    const response = await callTurnBroker<{ armed?: unknown }>(this.socketPath, {
+      method: "owner_arm_finalization_output",
+      token,
+      expectedRevision: expectedActivityRevision,
+    });
+    if (typeof response.armed !== "boolean") {
+      throw new Error("DEV turn owner received an invalid finalization output result");
+    }
+    return response.armed;
   }
 
   async nextOutput(token: string, afterSequence: number, signal?: AbortSignal): Promise<BrokerTurnOutputEvent> {

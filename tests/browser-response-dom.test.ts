@@ -32,7 +32,7 @@ type Snapshot = {
 
 // Execute the production page callback, with only missing Domino browser APIs supplied.
 async function snapshot(html: string, later?: { afterMs: number; selector: string; text?: string; remove?: boolean; remount?: boolean },
-  observe?: (state: Snapshot) => void): Promise<Snapshot> {
+  observe?: (state: Snapshot) => void, running = false): Promise<Snapshot> {
   const { createWindow } = require("@mixmark-io/domino");
   const window = createWindow(html);
   let now = 1_000;
@@ -72,9 +72,9 @@ async function snapshot(html: string, later?: { afterMs: number; selector: strin
       page: () => ({ isClosed: () => false }),
     } as unknown as Locator;
     const worker = Object.create(ChatGptBrowserWorker.prototype) as {
-      responseDomSnapshot(locator: Locator): Promise<Snapshot>;
+      responseDomSnapshot(locator: Locator, ownership?: undefined, running?: boolean): Promise<Snapshot>;
     };
-    let result = await worker.responseDomSnapshot(locator);
+    let result = await worker.responseDomSnapshot(locator, undefined, running);
     observe?.(result);
     if (later) {
       now += later.afterMs;
@@ -86,7 +86,7 @@ async function snapshot(html: string, later?: { afterMs: number; selector: strin
         root!.textContent = later.text!;
         for (const observer of observers) if (observer.root === root) observer.notify();
       }
-      result = await worker.responseDomSnapshot(locator);
+      result = await worker.responseDomSnapshot(locator, undefined, running);
       observe?.(result);
     }
     expect(errors).toEqual([]);
@@ -159,6 +159,32 @@ test("multi-root answer settlement tracks mutations in every contributing answer
   expect(response.visibleText).toContain("Review in progress.");
   expect(response.completionActionVisible).toBeTrue();
   expect(response.projection.lastMutationAt).toBe(4_000);
+});
+
+test("a bound turn accepts completion controls rendered before its final Markdown", async () => {
+  const response = await snapshot(
+    '<section id="turn" data-turn-key="current"><div class="turn-action-controls"><button>Copy</button><button>More</button></div>'
+      + '<div data-content-search-unit-key="final"><h4 data-conversation-role="assistant"></h4>'
+      + '<div class="markdown"><p>Review complete.</p></div></div></section>',
+  );
+  expect(response.visibleText).toBe("Review complete.");
+  expect(response.completionActionVisible).toBeTrue();
+});
+
+test("a bound turn does not mistake its earlier user footer for assistant completion", async () => {
+  const response = await snapshot(
+    '<section id="turn" data-turn-key="current"><div data-content-search-unit-key="current:0:user">'
+      + '<div data-user-message-bubble="true">Review this.</div><div class="turn-action-controls">'
+      + '<button>Copy prompt</button><button>Share prompt</button></div></div>'
+      + '<div data-content-search-unit-key="current:1:assistant"><h4 data-conversation-role="assistant"></h4>'
+      + '<div class="markdown"><p>Review is still projecting.</p></div></div></section>',
+  );
+  expect(response.visibleText).toBe("Review is still projecting.");
+  expect(response.completionActionVisible).toBeFalse();
+  const tracker = new ChatGptCompletionTracker();
+  const state = { ...response, running: false, currentText: response.visibleText, currentHtml: response.fullHtml };
+  expect(tracker.update(state, 1).status).toBe("waiting");
+  expect(tracker.update(state, 1 + CHATGPT_COMPLETION_SETTLE_MS).status).toBe("waiting");
 });
 
 test("multi-root answer settlement resets when an earlier answer root disappears", async () => {
@@ -238,7 +264,7 @@ test("captured DIL smoke response reaches Markdown delivery and stable completio
 test("captured power UI excludes the user footer during streaming and completes the assistant answer", async () => {
   // Captured from the same live DEV turn on 2026-09-25. The user already has Copy/Share
   // controls while the assistant streams; both live under one data-turn-key.
-  const streaming = await snapshot(powerStreamingHtml);
+  const streaming = await snapshot(powerStreamingHtml, undefined, undefined, true);
   expect(streaming.visibleText).toContain("How a Rainbow Begins");
   expect(streaming.visibleText).not.toContain("No tools or apps");
   expect(streaming.completionActionVisible).toBeFalse();
@@ -262,13 +288,123 @@ test("captured power UI excludes the user footer during streaming and completes 
 });
 
 test("captured power response keeps its Markdown ledger through final rendering", async () => {
-  const streaming = await snapshot(powerStreamingHtml);
+  const streaming = await snapshot(powerStreamingHtml, undefined, undefined, true);
   const complete = await snapshot(powerCompleteHtml);
   const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
   buffer.observe(streaming.markdownSegments, 0);
   buffer.observe(complete.markdownSegments, 1000);
   expect(buffer.currentSnapshotIsConsistent()).toBeTrue();
   expect(buffer.finish().markdown).toEndWith("STREAM\\_END\\_927");
+});
+
+test("reported code-block containers preserve code while their localized toolbar changes", async () => {
+  // #631 supplied the finished structure: a generic DIV around
+  // [data-markdown-copy="code-block"] > DIV > CODE, without a PRE.
+  // Exercise changing UI text inside that container through the production extraction callback.
+  const code = '  first = "コード"\n\n  print(first)\n  # ```\n';
+  for (const block of ["div", "pre"]) {
+    for (const label of ["コード", "Code", "代码"]) {
+      const html = (toolbar: string, value = code) => `<section id="turn" data-turn-key="response">
+        <div data-content-search-unit-key="response:assistant"><h4 data-conversation-role="assistant">ChatGPT said:</h4>
+        <div data-markdown-text-style="assistant-message">
+          <p data-start="0" data-end="10">Example</p>
+          <div data-start="12" data-end="100"><${block} data-markdown-copy="code-block">
+            ${toolbar}<div class="overflow-auto p-2"><code class="language-python whitespace-pre block"><span>${value}</span></code></div>
+          </${block}></div>
+          <p data-start="102" data-end="120">Done.</p>
+        </div></div></section>`;
+      const during = await snapshot(html(`<div>${label}<button>Copy</button></div>`));
+      const after = await snapshot(html(""));
+      expect(during.markdownSegments[1]?.text).toBe(code.trim());
+      expect(after.markdownSegments[1]?.text).toBe(code.trim());
+      expect(during.markdownSegments[1]).toMatchObject({ sourceStart: 12, sourceEnd: 100 });
+      const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
+      buffer.observe(during.markdownSegments, 0);
+      buffer.observe(after.markdownSegments, 1000);
+      expect(buffer.currentSnapshotIsConsistent()).toBeTrue();
+      expect(buffer.finish().markdown).toBe(`Example\n\n\`\`\`python\n${code}\`\`\`\n\nDone.`);
+
+      // Ignore the toolbar, never an actual change to code already sent to Codex.
+      const changed = await snapshot(html("", code.replace("print(first)", "print(other)")));
+      buffer.observe(changed.markdownSegments, 2000);
+      expect(() => buffer.finish()).toThrow("ChatGPT changed a completed text block");
+    }
+  }
+});
+
+test("deferred compact Markdown accepts final projection changes before emitting the summary", () => {
+  const initial = [
+    {
+      key: "0:p", tag: "p", html: "<p>Draft summary</p>", text: "Draft summary",
+      sourceStart: 0, sourceEnd: 13, streamable: true,
+    },
+    {
+      key: "14:p", tag: "p", html: "<p>Tail</p>", text: "Tail",
+      sourceStart: 14, sourceEnd: 18, streamable: false,
+    },
+  ];
+  const completed = [
+    { ...initial[0]!, html: "<p>Final summary</p>", text: "Final summary" },
+    initial[1]!,
+  ];
+  const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0, "markdown", false);
+
+  expect(buffer.observe(initial, 0)).toBe("");
+  expect(buffer.observe(completed, 1_000)).toBe("");
+  expect(buffer.finish().markdown).toBe("Final summary\n\nTail");
+});
+
+test("writing card controls cannot rewrite delivered content, but edited email text still can", async () => {
+  const html = (toolbar: string, body = "Hello <strong>Alex</strong>.") => `<section id="turn"><div class="markdown">
+    <p data-start="0" data-end="10">Drafts</p>
+    <div data-markdown-copy="rich-block" data-start="12" data-end="200">
+      <div>${toolbar}<button>Copy</button></div>
+      <div data-markdown-copy-content="true"><p>${body}</p><p>See <a href="https://example.com/">details</a>.</p>
+        <pre><code class="language-text">line 1\n  line 2</code></pre></div>
+      <footer>Email format</footer>
+    </div><p data-start="202" data-end="220">Done.</p></div></section>`;
+  const during = await snapshot(html("メール"));
+  const complete = await snapshot(html(""));
+  expect(during.markdownSegments).toEqual(complete.markdownSegments);
+  expect(during.markdownSegments.map(segment => segment.text).join("\n")).not.toContain("メール");
+  expect(during.markdownSegments.map(segment => segment.text).join("\n")).not.toContain("Email format");
+  const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
+  buffer.observe(during.markdownSegments, 0);
+  buffer.observe(complete.markdownSegments, 1000);
+  const output = buffer.finish().markdown;
+  expect(output).toContain("Hello **Alex**.");
+  expect(output).toContain("[details](https://example.com/)");
+  expect(output).toContain("line 1\n  line 2");
+  buffer.observe((await snapshot(html("", "Hello Sam."))).markdownSegments, 2000);
+  expect(() => buffer.finish()).toThrow("ChatGPT changed a completed text block");
+});
+
+test("nested writing cards keep the outer prose and cards without a unique body lose nothing", async () => {
+  const response = await snapshot(`<section id="turn"><div class="markdown">
+    <div data-markdown-copy="rich-block"><p>Outer prose</p>
+      <div data-markdown-copy="rich-block"><div>Toolbar</div>
+        <div data-markdown-copy-content="true"><p>Inner body</p></div></div></div>
+    <div data-markdown-copy="rich-block"><div data-markdown-copy-content="true">First</div>
+      <div data-markdown-copy-content="true">Second</div></div>
+    <p>End</p></div></section>`);
+  const text = response.markdownSegments.map(segment => segment.text).join("\n");
+  expect(text).toContain("Outer prose");
+  expect(text).toContain("Inner body");
+  expect(text).toContain("First");
+  expect(text).toContain("Second");
+  expect(text).not.toContain("Toolbar");
+});
+
+test("ordinary prose, inline code and legacy fenced code keep their meaning", async () => {
+  const response = await snapshot(`<section id="turn" data-turn="assistant">
+    <div data-message-author-role="assistant"><div class="markdown">
+      <p>Code: <code>/tmp/file.ts</code></p>
+      <pre data-start="30" data-end="80"><code class="language-text">/tmp/file.ts\n\n[[note]]\n\`\`\`\nend</code></pre>
+      <p>Done.</p>
+    </div></div></section>`);
+  const buffer = new ChatGptMarkdownBuffer();
+  buffer.observe(response.markdownSegments, 0);
+  expect(buffer.finish().markdown).toBe("Code: [/tmp/file.ts](</tmp/file.ts>)\n\n````text\n/tmp/file.ts\n\n[[note]]\n```\nend\n````\n\nDone.");
 });
 
 test("DIL response extraction preserves ownership, commentary and completion boundaries", async () => {

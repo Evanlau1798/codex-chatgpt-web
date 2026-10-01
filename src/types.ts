@@ -7,6 +7,8 @@ export interface CodexParsedRequest {
   _rawBody?: unknown;
   /** Set only by the trusted Web route, never parsed from caller-supplied model metadata. */
   _chatgptModelFamily?: "5.6" | "6";
+  /** Internal-only fresh surface that may synthesize a final answer but cannot call tools. */
+  _chatgptFinalizationOnly?: boolean;
   /** Number of leading raw input items restored from local previous_response_id state. */
   _replayPrefixLen?: number;
   /** Proxy-private proof that context contains a complete canonical request snapshot. */
@@ -315,7 +317,7 @@ export interface CodexProviderConfig {
     automaticWebSessionLimitMinutes?: number;
     /** Experimental no-context mode disables compaction and scales browser waits for its full prompt. */
     experimentalNoAutoCompact?: boolean;
-    /** Candidate only: replace large guarded insertions; preserve existing direct inline routes. */
+    /** Legacy compatibility setting; all composer insertion now uses literal plain paste. */
     experimentalComposerPlainText?: boolean;
     /** Keep the single controlled browser visible. */
     headed?: boolean;

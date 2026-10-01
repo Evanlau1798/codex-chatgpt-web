@@ -1,4 +1,11 @@
 export const fr = {
+  pluginName: "Nom du plugin",
+  pluginNameBody: "Codex reste fixe. Modifiez le reste du nom.",
+  pluginNameChange: "Changer le nom",
+  pluginNameWarning: "Créez un nouveau plugin avec le nom affiché, puis vérifiez à nouveau MCP. Cela change uniquement le mode actuel. Les identifiants du tunnel et votre connexion ChatGPT sont conservés.",
+  pluginNameConfirm: "Changer et configurer",
+  preparedWebSession: "Démarrage rapide (expérimental)",
+  preparedWebSessionBody: "Garder une page sans message envoyé avec le dernier modèle vérifié et les instructions stables quand la capacité le permet. Les tâches ont la priorité. Toutes les pages, y compris les conversations conservées, partagent la concurrence maximale de Sécurité du compte ; sans limite de sessions, le plafond est de six. La désactivation ferme uniquement la page en attente. Désactivé par défaut.",
   product: "Codex Web GPT",
   devBadge: "DEV",
   devSetupTitle: "Configurer le profil DEV isolé",

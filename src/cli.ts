@@ -157,6 +157,8 @@ async function setupCommand(args: string[]): Promise<void> {
   if (automaticBrowserInteraction || manualBrowserInteraction) {
     options.browserInteractionMode = manualBrowserInteraction ? "manual" : "automatic";
   }
+  const connectorNameSuffix = takeOption(args, "--connector-name-suffix");
+  if (connectorNameSuffix !== undefined) options.connectorNameSuffix = connectorNameSuffix;
   const subagentProtocol = takeOption(args, "--subagent-protocol");
   if (subagentProtocol !== undefined) {
     if (subagentProtocol !== "compatibility-v1" && subagentProtocol !== "native") {

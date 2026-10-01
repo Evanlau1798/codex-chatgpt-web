@@ -97,7 +97,9 @@ class BrowserControlServer {
     const isTurn = request.url === "/v1/turn/start"
       || request.url === "/v1/turn/heartbeat"
       || request.url === "/v1/turn/usage"
+      || request.url === "/v1/turn/prepared"
       || request.url === "/v1/turn/end";
+    const isStartupCancel = request.url === "/v1/startup/cancel";
     const isTurnRelease = request.url === "/v1/turn/release";
     const isSessionInspect = request.url === "/v1/session/inspect";
     const isProxyResolution = request.url === "/v1/network/resolve-proxy";
@@ -105,7 +107,7 @@ class BrowserControlServer {
     const isDebugCutoff = request.url === "/v1/debug/turn/cutoff";
     const manualAction = request.url?.match(/^\/v1\/manual\/(start|wait-sent|wait-terminal|started|end|cancel)$/)?.[1];
     if (request.method !== "POST"
-      || (!isTurn && !isTurnRelease && !isSessionInspect && !isProxyResolution && !isConnectorVerify && !isDebugCutoff && !manualAction)) {
+      || (!isTurn && !isTurnRelease && !isSessionInspect && !isProxyResolution && !isConnectorVerify && !isDebugCutoff && !manualAction && !isStartupCancel)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -221,6 +223,10 @@ class BrowserControlServer {
         writeJson(response, 200, { ok: true, ...result });
         return;
       }
+      if (isStartupCancel) {
+        writeJson(response, 200, { ok: true, ...host.discardStartupPages() });
+        return;
+      }
       if (!body || typeof body !== "object" || !/^[A-Za-z0-9_-]{6,128}$/.test(body.traceId || "")) {
         throw new Error("traceId is invalid");
       }
@@ -237,6 +243,15 @@ class BrowserControlServer {
       if (body.requireRetainedConversation !== undefined
         && typeof body.requireRetainedConversation !== "boolean") {
         throw new Error("requireRetainedConversation is invalid");
+      }
+      if ((body.startupPreparation !== undefined && typeof body.startupPreparation !== "boolean")
+        || (body.allowStartupPreparation !== undefined && typeof body.allowStartupPreparation !== "boolean")
+        || (body.startupSurfaceId !== undefined && (typeof body.startupSurfaceId !== "string"
+          || !/^[A-Za-z0-9_-]{32}$/.test(body.startupSurfaceId)))
+        || (body.startupPreparation === true && body.startupSurfaceId !== undefined)
+        || ((body.startupPreparation !== undefined || body.startupSurfaceId !== undefined
+          || body.allowStartupPreparation !== undefined) && request.url !== "/v1/turn/start")) {
+        throw new Error("Startup preparation metadata is invalid");
       }
       if (body.refreshViewport !== undefined && typeof body.refreshViewport !== "boolean") {
         throw new Error("refreshViewport is invalid");
@@ -255,6 +270,8 @@ class BrowserControlServer {
         return;
       }
       if (request.url === "/v1/turn/start") {
+        const startupEnabled = preferences.experimentalPreparedWebSession === true;
+        if (body.startupPreparation === true && !startupEnabled) throw new Error("Startup preparation is disabled");
         if (host.browserInteractionMode() === "manual") {
           throw new Error("Automatic browser interaction is disabled");
         }
@@ -270,17 +287,25 @@ class BrowserControlServer {
             body.traceId,
             preferences.showBrowserDuringTurns === true,
             body.helperPid,
-            preferences.lockBrowserDuringTurns === true,
+            body.startupPreparation === true || preferences.lockBrowserDuringTurns === true,
             body.conversationKey,
             body.connectorIdentity,
             body.requireRetainedConversation === true,
             acquisition.signal,
+            ...(body.startupPreparation === true || body.startupSurfaceId || body.allowStartupPreparation !== undefined
+              ? [{ preparing: body.startupPreparation === true, surfaceId: startupEnabled ? body.startupSurfaceId : undefined,
+                allowed: startupEnabled && body.allowStartupPreparation === true }] : []),
           );
         } finally {
           response.off("close", onClose);
         }
         this.logger.info("browser.turn_started", { traceId: body.traceId });
-        writeJson(response, 200, { ok: true, ...lease, trackUsage: this.limits?.enabled() === true });
+        writeJson(response, 200, { ok: true, ...lease,
+          ...(body.allowStartupPreparation !== undefined ? { startupAllowed: startupEnabled && body.allowStartupPreparation === true } : {}),
+          trackUsage: this.limits?.enabled() === true });
+        return;
+      } else if (request.url === "/v1/turn/prepared") {
+        writeJson(response, 200, { ok: true, ...host.markStartupPrepared(body.traceId, body.helperPid) });
         return;
       } else if (request.url === "/v1/turn/heartbeat") {
         host.heartbeatTurn(body.traceId, body.helperPid, body.refreshViewport === true);

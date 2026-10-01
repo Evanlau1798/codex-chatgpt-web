@@ -1,14 +1,14 @@
 import { parseChatGptWebModelCapabilities } from "./chatgpt-web-models";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep, win32 } from "node:path";
-import { tmpdir } from "node:os";
 import { VERSION } from "./version";
 import { effectiveExperimentalBiggerContext } from "./context-mode";
 import {
   CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME,
-  isLegacyChatGptConnectorName, resolveInteractionConnectorIdentities, tunnelConfigForInteractionMode,
+  resolveInteractionConnectorIdentities, tunnelConfigForInteractionMode,
+  validateCurrentConnectorName,
   type AppConfig, type RuntimeMode, type TunnelConfig,
 } from "./config-interaction";
 export * from "./config-interaction";
@@ -257,7 +257,8 @@ export function loadConfigForSetup(): AppConfig {
   const interactionMode = raw.browserInteractionMode ?? "automatic";
   const automaticName = raw.automaticAppName
     ?? (interactionMode === "automatic" ? raw.appName : CHATGPT_CONNECTOR_NAME);
-  if (automaticName === ZERO_RISK_CHATGPT_CONNECTOR_NAME) {
+  if (automaticName === ZERO_RISK_CHATGPT_CONNECTOR_NAME
+    && (raw.manualAppName ?? ZERO_RISK_CHATGPT_CONNECTOR_NAME) === ZERO_RISK_CHATGPT_CONNECTOR_NAME) {
     raw.automaticAppName = CHATGPT_CONNECTOR_NAME;
     if (interactionMode === "automatic") raw.appName = CHATGPT_CONNECTOR_NAME;
   }
@@ -326,9 +327,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (typeof automaticAppName !== "string" || !automaticAppName.trim() || automaticAppName.length > 80) {
     throw new Error(`Invalid automaticAppName in ${path}`);
   }
-  if (manualAppName !== ZERO_RISK_CHATGPT_CONNECTOR_NAME) {
-    throw new Error(`manualAppName must be ${JSON.stringify(ZERO_RISK_CHATGPT_CONNECTOR_NAME)} in ${path}`);
-  }
+  // Persisted Automatic identities may predate the current setup naming rule. New names are
+  // validated by resolveInteractionConnectorIdentities; keep existing custom connectors usable.
+  validateCurrentConnectorName(manualAppName);
   if (automaticAppName === manualAppName) {
     throw new Error(`Automatic and Zero Risk connector names must differ in ${path}; rerun setup`);
   }

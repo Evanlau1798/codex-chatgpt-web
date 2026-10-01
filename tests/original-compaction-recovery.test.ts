@@ -9,7 +9,7 @@ import { cancelStructuredCompactionTrace } from "../src/adapters/chatgpt-web/com
 import { chatGptConversationKey } from "../src/adapters/chatgpt-web/conversation-key";
 import { chatGptWebExecutionNamespace, createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
 import { ChatGptTextFeed, ChatGptTraceFeed, chatGptCompactionSourceExecutionKey, chatGptTurnExecutionKey, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
-import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { callTurnBroker, TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig } from "../src/types";
 
@@ -194,12 +194,25 @@ test.each([false, true])("structured compact rebuild after retained browser loss
     browserStarts += 1;
     if (turn.requireRetainedConversation) throw chatGptRetainedSurfaceUnavailableError(new Error("retained fixture lost"));
     const prepared = await turn.prepare();
-    expect(prepared.text).toContain("Original task");
+    const preparedText = prepared.multipart?.parts.join("\n") ?? prepared.text;
+    expect(preparedText).toContain("Original task");
     prepared.release();
     if (rateLimited) throw new ChatGptWebAdapterError("ChatGPT rate limit: too many requests.", {
       status: 429, errorType: "rate_limit_error", code: "rate_limit_exceeded", retryable: false,
     });
-    return "Fallback checkpoint after retained browser loss";
+    const token = preparedText.match(/turn_token (control_[A-Za-z0-9_-]+)/)?.[1];
+    const handoffId = preparedText.match(/handoff_id (handoff_[A-Za-z0-9_-]+)/)?.[1];
+    if (!token || !handoffId) throw new Error("Fresh compaction rebuild has no one-shot control identity");
+    await callTurnBroker(provider.chatgptWeb!.brokerSocketPath!, {
+      method: "submit_compaction_handoff", token, handoffId,
+      summary: "Fallback checkpoint after retained browser loss",
+    });
+    await new Promise<void>((_resolve, reject) => {
+      const fail = () => reject(turn.abortSignal?.reason ?? new DOMException("aborted", "AbortError"));
+      if (turn.abortSignal?.aborted) fail();
+      else turn.abortSignal?.addEventListener("abort", fail, { once: true });
+    });
+    throw new Error("Fresh compaction rebuild was not retired after handoff");
   };
   const events: AdapterEvent[] = [];
   try {

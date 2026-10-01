@@ -2,6 +2,16 @@ const CURRENT_CONNECTOR_NAME = "Codex Native2";
 const DEV_CONNECTOR_NAME = `${CURRENT_CONNECTOR_NAME} DEV`;
 const LEGACY_CONNECTOR_NAMES = Object.freeze(["Codex Native"]);
 
+function validateConnectorNameSuffix(value) {
+  if (typeof value !== "string" || value.length > 74
+    || !/^[\p{L}\p{N}][\p{L}\p{N} _-]*$/u.test(value)
+    || value !== value.trim()) {
+    throw new Error("The part after Codex must contain 1–74 letters, numbers, spaces, hyphens or underscores");
+  }
+  if (value === "Native") throw new Error("Codex Native is retired; choose another plugin name");
+  return value;
+}
+
 function validateConnectorName(value) {
   if (typeof value !== "string" || !value.trim() || value.length > 80) {
     throw new Error("Connector name is invalid");
@@ -48,4 +58,5 @@ module.exports = {
   LEGACY_CONNECTOR_NAMES,
   requireCurrentRuntimeConnectorName,
   validateConnectorName,
+  validateConnectorNameSuffix,
 };

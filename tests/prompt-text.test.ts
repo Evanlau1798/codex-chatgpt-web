@@ -1,5 +1,3 @@
-import { ChatGptPromptInsertionMetrics, type ChatGptPromptInsertionSnapshot } from "../src/adapters/chatgpt-web/prompt-insertion-metrics";
-import { planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import { expect, test } from "bun:test";
 import { chatGptPromptTextEquivalent as equivalent, chatGptPromptMismatchDetails as details,
   chatGptPromptCodePointWindow, readChatGptPromptText } from "../src/adapters/chatgpt-web/prompt-text";
@@ -40,11 +38,11 @@ test("local code-point window stops at six code points, preserving surrogate beh
   expect(chatGptPromptCodePointWindow("abc", 3)).toBe("");
 });
 
-test("characterizes existing top-level/LF, decoration and leading-whitespace readback without fixing it", () => {
+test("reads independent top-level and inline LF boundaries without mutating decorations or leading whitespace", () => {
   const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
   const document = createDocument('<div id="composer"><span data-id="plugin:x" data-keyword="x">PRIVATE_PILL</span><div> A</div><div><br></div><div>B<br>C</div><span data-inline-selection-pill-cursor-target>PRIVATE_CURSOR</span></div>');
   const element = document.getElementById("composer")!;
-  expect(readChatGptPromptText(element)).toBe("A\n\nBC");
+  expect(readChatGptPromptText(element)).toBe("A\n\n\nB\nC");
   expect(element.textContent).toContain("PRIVATE_PILL"); // reader cloned, never mutated the live root
   element.innerHTML = '<span>A</span><span>B</span>';
   expect(readChatGptPromptText(element)).toBe("A\nB"); // known representation, not a new normalization
@@ -66,17 +64,43 @@ test("prompt readback excludes the verified power UI connector pill", () => {
 });
 
 
-test("verified marker progress is observable but never logged once per marker", () => {
-  let now = 0;
-  const events: ChatGptPromptInsertionSnapshot[] = [];
-  const metrics = new ChatGptPromptInsertionMetrics(planChatGptPromptInsertion("literal"), event => events.push(event), () => now);
-  metrics.markers(500);
-  metrics.markers(400);
-  metrics.markers(300);
-  now = 1_000;
-  metrics.markers(200);
-  expect(events.map(event => [event.event, event.remainingMarkers])).toEqual([["progress", 400], ["progress", 200]]);
-  metrics.finish();
-  metrics.markers(0);
-  expect(events.at(-1)?.remainingMarkers).toBe(200);
+// Retired per-marker progress telemetry is covered by literal transaction counts
+// in prompt-fast-insertion and finite settlement progress in prompt-candidate.
+test("inline BRs preserve all LF including the trailing LF while editor placeholders contribute none", () => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+  const document = createDocument('<div id="composer"><p><span>  A<br><br>B<br></span><br class="ProseMirror-trailingBreak"></p></div>');
+  const element = document.getElementById("composer")!;
+  const before = element.innerHTML;
+  expect(readChatGptPromptText(element, { preserveLeading: true })).toBe("  A\n\nB\n");
+  expect(element.innerHTML).toBe(before);
+  expect(equivalent("  A\n\nB", readChatGptPromptText(element, { preserveLeading: true }))).toBeFalse();
+});
+
+test("a top-level empty paragraph contributes a real block boundary, not a placeholder LF", () => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+  const document = createDocument('<div id="composer"><p>A<br class="ProseMirror-trailingBreak"></p><p><br class="ProseMirror-trailingBreak"></p><p>B</p></div>');
+  expect(readChatGptPromptText(document.getElementById("composer")!, { preserveLeading: true })).toBe("A\n\nB");
+});
+
+test("readback includes controls and Unicode as text nodes without HTML parser normalization", () => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+  const document = createDocument('<div id="composer"><p></p></div>');
+  const element = document.getElementById("composer")!;
+  const payload = " \t\r\0\u0001\u00a0\uE000\uF8FF\u2060\uFEFF\u2028\u2029👩‍💻e\u0301\uD800";
+  element.firstChild!.appendChild(document.createTextNode(payload));
+  expect(readChatGptPromptText(element, { preserveLeading: true })).toBe(payload);
+});
+
+test("full DOM readback detects early drift even when length and the entire tail are unchanged", () => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+  const document = createDocument('<div id="composer"><p></p></div>');
+  const element = document.getElementById("composer")!;
+  const expected = "prefix" + "unchanged tail ".repeat(20_000);
+  element.firstChild!.textContent = expected;
+  expect(equivalent(expected, readChatGptPromptText(element, { preserveLeading: true }))).toBeTrue();
+  element.firstChild!.firstChild!.textContent = "x" + expected.slice(1);
+  const observed = readChatGptPromptText(element, { preserveLeading: true });
+  expect(observed.length).toBe(expected.length);
+  expect(equivalent(expected, observed)).toBeFalse();
+  expect(details(expected, observed).commonPrefixChars).toBe(0);
 });

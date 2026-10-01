@@ -40,8 +40,8 @@ export function isNativeTextCompaction(body: unknown): boolean {
   return true;
 }
 
-/** Mirrors codex-rs core/templates/compact/prompt.md (the local-compaction instruction). */
-export const COMPACT_PROMPT = `You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.
+/** Based on codex-rs local compaction, with handoff terms distinct from recovery checkpoints. */
+export const COMPACT_PROMPT = `You are performing CONTEXT COMPACTION. Create a handoff summary for another LLM that will resume the task.
 
 Include:
 - Current progress and key decisions made
@@ -54,7 +54,7 @@ Include:
 Do not claim that no work remains while a resumable agent or pending collaboration still exists.
 Prioritize the current goal, active constraints, the user's language preference, and the next unfinished action.
 Distinguish completed work from pending work. Mark cancelled or superseded requests as inactive, not as tasks to resume.
-Replace prior summaries with one consolidated current checkpoint; do not append a history of checkpoints.
+Replace prior summaries with one consolidated current handoff summary; do not append a history of summaries.
 Preserve verified file locations, findings, and essential test results so the next model need not repeat completed investigation; re-read when evidence is stale or incomplete.
 Be concise, structured, and focused on helping the next LLM seamlessly continue the work.`;
 

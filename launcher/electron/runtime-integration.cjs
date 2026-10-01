@@ -2,7 +2,7 @@
 const path = require("node:path");
 const fs = require("node:fs");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
-const { connectorNameForDevSetup, connectorNameForSetup, CURRENT_CONNECTOR_NAME, DEV_CONNECTOR_NAME, requireCurrentRuntimeConnectorName } = require("./connector-identity.cjs");
+const { connectorNameForDevSetup, connectorNameForSetup, CURRENT_CONNECTOR_NAME, DEV_CONNECTOR_NAME, isLegacyConnectorName, requireCurrentRuntimeConnectorName, validateConnectorName } = require("./connector-identity.cjs");
 const { normalizeContextModes } = require("./context-mode.cjs");
 const { setRuntimeBooleanSetting } = require("./runtime-boolean-setting.cjs");
 const UNINSTALL_TIMEOUT_MS = 2 * 60_000;
@@ -395,7 +395,7 @@ module.exports = {
     if (!current.configured || current.mode !== "full") {
       throw new Error("The native MCP runtime is not configured");
     }
-    return this.launcherProfile === "development"
+    return this.launcherProfile === "development" && !current.config?.automaticAppName
       ? connectorNameForDevSetup(current.config?.appName)
       : requireCurrentRuntimeConnectorName(current.config?.appName);
   },
@@ -403,15 +403,25 @@ module.exports = {
   browserConnectorName(mode = this.browserInteractionMode()) {
     const current = this.runtimeConfigSnapshot();
     const configured = mode === "manual" ? current.config?.manualAppName : current.config?.automaticAppName;
-    if (this.launcherProfile === "development") {
+    if (this.launcherProfile === "development" && !current.config?.automaticAppName) {
       return connectorNameForDevSetup(configured ?? current.config?.appName);
     }
     if (!current.configured || current.mode !== "full") return configured ?? CURRENT_CONNECTOR_NAME;
     return connectorNameForSetup(configured ?? current.config?.appName);
   },
 
-  setupConnectorName() {
-    return this.launcherProfile === "development" ? DEV_CONNECTOR_NAME : CURRENT_CONNECTOR_NAME;
+  setupConnectorName(mode = "automatic") {
+    if (mode !== "automatic" && mode !== "manual") throw new Error("Invalid interaction mode");
+    const current = this.runtimeConfigSnapshot().config;
+    const defaultName = mode === "manual" ? "Codex Zero Risk"
+      : this.launcherProfile === "development" ? DEV_CONNECTOR_NAME : CURRENT_CONNECTOR_NAME;
+    const stored = mode === "manual" ? current?.manualAppName : current?.automaticAppName;
+    if (stored !== undefined) return isLegacyConnectorName(stored) ? defaultName : validateConnectorName(stored);
+    if (mode !== "manual" && current?.browserInteractionMode !== "manual" && current?.appName) {
+      return this.launcherProfile === "development" ? connectorNameForDevSetup(current.appName)
+        : connectorNameForSetup(current.appName);
+    }
+    return defaultName;
   },
 
   cancelActiveTurns() {

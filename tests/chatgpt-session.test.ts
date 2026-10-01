@@ -15,7 +15,7 @@ import {
 test("French generation stays live beyond the completion grace period and still requires a finished answer", () => {
   const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
   // Captured from the French composer: this renderer has no stop-button test id.
-  const document = createDocument('<form data-chatgpt-composer><button type="button" aria-label="Arrêter"></button></form>');
+  const document = createDocument('<form data-chatgpt-composer><button type="button" aria-label="Arrêter"><svg class="icon-primary-action"><path d="M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"></path></svg></button></form>');
   const tracker = new ChatGptTurnDomHealthTracker();
   const state = () => ({ responsePresent: true, running: !!document.querySelector(CHATGPT_STOP_BUTTON_SELECTOR),
     currentText: "Résumé partiel", completionActionVisible: false });
@@ -36,7 +36,7 @@ test("generation control detection preserves legacy and English controls and exc
     <form><button type="button" aria-label="Arrêter" id="other-form"></button></form>
     <form data-chatgpt-composer>
       <button type="button" aria-label="Stop" id="english"></button>
-      <button type="button" aria-label="Arrêter" id="french"></button>
+      <button type="button" aria-label="Arrêter" id="french"><svg class="icon-primary-action"><path d="M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"></path></svg></button>
       <button type="submit" aria-label="Arrêter" id="submit"></button>
       <button type="button" aria-label="Envoyer" id="send"></button>
       <button type="button" aria-label="Arrêter autre chose" id="different-action"></button>

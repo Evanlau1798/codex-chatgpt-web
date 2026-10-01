@@ -6,20 +6,20 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-win-x64.exe"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-mac-arm64.dmg"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-linux-x64.AppImage"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-windows.svg" width="224" height="64" alt="Windows · x64"></a>&nbsp;
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-macos.svg" width="224" height="64" alt="macOS · Apple silicon"></a>&nbsp;
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest"><img src="assets/readme/download-linux.svg" width="224" height="64" alt="Linux · x64"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.0.0-Enhanced.1/codex-web-gpt-6.0.0-Enhanced.1-mac-x64.dmg">macOS Intel</a> · <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">All releases</a>
+  <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">macOS Intel</a> · <a href="https://github.com/Evanlau1798/codex-chatgpt-web/releases/latest">Latest release</a>
 </p>
 
 <p align="center">
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **Development candidate: `6.1.1-Enhanced.1`.** The download buttons still point to released Enhanced packages; this branch does not publish a release.
+> **Development candidate: `6.1.3-Enhanced.2`.** Download buttons always open the latest published Enhanced release; this branch does not publish a release by itself.
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">Troubleshooting</a> · <a href="SECURITY.md">Security</a> · <a href="CONTRIBUTING.md">Contributing</a>
@@ -170,6 +170,22 @@ ChatGPT page and never sends a prompt for you. The launcher prepares and copies 
 choose the model, effort, and `Codex Zero Risk` connector, then paste and send it yourself. This
 removes the account risk specifically associated with ChatGPT web automation.
 
+### Fast startup (experimental)
+
+`6.1.3-Enhanced.2` adds **Fast startup**, an opt-in switch in **Settings**. It prepares an
+unsent standby Web page with the last verified model and a harness draft, then inserts the
+current request after checking the account, model, and draft again. Preparation does not send
+a message. Real tasks take priority; a standby page is prepared only when the page limit has room.
+Account Safety's **Maximum concurrency** applies, with six sessions as the default when that
+limit is disabled. Completed pages retained by TTL are not standby pages.
+
+Native2 progress can stream while work is running; the complete final answer is committed
+once through the output tunnel. Startup and final-settlement diagnostics help distinguish
+local preparation time from time spent waiting for ChatGPT.
+
+**Known candidate limitation:** a sporadic continuation can fail model verification before
+Send. Additional diagnostics are included; the root cause remains under investigation.
+
 ### Enhanced Web session mode
 
 This setting is enabled by default for new Enhanced fork installations and affects only
@@ -259,9 +275,9 @@ The launcher's **MCP** page guides the complete setup. For the exact clicks, see
 
 1. Finish the required setup, open **MCP**, create the Tunnel and regular API key, then press
    **Connect harness**.
-2. Enable ChatGPT **Developer Mode** and create a new Tunnel connector named exactly
-   **Codex Native2**, with **Authentication: None** and **Allow all actions**.
-3. Run **Verify runtime** to confirm that **Codex Native2** is attached and available.
+2. Enable ChatGPT **Developer Mode** and create a new Tunnel connector with the exact name shown
+   in the launcher (**Codex Native2** by default), with **Authentication: None** and **Allow all actions**.
+3. Run **Verify runtime** to confirm that the displayed connector is attached and available.
 
 Write/modify actions also require the ChatGPT workspace and its administrator policy to permit
 them. See

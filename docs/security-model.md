@@ -22,7 +22,8 @@ created. Repository contents, tool output, websites, and prompt text are untrust
 The bridge transports decisions; it does not add a second planner, semantic router, or fallback
 model. Unsupported model/effort/tool combinations fail explicitly.
 
-The direct turn-token MCP schema is attached only through the `Codex Native2` connector identity.
+The direct turn-token MCP schema is attached only through the exact configured connector name
+(default `Codex Native2`; the part after `Codex ` can be changed).
 The pre-v4 `Codex Native` connector is treated as legacy and is never selected as a fallback. This
 prevents a cached legacy schema from being mistaken for the current capability contract.
 

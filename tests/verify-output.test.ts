@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { rootTestBatchCommands, writeBufferedOutput } from "../scripts/verify";
+
 const repo = resolve(import.meta.dir, "..");
 const verifyModule = pathToFileURL(resolve(repo, "scripts", "verify.ts")).href;
 const decode = (value: Uint8Array) => new TextDecoder().decode(value);
@@ -46,4 +48,25 @@ test("release verification replays failed output in concise mode", () => {
   expect(failed.stdout).toContain("failure-out");
   expect(failed.stderr).toContain("failure-err");
   expect(failed.stderr).toContain("Verification command failed (7)");
+});
+
+test("release verification splits buffered output into runner-safe writes", () => {
+  const writes: string[] = [];
+  const output = `${"x".repeat(16_383)}😀${"x".repeat(23_615)}`;
+
+  writeBufferedOutput(output, chunk => writes.push(chunk), 16_384);
+
+  expect(writes.length).toBe(3);
+  expect(Math.max(...writes.map(chunk => chunk.length))).toBe(16_384);
+  expect(writes.some(chunk => /[\uD800-\uDBFF]$/.test(chunk))).toBeFalse();
+  expect(writes.some(chunk => /^[\uDC00-\uDFFF]/.test(chunk))).toBeFalse();
+  expect(writes.join("")).toBe(output);
+});
+
+test("release verification launches root tests through bounded worker processes", () => {
+  expect(rootTestBatchCommands(["a", "b", "c", "d", "e"], 2)).toEqual([
+    ["run", "scripts/run-root-tests.ts", "--worker-start", "0", "--worker-count", "2"],
+    ["run", "scripts/run-root-tests.ts", "--worker-start", "2", "--worker-count", "2"],
+    ["run", "scripts/run-root-tests.ts", "--worker-start", "4", "--worker-count", "1"],
+  ]);
 });

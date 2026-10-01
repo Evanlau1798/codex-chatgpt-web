@@ -34,7 +34,10 @@ function validateRequest(request: BrokerRequest): void {
     && request.method !== "owner_register_safe" && request.method !== "owner_update"
     && request.method !== "owner_safe_sent" && request.method !== "owner_next"
     && request.method !== "owner_complete" && request.method !== "owner_completion_fence_begin"
-    && request.method !== "owner_completion_fence_commit" && request.method !== "owner_next_output"
+    && request.method !== "owner_completion_fence_commit" && request.method !== "owner_begin_finalization"
+    && request.method !== "owner_cancel_finalization"
+    && request.method !== "owner_arm_finalization_output"
+    && request.method !== "owner_next_output"
     && request.method !== "owner_reset_output" && request.method !== "owner_seal_output"
     && request.method !== "owner_revoke" && request.method !== "owner_wait_retirement"
     && request.method !== "owner_safe_wait_start" && request.method !== "owner_safe_wait_completion"
@@ -82,7 +85,7 @@ function handleSocket(socket: Socket, dispatch: BrokerDispatch): void {
 
 export function startTurnBrokerServer(socketPath: string, dispatch: BrokerDispatch): Promise<Server> {
   return new Promise<Server>((resolveStart, rejectStart) => {
-    const windowsPipe = isWindowsPipeEndpoint(socketPath);
+    const windowsPipe = process.platform === "win32" || isWindowsPipeEndpoint(socketPath);
     if (!windowsPipe) {
       const encodedLength = Buffer.byteLength(socketPath);
       if (encodedLength > MAX_UNIX_SOCKET_PATH_BYTES) {

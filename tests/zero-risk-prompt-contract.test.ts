@@ -94,6 +94,7 @@ test("active Zero Risk compaction returns its checkpoint through the bound compl
   expect(automatic).toContain("This sentinel only settles the source response; it does not complete the user's task or submit the checkpoint.");
   expect(safe).toContain("codex_turn_complete");
   expect(safe).toContain("Return only the complete checkpoint summary to Codex");
-  expect(safe).toContain("CONTEXT CHECKPOINT COMPACTION");
+  expect(safe).toContain("CONTEXT COMPACTION");
+  expect(safe).not.toContain("CONTEXT CHECKPOINT COMPACTION");
   expect(safe).not.toContain("separate structured compaction handoff request");
 });

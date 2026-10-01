@@ -28,7 +28,7 @@ test("composer diagnostics survive the production Activity/export route without 
     metrics.finish();
     const failure = chatGptPromptAttachmentMismatch("ChatGPT composer text mismatch", text, `${text}\n`);
     logger.error("runtime.stderr", { message: failure.message });
-    expect(exportSanitizedLogs({ filePath, destinationPath })).toBe(4);
+    expect(exportSanitizedLogs({ filePath, destinationPath })).toBe(6);
     const safe = readFileSync(destinationPath, "utf8");
     expect(safe).not.toContain(secret);
     expect(safe).not.toContain("U+0049");
@@ -36,6 +36,6 @@ test("composer diagnostics survive the production Activity/export route without 
     expect(safe).not.toContain("expectedText");
     expect(safe).toContain("nativeEditAttempts");
     expect(safe).toContain("single_lf_insertion");
-    expect(safe).toContain("guarded-chunked");
+    expect(safe).toContain("literal-paste");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

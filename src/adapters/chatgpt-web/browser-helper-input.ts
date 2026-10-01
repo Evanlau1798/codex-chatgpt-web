@@ -14,7 +14,7 @@ export interface BrowserHelperRunMessage {
     autoApproveToolCalls: boolean;
     useSavedChats?: boolean;
     experimentalNoAutoCompact?: boolean;
-    /** Candidate only: replace large guarded insertions; preserve existing direct inline routes. */
+    /** Legacy configuration accepted for compatibility; all prompts use literal paste. */
     experimentalComposerPlainText?: boolean;
   };
   turn: {
@@ -24,6 +24,7 @@ export interface BrowserHelperRunMessage {
     modelFamily?: "5.6" | "6";
     capabilities: ChatGptWebCapabilities;
     nativeConnector?: boolean;
+    allowStartupPreparation?: boolean;
     resumeAvailable?: boolean;
     retainConversation?: boolean;
     requireRetainedConversation?: boolean;
@@ -47,10 +48,14 @@ export type BrowserHelperInputMessage = BrowserHelperRunMessage | MaintenanceMes
   | { type: "send_activated_ack"; id: string }
   | { type: "completion_fence_begin_ack"; id: string; requestId: number; revision: number | null }
   | { type: "completion_fence_commit_ack"; id: string; requestId: number; committed: boolean }
+  | { type: "finalization_begin_ack"; id: string; requestId: number; started: boolean }
+  | { type: "finalization_cancel_ack"; id: string; requestId: number; cancelled: boolean }
+  | { type: "finalization_output_arm_ack"; id: string; requestId: number; armed: boolean }
   | { type: "tunneled_output"; id: string; output: BrokerTurnOutputEvent }
   | { type: "tunneled_output_reset_ack"; id: string; requestId: number; reset: boolean }
   | { type: "tunneled_output_seal_ack"; id: string; requestId: number; sealed: boolean }
   | { type: "preempt_retry"; id: string; prompt: string }
+  | { type: "arm_compaction_boundary_retention"; id: string }
   | { type: "progress"; id: string; snapshot: ChatGptExternalTurnProgressSnapshot }
   | { type: "abort"; id: string; reason?: "compaction_handoff_accepted" }
   | { type: "shutdown" };

@@ -10,6 +10,7 @@ import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker
 import { ChatGptBrowserDiagnostics } from "../src/adapters/chatgpt-web/browser-diagnostics";
 import { planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import { partitionMultipartContext, type MultipartContextRecord } from "../src/adapters/chatgpt-web/prompt-multipart";
+import { CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
 import type { CodexParsedRequest } from "../src/types";
 
 const pro = { localToolsEnabled: false, solAvailable: true, proAvailable: true };
@@ -102,6 +103,7 @@ test("large Bigger Context stage reaches the verified direct attachment route by
   let final: { text: string; direct: boolean } | undefined;
   const page = {
     isClosed: () => false,
+    url: () => CHATGPT_TEMPORARY_CHAT_URL,
     locator: () => ({ count: async () => 0, nth() { return this; },
       evaluateAll: async () => ({ count: 0, identities: [], ambiguous: false }) }),
   };
@@ -136,11 +138,11 @@ test("large Bigger Context stage reaches the verified direct attachment route by
     for (const stage of stages) {
       expect(stage.text.length).toBeGreaterThan(32_000);
       expect(planChatGptPromptInsertion(stage.text, { largeStructuredDirect: stage.direct }).strategy)
-        .toBe("direct-text");
+        .toBe("literal-paste");
     }
     expect(final?.text.length).toBeGreaterThan(32_000);
     expect(planChatGptPromptInsertion(final!.text, { largeStructuredDirect: final!.direct }).strategy)
-      .toBe("direct-text");
+      .toBe("literal-paste");
   } finally {
     capture.mockRestore();
     error.mockRestore();

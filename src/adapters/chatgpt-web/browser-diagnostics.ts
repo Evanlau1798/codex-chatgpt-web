@@ -114,7 +114,7 @@ function verificationFailure(error: unknown): string {
   if (error instanceof Error && error.name === "AbortError") return "cancelled";
   if (error instanceof Error && error.name === "TimeoutError") return "timeout";
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-  return typeof code === "string" && ["chatgpt_connector_unavailable", "chatgpt_rate_limited", "chatgpt_session_expired", "chatgpt_surface_changed"].includes(code)
+  return typeof code === "string" && ["chatgpt_connector_unavailable", "chatgpt_rate_limited", "chatgpt_session_expired", "chatgpt_sign_in_required", "chatgpt_surface_changed"].includes(code)
     ? code : "verification_failed";
 }
 
@@ -350,12 +350,17 @@ async function captureBrowserDiagnosticState(
       effortItems: rows(selectors.effortItem, 20),
       effortSliders: [...document.querySelectorAll(selectors.effortSliderContainer)]
         .filter(rendered).slice(-10)
-        .flatMap(container => [...container.querySelectorAll('[role="slider"]')])
-        .map(element => ({
+        .flatMap(container => [...container.querySelectorAll('[role="slider"]')].map(element => ({
           min: integerAttribute(element, "aria-valuemin"),
           max: integerAttribute(element, "aria-valuemax"),
           value: integerAttribute(element, "aria-valuenow"),
-        })),
+          power: container.hasAttribute("data-model-picker-power-slider"),
+          enabled: Boolean(container.querySelector('[data-orientation="horizontal"][aria-disabled="false"]')),
+          ticks: [...container.querySelectorAll("[data-selected]")].slice(0, 10).map(tick => ({
+            locked: tick.getAttribute("data-locked") === "true" ? true
+              : tick.getAttribute("data-locked") === "false" ? false : null,
+          })),
+        }))),
       menus: rows('[role="menu"], [role="listbox"], [data-testid="composer-intelligence-picker-content"]', 20),
       connectorRows: rows('.__menu-item[tabindex="0"], [data-mention-list-scroll-area] button[data-list-navigation-item="true"]', 40),
       overlays: rows('[role="dialog"], [role="alert"], [role="status"]', 30),

@@ -14,8 +14,13 @@ import { ChatGptPromptOperation } from "../src/adapters/chatgpt-web/prompt-opera
 import { chatGptPromptPreservesLeading, planChatGptPromptInsertion } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
 import { chatGptPromptAttachmentTimeoutMs } from "../src/adapters/chatgpt-web/prompt-attachment-budget";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
-import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_SEND_BUTTON_SELECTOR, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
-import { activateChatGptSendControl, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
+import {
+  CHATGPT_ASSISTANT_TURN_SELECTOR,
+  CHATGPT_COMPOSER_SELECTOR,
+  CHATGPT_SEND_BUTTON_SELECTOR,
+  CHATGPT_USER_TURN_SELECTOR,
+} from "../src/chatgpt-session";
+import { activateChatGptSendControl, activateOwnedChatGptSendControl, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
 import { ChatGptViewportReadinessError, chatGptSuspensionClock } from "../src/adapters/chatgpt-web/browser-stage-lifecycle";
 
 type Recovery = (attempt: number, cause: Error, signal?: AbortSignal) => Promise<Page>;
@@ -26,6 +31,9 @@ type Baseline = {
   initialUserTurnCount: number;
   initialResponseTurnCount: number;
   initialTurnIdentities: readonly string[];
+  initialPageUrl?: string;
+  submissionRequestObserved?: () => boolean;
+  activateSubmissionRequestObservation?: () => void;
 };
 interface Worker {
   activeComposer(page: Page): Promise<unknown>;
@@ -37,7 +45,7 @@ interface Worker {
     expectedPrompt?: string, insertionPlan?: ReturnType<typeof planChatGptPromptInsertion>): Promise<string>;
   waitForSubmissionAccepted(page: Page, users: Locator, responses: Locator, response: Locator,
     userCount: number, initial: State, turnIdentities: readonly string[], signal?: AbortSignal, progress?: ChatGptExternalTurnProgress,
-    initialRevision?: number, initialBrokerActivityRevision?: number, recover?: Recovery): Promise<string>;
+    initialRevision?: number, initialBrokerActivityRevision?: number, recover?: Recovery, baseline?: Baseline): Promise<string>;
   waitForNewAssistantTurn(page: Page, responses: Locator, initial: State, deadline?: number,
     signal?: AbortSignal, progress?: ChatGptExternalTurnProgress, grace?: number, recover?: Recovery): Promise<Locator>;
   waitForMultipartAcknowledgement(page: Page, response: Locator, stage: { acknowledgement: string },
@@ -47,6 +55,7 @@ interface Worker {
 function surface(
   read: () => Promise<State>,
   readUsers: () => Promise<readonly string[]> = async () => ["conversation-turn-old"],
+  options: { url?: () => string; composerText?: () => string } = {},
 ) {
   const hidden = {
     filter() { return this; }, last() { return this; }, getByText() { return this; }, getByTestId() { return this; },
@@ -85,9 +94,17 @@ function surface(
     },
     nth: () => assistant, page: () => page,
   } as unknown as Locator;
+  const composer = {
+    filter() { return this; },
+    count: async () => 1,
+    first() { return this; },
+    evaluate: async () => options.composerText?.() ?? "",
+  };
   const page = {
     isClosed: () => false,
+    url: () => options.url?.() ?? "https://chatgpt.com/?temporary-chat=true",
     locator: (selector: string) => {
+      if (selector === CHATGPT_COMPOSER_SELECTOR) return composer;
       if (selector.includes('data-message-author-role="assistant"')) return responses;
       if (selector.includes('data-message-author-role="user"')) return users;
       if (selector === "[data-turn-id-container], [data-turn-key]") {
@@ -106,7 +123,7 @@ function surface(
     },
     getByTestId: (id: string) => { selected.push(id); return assistant; },
   } as unknown as Page;
-  const baseline = {
+  const baseline: Baseline = {
     userTurns: users,
     responseTurns: responses,
     initialUserTurnCount: 1,
@@ -133,10 +150,24 @@ async function bounded<T>(operation: Promise<T>, ms: number): Promise<T> {
   } finally { clearTimeout(timer!); }
 }
 const accepted = (instance: Worker, fixture: ReturnType<typeof surface>, signal?: AbortSignal,
-  progress?: ChatGptExternalTurnProgress, recover?: Recovery) => instance.waitForSubmissionAccepted(
+  progress?: ChatGptExternalTurnProgress, recover?: Recovery, baseline?: Baseline) => instance.waitForSubmissionAccepted(
     fixture.page, fixture.baseline.userTurns, fixture.responses, fixture.assistant, 1, initial,
-    fixture.baseline.initialTurnIdentities, signal, progress, 0, 0, recover,
+    fixture.baseline.initialTurnIdentities, signal, progress, 0, 0, recover, baseline,
   );
+
+test("fresh Temporary Chat navigation and composer clearing acknowledge an accepted send", async () => {
+  let url = "https://chatgpt.com/?temporary-chat=true";
+  const fixture = surface(async () => initial, undefined, {
+    url: () => url,
+    composerText: () => "",
+  });
+  fixture.baseline.initialPageUrl = url;
+  fixture.baseline.submissionRequestObserved = () => true;
+  url = "https://chatgpt.com/c/compact-turn?temporary-chat=true";
+
+  expect(await accepted(worker(), fixture, undefined, undefined, undefined, fixture.baseline))
+    .toBe("conversation_navigation");
+});
 
 test("accepted send rebinds observation once without sending the prompt twice", async () => {
   const first = surface(timeout);
@@ -540,7 +571,7 @@ test("production send and multipart observation wire same-page recovery for laun
 test("every post-Send identity observer uses transient read-only recovery", () => {
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
   expect((source.match(/await observeChatGptTurnIdentityAfterSend\(/g) ?? []).length).toBe(4);
-  expect((source.match(/const initialResponseTurn = await readChatGptAssistantTurnState\(/g) ?? []).length).toBe(2);
+  expect((source.match(/(?:const|let) initialResponseTurn = await readChatGptAssistantTurnState\(/g) ?? []).length).toBe(2);
 });
 
 test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as const)("production %s send reacquires locators after recovery without resending", async lane => {
@@ -587,7 +618,12 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
   const progress = new ChatGptExternalTurnProgress();
   const dependencies = {
     usageSubmission: async () => undefined, recordFinalUsage: undefined,
-    submissionRejection: { begin() {}, failure: async () => undefined },
+    submissionRejection: {
+      begin() {},
+      activate() {},
+      ownedSubmissionRequestObserved: () => false,
+      failure: async () => undefined,
+    },
     first, next, initial, events, ChatGptPromptOperation, connectorAttemptBudget: { remaining: 3 },
     turn: {
       traceId: `production-${lane}-rebind`, externalProgress: progress,
@@ -606,7 +642,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
     CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, chatGptSuspensionClock,
     chatGptPromptAttachmentTimeoutMs, chatGptPromptPreservesLeading, planChatGptPromptInsertion,
     throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
-    activateChatGptSendControl, readChatGptAssistantTurnState,
+    activateChatGptSendControl, activateOwnedChatGptSendControl, readChatGptAssistantTurnState,
   };
   const compiled = new Bun.Transpiler({ loader: "ts" }).transformSync(`
     async function run() {
@@ -614,13 +650,18 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
       let responseTurns = first.responses;
       let responseTurn = first.assistant;
       const userTurns = first.baseline.userTurns;
-      const initialResponseTurn = initial;
+      let initialResponseTurn = initial;
       const initialUserTurnCount = 1;
       const submissionBaseline = first.baseline;
       const reuseConversation = false;
       const responseAttempt = 1;
       let initialToolBatchRevision = 0;
       let beforeRecoveryInsertion;
+      let activateRecoverySubmission;
+      let recoveryExpectedActivityRevision;
+      let recoveryFinalizationActivated = false;
+      let recoveryObservationOnly = false;
+      let recoveryObservationBaseline;
       let retrySubmitted = () => events.push("retry-submitted");
       const toolTurnObservationRecovery = async () => {
         events.push("rebind");

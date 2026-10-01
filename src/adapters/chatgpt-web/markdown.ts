@@ -229,6 +229,7 @@ export class ChatGptMarkdownBuffer {
     private readonly transform: (markdown: string) => string = markdown => markdown,
     private readonly stabilityMs = 750,
     private readonly outputFormat: "markdown" | "visible-text" = "markdown",
+    private readonly streamDuringObservation = true,
   ) {
     if (!Number.isFinite(stabilityMs) || stabilityMs < 0) {
       throw new Error("ChatGPT Markdown stability window must be a non-negative finite number");
@@ -243,6 +244,7 @@ export class ChatGptMarkdownBuffer {
     }
     this.consistencyError = undefined;
     this.latest = reconciled.map(segment => ({ ...segment }));
+    if (!this.streamDuringObservation) return "";
 
     const visibleCandidates = new Set<string>();
     for (const segment of reconciled) {
@@ -394,6 +396,10 @@ export class ChatGptMarkdownBuffer {
 
     if (segment.sourceStart !== undefined) return undefined;
     if (!segment.tag) return undefined;
+    // Empty text is not an identity: separate rules and images can share it.
+    // Their exact DOM keys/ranges above remain valid, but a new empty block must
+    // not be mistaken for an earlier committed one by the text-only match.
+    if (!segment.text.trim()) return undefined;
     const semanticMatches = this.committed
       .map((committed, index) => ({ committed, index }))
       .filter(({ committed }) => committed.tag === segment.tag && committed.text === segment.text);
@@ -409,6 +415,7 @@ export class ChatGptMarkdownBuffer {
     if (exact.length === 1) return true;
     if (segment.sourceStart !== undefined) return false;
     if (!segment.tag) return false;
+    if (!segment.text.trim()) return false;
     return this.latest.filter(candidate => (
       candidate.tag === segment.tag && candidate.text === segment.text
     )).length === 1;

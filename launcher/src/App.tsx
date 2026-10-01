@@ -84,6 +84,9 @@ export function App() {
           }
         : current);
     });
+    const unsubscribeConnectorNames = api.onConnectorNamesChanged(names => {
+      setSnapshot(current => current ? { ...current, ...names } : current);
+    });
     const unsubscribeBrowser = api.onBrowserState(setBrowser);
     const unsubscribeOperation = api.onOperation((next) => {
       setOperation(next);
@@ -96,6 +99,7 @@ export function App() {
     return () => {
       cancelled = true;
       unsubscribeState();
+      unsubscribeConnectorNames();
       unsubscribeBrowser();
       unsubscribeOperation();
       unsubscribeLog();
@@ -118,7 +122,7 @@ export function App() {
   if (!snapshot) return <LaunchLoading />;
 
   const language = snapshot.state.language ?? "en";
-  const copy = copyFor(language);
+  const copy = copyFor(language, snapshot.connectorNames);
 
   return (
     <div
@@ -891,8 +895,9 @@ function BrowserSurface({
             aria-selected={tab.active}
           >
             <BrandMark small />
-            <span title={tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
-              {browserTabTitleFromTitle(tab.title, copy)}
+            <span title={tab.startupPreparation ? copy.preparedWebSessionBody
+              : tab.traceId ? `${tab.title} · ${tab.traceId}` : tab.title}>
+              {tab.startupPreparation ? copy.preparedWebSession : browserTabTitleFromTitle(tab.title, copy)}
             </span>
             {tab.loading ? <i className="tab-spinner" /> : <StateDot state={browserTabTone(tab.status)} />}
             {tab.closable ? (

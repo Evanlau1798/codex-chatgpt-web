@@ -5,9 +5,15 @@ import {
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 
-function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider", closeDelayMs = 0) {
+function fixture(
+  openWith: "click" | "pointerdown" | "none" | "hidden-slider",
+  ignoredEscapeCalls: ReadonlySet<number> = new Set(),
+  closeDelayMs = 0,
+) {
   let opened = false;
   let expanded = openWith === "hidden-slider";
+  let escapeCalls = 0;
+  let pointerActivated = false;
   const events: string[] = [];
   const clickOptions: unknown[] = [];
   const hidden = {
@@ -43,13 +49,15 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider", c
     },
     click: async (options: unknown) => {
       clickOptions.push(options);
-      events.push("click"); expanded = true; opened = openWith === "click";
+      events.push("click"); expanded = true;
+      opened = openWith === "click" || (openWith === "pointerdown" && pointerActivated);
     },
     press: async () => { events.push("control-enter"); },
     dispatchEvent: async (event: string, detail: unknown) => {
       expect(event).toBe("pointerdown");
       expect(detail).toEqual({ button: 0, buttons: 1, pointerType: "mouse", isPrimary: true });
       events.push("pointerdown"); opened = openWith === "pointerdown"; expanded = true;
+      pointerActivated ||= opened;
     },
   };
   const page = {
@@ -73,8 +81,10 @@ function fixture(openWith: "click" | "pointerdown" | "none" | "hidden-slider", c
     },
     keyboard: { press: async (key: string) => {
       events.push(key);
-      if (closeDelayMs) setTimeout(() => { expanded = false; }, closeDelayMs);
-      else expanded = false;
+      if (key === "Escape" && !ignoredEscapeCalls.has(++escapeCalls)) {
+        if (closeDelayMs) setTimeout(() => { expanded = false; }, closeDelayMs);
+        else expanded = false;
+      }
     } },
   };
   return { page, control, owned, slider, events, clickOptions };
@@ -122,19 +132,18 @@ test("production model selection uses the opened slider instead of stale global 
   expect(f.events).toEqual(["click", "Escape", "click", "Escape"]);
 });
 
-test("model selection waits for both delayed menu closes before accepting the effort", async () => {
-  const f = fixture("click", 600);
-  f.control.innerText = async () => await f.control.getAttribute("aria-expanded") === "true" ? "Effort de réflexion" : "Moyen";
+test("production model selection retries one ignored effort-menu close", async () => {
+  // The first Escape clears the ghost click before pointerdown activation. The
+  // second is the first post-selection close and is ignored by the live UI.
+  const f = fixture("pointerdown", new Set([2]));
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     activeComposer: async () => ({ isEditable: async () => true, locator: () => ({ locator: () => f.control }) }),
   });
-  const mode = await worker.selectModelAndEffort(f.page, CHATGPT_WEB_MODEL_ID, "medium", {
+  await expect(worker.selectModelAndEffort(f.page, CHATGPT_WEB_MODEL_ID, "medium", {
     localToolsEnabled: true, solAvailable: true, proAvailable: true,
-  });
-  expect(mode.selection.label).toBe("Moyen");
-  expect(await f.control.getAttribute("aria-expanded")).toBe("false");
-  expect(f.events).toEqual(["click", "Escape", "click", "Escape"]);
-});
+  })).resolves.toMatchObject({ uiEffortIndex: 1 });
+  expect(f.events).toEqual(["click", "Escape", "pointerdown", "Escape", "Escape", "click", "Escape"]);
+}, 10_000);
 
 test.each([false, true])("activation failure retains structured error classification (late 429: %s)", async limited => {
   const f = fixture("none");
@@ -167,4 +176,19 @@ test.each([false, true])("activation failure retains structured error classifica
   })).rejects.toMatchObject(limited
     ? { status: 429, code: "rate_limit_exceeded", retryable: false }
     : { status: 502, code: "upstream_server_error", retryable: true });
+});
+
+// The original French delayed-close regression also exercises the current official close path.
+test("model selection waits for both delayed menu closes before accepting the effort", async () => {
+  const f = fixture("click", new Set(), 600);
+  f.control.innerText = async () => await f.control.getAttribute("aria-expanded") === "true" ? "Effort de réflexion" : "Moyen";
+  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    activeComposer: async () => ({ isEditable: async () => true, locator: () => ({ locator: () => f.control }) }),
+  });
+  const mode = await worker.selectModelAndEffort(f.page, CHATGPT_WEB_MODEL_ID, "medium", {
+    localToolsEnabled: true, solAvailable: true, proAvailable: true,
+  });
+  expect(mode.selection.label).toBe("Moyen");
+  expect(await f.control.getAttribute("aria-expanded")).toBe("false");
+  expect(f.events).toEqual(["click", "Escape", "click", "Escape"]);
 });

@@ -12,6 +12,7 @@ test("direct browser checkpoint preemption is one-shot and scoped to an active t
     activeRuns: new Map([["active-trace", new Promise<string>(() => {})]]),
     preemptiveRetries: new Map<string, string>(),
     preemptedRuns: new Set<string>(),
+    compactionBoundaryRetentions: new Set<string>(),
     finalizingRuns: new Set<string>(),
   }) as ChatGptBrowserWorker;
   const take = (ChatGptBrowserWorker.prototype as unknown as {
@@ -42,6 +43,21 @@ test("active checkpoint preemption stops generation without taking the abort pat
   expect(control).toContain("completedRetryPrompt = { text: preemptiveRetryPrompt }");
   expect(control).not.toContain('throw new DOMException("ChatGPT web turn aborted"');
   expect(source.slice(retry, source.indexOf("break;", retry))).toContain("preemptiveRetryPrompt,");
+});
+
+test("direct browser compaction-boundary retention is one-shot and scoped to an active turn", async () => {
+  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    config: { browserHost: "managed-chrome" },
+    activeRuns: new Map([["active-trace", new Promise<string>(() => {})]]),
+    preemptiveRetries: new Map<string, string>(),
+    preemptedRuns: new Set<string>(),
+    compactionBoundaryRetentions: new Set<string>(),
+    finalizingRuns: new Set<string>(),
+  }) as ChatGptBrowserWorker;
+
+  expect(await worker.armCompactionBoundaryRetention("missing-trace")).toBeFalse();
+  expect(await worker.armCompactionBoundaryRetention("active-trace")).toBeTrue();
+  expect(await worker.armCompactionBoundaryRetention("active-trace")).toBeFalse();
 });
 
 test("checkpoint preemption remains bounded when generation starts after the request is consumed", () => {

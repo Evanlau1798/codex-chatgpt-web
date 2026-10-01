@@ -43,10 +43,12 @@ export const CHATGPT_SEND_BUTTON_SELECTOR = '[data-testid="send-button"], button
 export const CHATGPT_STOP_BUTTON_SELECTOR = [
   '[data-testid="stop-button"]',
   'form[data-chatgpt-composer] button[type="button"][aria-label="Stop"]',
-  'form[data-chatgpt-composer] button[type="button"][aria-label="Arrêter"]',
+  // The current composer omits the test id and localizes its label. Bind the observed stop
+  // glyph inside the verified composer, excluding send arrows and unrelated page controls.
+  'form[data-chatgpt-composer] button[type="button"]:has(svg.icon-primary-action path[d="M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"])',
 ].join(", ");
-// The new footer is shared with user messages. Response extraction additionally requires
-// this control to FOLLOW the last assistant answer, excluding the user's earlier footer.
+// The new footer is shared with user messages. Response extraction rejects controls owned by a
+// user content unit, then verifies their relationship to the bound assistant answer.
 export const CHATGPT_COMPLETION_ACTION_SELECTOR = 'button[data-testid="copy-turn-action-button"], [data-turn-key] .turn-action-controls button';
 export const CHATGPT_ASSISTANT_TURN_SELECTOR = [
   '[data-testid^="conversation-turn-"][data-turn="assistant"]:not([data-turn-key] *)',
@@ -58,7 +60,7 @@ export const CHATGPT_USER_TURN_SELECTOR = [
   '[data-testid^="conversation-turn-"][data-turn="user"]:not([data-turn-key] *)',
   '[data-testid^="conversation-turn-"][data-message-author-role="user"]:not([data-turn-key] *)',
   '[data-testid^="conversation-turn-"]:has([data-message-author-role="user"]):not([data-turn-key] *)',
-  '[data-turn-key]:has([data-user-message-bubble])',
+  '[data-turn-key]:has([data-user-message-bubble], [data-conversation-role="assistant"], [data-chatgpt-agent-turn-start])',
 ].join(", ");
 
 export function isTemporaryChatGptUrl(value: string): boolean {
@@ -431,14 +433,14 @@ export async function detectChatGptAccountCapabilities(
       for (const family of present) {
         // Family changes can replace the menu node; reacquire the composer-owned menu.
         current = await reopen();
-        current = await selectChatGptModelFamily(page, current, family, reopen);
+        current = await selectChatGptModelFamily(current, family, reopen);
         const snapshot = await readChatGptEffortSnapshot(current.sliderContainer);
         modelCapabilities.families[family] = effortOrder.filter((_, index) => snapshot.available[index] === true);
       }
     } finally {
       // Inspection must not change the user's next model or effort, even after a probe failure.
       current = await reopen();
-      current = await selectChatGptModelFamily(page, current, original, reopen);
+      current = await selectChatGptModelFamily(current, original, reopen);
       const target = initial.value - initial.min;
       for (let step = 0; step <= CHATGPT_EFFORT_SLIDER_MAX_OPTIONS; step++) {
         const state = await readChatGptEffortSnapshot(current.sliderContainer);

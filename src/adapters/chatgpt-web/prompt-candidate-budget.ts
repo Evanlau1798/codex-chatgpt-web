@@ -2,7 +2,7 @@ import { ChatGptWebAdapterError } from "./adapter-error";
 import type { ChatGptPromptInsertionPlan } from "./prompt-insertion-plan";
 import type { ChatGptPromptInsertionSnapshot } from "./prompt-insertion-metrics";
 
-/** Candidate-only policy. No Context Window never removes the finite attachment limit. */
+/** Shared attachment policy. No Context Window never removes the finite attachment limit. */
 export class ChatGptCandidateAttachmentBudget {
   readonly timeoutMs: number;
   private readonly started: number;
@@ -16,16 +16,16 @@ export class ChatGptCandidateAttachmentBudget {
     private readonly now: () => number = () => performance.now(), readonly stallMs = 20_000) {
     // Playwright's edit timeout may not interrupt synchronous renderer work. Keep the finite
     // attachment limit without budgeting thousands of marker edits.
-    this.timeoutMs = plan.strategy === "guarded-chunked" ? 60_000 : 90_000;
+    this.timeoutMs = 90_000;
     this.started = now();
-    this.markers = plan.strategy === "guarded-chunked" ? plan.markdownDelimiterCount : 0;
+    this.markers = 0;
   }
 
   observe(snapshot: ChatGptPromptInsertionSnapshot): void {
     if (snapshot.event === "failed" && snapshot.phase === "insert") this.directEditInFlight = false;
     if (snapshot.event === "summary" || snapshot.event === "failed") return;
     this.lastProgress ??= this.now();
-    if (this.plan.strategy !== "guarded-chunked" && snapshot.phase === "insert") {
+    if (snapshot.phase === "insert") {
       if (snapshot.event === "edit_started") this.directEditInFlight = true;
       if (snapshot.event === "edit_settled") {
         this.directEditInFlight = false;

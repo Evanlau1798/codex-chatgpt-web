@@ -13,6 +13,7 @@ import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import {
   ChatGptCompactionHandoffAccepted,
   ChatGptWebAdapterError,
+  chatGptCompletionEvidenceError,
   chatGptRetainedSurfaceUnavailableError,
 } from "../src/adapters/chatgpt-web/adapter-error";
 import { CompactionTransactionStore } from "../src/adapters/chatgpt-web/compaction-transaction";
@@ -37,7 +38,7 @@ function fixture(active = false, tools = false) {
     trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), conversationKey: chatGptConversationKey(parsed, key),
     usageInput: parsed, cancel: () => browser.resolve("cancelled"),
     release: async () => { releasing.resolve(); await release.promise; },
-  }));
+  }), undefined, undefined, undefined, "active-source-trace");
   const options = {
     worker: { run: async () => { throw new Error("unexpected handoff surface"); } },
     parsed, broker: {} as TurnBroker, executionNamespace: key,
@@ -49,13 +50,21 @@ function fixture(active = false, tools = false) {
   return { key, source, options, release, releasing, cleanup, browser };
 }
 
-for (const stoppedWithoutHandoff of [false, true]) test(`active compact avoids preemption and reserves another message for a stopped source (missing checkpoint: ${stoppedWithoutHandoff})`, async () => {
+function submitCompaction(store: CompactionTransactionStore, instruction: string, summary: string): void {
+  const token = /turn_token (control_\w+)/.exec(instruction)![1]!;
+  const handoffId = /handoff_id (handoff_\w+)/.exec(instruction)![1]!;
+  store.submit(token, handoffId, summary);
+}
+
+for (const sourceSettlement of ["handoff", "final", "missing_completion_evidence"] as const) test(`active compact avoids preemption and reserves another message for a stopped source (${sourceSettlement})`, async () => {
   const f = fixture(true, true);
+  const stoppedWithoutHandoff = sourceSettlement !== "handoff";
   const store = new CompactionTransactionStore();
   const boundary = deferred<string>();
   const events: AdapterEvent[] = [];
   let starts = 0;
   let preemptions = 0;
+  let retentionArms = 0;
   let fallbackCalls = 0;
   let workerCalls = 0;
   const submit = (instruction: string) => {
@@ -68,6 +77,7 @@ for (const stoppedWithoutHandoff of [false, true]) test(`active compact avoids p
     waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
     abortCompactionTransaction: (token: string) => store.abort(token),
     requestCompaction: (_token: string, result: { content: { text: string }[] }, delivered?: () => void) => {
+      expect(retentionArms).toBe(1);
       boundary.resolve(result.content[0]!.text); delivered?.(); return 1;
     },
     compactionDeliveryCount: () => 1, revoke() {},
@@ -80,7 +90,12 @@ for (const stoppedWithoutHandoff of [false, true]) test(`active compact avoids p
       const prepared = await turn.prepare();
       try { submit(prepared.text); return "turn complete"; } finally { prepared.release(); }
     },
-      requestPreemptiveRetry: () => { preemptions++; return true; } },
+      requestPreemptiveRetry: () => { preemptions++; return true; },
+      armCompactionBoundaryRetention: async traceId => {
+        expect(traceId).toBe("active-source-trace");
+        retentionArms++;
+        return true;
+      } },
     startFallback: async () => { fallbackCalls++; return "Fallback checkpoint."; },
     emit: event => { events.push(event); },
   }).then(result => ({ result }), error => ({ error }));
@@ -88,12 +103,19 @@ for (const stoppedWithoutHandoff of [false, true]) test(`active compact avoids p
     const instruction = await boundary.promise;
     expect(instruction).toContain("codex.control.compaction_handoff");
     expect(preemptions).toBe(0);
+    expect(retentionArms).toBe(1);
     expect(f.source.runtime.compactionRequested).toBeTrue();
-    if (!stoppedWithoutHandoff) submit(instruction);
+    if (sourceSettlement === "handoff") submit(instruction);
     await new Promise<void>(resolve => setImmediate(resolve));
     expect(events).toEqual([]);
     expect(f.source.isActive()).toBe(stoppedWithoutHandoff);
-    if (stoppedWithoutHandoff) f.browser.resolve("compact turn had started");
+    if (sourceSettlement === "final") f.browser.resolve("compact turn had started");
+    if (sourceSettlement === "missing_completion_evidence") {
+      f.browser.reject(chatGptCompletionEvidenceError(
+        "ChatGPT stopped after native tool work without a final answer or usable completion evidence",
+        false,
+      ));
+    }
     await f.releasing.promise;
     expect(events).toEqual([]);
     f.release.resolve();
@@ -229,14 +251,24 @@ test("active compact preserves delivery evidence after acceptance retires the br
 
 for (const sameExecutionKey of [true, false]) test(`enhanced compact waits for detached source release (same key: ${sameExecutionKey})`, async () => {
   const f = fixture();
+  const store = new CompactionTransactionStore();
   await f.source.browserOutcome;
   const retirement = chatGptTurnSessions.retireAndWait(f.key);
   await f.releasing.promise;
   let fallbackStarted = false;
+  const broker = {
+    beginCompactionTransaction: async (trace: string, ttl: number) => store.begin(trace, ttl),
+    waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
+    abortCompactionTransaction: (token: string) => store.abort(token),
+  } as unknown as TurnBroker;
   const run = runEnhancedCompaction({ ...f.options,
-    responseExecutionKey: sameExecutionKey ? f.key : `${f.key}:next`, startFallback: async () => {
-    fallbackStarted = true; return "Checkpoint summary.";
-  } });
+    broker, responseExecutionKey: sameExecutionKey ? f.key : `${f.key}:next`,
+    startFallback: async (_traceId, signal, _onProgress, _retainOwnershipUntil, instruction) => {
+      fallbackStarted = true;
+      submitCompaction(store, instruction, "Checkpoint summary.");
+      await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+      throw signal.reason;
+    } });
   try {
     await Bun.sleep(0);
     expect(fallbackStarted).toBe(false);
@@ -244,7 +276,7 @@ for (const sameExecutionKey of [true, false]) test(`enhanced compact waits for d
     await retirement;
     await expect(run).resolves.toBe("completed");
     expect(fallbackStarted).toBe(true);
-  } finally { await f.cleanup(); await run.catch(() => {}); }
+  } finally { store.close(); await f.cleanup(); await run.catch(() => {}); }
 });
 
 test("compact cleanup failure preserves both the handoff error and retirement cause", async () => {
@@ -290,6 +322,33 @@ test("operator cancellation during source lookup does not start a fallback", asy
   await cancelAllStructuredCompactions(new Error("operator cancelled"));
   expect((await run).message).toContain("operator cancelled");
   expect(fallbackCalls).toBe(0);
+});
+
+test("fresh compact fallback requires the one-shot control handoff instead of DOM summary text", async () => {
+  const f = fixture();
+  await f.cleanup();
+  const store = new CompactionTransactionStore();
+  let instruction: string | undefined;
+  const broker = {
+    beginCompactionTransaction: async (trace: string, ttl: number) => store.begin(trace, ttl),
+    waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
+    abortCompactionTransaction: (token: string) => store.abort(token),
+  } as unknown as TurnBroker;
+  try {
+    const failure = await runEnhancedCompaction({
+      ...f.options,
+      broker,
+      timeoutMs: 1_000,
+      startFallback: async (_traceId, _signal, _onProgress, _retainOwnershipUntil, controlInstruction) => {
+        instruction = controlInstruction;
+        return "A complete handoff rendered in the browser DOM.";
+      },
+    }).then(() => undefined, error => error);
+    expect(instruction).toContain("codex.control.compaction_handoff");
+    expect(failure).toMatchObject({ code: "compaction_handoff_missing", retryable: false });
+  } finally {
+    store.close();
+  }
 });
 
 test("enhanced compact preserves structured account-safety failures from retained start", async () => {
@@ -445,12 +504,15 @@ for (const surfaceLost of [false, true]) {
             } finally { prepared.release(); }
           } finally { workerSettlements++; }
         } },
-        startFallback: async traceId => {
+        startFallback: async (traceId, signal, _onProgress, _retainOwnershipUntil, instruction) => {
           fallbackCalls++;
           expect(traceId).toEndWith("_fallback");
           expect(workerSettlements).toBe(1);
           expect(f.source.conversationKey()).toBeUndefined();
-          return summary;
+          expect(instruction).toContain("codex.control.compaction_handoff");
+          submitted.resolve();
+          await new Promise<void>((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+          throw signal.reason;
         },
         emit: event => { events.push(event); },
       });
@@ -459,8 +521,8 @@ for (const surfaceLost of [false, true]) {
       expect(turns).toHaveLength(1);
       expect(turns[0]).toMatchObject({ conversationKey, requireRetainedConversation: true, nativeConnector: true });
       expect(workerSettlements).toBe(1);
-      expect(transactionStarts).toBe(1);
-      expect(transactionAborts).toBe(1);
+      expect(transactionStarts).toBe(surfaceLost ? 2 : 1);
+      expect(transactionAborts).toBe(surfaceLost ? 2 : 1);
       expect(events.filter(event => event.type === "text_delta")).toEqual([
         { type: "text_delta", text: summary, phase: "final_answer" },
       ]);

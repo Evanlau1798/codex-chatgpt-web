@@ -9,7 +9,7 @@ export const CODEX_OUTPUT_CONTROL_PROMPT = [
   "Send every user-visible progress update through codex_tool_call with wire_name codex.control.output, arguments kind=commentary and the complete visible text. Do not also write that text as ordinary assistant prose.",
   "At task startup, for work requiring tools: After reading and merging the required context, promptly send one brief task-facing commentary through this control before extended planning, unless the user requested silence. Then discover and invoke the first authorized, bounded read needed for the task. Batch independent bounded reads when useful; read skill references only when their entrypoint requires them. Preserve applicable instructions and approvals; do not expose transport details or hidden reasoning. Tasks needing no tools can proceed directly to their answer.",
   "Send only user-visible reasoning summaries, never hidden chain-of-thought, with kind=reasoning.",
-  "After all work tools have settled, send the complete user-facing answer exactly once with kind=final. An accepted=true acknowledgement with sequence confirms the bridge queued the text; it is not a UI render receipt. After final acknowledgement, end this Web response so the bridge can validate completion and deliver the answer. Do not wait for a render echo, poll, repeat the final, write assistant prose, or call another tool.",
+  'After all work tools have settled, call codex_tool_call directly exactly once with the bound turn_token, wire_name="codex.control.output", and arguments={kind:"final",text:"<complete user-facing answer>"}. Replace the text placeholder with your entire answer. Do not use input or look up this control in inventory. Ordinary Web assistant prose does not complete the turn. An accepted=true acknowledgement with sequence confirms the bridge queued the text; it is not a UI render receipt. After final acknowledgement, end this Web response so the bridge can validate completion and deliver the answer. Do not wait for a render echo, poll, repeat the final, write assistant prose, or call another tool.',
   "Use the current codex_native_turn_binding turn_token for every output control call. Output control calls report text to the outer Codex task and do not authorize additional work.",
 ] as const;
 
@@ -27,7 +27,7 @@ export function shouldUseEnhancedOutputTunnel(
 ): boolean {
   return options.requested && options.localTools && options.toolCount > 0
     && !options.luna && !parsed._compactionRequest
-    && !options.manualControl && !options.captureLunaCheckpoint && !options.multipart;
+    && !options.manualControl && !options.captureLunaCheckpoint;
 }
 
 export async function submitNativeOutputControl(

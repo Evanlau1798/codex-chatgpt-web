@@ -82,7 +82,7 @@ export class ChatGptPromptInsertionMetrics {
   editStarted(): void {
     if (this.closed) return;
     this.editEvaluationsStarted += 1;
-    if (this.plan.strategy !== "guarded-chunked") this.publish("edit_started");
+    this.publish("edit_started");
   }
   editSettled<T>(value: T | ChatGptNativeEditResult<T>): T {
     const counted = value !== null && typeof value === "object" && "attempts" in value && "accepted" in value && "result" in value;
@@ -90,7 +90,7 @@ export class ChatGptPromptInsertionMetrics {
       this.editEvaluationsSettled += 1;
       if (counted) { this.nativeEditAttempts += value.attempts; this.nativeEditAccepted += value.accepted; }
       else this.nativeEditCountsComplete = false; // Legacy test doubles cannot prove native edits.
-      if (this.plan.strategy !== "guarded-chunked") this.publish("edit_settled");
+      this.publish("edit_settled");
     }
     return counted ? value.result : value;
   }

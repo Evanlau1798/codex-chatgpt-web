@@ -4,7 +4,7 @@ import { NativeChatCompletionBridge } from "./chat-completions/native-bridge";
 import { ChatCompletionError } from "./chat-completions/contract";
 import { chatGptWebExecutionNamespace, chatGptWebTraceId, createChatGptWebAdapter } from "./adapters/chatgpt-web";
 import { DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT, chatGptAccountSafety } from "./adapters/chatgpt-web/account-safety";
-import { closeChatGptBrowserWorkers } from "./adapters/chatgpt-web/browser-worker";
+import { closeChatGptBrowserWorkers, discardChatGptStartupPages } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { chatGptTurnExecutionKey, chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
 import { ChatGptThreadEnvironmentStore } from "./adapters/chatgpt-web/thread-environment";
@@ -396,6 +396,7 @@ export function startServer(
         if (accountSafetyDrainOwner) return new Response("Account Safety drain is owned", { status: 409 });
         draining = url.pathname === "/admin/drain";
         turnBroker?.setExternalOwnersAccepted(!draining);
+        if (draining) await discardChatGptStartupPages();
         return Response.json({ status: "ok", accepting_turns: !draining, ...activity() });
       }
       if (req.method === "POST" && url.pathname === "/admin/account-safety-sync-and-resume") {
@@ -456,6 +457,7 @@ export function startServer(
         draining = true;
         accountSafetyDrainOwner = owner;
         turnBroker?.setExternalOwnersAccepted(false);
+        await discardChatGptStartupPages();
         return Response.json({ status: "ok", acquired: true, accepting_turns: false, ...current });
       }
       const cancellation = await handleTurnCancellation(req, url.pathname, config.controlToken, httpTurns, turnBroker, activity);

@@ -4,8 +4,8 @@ import { resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { expandUserPath, stripUtf8Bom } from "./config";
 import { assertLauncherLoopbackEndpoint } from "./launcher-loopback-endpoint";
+import { runLauncherBrowserConnection } from "./launcher-browser-connection";
 import { processRunning } from "./process";
-import { parseLauncherTurnRelease } from "./launcher-turn-release";
 
 export const LAUNCHER_BROWSER_HOST_KIND = "codex-web-gpt-launcher";
 export const LAUNCHER_BROWSER_IDLE_URL = "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Chtml%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%3Ctitle%3ECodex%20Web%20GPT%3C%2Ftitle%3E%3C%2Fhead%3E%3Cbody%3E%3C%2Fbody%3E%3C%2Fhtml%3E#codex-web-gpt-browser-host";
@@ -19,10 +19,7 @@ export class LauncherBrowserTurnCancelledError extends Error {
 }
 
 export class LauncherRetainedConversationUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "LauncherRetainedConversationUnavailableError";
-  }
+  constructor(message: string) { super(message); this.name = "LauncherRetainedConversationUnavailableError"; }
 }
 
 export * from "./launcher-manual-control";
@@ -63,9 +60,7 @@ function assertDescriptorShape(value: unknown): LauncherBrowserHostDescriptor {
   if (descriptor.version !== 3 || descriptor.kind !== LAUNCHER_BROWSER_HOST_KIND) {
     throw new Error("Launcher browser descriptor has an unsupported identity or version; restart the updated launcher");
   }
-  if (descriptor.profile !== "production" && descriptor.profile !== "development") {
-    throw new Error("Launcher browser descriptor has an invalid profile");
-  }
+  if (descriptor.profile !== "production" && descriptor.profile !== "development") throw new Error("Launcher browser descriptor has an invalid profile");
   if (!Number.isInteger(descriptor.pid) || descriptor.pid! < 1) {
     throw new Error("Launcher browser descriptor has an invalid pid");
   }
@@ -233,38 +228,33 @@ export async function connectLauncherBrowserHost(
   timeoutMs = 20_000,
   surfaceId?: string,
   abortSignal?: AbortSignal,
+  prepared?: LauncherBrowserConnection,
 ): Promise<LauncherBrowserConnection> {
-  if (abortSignal?.aborted) {
-    throw new DOMException("Launcher browser connection aborted", "AbortError");
-  }
+  if (abortSignal?.aborted) throw new DOMException("Launcher browser connection aborted", "AbortError");
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
-  await assertCdpReady(descriptor, Math.min(timeoutMs, 5_000));
-  let browser: Browser;
-  try {
-    browser = await chromium.connectOverCDP(descriptor.endpoint, { timeout: timeoutMs });
-  } catch (error) {
-    throw new Error(`Could not connect Playwright to the launcher browser: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  const closeOnAbort = () => { void browser.close().catch(() => {}); };
-  abortSignal?.addEventListener("abort", closeOnAbort, { once: true });
-  try {
-    if (abortSignal?.aborted) {
-      throw new DOMException("Launcher browser connection aborted", "AbortError");
-    }
-    const { context, page } = await selectLauncherPage(
-      browser,
-      descriptor,
-      timeoutMs,
-      surfaceId,
-      abortSignal,
-    );
-    return { descriptor, browser, context, page };
-  } catch (error) {
-    await browser.close().catch(() => {});
-    throw error;
-  } finally {
-    abortSignal?.removeEventListener("abort", closeOnAbort);
-  }
+  if (prepared && (prepared.descriptor.pid !== descriptor.pid || prepared.descriptor.endpoint !== descriptor.endpoint
+    || prepared.descriptor.profile !== descriptor.profile || prepared.descriptor.partition !== descriptor.partition
+    || !surfaceId || !descriptor.surfaceTargets[surfaceId]
+    || prepared.descriptor.surfaceTargets[surfaceId] !== descriptor.surfaceTargets[surfaceId]
+    || !prepared.browser.isConnected())) throw new Error("Launcher prepared browser identity changed");
+  return runLauncherBrowserConnection(timeoutMs, {
+    ready: budget => assertCdpReady(descriptor, budget),
+    connect: async budget => {
+      if (prepared) return prepared.browser;
+      try { return await chromium.connectOverCDP(descriptor.endpoint, { timeout: budget }); }
+      catch (error) { throw new Error(`Could not connect Playwright to the launcher browser: ${error instanceof Error ? error.message : String(error)}`); }
+    },
+    select: async (browser, budget) => {
+      const closeOnAbort = () => { void browser.close().catch(() => {}); };
+      abortSignal?.addEventListener("abort", closeOnAbort, { once: true });
+      try {
+        if (abortSignal?.aborted) throw new DOMException("Launcher browser connection aborted", "AbortError");
+        const { context, page } = await selectLauncherPage(browser, descriptor, budget, surfaceId, abortSignal);
+        return { descriptor, browser, context, page };
+      } finally { abortSignal?.removeEventListener("abort", closeOnAbort); }
+    },
+    close: browser => browser.close(),
+  });
 }
 
 export async function inspectLauncherBrowserHost(
@@ -382,7 +372,9 @@ type LauncherUsageReceipt = {
 export type LauncherTurnActivity =
   | (LauncherTurnIdentity & { phase: "usage"; receipt?: LauncherUsageReceipt; trackingError?: "account-unavailable" })
   | (LauncherTurnIdentity & { phase: "start"; conversationKey?: string; connectorIdentity?: string;
-      requireRetainedConversation?: boolean })
+      requireRetainedConversation?: boolean; startupPreparation?: boolean; startupSurfaceId?: string;
+      allowStartupPreparation?: boolean })
+  | (LauncherTurnIdentity & { phase: "prepared" })
   | (LauncherTurnIdentity & { phase: "heartbeat"; refreshViewport?: boolean })
   | (LauncherTurnIdentity & {
       phase: "end"; status: "completed" | "failed" | "aborted";
@@ -404,8 +396,7 @@ export async function notifyLauncherTurn(
       ? LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS
       : LAUNCHER_TURN_START_TIMEOUT_MS,
   signal?: AbortSignal,
-): Promise<{ surfaceId?: string; reused?: boolean; connectorBound?: boolean; cancelledByUser?: boolean; authenticationBlocked?: boolean;
-  authenticationStatus?: "authenticated" | "signed-out" | "unknown"; trackUsage?: boolean }> {
+): Promise<{ surfaceId?: string; reused?: boolean; startupPrepared?: boolean; startupAllowed?: boolean; connectorBound?: boolean; cancelledByUser?: boolean; authenticationRequired?: boolean; trackUsage?: boolean }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -440,15 +431,23 @@ export async function notifyLauncherTurn(
       if (body.connectorBound !== undefined && typeof body.connectorBound !== "boolean") {
         throw new Error("Launcher browser control channel returned an invalid connector state");
       }
-      return {
-        surfaceId: body.surfaceId,
-        reused: body.reused === true,
-        ...(body.connectorBound === true ? { connectorBound: true } : {}),
-        trackUsage: body.trackUsage === true,
-      };
+      if (body.startupPrepared !== undefined && typeof body.startupPrepared !== "boolean") {
+        throw new Error("Launcher browser control channel returned an invalid startup state");
+      }
+      if (body.startupAllowed !== undefined && typeof body.startupAllowed !== "boolean") throw new Error("Invalid launcher startup admission");
+      return { surfaceId: body.surfaceId, reused: body.reused === true, ...(body.startupPrepared === true ? { startupPrepared: true } : {}), ...(body.startupAllowed === true ? { startupAllowed: true } : {}), ...(body.connectorBound === true ? { connectorBound: true } : {}), trackUsage: body.trackUsage === true };
+    }
+    if (activity.phase === "prepared" && body.prepared !== true) {
+      throw new Error("Launcher did not acknowledge startup preparation");
     }
     if (activity.phase === "end") {
-      return parseLauncherTurnRelease(body);
+      if (typeof body.cancelledByUser !== "boolean") {
+        throw new Error("Launcher browser control channel returned an invalid turn release result");
+      }
+      if (body.authenticationRequired !== undefined && typeof body.authenticationRequired !== "boolean") {
+        throw new Error("Launcher browser control channel returned an invalid authentication state");
+      }
+      return { cancelledByUser: body.cancelledByUser, ...(body.authenticationRequired === true ? { authenticationRequired: true } : {}) };
     }
     return {};
   } catch (error) {

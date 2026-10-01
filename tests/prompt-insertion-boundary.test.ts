@@ -1,483 +1,201 @@
 import { expect, test } from "bun:test";
-import {
-  CHATGPT_PROMPT_INSERT_CHUNK_CHARS,
-  ChatGptBrowserWorker,
-} from "../src/adapters/chatgpt-web/browser-worker";
-import {
-  guardChatGptPromptChunkBoundary,
-  insertChatGptComposerPlainText,
-  restoreChatGptPromptChunkBoundary,
-} from "../src/adapters/chatgpt-web/prompt-caret";
+import { CHATGPT_LITERAL_PASTE_CHUNK_CHARS } from "../src/adapters/chatgpt-web/prompt-insertion-plan";
+import { pasteChatGptComposerLiteralText } from "../src/adapters/chatgpt-web/composer-literal-paste";
+import { literalPasteComposer } from "./fixtures/literal-paste-composer";
 
-test("line-break chunk boundaries stay inside the bounded text edit", () => {
-  expect(guardChatGptPromptChunkBoundary("prefix\ntail", "\ntail", 6)).toBeUndefined();
-  expect(guardChatGptPromptChunkBoundary("prefix tail", " tail", 6)).toBeDefined();
-});
+// Retired boundary marker selection/restoration, recount and exact-marker diagnostics.
+// Replacements exercise literal boundaries, independent prefix integrity, rejected paste
+// privacy and no retry after dispatch. There is no restoration algorithm to emulate.
+for (const boundary of ["\n", "\n\n", " ", "  ", "\t", "\r\n", "\u00a0"]) {
+  test(`bounded paste preserves boundary whitespace ${JSON.stringify(boundary)}`, async () => {
+    const prompt = "x".repeat(CHATGPT_LITERAL_PASTE_CHUNK_CHARS - 2) + boundary + "tail";
+    const editor = literalPasteComposer();
+    await editor.run(prompt);
+    expect(editor.read()).toBe(prompt);
+    expect(editor.pastes.join("")).toBe(prompt);
+    expect(editor.pastes).toHaveLength(2);
+    expect(editor.pastes.every(value => value.length <= CHATGPT_LITERAL_PASTE_CHUNK_CHARS)).toBeTrue();
+  });
+}
 
-test("single-line Markdown density does not increase bounded composer edit count", async () => {
-  const { createDocument } = require("@mixmark-io/domino") as {
-    createDocument: (html: string) => Document;
-  };
+test("single-line Markdown density does not create per-delimiter edits, even across remounts", async () => {
   const pattern = '`json` {"key": ["*value*", "~x~", "a_b=c", "call()"]} ';
-  const prompt = pattern.repeat(Math.ceil((CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 6 + 17) / pattern.length))
-    .slice(0, CHATGPT_PROMPT_INSERT_CHUNK_CHARS * 6 + 17);
-  const document = createDocument('<div id="composer"></div>') as Document & {
-    createRange: () => Range;
-    execCommand: (command: string, showUi: boolean, value: string) => boolean;
-  };
-  let composerElement = document.getElementById("composer")!;
-  let anchor = document.createTextNode("");
-  composerElement.appendChild(anchor);
-  Object.defineProperty(document, "activeElement", { configurable: true, get: () => composerElement });
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  const previousNodeFilter = globalThis.NodeFilter;
-  let selected = { start: 0, end: 0 };
-  document.createRange = () => {
-    let start = 0;
-    let end = 0;
-    return {
-      setStart: (_node: Node, offset: number) => { start = offset; },
-      setEnd: (_node: Node, offset: number) => { end = offset; },
-      get startOffset() { return start; },
-      get endOffset() { return end; },
-    } as unknown as Range;
-  };
-  const edits: string[] = [];
-  let remounts = 0;
-  document.execCommand = (command, _showUi, value) => {
-    if (command !== "insertText" || typeof value !== "string") return false;
-    edits.push(value);
-    anchor.data = `${anchor.data.slice(0, selected.start)}${value}${anchor.data.slice(selected.end)}`;
-    selected = { start: selected.start + value.length, end: selected.start + value.length };
-    return true;
-  };
-  Object.assign(globalThis, {
-    document,
-    NodeFilter: { SHOW_TEXT: 4 },
-    window: {
-      getSelection: () => ({
-        get isCollapsed() { return selected.start === selected.end; },
-        anchorNode: anchor,
-        focusNode: anchor,
-        removeAllRanges: () => {},
-        addRange: (range: Range) => {
-          selected = { start: range.startOffset, end: range.endOffset };
-        },
-      }),
-    },
+  const prompt = pattern.repeat(Math.ceil((CHATGPT_LITERAL_PASTE_CHUNK_CHARS * 2 + 1) / pattern.length));
+  const editor = literalPasteComposer({ onPaste: () => editor.remount() });
+  await editor.run(prompt);
+  expect(editor.read()).toBe(prompt);
+  expect(editor.pastes).toHaveLength(3);
+  expect(editor.pastes.length).toBeLessThan(20);
+  expect(editor.snapshots.at(-1)).toMatchObject({
+    nativeEditAttempts: editor.pastes.length, nativeEditAccepted: editor.pastes.length,
+    restorationBatches: 0, remainingMarkers: 0,
   });
-  const composer = {
-    focus: async () => {},
-    evaluate: async (callback: (element: HTMLElement, input: unknown) => unknown, input: unknown) => {
-      const result = await callback(composerElement, input);
-      if (typeof input === "object" && input !== null && !Array.isArray(input)) {
-        const replacement = document.createElement("div");
-        const replacementText = document.createTextNode(anchor.data);
-        replacement.id = "composer";
-        replacement.appendChild(replacementText);
-        composerElement.parentNode?.replaceChild(replacement, composerElement);
-        composerElement = replacement;
-        anchor = replacementText;
-        remounts += 1;
-      }
-      return result;
-    },
-  };
-  const page = {
-    keyboard: {
-      insertText: async () => { throw new Error("bounded composer content must use the browser plain-text edit path"); },
-    },
-  };
-  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
-    attachedPromptText: async () => anchor.data,
-    activeComposer: async () => composer,
-    reanchorPromptCaret: async () => { selected = { start: anchor.data.length, end: anchor.data.length }; },
-  }) as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  };
-
-  try {
-    await worker.insertPromptText(page, prompt);
-    expect(anchor.data).toBe(prompt);
-    expect(remounts).toBeGreaterThan(1);
-    expect(edits.length).toBeLessThan(30);
-    expect(edits.every(edit => edit.length <= CHATGPT_PROMPT_INSERT_CHUNK_CHARS)).toBeTrue();
-  } finally {
-    Object.assign(globalThis, {
-      window: previousWindow,
-      document: previousDocument,
-      NodeFilter: previousNodeFilter,
-    });
-  }
 });
 
-test("bounded composer edit fails closed when the browser rejects plain-text insertion", async () => {
-  const composer = {
-    focus: async () => {},
-    evaluate: async () => false,
-  };
-  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
-    activeComposer: async () => composer,
-  }) as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  };
-
-  await expect(worker.insertPromptText({
-    keyboard: { insertText: async () => {} },
-  }, "literal `markdown`"))
-    .rejects.toThrow("plain-text");
-});
-
-test("bounded composer edit rejects a selection outside the active composer", async () => {
-  const { createDocument } = require("@mixmark-io/domino") as {
-    createDocument: (html: string) => Document;
-  };
-  const document = createDocument('<div id="composer"></div><div id="outside">outside</div>');
-  const composerElement = document.getElementById("composer")!;
-  const outside = document.getElementById("outside")!.firstChild!;
-  Object.defineProperty(document, "activeElement", { configurable: true, get: () => composerElement });
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  Object.assign(globalThis, {
-    document,
-    window: {
-      getSelection: () => ({
-        isCollapsed: true,
-        anchorNode: outside,
-        focusNode: outside,
-      }),
-    },
+for (const selection of [{ outside: true }, { collapsed: false }, { activeOutside: true }]) {
+  test(`public paste rejects invalid active selection ${JSON.stringify(selection)} before dispatch`, async () => {
+    const editor = literalPasteComposer();
+    editor.setSelection(selection);
+    await expect(editor.withGlobals(() => pasteChatGptComposerLiteralText(editor.composer, "private value")))
+      .rejects.toMatchObject({ code: "chatgpt_surface_changed", retireSession: true });
+    expect(editor.pastes).toEqual([]);
+    expect(editor.read()).toBe("");
   });
-  const composer = {
-    focus: async () => {},
-    evaluate: async (callback: (element: HTMLElement, input: unknown) => unknown, input: unknown) => (
-      await callback(composerElement, input)
-    ),
-  };
-  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
-    activeComposer: async () => composer,
-  }) as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  };
+}
 
-  try {
-    await expect(worker.insertPromptText({
-      keyboard: { insertText: async () => {} },
-    }, "plain text"))
-      .rejects.toMatchObject({ code: "chatgpt_surface_changed" });
-  } finally {
-    Object.assign(globalThis, { window: previousWindow, document: previousDocument });
-  }
-});
-
-test("bounded composer edit rejects non-collapsed selection and wrong active element", async () => {
-  const { createDocument } = require("@mixmark-io/domino") as {
-    createDocument: (html: string) => Document;
-  };
-  const document = createDocument('<div id="composer">text</div><button id="outside"></button>');
-  const composerElement = document.getElementById("composer")!;
-  const outside = document.getElementById("outside")!;
-  let active: Element = composerElement;
-  let collapsed = false;
-  Object.defineProperty(document, "activeElement", { configurable: true, get: () => active });
-  const previous = { document: globalThis.document, window: globalThis.window };
-  Object.assign(globalThis, {
-    document,
-    window: {
-      getSelection: () => ({
-        isCollapsed: collapsed,
-        anchorNode: composerElement.firstChild,
-        focusNode: composerElement.firstChild,
-      }),
-    },
+test("lost caret is recovered once before dispatch; content is pasted once", async () => {
+  const editor = literalPasteComposer();
+  editor.setSelection({ outside: true });
+  await editor.run("literal *fixture*");
+  expect(editor.pastes).toEqual(["literal *fixture*"]);
+  expect(editor.read()).toBe("literal *fixture*");
+  expect(editor.reanchors).toBe(2); // recovery followed by final logical-end anchor
+  expect(editor.snapshots.at(-1)).toMatchObject({
+    nativeEditAttempts: 1, nativeEditAccepted: 1, editEvaluationsStarted: 2, editEvaluationsSettled: 2,
   });
-  const composer = {
-    focus: async () => {},
-    evaluate: async (callback: (element: HTMLElement, input: unknown) => unknown, input: unknown) => (
-      callback(composerElement, input)
-    ),
-  };
-
-  try {
-    await expect(insertChatGptComposerPlainText(composer as never, "value"))
-      .rejects.toThrow("plain-text");
-    collapsed = true;
-    active = outside;
-    await expect(insertChatGptComposerPlainText(composer as never, "value"))
-      .rejects.toThrow("plain-text");
-  } finally {
-    Object.assign(globalThis, previous);
-  }
 });
 
-test("bounded composer edit preserves multiline PUA text and the connector pill", async () => {
-  const { createDocument } = require("@mixmark-io/domino") as {
-    createDocument: (html: string) => Document;
-  };
-  const document = createDocument(
-    '<div id="composer"><span data-id="plugin:test" data-keyword="Codex Native2">Codex Native2</span></div>',
-  ) as Document & {
-    createRange: () => Range;
-    execCommand: (command: string, showUi: boolean, value: string) => boolean;
-  };
-  const composerElement = document.getElementById("composer")!;
-  const connector = composerElement.firstChild!;
-  const text = document.createTextNode("");
-  composerElement.appendChild(text);
-  Object.defineProperty(document, "activeElement", { configurable: true, get: () => composerElement });
-  let selected = { start: 0, end: 0 };
-  document.createRange = () => {
-    let start = 0;
-    let end = 0;
-    return {
-      setStart: (_node: Node, offset: number) => { start = offset; },
-      setEnd: (_node: Node, offset: number) => { end = offset; },
-      get startOffset() { return start; },
-      get endOffset() { return end; },
-    } as unknown as Range;
-  };
-  document.execCommand = (command, _showUi, value) => {
-    if (command !== "insertText" || typeof value !== "string") return false;
-    text.data = `${text.data.slice(0, selected.start)}${value}${text.data.slice(selected.end)}`;
-    selected = { start: selected.start + value.length, end: selected.start + value.length };
-    return true;
-  };
-  const previous = {
-    document: globalThis.document,
-    NodeFilter: globalThis.NodeFilter,
-    window: globalThis.window,
-  };
-  Object.assign(globalThis, {
-    document,
-    NodeFilter: { SHOW_TEXT: 4 },
-    window: {
-      getSelection: () => ({
-        get isCollapsed() { return selected.start === selected.end; },
-        anchorNode: text,
-        focusNode: text,
-        removeAllRanges: () => {},
-        addRange: (range: Range) => { selected = { start: range.startOffset, end: range.endOffset }; },
-      }),
-    },
-  });
-  const composer = {
-    focus: async () => {},
-    evaluate: async (callback: (element: HTMLElement, input: unknown) => unknown, input: unknown) => (
-      await callback(composerElement, input)
-    ),
-  };
-  const prompt = " \n\uE000 literal *bold* [value])\n\uF8FF ";
-
-  try {
-    await insertChatGptComposerPlainText(composer as never, prompt);
-    expect(text.data).toBe(prompt);
-    expect(connector.textContent).toBe("Codex Native2");
-  } finally {
-    Object.assign(globalThis, previous);
-  }
+test("a second invalid selection fails closed without an unbounded caret retry", async () => {
+  const editor = literalPasteComposer();
+  editor.setSelection({ outside: true });
+  let recoveries = 0;
+  await expect(editor.run("literal", {
+    reanchor: async () => { recoveries += 1; },
+  })).rejects.toThrow("rejected");
+  expect(recoveries).toBe(1);
+  expect(editor.pastes).toEqual([]);
 });
 
-test("bounded Markdown restoration rejects an inconsistent marker recount", async () => {
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, input: unknown) => {
-      if (typeof input === "string") return true;
-      if (Array.isArray(input)) return 1;
-      return 2;
-    },
-  };
-
-  await expect(insertChatGptComposerPlainText(composer as never, "**"))
-    .rejects.toThrow("could not preserve literal Markdown");
+test("handled paste is not integrity evidence when the editor silently drops a delimiter", async () => {
+  const editor = literalPasteComposer({ onPaste: () => editor.setText("private-sentinel\n") });
+  await expect(editor.run("*private-sentinel*\n" + "tail".repeat(Math.ceil(CHATGPT_LITERAL_PASTE_CHUNK_CHARS / 4)))).rejects.toThrow("integrity mismatch");
+  expect(editor.pastes).toHaveLength(1);
+  expect(editor.reanchors).toBe(0);
+  expect(editor.snapshots.at(-1)!.verifiedUtf16Units).toBe(0);
 });
 
-test("structured Markdown restoration reports a rejected exact edit without prompt content", async () => {
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, input: unknown) => typeof input === "string" ? true : -1,
-  };
-
-  const failure = await insertChatGptComposerPlainText(composer as never, "*private-sentinel*\n")
-    .catch(error => error as Error);
-  expect(failure).toBeInstanceOf(Error);
-  if (!(failure instanceof Error)) throw new Error("Expected structured Markdown restoration to fail");
-  expect(failure.message).toContain("strategy=exact, initialMarkers=2, remainingMarkers=2, batches=1");
+test("rejected paste reports content-free failure and is never retried as a caret issue", async () => {
+  const editor = literalPasteComposer({ acceptPaste: false });
+  const failure = await editor.run("*private-sentinel*\n").catch(error => error as Error);
+  if (!(failure instanceof Error)) throw new Error("Expected editor rejection");
+  expect(failure.message).toContain("literal plain-text paste");
   expect(failure.message).not.toContain("private-sentinel");
+  expect(editor.pastes).toHaveLength(1);
+  expect(editor.reanchors).toBe(0);
 });
 
-test("structured Markdown restoration stops after aborting its current exact batch", async () => {
+test("paste preserves multiline PUA text, literal word joiners and the selected connector pill", async () => {
+  const prompt = " \n\uE000 literal *bold* [value])\n\uF8FF \u2060";
+  const editor = literalPasteComposer({ connector: true });
+  const pill = editor.element.querySelector('[data-id="plugin:test"]');
+  await editor.run(prompt, { connectorSelected: true });
+  expect(editor.read()).toBe(prompt);
+  expect(editor.pastes).toEqual([prompt]);
+  expect(editor.element.querySelector('[data-id="plugin:test"]')).toBe(pill);
+  expect(pill!.textContent).toBe("Codex Native2");
+});
+
+test("a surrogate pair straddling the native paste boundary stays in one transaction", async () => {
+  const prompt = "x".repeat(CHATGPT_LITERAL_PASTE_CHUNK_CHARS - 1) + "😀tail";
+  const editor = literalPasteComposer();
+  await editor.run(prompt);
+  expect(editor.pastes[0]!.length).toBe(CHATGPT_LITERAL_PASTE_CHUNK_CHARS - 1);
+  expect(editor.pastes[1]!.startsWith("😀")).toBeTrue();
+  expect(editor.read()).toBe(prompt);
+});
+
+test("trailing surrogate and delimiters require no subsequent replacement mutation", async () => {
+  const editor = literalPasteComposer();
+  await editor.run("*😀");
+  expect(editor.pastes).toEqual(["*😀"]);
+  expect(editor.read()).toBe("*😀");
+});
+
+test("asynchronous remount drift is rejected by final readback without restoring or resending", async () => {
+  const prompt = "\uF8FF literal *tail*";
+  const editor = literalPasteComposer({ onPaste: () => {
+    setTimeout(() => { editor.remount(); editor.setText("changed"); }, 0);
+  } });
+  await expect(editor.run(prompt)).rejects.toThrow("integrity mismatch");
+  expect(editor.pastes).toEqual([prompt]);
+  expect(editor.reanchors).toBe(0);
+});
+
+test("cancellation during paste stops before prefix readback or any following transaction", async () => {
   const controller = new AbortController();
-  let evaluations = 0;
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, input: unknown) => {
-      evaluations += 1;
-      if (typeof input === "string") return true;
-      controller.abort(new DOMException("stopped", "AbortError"));
-      return 1;
-    },
-  };
-
-  await expect(insertChatGptComposerPlainText(composer as never, "*value*\n", controller.signal))
-    .rejects.toThrow("stopped");
-  expect(evaluations).toBe(2);
+  const reason = new DOMException("stopped", "AbortError");
+  const editor = literalPasteComposer({ onPaste: () => controller.abort(reason) });
+  await expect(editor.run("*value*\n" + "x".repeat(CHATGPT_LITERAL_PASTE_CHUNK_CHARS + 1), { signal: controller.signal })).rejects.toBe(reason);
+  expect(editor.pastes).toHaveLength(1);
+  expect(editor.verified).toEqual([""]);
+  expect(editor.reanchors).toBe(0);
 });
 
-test("bounded Markdown restoration does not split its trailing surrogate pair", async () => {
-  const { createDocument } = require("@mixmark-io/domino") as {
-    createDocument: (html: string) => Document;
-  };
-  const document = createDocument('<div id="composer"></div>') as Document & {
-    createRange: () => Range;
-    execCommand: (command: string, showUi: boolean, value: string) => boolean;
-  };
-  const composerElement = document.getElementById("composer")!;
-  const text = document.createTextNode("");
-  composerElement.appendChild(text);
-  Object.defineProperty(document, "activeElement", { configurable: true, get: () => composerElement });
-  let selected = { start: 0, end: 0 };
-  document.createRange = () => {
-    let start = 0;
-    let end = 0;
-    return {
-      setStart: (_node: Node, offset: number) => { start = offset; },
-      setEnd: (_node: Node, offset: number) => { end = offset; },
-      get startOffset() { return start; },
-      get endOffset() { return end; },
-    } as unknown as Range;
-  };
-  document.execCommand = (_command, _showUi, value) => {
-    if (typeof value !== "string") return false;
-    const previous = text.data.charCodeAt(selected.end - 1);
-    const next = text.data.charCodeAt(selected.end);
-    if (previous >= 0xD800 && previous <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) return false;
-    text.data = `${text.data.slice(0, selected.start)}${value}${text.data.slice(selected.end)}`;
-    selected = { start: selected.start + value.length, end: selected.start + value.length };
-    return true;
-  };
-  const previous = {
-    document: globalThis.document,
-    NodeFilter: globalThis.NodeFilter,
-    window: globalThis.window,
-  };
-  Object.assign(globalThis, {
-    document,
-    NodeFilter: { SHOW_TEXT: 4 },
-    window: {
-      getSelection: () => ({
-        get isCollapsed() { return selected.start === selected.end; },
-        anchorNode: text,
-        focusNode: text,
-        removeAllRanges: () => {},
-        addRange: (range: Range) => { selected = { start: range.startOffset, end: range.endOffset }; },
-      }),
+test("single-space loss at a following paste boundary fails closed without another edit", async () => {
+  const editor = literalPasteComposer({
+    onPaste: (_value, index) => {
+      if (index === 2) editor.element.querySelectorAll("span")[1]!.firstChild!.textContent = "tail";
     },
   });
-  const composer = {
-    focus: async () => {},
-    evaluate: async (callback: (element: HTMLElement, input: unknown) => unknown, input: unknown) => (
-      await callback(composerElement, input)
-    ),
-  };
-
-  try {
-    await insertChatGptComposerPlainText(composer as never, "*😀");
-    expect(text.data).toBe("*😀");
-  } finally {
-    Object.assign(globalThis, previous);
-  }
+  const prompt = "x".repeat(CHATGPT_LITERAL_PASTE_CHUNK_CHARS) + " tail" + "y".repeat(CHATGPT_LITERAL_PASTE_CHUNK_CHARS);
+  await expect(editor.run(prompt)).rejects.toThrow("integrity mismatch");
+  expect(editor.pastes).toHaveLength(2);
+  expect(editor.reanchors).toBe(0);
 });
 
-test("chunk-boundary restoration fails closed when an asynchronous remount restores the marker", async () => {
-  const { createDocument } = require("@mixmark-io/domino") as {
-    createDocument: (html: string) => Document;
-  };
-  const marker = "\uF8FF";
-  const document = createDocument(`<div id="composer">${marker}tail</div>`) as Document & {
-    createRange: () => Range;
-    execCommand: (command: string, showUi: boolean, value: string) => boolean;
-  };
-  const composerElement = document.getElementById("composer")!;
-  const original = composerElement.firstChild!.cloneNode(true);
-  let selected: { node?: Text; start?: number; end?: number } = {};
-  document.createRange = () => ({
-    setStart: (node: Text, offset: number) => { selected = { node, start: offset }; },
-    setEnd: (_node: Text, offset: number) => { selected.end = offset; },
-  } as unknown as Range);
-  document.execCommand = (_command, _showUi, value) => {
-    const node = selected.node;
-    if (!node) return false;
-    node.data = `${node.data.slice(0, selected.start)}${value}${node.data.slice(selected.end)}`;
-    setTimeout(() => {
-      if (node.parentNode === composerElement) composerElement.replaceChild(original.cloneNode(true), node);
-    }, 0);
-    return true;
-  };
-  const previousWindow = globalThis.window;
-  const previousDocument = globalThis.document;
-  const previousNodeFilter = globalThis.NodeFilter;
-  Object.assign(globalThis, {
-    document,
-    NodeFilter: { SHOW_TEXT: 4 },
-    window: { getSelection: () => ({ removeAllRanges: () => {}, addRange: () => {} }) },
-  });
-  const composer = {
-    focus: async () => {},
-    evaluate: async (callback: (element: HTMLElement, input: unknown) => unknown, input: unknown) => (
-      await callback(composerElement, input)
-    ),
-  };
-
-  try {
-    await expect(restoreChatGptPromptChunkBoundary(
-      composer as never,
-      { marker, value: " " },
-    )).resolves.toBeFalse();
-    expect(composerElement.textContent).toBe(`${marker}tail`);
-  } finally {
-    Object.assign(globalThis, {
-      window: previousWindow,
-      document: previousDocument,
-      NodeFilter: previousNodeFilter,
-    });
-  }
-});
-
-test("native prompt chunks keep boundary whitespace in the preceding edit", async () => {
-  const prompt = `${"word ".repeat(4_000)}tail`;
-  const inserted: string[] = [];
-  let attached = "";
-  const page = {};
-  const composer = {
-    focus: async () => {},
-    evaluate: async (_callback: unknown, input: unknown) => {
-      if (typeof input === "string") {
-        if (input.length === 1 && input.charCodeAt(0) >= 0xE000 && input.charCodeAt(0) <= 0xF8FF) {
-          return !attached.includes(input);
-        }
-        inserted.push(input);
-        if (attached.endsWith("\u00A0") && input) attached = `${attached.slice(0, -1)} `;
-        const committed = attached && input.startsWith(" ") ? input.slice(1) : input;
-        attached += committed.endsWith(" ") ? `${committed.slice(0, -1)}\u00A0` : committed;
-        return true;
-      }
-      const replacement = input as { marker: string; value: string };
-      attached = attached.replace(replacement.marker, replacement.value);
-      return true;
+test("editor link-pill conversion is rejected without changing the selected connector or resending", async () => {
+  const prompt = "[private-label](https://example.invalid/private-target) " + "x".repeat(CHATGPT_LITERAL_PASTE_CHUNK_CHARS * 2 + 1);
+  const editor = literalPasteComposer({
+    connector: true,
+    onPaste: () => {
+      const pasted = editor.element.querySelectorAll("span")[1]!;
+      const linkPill = editor.document.createElement("span");
+      linkPill.setAttribute("contenteditable", "false");
+      linkPill.setAttribute("data-link-pill", "true");
+      linkPill.textContent = "private-label";
+      pasted.replaceChild(linkPill, pasted.firstChild!);
     },
-  };
-  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
-    attachedPromptText: async () => attached,
-    activeComposer: async () => composer,
-    reanchorPromptCaret: async () => {},
-  }) as {
-    insertPromptText(page: unknown, text: string): Promise<void>;
-  };
+  });
+  const connector = editor.element.querySelector('[data-id="plugin:test"]');
+  const failure = await editor.run(prompt, { connectorSelected: true }).catch(error => error as Error);
+  if (!(failure instanceof Error)) throw new Error("Expected link-pill integrity rejection");
+  expect(failure).toMatchObject({ code: "chatgpt_prompt_integrity_mismatch", retryable: false, retireSession: true });
+  expect(failure.message).not.toContain("private-label");
+  expect(failure.message).not.toContain("private-target");
+  expect(editor.pastes).toHaveLength(1);
+  expect(editor.element.querySelector('[data-id="plugin:test"]')).toBe(connector);
+  expect(editor.reanchors).toBe(0);
+  const rejectedDom = editor.element.innerHTML;
+  await Bun.sleep(0);
+  expect(editor.element.innerHTML).toBe(rejectedDom);
+  expect(editor.pastes).toHaveLength(1);
+});
 
-  await worker.insertPromptText(page, prompt);
-
-  expect(inserted.length).toBeGreaterThan(1);
-  expect(inserted.slice(1).every(chunk => !chunk.startsWith(" "))).toBeTrue();
-  expect(attached).toBe(prompt);
+test("editor attachment conversion cannot satisfy exact readback or start another transaction", async () => {
+  const prompt = "private-body ".repeat(Math.ceil((CHATGPT_LITERAL_PASTE_CHUNK_CHARS + 1) / "private-body ".length));
+  const editor = literalPasteComposer({
+    connector: true,
+    onPaste: () => {
+      const pasted = editor.element.querySelectorAll("span")[1]!;
+      const attachment = editor.document.createElement("span");
+      attachment.setAttribute("contenteditable", "false");
+      attachment.setAttribute("data-pasted-attachment", "true");
+      attachment.textContent = "pasted.txt";
+      pasted.parentNode!.replaceChild(attachment, pasted);
+    },
+  });
+  const connector = editor.element.querySelector('[data-id="plugin:test"]');
+  const failure = await editor.run(prompt, { connectorSelected: true }).catch(error => error as Error);
+  if (!(failure instanceof Error)) throw new Error("Expected attachment integrity rejection");
+  expect(failure).toMatchObject({ code: "chatgpt_prompt_integrity_mismatch", retryable: false, retireSession: true });
+  expect(failure.message).not.toContain("private-body");
+  expect(editor.pastes).toHaveLength(1);
+  expect(editor.pastes[0]!.length).toBeLessThanOrEqual(CHATGPT_LITERAL_PASTE_CHUNK_CHARS);
+  expect(editor.element.querySelector('[data-id="plugin:test"]')).toBe(connector);
+  expect(editor.reanchors).toBe(0);
+  expect(editor.snapshots.at(-1)!.verifiedUtf16Units).toBe(0);
+  const rejectedDom = editor.element.innerHTML;
+  await Bun.sleep(0);
+  expect(editor.element.innerHTML).toBe(rejectedDom);
+  expect(editor.pastes).toHaveLength(1);
 });

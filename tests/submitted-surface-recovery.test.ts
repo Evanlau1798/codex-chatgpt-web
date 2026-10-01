@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chatGptCompletionEvidenceError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
+import { EnhancedRecoveryCheckpointStore } from "../src/adapters/chatgpt-web/enhanced-recovery-checkpoint";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
@@ -87,6 +88,7 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
   let browserStarts = 0;
   let observedRetry: unknown;
   let observedCorrection: unknown;
+  let preparedToken: string | undefined;
   const originalFind = chatGptTurnSessions.find.bind(chatGptTurnSessions);
   const find = spyOn(chatGptTurnSessions, "find").mockImplementation(key => {
     const session = originalFind(key);
@@ -97,6 +99,8 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
   (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
     browserStarts += 1;
     const prepared = await turn.prepare();
+    const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
+    preparedToken = token;
     prepared.release();
     turn.onSubmitted?.();
     const retry = await turn.retryPromptForError?.(
@@ -104,8 +108,9 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
       1,
     );
     observedRetry = retry;
-    observedCorrection = await turn.retryPromptForAnswer?.("The tool was blocked by safety policy.", 1);
+    if (!compacting && !token) throw new Error("turn token missing from compiled prompt");
     const answer = "Recovered in the retained conversation.";
+    observedCorrection = await turn.retryPromptForAnswer?.("The tool was blocked by safety policy.", 1);
     turn.onTextDelta(answer);
     return answer;
   };
@@ -115,12 +120,19 @@ for (const compacting of [false, true]) test(`same-conversation recovery respect
     request._canonicalContextComplete = true;
     const events: AdapterEvent[] = [];
     await createChatGptWebAdapter(provider).runTurn!(request, { headers: new Headers() }, event => events.push(event));
-
     if (compacting) {
       expect(observedRetry).toBeUndefined();
       expect(observedCorrection).toBeUndefined();
     } else {
-      expect(observedRetry).toMatchObject({ text: CHATGPT_SAME_SURFACE_RECOVERY_PROMPT, replaceCandidate: true });
+      expect(observedRetry).toMatchObject({ replaceCandidate: true });
+      const retryText = (observedRetry as { text: string }).text;
+      expect(retryText).toContain(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT);
+      expect(retryText).toContain(`<codex_native_turn_binding> turn_token ${preparedToken} </codex_native_turn_binding>`);
+      expect(retryText).toContain(JSON.stringify({turn_token:preparedToken,wire_name:"codex.control.output",arguments:{kind:"final",text:"<complete user-facing answer>"}}));
+      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("codex.control.output");
+      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("kind=final");
+      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("Do not call any work tool");
+      expect(CHATGPT_SAME_SURFACE_RECOVERY_PROMPT).toContain("Do not write ordinary assistant prose");
       expect(observedCorrection).toBeDefined();
     }
 
@@ -173,8 +185,10 @@ test("original Web session mode does not install same-conversation recovery", as
   }
 });
 
-test("keeps a submitted tool surface terminal after acceptance", async () => {
-  const socketPath = brokerTestEndpoint(`cgw-submitted-recovery-${process.pid}-${Date.now()}`);
+for (const largeRecovery of [false, true]) test(
+  `rebuilds a submitted missing-final turn as a fresh finalization-only ${largeRecovery ? "multipart " : ""}surface`,
+  async () => {
+  const socketPath = brokerTestEndpoint(`cgw-submitted-recovery-${largeRecovery}-${process.pid}-${Date.now()}`);
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: "browser://submitted-recovery",
@@ -188,6 +202,10 @@ test("keeps a submitted tool surface terminal after acceptance", async () => {
   };
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const originalRun = worker.run.bind(worker);
+  const checkpointStore = new EnhancedRecoveryCheckpointStore();
+  const applyCheckpoint = spyOn(checkpointStore, "apply");
+  const shouldCheckpoint = spyOn(checkpointStore, "shouldCheckpoint");
+  const commitCheckpoint = spyOn(checkpointStore, "commit");
   const turnTokens: string[] = [];
   let browserStarts = 0;
 
@@ -196,9 +214,9 @@ test("keeps a submitted tool surface terminal after acceptance", async () => {
     const prepared = await turn.prepare();
     try {
       const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
-      if (!token) throw new Error("turn token missing from compiled prompt");
-      turnTokens.push(token);
       if (browserStarts === 1) {
+        if (!token) throw new Error("turn token missing from compiled prompt");
+        turnTokens.push(token);
         turn.onSubmitted?.();
         const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
         const progress = turn.externalProgress;
@@ -217,10 +235,20 @@ test("keeps a submitted tool surface terminal after acceptance", async () => {
         await progress.acknowledgeToolBatch(snapshot.lastToolBatchRevision);
         const result = await resultPromise;
         expect(textOf(result)).toContain("CANONICAL_RECOVERY_RESULT");
-        throw chatGptWebSurfaceError("completion action disappeared after the tool result", false);
+        throw chatGptCompletionEvidenceError("final answer disappeared after the tool result", false);
       }
-      expect(prepared.modelInputText ?? prepared.text).toContain("CANONICAL_RECOVERY_RESULT");
-      expect(prepared.modelInputText ?? prepared.text).toContain("Continue after the V2 boundary");
+      expect(token).toBeUndefined();
+      expect(turn.nativeConnector).toBeUndefined();
+      expect(turn.externalProgress).toBeUndefined();
+      expect(turn.retryPromptForAnswer).toBeUndefined();
+      expect(prepared.multipart?.parts.length).toBe(largeRecovery ? 2 : undefined);
+      const preparedContext = prepared.multipart?.parts.join("\n") ?? prepared.modelInputText ?? prepared.text;
+      expect(preparedContext).toContain("CANONICAL_RECOVERY_RESULT");
+      expect(preparedContext).toContain("Continue after the V2 boundary");
+      expect(prepared.multipart?.commit ?? prepared.text).toContain("final-answer recovery");
+      expect(prepared.multipart?.commit ?? prepared.text).toContain("Do not call any tool");
+      expect(`${preparedContext}\n${prepared.multipart?.commit ?? prepared.text}`)
+        .not.toContain("submit_recovery_checkpoint");
       const answer = "Recovered final answer.";
       turn.onTextDelta(answer);
       return answer;
@@ -230,8 +258,9 @@ test("keeps a submitted tool surface terminal after acceptance", async () => {
   };
 
   try {
-    const adapter = createChatGptWebAdapter(provider);
+    const adapter = createChatGptWebAdapter(provider, { enhancedRecoveryCheckpointStore: checkpointStore });
     const first = initialRequest();
+    ((first._rawBody as { client_metadata: Record<string, unknown> }).client_metadata).claude_subagent = true;
     const firstEvents: AdapterEvent[] = [];
     await adapter.runTurn!(first, { headers: new Headers() }, event => firstEvents.push(event));
     const call = firstEvents.find(
@@ -242,6 +271,11 @@ test("keeps a submitted tool surface terminal after acceptance", async () => {
     const continuation = structuredClone(first);
     continuation._canonicalContextComplete = true;
     continuation.context.messages.push(
+      ...(largeRecovery ? Array.from({ length: 24 }, (_, index) => ({
+        role: "user" as const,
+        content: `canonical recovery record ${index}: ${"word ".repeat(5_000)}`,
+        timestamp: 10 + index,
+      })) : []),
       {
         role: "assistant",
         content: [{ type: "toolCall", id: call!.id, name: "exec_command", arguments: { cmd: "inspect" } }],
@@ -280,18 +314,22 @@ test("keeps a submitted tool surface terminal after acceptance", async () => {
     const finalEvents: AdapterEvent[] = [];
     await adapter.runTurn!(continuation, { headers: new Headers() }, event => finalEvents.push(event));
 
-    expect(browserStarts).toBe(1);
+    expect(browserStarts).toBe(2);
     expect(new Set(turnTokens).size).toBe(1);
     expect(finalEvents.filter(event => event.type === "tool_call_start")).toEqual([]);
-    expect(finalEvents.filter(event => event.type === "text_delta")).toEqual([]);
-    expect(finalEvents.at(-1)).toMatchObject({
-      type: "error",
-      code: "chatgpt_submitted_turn_failed",
-      retryable: false,
-    });
+    expect(finalEvents.filter(event => event.type === "text_delta")).toEqual([
+      { type: "text_delta", text: "Recovered final answer.", phase: "final_answer" },
+    ]);
+    expect(finalEvents.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+    expect(applyCheckpoint).not.toHaveBeenCalled();
+    expect(shouldCheckpoint).not.toHaveBeenCalled();
+    expect(commitCheckpoint).not.toHaveBeenCalled();
     await expect(callTurnBroker(socketPath, { method: "claim", token: turnTokens[0]! }))
       .rejects.toThrow("already finished");
   } finally {
+    applyCheckpoint.mockRestore();
+    shouldCheckpoint.mockRestore();
+    commitCheckpoint.mockRestore();
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
     await TurnBroker.forSocket(socketPath).close();
   }

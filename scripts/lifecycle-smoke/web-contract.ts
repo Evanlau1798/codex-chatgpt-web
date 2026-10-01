@@ -8,6 +8,7 @@ import {
 } from "../../src/chatgpt-session";
 import { loadConfig } from "../../src/config";
 import { verifyCurrentConnectorContract } from "../../src/adapters/chatgpt-web/connector-contract";
+import { countChatGptTurnRoots } from "../../src/adapters/chatgpt-web/response-turn-boundary";
 import { VERSION } from "../../src/version";
 import {
   connectLauncherBrowserHost,
@@ -19,9 +20,10 @@ import {
   assertWebContractCooldown,
   assertWebContractRuntimeVersion,
   deriveWebContractCapabilities,
-  findWebContractSurface,
+  waitForWebContractSurface,
   requestWebContractTurn,
   runWebContractTurns,
+  webContractCandidateSurfaceIds,
   webContractRequestTools,
   WEB_CONTRACT_PROBE_TIMEOUT_MS,
   WEB_CONTRACT_TURN_TIMEOUT_MS,
@@ -169,7 +171,10 @@ const item = (turnId: string, id: string, text: string) => ({
   content: [{ type: "input_text", text }],
   internal_chat_message_metadata_passthrough: { turn_id: turnId },
 });
-const existingSurfaces = new Set(Object.keys(readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath).surfaceTargets));
+const initialSurfaceIds = new Set(Object.keys(
+  readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath).surfaceTargets,
+));
+let retainedSurfaceId: string | undefined;
 let contractProbeTurns = externalConnectorContractVerified ? 2 : 0;
 await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_CONTRACT_TURN_TIMEOUT_MS, async signal => {
   const turnId = `turn_web_contract_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -228,14 +233,49 @@ await runWebContractTurns(async (turn, previousResponseId) => withDeadline(WEB_C
   return payload;
 }), async () => {
   if (!await waitForBrowserIdle(baseUrl)) throw new Error("Web contract turn did not settle before reuse inspection");
-  const surfaces = Object.keys(readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!).surfaceTargets)
-    .filter(surfaceId => !existingSurfaces.has(surfaceId));
-  return findWebContractSurface(surfaces, async surfaceId => {
-    const retained = await connectLauncherBrowserHost(config.browserHostDescriptorPath!, 5_000, surfaceId);
+  return waitForWebContractSurface(() => {
+    const descriptor = readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!);
+    return webContractCandidateSurfaceIds(
+      descriptor.surfaceId,
+      Object.keys(descriptor.surfaceTargets),
+      initialSurfaceIds,
+      retainedSurfaceId,
+    );
+  }, async (surfaceId, remainingMs, signal) => {
+    let retained;
+    try {
+      retained = await connectLauncherBrowserHost(
+        config.browserHostDescriptorPath!, remainingMs, surfaceId, signal,
+      );
+    } catch (error) {
+      if (error instanceof Error
+        && error.message === "Launcher browser surface is no longer registered with its native target") return undefined;
+      throw error;
+    }
+    let aborting = false;
+    let onAbort: () => void;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      onAbort = () => {
+        if (aborting) return;
+        aborting = true;
+        void retained.browser.close().catch(() => {}).then(() => reject(
+          signal.reason instanceof Error ? signal.reason : new Error("Web contract surface inspection aborted"),
+        ));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+    });
     try {
       const turns = retained.page.locator(CHATGPT_USER_TURN_SELECTOR);
-      return { ownsCanary: await turns.filter({ hasText: threadId }).count() === 1, userTurns: await turns.count() };
-    } finally { await retained.browser.close(); }
+      const userTurns = await Promise.race([countChatGptTurnRoots(turns), aborted]);
+      return { ownsCanary: true, userTurns };
+    } finally {
+      signal.removeEventListener("abort", onAbort!);
+      await retained.browser.close().catch(() => {});
+    }
+  }).then(observation => {
+    retainedSurfaceId ??= observation.surfaceId;
+    return observation;
   });
 });
 const finalProjection = true;

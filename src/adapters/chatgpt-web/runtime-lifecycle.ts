@@ -70,6 +70,12 @@ export interface ChatGptSurfaceRecoveryDecision {
   reason: ChatGptSurfaceRecoveryReason;
   canonicalResultCount: number;
   unresolvedSupersededCount: number;
+  finalizationOnly?: true;
+}
+
+export interface ChatGptSurfaceRecoveryPlan {
+  canonicalResultCount: number;
+  finalizationOnly: boolean;
 }
 
 export type ChatGptSameSurfaceRecoveryReason =
@@ -93,9 +99,10 @@ export interface ChatGptSameSurfaceRecoveryDecision {
 }
 
 export const CHATGPT_SAME_SURFACE_RECOVERY_PROMPT = [
-  "Continue the current task from the work already completed in this conversation.",
-  "Do not repeat completed tool calls.",
-  "Finish any remaining work and provide the final response.",
+  "All requested Codex Native2 work tools have completed and their results are already available above.",
+  "Do not call any work tool or repeat completed tool calls.",
+  "Produce the complete user-facing answer now by calling codex_tool_call exactly once with the current turn_token, wire_name codex.control.output, and arguments kind=final with the answer text.",
+  "After the output control acknowledges the final, end this response immediately. Do not write ordinary assistant prose or call another tool.",
 ].join(" ");
 
 export function chatGptSameSurfaceRecoveryDecision(
@@ -152,8 +159,12 @@ export function chatGptSurfaceRecoveryDecision(
   if (session.runtime.compactionRequested) return reject("compaction_requested");
   if (signal?.aborted) return reject("aborted");
   if (session.runtime.mode !== "tools") return reject("read_only");
+  const acceptedFinalization = session.runtime.submission?.phase === "accepted"
+    && error instanceof ChatGptWebAdapterError
+    && error.code === "chatgpt_completion_evidence_missing";
   const acceptedWithCheckpoint = durableCheckpoint && session.runtime.submission?.phase === "accepted";
-  if (session.runtime.submission && session.runtime.submission.phase !== "prepared" && !acceptedWithCheckpoint) {
+  if (session.runtime.submission && session.runtime.submission.phase !== "prepared"
+    && !acceptedWithCheckpoint && !acceptedFinalization) {
     return reject("submission_activated");
   }
   const surfaceFailure = error instanceof ChatGptWebAdapterError
@@ -169,7 +180,7 @@ export function chatGptSurfaceRecoveryDecision(
   if (session.runtime.text.value().length > 0) return reject("final_streamed");
   if (parsed._canonicalContextComplete !== true) return reject("canonical_incomplete");
   if (unresolvedSupersededCount > 0) return reject("superseded_results_pending");
-  if (acceptedWithCheckpoint) {
+  if (acceptedWithCheckpoint || acceptedFinalization) {
     if (session.runtime.externalProgress?.snapshot().activeToolCalls !== 0 || session.outstanding().length > 0) {
       return reject("tool_results_incomplete");
     }
@@ -178,6 +189,15 @@ export function chatGptSurfaceRecoveryDecision(
     if (parsed.context.messages.some(message => message.role === "assistant"
       && message.content.some(part => part.type === "toolCall" && !results.has(part.id)))) {
       return reject("tool_results_incomplete");
+    }
+    if (acceptedFinalization) {
+      return {
+        eligible: true,
+        reason: "eligible",
+        canonicalResultCount: results.size,
+        unresolvedSupersededCount,
+        finalizationOnly: true,
+      };
     }
   }
   const outstanding = session.outstanding();
@@ -212,14 +232,14 @@ export class ChatGptSurfaceRecoveryTracker {
 
   constructor(private readonly traceId: string) {}
 
-  recoverableResultCount(
+  recoveryPlan(
     error: unknown,
     session: ChatGptTurnSession,
     parsed: CodexParsedRequest,
     recoveries: number,
     signal?: AbortSignal,
     durableCheckpoint = false,
-  ): number | undefined {
+  ): ChatGptSurfaceRecoveryPlan | undefined {
     const decision = chatGptSurfaceRecoveryDecision(error, session, parsed, recoveries, signal, durableCheckpoint);
     if (!this.diagnosticLogged) {
       this.diagnosticLogged = true;
@@ -234,12 +254,27 @@ export class ChatGptSurfaceRecoveryTracker {
           : "")
         + ` finalChars=${session.runtime.text.value().length}`
         + ` canonicalResults=${decision.canonicalResultCount}`
+        + ` finalizationOnly=${decision.finalizationOnly === true}`
         + ` unresolvedSuperseded=${decision.unresolvedSupersededCount}`
         + ` canonicalGeneration=${canonical.generation} canonicalComplete=${canonical.complete}`
         + ` canonicalCalls=${canonical.calls} cancelledBeforeCanonical=${canonical.cancelledBeforeCanonical}`
         + ` resolvedSuperseded=${canonical.resolvedSuperseded}`,
       );
     }
-    return decision.eligible ? decision.canonicalResultCount : undefined;
+    return decision.eligible ? {
+      canonicalResultCount: decision.canonicalResultCount,
+      finalizationOnly: decision.finalizationOnly === true,
+    } : undefined;
+  }
+
+  recoverableResultCount(
+    error: unknown,
+    session: ChatGptTurnSession,
+    parsed: CodexParsedRequest,
+    recoveries: number,
+    signal?: AbortSignal,
+    durableCheckpoint = false,
+  ): number | undefined {
+    return this.recoveryPlan(error, session, parsed, recoveries, signal, durableCheckpoint)?.canonicalResultCount;
   }
 }
