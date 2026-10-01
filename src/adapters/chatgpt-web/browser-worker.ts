@@ -4222,6 +4222,7 @@ export class ChatGptBrowserWorker {
               async () => {
                 await this.assertSelectedEffort(page, mode);
                 submissionRejection.begin(page);
+                await modelReceipts.ensurePageCaptureReady();
                 modelReceipts.beginSend({
                   responseAttempt: 1,
                   provenance: "multipart_stage",
@@ -4588,6 +4589,7 @@ export class ChatGptBrowserWorker {
           recoveryFinalizationActivated = true;
         }
         submissionRejection.begin(page);
+        await modelReceipts.ensurePageCaptureReady();
         modelReceipts.beginSend({
           responseAttempt,
           provenance: turn.modelReceiptProvenance

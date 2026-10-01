@@ -15,6 +15,9 @@ export const CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS = 32;
 export const CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES = 32;
 /** Telemetry-only cleanup budget after inference has already settled. */
 export const CHATGPT_MODEL_RECEIPT_TERMINAL_DRAIN_MS = 750;
+/** Short observer preparation budget; never extends or cancels provider inference. */
+export const CHATGPT_MODEL_RECEIPT_PAGE_PREPARATION_MS = 1_500;
+export const CHATGPT_MODEL_RECEIPT_ATTACH_PREPARATION_MS = 1_500;
 export const CHATGPT_CONVERSATION_URL = "https://chatgpt.com/backend-api/f/conversation";
 
 const MODEL_FIELDS = [
@@ -79,6 +82,31 @@ export type ChatGptModelReceiptFailureStage =
 export type ChatGptModelReceiptFailureCode =
   | "request_failed" | "stream_resource_content_rejected" | "collector_or_decoder_failed"
   | "network_loading_failed";
+export type ChatGptModelReceiptPageRejection =
+  | "binding_unavailable" | "install_failed" | "source_frame" | "stale_token" | "unknown_event"
+  | "not_activated" | "sealed" | "no_owned_request" | "body_hash_mismatch" | "capture_cap" | "invalid_response";
+
+export interface ChatGptModelReceiptPageLifecycle {
+  installed: boolean;
+  rebindPending: boolean;
+  rebinds: number;
+  invocations: number;
+  starts: number;
+  terminals: number;
+  rejected: number;
+  rejection?: ChatGptModelReceiptPageRejection;
+}
+export interface ChatGptModelReceiptParserSource {
+  status: ChatGptModelObservationStatus;
+  parsedEvents: number;
+  decodedBytes: number;
+}
+export interface ChatGptModelReceiptParserDiagnostics {
+  cdp?: ChatGptModelReceiptParserSource;
+  page?: ChatGptModelReceiptParserSource;
+  totalParsedEvents: number;
+  totalDecodedBytes: number;
+}
 
 export interface ChatGptModelReceiptDiagnostic {
   kind: "chatgpt_model_receipt_diagnostic";
@@ -94,6 +122,8 @@ export interface ChatGptModelReceiptDiagnostic {
   terminalCaptures: number;
   failureStage?: ChatGptModelReceiptFailureStage;
   failureCode?: ChatGptModelReceiptFailureCode;
+  page?: ChatGptModelReceiptPageLifecycle;
+  parser?: ChatGptModelReceiptParserDiagnostics;
   transport?: {
     mimeType: "text/event-stream" | "json" | "other";
     fromServiceWorker: boolean;
@@ -124,6 +154,10 @@ const RECEIPT_FAILURE_STAGES = new Set<ChatGptModelReceiptFailureStage>([
 ]);
 const RECEIPT_FAILURE_CODES = new Set<ChatGptModelReceiptFailureCode>([
   "request_failed", "stream_resource_content_rejected", "collector_or_decoder_failed", "network_loading_failed",
+]);
+const RECEIPT_PAGE_REJECTIONS = new Set<ChatGptModelReceiptPageRejection>([
+  "binding_unavailable", "install_failed", "source_frame", "stale_token", "unknown_event",
+  "not_activated", "sealed", "no_owned_request", "body_hash_mismatch", "capture_cap", "invalid_response",
 ]);
 
 /** Validate the narrow helper-wire shape; unknown keys are rejected to prevent payload leakage. */
@@ -162,7 +196,7 @@ export function assertChatGptModelReceiptDiagnostic(value: unknown, expectedTrac
   const diagnostic = value as Record<string, unknown>;
   const allowed = new Set([
     "kind", "version", "traceId", "physicalSend", "responseAttempt", "provenance", "outcome", "reason",
-    "ownedRequests", "cdpCaptures", "terminalCaptures", "failureStage", "failureCode", "transport",
+    "ownedRequests", "cdpCaptures", "terminalCaptures", "failureStage", "failureCode", "page", "parser", "transport",
   ]);
   if ([...Object.keys(diagnostic)].some(key => !allowed.has(key))) throw new Error("ChatGPT model receipt diagnostic has an unsupported field");
   if (diagnostic.kind !== "chatgpt_model_receipt_diagnostic" || diagnostic.version !== CHATGPT_MODEL_RECEIPT_VERSION
@@ -188,6 +222,40 @@ export function assertChatGptModelReceiptDiagnostic(value: unknown, expectedTrac
   }
   if (diagnostic.failureCode !== undefined && !RECEIPT_FAILURE_CODES.has(diagnostic.failureCode as ChatGptModelReceiptFailureCode)) {
     throw new Error("ChatGPT model receipt diagnostic failure code is invalid");
+  }
+  if (diagnostic.page !== undefined) {
+    const page = recordObject(diagnostic.page);
+    const keys = ["installed", "rebindPending", "rebinds", "invocations", "starts", "terminals", "rejected", "rejection"];
+    if (!page || Object.keys(page).some(key => !keys.includes(key))
+      || typeof page.installed !== "boolean" || typeof page.rebindPending !== "boolean"
+      || !["rebinds", "invocations", "starts", "terminals", "rejected"].every(key => Number.isSafeInteger(page[key])
+        && Number(page[key]) >= 0 && Number(page[key]) <= CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS)
+      || (page.rejection !== undefined && !RECEIPT_PAGE_REJECTIONS.has(page.rejection as ChatGptModelReceiptPageRejection))) {
+      throw new Error("ChatGPT model receipt page lifecycle is invalid");
+    }
+  }
+  if (diagnostic.parser !== undefined) {
+    const parser = recordObject(diagnostic.parser);
+    const parserKeys = ["cdp", "page", "totalParsedEvents", "totalDecodedBytes"];
+    const validateSource = (value: unknown): boolean => {
+      const source = recordObject(value);
+      return Boolean(source && Object.keys(source).every(key => ["status", "parsedEvents", "decodedBytes"].includes(key))
+        && typeof source.status === "string"
+        && ["resolved", "unavailable", "conflict", "malformed", "bounded"].includes(source.status)
+        && Number.isSafeInteger(source.parsedEvents) && Number(source.parsedEvents) >= 0
+        && Number(source.parsedEvents) <= CHATGPT_MODEL_RECEIPT_MAX_EVENTS * CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES
+        && Number.isSafeInteger(source.decodedBytes) && Number(source.decodedBytes) >= 0
+        && Number(source.decodedBytes) <= CHATGPT_MODEL_RECEIPT_MAX_BYTES * CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES);
+    };
+    if (!parser || Object.keys(parser).some(key => !parserKeys.includes(key))
+      || (parser.cdp !== undefined && !validateSource(parser.cdp))
+      || (parser.page !== undefined && !validateSource(parser.page))
+      || !Number.isSafeInteger(parser.totalParsedEvents) || Number(parser.totalParsedEvents) < 0
+      || Number(parser.totalParsedEvents) > CHATGPT_MODEL_RECEIPT_MAX_EVENTS * CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES
+      || !Number.isSafeInteger(parser.totalDecodedBytes) || Number(parser.totalDecodedBytes) < 0
+      || Number(parser.totalDecodedBytes) > CHATGPT_MODEL_RECEIPT_MAX_BYTES * CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) {
+      throw new Error("ChatGPT model receipt parser diagnostics are invalid");
+    }
   }
   if (diagnostic.transport !== undefined) {
     const transport = recordObject(diagnostic.transport);
@@ -531,6 +599,11 @@ interface ActiveSend extends ChatGptModelReceiptSendContext {
   diagnosticEmitted: boolean;
   bounded: boolean;
   pageInvocationIds: Map<string, string | undefined>;
+  pageInvocations: number;
+  pageStarts: number;
+  pageTerminals: number;
+  pageRejected: number;
+  pageRejection?: ChatGptModelReceiptPageRejection;
 }
 
 interface CdpRequestWillBeSent {
@@ -689,6 +762,14 @@ export class ChatGptModelReceiptObserver {
   private cdp?: CDPSession;
   private mainFrameId?: string;
   private pageCaptureToken?: string;
+  private pageCaptureInstalled = false;
+  private pageCaptureNeedsRebind = true;
+  private pageCaptureRebinds = 0;
+  private pageCaptureRejection?: ChatGptModelReceiptPageRejection;
+  private pageCaptureEpoch = 0;
+  private observerEpoch = 0;
+  private observerPageEpoch?: number;
+  private observerCdpEpoch?: number;
   private active?: ActiveSend;
   private nextPhysicalSend = 0;
   private surfaceRecoveryPending = false;
@@ -697,6 +778,46 @@ export class ChatGptModelReceiptObserver {
   /** Requests observed before the current activation are stale, even if their response arrives later. */
   private readonly preActivationRequestFingerprints = new Set<string>();
   private readonly observedBeforeActivation = new Set<string>();
+  private recordPageRejection(active: ActiveSend | undefined, rejection: ChatGptModelReceiptPageRejection): void {
+    this.pageCaptureRejection = rejection;
+    if (!active) return;
+    active.pageRejected = Math.min(CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS, active.pageRejected + 1);
+    active.pageRejection = rejection;
+  }
+  private markPageTerminal(capture: CdpCapture): void {
+    if (capture.terminal) return;
+    capture.terminal = true;
+    capture.send.pageTerminals = Math.min(CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS, capture.send.pageTerminals + 1);
+  }
+  private parserDiagnostics(active: ActiveSend): ChatGptModelReceiptParserDiagnostics {
+    const source = (captures: CdpCapture[]): ChatGptModelReceiptParserSource | undefined => {
+      if (captures.length === 0) return undefined;
+      const observations = captures.map(capture => capture.collector.finish());
+      const statuses = new Set(observations.map(observation => observation.status));
+      const status: ChatGptModelObservationStatus = statuses.size === 1
+        ? [...statuses][0]!
+        : "conflict";
+      return {
+        status,
+        parsedEvents: Math.min(CHATGPT_MODEL_RECEIPT_MAX_EVENTS * CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES, observations.reduce((sum, observation) => sum + observation.evidenceCount, 0)),
+        decodedBytes: Math.min(CHATGPT_MODEL_RECEIPT_MAX_BYTES * CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES, captures.reduce((sum, capture) => sum + capture.seenEncodedBytes, 0)),
+      };
+    };
+    const cdp = source(active.captures.filter(capture => capture.source === "cdp"));
+    const page = source(active.captures.filter(capture => capture.source === "page"));
+    return {
+      ...(cdp ? { cdp } : {}),
+      ...(page ? { page } : {}),
+      totalParsedEvents: Math.min(
+        CHATGPT_MODEL_RECEIPT_MAX_EVENTS * CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES,
+        active.captures.reduce((sum, capture) => sum + capture.collector.finish().evidenceCount, 0),
+      ),
+      totalDecodedBytes: Math.min(
+        CHATGPT_MODEL_RECEIPT_MAX_BYTES * CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES,
+        active.captures.reduce((sum, capture) => sum + capture.seenEncodedBytes, 0),
+      ),
+    };
+  }
   private readonly onRequest = (request: Request): void => {
     const active = this.active;
     if (!this.page || request.method() !== "POST"
@@ -728,7 +849,8 @@ export class ChatGptModelReceiptObserver {
     for (const capture of this.captures.values()) {
       if (capture.playwright?.request !== request) continue;
       capture.failed = true;
-      capture.terminal = true;
+      if (capture.source === "page") this.markPageTerminal(capture);
+      else capture.terminal = true;
       capture.failureStage = "playwright_requestfailed";
       capture.failureCode = "request_failed";
       void this.maybeEmit(capture.send).catch(error => noteTelemetryFailure("requestfailed", error));
@@ -736,12 +858,34 @@ export class ChatGptModelReceiptObserver {
   };
   readonly onPageCapture = async (value: unknown): Promise<boolean> => {
     const event = recordObject(value) as PageFetchCaptureEvent | undefined;
-    if (!event || event.token !== this.pageCaptureToken || typeof event.kind !== "string" || typeof event.id !== "string") return false;
     const active = this.active;
+    if (!event || typeof event.kind !== "string" || typeof event.id !== "string") {
+      this.recordPageRejection(active, "unknown_event");
+      return false;
+    }
+    if (event.token !== this.pageCaptureToken) {
+      this.recordPageRejection(active, "stale_token");
+      return false;
+    }
     if (event.kind === "invoke") {
-      if (!active?.activated || active.sealed || active.pageInvocationIds.size >= CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS) return false;
+      if (!active?.activated) {
+        this.recordPageRejection(active, "not_activated");
+        return false;
+      }
+      if (active.sealed) {
+        this.recordPageRejection(active, "sealed");
+        return false;
+      }
+      if (active.pageInvocationIds.size >= CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS) {
+        this.recordPageRejection(active, "capture_cap");
+        return false;
+      }
       if (event.bodyHash !== undefined && (typeof event.bodyHash !== "string"
-        || (event.bodyHash !== "oversized" && !/^[a-f0-9]{64}$/.test(event.bodyHash)))) return false;
+        || (event.bodyHash !== "oversized" && !/^[a-f0-9]{64}$/.test(event.bodyHash)))) {
+        this.recordPageRejection(active, "unknown_event");
+        return false;
+      }
+      active.pageInvocations = Math.min(CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS, active.pageInvocations + 1);
       active.pageInvocationIds.set(event.id, event.bodyHash as string | undefined);
       return true;
     }
@@ -750,8 +894,17 @@ export class ChatGptModelReceiptObserver {
       return false;
     }
     if (event.kind === "start") {
-      if (!active?.activated || active.sealed || !active.pageInvocationIds.has(event.id)) {
-        if (active && active.activated && active.captures.length >= CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) active.bounded = true;
+      active && (active.pageStarts = Math.min(CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS, active.pageStarts + 1));
+      if (!active?.activated) {
+        this.recordPageRejection(active, "not_activated");
+        return false;
+      }
+      if (active.sealed) {
+        this.recordPageRejection(active, "sealed");
+        return false;
+      }
+      if (!active.pageInvocationIds.has(event.id)) {
+        this.recordPageRejection(active, "stale_token");
         return false;
       }
       const requestBodyHash = active.pageInvocationIds.get(event.id);
@@ -759,15 +912,25 @@ export class ChatGptModelReceiptObserver {
       // A page nonce is not enough by itself: require the corresponding
       // Playwright main-frame request (and, when available, its bounded body
       // hash) before allowing the observation branch to bind.
-      if (active.requests.length === 0
-        || (requestBodyHash !== undefined && !active.requests.some(request => request.requestBodyHash === requestBodyHash && !request.pageCapture))
-        || active.captures.length >= CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) {
-        if (active && active.activated && active.captures.length >= CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) active.bounded = true;
+      if (active.requests.length === 0) {
+        this.recordPageRejection(active, "no_owned_request");
+        return false;
+      }
+      if (requestBodyHash !== undefined && !active.requests.some(request => request.requestBodyHash === requestBodyHash && !request.pageCapture)) {
+        this.recordPageRejection(active, "body_hash_mismatch");
+        return false;
+      }
+      if (active.captures.length >= CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES) {
+        active.bounded = true;
+        this.recordPageRejection(active, "capture_cap");
         return false;
       }
       const contentType = event.contentType === "text/event-stream" ? "sse"
         : event.contentType === "json" ? "json" : undefined;
-      if (!contentType || !Number.isInteger(event.status) || Number(event.status) < 200 || Number(event.status) >= 300) return false;
+      if (!contentType || !Number.isInteger(event.status) || Number(event.status) < 200 || Number(event.status) >= 300) {
+        this.recordPageRejection(active, "invalid_response");
+        return false;
+      }
       const capture: CdpCapture = {
         requestId: `page:${event.id}`,
         send: active,
@@ -794,7 +957,7 @@ export class ChatGptModelReceiptObserver {
       if (!this.reserveEncodedChunk(capture, encoded)) return false;
       capture.tail = capture.tail.then(() => this.consumeCaptureChunk(capture, encoded)).catch(error => {
         capture.failed = true;
-        capture.terminal = true;
+        this.markPageTerminal(capture);
         capture.failureStage = "data_received";
         capture.failureCode = "collector_or_decoder_failed";
         noteTelemetryFailure("page-data-chunk", error);
@@ -805,10 +968,10 @@ export class ChatGptModelReceiptObserver {
       capture.tail = capture.tail.then(() => {
         if (!capture.failed && capture.contentType === "sse") capture.collector.consumeSseChunk(new Uint8Array(), true);
         else if (!capture.failed && capture.contentType === "json") capture.collector.consumeJsonChunk(new Uint8Array(), true);
-        capture.terminal = true;
+        this.markPageTerminal(capture);
       }).catch(error => {
         capture.failed = true;
-        capture.terminal = true;
+        this.markPageTerminal(capture);
         capture.failureStage = "loading_finished";
         capture.failureCode = "collector_or_decoder_failed";
         noteTelemetryFailure("page-loading-finished", error);
@@ -819,13 +982,13 @@ export class ChatGptModelReceiptObserver {
     if (event.kind === "bounded") {
       capture.bounded = true;
       capture.collector.markBounded();
-      capture.terminal = true;
+      this.markPageTerminal(capture);
       void this.maybeEmit(capture.send).catch(error => noteTelemetryFailure("page-bounded", error));
       return false;
     }
     if (event.kind === "failed") {
       capture.failed = true;
-      capture.terminal = true;
+      this.markPageTerminal(capture);
       capture.failureStage = "data_received";
       capture.failureCode = "collector_or_decoder_failed";
       void this.maybeEmit(capture.send).catch(error => noteTelemetryFailure("page-failed", error));
@@ -834,7 +997,17 @@ export class ChatGptModelReceiptObserver {
     return false;
   };
   private readonly onCdpFrameNavigated = (payload: CdpFrameNavigated): void => {
-    if (payload.frame?.parentId === undefined && payload.frame?.id) this.mainFrameId = payload.frame.id;
+    if (payload.frame?.parentId === undefined && payload.frame?.id) {
+      this.mainFrameId = payload.frame.id;
+      this.pageCaptureEpoch += 1;
+      this.pageCaptureInstalled = false;
+      this.pageCaptureNeedsRebind = true;
+      this.pageCaptureRebinds = Math.min(CHATGPT_MODEL_RECEIPT_MAX_OWNED_REQUESTS, this.pageCaptureRebinds + 1);
+      this.pageCaptureToken = undefined;
+      const page = this.page;
+      const registry = page ? PAGE_BINDING_REGISTRIES.get(page) : undefined;
+      if (registry?.active?.observer.deref() === this) registry.active = undefined;
+    }
   };
   private readonly onCdpRequest = (payload: CdpRequestWillBeSent): void => {
     const active = this.active;
@@ -1012,6 +1185,18 @@ export class ChatGptModelReceiptObserver {
       terminalCaptures: active.captures.filter(capture => capture.terminal).length,
       ...(failedCapture?.failureStage ? { failureStage: failedCapture.failureStage } : {}),
       ...(failedCapture?.failureCode ? { failureCode: failedCapture.failureCode } : {}),
+      page: {
+        installed: this.pageCaptureInstalled,
+        rebindPending: this.pageCaptureNeedsRebind,
+        rebinds: this.pageCaptureRebinds,
+        invocations: active.pageInvocations,
+        starts: active.pageStarts,
+        terminals: active.pageTerminals,
+        rejected: active.pageRejected,
+        ...(active.pageRejection ?? this.pageCaptureRejection
+          ? { rejection: active.pageRejection ?? this.pageCaptureRejection } : {}),
+      },
+      parser: this.parserDiagnostics(active),
       ...(failedCapture?.transport ? { transport: failedCapture.transport } : {}),
     };
     try { this.onDiagnostic?.(diagnostic); } catch (error) { noteTelemetryFailure("diagnostic-callback", error); }
@@ -1143,8 +1328,13 @@ export class ChatGptModelReceiptObserver {
     this.discardSend(active);
   };
 
-  private async installPageCapture(page: Page): Promise<void> {
-    if (typeof page.exposeBinding !== "function") return;
+  private async installPageCapture(page: Page, epoch = this.pageCaptureEpoch): Promise<boolean> {
+    if (typeof page.exposeBinding !== "function") {
+      this.pageCaptureInstalled = false;
+      this.pageCaptureNeedsRebind = true;
+      this.pageCaptureRejection = "binding_unavailable";
+      return false;
+    }
     const token = randomUUID();
     let registry = PAGE_BINDING_REGISTRIES.get(page);
     if (!registry) {
@@ -1154,12 +1344,18 @@ export class ChatGptModelReceiptObserver {
     try {
       if (!registry.installed) {
         await page.exposeBinding("__codexModelReceiptDispatch", (source, event) => {
-          const sourceRecord = recordObject(source);
-          if (!sourceRecord || sourceRecord.frame !== page.mainFrame()) return false;
-          const eventRecord = recordObject(event);
-          if (!eventRecord || Object.keys(eventRecord).some(key => !["token", "id", "kind", "status", "contentType", "bodyHash", "data"].includes(key))) return false;
           const active = registry!.active;
           const observer = active?.observer.deref();
+          const sourceRecord = recordObject(source);
+          if (!sourceRecord || sourceRecord.frame !== page.mainFrame()) {
+            observer?.recordPageRejection(observer.active, "source_frame");
+            return false;
+          }
+          const eventRecord = recordObject(event);
+          if (!eventRecord || Object.keys(eventRecord).some(key => !["token", "id", "kind", "status", "contentType", "bodyHash", "data"].includes(key))) {
+            observer?.recordPageRejection(observer.active, "unknown_event");
+            return false;
+          }
           if (!active || !observer || active.token !== eventRecord.token) return false;
           return observer.onPageCapture(event);
         });
@@ -1173,11 +1369,12 @@ export class ChatGptModelReceiptObserver {
         const root = globalThis as typeof globalThis & { __codexModelReceiptCaptureState?: { uninstall?: () => void } };
         root.__codexModelReceiptCaptureState?.uninstall?.();
       });
+      if (this.page !== page || this.pageCaptureEpoch !== epoch) return false;
       registry.active = { observer: new WeakRef(this), token };
       await page.evaluate(({ url, token, maxBytes }) => {
         const root = globalThis as typeof globalThis & {
           __codexModelReceiptDispatch?: (event: unknown) => Promise<boolean>;
-          __codexModelReceiptCaptureState?: { wrapper: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>; uninstall: () => void };
+          __codexModelReceiptCaptureState?: { token: string; wrapper: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>; uninstall: () => void };
         };
         const originalFetch = window.fetch;
         let sequence = 0;
@@ -1322,6 +1519,7 @@ export class ChatGptModelReceiptObserver {
         Object.assign(wrapped, originalFetch);
         window.fetch = wrapped as typeof window.fetch;
         root.__codexModelReceiptCaptureState = {
+          token,
           wrapper: wrapped,
           uninstall: () => {
             if (window.fetch === wrapped) window.fetch = originalFetch;
@@ -1329,10 +1527,53 @@ export class ChatGptModelReceiptObserver {
           },
         };
       }, { url: this.conversationUrl, token, maxBytes: CHATGPT_MODEL_RECEIPT_MAX_BYTES });
+      if (this.page !== page || this.pageCaptureEpoch !== epoch) {
+        await page.evaluate(({ token }) => {
+          const root = globalThis as typeof globalThis & { __codexModelReceiptCaptureState?: { token?: string; uninstall?: () => void } };
+          if (root.__codexModelReceiptCaptureState?.token === token) root.__codexModelReceiptCaptureState.uninstall?.();
+        }, { token }).catch(error => noteTelemetryFailure("page-capture-stale-cleanup", error));
+        if (registry.active?.token === token) registry.active = undefined;
+        return false;
+      }
       this.pageCaptureToken = token;
+      this.pageCaptureInstalled = true;
+      this.pageCaptureNeedsRebind = false;
+      this.pageCaptureRejection = undefined;
+      return true;
     } catch (error) {
       registry.active = undefined;
+      this.pageCaptureInstalled = false;
+      this.pageCaptureNeedsRebind = true;
+      this.pageCaptureRejection = "install_failed";
       noteTelemetryFailure("page-capture-install", error);
+      return false;
+    }
+  }
+
+  /** Awaited by the worker immediately before ownership activation; navigation never races this reinstall. */
+  async ensurePageCaptureReady(): Promise<void> {
+    const page = this.page;
+    if (!page || (this.pageCaptureInstalled && !this.pageCaptureNeedsRebind)) return;
+    const epoch = this.pageCaptureEpoch;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<boolean>(resolve => {
+      timer = setTimeout(() => resolve(false), CHATGPT_MODEL_RECEIPT_PAGE_PREPARATION_MS);
+    });
+    const preparation = this.installPageCapture(page, epoch).catch(error => {
+      this.pageCaptureInstalled = false;
+      this.pageCaptureNeedsRebind = true;
+      this.pageCaptureRejection = "install_failed";
+      noteTelemetryFailure("page-capture-ready", error);
+      return false;
+    });
+    const installed = await Promise.race([preparation, timeout]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (installed === true) return;
+    if (this.page === page && this.pageCaptureEpoch === epoch) {
+      this.pageCaptureEpoch += 1;
+      this.pageCaptureInstalled = false;
+      this.pageCaptureNeedsRebind = true;
+      this.pageCaptureRejection = "install_failed";
     }
   }
 
@@ -1344,6 +1585,81 @@ export class ChatGptModelReceiptObserver {
   private readonly conversationUrl = CHATGPT_CONVERSATION_URL,
   private readonly onDiagnostic?: ChatGptModelReceiptDiagnosticCallback,
 ) {}
+
+  private async attachTransport(page: Page, candidate: Page & {
+    on: (event: string, listener: (value: unknown) => void) => void;
+    off?: (event: string, listener: (value: unknown) => void) => void;
+    context: () => { newCDPSession?: (target: Page) => Promise<CDPSession> };
+  }, epoch: number): Promise<boolean> {
+    let session: CDPSession | undefined;
+    let cdpListenersRegistered = false;
+    let pageListenersRegistered = false;
+    const stale = (): boolean => this.observerEpoch !== epoch;
+    const cleanup = async (): Promise<void> => {
+      if (pageListenersRegistered && candidate.off) {
+        candidate.off("request", this.onRequest);
+        candidate.off("requestfailed", this.onRequestFailed);
+      }
+      if (session) {
+        if (cdpListenersRegistered) {
+          session.off("Page.frameNavigated", this.onCdpFrameNavigated);
+          session.off("Network.requestWillBeSent", this.onCdpRequest);
+          session.off("Network.responseReceived", this.onCdpResponse);
+          session.off("Network.dataReceived", this.onCdpData);
+          session.off("Network.loadingFinished", this.onCdpFinished);
+          session.off("Network.loadingFailed", this.onCdpFailed);
+        }
+        await session.detach().catch(error => noteTelemetryFailure("attach-cleanup", error));
+      }
+      if (this.cdp === session && this.observerCdpEpoch === epoch) {
+        this.cdp = undefined;
+        this.observerCdpEpoch = undefined;
+        this.mainFrameId = undefined;
+      }
+      if (this.page === page && this.observerPageEpoch === epoch) {
+        this.page = undefined;
+        this.observerPageEpoch = undefined;
+      }
+      cdpListenersRegistered = false;
+      pageListenersRegistered = false;
+    };
+    try {
+      session = await candidate.context().newCDPSession?.(page);
+      if (!session || stale()) {
+        if (session) await session.detach().catch(error => noteTelemetryFailure("attach-stale-cleanup", error));
+        return false;
+      }
+      this.cdp = session;
+      this.observerCdpEpoch = epoch;
+      session.on("Page.frameNavigated", this.onCdpFrameNavigated);
+      session.on("Network.requestWillBeSent", this.onCdpRequest);
+      session.on("Network.responseReceived", this.onCdpResponse);
+      session.on("Network.dataReceived", this.onCdpData);
+      session.on("Network.loadingFinished", this.onCdpFinished);
+      session.on("Network.loadingFailed", this.onCdpFailed);
+      cdpListenersRegistered = true;
+      await session.send("Network.enable");
+      if (stale()) { await cleanup(); return false; }
+      await session.send("Page.enable");
+      if (stale()) { await cleanup(); return false; }
+      const frameTree = await session.send("Page.getFrameTree");
+      if (stale()) { await cleanup(); return false; }
+      this.mainFrameId = frameTree.frameTree.frame.id;
+      this.page = page;
+      this.observerPageEpoch = epoch;
+      this.pageCaptureEpoch += 1;
+      candidate.on("request", this.onRequest);
+      candidate.on("requestfailed", this.onRequestFailed);
+      pageListenersRegistered = true;
+      await this.ensurePageCaptureReady();
+      if (stale()) { await cleanup(); return false; }
+      return true;
+    } catch (error) {
+      noteTelemetryFailure("attach", error);
+      await cleanup();
+      return false;
+    }
+  }
 
   async attach(page: Page): Promise<void> {
     if (this.page === page) return;
@@ -1358,42 +1674,29 @@ export class ChatGptModelReceiptObserver {
     }
     const candidate = page as Page & {
       on?: (event: string, listener: (value: unknown) => void) => void;
+      off?: (event: string, listener: (value: unknown) => void) => void;
       context?: () => { newCDPSession?: (target: Page) => Promise<CDPSession> };
     };
     if (typeof candidate.on !== "function" || typeof candidate.context !== "function"
       || typeof candidate.context()?.newCDPSession !== "function") return;
-    let session: CDPSession | undefined;
-    try {
-      session = await candidate.context()!.newCDPSession!(page);
-      this.cdp = session;
-      session.on("Page.frameNavigated", this.onCdpFrameNavigated);
-      session.on("Network.requestWillBeSent", this.onCdpRequest);
-      session.on("Network.responseReceived", this.onCdpResponse);
-      session.on("Network.dataReceived", this.onCdpData);
-      session.on("Network.loadingFinished", this.onCdpFinished);
-      session.on("Network.loadingFailed", this.onCdpFailed);
-      await session.send("Network.enable");
-      const frameTree = await session.send("Page.getFrameTree");
-      this.mainFrameId = frameTree.frameTree.frame.id;
-    } catch (error) {
-      noteTelemetryFailure("attach", error);
-      if (session) {
-        session.off("Page.frameNavigated", this.onCdpFrameNavigated);
-        session.off("Network.requestWillBeSent", this.onCdpRequest);
-        session.off("Network.responseReceived", this.onCdpResponse);
-        session.off("Network.dataReceived", this.onCdpData);
-        session.off("Network.loadingFinished", this.onCdpFinished);
-        session.off("Network.loadingFailed", this.onCdpFailed);
-        await session.detach().catch(detachError => noteTelemetryFailure("attach-cleanup", detachError));
-      }
-      if (this.cdp === session) this.cdp = undefined;
-      this.mainFrameId = undefined;
-      return;
+    const epoch = ++this.observerEpoch;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const preparation = this.attachTransport(page, candidate as Page & {
+      on: (event: string, listener: (value: unknown) => void) => void;
+      off?: (event: string, listener: (value: unknown) => void) => void;
+      context: () => { newCDPSession?: (target: Page) => Promise<CDPSession> };
+    }, epoch);
+    const timeout = new Promise<boolean>(resolve => {
+      timer = setTimeout(() => resolve(false), CHATGPT_MODEL_RECEIPT_ATTACH_PREPARATION_MS);
+    });
+    const attached = await Promise.race([preparation, timeout]);
+    if (timer !== undefined) clearTimeout(timer);
+    if (attached === false && this.observerEpoch === epoch) {
+      this.observerEpoch += 1;
+      this.pageCaptureInstalled = false;
+      this.pageCaptureNeedsRebind = true;
+      this.pageCaptureRejection = "install_failed";
     }
-    this.page = page;
-    candidate.on("request", this.onRequest);
-    candidate.on("requestfailed", this.onRequestFailed);
-    await this.installPageCapture(page);
   }
 
   beginSend(context: ChatGptModelReceiptSendContext): void {
@@ -1429,6 +1732,10 @@ export class ChatGptModelReceiptObserver {
       diagnosticEmitted: false,
       bounded: false,
       pageInvocationIds: new Map(),
+      pageInvocations: 0,
+      pageStarts: 0,
+      pageTerminals: 0,
+      pageRejected: 0,
     };
     this.sends.add(this.active);
   }
@@ -1484,6 +1791,8 @@ export class ChatGptModelReceiptObserver {
 
   async detach(): Promise<void> {
     const boundPage = this.page;
+    this.observerEpoch += 1;
+    this.pageCaptureEpoch += 1;
     const candidate = this.page as (Page & {
       off?: (event: string, listener: (value: unknown) => void) => void;
     }) | undefined;
@@ -1522,8 +1831,12 @@ export class ChatGptModelReceiptObserver {
       if (registry?.active?.observer.deref() === this) registry.active = undefined;
       this.page = undefined;
       this.cdp = undefined;
+      this.observerPageEpoch = undefined;
+      this.observerCdpEpoch = undefined;
       this.mainFrameId = undefined;
       this.pageCaptureToken = undefined;
+      this.pageCaptureInstalled = false;
+      this.pageCaptureNeedsRebind = true;
     }
   }
 

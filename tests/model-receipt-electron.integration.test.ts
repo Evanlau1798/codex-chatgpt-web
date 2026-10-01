@@ -132,6 +132,8 @@ test.skipIf(!existsSync(ELECTRON_PATH))("installed Electron CDP observer capture
   let bindingErrorObserver: ChatGptModelReceiptObserver | undefined;
   try {
     await observer.attach(page);
+    await page.goto(`${origin}/?temporary-chat=true`, { waitUntil: "domcontentloaded" });
+    await observer.ensurePageCaptureReady();
     observer.beginSend({ responseAttempt: 1 });
     observer.activate();
     const result = await page.evaluate(async endpoint => {
@@ -159,6 +161,15 @@ test.skipIf(!existsSync(ELECTRON_PATH))("installed Electron CDP observer capture
       expect(diagnostics[0]!.terminalCaptures).toBe(2);
       expect(diagnostics[0]!.failureCode).toBe("stream_resource_content_rejected");
       expect(protocolError).toBeDefined();
+      expect(diagnostics[0]!.page).toMatchObject({
+        installed: true,
+        rebindPending: false,
+        invocations: 1,
+        starts: 1,
+        terminals: 1,
+        rejected: 0,
+      });
+      expect((diagnostics[0]!.page as { rebinds: number }).rebinds).toBeGreaterThan(0);
     } else expect(receipts).toHaveLength(0);
     expect(JSON.stringify(diagnostics)).not.toContain("authorization");
     expect(JSON.stringify(diagnostics)).not.toContain("cookie");

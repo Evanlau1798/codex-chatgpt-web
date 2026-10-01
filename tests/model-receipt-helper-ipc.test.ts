@@ -7,6 +7,7 @@ import type { BrowserTurn, ResolvedBrowserConfig } from "../src/adapters/chatgpt
 import { LAUNCHER_BROWSER_HOST_KIND, LAUNCHER_BROWSER_IDLE_URL } from "../src/launcher-browser-host";
 import {
   assertChatGptModelReceipt,
+  assertChatGptModelReceiptDiagnostic,
   type ChatGptModelReceipt,
   type ChatGptModelReceiptDiagnostic,
 } from "../src/adapters/chatgpt-web/model-receipt";
@@ -86,6 +87,22 @@ test("helper receipt protocol accepts only the bounded provider-private shape", 
   expect(() => parseLauncherHelperMessage(JSON.stringify({
     type: "event", id: value.traceId, event: "unknown", receipt: value,
   }))).toThrow("unknown event");
+  const lifecycle = { ...diagnostic(), page: {
+    installed: true,
+    rebindPending: false,
+    rebinds: 1,
+    invocations: 1,
+    starts: 1,
+    terminals: 1,
+    rejected: 0,
+  }, parser: {
+    cdp: { status: "unavailable" as const, parsedEvents: 0, decodedBytes: 0 },
+    totalParsedEvents: 0,
+    totalDecodedBytes: 0,
+  } };
+  expect(assertChatGptModelReceiptDiagnostic(lifecycle, value.traceId)).toMatchObject({ page: lifecycle.page });
+  expect(() => assertChatGptModelReceiptDiagnostic({ ...lifecycle, page: { ...lifecycle.page, rejected: 33 } }, value.traceId)).toThrow();
+  expect(() => assertChatGptModelReceiptDiagnostic({ ...lifecycle, parser: { ...lifecycle.parser, cdp: { status: "unknown", parsedEvents: 0, decodedBytes: 0 } } }, value.traceId)).toThrow();
 });
 
 test("real helper boundary replays run fields through worker event and daemon callback", async () => {

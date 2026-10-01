@@ -30,6 +30,10 @@ served/message/conversation evidence must agree; otherwise no receipt is emitted
 The page fallback announces a per-invocation nonce before reading the response and requires a
 matching activated main-frame request, so a response initiated before activation cannot attach to
 a later Send.
+After a full-frame navigation, the worker awaits page-capture reinstall before Send activation;
+diagnostics expose only bounded page lifecycle counters and an enum rejection reason.
+They also expose bounded parser status/event/decoded-byte counts per capture source, never raw
+frames or response keys.
 
 Each activated Send also emits one bounded diagnostic outcome through the same helper transport,
 including unavailable-CDP, missing-metadata, conflict, bounded, and resolved outcomes. These

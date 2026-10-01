@@ -197,6 +197,17 @@ class FailingCdp extends FakeCdp {
   }
 }
 
+class DelayedAttachPage extends FakePage {
+  private readonly sessionReady: Promise<FakeCdp>;
+  private resolveSession!: (session: FakeCdp) => void;
+  constructor(readonly delayedCdp: FakeCdp) {
+    super(delayedCdp);
+    this.sessionReady = new Promise(resolve => { this.resolveSession = resolve; });
+  }
+  override context() { return { newCDPSession: async () => this.sessionReady }; }
+  releaseSession(): void { this.resolveSession(this.delayedCdp); }
+}
+
 class FakeRequest {
   constructor(
     private readonly page: FakePage,
@@ -392,6 +403,22 @@ test("a partial CDP initialization is detached without escaping attach", async (
   await observer.attach(new FakePage(cdp) as never);
   expect(cdp.detached).toBeTrue();
   expect(cdp.listenerCount("Network.responseReceived")).toBe(0);
+  await observer.dispose();
+});
+
+test("a hung CDP attach is bounded and a late session is detached without reactivating the observer", async () => {
+  const cdp = new FakeCdp();
+  let detachedResolve!: () => void;
+  const detached = new Promise<void>(resolve => { detachedResolve = resolve; });
+  cdp.detach = async () => { cdp.detached = true; detachedResolve(); };
+  const page = new DelayedAttachPage(cdp);
+  const observer = new ChatGptModelReceiptObserver("trace_attach_timeout", "chatgpt-web/gpt-6-pro", undefined);
+  const started = Date.now();
+  await observer.attach(page as never);
+  expect(Date.now() - started).toBeLessThan(2_500);
+  page.releaseSession();
+  await detached;
+  expect(cdp.detached).toBeTrue();
   await observer.dispose();
 });
 

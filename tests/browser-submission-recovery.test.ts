@@ -625,6 +625,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
       failure: async () => undefined,
     },
     modelReceipts: {
+      ensurePageCaptureReady: async () => {},
       beginSend() {},
       activate() {},
       flushCurrent: async () => {},
