@@ -97,4 +97,3 @@ test('health preflight reports an unreachable bridge explicitly', async () => {
     );
   } finally { fs.rmSync(sourceRoot, { recursive: true, force: true }); }
 });
-
