@@ -253,6 +253,13 @@ export function SettingsSurface({
     catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(false); }
   };
+  const setAutoApproveToolCalls = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try { updateState(await api!.setAutoApproveToolCalls(enabled)); }
+    catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
   const setExperimentalNoAutoCompact = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
@@ -688,6 +695,14 @@ export function SettingsSurface({
             disabled={busy || snapshot.state.browserInteractionMode === "manual"
               || snapshot.state.useEnhancedWebSessionMode || snapshot.state.coreSetupComplete !== true}
             onChange={(checked) => void setFreshConversationPerTurn(checked)}
+          />
+        </SettingRow>
+        <SettingRow body={snapshot.state.browserInteractionMode === "manual"
+          ? copy.manualAutoApproveUnavailable : copy.autoApproveToolsBody} label={copy.autoApproveTools}>
+          <Switch
+            checked={snapshot.state.browserInteractionMode !== "manual" && snapshot.state.autoApproveToolCalls}
+            disabled={busy || snapshot.state.browserInteractionMode === "manual" || !snapshot.state.coreSetupComplete}
+            onChange={(checked) => void setAutoApproveToolCalls(checked)}
           />
         </SettingRow>
         <SettingRow body={copy.savedChatsBody} label={copy.savedChats}>

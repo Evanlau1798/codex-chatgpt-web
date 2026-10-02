@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { callTurnBroker } from "./turn-broker-client";
+import { assertRetirementFailure, type BrokerRetirementFailure } from "./turn-broker-protocol";
 import type { BrokerRequest, BrokerToolRequest, BrokerToolResult, BrokerTurnOutputEvent } from "./turn-broker-protocol";
 import { assertSurfaceNonce } from "./turn-broker-safe";
 
@@ -29,8 +30,8 @@ export interface TurnBrokerOwner {
   nextOutput(token: string, afterSequence: number, signal?: AbortSignal): Promise<BrokerTurnOutputEvent>;
   resetOutput(token: string, finalSequence: number): void | Promise<void>;
   sealOutput(token: string, afterSequence: number, expectedRevision: number): boolean | Promise<boolean>;
-  waitForRetirement(token: string, signal?: AbortSignal): Promise<void>;
-  revoke(token: string, reason?: Error): void | Promise<void>;
+  waitForRetirement(token: string, signal?: AbortSignal): Promise<BrokerRetirementFailure | undefined>;
+  revoke(token: string, reason?: Error, failure?: BrokerRetirementFailure): void | Promise<void>;
 }
 
 export interface ExternalOwnerDispatchTarget extends TurnBrokerOwner {
@@ -161,7 +162,7 @@ export function dispatchExternalOwnerRequest(
     return Promise.resolve(target.sealOutput(request.token, request.afterSequence!, request.expectedRevision!)).then(sealed => ({ sealed }));
   }
   if (request.method === "owner_wait_retirement") {
-    return target.waitForRetirement(request.token, signal).then(() => ({ retired: true }));
+    return target.waitForRetirement(request.token, signal).then(failure => ({ retired: true, ...(failure ? { failure } : {}) }));
   }
   if (request.method === "owner_revoke") {
     target.revoke(request.token);
@@ -200,9 +201,11 @@ export function ownerEnvironment(value: unknown): ChatGptTurnEnvironment {
 export class RemoteTurnBroker implements TurnBrokerOwner {
   constructor(readonly socketPath: string) {}
 
-  async waitForRetirement(token: string, signal?: AbortSignal): Promise<void> {
-    const result = await callTurnBroker<{ retired?: unknown }>(this.socketPath, { method: "owner_wait_retirement", token }, null, signal);
+  async waitForRetirement(token: string, signal?: AbortSignal): Promise<BrokerRetirementFailure | undefined> {
+    const result = await callTurnBroker<{ retired?: unknown; failure?: unknown }>(this.socketPath, { method: "owner_wait_retirement", token }, null, signal);
     if (result.retired !== true) throw new Error("DEV turn owner received an invalid retirement result");
+    if (result.failure !== undefined) assertRetirementFailure(result.failure);
+    return result.failure;
   }
 
   async assertCompatible(): Promise<void> {

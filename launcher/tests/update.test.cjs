@@ -8,6 +8,7 @@ const {
   buildJob,
   compareVersions,
   createUpdateController,
+  createUpdateDownloader,
   expectedChecksum,
   macApplicationPath,
   releaseAssetName,
@@ -331,4 +332,76 @@ test("Linux ARM64 updater selects only the matching checksummed Enhanced asset",
         .map(name => ({ name, browser_download_url: url + name })) }) },
   });
   assert.deepEqual(await controller.checkOnce(), { status: "available", version });
+});
+
+
+test("update downloads use the supplied Chromium transport across HTTPS redirects without cookies", async () => {
+  const calls = [];
+  const downloader = createUpdateDownloader(async (url, options) => {
+    calls.push({ url, options });
+    return calls.length === 1
+      ? new Response(null, { status: 302, headers: { location: "https://release-assets.githubusercontent.com/asset" } })
+      : new Response("release metadata");
+  });
+  assert.equal(await downloader.downloadText("https://github.com/release"), "release metadata");
+  assert.deepEqual(calls.map(call => call.url), [
+    "https://github.com/release", "https://release-assets.githubusercontent.com/asset",
+  ]);
+  for (const { options } of calls) {
+    assert.equal(options.credentials, "omit");
+    assert.equal(options.redirect, "manual");
+    assert.equal(options.cache, "no-store");
+    assert.equal(options.signal.aborted, true);
+  }
+});
+
+test("update downloads reject redirect downgrades, redirect loops and oversized metadata", async () => {
+  let requests = 0;
+  const downgrade = createUpdateDownloader(async () => {
+    requests += 1;
+    return new Response(null, { status: 302, headers: { location: "http://example.com/asset" } });
+  });
+  await assert.rejects(downgrade.downloadText("https://github.com/release"), /Refusing non-HTTPS/);
+  assert.equal(requests, 1);
+  const loop = createUpdateDownloader(async () => new Response(null, {
+    status: 302, headers: { location: "/again" },
+  }));
+  await assert.rejects(loop.downloadText("https://github.com/release"), /Too many redirects/);
+  const oversized = createUpdateDownloader(async () => new Response("12345"));
+  await assert.rejects(oversized.downloadText("https://github.com/release", 4), /size limit/);
+});
+
+test("update downloads cancel stalled headers and stalled response bodies", async () => {
+  // Keep the event loop alive while testing the deliberately unref'ed production timer.
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    const headers = createUpdateDownloader((_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }), 15);
+    await assert.rejects(headers.downloadText("https://github.com/release"), /timed out/);
+    const body = createUpdateDownloader(async (_url, { signal }) => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(Buffer.from("partial"));
+        signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+      },
+    })), 15);
+    await assert.rejects(body.downloadText("https://github.com/release"), /timed out/);
+  } finally {
+    clearInterval(keepAlive);
+  }
+});
+
+test("update asset streaming preserves bytes and refuses to overwrite a file", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-update-download-"));
+  const destination = path.join(root, "asset.zip");
+  const bytes = Buffer.from([0, 1, 2, 127, 128, 255]);
+  const downloader = createUpdateDownloader(async () => new Response(bytes));
+  try {
+    await downloader.downloadFile("https://github.com/release", destination);
+    assert.deepEqual(fs.readFileSync(destination), bytes);
+    await assert.rejects(downloader.downloadFile("https://github.com/release", destination), /EEXIST/);
+    assert.deepEqual(fs.readFileSync(destination), bytes);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

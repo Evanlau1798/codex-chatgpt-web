@@ -28,6 +28,7 @@ import { ManualTurnGuide } from "./manual-turn-guide";
 import { LimitsSurface } from "./LimitsSurface";
 import { limitsCopyFor } from "./limits-copy";
 import { useLimits } from "./useLimits";
+import { describeTurnActivity } from "./turn-activity";
 import type {
   BrowserInteractionMode,
   BrowserState,
@@ -371,6 +372,7 @@ function LauncherShell({
   const updateBusy = snapshot.update.status === "downloading" || snapshot.update.status === "installing";
   const updateVersion = "version" in snapshot.update ? snapshot.update.version : null;
   const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
+  const approvalTabs = browser?.tabs.filter(tab => tab.status === "running" && tab.approvalPending) ?? [];
   const limits = useLimits(api!, snapshot.state.browserInteractionMode === "manual");
   const limitsCopy = limitsCopyFor(language);
 
@@ -635,6 +637,20 @@ function LauncherShell({
       </motion.aside>
 
       <section className="workspace">
+        {approvalTabs.map(tab => (
+          <div className="tool-approval-notice" key={tab.id} role="status">
+            <Icon name="alert" />
+            <div>
+              <strong>{copy.toolApprovalNeeded} · {browserTabTitleFromTitle(tab.title, copy)}</strong>
+              <p>{copy.toolApprovalPendingBody}</p>
+            </div>
+            <SecondaryButton onClick={() => {
+              navigateSurface("browser");
+              void api!.selectBrowserTab(tab.id).then(() => activateBrowser(true))
+                .catch(cause => setError(messageOf(cause)));
+            }}>{copy.openChatgpt}</SecondaryButton>
+          </div>
+        ))}
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
             animate={{ opacity: 1 }}
@@ -686,7 +702,12 @@ function LauncherShell({
               />
             ) : null}
             {surface === "activity" ? (
-              <ActivitySurface copy={copy} language={language} logs={logs} setError={setError} />
+              <ActivitySurface copy={copy} language={language} logs={logs} browser={browser} setError={setError}
+                openTab={async id => {
+                  await api!.selectBrowserTab(id);
+                  navigateSurface("browser");
+                  await activateBrowser(true);
+                }} />
             ) : null}
             {surface === "limits" ? (
               <LimitsSurface
@@ -1483,15 +1504,59 @@ function ActivitySurface({
   copy,
   language,
   logs,
+  browser,
+  openTab,
   setError,
 }: {
   copy: Copy;
   language: Language;
   logs: LogRecord[];
+  browser: BrowserState | null;
+  openTab: (id: string) => Promise<void>;
   setError: (error: string | null) => void;
 }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(timer);
+  }, []);
+  const states = {
+    preparing: copy.activityPreparing, sending: copy.activitySending, chatgpt: copy.activityChatgpt,
+    tools: copy.activityTools, approval: copy.activityApproval, unknown: copy.activityUnknown,
+    stale: copy.activityStale, "sign-in": copy.stepAccount,
+  };
+  const tasks = (browser?.tabs ?? []).flatMap(tab => {
+    const activity = describeTurnActivity(tab, now);
+    return activity ? [{ tab, activity }] : [];
+  });
+  const duration = (ms: number) => {
+    const seconds = Math.floor(ms / 1_000);
+    return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  };
   return (
     <ContentSurface subtitle={copy.activitySubtitle} title={copy.activityTitle}>
+      {tasks.length > 0 ? (
+        <section className="activity-tasks" aria-label={copy.activityTasks}>
+          <div className="section-heading"><span>{copy.activityTasks}</span></div>
+          {tasks.map(({ tab, activity }) => (
+            <article className="activity-task" key={tab.id}>
+              <StateDot state={activity.state === "sign-in" ? "error" : ["unknown", "stale"].includes(activity.state) ? "idle" : "busy"} />
+              <div className="activity-task-detail">
+                <span className="activity-task-title">{browserTabTitleFromTitle(tab.title, copy)}</span>
+                <strong>{states[activity.state]}</strong>
+                <span className="activity-task-time">
+                  {activity.elapsedMs !== null && activity.state !== "unknown"
+                    ? copy.activityElapsed.replace("{time}", duration(activity.elapsedMs))
+                    : activity.ageMs !== null ? copy.activityObserved.replace("{time}", duration(activity.ageMs)) : null}
+                </span>
+              </div>
+              <SecondaryButton onClick={() => void openTab(tab.id).catch(cause => setError(messageOf(cause)))}>
+                {copy.openChatgpt}
+              </SecondaryButton>
+            </article>
+          ))}
+        </section>
+      ) : null}
       <div className="section-heading activity-heading">
         <span>{copy.recentActivity}</span>
         <SecondaryButton

@@ -74,13 +74,14 @@ export async function runEnhancedCompaction(
       MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
     );
     const deadline = new AbortController();
+    let phase = "source_settlement";
     let timer: ReturnType<typeof setTimeout> | undefined;
     let fallbackTransaction: Awaited<ReturnType<TurnBroker["beginCompactionTransaction"]>> | undefined;
     const armDeadline = (): void => {
       if (deadline.signal.aborted) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(
-        () => deadline.abort(new ChatGptWebAdapterError(`ChatGPT compaction did not fully settle within ${handoffTimeoutMs}ms`, { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_timeout", retryable: false })),
+        () => deadline.abort(new ChatGptWebAdapterError(`ChatGPT compaction did not fully settle within ${handoffTimeoutMs}ms (phase=${phase})`, { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_timeout", retryable: false })),
         handoffTimeoutMs,
       );
       timer.unref?.();
@@ -96,6 +97,7 @@ export async function runEnhancedCompaction(
     const fallback = async (reason: string): Promise<string> => {
       operationSignal.throwIfAborted();
       console.warn(`[chatgpt-web] retained compaction fallback=${reason}`);
+      phase = "fresh_compaction";
       armDeadline();
       const browserAbort = new AbortController();
       const abortBrowser = () => browserAbort.abort(operationSignal.reason);
@@ -168,10 +170,14 @@ export async function runEnhancedCompaction(
         await withCompactionAbort(source.physicalSettlement, operationSignal);
         preserveFinal = true;
       }
-      raw ??= await requestRetainedCompactionHandoff(
-        worker, parsed, source, broker, capabilities, traceId, operationSignal, handoffTimeoutMs,
-        requireAutomaticAdmission, retainOwnershipUntil,
-      );
+      if (raw === undefined) {
+        phase = "retained_checkpoint";
+        armDeadline();
+        raw = await requestRetainedCompactionHandoff(
+          worker, parsed, source, broker, capabilities, traceId, operationSignal, handoffTimeoutMs,
+          requireAutomaticAdmission, retainOwnershipUntil,
+        );
+      }
       const canonical = canonicalizeCompactionHandoff(parsed, raw);
       if (!canonical) throw new Error("ChatGPT returned an invalid structured compaction handoff");
       await withCompactionAbort(

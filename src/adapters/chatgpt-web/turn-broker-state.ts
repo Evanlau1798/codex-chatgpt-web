@@ -1,6 +1,7 @@
 import type { ChatGptTurnEnvironment } from "./environment";
 import { estimateTokens } from "../../lib/token-estimate";
 import type { AgentWait } from "./turn-broker-agent-wait";
+import type { BrokerRetirementFailure } from "./turn-broker-protocol";
 import type { BrokerToolRequest, BrokerToolResult, BrokerTurnOutputEvent } from "./turn-broker-protocol";
 
 export interface PendingTurn extends ChatGptTurnEnvironment {
@@ -65,7 +66,7 @@ export interface TurnChannel {
   activityRevision: number;
   completionCommitted: boolean;
   completionRevision?: number;
-  retirementWaiters: Set<SafeWaiter<void>>;
+  retirementWaiters: Set<SafeWaiter<BrokerRetirementFailure | undefined>>;
   batchTimer?: ReturnType<typeof setTimeout>;
   compactionRequested: boolean;
   compactionResult?: BrokerToolResult;

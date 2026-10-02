@@ -13,6 +13,35 @@ import {
   verifyCodexInterruptHookRestored,
 } from "../src/codex-interrupt-hook";
 
+test("native explicit hook defaults preserve ownership without accepting changed behavior", () => {
+  const original = '[mcp_servers.notes]\ncommand = "user-server"\n';
+  const { text, installed } = installCodexInterruptHookCommand(original, "/fixture/config.toml", "bridge-hook");
+  for (const explicitAsync of [false, true]) for (const explicitEnabled of [false, true]) {
+    let edited = text;
+    if (explicitAsync) edited = edited.replace("timeout = 3", "timeout = 3\nasync = false");
+    if (explicitEnabled) edited = edited.replace("trusted_hash =", "enabled = true\ntrusted_hash =");
+    verifyCodexInterruptHook(edited, installed);
+    const restored = restoreCodexInterruptHook(edited, installed);
+    expect(Bun.TOML.parse(restored)).toEqual(Bun.TOML.parse(original));
+    const reinstalled = installCodexInterruptHookCommand(restored, "/fixture/config.toml", "new-bridge-hook");
+    verifyCodexInterruptHook(reinstalled.text, reinstalled.installed);
+  }
+  for (const changed of [
+    text.replace("timeout = 3", "timeout = 3\nasync = true"),
+    text.replace("trusted_hash =", "enabled = false\ntrusted_hash ="),
+    text.replace("timeout = 3", 'timeout = 3\nasync = "false"'),
+    text.replace("trusted_hash =", 'enabled = "true"\ntrusted_hash ='),
+    text.replace("timeout = 3", "timeout = 3\nasync = false\nextra = true"),
+    text.replace("trusted_hash =", "enabled = true\nextra = true\ntrusted_hash ="),
+    text.replace("bridge-hook", "different-hook"),
+    text.replace("timeout = 3", "timeout = 2"),
+    text.replace(installed.trustedHash, "sha256:changed"),
+  ]) {
+    expect(() => verifyCodexInterruptHook(changed, installed)).toThrow("changed after setup");
+    expect(() => restoreCodexInterruptHook(changed, installed)).toThrow("changed after setup");
+  }
+});
+
 test("preserves hook ownership across native TOML command quoting and inline array serialization", () => {
   const original = 'model = "example"\n\n[mcp_servers.notes]\ncommand = "user-mcp"\n';
   const command = '"C:\\Program Files\\Bridge\\runtime.exe" "hook" "interrupt"';

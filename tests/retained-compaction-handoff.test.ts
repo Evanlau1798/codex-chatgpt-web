@@ -44,7 +44,7 @@ for (const accepted of [false, true]) test(`retained deadline bounds an uncooper
   } finally { browser.resolve("cleanup"); await run; }
 });
 
-test("structured handoff ignores browser text and uses only the control result", async () => {
+test.each(["5.6", "6"] as const)("structured %s handoff preserves model family and uses only the control result", async family => {
   let turn: BrowserTurn | undefined;
   const worker = { run: (value: BrowserTurn) => {
     turn = value;
@@ -57,7 +57,7 @@ test("structured handoff ignores browser text and uses only the control result",
   } as unknown as TurnBroker;
 
   await expect(requestRetainedCompactionHandoff(
-    worker as never, parsed, source(), broker,
+    worker as never, { ...parsed, _chatgptModelFamily: family }, source(), broker,
     { localToolsEnabled: true, solAvailable: true, proAvailable: true }, "trace_control",
   )).resolves.toBe("canonical checkpoint");
   const prepared = await turn!.prepare();
@@ -65,6 +65,7 @@ test("structured handoff ignores browser text and uses only the control result",
   expect(prepared.text).not.toContain("Inspect");
   expect(turn?.capabilities.localToolsEnabled).toBeFalse();
   expect(turn?.compaction).toBeTrue();
+  expect(turn?.modelFamily).toBe(family);
 });
 
 test("retained handoff rechecks automatic admission immediately before browser start", async () => {

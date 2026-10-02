@@ -435,3 +435,21 @@ test("production DOM snapshot preserves structured JSON text inside a rendered c
   expect(buffer.finish().markdown).toBe(raw);
   expect(JSON.parse(buffer.preview())).toEqual(JSON.parse(raw));
 });
+
+test("KaTeX hydration keeps the same formula identity while real formula edits still fail", async () => {
+  const html = (rendered: string, source = "x_1") => `<section id="turn"><div class="markdown">
+    <p>Value <span class="katex"><span class="katex-mathml"><math><semantics>
+      <mrow><mi>x</mi><mn>1</mn></mrow><annotation encoding="application/x-tex">${source}</annotation>
+    </semantics></math></span><span class="katex-html" aria-hidden="true">${rendered}</span></span>.</p>
+    <p>Done.</p></div></section>`;
+  const initial = await snapshot(html("x 1"));
+  const hydrated = await snapshot(html("x1"));
+  expect(initial.markdownSegments[0]?.text).toBe("Value x_1.");
+  expect(hydrated.markdownSegments[0]?.text).toBe(initial.markdownSegments[0]?.text);
+  const buffer = new ChatGptMarkdownBuffer(undefined, 0);
+  buffer.observe(initial.markdownSegments, 0);
+  buffer.observe(hydrated.markdownSegments, 1);
+  expect(buffer.finish().markdown).toBe(String.raw`Value \(x_1\).` + "\n\nDone.");
+  buffer.observe((await snapshot(html("x2", "x_2"))).markdownSegments, 2);
+  expect(() => buffer.finish()).toThrow("changed a completed text block");
+});

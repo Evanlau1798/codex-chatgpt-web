@@ -34,7 +34,11 @@ export async function invokeChatGptMcpTool(
     }, timeoutMs, signal);
   } catch (error) {
     try {
-      await callTurnBroker(socketPath, { method: "release", bindingId });
+      await callTurnBroker(socketPath, { method: "release", bindingId,
+        ...(error instanceof TurnBrokerTimeoutError ? {
+          failure: { code: "codex_tool_timeout" as const, tool: request.wireName, timeoutMs },
+        } : {}),
+      });
     } catch (releaseError) {
       throw new AggregateError([error, releaseError], "Codex Native invocation failed and its abandoned broker binding could not be retired");
     }
