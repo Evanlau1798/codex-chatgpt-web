@@ -222,6 +222,19 @@ test("owned recovery cleanup preserves a draft that replaced the recovery prompt
   expect(composer.textContent).toBe("User draft");
 });
 
+test("owned recovery cleanup recognizes its body separately from the selected app mention", async () => {
+  const { createWindow } = require("@mixmark-io/domino") as { createWindow(html: string): { document: Document } };
+  const document = createWindow('<div id="composer" contenteditable="true"><span app-mention-path="app://native2" app-mention-display-name="Codex Native2" contenteditable="false">Codex Native2</span> Recovery prompt</div>').document;
+  const composer = document.querySelector("#composer")!;
+  // Domino predates this standard DOM method; the live Chromium surface implements it.
+  Object.assign(composer, { replaceChildren: () => {
+    while (composer.firstChild) composer.removeChild(composer.firstChild);
+  } });
+  const locator = { evaluate: async (callback: (element: Element, input: string) => boolean, input: string) => callback(composer, input) };
+  expect(await clearOwnedChatGptComposerControl(locator as never, "Recovery prompt")).toBeTrue();
+  expect(composer.textContent).toBe("");
+});
+
 test("owned recovery Send rejects a late DOM final in the same renderer transaction", async () => {
   const { createWindow } = require("@mixmark-io/domino") as {
     createWindow(html: string): { document: Document; Event: typeof Event; HTMLButtonElement: typeof HTMLButtonElement };

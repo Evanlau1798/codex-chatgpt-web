@@ -27,6 +27,26 @@ type BrowserWorkerInternals = {
 
 const workerMethods = ChatGptBrowserWorker.prototype as unknown as BrowserWorkerInternals;
 
+test("recovery revalidation can stop before selecting the current message connector", async () => {
+  const actions: string[] = [];
+  const composer = {};
+  const fixture = {
+    config: { appName: "Codex Native2" },
+    activeComposer: async () => composer,
+    selectConnector: async () => { actions.push("select"); return composer; },
+    insertPromptText: async () => { actions.push("insert"); },
+    assertPromptAttached: async () => { actions.push("assert"); },
+  };
+  const methods = ChatGptBrowserWorker.prototype as unknown as {
+    attachPrompt(...args: unknown[]): Promise<void>;
+  };
+  const absent = { filter: () => absent, last: () => absent, isVisible: async () => false };
+  await methods.attachPrompt.call(fixture, { locator: () => absent },
+    "Recovery prompt", true, undefined, undefined, false, undefined, false, false, false,
+    async () => false);
+  expect(actions).toEqual([]);
+});
+
 for (const pill of ["missing", "selected", "unrecoverable"] as const) test.each([
   ["prompt attachment", async (fixture: object, page: object) => {
     await workerMethods.attachPrompt.call(fixture, page, "new suffix", true);
