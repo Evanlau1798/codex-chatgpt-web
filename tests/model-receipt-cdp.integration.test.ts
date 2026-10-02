@@ -16,6 +16,8 @@ const FIXTURE = JSON.parse(readFileSync(new URL("./fixtures/model-receipt-cdp-go
 };
 
 test.skipIf(!existsSync(CHROME_PATH))("real Chromium CDP transport captures headerless delayed SSE", async () => {
+  let releaseTail!: () => void;
+  const streamEnabled = new Promise<void>(resolve => { releaseTail = resolve; });
   const server = createServer((request, response) => {
     if (request.method === "GET") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -42,10 +44,10 @@ test.skipIf(!existsSync(CHROME_PATH))("real Chromium CDP transport captures head
     })}\n\n`;
     setTimeout(() => {
       response.write(frame.slice(0, Math.floor(frame.length / 2)));
-      setTimeout(() => {
+      void streamEnabled.then(() => {
         response.write(frame.slice(Math.floor(frame.length / 2)));
         response.end();
-      }, 25);
+      });
     }, 2_100);
   });
   server.listen(0, "127.0.0.1");
@@ -67,9 +69,10 @@ test.skipIf(!existsSync(CHROME_PATH))("real Chromium CDP transport captures head
   let streamCommand: Promise<void> = Promise.resolve();
   probe.on("Network.requestWillBeSent", () => events.add("Network.requestWillBeSent"));
   probe.on("Network.responseReceived", payload => {
+    if (payload.response.url !== `${origin}/backend-api/f/conversation`) return;
     events.add("Network.responseReceived");
     streamCommand = probe.send("Network.streamResourceContent", { requestId: payload.requestId })
-      .then(() => { streamCommandResolved = true; }, () => {});
+      .then(() => { streamCommandResolved = true; releaseTail(); }, () => { releaseTail(); });
   });
   probe.on("Network.dataReceived", payload => {
     events.add("Network.dataReceived");
@@ -116,6 +119,7 @@ test.skipIf(!existsSync(CHROME_PATH))("real Chromium CDP transport captures head
     expect(receipts[0]).toHaveProperty("messageIdHash");
     expect(receipts[0]).not.toHaveProperty("messageId", FIXTURE.assistantMessageId);
   } finally {
+    releaseTail();
     await observer.dispose().catch(() => {});
     await probe.detach().catch(() => {});
     await browser.close();
