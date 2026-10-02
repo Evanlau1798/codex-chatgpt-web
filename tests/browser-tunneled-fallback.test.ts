@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
-import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_STOP_BUTTON_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
+import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_STOP_BUTTON_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
 import type { BrokerTurnOutputEvent } from "../src/adapters/chatgpt-web/turn-broker-protocol";
 import { activeCompactionToolResultInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
 import { publishPendingFinalizationOutput, submitTurnOutput, waitForTurnOutput, sealTurnOutput, resetTurnOutput } from "../src/adapters/chatgpt-web/turn-broker-output";
@@ -67,6 +67,8 @@ async function runFixture(options: {
   const clock = spyOn(Date, "now").mockImplementation(() => now);
   let submitted = 0;
   let composerText = options.composerBusy ? "User draft" : "";
+  // Recorded Web behavior: the sent app mention does not bind the next message.
+  let currentMessageConnector = false;
   const localizedComposer = options.localizedGeneration
     ? (require("@mixmark-io/domino") as { createDocument(html: string): Document }).createDocument(
       '<form data-chatgpt-composer><button type="button" aria-label="停止"><svg class="icon-primary-action"><path d="M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"></path></svg></button></form>',
@@ -158,8 +160,10 @@ async function runFixture(options: {
   };
   const page: any = Object.assign(new EventEmitter(), {
     isClosed: () => false, url: () => submitted && options.conversationRoute || options.initialRoute || CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
+    keyboard: { press: async () => { actions.push("composer-end"); } },
     locator: (selector: string) => {
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
+      if (selector === CHATGPT_USER_TURN_SELECTOR) return { ...hidden, evaluateAll: async () => [] };
       if (selector === "[data-turn-id-container], [data-turn-key]") return {
         evaluateAll: async () => ["historical", ...Array.from({ length: submitted }, (_, index) => `current${index || ""}`)],
       };
@@ -221,7 +225,7 @@ async function runFixture(options: {
     },
     attachPromptWithCompactionRetry: async (...args: any[]) => {
       const bindConnector = args[2];
-      expect(bindConnector).toBe(!options.retained && submitted === 0);
+      expect(bindConnector).toBe(true);
       if (recoverable && submitted > 0) {
         if (options.toolBatchAtRecoveryInsertion && !actions.includes("recovery-tool-started")) {
           progress.recordToolBatch(1);
@@ -229,12 +233,19 @@ async function runFixture(options: {
         }
         if (options.generationResumesAtRecoveryInsertion) actions.push("recovery-attachment-started");
         await (ChatGptBrowserWorker.prototype as any).attachPromptWithCompactionRetry.apply(worker, args);
+      } else {
+        currentMessageConnector = true;
+        actions.push("message-connector-selected");
       }
       actions.push("attach");
     },
     clearChatGptComposerState: async () => { composerText = ""; actions.push("clear"); },
     insertPromptText: async (_page: unknown, prompt: string) => { composerText = prompt; actions.push("insert"); },
-    attachFiles: async () => {}, assertPromptAttached: async () => {}, connectorIsSelected: async () => true,
+    attachFiles: async () => {}, assertPromptAttached: async () => {},
+    attachedPromptText: async (_page: unknown, _signal?: AbortSignal, _operation?: unknown, preserveLeading = false) =>
+      preserveLeading ? composerText : composerText.trimStart(),
+    connectorIsSelected: async () => currentMessageConnector,
+    selectConnector: async () => { currentMessageConnector = true; actions.push("message-connector-selected"); return worker.activeComposer(); },
     activeComposer: async () => {
       if (options.composerBusyAfterAdmission && actions.includes("recovery:eligible")) composerText = "User draft";
       return { textContent: async () => {
@@ -252,7 +263,7 @@ async function runFixture(options: {
         sendButtonSelector: string;
       } | { nonce: string; sendButtonSelector: string }) => {
         if (typeof input === "string") {
-          if (composerText !== input) return false;
+          if (composerText.trimStart() !== input) return false;
           composerText = "";
           actions.push("clear");
           return true;
@@ -273,7 +284,7 @@ async function runFixture(options: {
           composerText = "User draft at atomic submission";
           actions.push("user-draft-at-atomic-submission");
         }
-        if (composerText !== input.expectedPrompt || input.guard.responseHtml !== text) return false;
+        if (composerText.trimStart() !== input.expectedPrompt || input.guard.responseHtml !== text) return false;
         recoveryGuardNonce = input.nonce;
         return true;
       }, isEditable: async () => true,
@@ -284,17 +295,21 @@ async function runFixture(options: {
       waitFor: async () => {}, isEnabled: async () => true,
       click: async ({ signal }: { signal?: AbortSignal }) => {
         signal?.throwIfAborted();
+        expect(currentMessageConnector).toBe(true);
         if (!recoveryGuardNonce) throw new Error("recovery send guard was not installed");
         recoveryGuardSent = true;
         composerText = "";
          submitted++;
+         currentMessageConnector = false;
          if (options.postToolRecovery && submitted === 2 && options.recoveryFails) text = "";
          if (options.finalDuringRecoverySubmission) submitTurnOutput(channel, "final", FINAL);
          actions.push("send");
       },
       press: async () => {
+        expect(currentMessageConnector).toBe(true);
         if (submitted > 0) composerText = "";
         submitted++;
+        currentMessageConnector = false;
         if (options.postToolRecovery && submitted === 2 && options.recoveryFails) text = "";
         if (options.pastToolBatch) text = FINAL;
         if (options.compactionSettlement && submitted === 2) text = "CODEX_COMPACTION_SOURCE_SETTLED";
@@ -521,6 +536,7 @@ async function runLateCompletionActionFixture() {
     evaluate: async () => ({}),
     locator: (selector: string) => {
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
+      if (selector === CHATGPT_USER_TURN_SELECTOR) return { ...hidden, evaluateAll: async () => [] };
       if (selector === '[data-turn-id="current"]') return current;
       if (selector === '[data-turn-id="historical"]') return historical;
       if (selector === "[data-turn-id-container], [data-turn-key]") return {
@@ -892,13 +908,14 @@ test("a new response does not classify settled historical tools against its curr
   expect(result.actions).not.toContain("tool-dispatched");
 });
 
-test("retained conversation keeps native tools and final delivery without another connector mention", async () => {
+test("retained conversation reselects its message-scoped connector before native work", async () => {
   const result = await runFixture({ retained: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.deltas).toEqual([FINAL]);
   expect(result.actions.filter(a => a === "tool-dispatched")).toHaveLength(1);
   expect(result.actions.filter(a => a === "fence-commit")).toHaveLength(1);
+  expect(result.actions.filter(a => a === "message-connector-selected")).toHaveLength(1);
 });
 
 test("DOM fallback still rejects an unchanged pre-tool answer", async () => {

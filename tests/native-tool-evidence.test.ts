@@ -61,7 +61,17 @@ test("tool-capable prompts require evidence before assigning a failure cause", (
     token,
   );
   expect(compiled.text).toContain(evidenceContract);
-  expect(compiled.text).toContain(safeDiscoveryContract);
+  expect(compiled.text).not.toContain(safeDiscoveryContract);
+  expect(compiled.text).toContain("This turn does not advertise deferred tool search.");
+  expect(compiled.text).not.toContain("This turn advertises native apply_patch.");
+  const withPatch = toolRequest();
+  withPatch.context.tools!.push({ name: "apply_patch", description: "Edit source", parameters: {}, freeform: true });
+  expect(compileChatGptWebPrompt(withPatch,
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true }, token).text).toContain("This turn advertises native apply_patch.");
+  const withSearch = toolRequest();
+  withSearch.context.tools!.push({ name: "tool_search", description: "Discover deferred tools", parameters: {}, toolSearch: true });
+  expect(compileChatGptWebPrompt(withSearch,
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true }, token).text).toContain(safeDiscoveryContract);
   expect(compiled.text).toContain(safeReadContract);
 
   const compact = parsedRequest();
