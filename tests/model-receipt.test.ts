@@ -342,6 +342,25 @@ class FakeTeePage extends FakePage {
   async evaluate() {}
 }
 
+test("rebind bounds stalled detach and late cleanup cannot clear a replacement observer", async () => {
+  class HungDetach extends FakeCdp {
+    release!: () => void;
+    override async detach() { await new Promise<void>(resolve => { this.release = resolve; }); }
+  }
+  const old = new FakePage(new HungDetach());
+  const replacement = new FakePage();
+  const observer = new ChatGptModelReceiptObserver("bounded_rebind", "route", undefined, () => {});
+  await observer.attach(old as never);
+  const started = Date.now();
+  await observer.attach(replacement as never);
+  expect(Date.now() - started).toBeLessThan(1_500);
+  expect(replacement.cdp.listenerCount("Network.responseReceived")).toBe(1);
+  (old.cdp as HungDetach).release();
+  await Promise.resolve(); await Promise.resolve();
+  expect((observer as unknown as { page: unknown }).page).toBe(replacement);
+  await observer.dispose();
+});
+
 test("receipt flush bounds a stalled production capture tail without cancelling inference", async () => {
   const page = new FakePage();
   const observer = new ChatGptModelReceiptObserver("trace_stalled_tail", "chatgpt-web/gpt-6-pro", undefined, () => {});

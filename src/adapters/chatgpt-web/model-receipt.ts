@@ -2317,9 +2317,21 @@ export class ChatGptModelReceiptObserver {
 
   async detach(): Promise<void> {
     const boundPage = this.page;
+    const boundCdp = this.cdp;
+    const boundToken = this.pageCaptureToken;
     this.observerEpoch += 1;
     this.pageCaptureEpoch += 1;
-    const candidate = this.page as (Page & {
+    const registry = boundPage ? PAGE_BINDING_REGISTRIES.get(boundPage) : undefined;
+    if (registry?.active?.observer.deref() === this) registry.active = undefined;
+    this.page = undefined;
+    this.cdp = undefined;
+    this.observerPageEpoch = undefined;
+    this.observerCdpEpoch = undefined;
+    this.mainFrameId = undefined;
+    this.pageCaptureToken = undefined;
+    this.pageCaptureInstalled = false;
+    this.pageCaptureNeedsRebind = true;
+    const candidate = boundPage as (Page & {
       off?: (event: string, listener: (value: unknown) => void) => void;
     }) | undefined;
     try {
@@ -2331,39 +2343,32 @@ export class ChatGptModelReceiptObserver {
       noteTelemetryFailure("detach-page-listeners", error);
     }
     try {
-      if (this.cdp) {
-        this.cdp.off("Page.frameNavigated", this.onCdpFrameNavigated);
-        this.cdp.off("Network.requestWillBeSent", this.onCdpRequest);
-        this.cdp.off("Network.responseReceived", this.onCdpResponse);
-        this.cdp.off("Network.dataReceived", this.onCdpData);
-        this.cdp.off("Network.loadingFinished", this.onCdpFinished);
-        this.cdp.off("Network.loadingFailed", this.onCdpFailed);
-        await this.cdp.detach().catch(error => noteTelemetryFailure("detach", error));
+      if (boundCdp) {
+        boundCdp.off("Page.frameNavigated", this.onCdpFrameNavigated);
+        boundCdp.off("Network.requestWillBeSent", this.onCdpRequest);
+        boundCdp.off("Network.responseReceived", this.onCdpResponse);
+        boundCdp.off("Network.dataReceived", this.onCdpData);
+        boundCdp.off("Network.loadingFinished", this.onCdpFinished);
+        boundCdp.off("Network.loadingFailed", this.onCdpFailed);
       }
     } catch (error) {
       noteTelemetryFailure("detach-cdp", error);
     }
+    const cleanup = Promise.allSettled([
+      Promise.resolve().then(() => boundCdp?.detach()),
+      Promise.resolve().then(() => boundPage && boundToken ? boundPage.evaluate(token => {
+        const root = globalThis as typeof globalThis & { __codexModelReceiptCaptureState?: { token?: string; uninstall?: () => void } };
+        if (root.__codexModelReceiptCaptureState?.token === token) root.__codexModelReceiptCaptureState.uninstall?.();
+      }, boundToken) : undefined),
+    ]).then(results => {
+      for (const result of results) if (result.status === "rejected") noteTelemetryFailure("detach-cleanup", result.reason);
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      if (this.page && this.pageCaptureToken) {
-        await this.page.evaluate(() => {
-          const root = globalThis as typeof globalThis & { __codexModelReceiptCaptureState?: { uninstall?: () => void } };
-          root.__codexModelReceiptCaptureState?.uninstall?.();
-        }).catch(error => noteTelemetryFailure("page-capture-uninstall", error));
-      }
-    } catch (error) {
-      noteTelemetryFailure("detach-page-capture", error);
-    } finally {
-      const registry = boundPage ? PAGE_BINDING_REGISTRIES.get(boundPage) : undefined;
-      if (registry?.active?.observer.deref() === this) registry.active = undefined;
-      this.page = undefined;
-      this.cdp = undefined;
-      this.observerPageEpoch = undefined;
-      this.observerCdpEpoch = undefined;
-      this.mainFrameId = undefined;
-      this.pageCaptureToken = undefined;
-      this.pageCaptureInstalled = false;
-      this.pageCaptureNeedsRebind = true;
-    }
+      await Promise.race([cleanup, new Promise<void>(resolve => {
+        timer = setTimeout(resolve, CHATGPT_MODEL_RECEIPT_TERMINAL_DRAIN_MS);
+      })]);
+    } finally { if (timer !== undefined) clearTimeout(timer); }
   }
 
 }
