@@ -200,6 +200,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
           enhancedMode: useEnhancedWebSessionMode,
           outputTunnel: tunneledOutput,
           turnToken: () => activeToken,
+          returnedErrors: () => toolEvidence?.recoveryErrorEvidence() ?? [],
           abortSignal: browserAbort.signal,
         });
     const emitCommentary = (value: string, continuation?: boolean): void => {
