@@ -6,6 +6,7 @@ import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { ChatGptToolEvidenceGuard, hasUnsupportedNativeToolCauseClaim } from "../src/adapters/chatgpt-web/tool-evidence-guard";
+import { chatGptSameSurfaceRecoveryPrompt } from "../src/adapters/chatgpt-web/same-surface-recovery";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { defaultBrokerEndpoint } from "../src/config";
 import type { AdapterEvent, CodexParsedRequest, CodexProviderConfig } from "../src/types";
@@ -134,6 +135,29 @@ test("unsupported safety-block commentary is withheld and forces a corrected ans
     await TurnBroker.forSocket(socketPath).close();
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("final recovery preserves returned failed-command evidence rather than treating it as missing", () => {
+  const guard = new ChatGptToolEvidenceGuard();
+  // Observed native Claude baseline: execution returned is_error=true and Exit code 1.
+  const content = "Exit code 1\n✖ two servings scale\n✖ four servings scale\n✔ invalid servings rejected";
+  guard.observeToolResult({ role: "toolResult", toolCallId: "call_1d37bb98f556037e3868b4d153e46c4c",
+    toolName: "Bash", content, isError: true, timestamp: 1 });
+  guard.observeToolResult({ role: "toolResult", toolCallId: "passing", toolName: "Bash",
+    content: "3 pass", isError: false, timestamp: 2 });
+  const evidence = guard.recoveryErrorEvidence();
+  expect(evidence).toEqual([{ toolCallId: "call_1d37bb98f556037e3868b4d153e46c4c", is_error: true, content, truncated: false }]);
+  const prompt = chatGptSameSurfaceRecoveryPrompt("owned-token", evidence);
+  expect(prompt).toContain(JSON.stringify(evidence));
+  expect(prompt).toContain("does not mean that no result exists");
+  expect(prompt).not.toContain("\n");
+  expect(chatGptSameSurfaceRecoveryPrompt("owned-token")).not.toContain("returned_error_results_json");
+  evidence[0]!.content = "mutated";
+  expect(guard.recoveryErrorEvidence()[0]!.content).toBe(content);
+  for (let i = 0; i < 10; i++) guard.observeToolResult({ role: "toolResult", toolCallId: `error-${i}`,
+    toolName: "Bash", content: "x".repeat(4_001), isError: true, timestamp: i });
+  expect(guard.recoveryErrorEvidence()).toHaveLength(4);
+  expect(guard.recoveryErrorEvidence()[0]).toMatchObject({ content: "x".repeat(4_000), truncated: true });
 });
 
 test("explicit Native policy errors support matching blocking claims", () => {
