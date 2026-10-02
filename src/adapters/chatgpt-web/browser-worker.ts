@@ -4860,7 +4860,7 @@ export class ChatGptBrowserWorker {
             },
             observe: async () => {
               const rejected = await submissionRejection.failure();
-              if (rejected) throw rejected;
+              if (rejected && rejected.code !== "context_length_exceeded") throw rejected;
               if (page.isClosed()) throw chatGptBrowserTabClosedError();
               if (!isTemporaryChatGptTurnUrl(page.url())) {
                 const currentUrl = new URL(page.url());
@@ -5018,7 +5018,7 @@ export class ChatGptBrowserWorker {
           let observedThisIteration = false;
           try {
         const rejected = await submissionRejection.failure();
-        if (rejected) throw rejected;
+        if (rejected && rejected.code !== "context_length_exceeded") throw rejected;
 
         if (page.isClosed()) {
           throw chatGptWebSurfaceError("ChatGPT browser tab was closed while the turn was active", answerBuffer.deliveredChars() > 0);
