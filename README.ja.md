@@ -19,7 +19,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **開発候補版：`6.1.3-Enhanced.2`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。このブランチだけではリリースは公開されません。
+> **開発候補版：`6.1.4-Enhanced.1`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。このブランチだけではリリースは公開されません。
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">トラブルシューティング</a> · <a href="SECURITY.md">セキュリティ</a> · <a href="CONTRIBUTING.md">コントリビューション</a>

@@ -2,6 +2,61 @@ import { expect, test } from "bun:test";
 import { ChatGptMarkdownBuffer, chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
 import { decodeChatCompletion, parseChatCompletion } from "../src/chat-completions/contract";
 
+function katex(source: string, display = false): string {
+  const escaped = source.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const math = '<span class="katex"><span class="katex-mathml"><math><semantics>'
+    + '<mrow><mi>ACCESSIBLE_COPY</mi><mo>\u2061</mo></mrow>'
+    + `<annotation encoding="application/x-tex">${escaped}</annotation>`
+    + '</semantics></math></span><span class="katex-html" aria-hidden="true">VISUAL_COPY\u200b</span></span>';
+  return display ? `<span class="katex-display">${math}</span>` : math;
+}
+
+test("KaTeX inline and display formulas preserve exactly one original LaTeX expression", () => {
+  const inline = String.raw`E = mc^2`;
+  const display = String.raw`r_{\mathrm{eff}} = \exp\left(-\sum_i q_i \log q_i\right)`;
+  expect(chatGptHtmlToMarkdown(`<p>Inline: ${katex(inline)}.</p>${katex(display, true)}`)).toBe(
+    `Inline: \\(${inline}\\).\n\n\\[\n${display}\n\\]`,
+  );
+});
+
+test("math source survives lists, links, nested braces, Unicode, and wiki-shaped expressions", () => {
+  const source = String.raw`\operatorname{rank}\left(\frac{α_{i}}{1+β}\right) < 2 \quad [[x]]`;
+  expect(chatGptHtmlToMarkdown(
+    `<ul><li>Value ${katex(source)}; <a href="https://example.com">reference</a>.</li></ul>`
+      + '<p>Open [[Notes/math|notes]].</p>' + katex(`${source}\n+ γ`, true),
+  )).toBe(`- Value \\(${source}\\); [reference](https://example.com).\n\n`
+    + `Open [notes](<Notes/math.md>).\n\n\\[\n${source}\n+ γ\n\\]`);
+  const code = String.raw`\frac{a_b}{c} [[literal]]`;
+  expect(chatGptHtmlToMarkdown(`<p><code>${code}</code></p><pre><code>${code}</code></pre>`))
+    .toBe(`\`${code}\`\n\n\`\`\`\n${code}\n\`\`\``);
+});
+
+test("LaTeX comment newlines survive generic HTML whitespace normalization", () => {
+  const source = "a % comment\n+ b";
+  expect(chatGptHtmlToMarkdown(katex(source, true))).toBe(`\\[\n${source}\n\\]`);
+});
+
+test("unknown or ambiguous KaTeX source fails instead of inventing a formula", () => {
+  const formula = katex("x");
+  expect(() => chatGptHtmlToMarkdown(formula.replace(/<annotation[^>]*>.*?<\/annotation>/, "")))
+    .toThrow("one unambiguous LaTeX source");
+  expect(() => chatGptHtmlToMarkdown(formula.replace("</semantics>",
+    '<annotation encoding="application/x-tex">y</annotation></semantics>')))
+    .toThrow("one unambiguous LaTeX source");
+});
+
+test("streaming formulas once still rejects a rewrite of committed math", () => {
+  const buffer = new ChatGptMarkdownBuffer(undefined, 0);
+  const segment = (source: string) => ({
+    key: "formula", tag: "p", text: `ACCESSIBLE_COPY${source}VISUAL_COPY`,
+    html: `<p>${katex(source)}</p>`, streamable: true,
+  });
+  expect(buffer.observe([segment("x_1")], 0)).toBe(String.raw`\(x_1\)`);
+  expect(buffer.observe([segment("x_1")], 1)).toBe("");
+  buffer.observe([segment("x_2")], 2);
+  expect(() => buffer.finish()).toThrow("changed a completed text block");
+});
+
 test("turns observed inline file path formats into Markdown links", () => {
   const cases = [
     { path: "/Users/dev/project/src/gamma-helper.ts", target: "/Users/dev/project/src/gamma-helper.ts" },
@@ -94,6 +149,7 @@ test("Markdown conflicts expose only bounded structural diagnostics", () => {
     expect(diagnostic).toEqual({
       reason: "text_changed", observedStart: 0, observedEnd: 6,
       committedStart: 0, committedEnd: 6, observedTextChars: 7, committedTextChars: 6,
+      observedTag: "p", committedTag: "p", observedIndex: 0, committedIndex: 0,
     });
     expect(JSON.stringify(diagnostic)).not.toMatch(/Stable|Changed|<p/);
   }
@@ -141,4 +197,30 @@ test("preserving plan markers does not rewrite mentions or literal code", () => 
     "`<proposed_plan>` `</proposed_plan>`", "",
     "```", "<proposed\\_plan>", "</proposed\\_plan>", "```",
   ].join("\n"));
+});
+
+
+test("repeated report headings can first appear after an earlier copy was committed", () => {
+  for (const { count, repeated, tag, text } of [
+    { count: 93, repeated: [15, 20, 25, 29], tag: "p", text: "変更済み:" },
+    { count: 199, repeated: [40, 83], tag: "h2", text: "Functions" },
+  ]) {
+    const buffer = new ChatGptMarkdownBuffer(undefined, 0);
+    const report = Array.from({ length: count }, (_, index) => {
+      const blockTag = repeated.includes(index) ? tag : "p";
+      const value = repeated.includes(index) ? text : `Unique block ${index}`;
+      return { key: `${index}:${blockTag}`, tag: blockTag, text: value,
+        html: `<${blockTag}>${value}</${blockTag}>`, streamable: true };
+    });
+    for (let length = 2; length <= report.length; length += 1) {
+      buffer.observe(report.slice(0, length).map((block, index) => ({
+        ...block, streamable: index < length - 1,
+      })), length);
+      expect(buffer.currentSnapshotIsConsistent()).toBeTrue();
+    }
+    const expected = report.map(block => chatGptHtmlToMarkdown(block.html)).join("\n\n");
+    expect(buffer.finish().markdown).toBe(expected);
+    buffer.observe([report[0]!, report[0]!], count + 1);
+    expect(() => buffer.finish()).toThrow("changed a completed text block");
+  }
 });

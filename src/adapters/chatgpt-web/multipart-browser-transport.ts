@@ -41,6 +41,7 @@ interface MultipartBoundaryEvidence {
 export interface PreparedChatGptWebMultipartTransport {
   transactionId: string;
   stages: ChatGptWebMultipartStage[];
+  stageMessageTokens: number[];
   finalPrompt: string;
   stagingMode: ChatGptWebModelMode;
 }
@@ -176,7 +177,8 @@ export function prepareChatGptWebMultipartTransport(
     )
   ));
   const finalPrompt = formatChatGptWebMultipartCommit(prepared.multipart, transactionId);
-  const maxStageMessageTokens = Math.max(...stages.map(stage => estimateTokens(stage.text, modelId)));
+  const stageMessageTokens = stages.map(stage => estimateTokens(stage.text, modelId));
+  const maxStageMessageTokens = Math.max(...stageMessageTokens);
   const maxStageChars = Math.max(...stages.map(stage => stage.text.length));
   const stagingMode = resolveChatGptWebMultipartStagingMode(
     modelId,
@@ -201,5 +203,5 @@ export function prepareChatGptWebMultipartTransport(
       finalImageTokens: estimateChatGptWebImageTokens(prepared),
     },
   );
-  return { transactionId, stages, finalPrompt, stagingMode };
+  return { transactionId, stages, stageMessageTokens, finalPrompt, stagingMode };
 }

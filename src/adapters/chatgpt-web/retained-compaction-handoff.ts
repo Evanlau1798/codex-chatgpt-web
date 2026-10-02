@@ -66,6 +66,7 @@ export async function requestRetainedCompactionHandoff(
       traceId,
       modelId: parsed.modelId,
       reasoning: parsed.options.reasoning,
+      ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
       capabilities: { ...capabilities, localToolsEnabled: false },
       nativeConnector: true,
       prepare,

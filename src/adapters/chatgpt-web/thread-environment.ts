@@ -372,14 +372,18 @@ function authority(environment: ChatGptTurnEnvironment, updatedAt: number): Stor
   };
 }
 
-function sameAuthority(left: ChatGptTurnEnvironment, right: ChatGptTurnEnvironment): boolean {
+function sameAuthority(left: ChatGptTurnEnvironment, right: ChatGptTurnEnvironment, steering = false): boolean {
   const samePaths = (a: string[], b: string[]): boolean => {
     const expected = new Set(b.map(pathIdentity));
     return a.length === expected.size && a.every(path => expected.has(pathIdentity(path)));
   };
   return pathIdentity(left.cwd) === pathIdentity(right.cwd)
     && samePaths(left.roots, right.roots)
-    && samePaths(left.writableRoots, right.writableRoots)
+    // Steering envelopes can omit Codex's extra output directories. The current
+    // native rollout remains the authority returned to the caller, never the claim.
+    && (steering
+      ? left.writableRoots.every(path => right.writableRoots.some(root => pathIdentity(root) === pathIdentity(path)))
+      : samePaths(left.writableRoots, right.writableRoots))
     && left.sandboxPolicy.type === right.sandboxPolicy.type
     && (left.sandboxPolicy.type === "dangerFullAccess" || (right.sandboxPolicy.type !== "dangerFullAccess"
       && left.sandboxPolicy.networkAccess === right.sandboxPolicy.networkAccess));
@@ -471,8 +475,10 @@ export class ChatGptThreadEnvironmentStore {
           }
         }
         const currentClaims = hasCurrentContext ? extractChatGptContinuationEnvironmentClaims(parsed, calendarDelta) : [];
-        if (currentClaims.some(claim => !sameAuthority(claim, rolloutEnvironment))) {
-          throw new Error("Compaction continuation environment conflicts with its current Codex rollout");
+        const steering = !currentCompaction && !postCompactionContext && ordinaryContinuation
+          && !!extractChatGptSteeringEnvironmentClaim(parsed);
+        if (currentClaims.some(claim => !sameAuthority(claim, rolloutEnvironment, steering))) {
+          throw new Error(`${steering ? "Steering" : "Compaction continuation"} environment conflicts with its current Codex rollout`);
         }
         if ((hasCurrentContext || crossesForeignCompaction)
           && !currentCompaction && !postCompactionContext && !ordinaryContinuation

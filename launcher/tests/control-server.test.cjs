@@ -3,6 +3,105 @@ const assert = require("node:assert/strict");
 const { BrowserHost, loadCommittedBrowserSurface, IDLE_BROWSER_URL } = require("../electron/browser-host.cjs");
 const { BrowserControlServer } = require("../electron/control-server.cjs");
 
+test("live task progress is owner-bound, preserves elapsed time, and clears on release", async () => {
+  const tab = { id: "task-one", traceId: "trace-one", helperPid: process.pid, status: "running", interactionMode: "automatic" };
+  const other = { ...tab, id: "task-two", traceId: "trace-two", helperPid: process.pid + 1 };
+  const host = Object.assign(Object.create(BrowserHost.prototype), {
+    turnTabs: new Map([[tab.id, tab], [other.id, other]]), closedTurnOwners: new Map(),
+    selectedTabId: other.id, getBrowserInteractionMode: () => "automatic",
+    syncViewVisibility() {},
+    snapshot() { return { tabs: [...this.turnTabs.values()].map(value => this.tabSnapshot(value)) }; },
+  });
+  const server = await new BrowserControlServer({
+    logger: { info() {}, warn() {}, error() {} }, getBrowserHost: () => host, getPreferences: () => ({}),
+  }).start();
+  const { endpoint, token } = server.descriptor();
+  const owner = { traceId: tab.traceId, helperPid: tab.helperPid };
+  const send = body => fetch(`${endpoint}/v1/turn/heartbeat`, {
+    method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ ...owner, ...body }),
+  });
+  try {
+    const progress = { stage: "chatgpt", activeToolCalls: 2 };
+    assert.equal((await send({ progress, helperPid: other.helperPid })).status, 400);
+    for (const invalid of [null, {}, { ...progress, stage: "safety-blocked" }, { ...progress, activeToolCalls: -1 },
+      { ...progress, activeToolCalls: 0.5 }, { ...progress, prompt: "private" }]) {
+      assert.equal((await send({ progress: invalid })).status, 400);
+    }
+    assert.equal(tab.activity, undefined);
+    assert.equal((await send({ progress })).status, 200);
+    assert.equal(tab.activity.state, "tools");
+    const since = tab.activity.since;
+    assert.equal((await send({ progress })).status, 200);
+    assert.equal(tab.activity.since, since);
+    host.setTurnApprovalPending(tab.traceId, tab.helperPid, true);
+    assert.equal((await send({ progress })).status, 200);
+    assert.equal(tab.activity.state, "approval");
+    host.setTurnApprovalPending(tab.traceId, tab.helperPid, false);
+    assert.equal(tab.activity.state, "tools");
+    assert.equal((await send({ progress: { stage: "chatgpt", activeToolCalls: 0 } })).status, 200);
+    assert.equal(tab.activity.state, "chatgpt");
+    assert.equal(other.activity, undefined);
+    assert.equal(host.selectedTabId, other.id);
+    tab.status = "ready";
+    assert.equal((await send({ progress })).status, 400);
+    assert.equal(host.tabSnapshot(tab).activity, undefined);
+    tab.status = "running";
+    tab.authenticationRequired = true;
+    assert.equal(host.tabSnapshot(tab).authenticationRequired, true);
+    assert.equal(host.tabSnapshot(tab).activity, undefined);
+  } finally { await server.close(); }
+});
+
+test("approval notices require the running tab's helper and never change another tab", async () => {
+  const tab = { id: "approval-tab", label: "ChatGPT 1", traceId: "approval-turn", helperPid: process.pid,
+    status: "running", interactionMode: "automatic" };
+  const other = { ...tab, id: "other-tab", traceId: "another-turn", helperPid: process.pid + 1 };
+  const events = [];
+  let mode = "automatic";
+  const host = Object.assign(Object.create(BrowserHost.prototype), {
+    turnTabs: new Map([[tab.id, tab], [other.id, other]]), closedTurnOwners: new Map(),
+    selectedTabId: other.id, getBrowserInteractionMode: () => mode,
+    syncViewVisibility() {},
+    snapshot() { return { tabs: [...this.turnTabs.values()].map(value => this.tabSnapshot(value)) }; },
+    publishState: state => events.push(state),
+  });
+  const server = await new BrowserControlServer({
+    logger: { info() {}, warn() {}, error() {} }, getBrowserHost: () => host, getPreferences: () => ({}),
+  }).start();
+  const { endpoint, token } = server.descriptor();
+  const send = (body, auth = token) => fetch(`${endpoint}/v1/turn/approval`, {
+    method: "POST", headers: { authorization: `Bearer ${auth}`, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const owner = { traceId: tab.traceId, helperPid: tab.helperPid };
+  try {
+    assert.equal((await send({ ...owner, pending: true }, "wrong-token")).status, 401);
+    assert.equal((await send({ ...owner, pending: true, helperPid: other.helperPid })).status, 400);
+    assert.equal((await send({ ...owner, pending: "true" })).status, 400);
+    assert.equal((await send(owner)).status, 400);
+    assert.equal(events.length, 0);
+    assert.equal((await send({ ...owner, pending: true })).status, 200);
+    assert.equal(tab.approvalPending, true);
+    assert.equal(other.approvalPending, undefined);
+    assert.equal(host.selectedTabId, other.id, "a notice must not switch away from the user's selected task");
+    assert.equal(events.at(-1).tabs[0].approvalPending, true);
+    host.heartbeatTurn(tab.traceId, tab.helperPid);
+    assert.equal(tab.approvalPending, true, "normal heartbeats must not erase the notice");
+    assert.equal((await send({ ...owner, pending: false })).status, 200);
+    assert.equal(events.at(-1).tabs[0].approvalPending, undefined);
+    tab.status = "error";
+    assert.equal((await send({ ...owner, pending: true })).status, 400);
+    tab.approvalPending = true;
+    assert.equal(host.tabSnapshot(tab).approvalPending, undefined, "terminal tabs cannot retain an active notice");
+    tab.status = "running";
+    tab.authenticationRequired = true;
+    assert.equal(host.tabSnapshot(tab).approvalPending, undefined);
+    mode = "manual";
+    assert.equal((await send({ ...owner, pending: true })).status, 400);
+  } finally { await server.close(); }
+});
+
 test("disconnect cancels pending browser initialization and destroys only its owned document", async () => {
   const { EventEmitter } = require("node:events");
   for (const stalledAt of ["load", "mark"]) {
@@ -231,8 +330,17 @@ test("browser control server authenticates and owns turn visibility", async () =
     assert.ok(acquisitionSignal instanceof AbortSignal);
     assert.equal(acquisitionSignal.aborted, false);
     assert.deepEqual(calls, [
-      ["start", "abcdef123456", true, process.pid, true, "a".repeat(64), "Codex Native2", true],
-      ["heartbeat", "abcdef123456", process.pid, true],
+      [
+        "start",
+        "abcdef123456",
+        true,
+        process.pid,
+        true,
+        "a".repeat(64),
+        "Codex Native2",
+        true,
+      ],
+      ["heartbeat", "abcdef123456", process.pid, true, undefined],
       ["end", "abcdef123456", process.pid, "completed", true, undefined, true, true],
     ]);
     assert.equal(logs.some(([, event]) => event === "browser.turn_started"), true);
