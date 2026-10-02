@@ -96,6 +96,34 @@ async function runSetup(name, args, options) {
 }
 
 module.exports = {
+  async setAutoApproveToolCalls(enabled) {
+    if (typeof enabled !== "boolean") throw new Error("Tool approval preference must be a boolean");
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) throw new Error("Initialize the runtime before changing tool approvals");
+    if ((current.config?.browserInteractionMode ?? "automatic") !== "automatic") {
+      throw new Error("Automatic tool approvals are unavailable in Zero Risk mode");
+    }
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      ...(enabled ? ["--auto-approve-tool-calls"] : []),
+    ];
+    const options = {
+      message: "Updating ChatGPT tool approvals",
+      successMessage: enabled ? "One-time tool requests will be approved automatically" : "Manual tool approvals restored",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = development
+      ? await this.runDevSetup("auto-approve-tool-calls", args, options)
+      : await this.runSetup("auto-approve-tool-calls", args, options);
+    return { ...result, enabled };
+  },
+
   async setFreshConversationPerTurn(enabled) {
     if (typeof enabled !== "boolean") throw new Error("Fresh conversation preference must be a boolean");
     const current = this.runtimeConfigSnapshot();

@@ -290,7 +290,7 @@ test("a disappeared retained source cannot leave its fresh compaction rebuild pa
       request(true),
       { headers: new Headers() },
       event => events.push(event),
-    )).rejects.toMatchObject({ code: "compaction_handoff_timeout", retryable: false, message: "ChatGPT compaction did not fully settle within 25ms" });
+    )).rejects.toMatchObject({ code: "compaction_handoff_timeout", retryable: false, message: "ChatGPT compaction did not fully settle within 25ms (phase=fresh_compaction)" });
     expect(performance.now() - startedAt).toBeLessThan(1_000);
     expect(browserStarts).toBe(2);
     expect(events.some(event => event.type === "done")).toBeFalse();

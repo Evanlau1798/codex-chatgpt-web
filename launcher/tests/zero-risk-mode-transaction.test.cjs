@@ -102,7 +102,7 @@ function ipc(name, context) {
   const start = source.indexOf(`  handle("launcher:${name}",`);
   const end = source.indexOf("\n  });", start);
   assert.ok(start >= 0 && end > start);
-  const syncStart = source.indexOf("function syncFreshConversationPreference(");
+  const syncStart = source.indexOf("function syncBrowserPreferences(");
   const syncEnd = source.indexOf("function registerIpc(", syncStart);
   assert.ok(syncStart >= 0 && syncEnd > syncStart);
   let handler;

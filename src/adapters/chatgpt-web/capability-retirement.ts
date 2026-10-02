@@ -1,5 +1,6 @@
 import type { TurnBrokerOwner } from "./turn-broker";
 import type { ChatGptExternalTurnProgress } from "./turn-progress";
+import { chatGptToolTimeoutError } from "./adapter-error";
 
 /** Broker retirement revokes tool delivery, but never manufactures model progress. */
 export function observeCapabilityRetirement(
@@ -10,8 +11,9 @@ export function observeCapabilityRetirement(
   ownerSettled: () => boolean,
 ): void {
   void broker.waitForRetirement(token).then(
-    () => {
-      const error = new Error("Codex Native retired the turn binding before its tool work completed");
+    failure => {
+      const error = failure ? chatGptToolTimeoutError(failure.tool, failure.timeoutMs)
+        : new Error("Codex Native retired the turn binding before its tool work completed");
       progress.retire(error);
       if (!ownerSettled() && !controller.signal.aborted) controller.abort(error);
     },

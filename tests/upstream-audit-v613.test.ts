@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
+import ts from "typescript";
 
 const root = resolve(import.meta.dir, "..");
 const ledger = JSON.parse(readFileSync(
@@ -186,3 +187,106 @@ test("v6.1.3 evidence is content-addressed, references v6.1.2, and reconstructs 
     rmSync(scratch, { recursive: true, force: true });
   }
 }, 30_000);
+
+test("continuing v6.1.4 evidence closes source anchors and reconstructs the original merge from retained prerequisites", () => {
+  const next = JSON.parse(readFileSync(resolve(root, ".github/upstream-audit/v6.1.4.json"), "utf8"));
+  const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const blob = (oid: string) => {
+    const result = spawnSync("git", ["cat-file", "blob", oid], { cwd: root });
+    expect(result.status).toBe(0);
+    return result.stdout;
+  };
+  const textDigest = (text: string) => digest(Buffer.from(text.replaceAll("\r\n", "\n")));
+  expect(next.tag.signed).toBeFalse();
+  expect(git(["rev-parse", `${next.upstream}^`])).toBe(next.semanticBaseline);
+  const expectedPaths = git(["diff", "--name-only", next.semanticBaseline, next.upstream]).split(/\r?\n/).sort();
+  expect(next.paths.map((item: any) => item.path).sort()).toEqual(expectedPaths);
+  expect(new Set(next.paths.map((item: any) => item.path)).size).toBe(expectedPaths.length);
+  const expectedHunks = expectedPaths.flatMap(path => {
+    const patch = spawnSync("git", ["diff", "--no-ext-diff", "--no-textconv", next.semanticBaseline, next.upstream, "--", path], {cwd: root, encoding: "utf8"});
+    expect(patch.status).toBe(0);
+    return patch.stdout.split(/(?=^@@ )/m).slice(1).map((chunk, index) => ({path, index: index + 1, sha256: textDigest(chunk)}));
+  });
+  expect(next.hunks.map(({path, index, sha256}: any) => ({path, index, sha256}))).toEqual(expectedHunks);
+  for (const item of [...next.paths, ...next.hunks, ...next.tests]) {
+    expect(["exact", "adapted", "superseded"], item.id).toContain(item.classification);
+    expect(next.obligations.some((entry: any) => entry.id === item.obligation), item.id).toBeTrue();
+  }
+  expect(new Set(next.tests.map((item: any) => item.id)).size).toBe(next.tests.length);
+  const declaredCases = (text: string, path: string) => {
+    const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+    const found: Array<{name: string; sha256: string}> = [];
+    function visit(node: ts.Node) {
+      if (ts.isCallExpression(node) && /^(test|it)(\.|\(|$)/.test(node.expression.getText(source))
+        && node.arguments.length >= 2 && (ts.isArrowFunction(node.arguments[1]!) || ts.isFunctionExpression(node.arguments[1]!))) {
+        const name = node.arguments[0]!;
+        if (ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) {
+          found.push({name: name.text, sha256: textDigest(node.getText(source))});
+        } else if (ts.isTemplateExpression(name) || ts.isBinaryExpression(name)) {
+          found.push({name: name.getText(source), sha256: textDigest(node.getText(source))});
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+    return found;
+  };
+  const expectedCases = expectedPaths.filter(path => /(^|\/)(tests?|__tests__)\/|\.test\./.test(path)).flatMap(path => {
+    const previous = spawnSync("git", ["show", `${next.semanticBaseline}:${path}`], {cwd: root, encoding: "utf8"});
+    const before = previous.status === 0 ? declaredCases(previous.stdout, path) : [];
+    const after = declaredCases(blob(git(["rev-parse", `${next.upstream}:${path}`])).toString("utf8"), path);
+    return [
+      ...after.filter(item => !before.some(old => old.name === item.name && old.sha256 === item.sha256))
+        .map(item => ({path, name: item.name, sha256: item.sha256, status: before.some(old => old.name === item.name) ? "modified" : "added"})),
+      ...before.filter(item => !after.some(current => current.name === item.name)).map(item => ({path, ...item, status: "removed"})),
+    ];
+  });
+  expect(next.tests.map((item: any) => ({path: item.source.path, name: item.source.name, sha256: item.source.sha256, status: item.status}))).toEqual(expectedCases);
+  for (const item of next.tests) {
+    expect(git(["rev-parse", `${item.status === "removed" ? next.semanticBaseline : next.upstream}:${item.source.path}`])).toBe(item.source.blob);
+    const source = blob(item.source.blob).toString("utf8").replaceAll("\r\n", "\n");
+    expect(textDigest(source.split("\n").slice(item.source.start - 1, item.source.end).join("\n")), item.id).toBe(item.source.lineSha256);
+    expect(item.targets.length, item.id).toBeGreaterThan(0);
+    for (const target of item.targets) {
+      const text = blob(target.blob).toString("utf8").replaceAll("\r\n", "\n");
+      expect(textDigest(text.split("\n").slice(target.start - 1, target.end).join("\n")), target.path).toBe(target.lineSha256);
+      if (JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version.startsWith("6.1.4-")) {
+        expect(textDigest(readFileSync(resolve(root, target.path), "utf8")), target.path).toBe(textDigest(text));
+      }
+    }
+  }
+  expect(next.tests.length).toBe(next.coverage.testCaseDeltas);
+  expect(next.evidence.prior.ledgerDigestCanonicalization).toBe("git-blob-exact-bytes");
+  expect(git(["rev-parse", `${next.baseline}:${next.evidence.prior.ledgerPath}`])).toBe(next.evidence.prior.ledgerBlob);
+  expect(digest(blob(next.evidence.prior.ledgerBlob))).toBe(next.evidence.prior.ledgerSha256);
+  const archive = readFileSync(resolve(root, next.evidence.path));
+  expect(digest(archive)).toBe(next.evidence.sha256);
+  expect(archive.length).toBe(next.evidence.bytes);
+  const entries = tarEntries(archive);
+  const manifest = JSON.parse(entries.get("manifest.json")!.toString("utf8"));
+  expect(manifest.prerequisites).toEqual([next.baseline, next.upstream]);
+  for (const item of manifest.files) {
+    const content = entries.get(item.path)!;
+    expect(content?.length, item.path).toBe(item.bytes);
+    expect(digest(content), item.path).toBe(item.sha256);
+  }
+  const scratch = mkdtempSync(resolve(tmpdir(), "upstream-audit-continuing-"));
+  try {
+    git(["init", "--bare", scratch]);
+    git(["--git-dir", scratch, "fetch", "--no-tags", root, next.baseline, next.upstream]);
+    const packPath = resolve(scratch, "objects/pack/auto-merge-objects.pack");
+    writeFileSync(packPath, entries.get("objects/auto-merge-objects.pack")!);
+    git(["--git-dir", scratch, "index-pack", packPath]);
+    expect(git(["--git-dir", scratch, "cat-file", "-t", next.automaticMergeTree])).toBe("tree");
+    expect(git(["--git-dir", scratch, "rev-parse", `${next.tag.object}^{commit}`])).toBe(next.upstream);
+    expect(git(["--git-dir", scratch, "rev-parse", `${ledger.tag.object}^{commit}`])).toBe(next.semanticBaseline);
+    const trees = git(["--git-dir", scratch, "rev-list", "--objects", next.automaticMergeTree]).split(/\r?\n/);
+    const check = spawnSync("git", ["--git-dir", scratch, "cat-file", "--batch-check"], {
+      input: trees.map(line => line.split(" ")[0]).join("\n") + "\n", encoding: "utf8",
+    });
+    expect(check.status).toBe(0);
+    expect(check.stdout).not.toContain("missing");
+  } finally {
+    rmSync(scratch, {recursive: true, force: true});
+  }
+}, 120_000);

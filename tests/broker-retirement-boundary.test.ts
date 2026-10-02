@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web";
-import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
+import { callTurnBroker, TurnBroker, RemoteTurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import type { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import type { AdapterEvent, CodexProviderConfig } from "../src/types";
 import { brokerTestEndpoint, beginAcknowledgedToolInvocation, environmentXml, rawWireRequest, toolResult } from "./chatgpt-harness-fixture";
 
-test("a retired MCP binding closes the adapter tool boundary before the stale batch can be emitted", async () => {
+test.each([false, true])("a retired MCP binding closes the adapter tool boundary and preserves timeout=%s", async timedOut => {
   const socketPath = brokerTestEndpoint(`cgw-h3-retired-boundary-${process.pid}-${Date.now()}`);
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
@@ -51,7 +51,21 @@ test("a retired MCP binding closes the adapter tool boundary before the stale ba
       }
       expect(snapshot.activeToolCalls).toBe(1);
 
-      await callTurnBroker(socketPath, { method: "release", bindingId: claimed.bindingId });
+      if (timedOut) {
+        await expect(callTurnBroker(socketPath, {
+          method: "release", bindingId: claimed.bindingId,
+          failure: { code: "codex_tool_timeout", tool: "exec_command", timeoutMs: -1 },
+        })).rejects.toThrow("Invalid Codex tool retirement failure");
+      }
+      const remoteRetirement = new RemoteTurnBroker(socketPath).waitForRetirement(token);
+      await callTurnBroker(socketPath, { method: "resolve", bindingId: claimed.bindingId });
+      await callTurnBroker(socketPath, {
+        method: "release", bindingId: claimed.bindingId,
+        ...(timedOut ? { failure: { code: "codex_tool_timeout" as const, tool: "exec_command", timeoutMs: 90_000 } } : {}),
+      });
+      expect(await remoteRetirement).toEqual(timedOut
+        ? { code: "codex_tool_timeout", tool: "exec_command", timeoutMs: 90_000 }
+        : undefined);
       const invocationResult = await invocationOutcome;
       expect(invocationResult.type).toBe("error");
       await broker.waitForRetirement(token);
@@ -84,11 +98,11 @@ test("a retired MCP binding closes the adapter tool boundary before the stale ba
     );
     await retirementObserved;
     expect(retiredProgress?.activeToolCalls).toBe(0);
-    expect(lateAcknowledgementError?.message).toContain("retired the turn binding");
+    expect(lateAcknowledgementError?.message).toContain(timedOut ? "exec_command" : "retired the turn binding");
     expect(events.some(event => event.type === "tool_call_start")).toBeFalse();
     expect(events.at(-1)).toMatchObject({
       type: "error",
-      code: "chatgpt_submitted_turn_failed",
+      code: timedOut ? "codex_tool_timeout" : "chatgpt_submitted_turn_failed",
     });
   } finally {
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;

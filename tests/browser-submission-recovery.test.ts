@@ -653,7 +653,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
     mode: { localTools: lane === "final-prewrap" },
     prepared: { multipart: lane === "multipart" || lane === "final-multipart-prewrap" ? { parts: ["part"] } : undefined },
     responsePrompt: lane.endsWith("prewrap") ? `\n${"x".repeat(40_000)}` : "final prompt",
-    multipartTransport: { stages: [{ text: "stage" }] },
+    multipartTransport: { stages: [{ text: "stage" }], stageMessageTokens: [1] },
     deadline: undefined,
     diagnostics: { capture: async () => {} },
     settleChatGptUi: async () => {},

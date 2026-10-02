@@ -12,7 +12,7 @@ test("off-on-off fresh conversation changes retire completed history before it c
     const property = savedChats ? "useSavedChats" : "experimentalFreshConversationPerTurn";
     const method = savedChats ? "setUseSavedChats" : "setFreshConversationPerTurn";
     const channel = savedChats ? "launcher:use-saved-chats" : "launcher:fresh-conversation-per-turn";
-    const nextChannel = savedChats ? "launcher:set-preference" : "launcher:use-saved-chats";
+    const nextChannel = savedChats ? "launcher:auto-approve-tool-calls" : "launcher:use-saved-chats";
     const key = "a".repeat(64);
     const stale = { id: "old-chat", traceId: "old-turn", status: "ready", interactionMode: "automatic",
       conversationKey: key, connectorIdentity: "Codex Native2", connectorBound: true };
@@ -33,7 +33,7 @@ test("off-on-off fresh conversation changes retire completed history before it c
       },
       createTurnTab: async () => ({ id: "new-chat", surfaceId: "new-surface" }),
     });
-    vm.runInNewContext(main.slice(main.indexOf("function syncFreshConversationPreference("), main.indexOf("function registerIpc(")) +
+    vm.runInNewContext(main.slice(main.indexOf("function syncBrowserPreferences("), main.indexOf("function registerIpc(")) +
       main.slice(main.indexOf(`handle("${channel}",`),
       main.indexOf(`handle("${nextChannel}",`)), {
       handle: (_channel, callback) => { handler = callback; }, browserHost: fixture, releaseRetainedConversation,
