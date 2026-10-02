@@ -85,6 +85,10 @@ test('optional headless invocations use native JSON interfaces without changing 
 });
 
 test('headless Codex argument sets are accepted by the installed native parser', { skip: !process.env.NATIVE_LAB_CODEX_INTEGRATION_PATH }, () => {
+  const version = nativeInvocation(process.env.NATIVE_LAB_CODEX_INTEGRATION_PATH, ['--version'], 'codex');
+  const observed = spawnSync(version.command, version.args, { encoding: 'utf8', timeout: 15_000 });
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.match(observed.stdout, /\b0\.159\.2\b/);
   const variants = [
     buildCodexArgs({ cwd: target, proxyUrl: 'http://127.0.0.1:1', catalogPath: '/private/tmp/gpt6.json', catalog, headless: true, unsafe: false }),
     buildCodexArgs({ cwd: target, proxyUrl: 'http://127.0.0.1:1', catalogPath: '/private/tmp/gpt6.json', catalog, headless: true, unsafe: true }),
