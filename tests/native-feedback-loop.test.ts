@@ -11,6 +11,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { defaultBrokerEndpoint } from "../src/config";
 import { EventEmitter } from "node:events";
 import { ChatGptSubmissionRejectionObserver } from "../src/adapters/chatgpt-web/browser-worker";
 
@@ -60,14 +62,15 @@ test("only typed native exit fields populate the reported-exit receipt", () => {
 
 test("recorded error replay crosses real MCP stdio/broker sockets with call binding and original content intact", async () => {
   const fixture = JSON.parse(readFileSync(new URL("./fixtures/native-claude-baseline-failure.recorded.json", import.meta.url), "utf8"));
-  const root = mkdtempSync("/private/tmp/cgw-wire-replay-");
-  const broker = TurnBroker.forSocket(join(root, "broker.sock"));
+  const root = mkdtempSync(join(tmpdir(), "cgw-wr-"));
+  const socket = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socket);
   const client = new Client({ name: "recorded-error-replay", version: "1" });
   const token = await broker.register({ cwd: root, roots: [root], writableRoots: [root],
     sandboxPolicy: { type: "dangerFullAccess" },
     tools: [{ name: "exec_command", description: "fixture transport", parameters: { type: "object" } }] });
   try {
-    await client.connect(new StdioClientTransport({ command: process.execPath, args: ["src/cli.ts", "mcp", "--broker-socket", join(root, "broker.sock")], cwd: process.cwd(), stderr: "pipe" }));
+    await client.connect(new StdioClientTransport({ command: process.execPath, args: ["src/cli.ts", "mcp", "--broker-socket", socket], cwd: process.cwd(), stderr: "pipe" }));
     const pending = client.callTool({ name: "codex_exec", arguments: { turn_token: token, cmd: "recorded-result-replay" } });
     const [call] = await broker.nextToolBatch(token);
     broker.completeTool(token, call!.callId, { content: [{ type: "text", text: fixture.result.content }], isError: fixture.result.is_error });
