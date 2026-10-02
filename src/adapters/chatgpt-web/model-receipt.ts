@@ -1331,12 +1331,15 @@ export class ChatGptModelReceiptObserver {
   private readonly onRequestFailed = (request: Request): void => {
     for (const capture of this.captures.values()) {
       if (capture.playwright?.request !== request) continue;
+      const priorFailure = capture.failed && capture.failureCode !== "network_loading_failed";
       if (capture.source === "page") capture.traceTerminal = "reader_error";
       capture.failed = true;
       if (capture.source === "page") this.markPageTerminal(capture);
       else capture.terminal = true;
-      capture.failureStage = "playwright_requestfailed";
-      capture.failureCode = "request_failed";
+      if (!priorFailure) {
+        capture.failureStage = "playwright_requestfailed";
+        capture.failureCode = "request_failed";
+      }
       void this.maybeEmit(capture.send).catch(error => noteTelemetryFailure("requestfailed", error));
     }
   };
@@ -1739,11 +1742,15 @@ export class ChatGptModelReceiptObserver {
     }));
     const protocolEnded = (capture: CdpCapture): boolean => capture.contentType === "sse"
       && capture.collector.diagnosticTrace().doneMarkers > 0 && !capture.bounded;
-    // The real recording has [DONE] before Chromium's late loadingFailed. This
+    // The real recording has [DONE] before Chromium's late loadingFailed or
+    // Playwright requestfailed. Both describe transport cleanup after protocol end.
     // is transport cleanup, not a truncated provider message. Decoder failures,
     // absent [DONE], bounded captures, and conflicting peer evidence still fail closed.
     const usable = (capture: CdpCapture): boolean => !capture.failed
-      || capture.source === "cdp" && capture.failureCode === "network_loading_failed" && protocolEnded(capture);
+      || capture.source === "cdp" && protocolEnded(capture) && (
+        capture.failureCode === "network_loading_failed"
+        || capture.failureStage === "playwright_requestfailed" && capture.failureCode === "request_failed"
+      );
     const resolvedPageObservations = observations.filter(({ capture, observation }) => capture.source === "page" && (usable(capture) || protocolEnded(capture)) && capture.playwright && observation.status === "resolved");
     const resolvedCdpObservations = observations.filter(({ capture, observation }) => capture.source === "cdp" && (usable(capture) || protocolEnded(capture)) && capture.playwright && observation.status === "resolved");
     const boundPageObservations = observations.filter(({ capture }) => capture.source === "page" && (usable(capture) || protocolEnded(capture)) && capture.playwright);

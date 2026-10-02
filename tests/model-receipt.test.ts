@@ -400,7 +400,7 @@ function emitOwnedNetwork(page: FakePage, request: FakeRequest, requestId: strin
 
 test("recorded metadata survives a late transport abort only after an observed provider DONE marker", async () => {
   const fixture = JSON.parse(readFileSync(new URL("./fixtures/chatgpt-gpt6-pro-metadata.recorded.json", import.meta.url), "utf8"));
-  for (const done of [false, true]) {
+  for (const failure of ["cdp", "playwright"]) for (const done of [false, true]) {
     const page = new FakePage();
     const receipts: any[] = [];
     const diagnostics: any[] = [];
@@ -414,7 +414,8 @@ test("recorded metadata survives a late transport abort only after an observed p
     page.cdp.emit("Network.responseReceived", { requestId: "recorded", response: { status: 200, headers: { "content-type": "text/event-stream" } } });
     const body = fixture.frames.map((frame: unknown) => `data: ${JSON.stringify(frame)}\n\n`).join("") + (done ? "data: [DONE]\n\n" : "");
     page.cdp.emit("Network.dataReceived", { requestId: "recorded", data: Buffer.from(body).toString("base64") });
-    page.cdp.emit("Network.loadingFailed", { requestId: "recorded" });
+    if (failure === "playwright") page.emit("requestfailed", request);
+    else page.cdp.emit("Network.loadingFailed", { requestId: "recorded" });
     await observer.flushCurrent();
     expect(receipts).toHaveLength(done ? 1 : 0);
     if (done) expect(receipts[0]).toMatchObject({ servedModel: "gpt-6-pro", source: "network.resolved_model_slug" });
