@@ -91,7 +91,8 @@ export function notifyCompactionDelivery(channel: TurnChannel): void {
 }
 
 export interface PendingContext {
-  text: string;
+  readonly text: string;
+  sha256?: string;
   traceId: string;
   expiresAt?: number;
   turnToken?: string;

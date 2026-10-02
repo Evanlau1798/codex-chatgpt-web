@@ -7,7 +7,9 @@ export function observeMcpToolCalls(
   write: (event: Record<string, unknown>) => void = event => console.error(`[chatgpt-web-mcp] transport=${JSON.stringify(event)}`),
 ): Transport {
   let sequence = 0;
-  const pending = new Map<string | number, { call: number; tool: string; started: number } | null>();
+  const pending = new Map<string | number, {
+    call: number; tool: string; started: number; output_kind?: "commentary" | "reasoning" | "final";
+  } | null>();
   const emit = (event: Record<string, unknown>) => {
     // Logging is observational: a broken sink cannot change the invocation or its result.
     try { write({ pid: process.pid, ...event }); } catch { /* Preserve transport semantics. */ }
@@ -24,9 +26,15 @@ export function observeMcpToolCalls(
       } else if (pending.size >= 1_024) {
         emit({ event: "uncorrelated_call", reason: "tracking_limit", tool });
       } else {
-        const call = { call: ++sequence, tool, started: performance.now() };
+        const args = message.params?.arguments;
+        const outputArgs = args && typeof args === "object" && "wire_name" in args
+          && args.wire_name === "codex.control.output" && "arguments" in args ? args.arguments : undefined;
+        const kind = outputArgs && typeof outputArgs === "object" && "kind" in outputArgs ? outputArgs.kind : undefined;
+        const output = tool === "codex_tool_call" && (kind === "commentary" || kind === "reasoning" || kind === "final")
+          ? { output_kind: kind } as const : {};
+        const call = { call: ++sequence, tool, started: performance.now(), ...output };
         pending.set(message.id, call);
-        emit({ event: "call_received", call: call.call, tool });
+        emit({ event: "call_received", call: call.call, tool, ...output });
       }
     }
     receive?.(message, extra);
@@ -35,6 +43,7 @@ export function observeMcpToolCalls(
   transport.send = async (message, options) => {
     const id = "id" in message ? message.id : undefined;
     const call = id !== undefined && id !== null && !("method" in message) ? pending.get(id) : undefined;
+    const sendingAt = performance.now();
     try {
       await send(message, options);
       if (call) {
@@ -42,6 +51,11 @@ export function observeMcpToolCalls(
         emit({
           event: "reply_sent", call: call.call, tool: call.tool,
           elapsed_ms: Math.round(performance.now() - call.started),
+          ...(call.output_kind ? {
+            output_kind: call.output_kind,
+            handler_elapsed_ms: Math.round(sendingAt - call.started),
+            send_elapsed_ms: Math.round(performance.now() - sendingAt),
+          } : {}),
           outcome: "error" in message ? "protocol_error" : "result",
           ...("result" in message ? { is_error: result?.isError === true } : {}),
         });

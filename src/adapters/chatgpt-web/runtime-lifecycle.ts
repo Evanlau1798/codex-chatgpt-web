@@ -99,8 +99,9 @@ export interface ChatGptSameSurfaceRecoveryDecision {
 }
 
 export const CHATGPT_SAME_SURFACE_RECOVERY_PROMPT = [
-  "All requested Codex Native2 work tools have completed and their results are already available above.",
+  "The currently issued Codex Native2 tool calls have settled. This does not establish that the user's requested work is complete.",
   "Do not call any work tool or repeat completed tool calls.",
+  "Use only actual completed tool results as evidence. Explicitly identify any requested work that has not been executed or verified; never turn this recovery into a claim that missing actions succeeded.",
   "Produce the complete user-facing answer now by calling codex_tool_call exactly once with the current turn_token, wire_name codex.control.output, and arguments kind=final with the answer text.",
   "After the output control acknowledges the final, end this response immediately. Do not write ordinary assistant prose or call another tool.",
 ].join(" ");

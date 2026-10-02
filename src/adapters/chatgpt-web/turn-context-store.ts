@@ -67,7 +67,7 @@ export class TurnContextStore {
       context.nextChunk += 1;
       context.complete = context.nextChunk === total;
     }
-    const sha256 = createHash("sha256").update(context.text).digest("hex");
+    const sha256 = context.sha256 ??= createHash("sha256").update(context.text).digest("hex");
     console.info(
       `[chatgpt-web] broker trace=${context.traceId} ${replayed ? "replayed" : "served"} context chunk=${index! + 1}/${total}`
       + ` chars=${chunk.length} complete=${context.complete}`,

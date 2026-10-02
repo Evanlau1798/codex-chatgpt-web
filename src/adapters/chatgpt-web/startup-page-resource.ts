@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Browser, Page } from "playwright-core";
-import { connectLauncherBrowserHost, notifyLauncherTurn, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS } from "../../launcher-browser-host";
+import { connectLauncherBrowserHost, notifyLauncherTurn, LAUNCHER_TURN_HEARTBEAT_INTERVAL_MS, type LauncherBrowserConnection } from "../../launcher-browser-host";
 import { readChatGptUsageAccount, type ChatGptUsageModel } from "./limits";
 import type { ChatGptWebModelMode } from "./model";
 import type { StartupPageResource } from "./startup-page-pool";
@@ -13,6 +13,7 @@ export type StartupPageSelection = ChatGptWebModelMode & {
 export type PreparedChatGptStartupPage = StartupPageResource & {
   selection: StartupPageSelection;
   account: Awaited<ReturnType<typeof readChatGptUsageAccount>>;
+  takeConnection?(): LauncherBrowserConnection | undefined;
 };
 
 /** Real launcher ownership, account verification and browser transport; never sends a message. */
@@ -66,7 +67,14 @@ export async function prepareChatGptStartupPage(options: {
     await notifyLauncherTurn(options.descriptorPath, { ...owner, phase: "prepared" }, undefined, signal);
     signal.throwIfAborted();
     return { surfaceId: lease.surfaceId, prefix: options.prefix, selection, account, pauseHeartbeat, release,
-      isAvailable: () => available && browser?.isConnected() === true };
+      isAvailable: () => available && browser?.isConnected() === true,
+      takeConnection: () => {
+        if (!available || browser?.isConnected() !== true) return undefined;
+        available = false;
+        pauseHeartbeat();
+        browser = undefined; // The accepted work lease now owns this transport's cleanup.
+        return connection;
+      } };
   } catch (error) {
     signal.removeEventListener("abort", onAbort);
     try { await release(); }

@@ -11,6 +11,20 @@ export interface ChatGptTunneledOutputReader {
 
 interface TunnelObservation { running: boolean; responsePresent: boolean; toolCallsInFlight?: boolean }
 
+export interface ChatGptFinalTiming {
+  status: "complete" | "retry" | "fallback" | "error";
+  elapsedMs: number;
+  /** Starts when the reader resolves, excluding upstream queue and transport latency. */
+  readerResolvedToConsumedMs?: number;
+  observations: number;
+  runningObservations: number;
+  toolObservations: number;
+  totalObservationMs: number;
+  maxObservationMs: number;
+  firstStoppedMs?: number;
+  lastRunningMs?: number;
+}
+
 interface TunnelOptions {
   output: ChatGptTunneledOutputReader;
   afterSequence?: number;
@@ -25,6 +39,7 @@ interface TunnelOptions {
   onFinal(text: string): void;
   onHeartbeat?(): void;
   onProgress?(): void;
+  onFinalTiming?(timing: ChatGptFinalTiming): void;
   signal?: AbortSignal;
   deadline?: number;
   attempt: number;
@@ -50,7 +65,28 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
   const missingResponseGraceMs = options.missingResponseGraceMs ?? 60_000;
   const terminalEvidenceGraceMs = options.terminalEvidenceGraceMs ?? 60_000;
   let sequence = options.afterSequence ?? 0;
-  let pending = waitForOutput(options.output, sequence, signal);
+  let readerResolvedAt: number | undefined, consumedAt: number | undefined;
+  let firstStoppedAt: number | undefined, lastRunningAt: number | undefined;
+  let observations = 0, runningObservations = 0, toolObservations = 0;
+  let totalObservationMs = 0, maxObservationMs = 0;
+  let timingStatus: ChatGptFinalTiming["status"] = "error";
+  const next = () => waitForOutput(options.output, sequence, signal).then(result => {
+    if (result.event.kind === "final") readerResolvedAt ??= Date.now();
+    return result;
+  });
+  let pending = next();
+  const observe = async () => {
+    const startedAt = Date.now();
+    const value = await options.observe();
+    if (readerResolvedAt !== undefined) {
+      const now = Date.now(), duration = Math.max(0, now - Math.max(startedAt, readerResolvedAt));
+      observations++; totalObservationMs += duration; maxObservationMs = Math.max(maxObservationMs, duration);
+      if (value.running) { runningObservations++; lastRunningAt = now; }
+      if (value.toolCallsInFlight) toolObservations++;
+      if (!value.running && !value.toolCallsInFlight) firstStoppedAt ??= now;
+    }
+    return value;
+  };
   let final: BrokerTurnOutputEvent | undefined;
   let fenceRevision: number | undefined;
   let stoppedWithoutFinalSince: number | undefined;
@@ -59,10 +95,11 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
   let stoppedWithNativeFinalSince: number | undefined;
   let preemptiveRetry: string | undefined;
   let stopRequested = false;
+  let observeImmediately = false;
   let lastHeartbeat = 0;
   const acceptOutput = (event: BrokerTurnOutputEvent): void => {
     sequence = event.sequence;
-    pending = waitForOutput(options.output, sequence, signal);
+    pending = next();
     fenceRevision = undefined;
     stoppedWithoutFinalSince = undefined;
     missingResponseSince = undefined;
@@ -71,20 +108,23 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
     options.onProgress?.();
     if (event.kind === "commentary") options.onCommentary?.(event.text);
     else if (event.kind === "reasoning") options.onReasoning?.(event.text);
-    else final = event;
+    else { final = event; consumedAt = Date.now(); observeImmediately = true; }
   };
   try {
     for (;;) {
       options.signal?.throwIfAborted();
       if (options.deadline !== undefined && Date.now() >= options.deadline) throw new Error("ChatGPT web turn timed out");
       if (Date.now() - lastHeartbeat >= 10_000) { options.onHeartbeat?.(); lastHeartbeat = Date.now(); }
-      const raced = await Promise.race([pending, delay(pollMs)]);
-      if (raced.kind === "output") {
-        acceptOutput(raced.event);
-        continue;
+      if (!observeImmediately) {
+        const raced = await Promise.race([pending, delay(pollMs)]);
+        if (raced.kind === "output") {
+          acceptOutput(raced.event);
+          continue;
+        }
       }
+      observeImmediately = false;
 
-      const observed = await options.observe();
+      const observed = await observe();
       preemptiveRetry ??= options.takePreemptiveRetry?.();
       if (preemptiveRetry && observed.running && !stopRequested) {
         stopRequested = true;
@@ -97,6 +137,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
         if (settled.kind === "output") { acceptOutput(settled.event); continue; }
         if (final) await options.output.reset(final.sequence);
         options.completionAdmission?.reopen();
+        timingStatus = "retry";
         return { status: "retry", retry: { text: preemptiveRetry }, lastSequence: sequence };
       }
       if (!final) {
@@ -125,7 +166,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
           // before the DOM candidate is read. The broker checks this revision at seal.
           const sealRevision = options.completionFence ? await options.completionFence.begin() : 0;
           if (sealRevision === undefined) { stoppedWithoutFinalSince = undefined; continue; }
-          const confirmed = await options.observe();
+          const confirmed = await observe();
           if (!confirmed.responsePresent || confirmed.running || confirmed.toolCallsInFlight) {
             stoppedWithoutFinalSince = undefined;
             continue;
@@ -136,7 +177,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
             const admission = await options.beforeDomFallback(Date.now() - stoppedWithoutFinalSince)
               .then(retry => ({ retry }), error => ({ error }));
             // Native output, resumed work and cancellation take precedence over a recovery decision.
-            const current = await options.observe();
+            const current = await observe();
             const arrived = await Promise.race([pending, delay(0)]);
             options.signal?.throwIfAborted();
             if (arrived.kind === "output") { acceptOutput(arrived.event); continue; }
@@ -164,6 +205,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
             if (admission.retry === "observe") continue;
             if (admission.retry) {
               options.completionAdmission?.reopen();
+              timingStatus = "retry";
               return {
                 status: "retry",
                 retry: { ...admission.retry, expectedActivityRevision: sealRevision },
@@ -175,6 +217,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
             stoppedWithoutFinalSince = undefined;
             continue;
           }
+          timingStatus = "fallback";
           return { status: "fallback", lastSequence: sequence };
         }
         continue;
@@ -192,6 +235,9 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
       }
       if (options.completionFence && fenceRevision === undefined) {
         fenceRevision = await options.completionFence.begin();
+        // Confirm browser state again across the broker round trip, without an
+        // idle poll. Generation, tools, abort and revision races still invalidate it.
+        observeImmediately = fenceRevision !== undefined;
         continue;
       }
       const decision = await decideChatGptFinalAnswer({
@@ -207,8 +253,10 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
       if (decision.status === "observe") { fenceRevision = undefined; continue; }
       if (decision.status === "retry") {
         await options.output.reset(final.sequence);
+        timingStatus = "retry";
         return { ...decision, lastSequence: sequence };
       }
+      timingStatus = "complete";
       return decision;
     }
   } catch (error) {
@@ -221,6 +269,14 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
   } finally {
     controller.abort();
     void pending.catch(() => {});
+    if (readerResolvedAt !== undefined && options.onFinalTiming) {
+      try { options.onFinalTiming({ status: timingStatus, elapsedMs: Date.now() - readerResolvedAt,
+        readerResolvedToConsumedMs: consumedAt === undefined ? undefined : consumedAt - readerResolvedAt,
+        observations, runningObservations, toolObservations, totalObservationMs, maxObservationMs,
+        firstStoppedMs: firstStoppedAt === undefined ? undefined : firstStoppedAt - readerResolvedAt,
+        lastRunningMs: lastRunningAt === undefined ? undefined : lastRunningAt - readerResolvedAt }); }
+      catch { /* Diagnostic delivery must never change completion or cleanup. */ }
+    }
   }
 }
 

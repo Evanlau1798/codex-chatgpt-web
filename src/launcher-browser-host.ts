@@ -227,12 +227,19 @@ export async function connectLauncherBrowserHost(
   timeoutMs = 20_000,
   surfaceId?: string,
   abortSignal?: AbortSignal,
+  prepared?: LauncherBrowserConnection,
 ): Promise<LauncherBrowserConnection> {
   if (abortSignal?.aborted) throw new DOMException("Launcher browser connection aborted", "AbortError");
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
+  if (prepared && (prepared.descriptor.pid !== descriptor.pid || prepared.descriptor.endpoint !== descriptor.endpoint
+    || prepared.descriptor.profile !== descriptor.profile || prepared.descriptor.partition !== descriptor.partition
+    || !surfaceId || !descriptor.surfaceTargets[surfaceId]
+    || prepared.descriptor.surfaceTargets[surfaceId] !== descriptor.surfaceTargets[surfaceId]
+    || !prepared.browser.isConnected())) throw new Error("Launcher prepared browser identity changed");
   return runLauncherBrowserConnection(timeoutMs, {
     ready: budget => assertCdpReady(descriptor, budget),
     connect: async budget => {
+      if (prepared) return prepared.browser;
       try { return await chromium.connectOverCDP(descriptor.endpoint, { timeout: budget }); }
       catch (error) { throw new Error(`Could not connect Playwright to the launcher browser: ${error instanceof Error ? error.message : String(error)}`); }
     },

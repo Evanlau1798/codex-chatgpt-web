@@ -43,7 +43,8 @@ for (const fixture of composerSyntheticFixtures()) {
     const chunks = split(fixture.text);
     assert.deepEqual(editor.pastes, chunks);
     assert.equal(editor.read(), fixture.text);
-    assert.deepEqual(editor.verified, ["", ...chunks.map((_, i) => chunks.slice(0, i + 1).join("")), fixture.text]);
+    // The last prefix is the full message, verified once after editor settlement.
+    assert.deepEqual(editor.verified, ["", ...chunks.map((_, i) => chunks.slice(0, i + 1).join(""))]);
     assert.equal(editor.reanchors, 1);
   });
 }
@@ -131,7 +132,7 @@ test("all legacy options still use multiple bounded transactions for an oversize
     await editor.run(text, { options });
     assert.deepEqual(editor.pastes, ["x".repeat(CHATGPT_LITERAL_PASTE_CHUNK_CHARS), "x".repeat(CHATGPT_LITERAL_PASTE_CHUNK_CHARS), "x"]);
     assert.deepEqual(editor.verified.map(value => value.length), [0, CHATGPT_LITERAL_PASTE_CHUNK_CHARS,
-      CHATGPT_LITERAL_PASTE_CHUNK_CHARS * 2, text.length, text.length]);
+      CHATGPT_LITERAL_PASTE_CHUNK_CHARS * 2, text.length]);
   }
 });
 

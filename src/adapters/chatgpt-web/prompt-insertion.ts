@@ -52,7 +52,9 @@ export async function insertChatGptPromptText(
         await checked(() => pasteChatGptComposerLiteralText(composer, insertionText.slice(offset, end), abortSignal, metrics, op, actions.reanchor));
         metrics.inserted(end + prefixUnits);
       });
-      await verify(text.slice(0, end + prefixUnits));
+      // Every intermediate prefix must be exact before another mutation. The final
+      // paste is checked once below, after yielding for editor settlement.
+      if (end < insertionText.length) await verify(text.slice(0, end + prefixUnits));
       offset = end;
     }
     await op.poll(0);
