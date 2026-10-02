@@ -115,7 +115,7 @@ test("provider telemetry correlates each owner and only classifies an explicit c
     for (const challenge of [false, true]) {
       const frame = {};
       const page = Object.assign(new EventEmitter(), { mainFrame: () => frame });
-      const observer = new ChatGptSubmissionRejectionObserver(challenge ? "owned-b" : "owned-a");
+      const observer = new ChatGptSubmissionRejectionObserver(undefined, challenge ? "owned-b" : "owned-a");
       observer.begin(page as never); observer.activate();
       const request = { method: () => "POST", url: () => "https://chatgpt.com/backend-api/f/conversation", frame: () => frame };
       page.emit("request", request);

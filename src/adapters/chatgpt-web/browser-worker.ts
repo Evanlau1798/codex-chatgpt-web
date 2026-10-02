@@ -519,8 +519,10 @@ export class ChatGptSubmissionRejectionObserver {
       const status = response.status();
       const code = status === 401 ? "chatgpt_authentication_required" : status === 403 ? "chatgpt_request_forbidden"
         : status === 429 ? "chatgpt_rate_limited" : "chatgpt_backend_request_rejected";
-      this.checks.push(Promise.resolve(new ChatGptWebAdapterError(`Owned ChatGPT request returned HTTP ${status}; no automatic resubmission.`,
-        { status: status === 429 ? 429 : 502, errorType: "server_error", code, retryable: false })));
+      const error = new ChatGptWebAdapterError(`Owned ChatGPT request returned HTTP ${status}; no automatic resubmission.`,
+        { status: status === 429 ? 429 : 502, errorType: "server_error", code, retryable: false });
+      this.checks.push(Promise.resolve(error));
+      this.onRejected?.(error);
       return;
     }
     if (response.status() !== 413
