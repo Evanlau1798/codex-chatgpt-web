@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import { gunzipSync } from "node:zlib";
 
 type Entry = {
   path: string;
@@ -44,6 +45,30 @@ function git(args: string[], input?: string): string {
   return result.stdout.trim();
 }
 
+// Match the in-process evidence reader used by the newer audit ledgers. Windows tar
+// timed out in CI while scanning this 53 MB archive. Keep the digest and tag checks.
+let evidenceEntries: Map<string, Buffer> | undefined;
+function tarEntries(): Map<string, Buffer> {
+  if (evidenceEntries) return evidenceEntries;
+  const entries = new Map<string, Buffer>();
+  const tar = gunzipSync(readFileSync(resolve(root, ledger.mergeEvidence.archive)));
+  for (let offset = 0; offset + 512 <= tar.length;) {
+    const header = tar.subarray(offset, offset + 512);
+    const name = header.subarray(0, 100).toString("utf8").replace(/\0.*$/, "").replace(/^\.\//, "");
+    if (!name) break;
+    const rawSize = header.subarray(124, 136).toString("ascii").replace(/\0.*$/, "").trim();
+    const size = Number.parseInt(rawSize || "0", 8);
+    const start = offset + 512;
+    if (!Number.isSafeInteger(size) || size < 0 || start + size > tar.length) {
+      throw new Error(`Invalid audit evidence entry: ${name}`);
+    }
+    entries.set(name, tar.subarray(start, start + size));
+    offset = start + Math.ceil(size / 512) * 512;
+  }
+  evidenceEntries = entries;
+  return entries;
+}
+
 test("v5.0.1 ledger pins the exact release and contemporaneous merge evidence", () => {
   expect(ledger.release).toBe("v5.0.1");
   expect(ledger.targetVersion).toBe("5.0.1-Enhanced.1");
@@ -55,14 +80,11 @@ test("v5.0.1 ledger pins the exact release and contemporaneous merge evidence", 
     tagObject: "4473f90a1f09348eb52d0db36d283550653ea62a",
     commit: "9a7428a9d1fced9baaa85112994c02c011a3b7c9",
   });
-  const archivedTag = spawnSync("tar", [
-    "-xOzf",
-    resolve(root, ledger.mergeEvidence.archive),
-    "upstream-tag.txt",
-  ], { encoding: "utf8" });
-  expect(archivedTag.status, archivedTag.stderr).toBe(0);
-  expect(git(["hash-object", "-t", "tag", "--stdin"], archivedTag.stdout)).toBe(ledger.upstream.tagObject);
-  expect(archivedTag.stdout).toStartWith(`object ${ledger.upstream.commit}\ntype commit\ntag ${ledger.release}\n`);
+  const archivedTag = tarEntries().get("upstream-tag.txt");
+  expect(archivedTag).toBeDefined();
+  const tagText = archivedTag!.toString("utf8");
+  expect(git(["hash-object", "-t", "tag", "--stdin"], tagText)).toBe(ledger.upstream.tagObject);
+  expect(tagText).toStartWith(`object ${ledger.upstream.commit}\ntype commit\ntag ${ledger.release}\n`);
   expect(ledger.mergeEvidence.kind).toBe("contemporaneous-default-ort");
   expect(ledger.mergeEvidence.inheritedLimitation).toContain("v5.0.0");
 }, 15_000);
@@ -72,11 +94,10 @@ test("v5.0.1 public evidence archive is complete and excludes private state", ()
   const bytes = readFileSync(archive);
   expect(bytes.byteLength).toBe(ledger.mergeEvidence.bytes);
   expect(createHash("sha256").update(bytes).digest("hex")).toBe(ledger.mergeEvidence.sha256);
-  const listing = spawnSync("tar", ["-tzf", archive], { encoding: "utf8" });
-  expect(listing.status, listing.stderr).toBe(0);
-  expect(listing.stdout).toContain("object-closure-verification.txt");
-  expect(listing.stdout).toContain("resolution-map.json");
-  expect(listing.stdout).not.toContain("user-gitignore.patch");
+  const listing = [...tarEntries().keys()].join("\n");
+  expect(listing).toContain("object-closure-verification.txt");
+  expect(listing).toContain("resolution-map.json");
+  expect(listing).not.toContain("user-gitignore.patch");
 });
 
 test("v5.0.1 ledger closes every binary-capable path obligation", () => {
