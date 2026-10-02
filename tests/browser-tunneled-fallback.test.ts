@@ -13,11 +13,15 @@ import { publishPendingFinalizationOutput, submitTurnOutput, waitForTurnOutput, 
 import type { TurnChannel } from "../src/adapters/chatgpt-web/turn-broker-state";
 import { chatGptSameSurfaceRecoveryDecision, CHATGPT_SAME_SURFACE_RECOVERY_PROMPT } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { chatGptSameSurfaceRecoveryPrompt } from "../src/adapters/chatgpt-web/same-surface-recovery";
+import * as launcherControl from "../src/launcher-browser-host";
+const { BrowserHost } = require("../launcher/electron/browser-host.cjs");
 
 const OLD = "Review in progress.";
 const FINAL = "Findings: No blocking defects. Review complete.";
 
 async function runFixture(options: {
+  manualApproval?: boolean;
+  approvalOutcome?: "timeout" | "aborted";
   stale?: boolean; tunneledFinal?: boolean; steering?: boolean; batches?: number;
   missingBaseline?: boolean; missingAssistantTurn?: boolean; abortAtBaseline?: boolean; delayedResult?: boolean;
   pastToolBatch?: boolean; retained?: boolean; tunneledRetry?: "answer" | "preemptive";
@@ -162,6 +166,7 @@ async function runFixture(options: {
     isClosed: () => false, url: () => submitted && options.conversationRoute || options.initialRoute || CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
     keyboard: { press: async () => { actions.push("composer-end"); } },
     locator: (selector: string) => {
+      if (options.manualApproval && selector === '[role="dialog"], [data-testid="tool-approval-card"]') return approvalDialog;
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
       if (selector === CHATGPT_USER_TURN_SELECTOR) return { ...hidden, evaluateAll: async () => [] };
       if (selector === "[data-turn-id-container], [data-turn-key]") return {
@@ -202,8 +207,43 @@ async function runFixture(options: {
       return hidden;
     },
   });
+  const approvalVisibility: boolean[] = [];
+  const approvalTab = { id: "approval-tab", traceId: "boole_fallback_fixture", helperPid: process.pid,
+    status: "running", interactionMode: "automatic", interactionLocked: true,
+    interactionShield: { setVisible: (visible: boolean) => approvalVisibility.push(visible),
+      webContents: { isDestroyed: () => false, focus: () => actions.push("approval-shield-focus") } },
+    view: { webContents: { isDestroyed: () => false, focus: () => actions.push("approval-focus") } } };
+  const otherTab = { ...approvalTab, id: "other", traceId: "other-turn", interactionShield: undefined };
+  const approvalHost = Object.assign(Object.create(BrowserHost.prototype), {
+    turnTabs: new Map<string, typeof approvalTab | typeof otherTab>([[approvalTab.id, approvalTab], [otherTab.id, otherTab]]), closedTurnOwners: new Map(),
+    selectedTabId: approvalTab.id, visible: true, surfaceActive: true, boundsReady: true,
+    window: { isVisible: () => true, isMinimized: () => false },
+    presentPrimaryView() {}, presentTurnView() {}, snapshot: () => ({}),
+  });
+  let approvalShown = options.manualApproval === true;
+  let approvalReads = 0;
+  const approvalDialog: any = { ...hidden, waitFor: async () => {}, isVisible: async () => {
+    if (++approvalReads > 1 && approvalShown) {
+      if (options.approvalOutcome === "aborted") controller.abort();
+      else if (approvalVisibility.at(-1) === false && !options.approvalOutcome) approvalShown = false; // User can only approve through the unlocked UI.
+      else now += 60_001; // A blocked user reaches the production manual-approval deadline.
+    }
+    return approvalShown;
+  }, getByRole: (_role: string, query: { name: string }) => ({ ...hidden,
+    waitFor: async () => {}, press: async () => { actions.push(`approval-${query.name}`); approvalShown = false; },
+  }) };
+  const approvalControl = options.manualApproval ? spyOn(launcherControl, "notifyLauncherTurn").mockImplementation(async (_path, activity) => {
+    expect(activity.phase).toBe("approval");
+    if (activity.phase !== "approval") throw new Error("unexpected control request");
+    approvalHost.setTurnApprovalPending(activity.traceId, activity.helperPid, activity.pending);
+    approvalHost.focusActiveSurface();
+    actions.push(`approval-pending:${activity.pending}`);
+    return {};
+  }) : undefined;
+  if (options.manualApproval) approvalHost.syncViewVisibility();
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
-    config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics },
+    config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics, autoApproveToolCalls: false,
+      ...(options.manualApproval ? { browserHostDescriptorPath: "fixture-control" } : {}) },
     finalizingRuns: new Set<string>(),
     takePreemptiveRetry: () => {
       if (options.steeringBeforeRecoverySend && actions.includes("insert") && !actions.includes("steering-issued")) {
@@ -484,13 +524,14 @@ async function runFixture(options: {
   };
   let answer: string | undefined;
   let error: unknown;
-  try { answer = await worker.runBrowserTurn(turn, undefined, page, options.retained); }
+  try { answer = await worker.runBrowserTurn(turn, options.manualApproval ? approvalTab.id : undefined, page, options.retained); }
   catch (cause) { error = cause; }
   finally {
     clearTimeout(guard);
     clock.mockRestore();
     info.mockRestore();
     warn.mockRestore();
+    approvalControl?.mockRestore();
     progress.retire(new Error("fixture finished"));
     rmSync(diagnostics, { recursive: true, force: true });
   }
@@ -502,8 +543,26 @@ async function runFixture(options: {
     expect(actions.filter(a => a === "submitted")).toHaveLength(options.tunneledRetry ? 2 : 1);
   }
   return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText,
-    fallbackAgeMs, recoveryDecisionAgeMs, selections };
+    fallbackAgeMs, recoveryDecisionAgeMs, selections, approvalVisibility, approvalTab, otherTab };
 }
+
+test.each([false, true])("manual approval restores its owned protection (DOM=%s)", async untunneled => {
+  for (const approvalOutcome of [undefined, "timeout", "aborted"] as const) {
+  const result = await runFixture({ manualApproval: true, untunneled, approvalOutcome });
+  if (approvalOutcome === "aborted") expect(result.error).toBeInstanceOf(DOMException);
+  else expect(result.error).toBeUndefined();
+  expect(result.actions.filter(action => action.startsWith("approval-pending:"))).toEqual([
+    "approval-pending:true", "approval-pending:false",
+  ]);
+  expect(result.actions).toContain("approval-focus");
+  if (approvalOutcome === "timeout") expect(result.actions).toContain("approval-Deny");
+  else expect(result.actions).not.toContain("approval-Deny");
+  expect(result.approvalVisibility).toEqual([true, false, true]);
+  expect(result.approvalTab.interactionLocked).toBe(true);
+  expect((result.otherTab as any).approvalPending).toBeUndefined();
+  if (approvalOutcome !== "aborted") expect(result.answer).toBe(FINAL);
+  }
+});
 
 async function runLateCompletionActionFixture() {
   const diagnostics = mkdtempSync(join(tmpdir(), "late-completion-action-"));

@@ -98,6 +98,7 @@ class BrowserControlServer {
       || request.url === "/v1/turn/heartbeat"
       || request.url === "/v1/turn/usage"
       || request.url === "/v1/turn/prepared"
+      || request.url === "/v1/turn/approval"
       || request.url === "/v1/turn/end";
     const isStartupCancel = request.url === "/v1/startup/cancel";
     const isTurnRelease = request.url === "/v1/turn/release";
@@ -265,6 +266,13 @@ class BrowserControlServer {
         throw new Error("refreshViewport is only valid for a turn heartbeat");
       }
       const preferences = this.getPreferences();
+      if (request.url === "/v1/turn/approval") {
+        if (host.browserInteractionMode() === "manual") throw new Error("Automatic browser interaction is disabled");
+        host.setTurnApprovalPending(body.traceId, body.helperPid, body.pending);
+        this.logger.info("browser.tool_approval", { traceId: body.traceId, pending: body.pending });
+        writeJson(response, 200, { ok: true });
+        return;
+      }
       if (request.url === "/v1/turn/usage") {
         if (host.browserInteractionMode() === "manual") throw new Error("Limits tracking is disabled in Zero Risk mode");
         // The same owner check as a heartbeat prevents another helper from charging this tab.
@@ -313,7 +321,7 @@ class BrowserControlServer {
         writeJson(response, 200, { ok: true, ...host.markStartupPrepared(body.traceId, body.helperPid) });
         return;
       } else if (request.url === "/v1/turn/heartbeat") {
-        host.heartbeatTurn(body.traceId, body.helperPid, body.refreshViewport === true);
+        host.heartbeatTurn(body.traceId, body.helperPid, body.refreshViewport === true, body.progress);
         this.logger.debug?.("browser.turn_heartbeat", { traceId: body.traceId });
         writeJson(response, 200, { ok: true });
         return;

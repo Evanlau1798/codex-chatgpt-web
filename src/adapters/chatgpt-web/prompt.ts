@@ -486,9 +486,13 @@ export function compileChatGptWebPrompt(
       ...manualControlContract,
       ...checkpointContract,
       answerContract,
+      // Context is serialized data, not Markdown prose. A text fence keeps the
+      // composer's link parser from interpreting bracket-heavy task history.
+      "```text",
       "<codex_context_json>",
       envelopeJson,
       "</codex_context_json>",
+      "```",
       ...(omittedMessages > 0 ? [
         "<codex_transport_resume>",
         `${omittedMessages} earlier history items were omitted to fit this compaction request; the supplied history is incomplete.`,

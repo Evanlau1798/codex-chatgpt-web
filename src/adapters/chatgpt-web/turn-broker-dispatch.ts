@@ -26,6 +26,8 @@ import {
 import { submitTurnOutput } from "./turn-broker-output";
 import { logNativeWorkflow } from "./native-observability";
 import { readAgentWait, startAgentWait } from "./turn-broker-agent-wait";
+import { assertRetirementFailure } from "./turn-broker-protocol";
+import { chatGptToolTimeoutError } from "./adapter-error";
 
 interface DispatchState {
   acceptingExternalOwners(): boolean;
@@ -223,7 +225,12 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
       : "internal Codex turn binding is invalid or expired");
   }
   if (request.method === "release") {
-    state.owner.revoke(binding.token);
+    if (request.failure !== undefined) {
+      assertRetirementFailure(request.failure);
+      state.owner.revoke(binding.token, chatGptToolTimeoutError(request.failure.tool, request.failure.timeoutMs), request.failure);
+    } else {
+      state.owner.revoke(binding.token);
+    }
     return { released: true };
   }
   if (request.method === "resolve") return { environment: binding.channel.environment };

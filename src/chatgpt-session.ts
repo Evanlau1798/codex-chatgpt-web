@@ -37,6 +37,42 @@ export const CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR = [
   '#conversation-header-actions button[aria-haspopup="menu"]',
   'div:has(> [data-testid="temporary-chat-label"]) + div button[aria-expanded]',
 ].join(", ");
+
+/** Read model evidence only from the slider's own active picker. */
+export async function readChatGptModelAnnouncements(slider: Locator): Promise<string[]> {
+  return slider.evaluate(element => {
+    const doc = element.ownerDocument;
+    const descriptions = (element.closest('[role="menuitem"]')?.getAttribute("aria-describedby") ?? "")
+      .split(/\s+/).filter(Boolean).map(id => doc.getElementById(id)?.textContent ?? "");
+    // Some accounts now announce only the effort ("Pro, 5 of 5"); the model
+    // version is shown in the picker header as adjacent text nodes ("6" + "Pro").
+    const menu = element.closest('[role="menu"]');
+    const rendered = (node: Element): boolean => {
+      for (let parent: Element | null = node; parent; parent = parent.parentElement) {
+        if (parent.matches('[hidden], [inert], [aria-hidden="true"]')) return false;
+        const style = getComputedStyle(parent);
+        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+      }
+      return true;
+    };
+    const headers = [...(menu?.querySelectorAll('[data-model-picker-view-toggle="true"]') ?? [])]
+      .filter(header => header.closest('[role="menu"]') === menu && rendered(header));
+    if (headers.length > 1) throw new Error("ChatGPT model picker exposes multiple active model headers");
+    if (headers.length === 1) {
+      const content = headers[0]!.querySelector("[data-menu-row-content]") ?? headers[0]!;
+      const words: string[] = [];
+      const walker = doc.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.parentElement && rendered(node.parentElement)) {
+          const word = node.textContent?.trim();
+          if (word) words.push(word);
+        }
+      }
+      descriptions.push(words.join(" "));
+    }
+    return descriptions;
+  });
+}
 /** Resolve only inside the verified composer's form; multiple submitters are an error. */
 export const CHATGPT_SEND_BUTTON_SELECTOR = '[data-testid="send-button"], button[type="submit"]';
 export const CHATGPT_STOP_BUTTON_SELECTOR = [

@@ -2,6 +2,7 @@ import { existsSync, lstatSync, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
 import type { Server } from "node:net";
 import { isWindowsPipeEndpoint } from "../../config";
+import type { BrokerRetirementFailure } from "./turn-broker-protocol";
 import { CompactionTransactionStore, type CompactionTransactionHandle } from "./compaction-transaction";
 import type { ChatGptTurnEnvironment } from "./environment";
 import { dispatchTurnBrokerRequest } from "./turn-broker-dispatch";
@@ -337,10 +338,10 @@ export class TurnBroker implements TurnBrokerOwner {
     return true;
   }
 
-  waitForRetirement(token: string, signal?: AbortSignal): Promise<void> {
+  waitForRetirement(token: string, signal?: AbortSignal): Promise<BrokerRetirementFailure | undefined> {
     this.prune();
     const channel = this.channels.get(token);
-    if (!channel) return Promise.resolve();
+    if (!channel) return Promise.resolve(undefined);
     return waitForSafeState(channel.retirementWaiters, signal, "turn retirement wait aborted");
   }
 
@@ -460,7 +461,7 @@ export class TurnBroker implements TurnBrokerOwner {
     return instruction;
   }
 
-  revoke(token: string, reason = new Error("Codex turn binding was revoked")): void {
+  revoke(token: string, reason = new Error("Codex turn binding was revoked"), failure?: BrokerRetirementFailure): void {
     const channel = this.channels.get(token);
     if (!channel) return;
     console.info(`[chatgpt-web] broker_retired ${JSON.stringify({
@@ -470,6 +471,7 @@ export class TurnBroker implements TurnBrokerOwner {
       deliveredTools: channel.deliveredCallIds.size,
       activeMcpRequests: channel.activities.size,
       completionCommitted: channel.completionCommitted,
+      ...(failure ? { failure } : {}),
     })}`);
     this.channels.delete(token);
     this.pending.delete(token);
@@ -479,7 +481,7 @@ export class TurnBroker implements TurnBrokerOwner {
     }
     revokeSafeTurn(channel, reason);
     this.retire(this.retiredTokens, token, channel.traceId);
-    resolveSafeWaiters(channel.retirementWaiters, undefined);
+    resolveSafeWaiters(channel.retirementWaiters, failure);
     rejectTurnOutputWaiters(channel, reason);
     rejectTurnChannel(channel, reason);
   }

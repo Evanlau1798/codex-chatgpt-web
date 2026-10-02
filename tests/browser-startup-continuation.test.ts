@@ -76,9 +76,16 @@ test("pre-Send baseline refuses a URL change between snapshot validation and ret
 
 async function refillFixture(error: Error, endFailure = false) {
   const phases: string[] = [];
+  const progress: unknown[] = [];
   const surfaceId = "s".repeat(32);
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
-    const body = await req.json() as { phase: string }; phases.push(body.phase);
+    const body = await req.json() as { phase: string; traceId: string; helperPid: number; progress?: unknown };
+    phases.push(body.phase);
+    if (body.phase === "heartbeat") {
+      expect(body.traceId).toBe("offline-continuation");
+      expect(body.helperPid).toBe(process.pid);
+      progress.push(body.progress);
+    }
     if (body.phase === "end" && endFailure) return Response.json({ error: "release unacknowledged" }, { status: 500 });
     return Response.json(body.phase === "start" ? { surfaceId, reused: true, connectorBound: true, startupAllowed: true }
       : { cancelledByUser: false, authenticationRequired: false });
@@ -110,7 +117,8 @@ async function refillFixture(error: Error, endFailure = false) {
       prepare: async () => ({ text: "offline prepared prompt", images: [], release() {} }) }); }
     catch (caught) { actual = caught; }
     expect(actual).toBe(error);
-    expect(phases).toEqual(["start", "end"]);
+    expect(phases).toEqual(["start", "heartbeat", "end"]);
+    expect(progress).toEqual([{stage: "preparing", activeToolCalls: 0}]);
     expect(released).toBe(1);
     return refill;
   } finally {
