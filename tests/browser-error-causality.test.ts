@@ -185,6 +185,8 @@ test("remote NEXT cleanup does not replace the typed browser outcome", async () 
   const originalNext = remote.nextToolBatch.bind(remote);
   const originalRevoke = remote.revoke.bind(remote);
   const revokePromises: Promise<void>[] = [];
+  const nextTransportAbort = new AbortController();
+  const nextTransportPromises: Promise<unknown>[] = [];
   const worker = ChatGptBrowserWorker.forProvider(provider);
   const originalRun = worker.run.bind(worker);
   const browserError = new ChatGptWebAdapterError("browser NEXT race closed", {
@@ -198,7 +200,9 @@ test("remote NEXT cleanup does not replace the typed browser outcome", async () 
   let rejectNext!: (error: Error) => void;
   (remote as unknown as { nextToolBatch: typeof remote.nextToolBatch }).nextToolBatch = async (token, signal) => {
     markNextStarted();
-    void originalNext(token, signal).catch(() => {});
+    const transport = originalNext(token, nextTransportAbort.signal);
+    nextTransportPromises.push(transport);
+    void transport.catch(() => {});
     return new Promise<never>((_resolve, reject) => { rejectNext = reject; });
   };
   (remote as unknown as { revoke: typeof remote.revoke }).revoke = async (token, reason) => {
@@ -247,6 +251,8 @@ test("remote NEXT cleanup does not replace the typed browser outcome", async () 
     });
   } finally {
     globalThis.setTimeout = realSetTimeout;
+    nextTransportAbort.abort();
+    await Promise.allSettled(nextTransportPromises);
     await Promise.allSettled(revokePromises);
     (remote as unknown as { nextToolBatch: typeof remote.nextToolBatch }).nextToolBatch = originalNext;
     (remote as unknown as { revoke: typeof remote.revoke }).revoke = originalRevoke;
