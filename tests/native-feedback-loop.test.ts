@@ -107,3 +107,26 @@ test("owned HTTP rejection is terminal evidence, not a slow-generation timeout o
   expect(observer.diagnosticSummary().statuses).toEqual([403]);
   observer.dispose();
 });
+
+test("provider telemetry correlates each owner and only classifies an explicit challenge header", async () => {
+  const saved = console.info; const logs: string[] = [];
+  console.info = (...parts) => { logs.push(parts.join(" ")); };
+  try {
+    for (const challenge of [false, true]) {
+      const frame = {};
+      const page = Object.assign(new EventEmitter(), { mainFrame: () => frame });
+      const observer = new ChatGptSubmissionRejectionObserver(challenge ? "owned-b" : "owned-a");
+      observer.begin(page as never); observer.activate();
+      const request = { method: () => "POST", url: () => "https://chatgpt.com/backend-api/f/conversation", frame: () => frame };
+      page.emit("request", request);
+      page.emit("response", { request: () => request, status: () => 403,
+        headers: () => ({ "content-type": "text/html", "authorization": "must-not-log", ...(challenge ? { "cf-mitigated": "challenge" } : {}) }) });
+      await observer.failure(); observer.dispose();
+    }
+    expect(logs[0]).toContain('"traceId":"owned-a"');
+    expect(logs[0]).toContain('"securityCheck":"not_reported"');
+    expect(logs[1]).toContain('"traceId":"owned-b"');
+    expect(logs[1]).toContain('"securityCheck":"provider_challenge_header"');
+    expect(logs.join(" ")).not.toContain("must-not-log");
+  } finally { console.info = saved; }
+});

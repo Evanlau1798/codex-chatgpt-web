@@ -485,6 +485,7 @@ export async function chatGptUnavailableProDetail(menu: Locator): Promise<string
 // Observe only browser-issued submissions from this owned page after Send is activated;
 // an old response, another tab, or a background endpoint cannot classify this turn.
 export class ChatGptSubmissionRejectionObserver {
+  constructor(private readonly traceId?: string) {}
   private page?: Page;
   private readonly requests = new Set<Request>();
   private checks: Array<Promise<ChatGptWebAdapterError | undefined>> = [];
@@ -508,7 +509,8 @@ export class ChatGptSubmissionRejectionObserver {
     this.statuses.push(response.status());
     if (this.statuses.length > 8) this.statuses.shift();
     const headers = response.headers?.() ?? {};
-    console.info(`[chatgpt-web] owned_provider_response ${JSON.stringify({ status: response.status(),
+    console.info(`[chatgpt-web] owned_provider_response ${JSON.stringify({ traceId: this.traceId, status: response.status(),
+      securityCheck: headers["cf-mitigated"] === "challenge" ? "provider_challenge_header" : "not_reported",
       contentType: headers["content-type"]?.includes("text/event-stream") ? "sse"
         : headers["content-type"]?.includes("json") ? "json" : "other" })}`);
     if (response.status() >= 400 && response.status() !== 413) {
@@ -4006,7 +4008,7 @@ export class ChatGptBrowserWorker {
     let managedPage: Page | undefined;
     let diagnosticPage: Page | undefined;
     const usageWrites: Promise<void>[] = [];
-    const submissionRejection = new ChatGptSubmissionRejectionObserver();
+    const submissionRejection = new ChatGptSubmissionRejectionObserver(turn.traceId);
     const workflowSignals = new NativeWorkflowSignals(turn.traceId);
     try {
       if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");

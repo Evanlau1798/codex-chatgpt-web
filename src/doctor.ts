@@ -98,6 +98,16 @@ async function proxyCheck(config: AppConfig): Promise<DoctorCheck> {
   }
 }
 
+export async function inspectDoctorLauncher(config: AppConfig, native = false) {
+  const descriptor = native || config.browserInteractionMode === "manual"
+    ? await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath!, { timeoutMs: 5_000 })
+    : readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!);
+  if (config.browserInteractionMode === "automatic" && !native) {
+    await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: 30_000 });
+  }
+  return descriptor;
+}
+
 export async function runDoctor(options: { native?: boolean } = {}): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   let config: AppConfig;
@@ -111,16 +121,13 @@ export async function runDoctor(options: { native?: boolean } = {}): Promise<Doc
 
   if (config.browserHost === "launcher") {
     try {
-      const descriptor = config.browserInteractionMode === "manual"
-        ? await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath!, { timeoutMs: 5_000 })
-        : readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!);
-      if (config.browserInteractionMode === "automatic") {
-        await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: 30_000 });
-      }
+      const descriptor = await inspectDoctorLauncher(config, options.native);
       checks.push({
         id: "browser-host",
         status: "ok",
-        message: config.browserInteractionMode === "manual"
+        message: options.native
+          ? `Embedded launcher browser is reachable for guarded Native inspection (pid ${descriptor.pid})`
+          : config.browserInteractionMode === "manual"
           ? `Embedded launcher browser is reachable for Zero Risk (pid ${descriptor.pid})`
           : `Embedded launcher browser is authenticated and reachable (pid ${descriptor.pid})`,
       });
