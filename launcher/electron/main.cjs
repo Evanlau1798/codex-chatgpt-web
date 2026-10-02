@@ -35,7 +35,7 @@ const {
   registerLoggedIpc,
 } = require("./logging.cjs");
 const { RuntimeHost } = require("./runtime.cjs");
-const { reconcileClaudeSetupState } = require("./claude-integration-status.cjs");
+const { reconcileClaudeSetupState, hasRuntimeClient } = require("./claude-integration-status.cjs");
 const { ensurePackagedRuntime, waitForPackagedRuntimeSource } = require("./runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
 const { DEVELOPMENT_PROFILE, resolveLauncherProfile } = require("./profile.cjs");
@@ -1447,7 +1447,12 @@ async function start() {
           const state = stateStore.update({ bridgeEnabled: route.active });
           send("launcher:state-changed", state);
         }
-        if (!route.active) return { status: "bridge-disabled" };
+        // The daemon also serves Claude's Messages gateway. An intentionally
+        // disconnected Codex route must not shut down a current Claude client.
+        if (!hasRuntimeClient({
+          codexRouteActive: route.active,
+          claudeIntegrationStatus: runtimeHost.claudeIntegrationStatus(),
+        })) return { status: "bridge-disabled" };
       }
     } catch (error) {
       logger.warn("bridge.route_status_failed", {

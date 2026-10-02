@@ -345,7 +345,7 @@ function LauncherShell({
   const clientIntegrationInstalled = hasClientIntegration(snapshot.state);
   const interactionSetupComplete = snapshot.state.coreSetupComplete === true
     && (snapshot.state.browserInteractionMode === "manual"
-      || snapshot.state.codexCatalogVerified === true);
+      || hasVerifiedClientIntegration(snapshot.state));
   const firstRunZeroRiskSetup = snapshot.state.browserInteractionMode === "manual"
     && snapshot.state.coreSetupComplete !== true;
   const [surface, setSurface] = useState<Surface>(
@@ -1293,7 +1293,7 @@ function McpSurface({
       subtitle={devProfile ? copy.devMcpSubtitle : copy.mcpSubtitle}
       title={devProfile ? copy.devMcpTitle : "MCP"}
     >
-      {!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified ? (
+      {!manualInteraction && !configuringInactiveMode && !hasVerifiedClientIntegration(snapshot.state) ? (
         <NoticeRow icon="setup" tone="warning">{copy.mcpCatalogRequired}</NoticeRow>
       ) : null}
 
@@ -1402,7 +1402,7 @@ function McpSurface({
             ) : null}
             {step === 1 ? (
               <p className="mcp-step-two-hint">
-                {manualInteraction || configuringInactiveMode || snapshot.state.codexCatalogVerified
+                {manualInteraction || configuringInactiveMode || hasVerifiedClientIntegration(snapshot.state)
                   ? copy.mcpStepTwoHint : copy.mcpCatalogRequired}
               </p>
             ) : null}
@@ -1447,7 +1447,7 @@ function McpSurface({
             disabled={
               busy
               || (!manualInteraction && !configuringInactiveMode && !clientIntegrationInstalled)
-              || (!manualInteraction && !configuringInactiveMode && !snapshot.state.codexCatalogVerified)
+              || (!manualInteraction && !configuringInactiveMode && !hasVerifiedClientIntegration(snapshot.state))
               || ((!credentialsConfigured || replacingCredentials) && (!tunnelId || !runtimeKey))
             }
             onClick={() => void install()}
@@ -1574,6 +1574,10 @@ function SetupRow({
 
 function hasClientIntegration(state: LauncherState): boolean {
   return state.codexSetupComplete || state.claudeSetupComplete;
+}
+
+function hasVerifiedClientIntegration(state: LauncherState): boolean {
+  return state.codexCatalogVerified === true || state.claudeSetupComplete === true;
 }
 
 function FieldRow({ children, label }: { children: ReactNode; label: string }) {
