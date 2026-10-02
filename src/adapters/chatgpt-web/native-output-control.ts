@@ -4,6 +4,21 @@ import type { CodexParsedRequest } from "../../types";
 
 export const CODEX_OUTPUT_CONTROL_WIRE_NAME = "codex.control.output";
 
+export async function readNativeOutputControlInventory(socketPath: string, token: string, signal?: AbortSignal) {
+  const state = await callTurnBroker<{ finalizationOnly: boolean }>(socketPath,
+    { method: "read_output_control", token }, 5_000, signal);
+  return {
+    tools: [{ wire_name: CODEX_OUTPUT_CONTROL_WIRE_NAME, name: CODEX_OUTPUT_CONTROL_WIRE_NAME,
+      namespace: null, kind: "function",
+      description: "Bound output control. Call codex_tool_call with this wire_name, the same turn_token, and arguments containing kind and text. This does not execute work tools. After final accepted=true, end immediately.",
+      parameters: { type: "object", additionalProperties: false, required: ["kind", "text"],
+        properties: { kind: { type: "string", enum: state.finalizationOnly ? ["final"] : ["commentary", "reasoning", "final"] },
+          text: { type: "string", minLength: 1, maxLength: 1_000_000 } } } }],
+    total: 1, next_offset: null,
+    ...(state.finalizationOnly ? { work_tools_closed: true } : {}),
+  };
+}
+
 export const CODEX_OUTPUT_CONTROL_PROMPT = [
   "codex.control.output is a bound bridge control supplied here, not an inventory tool; no inventory lookup is needed. The inventory-discovery rule for work tools does not apply to this bound control. Call it directly through codex_tool_call with the current bound turn_token and arguments containing kind and text.",
   "Send every user-visible progress update through codex_tool_call with wire_name codex.control.output, arguments kind=commentary and the complete visible text. Do not also write that text as ordinary assistant prose.",

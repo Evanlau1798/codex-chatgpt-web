@@ -45,3 +45,18 @@ export function logMcpToolPhase(
 export function diagnosticErrorType(value: unknown): string {
   return value instanceof Error ? value.name : typeof value;
 }
+
+/** Stable cause classes only; never log tool arguments, error messages, or tokens. */
+export function diagnosticErrorCode(value: unknown): string {
+  if (!(value instanceof Error)) return "unknown";
+  const message = value.message;
+  if (message === "This Codex turn did not advertise deferred tool search") return "deferred_search_unavailable";
+  if (message === "Codex deferred tool search query is empty") return "deferred_search_empty";
+  if (message.includes("work tools are closed during final-answer recovery")) return "work_tools_closed";
+  if (message.includes("already finished") || message.includes("binding was revoked")) return "binding_retired";
+  if (message.includes("Read and verify the complete Codex context archive")) return "context_archive_unread";
+  if (message.includes("tool is not available in this turn") || message.includes("did not advertise")) return "tool_unavailable";
+  if (value.name === "TurnBrokerTimeoutError") return "broker_timeout";
+  if (value.name === "AbortError") return "cancelled";
+  return "unclassified";
+}
