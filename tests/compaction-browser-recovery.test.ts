@@ -92,7 +92,7 @@ test.each([
       actions.push("attach:plain");
     },
     attachPromptWithCompactionRetry: async function (_page: unknown, _text: string, localTools: boolean, ...args: unknown[]) {
-      expect(localTools).toBe((requiredRetained || tools) && !reused);
+      expect(localTools).toBe(requiredRetained || tools || reused);
       expect(args[7]).toBe(direct || multipart);
       expect(args[8]).toBe(requiredRetained);
       if (reused) return methods.attachPromptWithCompactionRetry!.call(this, _page, _text, localTools, ...args);
@@ -100,17 +100,17 @@ test.each([
     },
     assertPromptAttached: async (_page: unknown, text: string) => {
       if (multipart) expect(text.endsWith("Summarize")).toBeTrue();
-      else expect(text).toBe(!reused && (requiredRetained || tools)
+      else expect(text).toBe((requiredRetained || tools || reused)
         ? " Summarize the context" : "Summarize the context");
       actions.push("verify");
     },
-    ensureConnectorSurface: async () => { throw new Error("retained binding must not reopen connector discovery"); },
-    selectConnector: methods.selectConnector,
+    ensureConnectorSurface: async () => {},
+    selectConnector: async () => { selected = true; actions.push("connector-select"); return worker.activeComposer(); },
     selectedConnectorControl: () => ({ waitFor: async () => {} }),
     clearChatGptComposerState: async () => {},
     insertPromptText: async (_page: unknown, text: string, _signal: unknown, _large: boolean, forceDirect: boolean) => {
-      expect(selected).toBeFalse();
-      expect(text).toBe("Summarize the context");
+      expect(selected).toBeTrue();
+      expect(text).toBe(" Summarize the context");
       expect(forceDirect).toBe(requiredRetained);
       actions.push("attach:retained");
     },
@@ -162,9 +162,9 @@ test.each([
         ]).flat(),
       ] : []),
       `effort:${effort}`,
-      ...(reused ? ["attach:retained", "verify"]
+      ...(reused ? ["connector-select", "attach:retained", "verify"]
         : [tools ? "attach:tools" : "attach:plain"]), "files", "verify",
-      ...(tools && !reused ? ["connector-check"] : []),
+      ...((requiredRetained || tools || reused) ? ["connector-check"] : []),
       "send", "observe",
     ]);
     expect(sendBudgets).toEqual(multipart ? Array(6).fill(180_000) : [60_000]);

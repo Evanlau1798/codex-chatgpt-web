@@ -2733,6 +2733,12 @@ export class ChatGptBrowserWorker {
           abortSignal, op, chatGptPromptPreservesLeading(insertionPlan));
         return;
       }
+      // Recheck the stopped response before mention selection mutates the composer.
+      // The owned Send guard rechecks it again atomically before any submission.
+      if (beforeRecoveryInsertion) {
+        const composer = await this.activeComposer(page, 30_000, abortSignal, op);
+        if (await beforeRecoveryInsertion(composer) === false) return;
+      }
       const selectedComposer = await this.selectConnector(
         page,
         captureDiagnostic,
@@ -4401,9 +4407,9 @@ export class ChatGptBrowserWorker {
                 chatGptPromptAttachmentTimeoutMs(responsePrompt.length, this.config.experimentalNoAutoCompact),
                 (stageSignal, remainingMs) => {
                   const operation = new ChatGptPromptOperation(stageSignal, remainingMs);
-                  // Connector access persists in this bound conversation without another mention.
-                  const localTools = (turn.nativeConnector === true || mode.localTools)
-                    && !(reuseConversation || responseAttempt > 1);
+                  // App selection belongs to a message, not the retained conversation.
+                  // Every owned Send needing Native2 must re-prove its current composer pill.
+                  const localTools = turn.nativeConnector === true || mode.localTools;
                   if (!candidateAttachment) {
                     const insertionPlan = planChatGptPromptInsertion(localTools ? ` ${responsePrompt}` : responsePrompt, {
                       largeStructuredDirect: Boolean(multipartTransport) || prepared.transport === "inline",
@@ -4532,8 +4538,7 @@ export class ChatGptBrowserWorker {
           await settleChatGptUi();
           sendEnableDeadline ??= Date.now() + CHATGPT_SEND_ENABLE_GRACE_MS;
         }
-        const localToolsAtSend = (turn.nativeConnector === true || mode.localTools)
-          && !(reuseConversation || responseAttempt > 1);
+        const localToolsAtSend = turn.nativeConnector === true || mode.localTools;
         const insertionText = localToolsAtSend ? ` ${responsePrompt}` : responsePrompt;
         const sendPlan = planChatGptPromptInsertion(insertionText, {
           largeStructuredDirect: Boolean(multipartTransport) || prepared.transport === "inline",
@@ -4544,14 +4549,13 @@ export class ChatGptBrowserWorker {
         await this.assertPromptAttached(page, preserveLeading ? insertionText : responsePrompt,
           stageSignal, undefined, preserveLeading);
         if ((turn.nativeConnector === true || mode.localTools)
-          && !(reuseConversation || responseAttempt > 1)
           && !await this.connectorIsSelected(composer, stageSignal)) {
           throw chatGptWebSurfaceError("ChatGPT connector was lost before prompt submission", false);
         }
         await diagnostics.capture(page, "send-ready");
         await this.assertSelectedEffort(page, mode, true, turn.traceId);
         if (recoveryExpectedActivityRevision !== undefined) {
-          if ((await composer.textContent() ?? "") !== responsePrompt) {
+          if ((await this.attachedPromptText(page, stageSignal)) !== responsePrompt) {
             throw chatGptWebSurfaceError("ChatGPT recovery composer changed before submission", false);
           }
           if (!await activateRecoverySubmission?.(composer)) {
@@ -4559,7 +4563,7 @@ export class ChatGptBrowserWorker {
             resumeRecoveryObservation();
             return;
           }
-          if ((await composer.textContent() ?? "") !== responsePrompt) {
+          if ((await this.attachedPromptText(page, stageSignal)) !== responsePrompt) {
             resumeRecoveryObservation();
             return;
           }
@@ -4615,7 +4619,7 @@ export class ChatGptBrowserWorker {
           }
           if (recoverySent === false) {
             await cancelRecoveryFinalization();
-            if ((await composer.textContent() ?? "") !== responsePrompt) {
+            if ((await this.attachedPromptText(page, stageSignal)) !== responsePrompt) {
               throw chatGptWebSurfaceError("ChatGPT recovery composer changed at submission", false);
             }
             await clearOwnedChatGptComposerControl(composer, responsePrompt, stageSignal);
