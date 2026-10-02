@@ -5,11 +5,14 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { LAB_ROOT } from '../src/launch-args.mjs';
 import { digest, nativeMetrics, ownedProviderMetrics } from '../src/benchmark-metrics.mjs';
+import { evaluateAcceptance } from '../src/benchmark-oracle.mjs';
 
 const argv = process.argv.slice(2);
 const option = (key, fallback) => argv.includes(key) ? argv[argv.indexOf(key) + 1] : fallback;
 const rounds = Number(option('--rounds', '2'));
 if (!Number.isInteger(rounds) || rounds < 1 || rounds > 5) throw new Error('--rounds must be 1..5 paired trials');
+const providerLog = option('--provider-log');
+if (!providerLog || !fs.statSync(providerLog).isFile()) throw new Error('--provider-log must name the existing private provider log before any trial');
 const requestedRoot = option('--output-root', fs.mkdtempSync(path.join(os.tmpdir(), 'native-client-benchmark-')));
 fs.mkdirSync(requestedRoot, { recursive: true, mode: 0o700 });
 const root = fs.realpathSync(requestedRoot);
@@ -18,7 +21,6 @@ const fixtures = path.join(LAB_ROOT, 'assets', 'benchmark');
 const original = fs.readFileSync(path.join(fixtures, 'scale.mjs'));
 const tests = fs.readFileSync(path.join(fixtures, 'scale.test.mjs'));
 const expected = digest(original.toString().replace('baseServings / targetServings', 'targetServings / baseServings'));
-const providerLog = option('--provider-log');
 const results = [];
 let activeChild;
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { if (activeChild?.exitCode === null) activeChild.kill(signal); });
@@ -51,14 +53,13 @@ for (let round = 0; round < rounds; round++) {
       : { served_model: null, provider_evidence: 'unavailable' };
     const exact_edit = digest(fs.readFileSync(path.join(cwd, 'scale.mjs'))) === expected;
     const tests_unchanged = digest(fs.readFileSync(path.join(cwd, 'scale.test.mjs'))) === digest(tests);
-    const provider_verified = wire.served_model === 'gpt-6-pro';
-    const accepted = code === 0 && metrics.native_exit === 0 && metrics.client_final_observed
-      && test.status === 0 && exact_edit && tests_unchanged && (!providerLog || provider_verified);
+    const acceptance = evaluateAcceptance({ launcherExit: code, nativeExit: metrics.native_exit, clientFinal: metrics.client_final_observed,
+      testExit: test.status, exactEdit: exact_edit, testsUnchanged: tests_unchanged, servedModel: wire.served_model });
     const result = { round: round + 1, client, elapsed_ms, launcher_exit: code, independent_test_exit: test.status,
-      exact_edit, tests_unchanged, accepted, provider_verified, original_source_sha256: digest(original), ...metrics, ...wire };
+      exact_edit, tests_unchanged, ...acceptance, original_source_sha256: digest(original), ...metrics, ...wire };
     results.push(result);
     fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify({ rounds, results, complete: results.length === rounds * 2 }, null, 2), { mode: 0o600 });
     console.log(JSON.stringify(result));
-    if (!accepted) throw new Error('Benchmark stopped on the first failed oracle; diagnose, do not blindly retry');
+    if (!acceptance.accepted) throw new Error('Benchmark stopped on the first failed oracle; diagnose, do not blindly retry');
   }
 }

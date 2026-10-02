@@ -21,6 +21,7 @@ import {
   printHelp,
 } from './launch-args.mjs';
 import { bridgeConfig, createRecordingProxy, sha256, StreamRedactor } from './proxy.mjs';
+import { withOwnedChild } from './owned-child.mjs';
 
 const SENSITIVE_ENV = /^(?:OPENAI_|ANTHROPIC_|CLAUDE_|OTEL_|CODEX_API_KEY$|CODEX_ACCESS_TOKEN$|AZURE_|AWS_|GOOGLE_|GEMINI_|GITHUB_TOKEN$|GH_TOKEN$)/;
 const LAUNCH_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -342,11 +343,11 @@ export async function runLauncher(client, argv) {
     stdio: options.headless ? 'capture-json' : 'inherit',
   });
   const invocation = nativeInvocation(cliPath, args, client);
-  const child = spawn(invocation.command, invocation.args, {
+  return await withOwnedChild(spawn(invocation.command, invocation.args, {
     cwd: options.cwd,
     env,
     stdio: options.headless ? [promptBytes ? 'pipe' : 'inherit', 'pipe', 'pipe'] : 'inherit',
-  });
+  }), async (child, completion) => {
   const childCapturePromises = [];
   if (options.headless) {
     childCapturePromises.push(captureChildOutput(child.stdout, path.join(artifactRoot, 'stdout.jsonl'), 'stdout', new StreamRedactor([childToken, bridge.controlToken])));
@@ -381,32 +382,29 @@ export async function runLauncher(client, argv) {
   const unsubscribe = proxy.on(event => {
     if (event.type !== 'quota_latch' || interruptSent) return;
     interruptSent = true;
-    appendLaunchEvent(proxy.eventsPath, { type: 'owned_child_interrupt', signal: 'SIGINT', pid: child.pid, reason: event.reason });
-    forwardOwnedSignal(child, 'SIGINT');
+    try { appendLaunchEvent(proxy.eventsPath, { type: 'owned_child_interrupt', signal: 'SIGINT', pid: child.pid, reason: event.reason }); }
+    finally { forwardOwnedSignal(child, 'SIGINT'); }
   });
   const signalHandler = signal => {
-    appendLaunchEvent(proxy.eventsPath, { type: 'launcher_signal', signal });
-    forwardOwnedSignal(child, signal);
+    try { appendLaunchEvent(proxy.eventsPath, { type: 'launcher_signal', signal }); }
+    finally { forwardOwnedSignal(child, signal); }
   };
   const onSigint = () => signalHandler('SIGINT');
   const onSigterm = () => signalHandler('SIGTERM');
   process.once('SIGINT', onSigint);
   process.once('SIGTERM', onSigterm);
-  const exit = await new Promise(resolve => {
-    child.once('error', error => {
-      appendLaunchEvent(proxy.eventsPath, { type: 'child_error', message: String(error.message || error) });
-      resolve(1);
-    });
-    child.once('exit', (code, signal) => {
-      appendLaunchEvent(proxy.eventsPath, { type: 'session_exit', code, signal, quotaLatched: proxy.state.quotaLatched });
-      resolve(code ?? (signal ? 128 : 1));
-    });
+  try {
+    const { code, signal, error } = await completion;
+    if (error) appendLaunchEvent(proxy.eventsPath, { type: 'child_error', message: String(error.message || error) });
+    appendLaunchEvent(proxy.eventsPath, { type: 'session_exit', code, signal, quotaLatched: proxy.state.quotaLatched });
+    await Promise.all(childCapturePromises);
+    return code ?? (signal ? 128 : 1);
+  } finally {
+    unsubscribe();
+    process.removeListener('SIGINT', onSigint);
+    process.removeListener('SIGTERM', onSigterm);
+  }
   });
-  unsubscribe();
-  process.removeListener('SIGINT', onSigint);
-  process.removeListener('SIGTERM', onSigterm);
-  await Promise.all(childCapturePromises);
-  return exit;
   } finally {
     await proxy.close();
   }

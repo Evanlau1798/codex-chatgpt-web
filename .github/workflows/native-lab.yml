@@ -18,4 +18,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.19.0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
       - run: node --test tools/native-client-lab/tests/*.test.mjs

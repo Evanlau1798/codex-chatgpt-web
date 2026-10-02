@@ -21,3 +21,19 @@ test('model-catalog.ts uses source augmentNativeModelCatalog and emits only GPT-
   assert.deepEqual(catalog.models[0].supported_reasoning_levels.map(level => level.effort), ['max']);
   assert.equal(catalog.models[0].supports_search_tool, false);
 });
+
+test('catalog generator invokes an npm command-shim package entry through a real child', { skip: !fs.existsSync(bun) }, () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'catalog-shim-'));
+  try {
+    const pkg = path.join(tmp, 'node_modules', '@openai', 'codex');
+    fs.mkdirSync(pkg, { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'codex.cmd'), '@echo off\n');
+    fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ bin: { codex: 'cli.mjs' } }));
+    fs.writeFileSync(path.join(pkg, 'cli.mjs'), `import fs from 'node:fs'; if (JSON.stringify(process.argv.slice(2)) !== JSON.stringify(['debug','models','--bundled'])) process.exit(2); console.log(fs.readFileSync(${JSON.stringify(path.join(root, 'tests/fixtures/native-models.json'))}, 'utf8'));`);
+    const output = path.join(tmp, 'catalog.json');
+    const result = spawnSync(bun, [path.join(root, 'scripts/model-catalog.ts'), '--source-root', sourceRoot,
+      '--codex-path', path.join(tmp, 'codex.cmd'), '--output', output], { encoding: 'utf8', timeout: 30_000 });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(JSON.parse(fs.readFileSync(output, 'utf8')).models[0].slug, 'chatgpt-web/gpt-6-pro');
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});

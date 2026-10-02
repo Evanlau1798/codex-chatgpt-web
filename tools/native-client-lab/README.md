@@ -18,3 +18,6 @@ Each invocation uses an ephemeral ownership marker, isolated loopback recording 
 Artifacts and runtime state are private and ignored by Git. They may contain task/tool content despite credential redaction: do not publish raw captures. The included READY fixture is sanitized client-facing SSE, not provider-wire identity evidence. The optional `bin/mcp-observe.mjs` is a non-rewriting stdio observer; explicitly supply `ASTRA6_MCP_EXECUTABLE` and JSON-array `ASTRA6_MCP_ARGS_JSON` for an existing command. It does not install or reconnect a tunnel.
 
 Acceptance is external: inspect disk diffs/hashes, unchanged tests and independently executed runner exits, then verify actual UI behavior. Served identity comes from the bridge's owned provider-wire receipt, never the banner or requested alias. Offline tests are not proof of live compatibility, maximum efficiency or provider availability.
+# Acceptance boundaries
+
+`workflow_accepted` is separate from Pro `accepted`: the latter always requires an owned wire receipt reporting `gpt-6-pro`. Missing provider logs or identity never waive that oracle. Read/repeated-read counts currently cover explicit Claude Read and simple quoted cat commands only; they are lower bounds, not comparable exhaustive read totals. Neither partial counts nor heartbeats establish efficiency or task completion.

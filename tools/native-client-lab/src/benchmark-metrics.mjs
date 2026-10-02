@@ -39,6 +39,8 @@ export function nativeMetrics(artifact) {
     quota_latched: latches.some(event => !event.reason?.startsWith('diagnostic_')),
     diagnostic_error_latched: latches.some(event => event.reason?.startsWith('diagnostic_')),
     client_final_observed: finalObserved, tool_calls: calls.length,
+    read_metric_coverage: 'explicit_Read_and_simple_quoted_cat_only',
+    read_calls_are_lower_bound: true,
     read_calls: [...reads.values()].reduce((a, b) => a + b, 0),
     repeat_reads: [...reads.values()].reduce((a, b) => a + Math.max(0, b - 1), 0),
     client_inference_http_requests: responseEvents.length,

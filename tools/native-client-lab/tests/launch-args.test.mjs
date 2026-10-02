@@ -91,7 +91,8 @@ test('headless Codex argument sets are accepted by the installed native parser',
     buildCodexArgs({ cwd: target, resume: '2f6d3d6c-7d88-4b14-8d85-e0ab2d8f9e4c', proxyUrl: 'http://127.0.0.1:1', catalogPath: '/private/tmp/gpt6.json', catalog, headless: true, unsafe: false }),
   ];
   for (const args of variants) {
-    const result = spawnSync(process.env.NATIVE_LAB_CODEX_INTEGRATION_PATH, [...args, '--help'], { encoding: 'utf8', timeout: 15_000 });
+    const invocation = nativeInvocation(process.env.NATIVE_LAB_CODEX_INTEGRATION_PATH, [...args, '--help'], 'codex');
+    const result = spawnSync(invocation.command, invocation.args, { encoding: 'utf8', timeout: 15_000 });
     assert.equal(result.status, 0, `${result.stderr}\n${args.join(' ')}`);
   }
 });

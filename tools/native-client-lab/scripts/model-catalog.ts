@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 
 const TARGET = "chatgpt-web/gpt-6-pro";
-import { DEFAULT_SOURCE_ROOT, DEFAULT_CODEX_PATH } from "../src/launch-args.mjs";
+import { DEFAULT_SOURCE_ROOT, DEFAULT_CODEX_PATH, nativeInvocation } from "../src/launch-args.mjs";
 const DEFAULT_SOURCE = DEFAULT_SOURCE_ROOT;
 const DEFAULT_CODEX = DEFAULT_CODEX_PATH;
 
@@ -36,7 +36,8 @@ function boolArg(name: string, fallback: boolean): boolean {
 }
 
 function bundledCatalog(codexPath: string): unknown {
-  const result = spawnSync(codexPath, ["debug", "models", "--bundled"], {
+  const invocation = nativeInvocation(codexPath, ["debug", "models", "--bundled"], "codex");
+  const result = spawnSync(invocation.command, invocation.args, {
     encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 15_000,
     env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENAI_|ANTHROPIC_|CLAUDE_|AWS_|AZURE_|GOOGLE_|GEMINI_)/.test(key))),
   });
