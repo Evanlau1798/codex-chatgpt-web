@@ -26,7 +26,8 @@ test('benchmark model identity is correlated by bound cwd hash, never client ban
   const receipt = { traceId: 'owned', physicalSend: 1, servedModel: 'gpt-6-pro', source: 'network.resolved_model_slug' };
   const log = `[chatgpt-web] native_workflow ${JSON.stringify(bind)}\n[chatgpt-web] model_receipt ${JSON.stringify(receipt)}`;
   assert.deepEqual(ownedProviderMetrics(log, cwd), { served_model: 'gpt-6-pro', provider_sends: 1,
-    recovery_sends: 0, completion_committed: false, provider_evidence: 'owned_wire_receipts' });
+    recovery_sends: 0, returned_native_tool_results: 0, errored_native_tool_results: 0,
+    completion_committed: false, provider_evidence: 'owned_wire_receipts' });
   assert.equal(ownedProviderMetrics(log, '/other').served_model, null);
   assert.equal(ownedProviderMetrics(log.replace('network.resolved_model_slug', 'client.banner'), cwd).served_model, null);
 });

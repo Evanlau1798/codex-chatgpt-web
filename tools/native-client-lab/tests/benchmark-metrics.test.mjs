@@ -30,5 +30,19 @@ test('owned rejected Send is counted without inventing a served-model receipt', 
     'model_receipt_diagnostic ' + JSON.stringify({ traceId: 'owned', physicalSend: 2, ownedRequests: 0 }),
   ].join('\n');
   assert.deepEqual(ownedProviderMetrics(log, cwd), { served_model: null, provider_sends: 1, recovery_sends: 0,
+    returned_native_tool_results: 0, errored_native_tool_results: 0,
     completion_committed: false, provider_evidence: 'owned_wire_diagnostics_no_model_identity' });
+});
+
+test('shared-boundary native results are correlated and deduplicated independently of client item coverage', () => {
+  const cwd = '/disposable/fixture';
+  const returned = { phase: 'tool_result_returned', result_state: 'returned', traceId: 'owned', call_id_hash: 'a'.repeat(24), is_error: true };
+  const log = [
+    'native_workflow ' + JSON.stringify({ phase: 'native_context_bound', traceId: 'owned', cwd_sha256: digest(cwd) }),
+    ...[returned, returned, { ...returned, traceId: 'foreign' }].map(event => 'native_workflow ' + JSON.stringify(event)),
+  ].join('\n');
+  const metrics = ownedProviderMetrics(log, cwd);
+  assert.equal(metrics.returned_native_tool_results, 1);
+  assert.equal(metrics.errored_native_tool_results, 1);
+  assert.equal(metrics.served_model, null);
 });

@@ -39,6 +39,7 @@ export function nativeMetrics(artifact) {
     quota_latched: latches.some(event => !event.reason?.startsWith('diagnostic_')),
     diagnostic_error_latched: latches.some(event => event.reason?.startsWith('diagnostic_')),
     client_final_observed: finalObserved, tool_calls: calls.length,
+    tool_metric_coverage: 'Codex_command_file_completions_and_Claude_tool_use', tool_calls_are_lower_bound: true,
     read_metric_coverage: 'explicit_Read_and_simple_quoted_cat_only',
     read_calls_are_lower_bound: true,
     read_calls: [...reads.values()].reduce((a, b) => a + b, 0),
@@ -56,7 +57,8 @@ export function ownedProviderMetrics(log, cwd) {
     const text = line.split('native_workflow ')[1]; if (!text) continue;
     try { const event = JSON.parse(text); if (event.phase === 'native_context_bound' && event.cwd_sha256 === digest(cwd)) traces.add(event.traceId); } catch {}
   }
-  const receipts = new Map(); const sends = new Map(); let recoverySends = 0; let committed = false;
+  const receipts = new Map(); const sends = new Map(); const returnedTools = new Set(); const erroredTools = new Set();
+  let recoverySends = 0; let committed = false;
   for (const line of rows) {
     const text = line.split('model_receipt ')[1];
     if (text) try {
@@ -75,11 +77,22 @@ export function ownedProviderMetrics(log, cwd) {
       }
     } catch {}
     const eventText = line.split('native_workflow ')[1];
-    if (eventText) try { const event = JSON.parse(eventText); if (traces.has(event.traceId) && event.phase === 'completion_committed') committed = true; } catch {}
+    if (eventText) try {
+      const event = JSON.parse(eventText);
+      if (traces.has(event.traceId)) {
+        if (event.phase === 'completion_committed') committed = true;
+        if (event.phase === 'tool_result_returned' && event.result_state === 'returned' && /^[a-f0-9]{24}$/.test(event.call_id_hash || '')) {
+          const id = event.traceId + '/' + event.call_id_hash;
+          returnedTools.add(id);
+          if (event.is_error === true) erroredTools.add(id);
+        }
+      }
+    } catch {}
   }
   for (const send of sends.values()) if (send.physicalSend > 1) recoverySends++;
   const models = new Set([...receipts.values()].map(receipt => receipt.servedModel));
   return { served_model: models.size === 1 ? [...models][0] : null,
     provider_sends: sends.size || null, recovery_sends: sends.size ? recoverySends : null,
+    returned_native_tool_results: returnedTools.size, errored_native_tool_results: erroredTools.size,
     completion_committed: committed, provider_evidence: receipts.size ? 'owned_wire_receipts' : sends.size ? 'owned_wire_diagnostics_no_model_identity' : 'unavailable' };
 }
