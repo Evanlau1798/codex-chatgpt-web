@@ -11,6 +11,20 @@ export { claudeSessionThreadId } from "../claude-session-identity";
 type Json = Record<string, unknown>;
 type TextFilter = (text: string) => string | undefined;
 
+// Claude Messages carries tool failure state on the `tool_result` content block, while the
+// Responses function_call_output contract has no portable error bit. Keep the bit in a narrow
+// provider-private passthrough field so the routed model still receives the exact tool output
+// text. The Responses parser validates this marker against Claude's translated request metadata;
+// it is never inferred from tool-result prose.
+export const CLAUDE_TOOL_RESULT_ERROR_MARKER = "claude_tool_result_is_error";
+const claudeTranslatedBodies = new WeakSet<object>();
+
+/** True only for the in-memory body object created by translateClaudeMessages. */
+export function isClaudeTranslatedRequestBody(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && claudeTranslatedBodies.has(value);
+}
+
 function object(value: unknown, label: string): Json {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
   return value as Json;
@@ -94,7 +108,16 @@ function userItems(content: unknown, turnId: string, filterText?: TextFilter): J
     const block = object(raw, "user content block");
     if (block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
     const output = typeof block.content === "string" ? (filter(block.content) ?? "") : inputParts(block.content, filter);
-    items.push({ type: "function_call_output", call_id: block.tool_use_id, output });
+    items.push({
+      type: "function_call_output",
+      call_id: block.tool_use_id,
+      output,
+      // Only the explicit Claude boolean is eligible. In particular, do not inspect the tool
+      // output for words such as "error" or an embedded is_error-looking JSON fragment.
+      ...(block.is_error === true
+        ? { internal_chat_message_metadata_passthrough: { [CLAUDE_TOOL_RESULT_ERROR_MARKER]: true } }
+        : {}),
+    });
   }
   return items;
 }
@@ -320,29 +343,31 @@ export function translateClaudeMessages(
     .digest("hex");
   const choice = toolChoice(request.tool_choice);
   const harness = "You are serving Claude Code through ChatGPT Web. Follow the supplied system and user instructions. Use only advertised client tools; the client owns tool execution and permission decisions.";
+  const body: Json = {
+    model,
+    stream: request.stream === true,
+    input,
+    instructions: [system, harness].filter(Boolean).join("\n\n"),
+    ...(request.max_tokens !== undefined ? { max_output_tokens: request.max_tokens } : {}),
+    ...(tools ? { tools } : {}),
+    ...(choice !== undefined ? { tool_choice: choice } : {}),
+    parallel_tool_calls: true,
+    prompt_cache_key: threadId,
+    client_metadata: {
+      "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: turnId, request_kind: "turn", sandbox: "none", workspaces: { [root]: {} } }),
+      claude_request_hash: createHash("sha256").update(JSON.stringify(request.messages)).digest("hex"),
+      claude_history_anchor: historyAnchor,
+      claude_subagent: subagent,
+      claude_retain_conversation: !auxiliaryResponse && headers.has("x-claude-code-session-id"),
+    },
+  };
+  claudeTranslatedBodies.add(body);
   return {
     requestedModel: request.model,
     stream: request.stream === true,
     compact,
     suppressedSteeringReplays,
     ...(auxiliaryResponse ? { auxiliaryResponse } : {}),
-    body: {
-      model,
-      stream: request.stream === true,
-      input,
-      instructions: [system, harness].filter(Boolean).join("\n\n"),
-      ...(request.max_tokens !== undefined ? { max_output_tokens: request.max_tokens } : {}),
-      ...(tools ? { tools } : {}),
-      ...(choice !== undefined ? { tool_choice: choice } : {}),
-      parallel_tool_calls: true,
-      prompt_cache_key: threadId,
-      client_metadata: {
-        "x-codex-turn-metadata": JSON.stringify({ thread_id: threadId, turn_id: turnId, request_kind: "turn", sandbox: "none", workspaces: { [root]: {} } }),
-        claude_request_hash: createHash("sha256").update(JSON.stringify(request.messages)).digest("hex"),
-        claude_history_anchor: historyAnchor,
-        claude_subagent: subagent,
-        claude_retain_conversation: !auxiliaryResponse && headers.has("x-claude-code-session-id"),
-      },
-    },
+    body,
   };
 }
