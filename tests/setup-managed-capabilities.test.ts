@@ -16,7 +16,35 @@ const javascript = new Bun.Transpiler({ loader: "ts" }).transformSync(`async fun
 }`);
 const probe = new Function(`${javascript}; return probe;`)() as (context: Record<string, unknown>) => Promise<{
   solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean;
+  modelCapabilities?: unknown;
 }>;
+
+test.each(["fresh", "missing", "expired", "refresh"] as const)(
+  "external service setup uses stored model capabilities only when fresh: %s", async state => {
+    const capabilities = { observedAt: state === "expired" ? 0 : Date.now(),
+      families: { "5.6": ["low", "medium", "high"] } };
+    const observed = { observedAt: Date.now(), families: { "latest": ["medium", "high", "xhigh"] } };
+    const calls: string[] = [];
+    const result = await probe({
+      config: { browserHost: "managed-chrome", browserInteractionMode: "automatic" },
+      existing: { browserInteractionMode: "automatic" },
+      options: { restartService: true, refreshAccountCapabilities: state === "refresh" },
+      beforeService: { loaded: true },
+      storedBrowserLoginCapabilities: () => ({ solAvailable: true, extraHighAvailable: false, proAvailable: false,
+        ...(state === "missing" ? {} : { modelCapabilities: capabilities }) }),
+      browserLoginStateExists: () => true,
+      inspectBrowserLoginCapabilities: async () => {
+        calls.push("inspect");
+        return { solAvailable: true, extraHighAvailable: true, proAvailable: false, modelCapabilities: observed };
+      },
+      assertServiceIdle: async () => { calls.push("idle"); },
+      loginToChatGpt: async () => { throw new Error("Verified login must not be replaced"); },
+    });
+    expect(calls).toEqual(state === "fresh" ? [] : ["idle", "inspect"]);
+    expect(result.modelCapabilities).toEqual(state === "fresh" ? capabilities : observed);
+    expect(result.extraHighAvailable).toBe(state !== "fresh");
+  },
+);
 
 test.each(["automatic", "manual"])("managed Automatic re-entry refreshes only prior manual capabilities: %s", async prior => {
   const calls: string[] = [];
