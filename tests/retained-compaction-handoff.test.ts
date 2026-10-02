@@ -6,6 +6,7 @@ import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/ad
 import type { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import type { CodexParsedRequest } from "../src/types";
 import { deferred } from "../src/adapters/chatgpt-web/runtime-lifecycle";
+import { CompactionTransactionStore } from "../src/adapters/chatgpt-web/compaction-transaction";
 
 const parsed: CodexParsedRequest = {
   modelId: "chatgpt-web", stream: true,
@@ -20,6 +21,33 @@ function source(): ChatGptTurnSession {
     conversationKey: "b".repeat(64), cancel() {},
   });
 }
+
+test("default compaction has no inferred deadline and cancellation retains physical ownership", async () => {
+  const store = new CompactionTransactionStore();
+  const browser = deferred<string>();
+  const owner = new AbortController();
+  const started = deferred<void>();
+  let token = "";
+  let retained: Promise<void> | undefined;
+  const broker = {
+    beginCompactionTransaction: async (trace: string, ttl: number | null) => {
+      expect(ttl).toBeNull(); const handle = store.begin(trace, ttl); token = handle.token; return handle;
+    },
+    waitForCompactionHandoff: (value: string, signal?: AbortSignal) => store.wait(value, signal),
+    abortCompactionTransaction: (value: string) => store.abort(value),
+  } as unknown as TurnBroker;
+  const run = requestRetainedCompactionHandoff({run: () => { started.resolve(); return browser.promise; }},
+    parsed, source(), broker, {localToolsEnabled:true,solAvailable:true,proAvailable:true},
+    "default_deadline_free", owner.signal, undefined, undefined, settlement => { retained = settlement; });
+  try {
+    await started.promise;
+    owner.abort(new DOMException("operator cancelled", "AbortError"));
+    await expect(run).rejects.toMatchObject({name:"AbortError"});
+    expect(retained).toBeDefined();
+    expect(await Promise.race([retained!.then(() => "settled"), Promise.resolve("owned")])).toBe("owned");
+    expect(() => store.submit(token, "wrong", "A usable checkpoint summary")).toThrow("invalid, expired, or consumed");
+  } finally { browser.resolve("cleanup"); await retained; store.close(); }
+});
 
 for (const accepted of [false, true]) test(`retained deadline bounds an uncooperative browser (checkpoint accepted: ${accepted})`, async () => {
   const browser = deferred<string>();

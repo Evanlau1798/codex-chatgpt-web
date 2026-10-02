@@ -918,7 +918,8 @@ export function chatGptExternalProgressSuppressesDomHealth(
   if (lastProgressAt === undefined) return false;
   const age = now - lastProgressAt;
   return age >= -CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS
-    && age < CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS;
+    && (chatGptExternalToolCallsAreInFlight(snapshot)
+      || age < CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS);
 }
 
 interface ChatGptResponseDomSnapshot {

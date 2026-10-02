@@ -11,6 +11,13 @@ import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adap
 export const LATEST_USER_PROMPT_MARKER = "CODEX_LATEST_USER_PROMPT_JSON";
 export const MAX_COMPACTION_HANDOFF_TIMEOUT_MS = 5 * 60_000;
 
+/** No default query deadline; retain only a caller's explicitly configured budget. */
+export function chatGptCompactionDeadlineMs(configured?: number | null): number | null {
+  if (configured === undefined || configured === null) return null;
+  if (!Number.isFinite(configured) || configured <= 0) throw new Error("ChatGPT compaction timeout must be a positive finite number or null");
+  return configured;
+}
+
 function brokerContent(content: string | CodexContentPart[]): unknown[] {
   if (typeof content === "string") return [{ type: "text", text: content }];
   return content.map(part => {
@@ -119,7 +126,7 @@ export async function settleActiveCompactionSource(
   source: ChatGptTurnSession,
   broker: TurnBroker,
   signal?: AbortSignal,
-  timeoutMs = MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+  timeoutMs: number | null = null,
   armCompactionBoundaryRetention?: () => Promise<boolean>,
 ): Promise<{ answer: string; compactionInstructionDelivered: boolean; handoff?: string }> {
   return source.runExclusive(async () => {

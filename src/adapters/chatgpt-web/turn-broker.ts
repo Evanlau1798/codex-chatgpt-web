@@ -162,7 +162,7 @@ export class TurnBroker implements TurnBrokerOwner {
 
   async beginCompactionTransaction(
     traceId: string,
-    ttlMs = 120_000,
+    ttlMs: number | null = 120_000,
   ): Promise<CompactionTransactionHandle> {
     await this.start();
     return this.compactionTransactions.begin(traceId, ttlMs);
@@ -170,7 +170,7 @@ export class TurnBroker implements TurnBrokerOwner {
 
   async beginRecoveryCheckpoint(
     traceId: string,
-    ttlMs: number,
+    ttlMs: number | null,
     persist: (summary: string) => void,
   ): Promise<CompactionTransactionHandle> {
     await this.start();
@@ -185,7 +185,7 @@ export class TurnBroker implements TurnBrokerOwner {
     this.compactionTransactions.abort(token);
   }
 
-  refreshCompactionTransaction(token: string, ttlMs: number): void {
+  refreshCompactionTransaction(token: string, ttlMs: number | null): void {
     this.compactionTransactions.refresh(token, ttlMs);
   }
 
