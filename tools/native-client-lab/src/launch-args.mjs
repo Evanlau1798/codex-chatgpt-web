@@ -10,8 +10,10 @@ export const CODEX_MODEL = 'chatgpt-web/gpt-6-pro';
 export const CLAUDE_MODEL = 'claude-chatgpt-web-gpt-6-pro';
 export function executableOnPath(name) {
   for (const directory of (process.env.PATH || '').split(path.delimiter)) {
-    const candidate = path.join(directory, process.platform === 'win32' ? `${name}.exe` : name);
-    try { fs.accessSync(candidate, fs.constants.X_OK); return path.resolve(candidate); } catch {}
+    for (const suffix of process.platform === 'win32' ? ['.exe', '.cmd', '.bat', ''] : ['']) {
+      const candidate = path.join(directory, name + suffix);
+      try { fs.accessSync(candidate, fs.constants.X_OK); return path.resolve(candidate); } catch {}
+    }
   }
   return path.join(os.homedir(), '.local', 'bin', name);
 }
@@ -51,6 +53,19 @@ export function assertExecutable(value, label) {
     throw new Error(`${label} is not executable: ${absolute}`);
   }
   return absolute;
+}
+
+export function nativeInvocation(executable, args, client) {
+  if (!/\.(cmd|bat)$/i.test(executable)) return { command: executable, args };
+  // Execute the npm package's JS entry directly; never interpolate user arguments into cmd.exe.
+  const packageName = client === 'codex' ? '@openai/codex' : '@anthropic-ai/claude-code';
+  const root = path.join(path.dirname(executable), 'node_modules', packageName);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const entry = typeof manifest.bin === 'string' ? manifest.bin : manifest.bin?.[client];
+  if (typeof entry !== 'string') throw new Error(`Unsupported npm ${client} shim: missing package entry`);
+  const script = path.resolve(root, entry);
+  if (!script.startsWith(root + path.sep) || !fs.statSync(script).isFile()) throw new Error('Unsafe or missing npm CLI entry');
+  return { command: process.execPath, args: [script, ...args] };
 }
 
 export function toml(value) {

@@ -4,10 +4,24 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { assertExactCodexCatalog, buildClaudeArgs, buildCodexArgs, CLAUDE_MODEL, CODEX_MODEL, parseLauncherArgs, LAB_ROOT } from '../src/launch-args.mjs';
+import { assertExactCodexCatalog, buildClaudeArgs, buildCodexArgs, CLAUDE_MODEL, CODEX_MODEL, parseLauncherArgs, LAB_ROOT, nativeInvocation } from '../src/launch-args.mjs';
 import { cleanEnvironment, forwardOwnedSignal, writeClaudeSettings } from '../src/launch.mjs';
 
 const target = LAB_ROOT;
+test('npm Windows shim invokes the package entry without a shell and preserves literal arguments', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'native-shim-'));
+  try {
+    const pkg = path.join(root, 'node_modules', '@openai', 'codex');
+    fs.mkdirSync(pkg, { recursive: true });
+    fs.writeFileSync(path.join(pkg, 'package.json'), JSON.stringify({ bin: { codex: 'cli.mjs' } }));
+    fs.writeFileSync(path.join(pkg, 'cli.mjs'), 'console.log(JSON.stringify(process.argv.slice(2)));');
+    const args = ['space argument', '&echo NOT_A_COMMAND', 'quote"value'];
+    const invocation = nativeInvocation(path.join(root, 'codex.cmd'), args, 'codex');
+    const result = spawnSync(invocation.command, invocation.args, { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), args);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 const catalog = {
   models: [{
     slug: CODEX_MODEL,
@@ -70,14 +84,14 @@ test('optional headless invocations use native JSON interfaces without changing 
   assert.equal(claude.includes('--disable-slash-commands'), true);
 });
 
-test('headless Codex argument sets are accepted by the installed native parser', () => {
+test('headless Codex argument sets are accepted by the installed native parser', { skip: !process.env.NATIVE_LAB_CODEX_INTEGRATION_PATH }, () => {
   const variants = [
     buildCodexArgs({ cwd: target, proxyUrl: 'http://127.0.0.1:1', catalogPath: '/private/tmp/gpt6.json', catalog, headless: true, unsafe: false }),
     buildCodexArgs({ cwd: target, proxyUrl: 'http://127.0.0.1:1', catalogPath: '/private/tmp/gpt6.json', catalog, headless: true, unsafe: true }),
     buildCodexArgs({ cwd: target, resume: '2f6d3d6c-7d88-4b14-8d85-e0ab2d8f9e4c', proxyUrl: 'http://127.0.0.1:1', catalogPath: '/private/tmp/gpt6.json', catalog, headless: true, unsafe: false }),
   ];
   for (const args of variants) {
-    const result = spawnSync('/opt/homebrew/bin/codex', [...args, '--help'], { encoding: 'utf8', timeout: 15_000 });
+    const result = spawnSync(process.env.NATIVE_LAB_CODEX_INTEGRATION_PATH, [...args, '--help'], { encoding: 'utf8', timeout: 15_000 });
     assert.equal(result.status, 0, `${result.stderr}\n${args.join(' ')}`);
   }
 });

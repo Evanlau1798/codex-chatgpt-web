@@ -76,10 +76,11 @@ function safeJson(value, redact) {
 export function decodeRequestBody(bytes, encoding) {
   const normalized = String(encoding || 'identity').toLowerCase().trim();
   if (!normalized || normalized === 'identity') return bytes;
-  if (normalized === 'gzip' || normalized === 'x-gzip') return zlib.gunzipSync(bytes);
-  if (normalized === 'deflate') return zlib.inflateSync(bytes);
-  if (normalized === 'br') return zlib.brotliDecompressSync(bytes);
-  if (normalized === 'zstd' && typeof zlib.zstdDecompressSync === 'function') return zlib.zstdDecompressSync(bytes);
+  const options = { maxOutputLength: MAX_DECODED_REQUEST_BYTES };
+  if (normalized === 'gzip' || normalized === 'x-gzip') return zlib.gunzipSync(bytes, options);
+  if (normalized === 'deflate') return zlib.inflateSync(bytes, options);
+  if (normalized === 'br') return zlib.brotliDecompressSync(bytes, options);
+  if (normalized === 'zstd' && typeof zlib.zstdDecompressSync === 'function') return zlib.zstdDecompressSync(bytes, options);
   throw new Error(`Unsupported request content-encoding: ${normalized}`);
 }
 
@@ -615,6 +616,7 @@ export function createRecordingProxy(options) {
     emit({ type: 'quota_latch', ...state.quota });
   };
   const redactorForEvents = new StreamRedactor([options.childToken, options.controlToken].filter(Boolean));
+  const activeUpstream = new Set();
   const server = http.createServer(async (req, res) => {
     const id = String(++state.sequence).padStart(4, '0');
     const started = Date.now();
@@ -635,6 +637,12 @@ export function createRecordingProxy(options) {
       if (!pathAllowed(client, pathname)) {
         appendEvent(eventsPath, { id, type: 'rejected_path', path: pathname, method: req.method }, redactorForEvents);
         jsonError(res, 404, 'route_not_allowed', 'Route is not enabled by this launcher');
+        return;
+      }
+      const earlyToken = client === 'claude' && pathname === '/v1/messages/steering' ? options.controlToken : options.childToken;
+      if (client === 'codex' ? req.headers['openai-project'] !== earlyToken : !authMatches(req, earlyToken)) {
+        jsonError(res, 403, 'owned_client_required', 'Owned client credentials are required before decoding');
+        req.resume();
         return;
       }
       bodyResult = await requestBody(req);
@@ -752,6 +760,7 @@ export function createRecordingProxy(options) {
         toolNames: Array.isArray(body?.tools) ? body.tools.map(tool => tool?.name || tool?.type).filter(Boolean).slice(0, 128) : [],
       }, redactor);
       upstreamAbort = new AbortController();
+      activeUpstream.add(upstreamAbort);
       res.on('close', () => { if (!res.writableEnded) upstreamAbort.abort(); });
       const upstream = await fetch(`${bridgeUrl(options)}${req.url}`, {
         method: req.method,
@@ -858,6 +867,8 @@ export function createRecordingProxy(options) {
       appendEvent(eventsPath, { id, type: 'proxy_error', path: req.url, message, elapsedMs: Date.now() - started }, redactor || redactorForEvents);
       if (!res.headersSent) jsonError(res, 502, 'proxy_error', 'Recording proxy failed while forwarding the local request');
       else res.end();
+    } finally {
+      if (upstreamAbort) activeUpstream.delete(upstreamAbort);
     }
   });
   return {
@@ -874,8 +885,14 @@ export function createRecordingProxy(options) {
       return { host: '127.0.0.1', port: address.port, url: `http://127.0.0.1:${address.port}` };
     },
     async close() {
-      await new Promise(resolve => server.close(() => resolve()));
+      for (const controller of activeUpstream) controller.abort();
+      activeUpstream.clear();
+      const closed = new Promise(resolve => server.close(() => resolve()));
       server.closeIdleConnections?.();
+      server.closeAllConnections?.();
+      let timer;
+      try { await Promise.race([closed, new Promise(resolve => { timer = setTimeout(resolve, 750); })]); }
+      finally { clearTimeout(timer); }
     },
   };
 }
@@ -902,6 +919,7 @@ export function bridgeConfig(pathname) {
     controlToken: value.controlToken,
     releaseVersion: typeof value.releaseVersion === 'string' ? value.releaseVersion : undefined,
     mode: value.mode,
+    runtimeCommand: Array.isArray(value.runtimeCommand) ? value.runtimeCommand : undefined,
     proAvailable: value.proAvailable === true,
     solAvailable: value.solAvailable === true,
     extraHighAvailable: value.extraHighAvailable === true,

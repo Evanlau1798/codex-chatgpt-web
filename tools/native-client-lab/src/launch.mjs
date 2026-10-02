@@ -17,6 +17,7 @@ import {
   buildCodexArgs,
   canonicalCodexHome,
   parseLauncherArgs,
+  nativeInvocation,
   printHelp,
 } from './launch-args.mjs';
 import { bridgeConfig, createRecordingProxy, sha256, StreamRedactor } from './proxy.mjs';
@@ -119,8 +120,39 @@ export async function preflightBridge({ bridge, sourceRoot, fetchImpl = fetch, t
   return { sourceVersion, healthVersion: health.version };
 }
 
+export async function preflightNativePlugin({ bridge, fetchImpl = fetch }) {
+  const response = await fetchImpl(`http://${bridge.host}:${bridge.port}/admin/native-readiness`, {
+    method: 'POST', headers: { authorization: `Bearer ${bridge.controlToken}`, 'content-type': 'application/json' },
+    body: '{}', signal: AbortSignal.timeout(100_000),
+  });
+  if (!response.ok) throw new Error(`Native preflight could not observe idle permission/catalog state: HTTP ${response.status}`);
+  const result = await response.json();
+  const required = ['codex_read_context', 'codex_exec', 'codex_write_stdin', 'codex_apply_patch', 'codex_view_image', 'codex_tool_inventory', 'codex_tool_call'];
+  if (result?.version !== 1 || result.source !== 'chatgpt_settings_dom'
+    || !Number.isFinite(result.observedAt) || Math.abs(Date.now() - result.observedAt) > 120_000
+    || !Array.isArray(result.advertised) || !Array.isArray(result.missing)
+    || required.some(name => !result.advertised.includes(name) && !result.missing.includes(name))) throw new Error('Native preflight evidence is invalid or stale');
+  if (result.missing.length) throw new Error(`Native plugin is missing attached tools: ${result.missing.join(', ')}`);
+  if (result.permission !== 'all_tools') throw new Error(`Native plugin permission=${result.permission}; write tools may be denied. Review the app setting yourself; this launcher will not elevate it.`);
+  return result;
+}
+
+export function preflightRuntimeArtifact({ bridge, sourceRoot }) {
+  const configured = bridge.runtimeCommand?.[1];
+  const built = path.join(sourceRoot, 'dist', 'runtime', 'app', 'cli.js');
+  if (typeof configured !== 'string' || !path.isAbsolute(configured) || !configured.replaceAll('\\', '/').endsWith('/app/cli.js')) {
+    throw new Error('Native preflight requires an explicit installed runtime CLI path');
+  }
+  if (!fs.existsSync(built) || !fs.existsSync(configured)) throw new Error('Build the matching source checkout before running native acceptance');
+  const expected = sha256(fs.readFileSync(built));
+  const observed = sha256(fs.readFileSync(configured));
+  if (expected !== observed) throw new Error('Installed runtime bytes differ from the built source; refusing native acceptance');
+  return { source_runtime_sha256: expected, installed_runtime_sha256: observed };
+}
+
 function nativeVersion(executable, client, env) {
-  const result = spawnSync(executable, ['--version'], {
+  const invocation = nativeInvocation(executable, ['--version'], client);
+  const result = spawnSync(invocation.command, invocation.args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env, timeout: 15_000,
   });
   if (result.error) throw new Error(`${client} version probe failed: ${result.error.message}`);
@@ -228,9 +260,12 @@ export async function runLauncher(client, argv) {
   const cliPath = assertExecutable(options.cliPath, `${client} CLI`);
   const bridge = bridgeConfig(options.bridgeConfig);
   await preflightBridge({ bridge, sourceRoot: options.sourceRoot });
+  const runtimeIdentity = preflightRuntimeArtifact({ bridge, sourceRoot: options.sourceRoot });
+  const nativeReadiness = await preflightNativePlugin({ bridge });
   const launchId = `${Date.now()}-${randomUUID()}`;
   const artifactRoot = path.join(options.artifacts, `${client}-${launchId}`);
   ensureDir(artifactRoot);
+  writePrivate(path.join(artifactRoot, 'readiness.json'), JSON.stringify({ ...nativeReadiness, runtimeIdentity }));
   const childToken = randomUUID();
   const launchedAt = Date.now();
   const proxy = createRecordingProxy({
@@ -248,6 +283,7 @@ export async function runLauncher(client, argv) {
     diagnostic: options.diagnostic,
     launchedAt,
   });
+  try {
   const endpoint = await proxy.listen();
   // The child process keeps this parent alive during the interactive session. If a preflight
   // fails before spawn, an unref'ed listener cannot leave a zombie launcher behind.
@@ -305,7 +341,8 @@ export async function runLauncher(client, argv) {
     mode: options.headless ? (options.diagnostic ? 'headless-diagnostic' : 'headless') : 'interactive',
     stdio: options.headless ? 'capture-json' : 'inherit',
   });
-  const child = spawn(cliPath, args, {
+  const invocation = nativeInvocation(cliPath, args, client);
+  const child = spawn(invocation.command, invocation.args, {
     cwd: options.cwd,
     env,
     stdio: options.headless ? [promptBytes ? 'pipe' : 'inherit', 'pipe', 'pipe'] : 'inherit',
@@ -369,8 +406,10 @@ export async function runLauncher(client, argv) {
   process.removeListener('SIGINT', onSigint);
   process.removeListener('SIGTERM', onSigterm);
   await Promise.all(childCapturePromises);
-  await proxy.close();
   return exit;
+  } finally {
+    await proxy.close();
+  }
 }
 
 export function cliMain(client, argv = process.argv.slice(2)) {
