@@ -36,7 +36,7 @@ export async function invokeChatGptMcpTool(
   } catch (error) {
     try {
       await callTurnBroker(socketPath, { method: "release", bindingId,
-        ...(error instanceof TurnBrokerTimeoutError ? {
+        ...(error instanceof TurnBrokerTimeoutError && timeoutMs !== null ? {
           failure: { code: "codex_tool_timeout" as const, tool: request.wireName, timeoutMs },
         } : {}),
       });
