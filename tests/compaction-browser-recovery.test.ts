@@ -10,16 +10,17 @@ import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-pr
 import { CHATGPT_USER_TURN_SELECTOR, CHATGPT_ASSISTANT_TURN_SELECTOR } from "../src/chatgpt-session";
 
 test.each([
-  [true, false, true, "inline", false, false, false],
-  [false, false, true, "inline", false, false, false],
-  [true, true, true, "inline", false, false, false],
-  [true, false, false, "inline", true, false, false],
-  [true, true, false, "inline", true, false, false],
-  [true, true, false, "native2-archive", false, false, false],
-  [true, true, false, undefined, false, false, false],
-  [true, false, false, "inline", true, true, true],
-  [true, true, false, "inline", true, false, true],
-] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s, direct=%s, required=%s, reused=%s)", async (owned, tools, multipart, transport, direct, requiredRetained, reused) => {
+  [true, false, true, "inline", false, false, false, false],
+  [false, false, true, "inline", false, false, false, false],
+  [true, true, true, "inline", false, false, false, false],
+  [true, false, false, "inline", true, false, false, false],
+  [true, true, false, "inline", true, false, false, false],
+  [true, true, false, "native2-archive", false, false, false, false],
+  [true, true, false, undefined, false, false, false, false],
+  [true, false, false, "inline", true, true, true, false],
+  [true, true, false, "inline", true, false, true, false],
+  [true, false, true, "inline", false, false, false, true],
+] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s, direct=%s, required=%s, reused=%s)", async (owned, tools, multipart, transport, direct, requiredRetained, reused, sizeRejected = false) => {
   const diagnostics = mkdtempSync(join(tmpdir(), "compaction-observation-"));
   const cancellationCase = owned && !tools && !multipart;
   const effort = tools ? "xhigh" : "high";
@@ -46,6 +47,8 @@ test.each([
   const history = () => remountHistory ? [...(historyRemounted ? ["older-user", "older-assistant"] : []), "old-user", "old-assistant"] : [];
   const responseTurns = { ...hidden, page: () => page,
     evaluateAll: async () => ({ count: assistants().length, identities: assistants(), ambiguous: false }) };
+  let freshChatPreparations = 0;
+  let rejectionAbortedWait = false;
   const frame = {};
   const page = Object.assign(new EventEmitter(), { mainFrame: () => frame, evaluate: async () => ({}), isClosed: () => false,
     getByText: () => ({}),
@@ -69,7 +72,7 @@ test.each([
       if (remountHistory && name === "multipart_stage_1_attachment") historyRemounted = true;
       return result;
     },
-    prepareChatSurface: async () => {},
+    prepareChatSurface: async () => { freshChatPreparations += 1; },
     assertSelectedEffort: async () => {},
     selectModelAndEffort: async (_page: unknown, model: string, effort: string, _capabilities: unknown,
       _diagnostic: unknown, trackUsage: boolean, family: string) => {
@@ -92,6 +95,7 @@ test.each([
             headers: () => ({ "content-type": "application/json" }),
             json: async () => ({ detail: { code: "message_length_exceeds_limit" } }),
           });
+          throw finalResponse;
         }
       },
     }) }) }),
@@ -133,6 +137,15 @@ test.each([
     attachFiles: async () => { actions.push("files"); },
     sendAttachedPrompt: async (...args: unknown[]) => {
       await (args[5] as () => Promise<void>)();
+      (args[1] as { activateSubmissionRequestObservation(): void }).activateSubmissionRequestObservation();
+      if (sizeRejected && stage === "multipart_stage_2_send") {
+        const request = { method: () => "POST", url: () => "https://chatgpt.com/backend-api/f/conversation", frame: () => frame };
+        page.emit("request", request);
+        page.emit("response", { request: () => request, status: () => 413,
+          headers: () => ({ "content-type": "application/json" }),
+          json: async () => ({ detail: { code: "message_length_exceeds_limit" } }),
+        });
+      }
       if (remountHistory) {
         expect((args[1] as { initialTurnIdentities: string[] }).initialTurnIdentities).toContain("older-user");
         expect((args[1] as { initialResponseTurn: { count: number } }).initialResponseTurn.count).toBe(2);
@@ -149,12 +162,21 @@ test.each([
       recoveryCallbacks.push(args[7]);
       actions.push("observe");
       if (stage === "send") throw finalResponse;
+      if (sizeRejected && stage === "multipart_stage_2_acknowledgement") {
+        const signal = args[4] as AbortSignal;
+        await new Promise((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("rejected stage kept waiting")), 250);
+          const onAbort = () => { clearTimeout(timer); rejectionAbortedWait = true; reject(signal.reason); };
+          if (signal.aborted) onAbort();
+          else signal.addEventListener("abort", onAbort, { once: true });
+        });
+      }
       return {};
     },
     waitForMultipartAcknowledgement: async () => { actions.push("ack"); },
   });
   try {
-    await expect(worker.runBrowserTurn({
+    const run = worker.runBrowserTurn({
       traceId: "compaction_recovery_fixture",
       modelId: "gpt-5.6-sol",
       modelFamily: "5.6",
@@ -170,7 +192,28 @@ test.each([
         commit: async () => { throw new Error("fixture must stop before completion"); },
       } : undefined,
       prepare: async () => ({ text: "Summarize the context", images: [], transport, multipart: multipart ? { parts: Array.from({ length: 6 }, (_, index) => JSON.stringify({ part: index + 1 })), commit: "Summarize" } : undefined, release: () => { released = true; } }),
-    }, owned ? "owned-surface" : undefined, page, reused)).rejects.toBe(finalResponse);
+    }, owned ? "owned-surface" : undefined, page, reused);
+    if (sizeRejected) {
+      await expect(run).rejects.toMatchObject({ code: "context_length_exceeded", retryable: false });
+      expect(rejectionAbortedWait).toBeTrue();
+      expect(sendBudgets).toHaveLength(2);
+      expect(actions.filter(action => action === "ack")).toHaveLength(1);
+      expect(released).toBeTrue();
+      expect(page.listenerCount("request")).toBe(0);
+      expect(page.listenerCount("response")).toBe(0);
+      return;
+    }
+    await expect(run).rejects.toBe(finalResponse);
+    expect(freshChatPreparations).toBe(reused ? 0 : 1);
+    if (cancellationCase) {
+      expect(actions.filter(action => action === "send")).toHaveLength(1);
+      expect(actions).not.toContain("observe");
+      expect(released).toBeTrue();
+      expect(activated).toBe(1);
+      expect(page.listenerCount("request")).toBe(0);
+      expect(page.listenerCount("response")).toBe(0);
+      return;
+    }
     expect(recoveryCallbacks.map(callback => typeof callback)).toEqual(
       Array(multipart ? 11 : 1).fill(owned ? "function" : "undefined"),
     );

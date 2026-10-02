@@ -13,6 +13,7 @@ export interface LauncherState {
   githubOpened: boolean;
   xOpened: boolean;
   autoStart: boolean;
+  autoApproveToolCalls: boolean;
   bridgeEnabled: boolean;
   useEnhancedWebSessionMode: boolean;
   useEnhancedOutputTunnel: boolean;
@@ -74,6 +75,14 @@ export interface BrowserTabState {
   closable: boolean;
   startupPreparation?: boolean;
   interactionMode?: BrowserInteractionMode;
+  approvalPending?: boolean;
+  authenticationRequired?: boolean;
+  activity?: {
+    state: "preparing" | "sending" | "chatgpt" | "tools" | "approval" | "unknown";
+    since: number;
+    updatedAt: number;
+    activeToolCalls: number;
+  };
   manualState?: "awaiting-user" | "sent" | "running" | "completed" | "timed-out" | "cancelled" | "failed";
   manualDeadlineAt?: string;
   canCopyPrompt?: boolean;
@@ -204,6 +213,7 @@ export interface LauncherApi {
   setUseEnhancedOutputTunnel(enabled: boolean): Promise<LauncherState>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
+  setAutoApproveToolCalls(enabled: boolean): Promise<LauncherState>;
   setExperimentalNoAutoCompact(enabled: boolean): Promise<LauncherState>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCodex(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;

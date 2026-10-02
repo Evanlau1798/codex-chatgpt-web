@@ -1808,7 +1808,8 @@ test("the known terminal ChatGPT error alert returns a structured retryable fail
 test("only a size rejection of the current owned browser submission is non-retryable", async () => {
   const frame = {};
   const page = Object.assign(new EventEmitter(), { mainFrame: () => frame });
-  const observer = new ChatGptSubmissionRejectionObserver();
+  const rejected: unknown[] = [];
+  const observer = new ChatGptSubmissionRejectionObserver(error => rejected.push(error));
   const makeRequest = (url = "https://chatgpt.com/backend-api/f/conversation", owner = frame) => ({
     method: () => "POST", url: () => url, frame: () => owner,
   });
@@ -1838,16 +1839,30 @@ test("only a size rejection of the current owned browser submission is non-retry
   expect(observer.ownedSubmissionRequestObserved()).toBeTrue();
   const unfamiliar = makeRequest(); page.emit("request", unfamiliar); respond(unfamiliar, "unknown_error");
   expect(await observer.failure()).toBeUndefined();
+  expect(rejected).toEqual([]);
   const current = makeRequest(); page.emit("request", current); respond(current);
   expect(await observer.failure()).toMatchObject({
     status: 400, code: "context_length_exceeded", errorType: "invalid_request_error", retryable: false,
   });
   expect(observer.ownedSubmissionRequestObserved()).toBeTrue();
+  expect(rejected).toHaveLength(1);
   observer.begin(page as unknown as Page);
   expect(observer.ownedSubmissionRequestObserved()).toBeFalse();
   expect(await observer.failure()).toBeUndefined();
   respond(current);
   expect(await observer.failure()).toBeUndefined();
+  observer.activate();
+  let finishOldBody!: (body: unknown) => void;
+  const delayed = makeRequest(); page.emit("request", delayed);
+  page.emit("response", {
+    request: () => delayed, status: () => 413, headers: () => ({ "content-type": "application/json" }),
+    json: () => new Promise(resolve => { finishOldBody = resolve; }),
+  });
+  const oldFailure = observer.failure();
+  observer.begin(page as unknown as Page);
+  finishOldBody({ detail: { code: "message_length_exceeds_limit" } });
+  expect(await oldFailure).toBeUndefined();
+  expect(rejected).toHaveLength(1);
   observer.dispose();
   expect(page.listenerCount("request")).toBe(0);
   expect(page.listenerCount("response")).toBe(0);
@@ -2220,7 +2235,7 @@ test("unrelated ChatGPT alerts are not terminal", async () => {
 function toolConfirmationPage(options: {
   disappearAfterReads?: number;
   surface?: "dialog" | "card";
-  allowLabel?: "Allow once" | "Allow";
+  allowLabel?: "Allow once" | "Allow" | "Always allow";
 } = {}): {
   page: Page;
   pressed: string[];
@@ -2282,22 +2297,28 @@ function toolConfirmationPage(options: {
 
 test("manual ChatGPT connector approval pauses and resumes the same browser turn", async () => {
   const fixture = toolConfirmationPage({ disappearAfterReads: 3 });
-
-  expect(await resolveChatGptToolConfirmation(fixture.page, "Codex Native", false, undefined, 100)).toBeTrue();
+  const pending: boolean[] = [];
+  expect(await resolveChatGptToolConfirmation(fixture.page, "Codex Native", false, undefined, 100,
+    undefined, async value => { pending.push(value); })).toBeTrue();
+  expect(pending).toEqual([true, false]);
   expect(fixture.pressed).toEqual([]);
 });
 
 test("an unanswered ChatGPT connector approval is denied instead of aborting the turn", async () => {
   const fixture = toolConfirmationPage();
-
-  expect(await resolveChatGptToolConfirmation(fixture.page, "Codex Native", false, undefined, 2)).toBeTrue();
+  const pending: boolean[] = [];
+  expect(await resolveChatGptToolConfirmation(fixture.page, "Codex Native", false, undefined, 2,
+    undefined, async value => { pending.push(value); })).toBeTrue();
+  expect(pending).toEqual([true, false]);
   expect(fixture.pressed).toEqual(["Deny:Enter"]);
 });
 
 test("explicit connector auto-approval still selects Allow once", async () => {
   const fixture = toolConfirmationPage();
-
-  expect(await resolveChatGptToolConfirmation(fixture.page, "Codex Native", true)).toBeTrue();
+  const pending: boolean[] = [];
+  expect(await resolveChatGptToolConfirmation(fixture.page, "Codex Native", true, undefined, 100,
+    undefined, async value => { pending.push(value); })).toBeTrue();
+  expect(pending).toEqual([]);
   expect(fixture.pressed).toEqual(["Allow once:Enter"]);
 });
 
@@ -2306,6 +2327,31 @@ test("connector auto-approval accepts the current shortened Allow action", async
 
   expect(await resolveChatGptToolConfirmation(fixture.page, "Codex Native", true)).toBeTrue();
   expect(fixture.pressed).toEqual(["Allow:Enter"]);
+});
+
+test("cancelling while an approval is pending clears the notice without choosing a button", async () => {
+  const fixture = toolConfirmationPage();
+  const controller = new AbortController();
+  const pending: boolean[] = [];
+  await expect(resolveChatGptToolConfirmation(fixture.page, "Codex Native", false, controller.signal, 100,
+    undefined, async value => { pending.push(value); if (value) controller.abort(); }))
+    .rejects.toMatchObject({ name: "AbortError" });
+  expect(pending).toEqual([true, false]);
+  expect(fixture.pressed).toEqual([]);
+});
+
+test("cancellation before auto-approval never grants permission", async () => {
+  const fixture = toolConfirmationPage();
+  await expect(resolveChatGptToolConfirmation(fixture.page, "Codex Native", true, AbortSignal.abort()))
+    .rejects.toMatchObject({ name: "AbortError" });
+  expect(fixture.pressed).toEqual([]);
+});
+
+test("one-time auto-approval never selects a permanent permission", async () => {
+  const fixture = toolConfirmationPage({ allowLabel: "Always allow" });
+  await expect(resolveChatGptToolConfirmation(fixture.page, "Codex Native", true))
+    .rejects.toThrow("Approval button not found");
+  expect(fixture.pressed).toEqual([]);
 });
 
 test("auto-approval recognizes the observed non-dialog approval card", async () => {
