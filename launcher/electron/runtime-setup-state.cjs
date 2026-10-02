@@ -6,6 +6,7 @@ function runtimePreferenceState(config) {
     ...(["automatic", "manual"].includes(config.browserInteractionMode)
       ? { browserInteractionMode: config.browserInteractionMode } : {}),
     zeroRiskProEnabled: config.zeroRiskProEnabled === true,
+    autoApproveToolCalls: config.autoApproveToolCalls === true,
     useEnhancedWebSessionMode: config.useEnhancedWebSessionMode === true,
     useEnhancedOutputTunnel: config.useEnhancedOutputTunnel !== false,
     maxBrowserTabs: Number.isInteger(config.maxBrowserTabs)

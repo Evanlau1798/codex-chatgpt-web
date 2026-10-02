@@ -240,7 +240,7 @@ export async function connectLauncherBrowserHost(
     ready: budget => assertCdpReady(descriptor, budget),
     connect: async budget => {
       if (prepared) return prepared.browser;
-      try { return await chromium.connectOverCDP(descriptor.endpoint, { timeout: budget }); }
+      try { return await chromium.connectOverCDP(descriptor.endpoint, { timeout: budget, noDefaults: true }); }
       catch (error) { throw new Error(`Could not connect Playwright to the launcher browser: ${error instanceof Error ? error.message : String(error)}`); }
     },
     select: async (browser, budget) => {
@@ -249,6 +249,8 @@ export async function connectLauncherBrowserHost(
       try {
         if (abortSignal?.aborted) throw new DOMException("Launcher browser connection aborted", "AbortError");
         const { context, page } = await selectLauncherPage(browser, descriptor, budget, surfaceId, abortSignal);
+        const inputSession = await context.newCDPSession(page);
+        await inputSession.send("Emulation.setFocusEmulationEnabled", { enabled: true });
         return { descriptor, browser, context, page };
       } finally { abortSignal?.removeEventListener("abort", closeOnAbort); }
     },
@@ -370,12 +372,14 @@ type LauncherUsageReceipt = {
   id: string; accountKey: string; at: number; model: "gpt-6-pro" | "gpt-5.6-pro" | "pro-unknown" | "other";
 };
 export type LauncherTurnActivity =
+  | (LauncherTurnIdentity & { phase: "approval"; pending: boolean })
   | (LauncherTurnIdentity & { phase: "usage"; receipt?: LauncherUsageReceipt; trackingError?: "account-unavailable" })
   | (LauncherTurnIdentity & { phase: "start"; conversationKey?: string; connectorIdentity?: string;
       requireRetainedConversation?: boolean; startupPreparation?: boolean; startupSurfaceId?: string;
       allowStartupPreparation?: boolean })
   | (LauncherTurnIdentity & { phase: "prepared" })
-  | (LauncherTurnIdentity & { phase: "heartbeat"; refreshViewport?: boolean })
+  | (LauncherTurnIdentity & { phase: "heartbeat"; refreshViewport?: boolean;
+      progress?: { stage: "preparing" | "sending" | "chatgpt"; activeToolCalls: number } })
   | (LauncherTurnIdentity & {
       phase: "end"; status: "completed" | "failed" | "aborted";
       message?: string; retain?: boolean; connectorBound?: boolean;
@@ -392,7 +396,7 @@ export async function notifyLauncherTurn(
   activity: LauncherTurnActivity,
   timeoutMs = activity.phase === "end"
     ? LAUNCHER_TURN_END_TIMEOUT_MS
-    : activity.phase === "heartbeat"
+    : activity.phase === "heartbeat" || activity.phase === "approval"
       ? LAUNCHER_TURN_HEARTBEAT_TIMEOUT_MS
       : LAUNCHER_TURN_START_TIMEOUT_MS,
   signal?: AbortSignal,

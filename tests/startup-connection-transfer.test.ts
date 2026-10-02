@@ -10,10 +10,16 @@ import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker
 
 function fixture() {
   const phases: string[] = [];
+  const progress: unknown[] = [];
   const surfaceId = "a".repeat(32);
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
     if (new URL(req.url).pathname === "/json/version") return Response.json({ webSocketDebuggerUrl: "ws://127.0.0.1:12345/test" });
-    const body = await req.json() as { phase: string }; phases.push(body.phase);
+    const body = await req.json() as { phase: string; traceId: string; helperPid: number; progress?: unknown }; phases.push(body.phase);
+    if (body.phase === "heartbeat") {
+      expect(body.traceId).toBe("transfer-cleanup");
+      expect(body.helperPid).toBe(process.pid);
+      progress.push(body.progress);
+    }
     return Response.json(body.phase === "start" ? { surfaceId, reused: false, connectorBound: false, startupPrepared: !(body as any).startupPreparation }
       : body.phase === "prepared" ? { prepared: true } : { cancelledByUser: false, authenticationRequired: false });
   } });
@@ -29,7 +35,7 @@ function fixture() {
   const context: any = { pages: () => [page], newCDPSession: async () => ({
     send: async () => ({ targetInfo: { targetId: "owned-target" } }), detach: async () => {} }) };
   const browser: any = { isConnected: () => true, contexts: () => [context], close: async () => { closes++; } };
-  return { path, descriptor, surfaceId, browser, connection: { descriptor, browser, context, page }, phases,
+  return { path, descriptor, surfaceId, browser, connection: { descriptor, browser, context, page }, phases, progress,
     get closes() { return closes; }, cleanup: () => { server.stop(true); rmSync(root, { recursive: true, force: true }); } };
 }
 
@@ -91,7 +97,8 @@ test.each(["old-owner-release", "prompt-prepare"])("claimed transport is cleaned
       .rejects.toThrow(failure === "old-owner-release" ? "original release failure" : "original prepare failure");
     expect(transferred).toBe(1);
     expect(f.closes).toBe(1);
-    expect(f.phases).toEqual(["start", "end"]);
+    expect(f.phases).toEqual(failure === "prompt-prepare" ? ["start", "heartbeat", "end"] : ["start", "end"]);
+    expect(f.progress).toEqual(failure === "prompt-prepare" ? [{stage: "preparing", activeToolCalls: 0}] : []);
   } finally {
     if (prior === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
     else process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = prior;

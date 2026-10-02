@@ -1,5 +1,6 @@
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
+import { createDocument } from "@mixmark-io/domino";
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -72,6 +73,33 @@ turndown.addRule("compactListItem", {
     return `${prefix}${normalized}${node.nextSibling ? "\n" : ""}`;
   },
 });
+turndown.addRule("preserveKatexSource", {
+  filter: node => node.classList.contains("katex") && node.hasAttribute("data-codex-latex"),
+  replacement: (_content, node) => {
+    const source = (node as HTMLElement).getAttribute("data-codex-latex")!;
+    return node.parentElement?.classList.contains("katex-display")
+      ? `\n\n\\[\n${source}\n\\]\n\n`
+      : `\\(${source}\\)`;
+  },
+});
+
+function preserveKatexSource(html: string): string | HTMLElement {
+  if (!html.includes("katex")) return html;
+  const root = createDocument().createElement("div");
+  root.innerHTML = html;
+  for (const math of Array.from(root.querySelectorAll(".katex"))) {
+    if (math.closest("pre, code")) continue;
+    const sources = math.querySelectorAll('annotation[encoding="application/x-tex"]');
+    if (sources.length !== 1) throw new Error("ChatGPT formula does not contain one unambiguous LaTeX source");
+    const source = sources[0]!.textContent ?? "";
+    // Capture before Turndown collapses whitespace: newlines matter in TeX
+    // comments. Carry the source as data while removing the duplicated MathML
+    // and visual layers from this conversion-only DOM.
+    math.setAttribute("data-codex-latex", source);
+    math.textContent = source;
+  }
+  return root;
+}
 
 function inlineFilePath(node: Node): string | undefined {
   if (node.nodeName !== "CODE") return undefined;
@@ -87,12 +115,6 @@ function inlineFilePath(node: Node): string | undefined {
   if (separator < 0) return undefined;
   const basename = withoutLocation.slice(separator + 1);
   return /\.[a-z\d][a-z\d._-]*$/i.test(basename) ? path : undefined;
-}
-
-function preserveObsidianWikiLinks(markdown: string): string {
-  // Turndown escapes literal brackets, but Codex interprets the resulting `\[` as LaTeX.
-  // Restore the source syntax before converting it into a regular Markdown file link.
-  return markdown.replace(/\\\[\\\[([^\r\n]*?)\\\]\\\]/g, "[[$1]]");
 }
 
 function preserveCodexPlanEnvelope(markdown: string): string {
@@ -117,6 +139,7 @@ function obsidianWikiLink(value: string): string | undefined {
 
 function linkObsidianWikiLinks(markdown: string): string {
   let fence: { marker: "`" | "~"; length: number } | undefined;
+  let mathEnd: "\\)" | "\\]" | undefined;
   return markdown.split("\n").map(line => {
     const fenceRun = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1];
     if (fence) {
@@ -124,7 +147,7 @@ function linkObsidianWikiLinks(markdown: string): string {
       if (closingRun?.[0] === fence.marker && closingRun.length >= fence.length) fence = undefined;
       return line;
     }
-    if (fenceRun) {
+    if (!mathEnd && fenceRun) {
       fence = { marker: fenceRun[0] as "`" | "~", length: fenceRun.length };
       return line;
     }
@@ -132,6 +155,14 @@ function linkObsidianWikiLinks(markdown: string): string {
     let result = "";
     let inlineCodeTicks = 0;
     for (let index = 0; index < line.length;) {
+      if (mathEnd) {
+        const end = line.indexOf(mathEnd, index);
+        if (end < 0) return result + line.slice(index);
+        result += line.slice(index, end + mathEnd.length);
+        index = end + mathEnd.length;
+        mathEnd = undefined;
+        continue;
+      }
       if (line[index] === "`") {
         let end = index + 1;
         while (line[end] === "`") end += 1;
@@ -141,16 +172,25 @@ function linkObsidianWikiLinks(markdown: string): string {
         index = end;
         continue;
       }
-      if (inlineCodeTicks === 0 && line.startsWith("[[", index) && line[index - 1] !== "!") {
-        const end = line.indexOf("]]", index + 2);
+      // Restore Turndown-escaped wiki brackets only in prose, never inside a
+      // formula or code example. Double brackets can be valid LaTeX content.
+      const escapedWiki = line.startsWith("\\[\\[", index);
+      if (inlineCodeTicks === 0 && (escapedWiki || line.startsWith("[[", index))) {
+        const delimiterLength = escapedWiki ? 4 : 2;
+        const end = line.indexOf(escapedWiki ? "\\]\\]" : "]]", index + delimiterLength);
         if (end >= 0) {
-          const linked = obsidianWikiLink(line.slice(index + 2, end));
-          if (linked) {
-            result += linked;
-            index = end + 2;
-            continue;
-          }
+          const value = line.slice(index + delimiterLength, end);
+          const linked = line[index - 1] !== "!" ? obsidianWikiLink(value) : undefined;
+          result += linked ?? `[[${value}]]`;
+          index = end + delimiterLength;
+          continue;
         }
+      }
+      if (inlineCodeTicks === 0 && (line.startsWith("\\(", index) || line.startsWith("\\[", index))) {
+        mathEnd = line[index + 1] === "(" ? "\\)" : "\\]";
+        result += line.slice(index, index + 2);
+        index += 2;
+        continue;
       }
       result += line[index];
       index += 1;
@@ -162,7 +202,7 @@ function linkObsidianWikiLinks(markdown: string): string {
 export function chatGptHtmlToMarkdown(html: string): string {
   if (!html.trim()) return "";
   return preserveCodexPlanEnvelope(
-    linkObsidianWikiLinks(preserveObsidianWikiLinks(turndown.turndown(html))).trim(),
+    linkObsidianWikiLinks(turndown.turndown(preserveKatexSource(html))).trim(),
   );
 }
 
@@ -201,6 +241,10 @@ export class ChatGptMarkdownConsistencyError extends Error {
     committedEnd?: number;
     observedTextChars: number;
     committedTextChars: number;
+    observedTag?: string;
+    committedTag?: string;
+    observedIndex: number;
+    committedIndex: number;
   }) {
     super(message);
     this.name = "ChatGptMarkdownConsistencyError";
@@ -333,10 +377,11 @@ export class ChatGptMarkdownBuffer {
       .at(-1);
     const lastCommittedEnd = lastRangedCommitted?.sourceEnd;
     let highestCommittedIndex = -1;
+    const matchedCommitted = new Set<number>();
     let sawPending = false;
     let previousSourceStart: number | undefined;
 
-    for (const segment of segments) {
+    for (const [observedIndex, segment] of segments.entries()) {
       if (segment.sourceStart !== undefined) {
         if (previousSourceStart !== undefined && segment.sourceStart <= previousSourceStart) {
           return new ChatGptMarkdownConsistencyError(
@@ -345,28 +390,35 @@ export class ChatGptMarkdownBuffer {
         }
         previousSourceStart = segment.sourceStart;
       }
-      const committedIndex = this.committedIndex(segment);
+      const committedIndex = this.committedIndex(segment, highestCommittedIndex, matchedCommitted);
+      if (committedIndex instanceof ChatGptMarkdownConsistencyError) return committedIndex;
       if (committedIndex !== undefined) {
         const committed = this.committed[committedIndex]!;
-        if (sawPending || committedIndex < highestCommittedIndex || committed.text !== segment.text) {
+        if (sawPending || committedIndex <= highestCommittedIndex || committed.text !== segment.text) {
           return this.changedCommittedBlockError(
-            sawPending || committedIndex < highestCommittedIndex ? "block_order_changed" : "text_changed",
+            sawPending || committedIndex <= highestCommittedIndex ? "block_order_changed" : "text_changed",
             segment,
             committed,
+            observedIndex,
+            committedIndex,
           );
         }
         highestCommittedIndex = committedIndex;
+        matchedCommitted.add(committedIndex);
         // Link destinations are answer content even when textContent remains identical.
         // Cosmetic DOM/formatting hydration still does not invalidate a committed paragraph.
         if (JSON.stringify(committed.linkTargets ?? []) !== JSON.stringify(segment.linkTargets ?? [])) {
-          return this.changedCommittedBlockError("link_target_changed", segment, committed);
+          return this.changedCommittedBlockError("link_target_changed", segment, committed, observedIndex, committedIndex);
         }
         continue;
       }
 
       if (segment.sourceStart !== undefined && lastCommittedEnd !== undefined) {
         if (segment.sourceStart <= lastCommittedEnd) {
-          return this.changedCommittedBlockError("source_range_overlap", segment, lastRangedCommitted!);
+          return this.changedCommittedBlockError(
+            "source_range_overlap", segment, lastRangedCommitted!, observedIndex,
+            this.committed.indexOf(lastRangedCommitted!),
+          );
         }
         sawPending = true;
         pending.push(segment);
@@ -386,7 +438,11 @@ export class ChatGptMarkdownBuffer {
     return pending;
   }
 
-  private committedIndex(segment: ChatGptMarkdownSegment): number | undefined {
+  private committedIndex(
+    segment: ChatGptMarkdownSegment,
+    afterIndex: number,
+    matched: ReadonlySet<number>,
+  ): number | ChatGptMarkdownConsistencyError | undefined {
     const exact = this.committed.findIndex(committed => (
       segment.sourceStart !== undefined && committed.sourceStart !== undefined
         ? segment.sourceStart === committed.sourceStart && segment.tag === committed.tag
@@ -403,7 +459,20 @@ export class ChatGptMarkdownBuffer {
     const semanticMatches = this.committed
       .map((committed, index) => ({ committed, index }))
       .filter(({ committed }) => committed.tag === segment.tag && committed.text === segment.text);
-    return semanticMatches.length === 1 ? semanticMatches[0]!.index : undefined;
+    // Match each committed occurrence at most once, in response order. A new
+    // repeated paragraph must not be rebound to an occurrence already consumed
+    // by this snapshot. Counting from zero breaks when earlier blocks disappear.
+    const remaining = semanticMatches.filter(match => match.index > afterIndex);
+    if (remaining.length === 1) return remaining[0]!.index;
+    if (remaining.length > 1) {
+      if (afterIndex >= 0 && remaining[0]!.index === afterIndex + 1) return remaining[0]!.index;
+      return new ChatGptMarkdownConsistencyError("ChatGPT final DOM has ambiguous repeated text already streamed to Codex");
+    }
+    // A known pending tail can survive removal of its committed prefix. Without
+    // that evidence, an unseen earlier occurrence is a reorder, not new text.
+    const earlier = semanticMatches.find(match => !matched.has(match.index));
+    if (earlier && !this.matchesLatestPending(segment)) return earlier.index;
+    return undefined;
   }
 
   private matchesLatestPending(segment: ChatGptMarkdownSegment): boolean {
@@ -442,6 +511,8 @@ export class ChatGptMarkdownBuffer {
     reason: NonNullable<ChatGptMarkdownConsistencyError["diagnostic"]>["reason"],
     observed: ChatGptMarkdownSegment,
     committed: CommittedChatGptMarkdownSegment,
+    observedIndex: number,
+    committedIndex: number,
   ): ChatGptMarkdownConsistencyError {
     return new ChatGptMarkdownConsistencyError(
       "ChatGPT changed a completed text block that was already streamed to Codex",
@@ -453,6 +524,10 @@ export class ChatGptMarkdownBuffer {
         committedEnd: committed.sourceEnd,
         observedTextChars: observed.text.length,
         committedTextChars: committed.text.length,
+        observedTag: observed.tag,
+        committedTag: committed.tag,
+        observedIndex,
+        committedIndex,
       },
     );
   }

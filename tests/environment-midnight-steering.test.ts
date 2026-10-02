@@ -383,3 +383,51 @@ const externalProfileXml = `<permission_profile type="external"><file_system typ
     body.input[0] = { ...environment, id: undefined };
     expect(() => store.resolve(request)).toThrow();
   });
+
+const workspaceWriteProfileXml = `<permission_profile type="managed"><file_system type="restricted"><entry access="read"><special>:root</special></entry><entry access="write"><path>${root}</path></entry><entry access="write"><special>:slash_tmp</special></entry><entry access="write"><special>:tmpdir</special></entry><entry access="read"><path>${root}/.git</path></entry></file_system></permission_profile>`;
+  test("steering accepts a native output write root beyond the workspace roots", () => {
+    const { codexHome, request, body, rolloutPath, environment, auxiliary } = steeredRolloutFixture(false, []);
+    const output = join(codexHome, "visualizations", "current-task");
+    environment.content[1]!.text = environment.content[1]!.text.replace(
+      dangerFullAccessProfileXml, workspaceWriteProfileXml,
+    );
+    const metadata = JSON.parse(body.client_metadata["x-codex-turn-metadata"]!);
+    metadata.sandbox_mode = "workspace-write";
+    body.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
+    const entries = [
+      { path: { type: "special", value: { kind: "root" } }, access: "read" },
+      ...[root, auxiliary, output].map(path => ({ path: { type: "path", path }, access: "write" })),
+      { path: { type: "special", value: { kind: "slash_tmp" } }, access: "write" },
+      { path: { type: "special", value: { kind: "tmpdir" } }, access: "write" },
+    ];
+    writeFileSync(rolloutPath, [
+      { type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } },
+      childTurnContext(rolloutTurnId, {
+        workspace_roots: [root, auxiliary],
+        sandbox_policy: { type: "workspace-write", writable_roots: [auxiliary, output], network_access: false },
+        permission_profile: { type: "managed", file_system: { type: "restricted", entries }, network: "restricted" },
+        file_system_sandbox_policy: { kind: "restricted", entries },
+      }),
+    ].map(value => JSON.stringify(value)).join("\n") + "\n");
+
+    const actual = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request);
+    expect(actual.roots).toEqual([root, auxiliary]);
+    expect(actual.writableRoots).toEqual([root, auxiliary, output]);
+    expect(actual.sandboxPolicy).toEqual({
+      type: "workspaceWrite", writableRoots: [root, auxiliary, output], networkAccess: false,
+    });
+
+    const originalClaim = environment.content[1]!.text;
+    environment.content[1]!.text = originalClaim.replace(
+      "</file_system>", `<entry access="write"><path>${join(codexHome, "unproven-output")}</path></entry></file_system>`,
+    );
+    // Envelope entries cannot add grants: only the current native rollout can.
+    expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request)).toEqual(actual);
+    environment.content[1]!.text = originalClaim;
+
+    environment.content[1]!.text = environment.content[1]!.text.replace(
+      `<root>${auxiliary}</root>`, `<root>${resolve(root, "..", "unproven-root")}</root>`,
+    );
+    expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request))
+      .toThrow("Steering environment conflicts");
+  });
