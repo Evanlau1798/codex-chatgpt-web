@@ -81,6 +81,7 @@ import {
 import {
   activateChatGptSendControl,
   activateOwnedChatGptSendControl,
+  assertChatGptPreSendHistory,
   bindChatGptAssistantTurn,
   ChatGptOwnedSendStateUnknownError,
   ChatGptTurnIdentityAmbiguityError,
@@ -2084,6 +2085,7 @@ export class ChatGptBrowserWorker {
     }
     await captureDiagnostic?.("send-ready");
     await onSendActivated?.();
+    initialResponseTurn = baseline.initialResponseTurn ?? initialResponseTurn;
     const initialProgress = externalProgress?.snapshot();
     const initialToolBatchRevision = initialProgress?.lastToolBatchRevision ?? 0;
     const initialBrokerActivityRevision = initialProgress?.lastBrokerActivityRevision ?? 0;
@@ -2203,23 +2205,33 @@ export class ChatGptBrowserWorker {
   private async captureSubmissionBaseline(
     page: Page,
     submittedText?: string,
+    previous?: ChatGptSubmissionBaseline,
   ): Promise<ChatGptSubmissionBaseline> {
+    const initialPageUrl = page.url();
     const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
     const responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
     const [userIdentities, initialResponseTurn] = await Promise.all([
       readChatGptTurnIdentities(userTurns),
       readChatGptAssistantTurnState(responseTurns),
     ]);
+    const initialTurnIdentities = initialResponseTurn.knownTurnIdentities ?? [
+      ...userIdentities, ...(initialResponseTurn.identities ?? []),
+    ];
+    if (initialPageUrl !== page.url() || (previous && previous.initialPageUrl !== initialPageUrl)) {
+      throw new ChatGptWebAdapterError("ChatGPT history changed before Send: browser surface changed", {
+        status: 502, errorType: "server_error", code: "chatgpt_submission_ambiguous", retryable: false, retireSession: true,
+      });
+    }
+    if (previous) {
+      assertChatGptPreSendHistory(previous.initialTurnIdentities, initialTurnIdentities);
+    }
     return {
       userTurns,
       responseTurns,
       initialUserTurnCount: userIdentities.length,
       initialResponseTurnCount: initialResponseTurn.count,
-      initialTurnIdentities: initialResponseTurn.knownTurnIdentities ?? [
-        ...userIdentities,
-        ...(initialResponseTurn.identities ?? []),
-      ],
-      initialPageUrl: page.url(),
+      initialTurnIdentities,
+      initialPageUrl,
       initialResponseTurn,
       submittedText,
     };
@@ -3927,7 +3939,10 @@ export class ChatGptBrowserWorker {
             { status: 401, errorType: "authentication_error", code: "chatgpt_sign_in_required", retryable: false },
           );
         }
-        if (!originalError && terminal === "completed" && canWarm && startupInput && lease.startupAllowed === true) {
+        const startupBlocked = originalError instanceof ChatGptWebAdapterError
+          && ([401, 403, 429].includes(originalError.status) || originalError.code === "client_cancelled");
+        if (terminal !== "aborted" && !turn.abortSignal?.aborted && !startupBlocked
+          && canWarm && startupInput && lease.startupAllowed === true) {
           primeStartup();
         }
       } catch (controlError) {
@@ -4242,6 +4257,7 @@ export class ChatGptBrowserWorker {
               turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
               async () => {
                 await this.assertSelectedEffort(page, mode, true, turn.traceId);
+                Object.assign(baseline, await this.captureSubmissionBaseline(page, stage.text, baseline));
                 submissionRejection.begin(page);
               },
               undefined,
@@ -4264,7 +4280,7 @@ export class ChatGptBrowserWorker {
           const responseTurn = await this.waitForNewAssistantTurn(
             page,
             page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR),
-            initialResponseTurn,
+            baseline.initialResponseTurn ?? initialResponseTurn,
             deadline,
             acknowledgementSignal,
             undefined,
@@ -4353,7 +4369,7 @@ export class ChatGptBrowserWorker {
         let completionTracker = new ChatGptCompletionTracker();
         let initialToolBatchRevision = 0;
         let userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
-        const initialUserTurnCount = await userTurns.count();
+        let initialUserTurnCount = await userTurns.count();
         let submissionBaseline: ChatGptSubmissionBaseline = {
           userTurns,
           responseTurns,
@@ -4597,6 +4613,15 @@ export class ChatGptBrowserWorker {
         }
         submissionRejection.begin(page);
         if (!recoveryFinalizationActivated) await turn.onSendActivated?.();
+        // IPC activation acknowledgement can restore virtualized history too. Refresh only
+        // after it settles, while the terminal anchor and retained identity order are proven.
+        if (recoveryExpectedActivityRevision === undefined) {
+          const refreshed = await this.captureSubmissionBaseline(page, responsePrompt, submissionBaseline);
+          submissionBaseline = { ...submissionBaseline, ...refreshed };
+          initialResponseTurn = refreshed.initialResponseTurn!;
+          initialUserTurnCount = refreshed.initialUserTurnCount;
+          responseTurn = responseTurns.nth(initialResponseTurn.count);
+        }
         const initialProgress = turn.externalProgress?.snapshot();
         initialToolBatchRevision = initialProgress?.lastToolBatchRevision ?? 0;
         const initialBrokerActivityRevision = initialProgress?.lastBrokerActivityRevision ?? 0;

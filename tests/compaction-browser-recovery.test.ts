@@ -7,6 +7,7 @@ import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker
 import { chatGptBrowserTabClosedError } from "../src/adapters/chatgpt-web/adapter-error";
 import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
+import { CHATGPT_USER_TURN_SELECTOR, CHATGPT_ASSISTANT_TURN_SELECTOR } from "../src/chatgpt-session";
 
 test.each([
   [true, false, true, "inline", false, false, false],
@@ -37,14 +38,25 @@ test.each([
     isVisible: async () => false };
   const row = { waitFor: async () => {}, count: async () => 1, getAttribute: async () => "" };
   let activated = 0;
+  let finalSent = false;
+  const remountHistory = owned && !tools && multipart;
+  let historyRemounted = false;
+  const users = () => remountHistory ? [...(historyRemounted ? ["older-user"] : []), "old-user"] : [];
+  const assistants = () => remountHistory ? [...(historyRemounted ? ["older-assistant"] : []), "old-assistant"] : [];
+  const history = () => remountHistory ? [...(historyRemounted ? ["older-user", "older-assistant"] : []), "old-user", "old-assistant"] : [];
+  const responseTurns = { ...hidden, page: () => page,
+    evaluateAll: async () => ({ count: assistants().length, identities: assistants(), ambiguous: false }) };
   const frame = {};
   const page = Object.assign(new EventEmitter(), { mainFrame: () => frame, evaluate: async () => ({}), isClosed: () => false,
     getByText: () => ({}),
     keyboard: { press: async () => {} },
-    locator: (selector: string) => selector.includes('.__menu-item[tabindex="0"]')
-      ? { filter: () => row } : hidden,
+    locator: (selector: string) => selector === CHATGPT_USER_TURN_SELECTOR
+      ? { ...hidden, count: async () => users().length, evaluateAll: async () => users() }
+      : selector === CHATGPT_ASSISTANT_TURN_SELECTOR ? responseTurns
+      : selector === "[data-turn-id-container], [data-turn-key]" ? { evaluateAll: async () => history() }
+      : selector.includes('.__menu-item[tabindex="0"]') ? { filter: () => row } : hidden,
     url: () => {
-      if (stage === "send") { actions.push("observe"); throw finalResponse; }
+      if (stage === "send" && finalSent) { actions.push("observe"); throw finalResponse; }
       return "https://chatgpt.com/?temporary-chat=true";
     } });
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
@@ -53,7 +65,9 @@ test.each([
     runStage: async (_trace: string, name: string, timeout: number, action: (signal: AbortSignal) => Promise<unknown>) => {
       stage = name;
       if (name === "send" || name.endsWith("_send")) sendBudgets.push(timeout);
-      return action(new AbortController().signal);
+      const result = await action(new AbortController().signal);
+      if (remountHistory && name === "multipart_stage_1_attachment") historyRemounted = true;
+      return result;
     },
     prepareChatSurface: async () => {},
     assertSelectedEffort: async () => {},
@@ -69,6 +83,7 @@ test.each([
       press: async () => { actions.push("connector-select"); selected = true; },
       locator: () => ({ locator: () => ({
       waitFor: async () => {}, isEnabled: async () => true, press: async () => {
+        finalSent = true;
         actions.push("send");
         if (cancellationCase) {
           const request = { method: () => "POST", url: () => "https://chatgpt.com/backend-api/f/conversation", frame: () => frame };
@@ -117,14 +132,19 @@ test.each([
     connectorIsSelected: async () => { actions.push("connector-check"); return requiredRetained ? selected : true; },
     attachFiles: async () => { actions.push("files"); },
     sendAttachedPrompt: async (...args: unknown[]) => {
+      await (args[5] as () => Promise<void>)();
+      if (remountHistory) {
+        expect((args[1] as { initialTurnIdentities: string[] }).initialTurnIdentities).toContain("older-user");
+        expect((args[1] as { initialResponseTurn: { count: number } }).initialResponseTurn.count).toBe(2);
+      }
       // Context ingestion cannot mistake tool activity for acknowledgement of a part.
       expect(args[6]).toBeUndefined();
-      await (args[5] as () => Promise<void>)();
       recoveryCallbacks.push(args[7]);
       actions.push("send");
       return "user_turn";
     },
     waitForNewAssistantTurn: async (...args: unknown[]) => {
+      if (remountHistory) expect((args[2] as { count: number }).count).toBe(2);
       expect(args[5]).toBeUndefined();
       recoveryCallbacks.push(args[7]);
       actions.push("observe");

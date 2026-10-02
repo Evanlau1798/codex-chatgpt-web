@@ -1,4 +1,5 @@
 import type { Locator } from "playwright-core";
+import { ChatGptWebAdapterError } from "./adapter-error";
 import {
   chatGptAssistantTurnSelector,
   isTemporaryChatGptTurnUrl,
@@ -278,6 +279,24 @@ export function chatGptNewTurnIdentity(
   const added = current.filter(identity => !previous.has(identity));
   if (added.length > 1) throw new Error(`ChatGPT exposed ${added.length} new conversation turns for one submitted message`);
   return added[0];
+}
+
+/** Before Send, only history preceding the same terminal anchor may be remounted. */
+export function assertChatGptPreSendHistory(initial: readonly string[], current: readonly string[]): void {
+  const initialSet = new Set(initial);
+  const currentSet = new Set(current);
+  const retainedInitial = initial.filter(identity => currentSet.has(identity));
+  const retainedCurrent = current.filter(identity => initialSet.has(identity));
+  const stable = initial.length === 0 ? current.length === 0
+    : current.at(-1) === initial.at(-1)
+      && retainedInitial.length === retainedCurrent.length
+      && retainedInitial.every((identity, index) => identity === retainedCurrent[index]);
+  if (!stable) {
+    throw new ChatGptWebAdapterError(
+      `ChatGPT history changed before Send (initial=${initial.length}, current=${current.length}); refusing to submit`,
+      { status: 502, errorType: "server_error", code: "chatgpt_submission_ambiguous", retryable: false, retireSession: true },
+    );
+  }
 }
 
 export function chatGptReboundTurnIdentity(

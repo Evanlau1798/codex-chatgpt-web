@@ -574,15 +574,25 @@ test("every post-Send identity observer uses transient read-only recovery", () =
   expect((source.match(/(?:const|let) initialResponseTurn = await readChatGptAssistantTurnState\(/g) ?? []).length).toBe(2);
 });
 
-test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as const)("production %s send reacquires locators after recovery without resending", async lane => {
-  let reads = 0;
-  const first = surface(async () => {
-    // Multipart captures its baseline in production before activating Send.
-    if (lane === "multipart" && ++reads === 1) return initial;
-    return timeout();
-  });
-  const next = surface(async () => ({ count: 1, lastId: "conversation-turn-new" }));
+test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "final-activation-remount", "final-activation-surface-change", "final-activation-trailing-turn"] as const)("production %s send reacquires locators after recovery without resending", async lane => {
   const events: string[] = [];
+  const first = surface(async () => {
+    if (events.includes("send")) return timeout();
+    if (lane === "final-activation-trailing-turn" && events.includes("activated")) {
+      return { count: 2, lastId: "unexpected", identities: [initial.lastId, "unexpected"],
+        knownTurnIdentities: [initial.lastId, "unexpected"] };
+    }
+    return lane === "final-activation-remount" && events.includes("activated")
+      ? { count: 2, lastId: initial.lastId, identities: ["history-assistant", initial.lastId],
+        knownTurnIdentities: ["history-user", "history-assistant", initial.lastId] }
+      : initial;
+  }, async () => lane === "final-activation-remount" && events.includes("activated")
+    ? ["history-user", initial.lastId] : [initial.lastId], {
+      url: () => lane === "final-activation-surface-change" && events.includes("activated")
+        ? "https://chatgpt.com/c/foreign" : "https://chatgpt.com/?temporary-chat=true",
+    });
+  Object.assign(first.baseline, { initialPageUrl: first.page.url() });
+  const next = surface(async () => ({ count: 1, lastId: "conversation-turn-new" }));
   const verified: Array<{ text: string; preserveLeading: boolean }> = [];
   const instance = Object.assign(worker(), {
     config: { experimentalNoAutoCompact: false, experimentalComposerPlainText: lane === "final-prewrap" },
@@ -591,6 +601,9 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
         expect(options).toMatchObject({ noWaitAfter: true, timeout: 0 });
         expect(options.signal).toBeInstanceOf(AbortSignal);
         events.push("send");
+        if (lane === "final-activation-remount") {
+          expect(baselineAfterActivation?.initialTurnIdentities ?? []).toContain("history-user");
+        }
       },
     }) }) }),
     attachPrompt: async () => { events.push("attach"); },
@@ -606,6 +619,13 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
       events.push("ack");
     },
   });
+  let baselineAfterActivation: Baseline | undefined;
+  const captureBaseline = (instance as any).captureSubmissionBaseline;
+  (instance as any).captureSubmissionBaseline = async (...args: unknown[]) => {
+    const baseline = await captureBaseline.apply(instance, args);
+    if (events.includes("activated")) baselineAfterActivation = baseline;
+    return baseline;
+  };
   const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   const start = lane !== "multipart"
     ? source.indexOf('        await this.runStage(\n          turn.traceId,\n          "send",')
@@ -651,8 +671,8 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
       let responseTurn = first.assistant;
       const userTurns = first.baseline.userTurns;
       let initialResponseTurn = initial;
-      const initialUserTurnCount = 1;
-      const submissionBaseline = first.baseline;
+      let initialUserTurnCount = 1;
+      let submissionBaseline = first.baseline;
       const reuseConversation = false;
       const responseAttempt = 1;
       let initialToolBatchRevision = 0;
@@ -673,6 +693,11 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap"] as 
     }
   `);
   const run = new Function(...Object.keys(dependencies), `${compiled}; return run;`)(...Object.values(dependencies));
+  if (lane === "final-activation-surface-change" || lane === "final-activation-trailing-turn") {
+    await expect(run.call(instance)).rejects.toMatchObject({ code: "chatgpt_submission_ambiguous", retryable: false });
+    expect(events).toEqual(["verify:final prompt", "activated"]);
+    return;
+  }
   const result = await run.call(instance);
   if (lane !== "multipart") {
     expect(result.responseTurns).toBe(next.responses);
