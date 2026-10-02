@@ -89,7 +89,7 @@ async function refillFixture(error: Error, endFailure = false) {
     pid: process.pid, endpoint: `http://127.0.0.1:${server.port}`,
     control: { endpoint: `http://127.0.0.1:${server.port}`, token: "offline-fixture-token-0123456789abcdefghijklmnop" },
     helper: { executable: process.execPath, script: import.meta.path }, partition: "persist:codex-web-gpt-chatgpt",
-    idleUrl: LAUNCHER_BROWSER_IDLE_URL, surfaceId, surfaceTargets: { [surfaceId]: "owned-target" }, createdAt: new Date().toISOString() }));
+    idleUrl: LAUNCHER_BROWSER_IDLE_URL, surfaceId, surfaceTargets: { [surfaceId]: "owned-target" }, createdAt: new Date().toISOString() }), { mode: 0o600 });
   const previous = process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
   process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = "1";
   const pool = new ChatGptStartupPagePool<any>();
