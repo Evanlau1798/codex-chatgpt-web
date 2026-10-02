@@ -1,3 +1,4 @@
+import { fr } from "./i18n-fr";
 import type { Language } from "./types";
 import { zeroRiskCopy } from "./zero-risk-copy";
 import { ja } from "./i18n-ja";
@@ -546,6 +547,7 @@ function baseCopyFor(language: Language): Copy {
   if (language === "zh-CN") return zh as Copy;
   if (language === "zh-TW") return { ...en, ...zhTW } as Copy;
   if (language === "ja") return ja as Copy;
+  if (language === "fr") return { ...en, ...fr } as Copy;
   if (language === "ko") return { ...en, ...ko } as Copy;
   return en;
 }

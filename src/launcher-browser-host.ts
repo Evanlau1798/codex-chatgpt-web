@@ -1,3 +1,4 @@
+import { parseChatGptWebModelCapabilities, type ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
@@ -263,12 +264,10 @@ export async function inspectLauncherBrowserHost(
     expectedProfile?: LauncherBrowserHostProfile;
     timeoutMs?: number;
   } = {},
-): Promise<{
+): Promise<Partial<Pick<ChatGptWebAccountCapabilities, "solAvailable" | "extraHighAvailable" | "proAvailable" | "modelCapabilities">> & {
   authenticated: true;
   temporary: true;
   composer: true;
-  solAvailable?: boolean;
-  extraHighAvailable?: boolean; proAvailable?: boolean;
   url: string;
 }> {
   const descriptor = readLauncherBrowserHostDescriptor(descriptorPath);
@@ -318,6 +317,7 @@ export async function inspectLauncherBrowserHost(
         solAvailable: body.solAvailable as boolean,
         extraHighAvailable: body.extraHighAvailable as boolean,
         proAvailable: body.proAvailable as boolean,
+        modelCapabilities: parseChatGptWebModelCapabilities(body.modelCapabilities),
       } : {}),
     };
   } catch (error) {

@@ -31,15 +31,18 @@ test("setup accepts only a matching daemon that is ready for new Codex turns", (
   expect(setupProxyIsReady({ ...ready, version: "0.1.16" }, config)).toBe(false);
 });
 
-test("launcher setup refreshes account capabilities only when missing or explicitly requested", () => {
+test("launcher setup reuses fresh per-model observations unless a refresh is requested", () => {
   const verifiedLauncher = {
     browserHost: "launcher",
     solAvailable: true,
     extraHighAvailable: false, proAvailable: false,
+    modelCapabilities: { observedAt: Date.now(), families: { "5.6": ["low", "medium", "high"] } },
   };
 
   expect(launcherCapabilityProbeRequired(undefined)).toBe(true);
   expect(launcherCapabilityProbeRequired(verifiedLauncher as never)).toBe(false);
+  expect(launcherCapabilityProbeRequired({ ...verifiedLauncher, modelCapabilities: undefined } as never)).toBe(true);
+  expect(launcherCapabilityProbeRequired({ ...verifiedLauncher, modelCapabilities: { observedAt: 0, families: {} } } as never)).toBe(true);
   expect(launcherCapabilityProbeRequired({ ...verifiedLauncher, extraHighAvailable: undefined } as never)).toBe(true);
   expect(launcherCapabilityProbeRequired({
     browserHost: "launcher",
@@ -157,7 +160,13 @@ test.skipIf(process.platform !== "darwin")("external service setup retains valid
     spyOn(integration, "preflightCodexIntegration").mockImplementation(() => {}),
     spyOn(integration, "installCodexIntegration").mockImplementation(() => ({} as never)),
     spyOn(browserLogin, "browserLoginStateExists").mockReturnValue(true),
-    spyOn(browserLogin, "storedBrowserLoginCapabilities").mockReturnValue({ solAvailable: true, extraHighAvailable: false, proAvailable: false } as never),
+    spyOn(browserLogin, "storedBrowserLoginCapabilities").mockReturnValue({
+      solAvailable: true, extraHighAvailable: false, proAvailable: false,
+      modelCapabilities: { observedAt: Date.now(), families: { "5.6": ["low", "medium", "high"] } },
+    } as never),
+    spyOn(browserLogin, "inspectBrowserLoginCapabilities").mockImplementation(async () => {
+      throw new Error("Fresh stored capabilities must not inspect a real browser");
+    }),
     spyOn(service, "getServiceStatus").mockReturnValue({ installed: true, loaded: true } as never),
     spyOn(service, "assertServiceIdle").mockResolvedValue(undefined),
     spyOn(service, "installService").mockReturnValue({ installed: true, loaded: true } as never),

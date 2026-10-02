@@ -1,15 +1,49 @@
 import { expect, test } from "bun:test";
-import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptBrowserWorker, ChatGptTurnDomHealthTracker } from "../src/adapters/chatgpt-web/browser-worker";
 import {
   CHATGPT_COMPOSER_SELECTOR,
   CHATGPT_EFFORT_CONTROL_SELECTOR,
   CHATGPT_EFFORT_MENU_SELECTOR,
   CHATGPT_EFFORT_SLIDER_CONTAINER_SELECTOR,
+  CHATGPT_STOP_BUTTON_SELECTOR,
   activateChatGptEffortMenu,
   assertNewChatPage,
   chatGptNewChatUrl,
   detectChatGptAccountCapabilities,
 } from "../src/chatgpt-session";
+
+test("French generation stays live beyond the completion grace period and still requires a finished answer", () => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+  // Captured from the French composer: this renderer has no stop-button test id.
+  const document = createDocument('<form data-chatgpt-composer><button type="button" aria-label="Arrêter"><svg class="icon-primary-action"><path d="M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"></path></svg></button></form>');
+  const tracker = new ChatGptTurnDomHealthTracker();
+  const state = () => ({ responsePresent: true, running: !!document.querySelector(CHATGPT_STOP_BUTTON_SELECTOR),
+    currentText: "Résumé partiel", completionActionVisible: false });
+  expect(state().running).toBeTrue();
+  for (const now of [0, 60_000, 60_001, 180_000]) expect(tracker.update(state(), now)).toBeUndefined();
+  document.querySelector("button")!.remove();
+  expect(state().running).toBeFalse();
+  expect(tracker.update(state(), 180_001)).toBeUndefined();
+  expect(tracker.update(state(), 240_001)).toBeUndefined();
+  expect(tracker.update(state(), 240_002)).toContain("did not expose its completed-turn action");
+  expect(tracker.update({ ...state(), completionActionVisible: true }, 240_003)).toBeUndefined();
+});
+
+test("generation control detection preserves legacy and English controls and excludes unrelated French buttons", () => {
+  const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
+  const document = createDocument(`<button data-testid="stop-button" id="legacy"></button>
+    <button type="button" aria-label="Arrêter" id="outside"></button>
+    <form><button type="button" aria-label="Arrêter" id="other-form"></button></form>
+    <form data-chatgpt-composer>
+      <button type="button" aria-label="Stop" id="english"></button>
+      <button type="button" aria-label="Arrêter" id="french"><svg class="icon-primary-action"><path d="M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"></path></svg></button>
+      <button type="submit" aria-label="Arrêter" id="submit"></button>
+      <button type="button" aria-label="Envoyer" id="send"></button>
+      <button type="button" aria-label="Arrêter autre chose" id="different-action"></button>
+    </form>`);
+  expect(Array.from(document.querySelectorAll(CHATGPT_STOP_BUTTON_SELECTOR)).map(element => element.id))
+    .toEqual(["legacy", "english", "french"]);
+});
 
 test("saved chats start empty and cannot reuse an arbitrary conversation or a Temporary Chat", async () => {
   expect(chatGptNewChatUrl()).toBe("https://chatgpt.com/?temporary-chat=true");
@@ -207,7 +241,7 @@ test("a complete authenticated composer with no effort selector is Luna-only", a
   await expect(detectChatGptAccountCapabilities(page as never, {
     selectorTimeoutMs: 100,
     stableAbsenceMs: 0,
-  })).resolves.toEqual({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
+  })).resolves.toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
 });
 
 test("a transient effort control does not turn a Luna-only account into Sol", async () => {
@@ -238,7 +272,7 @@ test("a transient effort control does not turn a Luna-only account into Sol", as
   await expect(detectChatGptAccountCapabilities(page as never, {
     selectorTimeoutMs: 100,
     stableAbsenceMs: 0,
-  })).resolves.toEqual({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
+  })).resolves.toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
   expect(visibilityReads).toBe(2);
 });
 
@@ -294,7 +328,7 @@ function reasoningPicker(options: { max?: string; locks?: Array<string | null>; 
   };
   const composer = { filter() { return this; }, last() { return this; }, count: async () => 1, isEditable: async () => true, locator: () => ({ count: async () => 1, locator: () => control }) };
   const modelRows = { count: async () => 3, first() { return this; }, waitFor: async () => {}, nth: () => { throw new Error("Model rows are not effort choices"); } };
-  const menu = { filter() { return this; }, last() { return this; }, isVisible: async () => true, locator: () => modelRows };
+  const menu = { filter() { return this; }, last() { return this; }, isVisible: async () => true, locator: () => modelRows, getByRole: () => ({ count: async () => 0 }) };
   const page = {
     url: () => "https://chatgpt.com/?temporary-chat=true",
     evaluate: async () => true,

@@ -1,3 +1,4 @@
+import { fr } from "./limits-copy-fr";
 import type { Language } from "./types";
 
 const en = {
@@ -312,7 +313,7 @@ const ko: LimitsCopy = {
   businessBody: "Business 한도는 참고용입니다. Business 사용량 추적은 지원하지 않습니다.",
 };
 
-const copies: Record<Language, LimitsCopy> = { en, "zh-CN": zhCN, "zh-TW": zhTW, ja, ko };
+const copies: Record<Language, LimitsCopy> = { en, "zh-CN": zhCN, "zh-TW": zhTW, ja, ko, fr };
 
 export function limitsCopyFor(language: Language): LimitsCopy {
   return copies[language];
