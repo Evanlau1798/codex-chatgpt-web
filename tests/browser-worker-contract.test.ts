@@ -3569,9 +3569,13 @@ test("two-part saved chats re-prove unchanged effort after the first message cre
   const page = Object.assign(new EventEmitter(), {
     url: () => url, isClosed: () => false,
     evaluate: async () => { throw new Error("No real browser in the transport fixture"); },
-    locator: () => ({ count: async () => sends, nth() { return this; }, last() { return this; },
+    locator: (selector: string) => ({ page: () => page, count: async () => sends, nth() { return this; }, last() { return this; },
       filter() { return this; }, isVisible: async () => false,
-      evaluateAll: async () => ({ count: sends, identities: sends ? ["saved_stage"] : [], ambiguous: false }),
+      evaluateAll: async () => selector === accountSession.CHATGPT_USER_TURN_SELECTOR
+        ? (sends ? ["saved_user"] : [])
+        : selector === "[data-turn-id-container], [data-turn-key]"
+        ? (sends ? ["saved_user", "saved_stage"] : [])
+        : ({ count: sends, identities: sends ? ["saved_stage"] : [], ambiguous: false }),
     }),
   });
   let sends = 0;

@@ -61,9 +61,8 @@ test.each([true, false])("reserved Native inventory shortcuts match manualContro
   const { text } = compileChatGptWebPrompt(parsed, { ...capabilities, solAvailable: true }, requestId, {
     manualControl: manualControl ? true : undefined,
   });
-  for (const query of ["__codex_read_file__:", "__codex_tool_search__:"]) {
-    expect(text.includes(query)).toBe(!manualControl);
-  }
+  expect(text.includes("__codex_read_file__:")).toBe(!manualControl);
+  expect(text.includes("__codex_tool_search__:")).toBe(false);
   expect(text).toContain("use codex_tool_inventory to find the required capability");
   expect(text).toContain("invoke its returned wire_name through codex_tool_call");
 });

@@ -30,15 +30,22 @@ export function hasUnsupportedNativeToolCauseClaim(text: string): boolean {
 
 export class ChatGptToolEvidenceGuard {
   private readonly errorEvidence: string[] = [];
+  private readonly returnedErrors: Array<{ toolCallId: string; is_error: true; content: string; truncated: boolean }> = [];
   private unsupportedCommentary = false;
   private correctionRetries = 0;
 
   observeToolResult(result: CodexToolResultMessage): void {
     if (!result.isError) return;
-    this.errorEvidence.push(contentText(result.content));
+    const text = contentText(result.content);
+    this.errorEvidence.push(text);
+    this.returnedErrors.push({ toolCallId: result.toolCallId, is_error: true,
+      content: text.slice(0, 4_000), truncated: text.length > 4_000 });
+    if (this.returnedErrors.length > MAX_ERROR_EVIDENCE) this.returnedErrors.shift();
     if (this.errorEvidence.length > MAX_ERROR_EVIDENCE) this.errorEvidence.shift();
     if (this.hasSupportingErrorEvidence()) this.unsupportedCommentary = false;
   }
+
+  recoveryErrorEvidence() { return this.returnedErrors.slice(-4).map(value => ({ ...value })); }
 
   shouldEmitCommentary(text: string): boolean {
     if (!hasUnsupportedNativeToolCauseClaim(text) || this.hasSupportingErrorEvidence()) return true;

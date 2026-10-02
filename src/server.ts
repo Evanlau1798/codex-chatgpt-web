@@ -39,6 +39,7 @@ import { COMPACT_PROMPT } from "./responses/compaction";
 import { handleCompactRequest } from "./responses/compact-handler";
 import { parseRequest } from "./responses/parser";
 import { expandPreviousResponseInput, flushResponseState, rememberResponseState } from "./responses/state";
+import { codexTitleAuxiliaryResponse } from "./responses/title-auxiliary";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
 import { VERSION } from "./version";
 import { messagesRequest } from "./messages";
@@ -113,6 +114,20 @@ export async function responseRequest(
   const requestedModel = raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as { model?: unknown }).model
     : undefined;
+  // Codex TUI title generation uses an ephemeral structured thread with no
+  // canonical rollout. Validate the visible Web route first so this local
+  // shortcut cannot make an unknown or unavailable model look enabled, then
+  // handle the exact title contract before lifecycle identity registration,
+  // adapter, broker, or browser work.
+  if (typeof requestedModel === "string" && isChatGptWebModelSlug(requestedModel)) {
+    try {
+      requireChatGptWebModelRoute(requestedModel, config);
+    } catch (error) {
+      return formatErrorResponse(400, "invalid_request_error", error instanceof Error ? error.message : String(error));
+    }
+    const titleAuxiliary = codexTitleAuxiliaryResponse(raw);
+    if (titleAuxiliary) return titleAuxiliary;
+  }
   try {
     const identity = extractCodexTurnIdentityFromBody(raw);
     if (identity.threadId && identity.turnId) {

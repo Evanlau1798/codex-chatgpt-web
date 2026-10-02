@@ -18,6 +18,7 @@ import { previousResponseReplayPrefixLength } from "./state";
 import { decodeReasoningEnvelope } from "./reasoning-envelope";
 import { prepareMultiAgentV2Tool } from "./multi-agent-v2";
 import { codexResponsesRequestKind } from "./request-metadata";
+import { CLAUDE_TOOL_RESULT_ERROR_MARKER, isClaudeTranslatedRequestBody } from "../messages/request";
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -276,6 +277,22 @@ function findToolById(messages: CodexMessage[], callId: string): { name: string;
   return { name: "" };
 }
 
+/**
+ * Read the explicit Claude tool-result failure bit from the unparsed request item.
+ *
+ * Zod intentionally strips the provider-private passthrough field from the normalized Responses
+ * item, so this lookup must use the original body. Requiring Claude's request hash and the exact
+ * In-process provenance plus the exact item/call-id shape keeps arbitrary native Responses input
+ * and tool prose from becoming errors; a caller-forged JSON hash is not provenance.
+ */
+function claudeToolResultIsError(body: unknown, inputIndex: number, callId: string): boolean {
+  if (!isClaudeTranslatedRequestBody(body) || !isObj(body) || !Array.isArray(body.input)) return false;
+  const rawItem = body.input[inputIndex];
+  if (!isObj(rawItem) || rawItem.type !== "function_call_output" || rawItem.call_id !== callId) return false;
+  const passthrough = rawItem.internal_chat_message_metadata_passthrough;
+  return isObj(passthrough) && passthrough[CLAUDE_TOOL_RESULT_ERROR_MARKER] === true;
+}
+
 const REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 export function parseRequest(body: unknown): CodexParsedRequest {
@@ -316,7 +333,7 @@ export function parseRequest(body: unknown): CodexParsedRequest {
   if (typeof data.input === "string") {
     messages.push({ role: "user", content: data.input, timestamp: now });
   } else if (data.input) {
-    for (const item of data.input) {
+    for (const [inputIndex, item] of data.input.entries()) {
       const effectiveType = (item as { type?: string }).type ?? ("role" in item ? "message" : undefined);
 
       if (effectiveType === "compaction_trigger") {
@@ -569,7 +586,8 @@ export function parseRequest(body: unknown): CodexParsedRequest {
         messages.push({
           role: "toolResult", toolCallId: output.call_id,
           toolName: toolInfo.name, toolNamespace: toolInfo.namespace,
-          content: outputToToolResultContent(output.output), isError: false, timestamp: now,
+          content: outputToToolResultContent(output.output),
+          isError: claudeToolResultIsError(body, inputIndex, output.call_id), timestamp: now,
         });
         continue;
       }
