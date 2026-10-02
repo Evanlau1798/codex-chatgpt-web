@@ -1,5 +1,6 @@
 import type { BrokerTurnOutputEvent, BrokerTurnOutputKind } from "./turn-broker-protocol";
 import type { TurnChannel, TurnOutputWaiter } from "./turn-broker-state";
+import { logNativeWorkflow } from "./native-observability";
 
 const MAX_OUTPUT_EVENT_CHARS = 1_000_000;
 const MAX_OUTPUT_TOTAL_CHARS = 5_000_000;
@@ -67,6 +68,8 @@ export function publishPendingFinalizationOutput(channel: TurnChannel): void {
 
 function publishTurnOutput(channel: TurnChannel, event: BrokerTurnOutputEvent): void {
   channel.outputEvents.push(event);
+  logNativeWorkflow(channel.traceId, { phase: "output_queued", kind: event.kind, sequence: event.sequence,
+    client_delivery: "not_observed", task_acceptance: "not_established" });
   channel.outputChars += event.text.length;
   if (event.kind === "final") channel.outputFinalSequence = event.sequence;
   channel.activityRevision += 1;

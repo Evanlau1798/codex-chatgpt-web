@@ -2436,6 +2436,16 @@ class BrowserHost {
     return inspected;
   }
 
+  async inspectNativeReadiness() {
+    requireAutomaticBrowserInspection(this, "Native permission and catalog inspection");
+    return this.withManualOperation("Native readiness", async () => {
+      const result = await this.runBrowserHelperOperation({ helper: this.helper,
+        descriptorPath: this.descriptorPath, appName: this.connectorName(),
+        operation: "native_readiness", logger: this.logger });
+      return result?.value;
+    });
+  }
+
   async inspectLimitsPlan() {
     requireAutomaticBrowserInspection(this, "Limits plan detection");
     return this.withManualOperation("Limits plan detection", async () => {

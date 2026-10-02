@@ -30,6 +30,7 @@ export async function invokeChatGptMcpTool(
     return await callTurnBroker<BrokerToolResult>(socketPath, {
       method: "invoke",
       bindingId,
+      includeResultReceipt: true,
       ...request,
     }, timeoutMs, signal);
   } catch (error) {

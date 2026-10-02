@@ -267,8 +267,9 @@ async function setupCommand(args: string[]): Promise<void> {
 
 async function doctorCommand(args: string[]): Promise<void> {
   const json = takeFlag(args, "--json");
+  const native = takeFlag(args, "--native");
   assertNoArgs(args);
-  const report = await runDoctor();
+  const report = await runDoctor({ native });
   stdout.write(json ? `${JSON.stringify(report, null, 2)}\n` : formatDoctorReport(report));
   if (!report.ok) process.exitCode = 1;
 }

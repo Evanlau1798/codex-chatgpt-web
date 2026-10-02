@@ -205,6 +205,8 @@ import {
   resolveChatGptWebMultipartStagingMode,
   type PreparedChatGptWebMultipartTransport,
 } from "./multipart-browser-transport";
+import { inspectNativePluginReadiness } from "./native-readiness";
+import { NativeWorkflowSignals } from "./native-observability";
 
 export {
   assertChatGptWebMultipartInputWithinLimits,
@@ -505,6 +507,18 @@ export class ChatGptSubmissionRejectionObserver {
     if (!this.requests.has(response.request())) return;
     this.statuses.push(response.status());
     if (this.statuses.length > 8) this.statuses.shift();
+    const headers = response.headers?.() ?? {};
+    console.info(`[chatgpt-web] owned_provider_response ${JSON.stringify({ status: response.status(),
+      contentType: headers["content-type"]?.includes("text/event-stream") ? "sse"
+        : headers["content-type"]?.includes("json") ? "json" : "other" })}`);
+    if (response.status() >= 400 && response.status() !== 413) {
+      const status = response.status();
+      const code = status === 401 ? "chatgpt_authentication_required" : status === 403 ? "chatgpt_request_forbidden"
+        : status === 429 ? "chatgpt_rate_limited" : "chatgpt_backend_request_rejected";
+      this.checks.push(Promise.resolve(new ChatGptWebAdapterError(`Owned ChatGPT request returned HTTP ${status}; no automatic resubmission.`,
+        { status: status === 429 ? 429 : 502, errorType: "server_error", code, retryable: false })));
+      return;
+    }
     if (response.status() !== 413
       || !response.headers()["content-type"]?.includes("application/json")) return;
     this.checks.push(withChatGptBrowserObservationTimeout(response.json(), 3_000)
@@ -1253,6 +1267,11 @@ export class ChatGptBrowserWorker {
       await this.prepareChatSurface(page);
       return detectChatGptLimitsPlan(page);
     });
+  }
+
+  inspectNativeReadiness() {
+    return this.enqueueMaintenance("native readiness inspection", async () =>
+      inspectNativePluginReadiness(await this.ensurePage(), this.config.appName));
   }
 
   private enqueueMaintenance<T>(name: string, action: () => Promise<T>): Promise<T> {
@@ -3988,6 +4007,7 @@ export class ChatGptBrowserWorker {
     let diagnosticPage: Page | undefined;
     const usageWrites: Promise<void>[] = [];
     const submissionRejection = new ChatGptSubmissionRejectionObserver();
+    const workflowSignals = new NativeWorkflowSignals(turn.traceId);
     try {
       if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       assertChatGptPromptAttachments(prepared);
@@ -4839,6 +4859,8 @@ export class ChatGptBrowserWorker {
               if (await stop.isVisible().catch(() => false)) await stop.press("Enter");
             },
             observe: async () => {
+              const rejected = await submissionRejection.failure();
+              if (rejected) throw rejected;
               if (page.isClosed()) throw chatGptBrowserTabClosedError();
               if (!isTemporaryChatGptTurnUrl(page.url())) {
                 const currentUrl = new URL(page.url());
@@ -4883,6 +4905,7 @@ export class ChatGptBrowserWorker {
               }
               const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible().catch(() => false);
               const progress = turn.externalProgress?.snapshot();
+              workflowSignals.observe(running, progress?.activeToolCalls ?? 0);
               if (turn.externalProgress && progress
                 && progress.lastToolBatchRevision > initialToolBatchRevision
                 && completionTracker.needsToolBatchObservation(progress.lastToolBatchRevision)) {
@@ -4994,6 +5017,8 @@ export class ChatGptBrowserWorker {
           }
           let observedThisIteration = false;
           try {
+        const rejected = await submissionRejection.failure();
+        if (rejected) throw rejected;
 
         if (page.isClosed()) {
           throw chatGptWebSurfaceError("ChatGPT browser tab was closed while the turn was active", answerBuffer.deliveredChars() > 0);
@@ -5091,6 +5116,7 @@ export class ChatGptBrowserWorker {
 
         const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
         const running = await stop.isVisible().catch(() => false);
+        workflowSignals.observe(running, turn.externalProgress?.snapshot().activeToolCalls ?? 0);
         const requestedPreemption = tunneledDomFallback || preemptiveRetryPrompt
           ? undefined : this.takePreemptiveRetry(turn.traceId);
         if (requestedPreemption) {
@@ -5480,7 +5506,7 @@ export class ChatGptBrowserWorker {
         && !(error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")) {
         error = await submissionRejection.failure() ?? error;
       }
-      if (error instanceof ChatGptWebAdapterError && error.code === "upstream_server_error") {
+      if (error instanceof ChatGptWebAdapterError) {
         const ui = diagnosticPage && !diagnosticPage.isClosed()
           ? await readChatGptUpstreamFailureUiState(diagnosticPage).catch(() => null) : null;
         console.warn(`[chatgpt-web] browser turn ${turn.traceId} upstream_failure ${JSON.stringify({

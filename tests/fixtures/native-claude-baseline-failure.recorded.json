@@ -1,0 +1,22 @@
+{
+  "provenance": {
+    "source": "0010.request.json",
+    "sha256": "984dff72df010264e51160ce49bf3d3b27533708b83eb3fcb2de5d4ef5b3c4f5",
+    "scope": "Sanitized recorded native Claude tool-use/result blocks only; not a full provider replay.",
+    "sanitization": "call ID normalized and disposable cwd replaced; headers, other messages and account metadata excluded"
+  },
+  "tool": {
+    "type": "tool_use",
+    "id": "recorded-baseline-call",
+    "name": "Bash",
+    "input": {
+      "command": "cd -- /private/tmp/recorded-project && node --test scale.test.mjs"
+    }
+  },
+  "result": {
+    "type": "tool_result",
+    "content": "Exit code 1\n✖ two to four servings doubles the amount (0.962875ms)\n✖ four to two servings halves the amount (0.128959ms)\n✔ invalid servings are rejected (0.246ms)\nℹ tests 3\nℹ suites 0\nℹ pass 1\nℹ fail 2\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 93.1305\n\n✖ failing tests:\n\ntest at scale.test.mjs:4:1\n✖ two to four servings doubles the amount (0.962875ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  75 !== 300\n  \n      at TestContext.<anonymous> (file:///private/tmp/recorded-project/scale.test.mjs:4:62)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1397:25)\n      at Test.start (node:internal/test_runner/test:1257:17)\n      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 75,\n    expected: 300,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n\ntest at scale.test.mjs:5:1\n✖ four to two servings halves the amount (0.128959ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  6 !== 1.5\n  \n      at TestContext.<anonymous> (file:///private/tmp/recorded-project/scale.test.mjs:5:61)\n      at Test.runInAsyncScope (node:async_hooks:226:14)\n      at Test.run (node:internal/test_runner/test:1397:25)\n      at Test.processPendingSubtests (node:internal/test_runner/test:969:18)\n      at Test.postRun (node:internal/test_runner/test:1537:19)\n      at Test.run (node:internal/test_runner/test:1462:12)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 6,\n    expected: 1.5,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }",
+    "is_error": true,
+    "tool_use_id": "recorded-baseline-call"
+  }
+}

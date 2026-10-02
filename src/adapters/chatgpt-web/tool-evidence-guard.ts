@@ -8,7 +8,7 @@ const ENGLISH_CAUSAL_CLAIM = /(?:tool|command|execution|invocation|action|reques
 const CHINESE_CAUSAL_CLAIM = /(?:工具|命令|執行|呼叫|操作|請求|helper).{0,60}(?:安全|資安|政策|規則|審核|批准|權限).{0,60}(?:擋下|攔下|阻擋|攔截|拒絕|阻止|禁止|未執行|沒有執行)|(?:安全|資安|政策|規則|審核|批准|權限).{0,60}(?:擋下|攔下|阻擋|攔截|拒絕|阻止|禁止).{0,60}(?:工具|命令|執行|呼叫|操作|請求|helper)/i;
 const ENGLISH_NEGATED_ATTRIBUTION = /\b(?:cannot|can't|could not|couldn't|should not|shouldn't|must not|mustn't|do not|don't)\b.{0,100}\b(?:say|claim|infer|conclude|attribute|determine|name)\b/i;
 const CHINESE_NEGATED_ATTRIBUTION = /(?:不能|無法|不應|不可|不該|不得).{0,50}(?:說|聲稱|宣稱|推斷|歸因|確認|命名)|(?:不能|無法).{0,20}判定.{0,10}是否/i;
-const SAFETY_ERROR_EVIDENCE = /(?:safety|security|policy|approval|permission|guardrail|blocked|rejected|denied|refused)|(?:安全|資安|政策|規則|審核|批准|權限|擋下|攔下|阻擋|攔截|拒絕|禁止)/i;
+const SAFETY_ERROR_EVIDENCE = /^(?:Error:\s*)?(?:Execution|Tool invocation|Command) (?:was )?(?:blocked|rejected|denied) by (?:the )?(?:local )?(?:security|safety|approval|permission) (?:policy|check)\b/i;
 
 const CORRECTION_PROMPT = [
   "Your previous response attributed a local tool action to a safety, security, policy, approval, or permission cause that is not supported by the returned Native tool evidence.",
@@ -37,7 +37,7 @@ export class ChatGptToolEvidenceGuard {
   observeToolResult(result: CodexToolResultMessage): void {
     if (!result.isError) return;
     const text = contentText(result.content);
-    this.errorEvidence.push(text);
+    this.errorEvidence.push(text.slice(0, 4_000));
     this.returnedErrors.push({ toolCallId: result.toolCallId, is_error: true,
       content: text.slice(0, 4_000), truncated: text.length > 4_000 });
     if (this.returnedErrors.length > MAX_ERROR_EVIDENCE) this.returnedErrors.shift();
