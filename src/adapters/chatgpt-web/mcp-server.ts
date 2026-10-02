@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import { namespacedToolName, type CodexTool } from "../../types";
@@ -29,7 +29,7 @@ import {
   isGatewayAgentWaitTool,
 } from "./mcp-gateway";
 import { CODEX_COMPACTION_CONTROL_WIRE_NAME, CODEX_RECOVERY_CHECKPOINT_WIRE_NAME } from "./native-compaction-control";
-import { CODEX_OUTPUT_CONTROL_WIRE_NAME, submitNativeOutputControl } from "./native-output-control";
+import { CODEX_OUTPUT_CONTROL_WIRE_NAME, submitNativeOutputControl, readNativeOutputControlInventory } from "./native-output-control";
 import { callTurnBroker } from "./turn-broker";
 import { invokeChatGptMcpTool } from "./mcp-invocation";
 import { readNativeAgentWait, startNativeAgentWait } from "./mcp-agent-wait";
@@ -48,6 +48,7 @@ import {
 } from "./mcp-zero-risk";
 import {
   diagnosticErrorType,
+  diagnosticErrorCode,
   logMcpToolPhase,
   requestScopeSummary,
   scopeHash,
@@ -70,6 +71,9 @@ export { CHATGPT_WEB_AGENT_WAIT_POLL_MS, boundedConnectorToolArguments, matching
 const turnTokenSchema = z.string().min(20).max(256);
 const contextTokenSchema = z.string().min(20).max(256);
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
+const nativePatchInput = { turn_token: turnTokenSchema, patch: z.string().min(1).max(5_000_000) };
+const nativeGatewayInput = { turn_token: turnTokenSchema, wire_name: z.string().min(1).max(1_000),
+  arguments: jsonArgumentsSchema.optional(), input: z.string().max(5_000_000).optional() };
 const BRIDGE_TOOL_NAMES = new Set([
   "codex_read_context", "codex_turn_start", "codex_exec", "codex_write_stdin",
   "codex_apply_patch", "codex_view_image", "codex_tool_inventory", "codex_tool_call", "codex_turn_complete",
@@ -91,6 +95,8 @@ export async function runChatGptMcpServer(options: {
     contract === "safe" ? { instructions: ZERO_RISK_MCP_INSTRUCTIONS } : undefined,
   );
   if (contract === "safe") registerZeroRiskLifecycleTools(server, options.brokerSocketPath);
+  const connectorTools = new Map<string, RegisteredTool>();
+  const remember = (name: string, tool: RegisteredTool) => { connectorTools.set(name, tool); return tool; };
 
   const withTurn = async <T>(
     toolName: string,
@@ -105,7 +111,7 @@ export async function runChatGptMcpServer(options: {
         return action(claimed);
       }, contract);
     } catch (error) {
-      logMcpToolPhase(toolName, "claim", "failed", ` errorType=${diagnosticErrorType(error)}`);
+      logMcpToolPhase(toolName, "claim", "failed", ` errorType=${diagnosticErrorType(error)} errorCode=${diagnosticErrorCode(error)}`);
       throw error;
     }
   };
@@ -129,7 +135,7 @@ export async function runChatGptMcpServer(options: {
       logMcpToolPhase(name, "invoke", "completed", ` isError=${response.isError === true} binding=${binding}`);
       return asMcpResult(response);
     } catch (error) {
-      logMcpToolPhase(name, "invoke", "failed", ` errorType=${diagnosticErrorType(error)} binding=${binding}`);
+      logMcpToolPhase(name, "invoke", "failed", ` errorType=${diagnosticErrorType(error)} errorCode=${diagnosticErrorCode(error)} binding=${binding}`);
       throw error;
     }
   };
@@ -197,7 +203,7 @@ export async function runChatGptMcpServer(options: {
     }, signal);
   };
 
-  if (contract === "native") server.registerTool(
+  if (contract === "native") remember("codex_read_context", server.registerTool(
     "codex_read_context",
     {
       title: "Read the current Codex task context",
@@ -214,9 +220,9 @@ export async function runChatGptMcpServer(options: {
       );
       return { content: [{ type: "text" as const, text: context }] };
     },
-  );
+  ));
 
-  server.registerTool(
+  remember("codex_exec", server.registerTool(
     "codex_exec",
     {
       title: "Run a native Codex command",
@@ -241,9 +247,8 @@ export async function runChatGptMcpServer(options: {
           ...(tty !== undefined ? { tty } : {}),
         }, extra.signal));
     },
-  );
-
-  server.registerTool(
+  ));
+  remember("codex_write_stdin", server.registerTool(
     "codex_write_stdin",
     {
       title: "Continue a native Codex command session",
@@ -275,14 +280,13 @@ export async function runChatGptMcpServer(options: {
           : invokeNestedNative(claimed.bindingId, bound, toolName, false, payload, extra.signal);
       });
     },
-  );
-
-  server.registerTool(
+  ));
+  remember("codex_apply_patch", server.registerTool(
     "codex_apply_patch",
     {
       title: "Apply a native Codex patch",
       description: afterSafeStart(contract, "Invoke the outer Codex apply_patch tool, producing a native file-change item in the Codex task."),
-      inputSchema: { ...turnReferenceInput(contract, turnTokenSchema), patch: z.string().min(1).max(5_000_000) },
+      inputSchema: { ...turnReferenceInput(contract, turnTokenSchema), patch: nativePatchInput.patch },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async (input, extra) => {
@@ -296,9 +300,8 @@ export async function runChatGptMcpServer(options: {
           : invoke(claimed.bindingId, bound, tool, { arguments: { input: patch } }, extra.signal);
       });
     },
-  );
-
-  server.registerTool(
+  ));
+  remember("codex_view_image", server.registerTool(
     "codex_view_image",
     {
       title: "View an image through native Codex",
@@ -321,9 +324,8 @@ export async function runChatGptMcpServer(options: {
           : invokeNestedNative(claimed.bindingId, bound, "view_image", false, payload, extra.signal);
       });
     },
-  );
-
-  server.registerTool(
+  ));
+  remember("codex_tool_inventory", server.registerTool(
     "codex_tool_inventory",
     {
       title: "Discover tools from the current Codex harness",
@@ -342,6 +344,30 @@ export async function runChatGptMcpServer(options: {
     async (input, extra) => {
       const { query, offset, limit, include_schema } = input;
       const requestId = turnReference(contract, input);
+      const connector = query?.trim() ? connectorTools.get(query.trim()) : undefined;
+      if (contract === "native" && connector?.enabled) {
+        return result({ tools: [{ name: query!.trim(), wire_name: query!.trim(),
+          kind: "connector", invocation: "attached_direct",
+          description: "Call this attached MCP shortcut directly, never route its own name as a runtime wire_name through codex_tool_call. " + (connector.description ?? ""),
+          ...(include_schema && connector.inputSchema
+            ? { parameters: z.toJSONSchema(connector.inputSchema as z.ZodType, { io: "input" }) } : {}),
+        }], total: 1, next_offset: null });
+      }
+      const recoverClosedInventory = async (error: unknown) => {
+        if (contract !== "native" || diagnosticErrorCode(error) !== "work_tools_closed") throw error;
+        return result(await readNativeOutputControlInventory(options.brokerSocketPath, requestId, extra.signal));
+      };
+      if (contract === "native" && query?.trim() === CODEX_OUTPUT_CONTROL_WIRE_NAME) {
+        return result(await readNativeOutputControlInventory(options.brokerSocketPath, requestId, extra.signal));
+      }
+      if (contract === "native") {
+        try {
+          const control = await readNativeOutputControlInventory(options.brokerSocketPath, requestId, extra.signal);
+          if (control.work_tools_closed) return result(control);
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== "output control is unavailable for this turn") throw error;
+        }
+      }
       if (query && isConnectorContractProbeQuery(query, contract)) {
         return withTurn("codex_tool_inventory", requestId, extra, () => {
           if (!recordConnectorContractProbeQuery(query, contract)) {
@@ -371,7 +397,7 @@ export async function runChatGptMcpServer(options: {
             yieldTimeMs: 30_000,
             maxOutputTokens: 1_000_000,
           }, extra.signal);
-        });
+        }).catch(recoverClosedInventory);
       }
       const archiveMatch = /^__codex_context__:(\d+)$/.exec(query?.trim() ?? "");
       if (contract === "native" && archiveMatch) {
@@ -441,20 +467,19 @@ export async function runChatGptMcpServer(options: {
             ...(total === 0 && discoveryTools.length > 0 ? { discovery_tools: discoveryTools } : {}),
           });
         });
-      });
+      }).catch(recoverClosedInventory);
     },
-  );
-
-  server.registerTool(
+  ));
+  remember("codex_tool_call", server.registerTool(
     "codex_tool_call",
     {
       title: "Call any tool from the current Codex harness",
       description: afterSafeStart(contract, "Invoke an exact wire_name returned by codex_tool_inventory. The outer Codex runtime performs the call, approvals, and UI lifecycle."),
       inputSchema: {
         ...turnReferenceInput(contract, turnTokenSchema),
-        wire_name: z.string().min(1).max(1_000),
-        arguments: jsonArgumentsSchema.optional(),
-        input: z.string().max(5_000_000).optional(),
+        wire_name: nativeGatewayInput.wire_name,
+        arguments: nativeGatewayInput.arguments,
+        input: nativeGatewayInput.input,
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
     },
@@ -544,7 +569,6 @@ export async function runChatGptMcpServer(options: {
         return invoke(claimed.bindingId, bound, tool, { arguments: toolArguments }, extra.signal);
       });
     },
-  );
-
+  ));
   await server.connect(observeMcpToolCalls(new StdioServerTransport(), BRIDGE_TOOL_NAMES));
 }
