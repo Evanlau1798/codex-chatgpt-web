@@ -4190,6 +4190,12 @@ export class ChatGptBrowserWorker {
         }
         : undefined;
       await diagnostics.capture(page, "browser-page-acquired");
+      const notifyApprovalPending = async (pending: boolean) => {
+        if (!launcherSurfaceId) return;
+        await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
+          phase: "approval", traceId: turn.traceId, helperPid: process.pid, pending,
+        });
+      };
       console.info(
         `[chatgpt-web] browser turn ${turn.traceId} opened (transport=${multipartTransport
           ? `multipart-${prepared.multipart!.parts.length}`
@@ -4932,6 +4938,7 @@ export class ChatGptBrowserWorker {
                 this.config.autoApproveToolCalls,
                 turn.abortSignal,
                 CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS, () => diagnostics.capture(page, "tool-confirmation-visible"),
+                notifyApprovalPending,
               )) turn.onProgress?.();
               let current: ChatGptAssistantTurnState;
               for (;;) {
@@ -5159,15 +5166,7 @@ export class ChatGptBrowserWorker {
           turn.abortSignal,
           CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS,
           () => diagnostics.capture(page, "tool-confirmation-visible"),
-          async pending => {
-            if (!launcherSurfaceId) return;
-            await notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
-              phase: "approval",
-              traceId: turn.traceId,
-              helperPid: process.pid,
-              pending,
-            });
-          },
+          notifyApprovalPending,
         )) {
           internalObservationFaults = 0;
           await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
