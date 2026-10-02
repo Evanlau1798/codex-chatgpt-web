@@ -54,21 +54,30 @@ export function ownedProviderMetrics(log, cwd) {
     const text = line.split('native_workflow ')[1]; if (!text) continue;
     try { const event = JSON.parse(text); if (event.phase === 'native_context_bound' && event.cwd_sha256 === digest(cwd)) traces.add(event.traceId); } catch {}
   }
-  const receipts = new Map(); let recoverySends = 0; let committed = false;
+  const receipts = new Map(); const sends = new Map(); let recoverySends = 0; let committed = false;
   for (const line of rows) {
     const text = line.split('model_receipt ')[1];
     if (text) try {
       const receipt = JSON.parse(text);
       if (traces.has(receipt.traceId) && receipt.source === 'network.resolved_model_slug') {
         receipts.set(`${receipt.traceId}/${receipt.physicalSend}`, receipt);
+        sends.set(`${receipt.traceId}/${receipt.physicalSend}`, receipt);
+      }
+    } catch {}
+    const diagnosticText = line.split('model_receipt_diagnostic ')[1];
+    if (diagnosticText) try {
+      const diagnostic = JSON.parse(diagnosticText);
+      if (traces.has(diagnostic.traceId) && diagnostic.ownedRequests > 0
+        && Number.isInteger(diagnostic.physicalSend) && diagnostic.physicalSend > 0) {
+        sends.set(`${diagnostic.traceId}/${diagnostic.physicalSend}`, diagnostic);
       }
     } catch {}
     const eventText = line.split('native_workflow ')[1];
     if (eventText) try { const event = JSON.parse(eventText); if (traces.has(event.traceId) && event.phase === 'completion_committed') committed = true; } catch {}
   }
-  for (const receipt of receipts.values()) if (receipt.physicalSend > 1) recoverySends++;
+  for (const send of sends.values()) if (send.physicalSend > 1) recoverySends++;
   const models = new Set([...receipts.values()].map(receipt => receipt.servedModel));
   return { served_model: models.size === 1 ? [...models][0] : null,
-    provider_sends: receipts.size || null, recovery_sends: receipts.size ? recoverySends : null,
-    completion_committed: committed, provider_evidence: receipts.size ? 'owned_wire_receipts' : 'unavailable' };
+    provider_sends: sends.size || null, recovery_sends: sends.size ? recoverySends : null,
+    completion_committed: committed, provider_evidence: receipts.size ? 'owned_wire_receipts' : sends.size ? 'owned_wire_diagnostics_no_model_identity' : 'unavailable' };
 }
