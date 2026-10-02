@@ -3,16 +3,25 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 export const digest = value => createHash('sha256').update(value).digest('hex');
-const lines = file => fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+function decodeLines(text) {
+  const rows = []; let errors = 0;
+  for (const line of text.trim().split('\n').filter(Boolean)) {
+    try { rows.push(JSON.parse(line)); } catch { errors++; }
+  }
+  return { rows, errors };
+}
 
 export function nativeMetrics(artifact) {
   if (!fs.existsSync(path.join(artifact, 'stdout.jsonl'))) return { native_exit: null, quota_latched: null, diagnostic_error_latched: null,
     client_final_observed: false, tool_calls: null, read_calls: null, repeat_reads: null,
     client_inference_http_requests: 0, recorded_response_bytes: 0, transport_heartbeats: 0,
     failure_stage: 'launcher_preflight', billing_cost: null };
-  const chunks = lines(path.join(artifact, 'stdout.jsonl'));
-  const records = chunks.map(row => row.data || '').join('').trim().split('\n').filter(Boolean).map(JSON.parse);
-  const events = lines(path.join(artifact, 'events.jsonl'));
+  const chunks = decodeLines(fs.readFileSync(path.join(artifact, 'stdout.jsonl'), 'utf8'));
+  const decoded = decodeLines(chunks.rows.map(row => row?.data || '').join(''));
+  const eventCapture = decodeLines(fs.readFileSync(path.join(artifact, 'events.jsonl'), 'utf8'));
+  const captureErrors = chunks.errors + decoded.errors + eventCapture.errors;
+  const records = decoded.rows;
+  const events = eventCapture.rows;
   const calls = []; let finalObserved = false; let lastTool = -1; let lastAnswer = -1; let turnCompleted = false;
   for (const [index, record] of records.entries()) {
     if (record.type === 'item.completed' && ['command_execution', 'file_change'].includes(record.item?.type)) {
@@ -27,6 +36,7 @@ export function nativeMetrics(artifact) {
     if (record.type === 'result' && record.subtype === 'success' && record.is_error === false && record.result?.trim()) finalObserved = true;
   }
   finalObserved ||= turnCompleted && lastAnswer > lastTool;
+  if (captureErrors) finalObserved = false;
   const reads = new Map();
   for (const call of calls) {
     const file = call.tool === 'Read' ? call.file : /\bcat\s+--\s+['"]([^'"]+)['"]/.exec(call.command || '')?.[1];
@@ -36,6 +46,7 @@ export function nativeMetrics(artifact) {
   const latches = events.filter(event => event.type === 'quota_latch');
   const responseEvents = events.filter(event => event.type === 'response_end' && event.scope === 'gpt-6-pro-inference');
   return { native_exit: exit?.code ?? null,
+    capture_parse_errors: captureErrors, capture_complete: captureErrors === 0,
     quota_latched: latches.some(event => !event.reason?.startsWith('diagnostic_')),
     diagnostic_error_latched: latches.some(event => event.reason?.startsWith('diagnostic_')),
     client_final_observed: finalObserved, tool_calls: calls.length,

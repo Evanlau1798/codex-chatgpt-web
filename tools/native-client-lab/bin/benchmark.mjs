@@ -38,6 +38,7 @@ for (let round = 0; round < rounds; round++) {
     if (option('--codex-path') && client === 'codex') args.push('--cli-path', option('--codex-path'));
     if (option('--claude-path') && client === 'claude') args.push('--cli-path', option('--claude-path'));
     if (option('--source-root')) args.push('--source-root', option('--source-root'));
+    if (option('--bridge-config')) args.push('--bridge-config', option('--bridge-config'));
     const before = providerLog ? fs.statSync(providerLog).size : 0;
     const started = Date.now();
     const stdout = fs.openSync(path.join(root, `${round + 1}-${client}.launch.log`), 'wx', 0o600);

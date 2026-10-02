@@ -22,6 +22,7 @@ import {
 } from './launch-args.mjs';
 import { bridgeConfig, createRecordingProxy, sha256, StreamRedactor } from './proxy.mjs';
 import { withOwnedChild } from './owned-child.mjs';
+import { captureChildOutput } from './output-capture.mjs';
 
 const SENSITIVE_ENV = /^(?:OPENAI_|ANTHROPIC_|CLAUDE_|OTEL_|CODEX_API_KEY$|CODEX_ACCESS_TOKEN$|AZURE_|AWS_|GOOGLE_|GEMINI_|GITHUB_TOKEN$|GH_TOKEN$)/;
 const LAUNCH_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -230,17 +231,6 @@ function writeLaunchMetadata(file, value) {
 
 function appendLaunchEvent(file, value) {
   fs.appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), ...value })}\n`, { mode: 0o600 });
-}
-
-function captureChildOutput(stream, file, streamName, redactor) {
-  if (!stream) return Promise.resolve();
-  const output = fs.createWriteStream(file, { mode: 0o600, flags: 'wx' });
-  return new Promise(resolve => {
-    const write = piece => output.write(`${JSON.stringify({ at: new Date().toISOString(), stream: streamName, data: piece })}\n`);
-    stream.on('data', chunk => redactor.push(Buffer.from(chunk).toString('utf8'), write));
-    stream.once('end', () => { redactor.end(write); output.end(resolve); });
-    stream.once('error', () => { redactor.end(write); output.end(resolve); });
-  });
 }
 
 function readPromptFile(promptFile) {
