@@ -192,7 +192,8 @@ test("real helper boundary replays run fields through worker event and daemon ca
     expect(JSON.stringify(received)).not.toContain("authorization");
     expect(JSON.stringify(received)).not.toContain("cookie");
     expect(JSON.stringify(received)).not.toContain("toolNames");
-    await expect(client.run({
+    let rejection: unknown;
+    try { await client.run({
       traceId: "helper-receipt-bad",
       modelId: "gpt-5.6-sol",
       requestedModel: "chatgpt-web/gpt-6-pro",
@@ -202,7 +203,9 @@ test("real helper boundary replays run fields through worker event and daemon ca
       prepare: async () => ({ text: "offline fixture", images: [], release() {} }),
       onTextDelta() {},
       onModelReceipt: value => received.push(value),
-    } as BrowserTurn)).rejects.toThrow("trace");
+    } as BrowserTurn); } catch (error) { rejection = error; }
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message).toContain("trace");
   } finally {
     await client.close();
   }

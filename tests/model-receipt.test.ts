@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import {
   CHATGPT_MODEL_RECEIPT_MAX_EVENTS,
   ChatGptModelReceiptCollector,
@@ -341,6 +342,49 @@ class FakeTeePage extends FakePage {
   async evaluate() {}
 }
 
+test("receipt flush bounds a stalled production capture tail without cancelling inference", async () => {
+  const page = new FakePage();
+  const observer = new ChatGptModelReceiptObserver("trace_stalled_tail", "chatgpt-web/gpt-6-pro", undefined, () => {});
+  await observer.attach(page as never);
+  observer.beginSend({ responseAttempt: 1 });
+  observer.activate();
+  const request = new FakeRequest(page, { model: "gpt-6-pro" });
+  page.emit("request", request);
+  page.cdp.emit("Network.requestWillBeSent", { requestId: "stalled", frameId: "main", request: { method: "POST", url: request.url(), postData: request.postData() } });
+  const captures = (observer as unknown as { captures: Map<string, { tail: Promise<void> }> }).captures;
+  expect(captures.size).toBe(1);
+  captures.get("stalled")!.tail = new Promise(() => {});
+  const start = Date.now();
+  await observer.flushAll();
+  expect(Date.now() - start).toBeLessThan(1_500);
+  expect(page.cdp.detached).toBeFalse();
+  await observer.dispose();
+});
+
+test("page receipts refuse missing body identity and foreign conversation metadata", async () => {
+  for (const missingHash of [true, false]) {
+    const page = new FakeTeePage();
+    const receipts: unknown[] = [];
+    const observer = new ChatGptModelReceiptObserver("trace_page_identity", "chatgpt-web/gpt-6-pro", undefined, value => receipts.push(value));
+    await observer.attach(page as never);
+    observer.beginSend({ responseAttempt: 1 });
+    observer.activate();
+    const request = new FakeRequest(page, { model: "gpt-6-pro", conversation_id: "owned-conversation" });
+    page.emit("request", request);
+    const token = (observer as unknown as { pageCaptureToken: string }).pageCaptureToken;
+    await observer.onPageCapture({ token, id: "identity", kind: "invoke", ...(missingHash ? {} : { bodyHash: createHash("sha256").update(request.postData()).digest("hex") }) });
+    const accepted = await observer.onPageCapture({ token, id: "identity", kind: "start", status: 200, contentType: "text/event-stream" });
+    expect(accepted).toBe(!missingHash);
+    if (accepted) {
+      await observer.onPageCapture({ token, id: "identity", kind: "chunk", data: Buffer.from(resolvedSse("gpt-6-pro", "foreign-conversation")).toString("base64") });
+      await observer.onPageCapture({ token, id: "identity", kind: "end" });
+    }
+    await observer.flushAll();
+    await observer.dispose();
+    expect(receipts).toHaveLength(0);
+  }
+});
+
 class FailingCdp extends FakeCdp {
   async send(method: string) {
     if (method === "Network.enable") throw new Error("offline CDP enable failure");
@@ -442,7 +486,7 @@ test("two DONE-terminated sources retain agreement checks after the recorded lat
     page.cdp.emit("Network.dataReceived", { requestId: "paired", data: Buffer.from(body).toString("base64") });
     const token = (observer as unknown as { pageCaptureToken: string }).pageCaptureToken;
     expect(typeof token).toBe("string");
-    expect(await observer.onPageCapture({ token, id: "paired-page", kind: "invoke" })).toBeTrue();
+    expect(await observer.onPageCapture({ token, id: "paired-page", kind: "invoke", bodyHash: createHash("sha256").update(request.postData()!).digest("hex") })).toBeTrue();
     expect(await observer.onPageCapture({ token, id: "paired-page", kind: "start", status: 200, contentType: "text/event-stream" })).toBeTrue();
     await observer.onPageCapture({ token, id: "paired-page", kind: "chunk", data: Buffer.from(conflict ? body.replaceAll("gpt-6-pro", "gpt-5-pro") : body).toString("base64") });
     await observer.onPageCapture({ token, id: "paired-page", kind: "failed" });

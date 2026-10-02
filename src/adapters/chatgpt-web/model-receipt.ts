@@ -429,7 +429,7 @@ export function assertChatGptModelReceiptDiagnostic(value: unknown, expectedTrac
           }))) return false;
         return true;
       };
-      if (!Array.isArray(traces) || traces.length > 2 || traces.some(trace => {
+      if (!Array.isArray(traces) || traces.length > CHATGPT_MODEL_RECEIPT_MAX_CDP_CAPTURES || traces.some(trace => {
         const value = recordObject(trace);
         return !value || Object.keys(value).some(key => !["source", "transport", "terminal", "failureCode", "frames", "droppedFrames", "doneMarkers", "assistantMessageFrames", "replayComplete"].includes(key))
           || value.source !== "cdp" && value.source !== "page"
@@ -1403,7 +1403,7 @@ export class ChatGptModelReceiptObserver {
         this.recordPageRejection(active, "no_owned_request");
         return false;
       }
-      if (requestBodyHash !== undefined && !active.requests.some(request => request.requestBodyHash === requestBodyHash && !request.pageCapture)) {
+      if (requestBodyHash === undefined || requestBodyHash === "oversized" || !active.requests.some(request => request.requestBodyHash === requestBodyHash && !request.pageCapture)) {
         this.recordPageRejection(active, "body_hash_mismatch");
         return false;
       }
@@ -1643,11 +1643,12 @@ export class ChatGptModelReceiptObserver {
       }
       if (!request.pageCapture) {
         const capture = active.captures.find(candidate => candidate.source === "page" && !candidate.playwright
-          && (!candidate.requestBodyHash || !request.requestBodyHash || candidate.requestBodyHash === request.requestBodyHash)
+          && !!candidate.requestBodyHash && !!request.requestBodyHash && candidate.requestBodyHash === request.requestBodyHash
           && contextsMatch(request, candidate));
         if (capture) {
           request.pageCapture = capture;
           capture.playwright = request;
+          capture.expectedConversationId = request.expectedConversationId;
         }
       }
     }
@@ -2256,8 +2257,21 @@ export class ChatGptModelReceiptObserver {
     if (!active || active.emitted) return;
     try {
       active.sealed = true;
-      await Promise.all(active.captures.map(capture => capture.tail));
-      await this.maybeEmit(active);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          (async () => {
+            await Promise.all(active.captures.map(capture => capture.tail));
+            await this.maybeEmit(active);
+          })(),
+          new Promise<void>(resolve => { timer = setTimeout(() => {
+            this.discardSend(active, "terminal_drain_timeout");
+            resolve();
+          }, CHATGPT_MODEL_RECEIPT_TERMINAL_DRAIN_MS); }),
+        ]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
     } catch (error) {
       noteTelemetryFailure("flush", error);
       try { this.discardSend(active, "telemetry_error"); } catch (discardError) { noteTelemetryFailure("flush-cleanup", discardError); }
@@ -2283,7 +2297,15 @@ export class ChatGptModelReceiptObserver {
     } finally {
       try {
         for (const send of [...this.sends]) this.discardSend(send, "terminal_drain_timeout");
-        await this.detach();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            this.detach(),
+            new Promise<void>(resolve => { timer = setTimeout(resolve, CHATGPT_MODEL_RECEIPT_TERMINAL_DRAIN_MS); }),
+          ]);
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+        }
         this.captures.clear();
         this.sends.clear();
         this.active = undefined;
