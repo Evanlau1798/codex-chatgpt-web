@@ -1,6 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
@@ -14,7 +16,14 @@ import type { TurnChannel } from "../src/adapters/chatgpt-web/turn-broker-state"
 import { chatGptSameSurfaceRecoveryDecision, CHATGPT_SAME_SURFACE_RECOVERY_PROMPT } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { chatGptSameSurfaceRecoveryPrompt } from "../src/adapters/chatgpt-web/same-surface-recovery";
 import * as launcherControl from "../src/launcher-browser-host";
-const { BrowserHost } = require("../launcher/electron/browser-host.cjs");
+const hostSource = createRequire(import.meta.url).resolve("../launcher/electron/browser-host.cjs");
+const hostRequire = createRequire(hostSource);
+const hostModule = { exports: {} as any };
+runInNewContext(readFileSync(hostSource, "utf8"), {
+  require: (id: string) => id === "electron" ? {} : hostRequire(id),
+  module: hostModule, exports: hostModule.exports, Buffer, URL, process,
+});
+const { BrowserHost } = hostModule.exports;
 
 const OLD = "Review in progress.";
 const FINAL = "Findings: No blocking defects. Review complete.";

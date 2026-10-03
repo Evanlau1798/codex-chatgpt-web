@@ -19,7 +19,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **开发候选版：`6.1.4-Enhanced.1`。** 下载按钮会始终打开最新发布的 Enhanced 版本；仅更新此分支不会发布版本。
+> **发布版本：`6.1.4-Enhanced.1`。** 下载按钮会始终打开最新发布的 Enhanced 版本。[观看介绍影片（英文 MP4）](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4)。
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">故障排除</a> · <a href="SECURITY.md">安全</a> · <a href="CONTRIBUTING.md">贡献</a>
@@ -165,7 +165,7 @@ API `reasoning_effort` 仅接受新路由支持的选择，旧路由保持固定
 
 ### 快速启动（实验性）
 
-`6.1.3-Enhanced.2` 增加了 **Settings** 中可选择启用的 **快速启动**。它预先准备一个尚未发送
+`6.1.4-Enhanced.1` 增加了 **Settings** 中可选择启用的 **快速启动**。它预先准备一个尚未发送
 消息的待命 Web 页面，包含最后验证的模型及 harness 草稿；收到请求后，再验证账号、模型与
 草稿，插入当前请求并发送。预热本身不会发送消息。工作任务优先，页面上限有空位时才准备
 待命页。工作页受 Account Safety 的 **Maximum concurrency** 限制；未启用该限制时默认
@@ -174,7 +174,7 @@ API `reasoning_effort` 仅接受新路由支持的选择，旧路由保持固定
 Native2 在工作期间可流式返回进度，完整最终答案则通过 output tunnel 一次原子提交。
 启动及最终收尾诊断可区分本地准备时间与等待 ChatGPT 的时间。
 
-**候选版已知限制：** 偶发续接可能在发送前的模型验证阶段失败。已增加诊断，根因仍在调查。
+**已知限制：** 偶发续接可能在发送前的模型验证阶段失败。已增加诊断，根因仍在调查。
 
 ### 增强型 Web 工作阶段模式
 
