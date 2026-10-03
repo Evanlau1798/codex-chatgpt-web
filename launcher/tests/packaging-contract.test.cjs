@@ -401,18 +401,24 @@ test("release rebuild preserves an existing preview without changing Enhanced st
   const stop = source.indexOf('          gh release edit "$GITHUB_REF_NAME"', start);
   assert.ok(start >= 0 && stop > start);
   const policy = source.slice(start, stop);
-  for (const [tag, preview, expected] of [
+  const cases = [
     ["v6.0.0-Enhanced.1", "true", "--prerelease --latest=false"],
     ["v6.0.0-Enhanced.1", "false", "--prerelease=false --latest"],
     ["v6.0.0-rc.1-Enhanced.1", "false", "--prerelease --latest=false"],
-  ]) {
-    const result = spawnSync(bash, ["-c", policy + '\nprintf "%s" "${release_flags[*]}"'], {
-      encoding: "utf8", env: { ...process.env, GITHUB_REF_NAME: tag, existing_prerelease: preview },
-      timeout: 5000,
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, expected);
-  }
+  ];
+  // One real Bash startup exercises all cases. Windows antivirus/process load
+  // can exceed the old five-second startup watchdog; do not confuse that with
+  // a policy assertion, and report timeout/spawn failures explicitly.
+  const script = cases.map(([tag, preview]) =>
+    `GITHUB_REF_NAME='${tag}'\nexisting_prerelease='${preview}'\n${policy}` + '\nprintf \'%s\\n\' "${release_flags[*]}"'
+  ).join('\n');
+  const result = spawnSync(bash, ["--noprofile", "--norc", "-c", script], {
+    encoding: "utf8", env: { ...process.env, BASH_ENV: '' }, timeout: 30000,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.signal, null, result.stderr);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.trimEnd().split(/\r?\n/), cases.map(([, , expected]) => expected));
   assert.ok(source.indexOf("--json isPrerelease") < source.indexOf("--draft=true"));
 });
 
