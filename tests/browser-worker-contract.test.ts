@@ -3279,8 +3279,8 @@ test("an accepted turn survives internal observation faults instead of being tor
   expect(worker).toContain("internalObservationFaults = 0;");
   expect(worker).toMatch(/internalObservationFaults > MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS/);
 
-  // Liveness may postpone a verdict but never waive it, so a tool call that never returns cannot
-  // hold an undeadlined turn open forever.
+  // Settled progress has a grace window; live owned calls end through explicit
+  // cancellation, revocation, connection failure, or their owner deadline.
   expect(CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS).toBeGreaterThan(CHATGPT_RESPONSE_DOM_GRACE_MS);
 
   // Chain-of-thought containment is commentary regardless of document position.
@@ -3290,8 +3290,7 @@ test("an accepted turn survives internal observation faults instead of being tor
 test("stale MCP progress stops suppressing DOM health without penalising long active turns", () => {
   const outstanding = { revision: 2, lastToolBatchRevision: 2, activeToolCalls: 1, lastProgressAt: 1_000 };
 
-  // An outstanding call reports liveness regardless of age, so age is bounded separately: a tool
-  // that never returns must not hold a turn open forever, since turns carry no deadline by default.
+  // A live owned call must not be retired solely because it is slow.
   expect(chatGptExternalProgressSuppressesDomHealth(outstanding, 1_000)).toBeTrue();
   expect(chatGptExternalProgressSuppressesDomHealth(
     outstanding,
@@ -3300,6 +3299,12 @@ test("stale MCP progress stops suppressing DOM health without penalising long ac
   expect(chatGptExternalProgressSuppressesDomHealth(
     outstanding,
     1_000 + CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS,
+  )).toBeTrue();
+  expect(chatGptExternalProgressSuppressesDomHealth(
+    outstanding, 1_000 + 4 * 60 * 60_000,
+  )).toBeTrue();
+  expect(chatGptExternalProgressSuppressesDomHealth(
+    { ...outstanding, activeToolCalls: 0 }, 1_000 + CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS,
   )).toBeFalse();
 
   // A turn that keeps calling tools stays suppressed no matter how long it has been running, so

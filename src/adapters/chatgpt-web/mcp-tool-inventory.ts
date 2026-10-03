@@ -37,6 +37,8 @@ export function matchingToolInventory(tools: CodexTool[], query?: string): Codex
 }
 
 export function browserToolDescription(tool: CodexTool, native = true): string {
+  if (native && !tool.namespace && tool.name === "Bash" && tool.parameters.properties && Object.hasOwn(tool.parameters.properties, "run_in_background")) return `${tool.description}\n\nLong commands must use the native run_in_background task handoff when TaskOutput is advertised. Keep the command's intended timeout; retrieve the same task_id with TaskOutput until its real terminal result. Never rerun the command because a response wait is pending.`;
+  if (native && !tool.namespace && tool.name === "TaskOutput" && tool.parameters.properties && Object.hasOwn(tool.parameters.properties, "timeout")) return `${tool.description}\n\nUse block=true and timeout=30000 for each transport-safe response wait. A pending result does not cancel the task or establish success. Continue the same task_id without resubmitting its command, and inspect the real terminal output/exit status before answering.`;
   const waitRule = native ? CHATGPT_WEB_AGENT_WAIT_RULE : CHATGPT_WEB_SYNC_WAIT_RULE;
   if (isAgentWaitTool(tool)) return `${tool.description}\n\n${waitRule}`;
   if (!tool.namespace && tool.name === "exec") {
