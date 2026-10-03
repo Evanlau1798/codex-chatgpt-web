@@ -364,6 +364,7 @@ export class ChatGptTurnSessions {
   }
 
   linkGroups(parent: string, child: string): void { this.agentGraph.link(parent, child); }
+  rootGroup(group: string): string { return this.agentGraph.rootOf(group); }
   linkAgentReference(parent: string, reference: string): void { this.agentGraph.linkReference(parent, reference); }
 
   retireAgentReference(parent: string, reference: string, descendants: boolean): number {

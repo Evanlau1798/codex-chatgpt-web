@@ -154,6 +154,7 @@ export function parseLauncherArgs(argv, client) {
     catalog: undefined,
     headless: false,
     diagnostic: false,
+    parallelAgents: false,
     promptFile: undefined,
     extraArgs: [],
     showHelp: false,
@@ -179,6 +180,7 @@ export function parseLauncherArgs(argv, client) {
     else if (arg === '--catalog') result.catalog = next();
     else if (arg === '--headless') result.headless = true;
     else if (arg === '--diagnostic') result.diagnostic = true;
+    else if (arg === '--parallel-agents') result.parallelAgents = true;
     else if (arg === '--prompt-file') result.promptFile = next();
     else if (arg === '--cli-path') result.cliPath = next();
     else if (arg === '--bun-path') result.bunPath = next();
@@ -205,9 +207,15 @@ export function newSessionId(resume) {
   return resume ? assertUuid(resume, '--resume') : randomUUID();
 }
 
-export function buildCodexArgs({ cwd, resume, proxyUrl, catalogPath, catalog, unsafe, headless = false, extraArgs = [] }) {
+export function buildCodexArgs({ cwd, resume, proxyUrl, catalogPath, catalog, unsafe, headless = false, parallelAgents = false, extraArgs = [] }) {
   validateExtras(extraArgs, CODEX_MODEL, 'Codex');
   const overrides = codexOverrides({ proxyUrl, catalogPath, catalog });
+  if (parallelAgents) {
+    delete overrides['features.multi_agent_v2'];
+    overrides['features.multi_agent_v2.enabled'] = true;
+    overrides['features.multi_agent_v2.max_concurrent_threads_per_session'] = 3;
+    overrides['agents.max_depth'] = 1;
+  }
   const args = headless
     ? ['exec', '--cd', path.resolve(cwd), '--json', '--model', CODEX_MODEL]
     : [];
@@ -250,6 +258,7 @@ export function printHelp(client) {
   process.stdout.write('  --cwd PATH             Interactive project root (default: current directory)\n');
   process.stdout.write('  --resume UUID          Resume only this owned session\n');
   process.stdout.write('  --headless             Use native JSON/stream-json output (prompt from --prompt-file or stdin)\n');
+  process.stdout.write('  --parallel-agents      Opt-in native Codex v2: coordinator plus two workers, flat delegation\n');
   process.stdout.write('  --prompt-file PATH     Owned prompt input for --headless mode\n');
   process.stdout.write('  --diagnostic           Latch on owned upstream 5xx/typed failure events\n');
   process.stdout.write('  --unsafe               Disposable test mode (bypasses client permissions)\n');

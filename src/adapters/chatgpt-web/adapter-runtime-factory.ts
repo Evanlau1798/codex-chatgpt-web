@@ -1,6 +1,7 @@
 import type { CodexParsedRequest, CodexProviderConfig } from "../../types";
 import { retainedConversationRelease } from "./adapter-runtime-config";
 import { ChatGptBrowserWorker } from "./browser-worker";
+import { parallelAdmissionIdentity } from "./parallel-identity";
 import { claudeBrowserTurnOptions, isClaudeClientSession } from "./claude-subagent";
 import { observeCapabilityRetirement } from "./capability-retirement";
 import { prepareChatGptWebContext } from "./context-bootstrap";
@@ -85,6 +86,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     }
     if (toolPolicy.requireTool && !localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
     const identity = extractChatGptTurnIdentity(parsed);
+    const parallelAdmission = provider.chatgptWeb?.experimentalParallelSubagents
+      ? parallelAdmissionIdentity(parsed, executionNamespace) : undefined;
     const captureLunaCheckpoint = !finalizationOnly && parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !browserCompaction && Boolean(identity.threadId && identity.turnId);
     const captureEnhancedCheckpoint = useEnhancedWebSessionMode
       && provider.chatgptWeb?.experimentalNoAutoCompact === true
@@ -209,6 +212,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     };
     if (!localTools) {
       const base = {
+        ...(parallelAdmission ? { parallelAdmission } : {}),
         modelId: parsed.modelId,
         ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
         reasoning: parsed.options.reasoning,
@@ -319,6 +323,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     };
     const browserRun = worker.run({
       traceId,
+      ...(parallelAdmission ? { parallelAdmission } : {}),
       modelId: parsed.modelId,
       ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
       reasoning: parsed.options.reasoning,

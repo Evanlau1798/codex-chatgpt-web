@@ -299,7 +299,7 @@ export async function runLauncher(client, argv) {
   let settingsPath;
   if (client === 'claude') settingsPath = writeClaudeSettings(configDir, bridge, proxyUrl, clientVersion);
   const args = client === 'codex'
-    ? buildCodexArgs({ cwd: options.cwd, resume: options.resume, proxyUrl, catalogPath, catalog, unsafe: options.unsafe, headless: options.headless, extraArgs: options.extraArgs })
+    ? buildCodexArgs({ cwd: options.cwd, resume: options.resume, proxyUrl, catalogPath, catalog, unsafe: options.unsafe, headless: options.headless, parallelAgents: options.parallelAgents, extraArgs: options.extraArgs })
     : buildClaudeArgs({ cwd: options.cwd, resume: options.resume, sessionId: proxy.state.sessionId, settingsPath, emptyMcpPath: DEFAULT_EMPTY_MCP, unsafe: options.unsafe, headless: options.headless, extraArgs: options.extraArgs }).args;
   const promptBytes = readPromptFile(options.promptFile);
   writeLaunchMetadata(path.join(artifactRoot, 'launch.json'), {
@@ -308,6 +308,7 @@ export async function runLauncher(client, argv) {
     clientVersion,
     model: client === 'codex' ? CODEX_MODEL : CLAUDE_MODEL,
     cwd: options.cwd,
+    parallelAgents: options.parallelAgents,
     resume: options.resume || null,
     sessionId: client === 'claude' ? proxy.state.sessionId : null,
     cliPath,
