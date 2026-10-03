@@ -1,5 +1,6 @@
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import * as z from "zod/v4";
 import { namespacedToolName, type CodexTool } from "../../types";
 import { VERSION } from "../../version";
@@ -85,10 +86,10 @@ function wireName(tool: CodexTool): string {
 
 export type { ChatGptMcpContract } from "./mcp-zero-risk";
 
-export async function runChatGptMcpServer(options: {
+export function createChatGptMcpServer(options: {
   brokerSocketPath: string;
   contract?: ChatGptMcpContract;
-}): Promise<void> {
+}): McpServer {
   const contract = options.contract ?? "native";
   const server = new McpServer(
     { name: contract === "safe" ? "codex-safe" : "codex-native", version: VERSION },
@@ -570,5 +571,18 @@ export async function runChatGptMcpServer(options: {
       });
     },
   ));
-  await server.connect(observeMcpToolCalls(new StdioServerTransport(), BRIDGE_TOOL_NAMES));
+  return server;
+}
+
+export function connectChatGptMcpServer(server: McpServer, transport: Transport, requestId?: string): Promise<void> {
+  return server.connect(observeMcpToolCalls(transport, BRIDGE_TOOL_NAMES, requestId
+    ? event => console.error(`[chatgpt-web-mcp] transport=${JSON.stringify({ requestId, ...event })}`)
+    : undefined));
+}
+
+export async function runChatGptMcpServer(options: {
+  brokerSocketPath: string;
+  contract?: ChatGptMcpContract;
+}): Promise<void> {
+  await connectChatGptMcpServer(createChatGptMcpServer(options), new StdioServerTransport());
 }

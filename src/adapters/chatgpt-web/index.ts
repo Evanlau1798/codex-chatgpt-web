@@ -463,7 +463,7 @@ export function createChatGptWebAdapter(
                 const recoveryLimit = recoveryLimits ? Math.min(100_000, recoveryLimits.autoCompactTokenLimit) : undefined;
                 const checkpoint = recoveryLimit !== undefined
                   && enhancedRecoveryCheckpointStore.shouldCheckpoint(parsed, recoveryLimit, recoveryBudget)
-                  ? await broker.beginRecoveryCheckpoint(traceId, 5 * 60_000,
+                  ? await broker.beginRecoveryCheckpoint(traceId, timeoutMs ?? null,
                       summary => enhancedRecoveryCheckpointStore.commit(parsed, summary))
                   : undefined;
                 try {
@@ -535,10 +535,15 @@ export function createChatGptWebAdapter(
                   stallTimeoutMs,
                 ), incoming.abortSignal);
               } catch (error) {
-                recoveryPlan = surfaceRecovery.recoveryPlan(error, session, parsed,
+                // Broker retirement can reject owner_next before its browser outcome wrapper is
+                // observed. Once the session has a browser error, keep that typed failure
+                // authoritative; otherwise preserve the broker/stall error that actually won.
+                const settled = session.settledOutcome();
+                const authoritativeError = settled?.type === "error" ? settled.error : error;
+                recoveryPlan = surfaceRecovery.recoveryPlan(authoritativeError, session, parsed,
                   surfaceRecoveries, incoming.abortSignal, durableRecoveryCheckpoint());
                 if (recoveryPlan !== undefined) return;
-                throw error;
+                throw authoritativeError;
               }
               if (next.type === "trace") {
                 emitNewTrace(session.runtime.trace.drain());
