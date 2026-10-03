@@ -26,11 +26,19 @@ test.skipIf(process.platform !== "win32")("Interrupt hook reaches the exact auth
       { cwd: root, windowsHide: true, windowsVerbatimArguments: shell === "cmd", stdio: ["pipe", "pipe", "pipe"] });
     let output = "";
     let error = "";
+    const startedAt = Date.now(), requestStart = requests.length;
+    let spawned = false, stdinWritten = false, stdinError: string | undefined;
+    child.once("spawn", () => { spawned = true; });
+    child.stdin.on("error", err => { stdinError = err.message; });
     child.stdout.on("data", chunk => { output += chunk; });
     child.stderr.on("data", chunk => { error += chunk; });
-    if (keepStdinOpen) child.stdin.write(`${payload}\n`);
+    if (keepStdinOpen) child.stdin.write(`${payload}\n`, err => { stdinWritten = !err; if (err) stdinError = err.message; });
     else child.stdin.end(payload);
-    const timer = setTimeout(() => child.kill(), 10_000);
+    const timer = setTimeout(() => {
+      console.error("[interrupt-shell-probe] " + JSON.stringify({ shell, keepStdinOpen, spawned, stdinWritten,
+        stdinError, requestsObserved: requests.length - requestStart, elapsedMs: Date.now() - startedAt }));
+      child.kill();
+    }, 10_000);
     const status = await new Promise<number | null>((resolve, reject) => {
       child.once("error", reject);
       child.once("close", resolve);
