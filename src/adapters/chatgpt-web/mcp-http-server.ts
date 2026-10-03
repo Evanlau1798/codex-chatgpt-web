@@ -22,14 +22,42 @@ function localOrigin(request: IncomingMessage, port: number): boolean {
 }
 
 async function body(request: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  for await (const chunk of request) {
-    bytes += chunk.length;
-    if (bytes > MAX_BODY_BYTES) throw new Error("mcp_body_too_large");
-    chunks.push(Buffer.from(chunk));
-  }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    const cleanup = () => {
+      request.off("data", onData);
+      request.off("end", onEnd);
+      request.off("error", onError);
+      request.off("aborted", onAborted);
+      chunks.length = 0;
+    };
+    const fail = (error: Error) => { cleanup(); reject(error); };
+    const onError = (error: Error) => fail(error);
+    const onAborted = () => fail(new Error("mcp_request_aborted"));
+    const onData = (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > MAX_BODY_BYTES) {
+        // Breaking IncomingMessage's async iterator destroys the socket and
+        // loses the 413 response. Stop retaining data but drain the body.
+        fail(new Error("mcp_body_too_large"));
+        request.resume();
+        return;
+      }
+      chunks.push(Buffer.from(chunk));
+    };
+    const onEnd = () => {
+      try {
+        const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        cleanup();
+        resolve(value);
+      } catch (error) { fail(error instanceof Error ? error : new Error("invalid_json")); }
+    };
+    request.on("data", onData);
+    request.once("end", onEnd);
+    request.once("error", onError);
+    request.once("aborted", onAborted);
+  });
 }
 
 /** Opt-in, authenticated stateless MCP. Each HTTP request owns its RPC namespace. */
@@ -68,9 +96,11 @@ export async function startChatGptMcpHttpServer(options: {
     response.on("close", disconnected);
     try {
       const value = await body(request);
+      if (request.aborted || response.destroyed) return;
       mcp = createChatGptMcpServer(options);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       await connectChatGptMcpServer(mcp, transport, requestId);
+      if (response.destroyed) return;
       await transport.handleRequest(request, response, value);
     } catch (error) {
       // Never include exception text, authorization, tool input or request body.
