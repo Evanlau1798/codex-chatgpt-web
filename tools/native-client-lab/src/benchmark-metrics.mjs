@@ -19,7 +19,8 @@ export function nativeMetrics(artifact) {
   const chunks = decodeLines(fs.readFileSync(path.join(artifact, 'stdout.jsonl'), 'utf8'));
   const decoded = decodeLines(chunks.rows.map(row => row?.data || '').join(''));
   const eventCapture = decodeLines(fs.readFileSync(path.join(artifact, 'events.jsonl'), 'utf8'));
-  const captureErrors = chunks.errors + decoded.errors + eventCapture.errors;
+  const captureErrors = chunks.errors + decoded.errors + eventCapture.errors
+    + eventCapture.rows.filter(row => row.type === 'response_capture_failed').length;
   const records = decoded.rows;
   const events = eventCapture.rows;
   const calls = []; let finalObserved = false; let lastTool = -1; let lastAnswer = -1; let turnCompleted = false;
