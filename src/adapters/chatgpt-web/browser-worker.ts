@@ -205,6 +205,12 @@ import {
   resolveChatGptWebMultipartStagingMode,
   type PreparedChatGptWebMultipartTransport,
 } from "./multipart-browser-transport";
+import {
+  ChatGptModelReceiptObserver,
+  type ChatGptModelReceipt,
+  type ChatGptModelReceiptCallback,
+  type ChatGptModelReceiptDiagnosticCallback,
+} from "./model-receipt";
 
 export {
   assertChatGptWebMultipartInputWithinLimits,
@@ -737,6 +743,12 @@ function throwIfPromptAttachmentAborted(signal?: AbortSignal): void {
 export interface BrowserTurn {
   traceId: string;
   modelId: string;
+  /** Public Responses model route before the Web adapter resolves its backend context model. */
+  requestedModel?: string;
+  /** Generic internal Web context model; never presented as the model that answered. */
+  backendContextModel?: string;
+  /** Optional recovery provenance supplied by a caller rebuilding the browser surface. */
+  modelReceiptProvenance?: ChatGptModelReceipt["provenance"];
   reasoning?: string;
   modelFamily?: "5.6" | "6";
   capabilities: ChatGptWebCapabilities;
@@ -758,6 +770,10 @@ export interface BrowserTurn {
   onSendActivated?: () => void | Promise<void>;
   /** The current prompt is visible to ChatGPT and must never be replayed on another surface. */
   onSubmitted?: () => void | Promise<void>;
+  /** Provider-private network model receipt; it never changes the public Responses model field. */
+  onModelReceipt?: ChatGptModelReceiptCallback;
+  /** Provider-private bounded outcome diagnostic; it contains no response text or payload. */
+  onModelReceiptDiagnostic?: ChatGptModelReceiptDiagnosticCallback;
   onMultipartStageAcknowledged?: (stageIndex: number) => void | Promise<void>;
   /** Release the unselected full/resume transport after the launcher resolves the retained lease. */
   onPreparedSelected?: (reused: boolean) => void | Promise<void>;
@@ -4059,6 +4075,14 @@ export class ChatGptBrowserWorker {
     turn = { ...turn, abortSignal: originalAbortSignal
       ? AbortSignal.any([originalAbortSignal, rejectionAbort.signal])
       : rejectionAbort.signal };
+    const modelReceipts = new ChatGptModelReceiptObserver(
+      turn.traceId,
+      turn.requestedModel ?? turn.modelId,
+      turn.backendContextModel ?? (turn.requestedModel !== turn.modelId ? turn.modelId : undefined),
+      turn.onModelReceipt,
+      undefined,
+      turn.onModelReceiptDiagnostic,
+    );
     try {
       if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
       assertChatGptPromptAttachments(prepared);
@@ -4121,6 +4145,7 @@ export class ChatGptBrowserWorker {
       });
       if (!maintenancePage && !launcherSurfaceId) managedPage = page;
       diagnosticPage = page;
+      await modelReceipts.attach(page);
       const rebindLauncherPage = async (
         attempt: number, cause: Error, callerSignal?: AbortSignal, episodeRemainingMs?: () => number,
       ): Promise<void> => {
@@ -4177,6 +4202,7 @@ export class ChatGptBrowserWorker {
             checkCurrent();
             page = connection.page;
             diagnosticPage = page;
+            await modelReceipts.attach(page);
           }, rebindSignal);
           check();
           console.warn(`[chatgpt-web] browser turn ${turn.traceId} same-page recovery attempt=${attempt} phase=ready`);
@@ -4303,7 +4329,10 @@ export class ChatGptBrowserWorker {
             initialTurnIdentities,
             initialPageUrl: page.url(),
             submissionRequestObserved: () => submissionRejection.ownedSubmissionRequestObserved(),
-            activateSubmissionRequestObservation: () => submissionRejection.activate(),
+            activateSubmissionRequestObservation: () => {
+              submissionRejection.activate();
+              modelReceipts.activate();
+            },
             initialResponseTurn,
             submittedText: stage.text,
           };
@@ -4341,6 +4370,11 @@ export class ChatGptBrowserWorker {
                 await this.assertSelectedEffort(page, mode, true, turn.traceId);
                 Object.assign(baseline, await this.captureSubmissionBaseline(page, stage.text, baseline));
                 submissionRejection.begin(page);
+                await modelReceipts.ensurePageCaptureReady();
+                modelReceipts.beginSend({
+                  responseAttempt: 1,
+                  provenance: "multipart_stage",
+                });
               },
               undefined,
               toolTurnObservationRecovery,
@@ -4383,6 +4417,7 @@ export class ChatGptBrowserWorker {
           );
           const stageRejection = await submissionRejection.failure();
           if (stageRejection) throw stageRejection;
+          await modelReceipts.flushCurrent();
           await turn.onMultipartStageAcknowledged?.(index + 1);
           await diagnostics.capture(page, `multipart-stage-${index + 1}-acknowledged`);
         }
@@ -4460,7 +4495,10 @@ export class ChatGptBrowserWorker {
           initialTurnIdentities,
           initialPageUrl: page.url(),
           submissionRequestObserved: () => submissionRejection.ownedSubmissionRequestObserved(),
-          activateSubmissionRequestObservation: () => submissionRejection.activate(),
+          activateSubmissionRequestObservation: () => {
+            submissionRejection.activate();
+            modelReceipts.activate();
+          },
           initialResponseTurn,
           submittedText: responsePrompt,
         };
@@ -4556,7 +4594,10 @@ export class ChatGptBrowserWorker {
                     initialTurnIdentities,
                     initialPageUrl: page.url(),
                     submissionRequestObserved: () => submissionRejection.ownedSubmissionRequestObserved(),
-                    activateSubmissionRequestObservation: () => submissionRejection.activate(),
+                    activateSubmissionRequestObservation: () => {
+                      submissionRejection.activate();
+                      modelReceipts.activate();
+                    },
                     initialResponseTurn,
                     submittedText: responsePrompt,
                   };
@@ -4694,6 +4735,12 @@ export class ChatGptBrowserWorker {
           recoveryFinalizationActivated = true;
         }
         submissionRejection.begin(page);
+        await modelReceipts.ensurePageCaptureReady();
+        modelReceipts.beginSend({
+          responseAttempt,
+          provenance: turn.modelReceiptProvenance
+            ?? (responseAttempt > 1 ? "response_retry" : "initial"),
+        });
         if (!recoveryFinalizationActivated) await turn.onSendActivated?.();
         // IPC activation acknowledgement can restore virtualized history too. Refresh only
         // after it settles, while the terminal anchor and retained identity order are proven.
@@ -4709,6 +4756,7 @@ export class ChatGptBrowserWorker {
         const initialBrokerActivityRevision = initialProgress?.lastBrokerActivityRevision ?? 0;
         if (recoveryFinalizationActivated) {
           submissionRejection.activate();
+          modelReceipts.activate();
           let recoverySent: boolean | undefined;
           try {
             recoverySent = await activateOwnedChatGptSendControl(
@@ -4746,7 +4794,10 @@ export class ChatGptBrowserWorker {
           recoveryExpectedActivityRevision = undefined;
         } else {
           console.info(`[chatgpt-web] browser turn ${turn.traceId} send_control phase=activating`);
-          await activateChatGptSendControl(sendButton, stageSignal, () => submissionRejection.activate());
+          await activateChatGptSendControl(sendButton, stageSignal, () => {
+            submissionRejection.activate();
+            modelReceipts.activate();
+          });
           console.info(`[chatgpt-web] browser turn ${turn.traceId} send_control phase=settled`);
         }
         const evidence = await this.waitForSubmissionAccepted(
@@ -5441,6 +5492,7 @@ export class ChatGptBrowserWorker {
             if (finalDecision.status === "retry") {
               this.finalizingRuns.delete(turn.traceId);
               completedRetryPrompt = finalDecision.retry;
+              await modelReceipts.flushCurrent();
             } else {
               const deliverable = answerBuffer.finalizeCandidate(finalDecision.answer);
               if (deliverable) turn.onTextDelta(deliverable);
@@ -5522,6 +5574,7 @@ export class ChatGptBrowserWorker {
             ? `${failure.name}:${failure.code}`
             : failure.name;
           console.warn(`[chatgpt-web] browser turn ${turn.traceId} retrying response failure attempt=${responseAttempt + 1} reason=${reason}`);
+          await modelReceipts.flushCurrent();
           continue;
         }
         const retryPrompt = completedRetryPrompt;
@@ -5551,6 +5604,7 @@ export class ChatGptBrowserWorker {
 
       const finalRejection = await submissionRejection.failure();
       if (finalRejection) throw finalRejection;
+      await modelReceipts.flushAll();
       if (this.context && this.config.browserHost === "managed-chrome") {
         const state = await this.context.storageState();
         atomicWriteFile(this.config.storageStatePath, `${JSON.stringify(state)}\n`);
@@ -5560,6 +5614,7 @@ export class ChatGptBrowserWorker {
       console.info(`[chatgpt-web] browser turn ${turn.traceId} completed (markdownChars=${answer.length})`);
       return answer;
     } catch (error) {
+      await modelReceipts.flushAll();
       if (rejectionAbort.signal.aborted && !originalAbortSignal?.aborted
         && !(error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")) {
         error = rejectionAbort.signal.reason;
@@ -5592,6 +5647,7 @@ export class ChatGptBrowserWorker {
       throw error;
     } finally {
       submissionRejection.dispose();
+      await modelReceipts.dispose();
       await Promise.all(usageWrites);
       prepared.release();
       if (turnConnection) {

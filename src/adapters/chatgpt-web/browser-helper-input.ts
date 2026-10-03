@@ -2,6 +2,7 @@ import type { CompiledChatGptWebPrompt } from "./prompt";
 import type { ChatGptExternalTurnProgressSnapshot } from "./turn-progress";
 import type { BrokerTurnOutputEvent } from "./turn-broker-protocol";
 import type { ChatGptWebCapabilities } from "./model";
+import type { ChatGptModelReceipt } from "./model-receipt";
 
 export interface BrowserHelperRunMessage {
   type: "run";
@@ -20,6 +21,9 @@ export interface BrowserHelperRunMessage {
   turn: {
     traceId: string;
     modelId: string;
+    requestedModel?: string;
+    backendContextModel?: string;
+    modelReceiptProvenance?: ChatGptModelReceipt["provenance"];
     reasoning?: string;
     modelFamily?: "5.6" | "6";
     capabilities: ChatGptWebCapabilities;

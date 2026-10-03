@@ -1,0 +1,41 @@
+{
+  "provenance": {
+    "sourceArtifactSha256": "fdcc6ad501aca22198490debaa2df81472b79a866327a227be48dc64b0c54095",
+    "traceId": "c6f8424c1133",
+    "source": "page",
+    "frameIndexes": [
+      9,
+      12
+    ],
+    "scope": "Exact complete assistant-metadata and stream-metadata fragments only; NOT a replay of the incomplete full trace. Content omitted and identifiers hashed by the runtime recorder."
+  },
+  "frames": [
+    {
+      "v": {
+        "message": {
+          "id": "a36c6b14efde0eba7529b759",
+          "author": {
+            "role": "assistant",
+            "metadata": {}
+          },
+          "status": "finished_successfully",
+          "end_turn": null,
+          "metadata": {
+            "resolved_model_slug": "gpt-6-pro",
+            "model_slug": "gpt-6-pro",
+            "default_model_slug": "gpt-6-pro"
+          }
+        },
+        "conversation_id": "a80e1d45291670c074c88687"
+      }
+    },
+    {
+      "type": "server_ste_metadata",
+      "metadata": {
+        "model_slug": "gpt-6-pro",
+        "message_id": "7417dd999851cab1ffdd4d8a"
+      },
+      "conversation_id": "a80e1d45291670c074c88687"
+    }
+  ]
+}
