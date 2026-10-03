@@ -4,6 +4,7 @@ import path from 'node:path';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
 import * as zlib from 'node:zlib';
+import { responseCapture as createResponseCapture } from './response-capture.mjs';
 
 export const CODEX_MODEL = 'chatgpt-web/gpt-6-pro';
 export const CLAUDE_MODEL = 'claude-chatgpt-web-gpt-6-pro';
@@ -787,7 +788,7 @@ export function createRecordingProxy(options) {
         });
       }
       const responseFile = path.join(artifactRoot, `${id}.response.txt`);
-      responseCapture = fs.createWriteStream(responseFile, { mode: 0o600, flags: 'wx' });
+      responseCapture = createResponseCapture(responseFile);
       const responseRedactor = redactor;
       const decoder = new TextDecoder();
       let frameBuffer = '';
@@ -831,7 +832,9 @@ export function createRecordingProxy(options) {
         classificationText += tail.slice(0, MAX_EVENT_VALUE_CHARS - classificationText.length);
       }
       responseRedactor.end(piece => responseCapture.write(piece));
-      responseCapture.end();
+      // EOF at the upstream/client is not proof the captured file has flushed.
+      const capture = await responseCapture.end();
+      if (!capture.complete) appendEvent(eventsPath, { id, type: 'response_capture_failed', error_code: capture.error_code }, responseRedactor);
       if (inferenceScope && (upstream.status === 429 || (options.diagnostic && upstream.status >= 500))) {
         let error;
         try {
@@ -858,7 +861,7 @@ export function createRecordingProxy(options) {
       }, responseRedactor);
       writeJson(path.join(artifactRoot, `${id}.response.meta.json`), {
         id, status: upstream.status, headers: outHeaders, responseChars, frameCount,
-        elapsedMs: Date.now() - started, quotaLatched: state.quotaLatched,
+        elapsedMs: Date.now() - started, quotaLatched: state.quotaLatched, capture_complete: capture.complete,
       }, responseRedactor);
       res.end();
     } catch (error) {
