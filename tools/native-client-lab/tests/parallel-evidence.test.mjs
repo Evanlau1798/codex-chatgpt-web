@@ -13,6 +13,8 @@ test('parallel evidence requires owned worker intervals and exact served model r
     rows.push('model_receipt ' + JSON.stringify({ traceId, source: 'network.resolved_model_slug', servedModel: 'gpt-6-pro' }));
   }
   assert.equal(parallelEvidence(rows.join('\n'), '/owned').observed_worker_overlap_ms, 20);
+  assert.equal(parallelEvidence(rows.join('\n'), '/owned').workers_with_generation_intervals, 2);
+  assert.equal(parallelEvidence(rows.filter(row => !row.includes('completion_committed')).join('\n'), '/owned').workers_with_generation_intervals, 0);
   assert.equal(parallelEvidence(rows.filter(row => !row.startsWith('model_receipt')).join('\n'), '/owned').observed_worker_overlap_ms, 0);
   assert.equal(parallelEvidence(rows.join('\n'), '/wrong').owned_workers, 0);
 });

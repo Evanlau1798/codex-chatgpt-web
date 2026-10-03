@@ -35,4 +35,9 @@ ordinary lab tests continue disabling delegation. Receipt/visible-generation
 correlation requires the diagnostics and receipt packets (#74/#76) in the
 deployed composition. Overlap means distinct owned visible generation intervals
 with wire model receipts, not GPU scheduling or proven provider throughput.
+Sequential acceptance also requires two closed observed worker intervals:
+missing observations must not masquerade as zero overlap. Both benchmark modes
+report client-completion wall time separately from independent verification.
+Output directories must be empty; only explicit interrupts or exceptional
+harness failure tear down the owned child, never slow provider generation.
 Keep all experimental packets draft until that real-client acceptance passes.

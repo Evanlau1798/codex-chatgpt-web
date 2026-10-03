@@ -22,12 +22,14 @@ export function parallelEvidence(log, cwd) {
     }
   }
   const served = new Set(receipts.filter(row => owned.has(row.traceId) && row.source === 'network.resolved_model_slug' && row.servedModel === 'gpt-6-pro').map(row => row.traceId));
+  const observed = new Set(intervals.map(interval => interval.traceId));
   let overlap = 0;
   for (let i = 0; i < intervals.length; i++) for (let j = i + 1; j < intervals.length; j++) {
     const a = intervals[i], b = intervals[j];
     if (a.traceId !== b.traceId && served.has(a.traceId) && served.has(b.traceId)) overlap = Math.max(overlap, Math.min(a.end, b.end) - Math.max(a.start, b.start));
   }
   return { owned_workers: workers.size, workers_with_pro_receipts: [...workers].filter(id => served.has(id)).length,
+    workers_with_generation_intervals: [...workers].filter(id => observed.has(id)).length,
     observed_worker_overlap_ms: Math.max(0, overlap), overlap_evidence: 'owned_visible_generation_intervals_and_wire_receipts',
     hardware_inference_scheduling: 'unobserved' };
 }

@@ -6,14 +6,18 @@ import { spawn, spawnSync } from 'node:child_process';
 import { LAB_ROOT } from '../src/launch-args.mjs';
 import { digest, nativeMetrics, ownedProviderMetrics } from '../src/benchmark-metrics.mjs';
 import { parallelEvidence } from '../src/parallel-evidence.mjs';
+import { evaluateParallelAcceptance } from '../src/parallel-oracle.mjs';
+import { withOwnedChild } from '../src/owned-child.mjs';
 const argv = process.argv.slice(2);
 const option = (name, fallback) => argv.includes(name) ? argv[argv.indexOf(name) + 1] : fallback;
 const client = option('--client', 'codex'), mode = option('--mode', 'parallel');
 if (!['codex', 'claude'].includes(client) || !['parallel', 'sequential'].includes(mode)) throw new Error('Invalid client/mode');
 const providerLog = option('--provider-log');
 if (!providerLog || !fs.statSync(providerLog).isFile()) throw new Error('Existing private --provider-log required before inference');
-const root = option('--output-root', fs.mkdtempSync(path.join(os.tmpdir(), 'native-parallel-')));
-fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+const requestedRoot = option('--output-root', fs.mkdtempSync(path.join(os.tmpdir(), 'native-parallel-')));
+fs.mkdirSync(requestedRoot, { recursive: true, mode: 0o700 });
+const root = fs.realpathSync(requestedRoot);
+if (fs.readdirSync(root).length) throw new Error('Benchmark output directory must be empty; never reuse uncertain runs');
 const cwd = path.join(root, 'project'), artifacts = path.join(root, 'artifacts');
 fs.mkdirSync(cwd, { mode: 0o700 });
 const assets = path.join(LAB_ROOT, 'assets', 'parallel');
@@ -29,9 +33,22 @@ if (argv.includes('--unsafe')) args.push('--unsafe');
 const before = fs.statSync(providerLog).size, started = Date.now();
 const fd = fs.openSync(path.join(root, 'launch.log'), 'wx', 0o600);
 const child = spawn(process.execPath, args, { stdio: ['ignore', fd, fd] });
+const signalHandlers = new Map(['SIGINT', 'SIGTERM'].map(signal => [signal, () => {
+  if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+}]));
+for (const [signal, handler] of signalHandlers) process.on(signal, handler);
 console.log(JSON.stringify({ benchmark_root: root, client, mode, query_timeout: null, automatic_retry: false }));
-const launchExit = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
-fs.closeSync(fd);
+let launchExit;
+try {
+  const completion = await withOwnedChild(child, async (_child, completed) => completed);
+  if (completion.error) throw completion.error;
+  launchExit = completion.code;
+} finally {
+  fs.closeSync(fd);
+  for (const [signal, handler] of signalHandlers) process.off(signal, handler);
+}
+const elapsed = Date.now() - started;
+const verificationStarted = Date.now();
 const test = spawnSync(process.execPath, ['--test', 'parallel.test.mjs'], { cwd, encoding: 'utf8' });
 fs.writeFileSync(path.join(root, 'independent-test.log'), test.stdout + test.stderr, { mode: 0o600 });
 const dirs = fs.existsSync(artifacts) ? fs.readdirSync(artifacts) : [];
@@ -43,11 +60,12 @@ const expected = { 'left.mjs': 'export const left = n => n * 2;\n', 'right.mjs':
 const fileDigest = name => { try { return digest(fs.readFileSync(path.join(cwd, name))); } catch { return null; } };
 const exact = Object.entries(expected).every(([name, text]) => fileDigest(name) === digest(text));
 const immutable = fileDigest('parallel.test.mjs') === testHash;
-const accepted = launchExit === 0 && native.native_exit === 0 && native.client_final_observed === true && test.status === 0
-  && exact && immutable && wire.served_model === 'gpt-6-pro' && parallel.owned_workers === 2 && parallel.workers_with_pro_receipts === 2
-  && (mode === 'parallel' ? parallel.observed_worker_overlap_ms > 0 : parallel.observed_worker_overlap_ms === 0);
-const result = { accepted, client, mode, elapsed_ms: Date.now() - started, launcher_exit: launchExit, test_exit: test.status,
+const acceptance = evaluateParallelAcceptance({ mode, parallel, launcherExit: launchExit, nativeExit: native.native_exit,
+  clientFinal: native.client_final_observed, testExit: test.status, exactEdit: exact, testsUnchanged: immutable, servedModel: wire.served_model });
+const result = { ...acceptance, client, mode, elapsed_ms: elapsed,
+  verification_elapsed_ms: Date.now() - verificationStarted, total_elapsed_ms: Date.now() - started,
+  launcher_exit: launchExit, test_exit: test.status,
   exact_edits: exact, tests_unchanged: immutable, ...native, ...wire, ...parallel, billing_cost: 'unmeasured' };
 fs.writeFileSync(path.join(root, 'results.json'), JSON.stringify(result, null, 2) + '\n', { mode: 0o600 });
 console.log(JSON.stringify(result));
-process.exitCode = accepted ? 0 : 1;
+process.exitCode = acceptance.accepted ? 0 : 1;
