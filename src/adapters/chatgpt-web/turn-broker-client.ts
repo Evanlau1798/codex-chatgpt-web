@@ -27,13 +27,20 @@ export async function callTurnBroker<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   const id = opaqueId("request");
-  const settleOnResponseFrame = timeoutMs === null;
+  const trace = (phase: string) => {
+    if (process.env.CODEX_CHATGPT_WEB_BROKER_TRACE !== "1") return;
+    try { console.error(`[broker-rpc] ${JSON.stringify({ id, method: request.method, phase })}`); } catch {}
+  };
   const wireRequest = request.method === "claim" && request.activityId === undefined
     ? { ...request, activityId: opaqueId("activity") }
     : request.method === "invoke" && timeoutMs !== null
       ? { ...request, invokeDeadlineAt: Date.now() + timeoutMs }
       : request;
   return new Promise<T>((resolveCall, rejectCall) => {
+    if (signal?.aborted) {
+      rejectCall(new DOMException("turn broker call aborted", "AbortError"));
+      return;
+    }
     const socket = createConnection(socketPath);
     let buffered = "";
     let settled = false;
@@ -46,9 +53,10 @@ export async function callTurnBroker<T>(
     const finishError = (error: Error) => {
       if (settled) return;
       settled = true;
+      trace("rejected");
       clearTimeout(timer);
       cleanup();
-      socket.destroy();
+      setImmediate(() => socket.destroy());
       rejectCall(error);
     };
     const finishResponse = () => {
@@ -58,6 +66,7 @@ export async function callTurnBroker<T>(
         return;
       }
       settled = true;
+      trace(response.error ? "reply_error" : "reply_result");
       clearTimeout(timer);
       cleanup();
       if (response.error) rejectCall(new Error(response.error));
@@ -78,15 +87,17 @@ export async function callTurnBroker<T>(
       if (!responseAccepted) finishError(new Error(`ChatGPT web turn broker unavailable: ${error.message}`));
     });
     socket.once("end", () => {
+      trace("peer_end");
       if (response) responseAccepted = true;
       socket.end();
       setImmediate(finishResponse);
     });
     socket.once("close", () => {
+      trace("socket_close");
       if (response) responseAccepted = true;
       setImmediate(finishResponse);
     });
-    socket.once("connect", () => socket.write(`${JSON.stringify({ id, ...wireRequest })}\n`));
+    socket.once("connect", () => { trace("connected"); socket.write(`${JSON.stringify({ id, ...wireRequest })}\n`); });
     socket.on("data", chunk => {
       if (settled || response) return;
       buffered += chunk;
@@ -114,11 +125,15 @@ export async function callTurnBroker<T>(
         return;
       }
       response = parsed;
+      trace("valid_frame");
       responseAccepted = true;
-      if (settleOnResponseFrame) {
-        finishResponse();
-        socket.destroy();
-      }
+      // One validated newline-delimited frame is the complete RPC response.
+      // Waiting for peer EOF afterward can hang Windows named pipes forever:
+      // responseAccepted has already disabled timeout/cancellation settlement.
+      finishResponse();
+      // The server owns normal socket closure after its response. Force-close
+      // races Bun's Windows pipe end path even when deferred. Settlement is
+      // independent of EOF; failed/cancelled requests still retire their socket.
     });
   });
 }

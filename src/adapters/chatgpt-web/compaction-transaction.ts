@@ -32,9 +32,9 @@ function opaqueId(prefix: "control" | "handoff"): string {
 export class CompactionTransactionStore {
   private readonly transactions = new Map<string, CompactionTransaction>();
 
-  begin(traceId: string, ttlMs: number, beforeAccept?: (summary: string) => void): CompactionTransactionHandle {
+  begin(traceId: string, ttlMs: number | null, beforeAccept?: (summary: string) => void): CompactionTransactionHandle {
     if (!traceId.trim()) throw new Error("compaction transaction trace id is required");
-    if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+    if (ttlMs !== null && (!Number.isFinite(ttlMs) || ttlMs <= 0)) {
       throw new Error("compaction transaction TTL must be a positive finite number");
     }
     const transaction: CompactionTransaction = {
@@ -45,16 +45,19 @@ export class CompactionTransactionStore {
       kind: beforeAccept ? "recovery" : "compaction",
       ...(beforeAccept ? { beforeAccept } : {}),
     };
-    this.armTimeout(transaction, ttlMs);
+    if (ttlMs !== null) this.armTimeout(transaction, ttlMs);
     this.transactions.set(transaction.token, transaction);
     return { token: transaction.token, handoffId: transaction.handoffId };
   }
 
-  refresh(token: string, ttlMs: number): void {
+  refresh(token: string, ttlMs: number | null): void {
     const transaction = this.transactions.get(token);
     if (!transaction) throw new Error("compaction control token is invalid, expired, or consumed");
     if (transaction.state !== "pending") return;
-    this.armTimeout(transaction, ttlMs);
+    if (ttlMs === null) {
+      if (transaction.timer) clearTimeout(transaction.timer);
+      transaction.timer = undefined;
+    } else this.armTimeout(transaction, ttlMs);
   }
 
   submit(token: string, handoffId: string, summary: string, kind: "compaction" | "recovery" = "compaction"): void {

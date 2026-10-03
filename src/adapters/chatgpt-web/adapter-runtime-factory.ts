@@ -380,7 +380,10 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     const browser = finalizeCheckpoint(toolPolicy.requireTool ? trackedRun.then(answer => {
       assertChatGptToolRequirementSatisfied(toolPolicy, toolResultDelivered); return answer;
     }) : trackedRun);
-    void browser.catch(() => setTimeout(() => activeToken && void Promise.resolve(brokerOwner.revoke(activeToken)).catch(() => {}), 0));
+    void browser.catch(error => {
+      const reason = error instanceof Error ? error : new Error(String(error));
+      setTimeout(() => activeToken && void Promise.resolve(brokerOwner.revoke(activeToken, reason)).catch(() => {}), 0);
+    });
     void browser.catch(error => {
       if (!tokenSettled) {
         tokenSettled = true;

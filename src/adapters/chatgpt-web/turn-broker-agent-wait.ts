@@ -98,8 +98,11 @@ export function startAgentWait(
       );
     }
     const invocation = enqueue(request);
-    wait.timer = setTimeout(() => retire(new Error("Native agent wait exceeded its transport deadline; do not replay")),
-      chatGptMcpInvocationTimeout(channel.environment));
+    const timeoutMs = chatGptMcpInvocationTimeout(channel.environment);
+    if (timeoutMs !== null) {
+      wait.timer = setTimeout(() => retire(new Error("Native agent wait exceeded its transport deadline; do not replay")),
+        timeoutMs);
+    }
     void Promise.resolve(invocation).then(result => {
       if (channel.agentWait !== wait || wait.result !== undefined) return;
       if (wait.timer) clearTimeout(wait.timer);

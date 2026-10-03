@@ -90,7 +90,7 @@ test("a failed browser surface revokes an outstanding native tool invocation wit
     expect(events.some(event => event.type === "tool_call_start")).toBe(true);
 
     failSurface(new Error("browser surface closed"));
-    expect(await invocationOutcome).toContain("revoked");
+    expect(await invocationOutcome).toBe("browser surface closed");
   } finally {
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
     await broker.close();
