@@ -11,8 +11,8 @@ import {
   inspectLauncherBrowserHost,
   inspectLauncherBrowserHostLiveness,
   readLauncherBrowserHostDescriptor,
-  inspectLauncherNativeReadiness,
 } from "./launcher-browser-host";
+import { inspectLauncherNativeReadiness } from "./adapters/chatgpt-web/native-readiness-client";
 import { processRunning } from "./process";
 
 export type CheckStatus = "ok" | "warning" | "error";

@@ -40,7 +40,7 @@ import { handleCompactRequest } from "./responses/compact-handler";
 import { parseRequest } from "./responses/parser";
 import { expandPreviousResponseInput, flushResponseState, rememberResponseState } from "./responses/state";
 import { codexTitleAuxiliaryResponse } from "./responses/title-auxiliary";
-import { inspectLauncherNativeReadiness } from "./launcher-browser-host";
+import { inspectLauncherNativeReadiness } from "./adapters/chatgpt-web/native-readiness-client";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
 import { VERSION } from "./version";
 import { messagesRequest } from "./messages";

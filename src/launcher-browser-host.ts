@@ -258,8 +258,6 @@ export async function connectLauncherBrowserHost(
   });
 }
 
-export { inspectLauncherNativeReadiness } from "./adapters/chatgpt-web/native-readiness-client";
-
 export async function inspectLauncherBrowserHost(
   descriptorPath: string,
   options: {
