@@ -4,7 +4,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { request } from "node:http";
+import { Agent, request } from "node:http";
 import { defaultBrokerEndpoint } from "../src/config";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { startChatGptMcpHttpServer } from "../src/adapters/chatgpt-web/mcp-http-server";
@@ -41,8 +41,13 @@ test("real MCP HTTP clients isolate reused RPC ids and do not head-of-line block
     broker.completeTool(b, second!.callId, { content: [{ type: "text", text: "CHILD_RESULT" }] });
     expect(JSON.stringify((await quick).content)).toContain("CHILD_RESULT");
     expect(aReturned).toBeFalse();
+    let shutdownFinished = false;
+    const shutdown = http.close().then(() => { shutdownFinished = true; });
+    expect(shutdownFinished).toBeFalse();
     broker.completeTool(a, first!.callId, { content: [{ type: "text", text: "PARENT_RESULT" }] });
     expect(JSON.stringify((await held).content)).toContain("PARENT_RESULT");
+    await shutdown;
+    expect(shutdownFinished).toBeTrue();
   } finally {
     await Promise.allSettled(clients.map(client => client.close()));
     await http.close();
@@ -88,4 +93,23 @@ test("chunked oversized MCP body receives 413 without destroying its reply socke
     expect(JSON.parse(reply.body)).toEqual({ error: "invalid_mcp_request" });
     expect(http.activeRequests()).toBe(0);
   } finally { await http.close(); }
+});
+
+test("graceful MCP shutdown closes an actual idle keep-alive connection", async () => {
+  const http = await startChatGptMcpHttpServer({ brokerSocketPath: defaultBrokerEndpoint(), controlToken: key, port: 0 });
+  const agent = new Agent({ keepAlive: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const status = await new Promise<number>((resolve, reject) => {
+      request(http.endpoint, { method: "POST", agent }, response => {
+        response.resume();
+        response.once("end", () => resolve(response.statusCode!));
+      }).once("error", reject).end();
+    });
+    expect(status).toBe(401);
+    // A test-only bounded oracle; production graceful shutdown has no deadline.
+    await Promise.race([http.close(), new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error("Idle socket prevented MCP shutdown")), 2000);
+    })]);
+  } finally { clearTimeout(timer); agent.destroy(); await http.close(); }
 });
