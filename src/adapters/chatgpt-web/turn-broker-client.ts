@@ -118,7 +118,9 @@ export async function callTurnBroker<T>(
       // Waiting for peer EOF afterward can hang Windows named pipes forever:
       // responseAccepted has already disabled timeout/cancellation settlement.
       finishResponse();
-      socket.destroy();
+      // Do not destroy a Windows named-pipe handle reentrantly from its native
+      // read callback (Bun can crash). The RPC result is already settled.
+      setImmediate(() => socket.destroy());
     });
   });
 }
