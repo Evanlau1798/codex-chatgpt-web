@@ -1,0 +1,21 @@
+name: Windows broker protocol probe
+on:
+  pull_request:
+    paths:
+      - 'src/adapters/chatgpt-web/turn-broker*.ts'
+      - 'tests/dev-chat-broker.test.ts'
+      - 'tests/turn-broker-frame-settlement.test.ts'
+      - '.github/workflows/broker-windows-probe.yml'
+permissions:
+  contents: read
+jobs:
+  windows-broker:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: bun test tests/dev-chat-broker.test.ts tests/turn-broker-frame-settlement.test.ts
