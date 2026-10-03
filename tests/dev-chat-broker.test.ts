@@ -51,7 +51,7 @@ test("remote outer harness owns a turn through the live broker protocol", async 
     });
     expect(await invocation).toMatchObject({ structuredContent: { simulated: true } });
     await remote.revoke(token);
-    await expect(retirement).resolves.toBeUndefined();
+    expect(await retirement).toBeUndefined();
     await expect(callTurnBroker(socketPath, { method: "claim", token })).rejects.toThrow("already finished");
     expect(broker.externalOwnerActiveCount()).toBe(0);
   } finally {
