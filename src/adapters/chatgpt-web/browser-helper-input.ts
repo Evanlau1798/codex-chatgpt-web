@@ -40,7 +40,7 @@ export interface BrowserHelperRunMessage {
 type MaintenanceMessage =
   | { type: "verify"; id: string; config: { appName: string; browserHostDescriptorPath: string; brokerSocketPath: string } }
   | { type: "inspect"; id: string; config: { appName: string; browserHostDescriptorPath: string }; detectCapabilities: boolean }
-  | { type: "smoke" | "limits"; id: string; config: { appName: string; browserHostDescriptorPath: string } };
+  | { type: "smoke" | "limits" | "native_readiness"; id: string; config: { appName: string; browserHostDescriptorPath: string } };
 
 export type BrowserHelperInputMessage = BrowserHelperRunMessage | MaintenanceMessage
   | { type: "answer_retry"; id: string; prompt?: string; acknowledge?: boolean; replaceCandidate?: boolean; allowLunaCheckpointRetry?: boolean }
@@ -61,5 +61,5 @@ export type BrowserHelperInputMessage = BrowserHelperRunMessage | MaintenanceMes
   | { type: "shutdown" };
 
 export type BrowserHelperMaintenanceMessage = Extract<BrowserHelperInputMessage, {
-  type: "verify" | "inspect" | "smoke" | "limits";
+  type: "verify" | "inspect" | "smoke" | "limits" | "native_readiness";
 }>;

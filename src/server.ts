@@ -40,6 +40,7 @@ import { handleCompactRequest } from "./responses/compact-handler";
 import { parseRequest } from "./responses/parser";
 import { expandPreviousResponseInput, flushResponseState, rememberResponseState } from "./responses/state";
 import { codexTitleAuxiliaryResponse } from "./responses/title-auxiliary";
+import { inspectLauncherNativeReadiness } from "./adapters/chatgpt-web/native-readiness-client";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
 import { VERSION } from "./version";
 import { messagesRequest } from "./messages";
@@ -360,6 +361,7 @@ export function startServer(
     });
   }
   let draining = false;
+  let nativeReadinessInProgress = false;
   let accountSafetyDrainOwner: string | undefined;
   let shutdownPromise: Promise<void> | undefined;
   let successfulModelCatalogRequests = 0;
@@ -461,6 +463,20 @@ export function startServer(
           return Response.json({ status: "refused", message: error instanceof Error ? error.message : String(error) }, { status: 409 });
         }
       }
+      if (req.method === "POST" && url.pathname === "/admin/native-readiness") {
+        if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
+        const current = activity();
+        if (draining || nativeReadinessInProgress || current.active_http_turns > 0 || current.active_browser_turns > 0) {
+          return Response.json({ code: "native_readiness_busy" }, { status: 409 });
+        }
+        if (config.browserHost !== "launcher" || config.browserInteractionMode === "manual" || !config.browserHostDescriptorPath) {
+          return Response.json({ code: "native_readiness_unavailable" }, { status: 409 });
+        }
+        nativeReadinessInProgress = true;
+        try { return Response.json(await inspectLauncherNativeReadiness(config.browserHostDescriptorPath)); }
+        catch { return Response.json({ code: "native_readiness_unverified" }, { status: 409 }); }
+        finally { nativeReadinessInProgress = false; }
+      }
       if (req.method === "POST" && url.pathname === "/admin/drain-if-idle") {
         if (!lifecycleControlAuthorized(req, config.controlToken)) return new Response("Unauthorized", { status: 401 });
         if (accountSafetyDrainOwner) return new Response("Account Safety drain is owned", { status: 409 });
@@ -547,6 +563,7 @@ export function startServer(
         });
       }
       if (req.method === "POST" && url.pathname === "/v1/responses") {
+        if (nativeReadinessInProgress) return formatErrorResponse(409, "server_error", "native_readiness_busy: no inference started");
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
           (signal, bindIdentity) => responseRequest(
@@ -561,6 +578,7 @@ export function startServer(
         );
       }
       if (req.method === "POST" && url.pathname === "/v1/messages") {
+        if (nativeReadinessInProgress) return formatErrorResponse(409, "server_error", "native_readiness_busy: no inference started");
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
           signal => messagesRequest(new Request(req, { signal }), config, dependencies.adapterFactory),
@@ -574,6 +592,7 @@ export function startServer(
         return handleClaudeSteeringHook(req);
       }
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
+        if (nativeReadinessInProgress) return formatErrorResponse(409, "server_error", "native_readiness_busy: no inference started");
         if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
           (signal, bindIdentity) => compactRequest(

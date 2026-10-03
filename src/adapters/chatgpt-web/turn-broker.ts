@@ -1,4 +1,5 @@
 import { existsSync, lstatSync, unlinkSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { Server } from "node:net";
 import { isWindowsPipeEndpoint } from "../../config";
 import type { BrokerRetirementFailure } from "./turn-broker-protocol";
@@ -18,6 +19,7 @@ import { opaqueId, type BrokerToolRequest, type BrokerToolResult, type BrokerTur
 import { TurnContextStore } from "./turn-context-store";
 import { beginTurnCompletionFence, commitTurnCompletionFence } from "./turn-broker-completion";
 import { publishPendingFinalizationOutput, rejectTurnOutputWaiters, resetTurnOutput, sealTurnOutput, waitForTurnOutput } from "./turn-broker-output";
+import { logNativeWorkflow, nativeToolResultReceipt } from "./native-observability";
 import { logToolDelivery, rejectTurnChannel, takeQueuedTools } from "./turn-broker-queue";
 import {
   assertSafeHarnessRunning,
@@ -135,6 +137,9 @@ export class TurnBroker implements TurnBrokerOwner {
     };
     this.channels.set(token, channel);
     this.pending.set(token, channel);
+    logNativeWorkflow(traceId, { phase: "native_context_bound", tools: environment.tools.length,
+      cwd_sha256: createHash("sha256").update(environment.cwd).digest("hex"),
+      permission_authority: "native_client", attachment_authority: "current_browser_message" });
     return token;
   }
 
@@ -257,8 +262,15 @@ export class TurnBroker implements TurnBrokerOwner {
     if (!invocation) throw new Error(`tool call is not pending: ${callId}`);
     if (!channel.deliveredCallIds.delete(callId)) throw new Error(`tool call was completed before it was delivered: ${callId}`);
     channel.invocations.delete(callId);
+    const receipt = nativeToolResultReceipt(invocation.request, result);
+    const { call_id, ...logReceipt } = receipt;
+    logNativeWorkflow(channel.traceId, { phase: "tool_result_returned", ...logReceipt,
+      call_id_hash: createHash("sha256").update(call_id).digest("hex").slice(0, 24) });
     console.info(`[chatgpt-web] broker trace=${channel.traceId} completed call=${callId.slice(0, 17)} pending=${channel.invocations.size}`);
-    invocation.resolve(result);
+    invocation.resolve(invocation.includeResultReceipt ? { ...result, _meta: {
+      ...(result._meta && typeof result._meta === "object" && !Array.isArray(result._meta) ? result._meta : {}),
+      codex_native_result: receipt,
+    } } : result);
   }
 
   beginCompletionFence(token: string): number | undefined {
@@ -275,6 +287,8 @@ export class TurnBroker implements TurnBrokerOwner {
     if (!channel) throw new Error("turn token is invalid or expired");
     const committed = commitTurnCompletionFence(channel, revision);
     if (committed) {
+      logNativeWorkflow(channel.traceId, { phase: "completion_committed", revision,
+        client_delivery: "not_observed", task_acceptance: "requires_independent_oracle" });
       console.info(`[chatgpt-web] broker trace=${channel.traceId} committed browser completion revision=${revision}`);
     }
     return committed;

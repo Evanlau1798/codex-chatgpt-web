@@ -24,6 +24,7 @@ import {
   type BrokerToolResult,
 } from "./turn-broker-protocol";
 import { submitTurnOutput } from "./turn-broker-output";
+import { logNativeWorkflow } from "./native-observability";
 import { readAgentWait, startAgentWait } from "./turn-broker-agent-wait";
 import { assertRetirementFailure } from "./turn-broker-protocol";
 import { chatGptToolTimeoutError } from "./adapter-error";
@@ -114,6 +115,10 @@ export async function dispatchTurnBrokerRequest(
     }
     console.info(`[chatgpt-web] broker trace=${channel.traceId} output accepted kind=${submitted.event.kind}`
       + ` sequence=${submitted.event.sequence} chars=${submitted.event.text.length} duplicate=${submitted.duplicate}`);
+    logNativeWorkflow(channel.traceId, { phase: "output_acknowledged", kind: submitted.event.kind,
+      sequence: submitted.event.sequence, duplicate: submitted.duplicate,
+      delivery_state: channel.finalizationPendingOutput === submitted.event ? "held_until_submission_ack" : "queued",
+      client_delivery: "not_observed", task_acceptance: "not_established" });
     return { accepted: true, sequence: submitted.event.sequence, duplicate: submitted.duplicate };
   }
   if (request.method === "read_context") {
@@ -207,6 +212,7 @@ async function claim(request: BrokerRequest, signal: AbortSignal, state: Dispatc
 }
 
 function invoke(request: BrokerRequest, state: DispatchState): unknown {
+  if (request.includeResultReceipt !== undefined && typeof request.includeResultReceipt !== "boolean") throw new Error("result receipt flag is invalid");
   const bindingId = request.bindingId;
   if (typeof bindingId !== "string" || bindingId.length === 0) throw new Error("binding id is required");
   const binding = state.bindings.get(bindingId);
@@ -267,7 +273,7 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
     ...(request.freeform === true ? { input: request.input ?? "" } : { arguments: request.arguments ?? {} }),
   };
   return new Promise<BrokerToolResult>((resolve, reject) => {
-    binding.channel.invocations.set(callId, { request: toolRequest, resolve, reject });
+    binding.channel.invocations.set(callId, { request: toolRequest, resolve, reject, includeResultReceipt: request.includeResultReceipt === true });
     binding.channel.queuedCallIds.push(callId);
     console.info(`[chatgpt-web] broker trace=${binding.channel.traceId} queued call=${callId.slice(0, 17)} tool=${wireName} waiters=${binding.channel.waiters.size}`);
     scheduleToolWaiters(binding.channel);

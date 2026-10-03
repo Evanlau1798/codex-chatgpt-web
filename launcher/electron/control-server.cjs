@@ -103,12 +103,13 @@ class BrowserControlServer {
     const isStartupCancel = request.url === "/v1/startup/cancel";
     const isTurnRelease = request.url === "/v1/turn/release";
     const isSessionInspect = request.url === "/v1/session/inspect";
+    const isNativeReadiness = request.url === "/v1/session/native-readiness";
     const isProxyResolution = request.url === "/v1/network/resolve-proxy";
     const isConnectorVerify = request.url === "/v1/session/verify-connector";
     const isDebugCutoff = request.url === "/v1/debug/turn/cutoff";
     const manualAction = request.url?.match(/^\/v1\/manual\/(start|wait-sent|wait-terminal|started|end|cancel)$/)?.[1];
     if (request.method !== "POST"
-      || (!isTurn && !isTurnRelease && !isSessionInspect && !isProxyResolution && !isConnectorVerify && !isDebugCutoff && !manualAction && !isStartupCancel)) {
+      || (!isTurn && !isTurnRelease && !isSessionInspect && !isNativeReadiness && !isProxyResolution && !isConnectorVerify && !isDebugCutoff && !manualAction && !isStartupCancel)) {
       writeJson(response, 404, { error: "not_found" });
       return;
     }
@@ -177,6 +178,10 @@ class BrowserControlServer {
           value = host.cancelManualTurn(body.traceId, body.helperPid);
         }
         writeJson(response, 200, { ok: true, ...value });
+        return;
+      }
+      if (isNativeReadiness) {
+        writeJson(response, 200, await host.inspectNativeReadiness());
         return;
       }
       if (isSessionInspect) {
