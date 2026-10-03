@@ -71,6 +71,7 @@ export async function startChatGptMcpHttpServer(options: {
   const portOption = options.port ?? 17842;
   if (!Number.isInteger(portOption) || portOption < 0 || portOption > 65535) throw new Error("Invalid MCP HTTP port");
   let active = 0, closing = false;
+  let closePromise: Promise<void> | undefined;
   const server = createServer(async (request, response) => {
     const reject = (status: number, code: string) => {
       request.resume();
@@ -119,10 +120,18 @@ export async function startChatGptMcpHttpServer(options: {
   return {
     endpoint: `http://127.0.0.1:${address.port}/mcp`,
     activeRequests: () => active,
-    close: async () => {
+    close: () => {
+      if (closePromise) return closePromise;
       closing = true;
       // Graceful shutdown waits for real requests; no slow-work lifetime timer.
-      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+      closePromise = new Promise<void>((resolve, reject) => {
+        server.close(error => error ? reject(error) : resolve());
+        // Explicitly retire only idle keep-alive connections for runtimes
+        // whose Node compatibility layer does not do so as part of close().
+        // Never use closeAllConnections(): active native work must survive.
+        server.closeIdleConnections();
+      });
+      return closePromise;
     },
   };
 }
