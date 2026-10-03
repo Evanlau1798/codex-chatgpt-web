@@ -11,7 +11,9 @@ export function normalizeClaudeLongCommands(parsed: CodexParsedRequest, requests
   const output = tools.find(tool => !tool.namespace && tool.name === "TaskOutput");
   const supportsBackground = bash?.parameters?.properties &&
     Object.hasOwn(bash.parameters.properties, "run_in_background");
-  if (!supportsBackground || !output) return;
+  const supportsOutputWait = output?.parameters?.properties &&
+    Object.hasOwn(output.parameters.properties, "timeout");
+  if (!supportsBackground || !supportsOutputWait) return;
   for (const request of requests) {
     if (request.freeform || !request.arguments) continue;
     const args = request.arguments;
