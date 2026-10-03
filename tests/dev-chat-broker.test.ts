@@ -15,6 +15,8 @@ test("remote outer harness owns a turn through the live broker protocol", async 
   const socketPath = defaultBrokerEndpoint(root);
   const broker = TurnBroker.forSocket(socketPath);
   const remote = new RemoteTurnBroker(socketPath);
+  const retirementAbort = new AbortController();
+  let retirement: Promise<unknown> | undefined;
   await broker.listen();
   try {
     await remote.assertCompatible();
@@ -28,7 +30,9 @@ test("remote outer harness owns a turn through the live broker protocol", async 
       tools: [{ name: "exec_command", description: "Simulated command", parameters: { type: "object" } }],
     };
     const token = await remote.register(environment, 60_000, "dev-owner-test");
-    const retirement = remote.waitForRetirement(token);
+    retirement = remote.waitForRetirement(token, retirementAbort.signal);
+    // Teardown must remain possible if the transport regression fails.
+    void retirement.catch(() => {});
     const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
     const invocation = callTurnBroker<BrokerToolResult>(socketPath, {
       method: "invoke",
@@ -49,6 +53,8 @@ test("remote outer harness owns a turn through the live broker protocol", async 
     await expect(callTurnBroker(socketPath, { method: "claim", token })).rejects.toThrow("already finished");
     expect(broker.externalOwnerActiveCount()).toBe(0);
   } finally {
+    retirementAbort.abort();
+    await retirement?.catch(() => {});
     await broker.close();
     rmSync(root, { recursive: true, force: true });
   }

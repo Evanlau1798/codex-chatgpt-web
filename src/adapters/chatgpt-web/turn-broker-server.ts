@@ -58,6 +58,9 @@ function validateRequest(request: BrokerRequest): void {
 }
 
 function handleSocket(socket: Socket, dispatch: BrokerDispatch): void {
+  liveBrokerServerSockets.add(socket);
+  socket.ref();
+  socket.once("close", () => liveBrokerServerSockets.delete(socket));
   let buffered = "";
   let handled = false;
   socket.setEncoding("utf8");
@@ -94,6 +97,7 @@ function handleSocket(socket: Socket, dispatch: BrokerDispatch): void {
     );
   });
 }
+const liveBrokerServerSockets = new Set<Socket>();
 
 export function startTurnBrokerServer(socketPath: string, dispatch: BrokerDispatch): Promise<Server> {
   return new Promise<Server>((resolveStart, rejectStart) => {
