@@ -89,12 +89,15 @@ function environmentlessChild(
 function createRolloutState(databasePath: string, rolloutPath: string): void {
   mkdirSync(dirname(databasePath), { recursive: true });
   const database = new Database(databasePath, { create: true });
-  database.exec("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, agent_path TEXT)");
-  database.exec("CREATE TABLE thread_spawn_edges (parent_thread_id TEXT NOT NULL, child_thread_id TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL)");
-  database.query("INSERT INTO threads (id, rollout_path, agent_path) VALUES (?, ?, ?)")
-    .run(rolloutThreadId, rolloutPath, rolloutAgent);
-  database.query("INSERT INTO thread_spawn_edges (parent_thread_id, child_thread_id, status) VALUES (?, ?, ?)")
-    .run(rolloutParentId, rolloutThreadId, "open");
+  // Keep the fixture durable while avoiding one filesystem sync per statement.
+  database.transaction(() => {
+    database.exec("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, agent_path TEXT)");
+    database.exec("CREATE TABLE thread_spawn_edges (parent_thread_id TEXT NOT NULL, child_thread_id TEXT NOT NULL PRIMARY KEY, status TEXT NOT NULL)");
+    database.query("INSERT INTO threads (id, rollout_path, agent_path) VALUES (?, ?, ?)")
+      .run(rolloutThreadId, rolloutPath, rolloutAgent);
+    database.query("INSERT INTO thread_spawn_edges (parent_thread_id, child_thread_id, status) VALUES (?, ?, ?)")
+      .run(rolloutParentId, rolloutThreadId, "open");
+  })();
   database.close();
 }
 

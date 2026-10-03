@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import * as launcherControl from "../src/launcher-browser-host";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -143,4 +144,37 @@ test.each([
 test("user abort and unacknowledged ownership release never replenish standby", async () => {
   expect(await refillFixture(new DOMException("cancelled", "AbortError"))).toBe(0);
   expect(await refillFixture(new Error("surface failed"), true)).toBe(0);
+});
+
+test("turn-end waits for a delayed owned heartbeat settlement without losing the original failure", async () => {
+  let releaseHeartbeat!: () => void, heartbeatStarted!: () => void;
+  const held = new Promise<void>(resolve => { releaseHeartbeat = resolve; });
+  const started = new Promise<void>(resolve => { heartbeatStarted = resolve; });
+  const phases: string[] = [];
+  const error = new Error("original browser failure");
+  const control = spyOn(launcherControl, "notifyLauncherTurn").mockImplementation(async (_path, activity) => {
+    if (activity.phase === "heartbeat") { heartbeatStarted(); await held; }
+    phases.push(activity.phase);
+    return activity.phase === "start" ? { surfaceId: "s".repeat(32) } : { cancelledByUser: false };
+  });
+  const previous = process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
+  process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = "0";
+  const worker: any = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    config: { browserHost: "launcher", browserHostDescriptorPath: "fixture" },
+    runBrowserTurn: async () => { throw error; },
+  });
+  const result = worker.runExclusive({ traceId: "delayed-heartbeat", modelId: "gpt-5.6-sol", reasoning: "high",
+    capabilities: { localToolsEnabled: true, solAvailable: true } }).catch((caught: unknown) => caught);
+  try {
+    await started;
+    await new Promise<void>(resolve => setImmediate(resolve)); // Drain runnable cleanup while only heartbeat is held.
+    expect(phases).toEqual(["start"]);
+    releaseHeartbeat();
+    expect(await result).toBe(error);
+    expect(phases).toEqual(["start", "heartbeat", "end"]);
+  } finally {
+    releaseHeartbeat(); await result; control.mockRestore();
+    if (previous === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
+    else process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = previous;
+  }
 });
