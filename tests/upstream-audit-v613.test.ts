@@ -251,7 +251,20 @@ test("continuing v6.1.4 evidence closes source anchors and reconstructs the orig
       const text = blob(target.blob).toString("utf8").replaceAll("\r\n", "\n");
       expect(textDigest(text.split("\n").slice(target.start - 1, target.end).join("\n")), target.path).toBe(target.lineSha256);
       if (JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version.startsWith("6.1.4-")) {
-        expect(textDigest(readFileSync(resolve(root, target.path), "utf8")), target.path).toBe(textDigest(text));
+        // Historical source anchors stay immutable. Intentional follow-ups are
+        // exact-byte attestations, never a wildcard or a version-based bypass.
+        const followups: Array<{path: string; baselineSha256: string; currentSha256: string; reason: string}> =
+          JSON.parse(readFileSync(resolve(root, ".github/upstream-audit/v6.1.4-followups.json"), "utf8"));
+        const matching = followups.filter((entry: any) => entry.path === target.path);
+        expect(matching.length, target.path).toBeLessThanOrEqual(1);
+        const followup = matching[0];
+        if (followup) {
+          expect(followup.baselineSha256, target.path).toBe(textDigest(text));
+          expect(followup.reason.length, target.path).toBeGreaterThan(20);
+          expect(followup.currentSha256, target.path).not.toBe(followup.baselineSha256);
+        }
+        expect(textDigest(readFileSync(resolve(root, target.path), "utf8")), target.path)
+          .toBe(followup?.currentSha256 ?? textDigest(text));
       }
     }
   }

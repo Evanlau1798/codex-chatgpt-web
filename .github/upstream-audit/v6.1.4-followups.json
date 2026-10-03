@@ -1,0 +1,8 @@
+[
+  {
+    "path": "launcher/tests/update.test.cjs",
+    "baselineSha256": "5edd6d619cf6c349281190f379e46ab223c5148c4650076efa9208efa57236ee",
+    "currentSha256": "05fc8f2c9f31f88fc10c4da7830cbc659a34d6598021903ab3817ee34726f3cb",
+    "reason": "PR 78: wait for complete updater marker before asserting readiness"
+  }
+]
