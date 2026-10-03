@@ -17,7 +17,7 @@ test("remote outer harness owns a turn through the live broker protocol", async 
   const remote = new RemoteTurnBroker(socketPath);
   const retirementAbort = new AbortController();
   // Diagnose a lost reply without leaving this disposable test process alive.
-  const retirementDeadline = setTimeout(() => retirementAbort.abort(), 4000);
+  const testDeadline = setTimeout(() => retirementAbort.abort(), 4000);
   let retirement: Promise<unknown> | undefined;
   await broker.listen();
   try {
@@ -55,7 +55,7 @@ test("remote outer harness owns a turn through the live broker protocol", async 
     await expect(callTurnBroker(socketPath, { method: "claim", token })).rejects.toThrow("already finished");
     expect(broker.externalOwnerActiveCount()).toBe(0);
   } finally {
-    clearTimeout(retirementDeadline);
+    clearTimeout(testDeadline);
     retirementAbort.abort();
     await retirement?.catch(() => {});
     await broker.close();

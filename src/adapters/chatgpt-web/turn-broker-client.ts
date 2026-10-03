@@ -13,7 +13,6 @@ export class TurnBrokerTimeoutError extends Error {
     this.name = "TurnBrokerTimeoutError";
   }
 }
-const liveBrokerSockets = new Set<ReturnType<typeof createConnection>>();
 
 /**
  * A turn registered without a TTL has no deadline to bound its tool calls against, so a null
@@ -43,8 +42,6 @@ export async function callTurnBroker<T>(
       return;
     }
     const socket = createConnection(socketPath);
-    liveBrokerSockets.add(socket);
-    socket.ref?.();
     let buffered = "";
     let settled = false;
     let responseAccepted = false;
@@ -96,7 +93,6 @@ export async function callTurnBroker<T>(
       setImmediate(finishResponse);
     });
     socket.once("close", () => {
-      liveBrokerSockets.delete(socket);
       trace("socket_close");
       if (response) responseAccepted = true;
       setImmediate(finishResponse);

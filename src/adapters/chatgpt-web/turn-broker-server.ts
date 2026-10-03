@@ -20,14 +20,7 @@ function writeSocketResponse(socket: Socket, response: BrokerResponse): void {
   if (socket.destroyed || !socket.writable) return;
   let line = `${JSON.stringify(response)}\n`;
   if (line.length > MAX_BROKER_LINE_CHARS) line = `${JSON.stringify({ id: response.id, error: "turn broker response exceeds size limit" } satisfies BrokerResponse)}\n`;
-  // End-with-data can lose delayed Windows pipe replies. Observe the write
-  // callback before graceful close; this does not bound native work lifetime.
-  socket.write(line, error => {
-    if (process.env.CODEX_CHATGPT_WEB_BROKER_TRACE === "1") {
-      try { console.error(`[broker-server] ${JSON.stringify({ id: response.id, phase: "write_completed", failed: !!error })}`); } catch {}
-    }
-    if (error) socket.destroy(); else socket.end();
-  });
+  socket.end(line);
 }
 
 function validateRequest(request: BrokerRequest): void {
@@ -58,9 +51,6 @@ function validateRequest(request: BrokerRequest): void {
 }
 
 function handleSocket(socket: Socket, dispatch: BrokerDispatch): void {
-  liveBrokerServerSockets.add(socket);
-  socket.ref();
-  socket.once("close", () => liveBrokerServerSockets.delete(socket));
   let buffered = "";
   let handled = false;
   socket.setEncoding("utf8");
@@ -97,7 +87,6 @@ function handleSocket(socket: Socket, dispatch: BrokerDispatch): void {
     );
   });
 }
-const liveBrokerServerSockets = new Set<Socket>();
 
 export function startTurnBrokerServer(socketPath: string, dispatch: BrokerDispatch): Promise<Server> {
   return new Promise<Server>((resolveStart, rejectStart) => {
