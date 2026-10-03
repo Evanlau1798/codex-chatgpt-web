@@ -305,8 +305,8 @@ test("turn broker tokens do not expire while their browser turn is still alive",
     });
     expect(token).toMatch(/^turn_[a-f0-9]{32}$/);
     await Bun.sleep(5);
-    await expect(callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token }))
-      .resolves.toMatchObject({ bindingId: expect.any(String) });
+    expect(await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token }))
+      .toMatchObject({ bindingId: expect.any(String) });
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
@@ -425,8 +425,8 @@ test("turn broker revokes only channels owned by the closed browser trace", asyn
     expect(broker.revokeTrace("trace_target")).toBe(1);
     await expect(callTurnBroker(socketPath, { method: "claim", token: target }))
       .rejects.toThrow("already finished");
-    await expect(callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token: other }))
-      .resolves.toMatchObject({ bindingId: expect.any(String) });
+    expect(await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token: other }))
+      .toMatchObject({ bindingId: expect.any(String) });
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
@@ -476,7 +476,7 @@ test("bounded broker calls settle validated replies without depending on peer cl
   try {
     const call = callTurnBroker(broker.socketPath, { method: "owner_status" });
     await frameWritten;
-    await expect(call).resolves.toEqual({ ready: true });
+    expect(await call).toEqual({ ready: true });
     expect(peer.writableEnded).toBeFalse();
   } finally {
     peer?.destroy();

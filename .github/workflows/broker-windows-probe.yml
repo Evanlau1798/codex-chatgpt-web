@@ -24,6 +24,10 @@ jobs:
         env:
           CODEX_CHATGPT_WEB_BROKER_TRACE: '1'
       - name: Probe owner lifecycle and frame validation
-        run: bun test tests/dev-chat-broker.test.ts tests/turn-broker-frame-settlement.test.ts
+        run: bun test --no-orphans tests/dev-chat-broker.test.ts tests/turn-broker-frame-settlement.test.ts
+        env:
+          CODEX_CHATGPT_WEB_BROKER_TRACE: '1'
+      - name: Probe the completion and compaction boundaries with full-runner flags
+        run: bun test --no-orphans tests/turn-broker-lifecycle.test.ts tests/turn-broker-compaction.test.ts tests/turn-broker-compaction-control.test.ts
         env:
           CODEX_CHATGPT_WEB_BROKER_TRACE: '1'
