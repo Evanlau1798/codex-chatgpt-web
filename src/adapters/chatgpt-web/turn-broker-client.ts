@@ -27,7 +27,6 @@ export async function callTurnBroker<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   const id = opaqueId("request");
-  const settleOnResponseFrame = timeoutMs === null;
   const wireRequest = request.method === "claim" && request.activityId === undefined
     ? { ...request, activityId: opaqueId("activity") }
     : request.method === "invoke" && timeoutMs !== null
@@ -115,10 +114,11 @@ export async function callTurnBroker<T>(
       }
       response = parsed;
       responseAccepted = true;
-      if (settleOnResponseFrame) {
-        finishResponse();
-        socket.destroy();
-      }
+      // One validated newline-delimited frame is the complete RPC response.
+      // Waiting for peer EOF afterward can hang Windows named pipes forever:
+      // responseAccepted has already disabled timeout/cancellation settlement.
+      finishResponse();
+      socket.destroy();
     });
   });
 }
