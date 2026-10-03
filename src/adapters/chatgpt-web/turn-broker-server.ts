@@ -14,11 +14,12 @@ type BrokerDispatch = (request: BrokerRequest, signal: AbortSignal) => unknown |
 const MAX_UNIX_SOCKET_PATH_BYTES = 103;
 
 function writeSocketResponse(socket: Socket, response: BrokerResponse): void {
-  const line = `${JSON.stringify(response)}\n`;
-  if (line.length > MAX_BROKER_LINE_CHARS) {
-    socket.end(`${JSON.stringify({ id: response.id, error: "turn broker response exceeds size limit" } satisfies BrokerResponse)}\n`);
-    return;
+  if (process.env.CODEX_CHATGPT_WEB_BROKER_TRACE === "1") {
+    try { console.error(`[broker-server] ${JSON.stringify({ id: response.id, phase: "write_response", destroyed: socket.destroyed, writable: socket.writable })}`); } catch {}
   }
+  if (socket.destroyed || !socket.writable) return;
+  let line = `${JSON.stringify(response)}\n`;
+  if (line.length > MAX_BROKER_LINE_CHARS) line = `${JSON.stringify({ id: response.id, error: "turn broker response exceeds size limit" } satisfies BrokerResponse)}\n`;
   socket.end(line);
 }
 
@@ -71,6 +72,9 @@ function handleSocket(socket: Socket, dispatch: BrokerDispatch): void {
       if (line.length > MAX_BROKER_LINE_CHARS) throw new Error("turn broker request exceeds size limit");
       request = JSON.parse(line) as BrokerRequest;
       validateRequest(request);
+      if (process.env.CODEX_CHATGPT_WEB_BROKER_TRACE === "1") {
+        try { console.error(`[broker-server] ${JSON.stringify({ id: request.id, method: request.method, phase: "dispatch" })}`); } catch {}
+      }
     } catch (error) {
       writeSocketResponse(socket, { id: request?.id ?? "unknown", error: errorOf(error).message });
       return;
