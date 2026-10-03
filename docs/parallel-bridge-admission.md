@@ -31,7 +31,12 @@ report verified completion time and failures, not request counts as productivity
 The lab `parallel-benchmark.mjs` runs either client with `--mode parallel` or
 `--mode sequential`, immutable test fixtures, exact edit hashes and a separate
 test runner. `--parallel-agents` enables Codex v2 only for that invocation;
-ordinary lab tests continue disabling delegation. Receipt/visible-generation
+ordinary lab tests continue disabling delegation. Pinned Codex v2 ignores
+`agents.max_depth`, so native graph/task-path ancestry is checked by this bridge
+before Send; the compatibility flag is not the enforcement boundary. Claude's
+client metadata identifies workers but not their nesting depth, so its measured
+bound is two simultaneous worker turns, not proven nested-spawn prevention.
+Receipt/visible-generation
 correlation requires the diagnostics and receipt packets (#74/#76) in the
 deployed composition. Overlap means distinct owned visible generation intervals
 with wire model receipts, not GPU scheduling or proven provider throughput.

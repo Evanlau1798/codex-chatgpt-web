@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildCodexArgs, CODEX_MODEL } from '../src/launch-args.mjs';
 const catalog = { models: [{ slug: CODEX_MODEL, default_reasoning_level: 'max',
   supported_reasoning_levels: [{ effort: 'max' }], context_window: 272000, auto_compact_token_limit: 244800 }] };
-test('native parallel acceptance enables only invocation-scoped flat v2 delegation', () => {
+test('native parallel acceptance enables invocation-scoped v2 with a residency bound', () => {
   const options = { cwd: process.cwd(), proxyUrl: 'http://127.0.0.1:10000', catalogPath: '/fixture/catalog.json', catalog,
     unsafe: false, headless: true };
   const ordinary = buildCodexArgs(options).join('\n');
