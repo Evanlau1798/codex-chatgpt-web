@@ -52,7 +52,10 @@ export interface BrokerRequest {
     | "owner_cancel_finalization"
     | "owner_arm_finalization_output"
     | "owner_reset_output" | "owner_seal_output" | "owner_wait_retirement" | "owner_revoke" | "activity_complete"
-    | "start_agent_wait" | "read_agent_wait" | "read_output_control";
+    | "start_agent_wait" | "read_agent_wait" | "read_output_control" | "start_operation" | "read_operation";
+  operationKey?: string;
+  operationId?: string;
+  waitMs?: number;
   waitId?: string;
   token?: string;
   bindingId?: string;
