@@ -1,0 +1,20 @@
+[
+  {
+    "path": "tests/browser-worker-contract.test.ts",
+    "baselineSha256": "0111862276e04f85a8d4c7f2b054f6702a434869b2eec089b587a77c00ea30f4",
+    "currentSha256": "cafc47f52d79a7db93db2f105a5eac3757851ff852f9b2ccfce884ebaf220ad3",
+    "reason": "PR 75: owned Pro persistence and corrected lifecycle race coverage"
+  },
+  {
+    "path": "tests/chatgpt-web-harness.test.ts",
+    "baselineSha256": "e928a04bffb6f0589478de0a603a6513a4b0405c52b9a829bb64e5d9c1c7587b",
+    "currentSha256": "20ed90bff89fd18ca916e428356a04b2234342769b3c167d0466f9f4f9a9bc63",
+    "reason": "PR 75: owned Pro persistence and corrected lifecycle race coverage"
+  },
+  {
+    "path": "tests/retained-compaction-handoff.test.ts",
+    "baselineSha256": "3153f33bb0de3089afd3dc0749ddd6a361656aa1986b04cfa91ef044cd847073",
+    "currentSha256": "26d11b8d58f841a0c2d8bca28624f095cb8f95c9bc70ffe5edd16a0eed7a7dc9",
+    "reason": "PR 75: owned Pro persistence and corrected lifecycle race coverage"
+  }
+]
