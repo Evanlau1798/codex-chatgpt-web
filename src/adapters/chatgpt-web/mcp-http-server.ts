@@ -62,6 +62,10 @@ export async function startChatGptMcpHttpServer(options: {
     response.setHeader("x-cgw-mcp-request-id", requestId);
     active++;
     let mcp: ReturnType<typeof createChatGptMcpServer> | undefined;
+    const disconnected = () => {
+      if (!response.writableEnded) void mcp?.close().catch(() => {});
+    };
+    response.on("close", disconnected);
     try {
       const value = await body(request);
       mcp = createChatGptMcpServer(options);
@@ -73,6 +77,7 @@ export async function startChatGptMcpHttpServer(options: {
       if (!response.headersSent && !response.destroyed) reject(
         error instanceof Error && error.message === "mcp_body_too_large" ? 413 : 400, "invalid_mcp_request");
     } finally {
+      response.off("close", disconnected);
       try { await mcp?.close(); } catch { /* Isolated transport cleanup only. */ }
       active--;
     }
