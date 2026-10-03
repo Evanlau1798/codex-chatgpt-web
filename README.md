@@ -19,7 +19,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **Development candidate: `6.1.4-Enhanced.1`.** Download buttons always open the latest published Enhanced release; this branch does not publish a release by itself.
+> **Release: `6.1.4-Enhanced.1`.** Download buttons always open the latest published Enhanced release. [Watch the introduction (MP4)](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4).
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">Troubleshooting</a> · <a href="SECURITY.md">Security</a> · <a href="CONTRIBUTING.md">Contributing</a>
@@ -172,7 +172,7 @@ removes the account risk specifically associated with ChatGPT web automation.
 
 ### Fast startup (experimental)
 
-`6.1.3-Enhanced.2` adds **Fast startup**, an opt-in switch in **Settings**. It prepares an
+`6.1.4-Enhanced.1` adds **Fast startup**, an opt-in switch in **Settings**. It prepares an
 unsent standby Web page with the last verified model and a harness draft, then inserts the
 current request after checking the account, model, and draft again. Preparation does not send
 a message. Real tasks take priority; a standby page is prepared only when the page limit has room.
@@ -183,7 +183,7 @@ Native2 progress can stream while work is running; the complete final answer is 
 once through the output tunnel. Startup and final-settlement diagnostics help distinguish
 local preparation time from time spent waiting for ChatGPT.
 
-**Known candidate limitation:** a sporadic continuation can fail model verification before
+**Known limitation:** a sporadic continuation can fail model verification before
 Send. Additional diagnostics are included; the root cause remains under investigation.
 
 ### Enhanced Web session mode

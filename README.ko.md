@@ -16,7 +16,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **개발 후보: `6.1.4-Enhanced.1`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다. 이 브랜치만으로 릴리스가 게시되지는 않습니다.
+> **릴리스: `6.1.4-Enhanced.1`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다. [소개 영상 보기 (영어 MP4)](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4).
 
 <p align="center">
   <img src="assets/demo.gif" width="960" alt="네이티브 Codex 하네스를 사용하는 ChatGPT Web 실시간 턴">
@@ -79,7 +79,7 @@ Zero Risk는 ChatGPT 페이지를 읽거나 조작하지 않습니다. 모델과
 
 ### Fast startup (실험적)
 
-`6.1.3-Enhanced.2`에서는 **Settings**에서 **Fast startup**을 선택할 수 있습니다. 마지막으로
+`6.1.4-Enhanced.1`에서는 **Settings**에서 **Fast startup**을 선택할 수 있습니다. 마지막으로
 검증한 모델과 harness 초안이 있는 미전송 대기 페이지를 준비하고, 요청 시 계정, 모델, 초안을
 다시 확인한 뒤 현재 요청을 삽입합니다. 준비만으로 메시지를 보내지는 않습니다. 작업을 우선하며
 페이지 한도에 여유가 있을 때만 대기 페이지를 준비합니다. Account Safety의 **Maximum concurrency**를
@@ -90,7 +90,7 @@ Native2는 작업 중 진행 상황을 스트리밍할 수 있지만, 완전한 
 한 번만 원자적으로 확정합니다. 시작 및 최종 확정 진단으로 로컬 준비 시간과 ChatGPT 대기 시간을
 구분할 수 있습니다.
 
-**후보 버전의 알려진 제한:** 이어지는 요청이 전송 전 모델 검증에서 간헐적으로 실패할 수 있습니다.
+**알려진 제한:** 이어지는 요청이 전송 전 모델 검증에서 간헐적으로 실패할 수 있습니다.
 진단을 추가했으며 근본 원인은 계속 조사 중입니다.
 
 ### 대화 설정, Limits 및 API

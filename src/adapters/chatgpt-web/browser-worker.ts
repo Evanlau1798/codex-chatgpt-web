@@ -3925,7 +3925,7 @@ export class ChatGptBrowserWorker {
     let terminalMessage: string | undefined;
     let originalError: unknown;
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
-    let heartbeatInFlight = false;
+    let heartbeatInFlight: Promise<unknown> | undefined;
     let heartbeatPending = false;
     let activityFinished = false;
     let lastHeartbeatFailureAt = 0;
@@ -3933,8 +3933,7 @@ export class ChatGptBrowserWorker {
     const sendHeartbeat = () => {
       if (activityFinished) return;
       if (heartbeatInFlight) { heartbeatPending = true; return; }
-      heartbeatInFlight = true;
-      void notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
+      heartbeatInFlight = notifyLauncherTurn(this.config.browserHostDescriptorPath!, {
         phase: "heartbeat",
         traceId: turn.traceId,
         helperPid: process.pid,
@@ -3948,7 +3947,7 @@ export class ChatGptBrowserWorker {
           `[chatgpt-web] launcher turn heartbeat failed for ${turn.traceId}: ${error instanceof Error ? error.message : String(error)}`,
         );
       }).finally(() => {
-        heartbeatInFlight = false;
+        heartbeatInFlight = undefined;
         if (heartbeatPending) { heartbeatPending = false; sendHeartbeat(); }
       });
     };
@@ -4006,6 +4005,7 @@ export class ChatGptBrowserWorker {
     } finally {
       activityFinished = true;
       if (heartbeatTimer) clearInterval(heartbeatTimer);
+      await heartbeatInFlight;
       // Also covers failures before runBrowserTurn reaches its connection owner.
       await startupConnection?.browser.close().catch(error => {
         console.warn(`[chatgpt-web] prepared transport cleanup failed (${error instanceof Error ? error.name : "unknown"})`);
