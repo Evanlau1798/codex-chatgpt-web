@@ -56,7 +56,8 @@ export function startNativeOperation(channel: TurnChannel, key: unknown,
     operation.result = JSON.parse(JSON.stringify(result)) as BrokerToolResult;
     operation.bytes = bytes;
     for (const notify of [...operation.waiters]) notify();
-    console.info(`[chatgpt-web] broker trace=${channel.traceId} native_operation state=ready isError=${result.isError === true}`);
+    try { console.info(`[chatgpt-web] broker trace=${channel.traceId} native_operation state=ready isError=${result.isError === true}`); }
+    catch { /* Observational sink failure cannot change the operation. */ }
   };
   try {
     // The operation is broker-owned, not tied to this MCP response or connection.
