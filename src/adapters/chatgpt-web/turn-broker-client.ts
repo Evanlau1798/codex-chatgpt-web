@@ -33,6 +33,10 @@ export async function callTurnBroker<T>(
       ? { ...request, invokeDeadlineAt: Date.now() + timeoutMs }
       : request;
   return new Promise<T>((resolveCall, rejectCall) => {
+    if (signal?.aborted) {
+      rejectCall(new DOMException("turn broker call aborted", "AbortError"));
+      return;
+    }
     const socket = createConnection(socketPath);
     let buffered = "";
     let settled = false;
@@ -47,7 +51,7 @@ export async function callTurnBroker<T>(
       settled = true;
       clearTimeout(timer);
       cleanup();
-      socket.destroy();
+      setImmediate(() => socket.destroy());
       rejectCall(error);
     };
     const finishResponse = () => {
