@@ -63,6 +63,7 @@ for (const unbounded of [false, true]) test(`broker complete frame settlement (u
     socket.emit("error", new Error("late socket error"));
     abort.abort();
     expect(await result).toEqual({ ready: true });
+    await setImmediate();
     expect(socket.destroyed).toBeTrue();
   } finally { abort.abort(); await result.catch(() => {}); }
 });
