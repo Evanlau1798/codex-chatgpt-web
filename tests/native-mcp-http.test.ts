@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { request } from "node:http";
 import { defaultBrokerEndpoint } from "../src/config";
 import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import { startChatGptMcpHttpServer } from "../src/adapters/chatgpt-web/mcp-http-server";
@@ -61,6 +62,30 @@ test("MCP HTTP refuses unauthenticated, browser-origin and malformed requests be
     expect((await send({ ...allowed, "sec-fetch-site": "cross-site" })).status).toBe(403);
     expect((await send({ ...allowed, "content-type": "text/plain" })).status).toBe(415);
     expect((await send(allowed, "{" )).status).toBe(400);
+    expect(http.activeRequests()).toBe(0);
+  } finally { await http.close(); }
+});
+
+test("chunked oversized MCP body receives 413 without destroying its reply socket", async () => {
+  const http = await startChatGptMcpHttpServer({ brokerSocketPath: defaultBrokerEndpoint(), controlToken: key, port: 0 });
+  try {
+    const reply = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      let replied = false;
+      const client = request(http.endpoint, {
+        method: "POST",
+        headers: { authorization: `Bearer ${key}`, "content-type": "application/json", "transfer-encoding": "chunked" },
+      }, response => {
+        let body = "";
+        response.setEncoding("utf8");
+        response.on("data", chunk => { body += chunk; });
+        response.on("end", () => { replied = true; resolve({ status: response.statusCode!, body }); });
+        response.on("error", reject);
+      });
+      client.on("error", error => { if (!replied) reject(error); });
+      client.end(Buffer.alloc(32 * 1024 * 1024 + 1, 32));
+    });
+    expect(reply.status).toBe(413);
+    expect(JSON.parse(reply.body)).toEqual({ error: "invalid_mcp_request" });
     expect(http.activeRequests()).toBe(0);
   } finally { await http.close(); }
 });

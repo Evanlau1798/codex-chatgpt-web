@@ -5,6 +5,7 @@ on:
       - 'src/adapters/chatgpt-web/turn-broker*.ts'
       - 'tests/dev-chat-broker.test.ts'
       - 'tests/turn-broker-frame-settlement.test.ts'
+      - 'tests/turn-broker-delayed-response.test.ts'
       - '.github/workflows/broker-windows-probe.yml'
 permissions:
   contents: read
@@ -18,4 +19,11 @@ jobs:
         with:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
-      - run: bun test tests/dev-chat-broker.test.ts tests/turn-broker-frame-settlement.test.ts
+      - name: Probe the transport without turn owners
+        run: bun test tests/turn-broker-delayed-response.test.ts
+        env:
+          CODEX_CHATGPT_WEB_BROKER_TRACE: '1'
+      - name: Probe owner lifecycle and frame validation
+        run: bun test tests/dev-chat-broker.test.ts tests/turn-broker-frame-settlement.test.ts
+        env:
+          CODEX_CHATGPT_WEB_BROKER_TRACE: '1'
