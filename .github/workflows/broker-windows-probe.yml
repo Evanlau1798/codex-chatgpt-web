@@ -19,3 +19,5 @@ jobs:
           bun-version: 1.4.0
       - run: bun install --frozen-lockfile
       - run: bun test tests/dev-chat-broker.test.ts tests/turn-broker-frame-settlement.test.ts
+        env:
+          CODEX_CHATGPT_WEB_BROKER_TRACE: '1'
