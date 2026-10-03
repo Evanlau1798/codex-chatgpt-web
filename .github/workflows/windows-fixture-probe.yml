@@ -24,3 +24,5 @@ jobs:
         run: bun test tests/upstream-audit-v501-ledger.test.ts
       - name: Exercise actual Windows hook shells
         run: bun test tests/codex-interrupt-shell.test.ts
+      - name: Exercise hook shells with full-runner process ownership flags
+        run: bun test --no-orphans --path-ignore-patterns=tmp tests/codex-interrupt-shell.test.ts
