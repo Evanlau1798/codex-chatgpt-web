@@ -1,0 +1,7 @@
+{
+  "name": "http-cache-semantics",
+  "version": "4.2.0",
+  "main": "index.js",
+  "license": "BSD-2-Clause",
+  "private": true
+}
