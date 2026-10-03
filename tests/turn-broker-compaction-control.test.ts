@@ -11,11 +11,11 @@ test("compaction control accepts one structured handoff and consumes it once", a
   try {
     const transaction = await broker.beginCompactionTransaction("trace-control", 10_000);
     const waiting = broker.waitForCompactionHandoff(transaction.token);
-    await expect(callTurnBroker(broker.socketPath, {
+    expect(await callTurnBroker<{ submitted: boolean }>(broker.socketPath, {
       method: "submit_compaction_handoff", token: transaction.token,
       handoffId: transaction.handoffId, summary: "Structured checkpoint preserved the implementation state.",
-    })).resolves.toEqual({ submitted: true });
-    await expect(waiting).resolves.toBe("Structured checkpoint preserved the implementation state.");
+    })).toEqual({ submitted: true });
+    expect(await waiting).toBe("Structured checkpoint preserved the implementation state.");
     await expect(callTurnBroker(broker.socketPath, {
       method: "submit_compaction_handoff", token: transaction.token,
       handoffId: transaction.handoffId, summary: "Duplicate checkpoint.",
@@ -79,12 +79,12 @@ test("passive recovery checkpoint is durable before its control call is acknowle
       method: "submit_compaction_handoff", token: transaction.token,
       handoffId: transaction.handoffId, summary: "Wrong control operation.",
     })).rejects.toThrow("operation");
-    await expect(callTurnBroker(broker.socketPath, {
+    expect(await callTurnBroker<{ submitted: boolean }>(broker.socketPath, {
       method: "submit_recovery_checkpoint", token: transaction.token,
       handoffId: transaction.handoffId, summary: "Checkpoint for a continuing Web response.",
-    })).resolves.toEqual({ submitted: true });
+    })).toEqual({ submitted: true });
     expect(saved).toEqual(["Checkpoint for a continuing Web response."]);
-    await expect(waiting).resolves.toBe(saved[0]!);
+    expect(await waiting).toBe(saved[0]!);
     const failed = await broker.beginRecoveryCheckpoint("trace-failed", 10_000, () => {
       throw new Error("checkpoint disk write failed");
     });
