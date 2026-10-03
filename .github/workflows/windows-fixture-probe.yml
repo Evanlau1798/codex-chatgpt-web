@@ -1,0 +1,26 @@
+name: Windows external fixture probe
+on:
+  pull_request:
+    paths:
+      - 'tests/codex-interrupt-shell.test.ts'
+      - 'tests/upstream-audit-v501-ledger.test.ts'
+      - 'src/codex-interrupt-hook-windows.js'
+      - '.github/workflows/windows-fixture-probe.yml'
+permissions:
+  contents: read
+jobs:
+  windows-fixtures:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - name: Verify the immutable historical archive
+        run: bun test tests/upstream-audit-v501-ledger.test.ts
+      - name: Exercise actual Windows hook shells
+        run: bun test tests/codex-interrupt-shell.test.ts
