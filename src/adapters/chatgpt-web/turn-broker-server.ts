@@ -17,12 +17,17 @@ function writeSocketResponse(socket: Socket, response: BrokerResponse): void {
   if (process.env.CODEX_CHATGPT_WEB_BROKER_TRACE === "1") {
     try { console.error(`[broker-server] ${JSON.stringify({ id: response.id, phase: "write_response", destroyed: socket.destroyed, writable: socket.writable })}`); } catch {}
   }
-  const line = `${JSON.stringify(response)}\n`;
-  if (line.length > MAX_BROKER_LINE_CHARS) {
-    socket.end(`${JSON.stringify({ id: response.id, error: "turn broker response exceeds size limit" } satisfies BrokerResponse)}\n`);
-    return;
-  }
-  socket.end(line);
+  if (socket.destroyed || !socket.writable) return;
+  let line = `${JSON.stringify(response)}\n`;
+  if (line.length > MAX_BROKER_LINE_CHARS) line = `${JSON.stringify({ id: response.id, error: "turn broker response exceeds size limit" } satisfies BrokerResponse)}\n`;
+  // End-with-data can lose delayed Windows pipe replies. Observe the write
+  // callback before graceful close; this does not bound native work lifetime.
+  socket.write(line, error => {
+    if (process.env.CODEX_CHATGPT_WEB_BROKER_TRACE === "1") {
+      try { console.error(`[broker-server] ${JSON.stringify({ id: response.id, phase: "write_completed", failed: !!error })}`); } catch {}
+    }
+    if (error) socket.destroy(); else socket.end();
+  });
 }
 
 function validateRequest(request: BrokerRequest): void {
