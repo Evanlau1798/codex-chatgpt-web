@@ -6,11 +6,12 @@ export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
 export function chatGptMcpInvocationTimeout(
   environment: ChatGptTurnEnvironment & { expiresAt?: number },
   now = Date.now(),
-): number {
-  const remaining = environment.expiresAt === undefined
-    ? CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS
-    : Math.max(1, environment.expiresAt - now);
-  return Math.min(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, remaining);
+): number | null {
+  // A slow tool is not an abandoned turn. Deadline-free owner registrations already
+  // support cancellation/revocation and connection failure in callTurnBroker; do
+  // not introduce a second implicit deadline that discards an eventual result.
+  if (environment.expiresAt === undefined) return null;
+  return Math.max(1, environment.expiresAt - now);
 }
 
 export async function invokeChatGptMcpTool(
@@ -35,7 +36,7 @@ export async function invokeChatGptMcpTool(
   } catch (error) {
     try {
       await callTurnBroker(socketPath, { method: "release", bindingId,
-        ...(error instanceof TurnBrokerTimeoutError ? {
+        ...(error instanceof TurnBrokerTimeoutError && timeoutMs !== null ? {
           failure: { code: "codex_tool_timeout" as const, tool: request.wireName, timeoutMs },
         } : {}),
       });

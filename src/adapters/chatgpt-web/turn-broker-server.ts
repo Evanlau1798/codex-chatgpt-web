@@ -14,11 +14,12 @@ type BrokerDispatch = (request: BrokerRequest, signal: AbortSignal) => unknown |
 const MAX_UNIX_SOCKET_PATH_BYTES = 103;
 
 function writeSocketResponse(socket: Socket, response: BrokerResponse): void {
-  const line = `${JSON.stringify(response)}\n`;
-  if (line.length > MAX_BROKER_LINE_CHARS) {
-    socket.end(`${JSON.stringify({ id: response.id, error: "turn broker response exceeds size limit" } satisfies BrokerResponse)}\n`);
-    return;
+  if (process.env.CODEX_CHATGPT_WEB_BROKER_TRACE === "1") {
+    try { console.error(`[broker-server] ${JSON.stringify({ id: response.id, phase: "write_response", destroyed: socket.destroyed, writable: socket.writable })}`); } catch {}
   }
+  if (socket.destroyed || !socket.writable) return;
+  let line = `${JSON.stringify(response)}\n`;
+  if (line.length > MAX_BROKER_LINE_CHARS) line = `${JSON.stringify({ id: response.id, error: "turn broker response exceeds size limit" } satisfies BrokerResponse)}\n`;
   socket.end(line);
 }
 
@@ -44,7 +45,7 @@ function validateRequest(request: BrokerRequest): void {
     && request.method !== "owner_request_compaction" && request.method !== "owner_compaction_delivery_count"
     && request.method !== "safe_start" && request.method !== "safe_complete"
     && request.method !== "activity_complete" && request.method !== "start_agent_wait" && request.method !== "read_agent_wait"
-    && request.method !== "read_output_control") {
+    && request.method !== "read_output_control" && request.method !== "start_operation" && request.method !== "read_operation") {
     throw new Error("turn broker method is invalid");
   }
 }
@@ -71,6 +72,9 @@ function handleSocket(socket: Socket, dispatch: BrokerDispatch): void {
       if (line.length > MAX_BROKER_LINE_CHARS) throw new Error("turn broker request exceeds size limit");
       request = JSON.parse(line) as BrokerRequest;
       validateRequest(request);
+      if (process.env.CODEX_CHATGPT_WEB_BROKER_TRACE === "1") {
+        try { console.error(`[broker-server] ${JSON.stringify({ id: request.id, method: request.method, phase: "dispatch" })}`); } catch {}
+      }
     } catch (error) {
       writeSocketResponse(socket, { id: request?.id ?? "unknown", error: errorOf(error).message });
       return;
