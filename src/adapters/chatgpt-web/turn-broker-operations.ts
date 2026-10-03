@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from "node:util";
+import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 import { opaqueId, type BrokerToolRequest, type BrokerToolResult } from "./turn-broker-protocol";
 import { claimTurnActivity, completeTurnActivity } from "./turn-broker-completion";
@@ -12,7 +12,7 @@ export interface NativeOperation {
   id: string;
   key: string;
   activityId: string;
-  request: Omit<BrokerToolRequest, "callId">;
+  requestHash: string;
   consumed: boolean;
   bytes: number;
   result?: BrokerToolResult;
@@ -27,10 +27,16 @@ export function startNativeOperation(channel: TurnChannel, key: unknown,
   request: Omit<BrokerToolRequest, "callId">,
   enqueue: (request: Omit<BrokerToolRequest, "callId">) => Promise<BrokerToolResult> | BrokerToolResult) {
   if (channel.safe || typeof key !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(key)) throw new Error("Invalid native operation key");
+  let requestHash: string;
+  try {
+    const canonical = JSON.stringify(request, (_key, value) => value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value);
+    requestHash = createHash("sha256").update(canonical).digest("hex");
+  } catch { throw new Error("Native operation payload cannot be safely fingerprinted"); }
   const operations = channel.nativeOperations ??= new Map();
   const prior = operations.get(key);
   if (prior) {
-    if (!isDeepStrictEqual(prior.request, request)) throw new Error("Native operation key was reused for different work");
+    if (prior.requestHash !== requestHash) throw new Error("Native operation key was reused for different work");
     return receipt(prior);
   }
   if ([...operations.values()].some(item => !item.consumed)) {
@@ -40,7 +46,7 @@ export function startNativeOperation(channel: TurnChannel, key: unknown,
   // ambiguous retry to execute the same side effect again.
   if (operations.size >= MAX_OPERATIONS) throw new Error("Native operation capacity for this turn reached; no new work was started");
   const operation: NativeOperation = { id: opaqueId("operation"), key, activityId: opaqueId("activity"),
-    request: structuredClone(request), consumed: false, bytes: 0, waiters: new Set() };
+    requestHash, consumed: false, bytes: 0, waiters: new Set() };
   claimTurnActivity(channel, operation.activityId);
   operations.set(key, operation);
   const retain = (result: BrokerToolResult) => {
@@ -61,7 +67,7 @@ export function startNativeOperation(channel: TurnChannel, key: unknown,
   };
   try {
     // The operation is broker-owned, not tied to this MCP response or connection.
-    void Promise.resolve(enqueue(operation.request)).then(retain, () => retain({ isError: true,
+    void Promise.resolve(enqueue(structuredClone(request))).then(retain, () => retain({ isError: true,
       content: [{ type: "text", text: "Native operation failed or its owner was retired; do not replay." }],
       structuredContent: { code: "native_operation_failed", retryable: false } }));
   } catch (error) {
