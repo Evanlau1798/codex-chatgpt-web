@@ -1866,6 +1866,9 @@ export class ChatGptModelReceiptObserver {
         });
         registry.installed = true;
       }
+      // A timed-out binding install can settle after detach/rebind. Do not let
+      // that stale continuation uninstall a newer observer's page wrapper.
+      if (this.page !== page || this.pageCaptureEpoch !== epoch) return false;
       // A Page can be rebound to a new observer without the old observer being
       // disposed first.  Remove the old wrapper before publishing the new token;
       // the page-side uninstall is identity-checked and therefore cannot clobber
