@@ -46,3 +46,17 @@ test('shared-boundary native results are correlated and deduplicated independent
   assert.equal(metrics.errored_native_tool_results, 1);
   assert.equal(metrics.served_model, null);
 });
+
+test('one resolved receipt cannot attest an additional unidentified Send or conflicting duplicate', () => {
+  const cwd = '/disposable/identity-completeness';
+  const bound = 'native_workflow ' + JSON.stringify({ phase: 'native_context_bound', traceId: 'owned', cwd_sha256: digest(cwd) });
+  const receipt = { traceId: 'owned', physicalSend: 1, source: 'network.resolved_model_slug', servedModel: 'gpt-6-pro' };
+  const first = 'model_receipt ' + JSON.stringify(receipt);
+  const unknown = 'model_receipt_diagnostic ' + JSON.stringify({ traceId: 'owned', physicalSend: 2, ownedRequests: 1 });
+  assert.equal(ownedProviderMetrics([bound, first, unknown].join('\n'), cwd).served_model, null);
+  for (const reversed of [false, true]) {
+    const conflict = 'model_receipt ' + JSON.stringify({ ...receipt, servedModel: 'gpt-6-thinking' });
+    const rows = reversed ? [conflict, first] : [first, conflict];
+    assert.equal(ownedProviderMetrics([bound, ...rows].join('\n'), cwd).served_model, null);
+  }
+});

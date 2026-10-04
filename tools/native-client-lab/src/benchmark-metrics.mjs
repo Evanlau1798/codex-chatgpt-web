@@ -70,14 +70,17 @@ export function ownedProviderMetrics(log, cwd) {
     try { const event = JSON.parse(text); if (event.phase === 'native_context_bound' && event.cwd_sha256 === digest(cwd)) traces.add(event.traceId); } catch {}
   }
   const receipts = new Map(); const sends = new Map(); const returnedTools = new Set(); const erroredTools = new Set();
-  let recoverySends = 0; let committed = false;
+  let recoverySends = 0; let committed = false; let receiptConflict = false;
   for (const line of rows) {
     const text = line.split('model_receipt ')[1];
     if (text) try {
       const receipt = JSON.parse(text);
-      if (traces.has(receipt.traceId) && receipt.source === 'network.resolved_model_slug') {
-        receipts.set(`${receipt.traceId}/${receipt.physicalSend}`, receipt);
-        sends.set(`${receipt.traceId}/${receipt.physicalSend}`, receipt);
+      if (traces.has(receipt.traceId) && receipt.source === 'network.resolved_model_slug'
+        && Number.isInteger(receipt.physicalSend) && receipt.physicalSend > 0) {
+        const key = `${receipt.traceId}/${receipt.physicalSend}`;
+        if (receipts.has(key) && receipts.get(key).servedModel !== receipt.servedModel) receiptConflict = true;
+        receipts.set(key, receipt);
+        sends.set(key, receipt);
       }
     } catch {}
     const diagnosticText = line.split('model_receipt_diagnostic ')[1];
@@ -103,7 +106,8 @@ export function ownedProviderMetrics(log, cwd) {
   }
   for (const send of sends.values()) if (send.physicalSend > 1) recoverySends++;
   const models = new Set([...receipts.values()].map(receipt => receipt.servedModel));
-  return { served_model: models.size === 1 ? [...models][0] : null,
+  const completeIdentity = !receiptConflict && sends.size > 0 && [...sends.keys()].every(key => receipts.has(key));
+  return { served_model: completeIdentity && models.size === 1 ? [...models][0] : null,
     provider_sends: sends.size || null, recovery_sends: sends.size ? recoverySends : null,
     returned_native_tool_results: returnedTools.size, errored_native_tool_results: erroredTools.size,
     completion_committed: committed, provider_evidence: receipts.size ? 'owned_wire_receipts' : sends.size ? 'owned_wire_diagnostics_no_model_identity' : 'unavailable' };
