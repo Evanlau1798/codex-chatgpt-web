@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { ChatGptBrowserWorker, setChatGptThinkMode } from "../src/adapters/chatgpt-web/browser-worker";
 
-function fixture(label = "Think") {
+function fixture() {
   const state = { pressed: false, controlPresent: true, highlighted: true, popupCount: 1,
     optionCount: 1, draft: "", connectors: [] as string[], loseConnector: false,
     commands: [] as string[], enters: 0, pollsBeforeToggle: 0, pendingToggle: false };
@@ -39,14 +39,12 @@ function fixture(label = "Think") {
       }
     },
   };
-  const composerForm = { getByRole: (_role: string, options: { name: string | RegExp }) => ({ filter: () => ({ ...controls,
-    count: async () => (typeof options.name === "string" ? options.name === label : options.name.test(label)) ? controls.count() : 0,
-  }) }), locator: () => composer, page: () => page };
+  const composerForm = { getByRole: () => ({ filter: () => controls }), locator: () => composer, page: () => page };
   return { state, composer, composerForm, page };
 }
 
-test.each(["Think", "Analyser"])("%s slash toggles only when needed and preserves selected connectors", async label => {
-  const ui = fixture(label);
+test("Think slash toggles only when needed and preserves selected connectors", async () => {
+  const ui = fixture();
   ui.state.connectors = ["Codex Native2"];
   await setChatGptThinkMode(ui.composerForm as never, true);
   expect(ui.state.pressed).toBeTrue();

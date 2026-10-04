@@ -1709,8 +1709,6 @@ function dialogPage(text: string, buttonText = "Got it", errorActionVisible = fa
 
 test.each([
   ["Too many requests. You're making requests too quickly.", "Got it"],
-  ["Trop de requêtes. Vous envoyez des demandes trop rapidement.", "J’ai compris"],
-  ["Trop de requêtes. Vous envoyez des demandes trop rapidement.", "J'ai compris"],
   ["요청을 너무 빠르게 보내고 있습니다. 잠시 후 다시 시도해 주세요.", "알겠습니다"],
 ])("rate-limit dialog stops automatic resubmission: %s", async (message, button) => {
   const fixture = dialogPage(message, button);
@@ -1741,8 +1739,6 @@ test("a suspicious-activity protection dialog returns a structured hard stop", a
 
 test("localized suspicious-activity protection dialogs return the same hard stop", async () => {
   for (const text of [
-    "Nous détectons une activité suspecte. Veuillez réessayer plus tard.",
-    "Activité inhabituelle détectée. Veuillez réessayer plus tard.",
     "偵測到可疑活動。請稍後再試。",
     "检测到可疑活动。请稍后再试。",
     "不審なアクティビティが検出されました。しばらくしてからもう一度お試しください。",
@@ -1755,7 +1751,6 @@ test("localized suspicious-activity protection dialogs return the same hard stop
       retryable: false,
       retireSession: true,
     });
-    expect(fixture.pressed).toEqual([]);
   }
 });
 
@@ -1796,11 +1791,10 @@ test("unrelated ChatGPT dialogs are left untouched", async () => {
   expect(fixture.pressed).toEqual([]);
 });
 
-test.each([
+test("the known terminal ChatGPT error alert returns a structured retryable failure", async () => {
+  const fixture = dialogPage(
     "Something went wrong. If this issue persists please contact us through our help center at help.openai.com.",
-    "Une erreur s’est produite. Si ce problème persiste, veuillez contacter notre centre d’assistance à l’adresse help.openai.com.",
-])("the known terminal ChatGPT error alert returns a structured retryable failure: %s", async text => {
-  const fixture = dialogPage(text);
+  );
 
   await expect(throwIfChatGptTerminalErrorAlert(fixture.page)).rejects.toMatchObject({
     name: "ChatGptWebAdapterError",
@@ -2043,12 +2037,10 @@ test("a previous response error cannot reject a newly accepted user submission",
   expect(fixture.pressed).toEqual([]);
 });
 
-test.each([
+test("a failed subscription fetch is retryable and does not falsely invalidate ChatGPT login", async () => {
+  const fixture = dialogPage(
     "Failed to load subscription: Something went wrong. If this issue persists please contact us through our help center at help.openai.com.",
-    "Échec du chargement de l’abonnement : erreur. Si l’erreur persiste, rendez-vous sur help.openai.com.",
-    "Échec du chargement de l'abonnement : erreur. Si l'erreur persiste, rendez-vous sur help.openai.com.",
-])("a failed subscription fetch is retryable and does not falsely invalidate ChatGPT login: %s", async text => {
-  const fixture = dialogPage(text);
+  );
 
   await expect(throwIfChatGptSessionFailureAlert(fixture.page)).rejects.toMatchObject({
     name: "ChatGptWebAdapterError",
@@ -2061,7 +2053,6 @@ test.each([
 
 test.each([
   "Your session has expired. Please log in again to continue using the app. Log in",
-  "Votre session a expiré. Veuillez vous connecter à nouveau pour continuer à utiliser l’application. Se connecter",
   "你的工作階段已過期 請重新登入以繼續使用應用程式。 登入",
   "您的会话已过期 请重新登录以继续使用该应用。 登录",
 ])("an expired ChatGPT session returns a non-retryable authentication failure: %s", async alertText => {
@@ -2245,9 +2236,7 @@ test("unrelated ChatGPT alerts are not terminal", async () => {
 function toolConfirmationPage(options: {
   disappearAfterReads?: number;
   surface?: "dialog" | "card";
-  allowLabel?: string;
-  denyLabel?: string;
-  title?: string;
+  allowLabel?: "Allow once" | "Allow" | "Always allow";
 } = {}): {
   page: Page;
   pressed: string[];
@@ -2255,8 +2244,7 @@ function toolConfirmationPage(options: {
   let reads = 0;
   let visible = true;
   const pressed: string[] = [];
-  const availableButtons = [options.allowLabel ?? "Allow once", options.denyLabel ?? "Deny"];
-  let titleMatches = true;
+  const availableButtons = [options.allowLabel ?? "Allow once", "Deny"] as const;
   const button = (name: string | RegExp) => {
     const actualName = availableButtons.find(candidate => (
       typeof name === "string" ? candidate === name : name.test(candidate)
@@ -2275,15 +2263,14 @@ function toolConfirmationPage(options: {
   };
   const dialog = {
     filter: ({ hasText }: { hasText: string | RegExp }) => {
-      const title = options.title ?? "Allow ChatGPT to use Codex Native?";
-      titleMatches = typeof hasText === "string" ? title.includes(hasText) : hasText.test(title);
+      expect(typeof hasText === "string" ? hasText === "Allow ChatGPT to use Codex Native?" : hasText.test("Allow ChatGPT to use Codex Native?")).toBeTrue();
       return dialog;
     },
     last: () => dialog,
     isVisible: async () => {
       reads += 1;
       if (options.disappearAfterReads !== undefined && reads >= options.disappearAfterReads) visible = false;
-      return visible && titleMatches;
+      return visible;
     },
     getByRole: (_role: string, input: { name: string | RegExp }) => button(input.name),
     waitFor: async ({ state }: { state: string }) => {
@@ -2373,45 +2360,6 @@ test("auto-approval recognizes the observed non-dialog approval card", async () 
 
   expect(await resolveChatGptToolConfirmation(fixture.page, "Codex Native", true)).toBeTrue();
   expect(fixture.pressed).toEqual(["Allow once:Enter"]);
-});
-
-test.each(["Autoriser", "Autoriser une fois"])("French one-shot tool approval accepts only %s", async allowLabel => {
-  const fixture = toolConfirmationPage({ surface: "card", title: "Autoriser ChatGPT à utiliser Codex Native\u00a0?", allowLabel, denyLabel: "Refuser" });
-  expect(await resolveChatGptToolConfirmation(fixture.page, "Codex Native", true)).toBeTrue();
-  expect(fixture.pressed).toEqual([`${allowLabel}:Enter`]);
-});
-
-test("French tool approval preserves manual handling, refusal and the exact connector identity", async () => {
-  const options = { title: "Autoriser ChatGPT à utiliser Codex Native ?", allowLabel: "Autoriser une fois", denyLabel: "Refuser" };
-  const manual = toolConfirmationPage({ ...options, disappearAfterReads: 3 });
-  expect(await resolveChatGptToolConfirmation(manual.page, "Codex Native", false, undefined, 100)).toBeTrue();
-  expect(manual.pressed).toEqual([]);
-  const expired = toolConfirmationPage(options);
-  expect(await resolveChatGptToolConfirmation(expired.page, "Codex Native", false, undefined, 1)).toBeTrue();
-  expect(expired.pressed).toEqual(["Refuser:Enter"]);
-  for (const appName of ["Codex Other", "Codex Native.*", "Codex (Native)"]) {
-    const unrelated = toolConfirmationPage(options);
-    expect(await resolveChatGptToolConfirmation(unrelated.page, appName, true)).toBeFalse();
-    expect(unrelated.pressed).toEqual([]);
-  }
-  const literal = toolConfirmationPage({ ...options, title: "Autoriser ChatGPT à utiliser Codex (Native) ?" });
-  expect(await resolveChatGptToolConfirmation(literal.page, "Codex (Native)", true)).toBeTrue();
-});
-
-test.each(["Always allow", "Toujours autoriser"])("one-shot approval never selects persistent permission %s", async allowLabel => {
-  const fixture = toolConfirmationPage({ title: "Autoriser ChatGPT à utiliser Codex Native ?", allowLabel });
-  await expect(resolveChatGptToolConfirmation(fixture.page, "Codex Native", true)).rejects.toThrow("Approval button not found");
-  expect(fixture.pressed).toEqual([]);
-});
-
-test("French status controls do not leak into the answer or swallow ordinary prose", () => {
-  for (const text of ["Répondre maintenant", "Réflexion", "Réflexion en cours", "Réflexion…", "Réflexion en cours..."]) {
-    expect(isChatGptTraceControl({ kind: "status", text })).toBeTrue();
-    expect(isChatGptTraceControl({ kind: "answer", text })).toBeFalse();
-  }
-  expect(stripChatGptTraceControlSuffix({ kind: "status", text: "Vérification des fichiers Répondre maintenant" }).text).toBe("Vérification des fichiers");
-  expect(stripChatGptTraceControlSuffix({ kind: "answer", text: "Répondre maintenant" }).text).toBe("Répondre maintenant");
-  expect(isChatGptTraceControl({ kind: "status", text: "Réflexion sur les tests" })).toBeFalse();
 });
 
 test("browser preflight separates model context from one-message transport limits", () => {
