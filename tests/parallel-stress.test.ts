@@ -62,6 +62,25 @@ test("64 queued owners: overflow is refused, cancellation frees one slot, every 
   (await admission.acquire({ group: "after", role: "root" }))();
 });
 
+test("a full unrelated root queue cannot consume the active tree's reserved worker and maintenance slots", async () => {
+  const admission = new ChatGptParallelAdmission();
+  const root = await admission.acquire({ group: "active", role: "root" });
+  const controllers = Array.from({ length: 64 }, () => new AbortController());
+  const queued = controllers.map((controller, i) => admission.acquire(
+    { group: `other-${i}`, role: "root" }, controller.signal,
+  ).then(release => { release(); return "started"; }, () => "cancelled"));
+  try {
+    const left = await admission.acquire({ group: "active", role: "worker" });
+    const right = await admission.acquire({ group: "active", role: "worker" });
+    const maintenance = await admission.acquire({ group: "active", role: "maintenance" });
+    left(); right(); maintenance();
+  } finally {
+    controllers.forEach(controller => controller.abort());
+    root();
+    expect((await Promise.all(queued)).every(result => result === "cancelled")).toBeTrue();
+  }
+});
+
 test("200 task trees preserve both child slots and compaction while refusing excess workers", async () => {
   const admission = new ChatGptParallelAdmission();
   for (let i = 0; i < 200; i++) {

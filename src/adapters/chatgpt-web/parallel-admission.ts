@@ -56,7 +56,13 @@ export class ChatGptParallelAdmission {
       // their documents. Refuse before Send; never cancel active Pro work.
       throw this.childCapacity();
     }
-    if (this.available(identity) && this.queue.length === 0) return this.reserve(identity);
+    // Queued unrelated trees cannot occupy this tree's reserved slots, even
+    // when the global waiting queue is full. Preserve FIFO for new trees and
+    // already-queued requests of the same role in the active tree.
+    const sameRoleWaiting = this.queue.some(waiter => waiter.identity.group === identity.group
+      && waiter.identity.role === identity.role);
+    if (this.available(identity) && (this.queue.length === 0
+      || (identity.group === this.group && !sameRoleWaiting))) return this.reserve(identity);
     if (this.queue.length >= 64) throw new ChatGptWebAdapterError("Parallel browser admission queue is full; no provider Send was made.",
       { status: 409, errorType: "invalid_request_error", code: "parallel_queue_capacity", retryable: false });
     return new Promise((resolve, reject) => {
