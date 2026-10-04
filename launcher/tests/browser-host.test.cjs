@@ -315,12 +315,13 @@ test("managed challenge is reported without reloading, cancelling or trusting a 
     setState: patch => messages.push(patch),
     reloadHomeAfterCloudflareChallenge: () => { throw new Error("must not reload"); },
   });
-  const details = { statusCode: 403, webContentsId: 43, url: "https://chatgpt.com/backend-api/f/conversation", responseHeaders: { "cf-mitigated": ["challenge"] } };
+  const details = { statusCode: 403, webContentsId: 43, url: "https://chatgpt.com/backend-api/f/conversation?private=PRIVATE_QUERY", responseHeaders: { "cf-mitigated": ["challenge"] } };
   assert.equal(fixture.handleChatGptBackendResponse({ ...details, webContentsId: 999 }), false);
   assert.equal(fixture.handleChatGptBackendResponse(details), true);
   assert.equal(tab.status, "running");
   assert.match(tab.message, /manually/);
   assert.equal(messages[0][1].traceId, "owned");
+  assert.doesNotMatch(JSON.stringify(messages), /PRIVATE_QUERY|https:\/\//);
 });
 
 test("security refresh preserves manually running generation, draft and unverifiable renderer", async () => {

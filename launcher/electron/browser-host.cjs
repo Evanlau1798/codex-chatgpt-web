@@ -1140,7 +1140,9 @@ class BrowserHost {
     if (details?.webContentsId !== contents.id) {
       if (!managed || !isChatGptCloudflareChallengeResponse(details)) return false;
       managed.message = "ChatGPT blocked an owned request with a security challenge. Complete verification manually in the private browser; this turn will not be reloaded or resubmitted.";
-      this.logger.warn("browser.managed_cloudflare_challenge_detected", { traceId: managed.traceId, url: details.url });
+      this.logger.warn("browser.managed_cloudflare_challenge_detected", {
+        traceId: managed.traceId, statusCode: 403, classification: "owned_provider_security_challenge",
+      });
       this.setState({ status: "error", message: managed.message, loading: false });
       return true;
     }
