@@ -113,3 +113,25 @@ test("graceful MCP shutdown closes an actual idle keep-alive connection", async 
     })]);
   } finally { clearTimeout(timer); agent.destroy(); await http.close(); }
 });
+
+test("a peer reset during JSON upload cannot crash the MCP listener or leak admission", async () => {
+  const http = await startChatGptMcpHttpServer({ brokerSocketPath: defaultBrokerEndpoint(), controlToken: key, port: 0 });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const client = request(http.endpoint, { method: "POST", headers: {
+        authorization: `Bearer ${key}`, "content-type": "application/json", "content-length": "1000", expect: "100-continue",
+      } });
+      client.once("continue", () => {
+        client.write("{", () => { client.destroy(); resolve(); });
+      });
+      client.on("error", error => { if (!client.destroyed) reject(error); });
+      client.flushHeaders();
+    });
+    // A following real request proves the listener is still serving, not merely
+    // that the aborted client's promise returned. No provider work is involved.
+    const response = await fetch(http.endpoint, { method: "POST", body: "{}" });
+    expect(response.status).toBe(401);
+    await response.text();
+    expect(http.activeRequests()).toBe(0);
+  } finally { await http.close(); }
+});
