@@ -4,6 +4,7 @@ on:
     paths:
       - 'tests/codex-interrupt-shell.test.ts'
       - 'tests/upstream-audit-v501-ledger.test.ts'
+      - 'tests/environment-root-continuation.test.ts'
       - 'src/codex-interrupt-hook-windows.js'
       - '.github/workflows/windows-fixture-probe.yml'
 permissions:
@@ -22,6 +23,8 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Verify the immutable historical archive
         run: bun test tests/upstream-audit-v501-ledger.test.ts
+      - name: Verify independent rollout authority readers
+        run: bun test --no-orphans tests/environment-root-continuation.test.ts
       - name: Exercise actual Windows hook shells
         run: bun test tests/codex-interrupt-shell.test.ts
       - name: Exercise hook shells with full-runner process ownership flags
