@@ -218,7 +218,9 @@ async function captureVerificationCapabilities(page: Page): Promise<Record<strin
     const effortControls = composerForm ? [...composerForm.querySelectorAll(selectors.effortControl)].filter(rendered) : [];
     return {
       composerVisible: composers.length === 1,
-      composerEditable: composers.length === 1 && (composers[0] as HTMLElement).isContentEditable,
+      composerEditable: composers.length === 1 && (composers[0] instanceof HTMLTextAreaElement
+        ? !composers[0].matches(":disabled") && !composers[0].readOnly
+        : (composers[0] as HTMLElement).isContentEditable),
       effortControlUnique: effortControls.length === 1,
       effortControlExpanded: effortControls.length === 1 && effortControls[0]!.getAttribute("aria-expanded") === "true",
       effortControlClosed: effortControls.length === 1 && effortControls[0]!.getAttribute("aria-expanded") === "false",
