@@ -301,7 +301,7 @@ export function translateClaudeMessages(
   const turnId = claudeAgentTurnId(agent);
   const system = textBlocks(request.system);
   const auxiliaryResponse = claudeTitleResponse(request, system);
-  const workspaceKey = headers.has("x-claude-code-session-id") ? session + "\\0" + agent : undefined;
+  const workspaceKey = headers.has("x-claude-code-session-id") ? JSON.stringify([session, agent]) : undefined;
   const workspace = workingDirectory(system, request.messages, workspaceKey ? retainedClaudeWorkspaces.get(workspaceKey) : undefined);
   const root = workspace.root;
   if (workspaceKey && !auxiliaryResponse && (workspace.explicit || retainedClaudeWorkspaces.has(workspaceKey))) {
