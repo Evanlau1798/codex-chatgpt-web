@@ -15,10 +15,15 @@ test("checkpoint instructions distinguish current work from superseded history",
 });
 
 test("many short messages charge their envelopes against the retained token budget", () => {
-  const input = Array.from({ length: 30_000 }, (_, i) => user("OK", `user-${i}`));
+  // Functional envelope-accounting oracle, not a runner CPU-speed assertion.
+  // Visible text fits; complete envelopes do not. The 30k stress case remains
+  // independently executable in scripts/benchmark-compaction-budget.ts.
+  const input = Array.from({ length: 2_000 }, (_, i) => user("OK", `user-${i}`));
+  expect(input.length * estimateTokens("OK")).toBeLessThan(20_000);
+  expect(estimateTokens(JSON.stringify(input))).toBeGreaterThan(20_000);
   const output = buildCompactV1Output(input, "Current task checkpoint.");
   expect(estimateTokens(JSON.stringify(output.slice(0, -1)))).toBeLessThanOrEqual(20_000);
-  expect(output.at(-2)?.id).toBe("user-29999");
+  expect(output.at(-2)?.id).toBe("user-1999");
 });
 
 test("latest instruction is never tail-truncated even beyond the optional history budget", () => {
