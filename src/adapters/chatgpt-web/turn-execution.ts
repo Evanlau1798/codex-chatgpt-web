@@ -2,6 +2,7 @@ import type { AdapterEvent, CodexParsedRequest, CodexToolResultMessage } from ".
 import type { BrokerToolRequest } from "./turn-broker";
 import { ChatGptSteeringFeed, steeringFingerprint, type ClaudeSteeringDelivery } from "./steering-feed";
 import { ChatGptTextFeed, ChatGptTraceFeed } from "./turn-feeds";
+import { NativeAgentInputInbox } from "./native-agent-input";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import type { ChatGptExternalTurnProgress } from "./turn-progress";
 export { chatGptConversationKey, chatGptTurnTraceId } from "./conversation-key";
@@ -42,6 +43,7 @@ export type ChatGptTurnRuntime =
   | (ChatGptTurnRuntimeBase & { mode: "read-only" });
 
 export class ChatGptTurnSession {
+  readonly nativeAgentInputs = new NativeAgentInputInbox();
   readonly createdAt = Date.now();
   private lastTouchedAt = this.createdAt;
   readonly browserOutcome: Promise<ChatGptBrowserOutcome>;
@@ -277,6 +279,7 @@ export class ChatGptTurnSession {
   }
 
   observeCanonicalRequest(parsed: CodexParsedRequest): void {
+    this.nativeAgentInputs.observe(parsed);
     this.canonicalGeneration += 1;
     this.canonicalComplete = parsed._canonicalContextComplete === true;
     this.canonicalCallIds = new Set(parsed.context.messages.flatMap(message => (
