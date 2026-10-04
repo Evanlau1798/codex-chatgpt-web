@@ -276,7 +276,13 @@ export function compileChatGptWebPrompt(
       "A skill catalog entry is an instruction source, not proof that its runtime tool is loaded. When a relevant entry names a SKILL.md path, read that file completely before deciding the capability is unavailable.",
       ...(!manualControl ? ["For a local text instruction or source file, use codex_tool_inventory with query `__codex_read_file__:<absolute path>` so the outer Codex runtime performs one fixed read-only file operation. Do not use this reserved query for commands."] : []),
       "If a required tool is absent from the attached shortcuts, use codex_tool_inventory to find the required capability or exact advertised tool name, then invoke its returned wire_name through codex_tool_call and wait for its result in this same Web conversation. Do not open a replacement conversation or resend the task context.",
-      ...(!manualControl ? ["Only when that capability is not already advertised, call codex_tool_inventory with query `__codex_tool_search__:<capability query>`; after its result, query the refreshed inventory and call the loaded tool by its exact wire name."] : []),
+      "Inventory entries with kind=connector and invocation=attached_direct describe attached MCP shortcuts: call that shortcut directly, never route its own name through codex_tool_call. For a freeform runtime capability, use its exact advertised wire_name and input, omitting arguments; for a function capability, use arguments and omit input.",
+      ...(toolPolicy.tools.some(tool => !tool.namespace && tool.name === "apply_patch") ? [
+        "This turn advertises native apply_patch. When the latest user request authorizes source edits, prefer the attached codex_apply_patch shortcut directly with this turn_token and the patch string in patch. No inventory lookup is needed for that attached shortcut. Do the requested edit after gathering the necessary evidence; an explanation of the required change is not the edit. Do not edit for review-only or diagnosis-only requests, and preserve all runtime approvals and scope restrictions.",
+      ] : []),
+      ...(!manualControl && toolPolicy.tools.some(tool => tool.name === "tool_search" && tool.toolSearch === true)
+        ? ["Only when that capability is not already advertised, call codex_tool_inventory with query `__codex_tool_search__:<capability query>`; after its result, query the refreshed inventory and call the loaded tool by its exact wire name."]
+        : !manualControl ? ["This turn does not advertise deferred tool search. Use ordinary codex_tool_inventory queries for exact advertised capabilities; do not request reserved deferred-search queries or treat a registry lookup as execution."] : []),
       "When a command needs sandbox_permissions, justification, or prefix_rule, inventory the actual exec_command or shell_command and use codex_tool_call instead of codex_exec.",
       "Never emulate a stateful or persistent tool with codex_exec, shell commands, or a temporary language process. If discovery or loading fails, report only the observed failure and do not attempt that fallback.",
       "Codex Native shell_command is one-shot: do not request a TTY or expect later stdin. Use APIs compatible with the active platform shell, pipe generated input inside the same command, and never print secret values.",
@@ -479,9 +485,13 @@ export function compileChatGptWebPrompt(
       ...manualControlContract,
       ...checkpointContract,
       answerContract,
+      // Context is serialized data, not Markdown prose. A text fence keeps the
+      // composer's link parser from interpreting bracket-heavy task history.
+      "```text",
       "<codex_context_json>",
       envelopeJson,
       "</codex_context_json>",
+      "```",
       ...(omittedMessages > 0 ? [
         "<codex_transport_resume>",
         `${omittedMessages} earlier history items were omitted to fit this compaction request; the supplied history is incomplete.`,

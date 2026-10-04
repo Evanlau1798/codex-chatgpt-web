@@ -19,7 +19,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **開発候補版：`6.1.3-Enhanced.2`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。このブランチだけではリリースは公開されません。
+> **リリース：`6.1.4-Enhanced.1`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。[紹介動画を見る（英語 MP4）](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4)。
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">トラブルシューティング</a> · <a href="SECURITY.md">セキュリティ</a> · <a href="CONTRIBUTING.md">コントリビューション</a>
@@ -158,7 +158,7 @@ Enhanced の自動ツールターンでは、**Web Agent 出力を MCP Tunnel �
 
 ### Fast startup（実験的）
 
-`6.1.3-Enhanced.2` では **Settings** から **Fast startup** を有効にできます。最後に検証した
+`6.1.4-Enhanced.1` では **Settings** から **Fast startup** を有効にできます。最後に検証した
 モデルと harness の下書きを持つ未送信の待機ページを準備し、リクエスト時にアカウント、
 モデル、下書きを再検証してから現在のリクエストを挿入します。準備だけでは送信しません。
 実行中のタスクを優先し、ページ上限に空きがある場合のみ待機ページを準備します。
@@ -168,7 +168,7 @@ Account Safety の **Maximum concurrency** に従い、この制限が無効の�
 Native2 の進捗はストリーミングできますが、完全な最終回答は output tunnel で一度だけ
 原子的に確定します。起動と最終確定の診断で、ローカル準備と ChatGPT の待機時間を区別できます。
 
-**候補版の既知の制限：** 継続時に送信前のモデル検証が失敗することがあります。
+**既知の制限：** 継続時に送信前のモデル検証が失敗することがあります。
 診断を追加していますが、根本原因は引き続き調査中です。
 
 ### 会話設定、Limits と API

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { mock } from "node:test";
 import { runEnhancedCompaction } from "../src/adapters/chatgpt-web/enhanced-compaction";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { beginCancelStructuredCompactionTrace, cancelAllStructuredCompactions, canonicalizeCompactionHandoff, runStructuredCompactionOnce } from "../src/adapters/chatgpt-web/compaction-handoff";
@@ -55,6 +56,43 @@ function submitCompaction(store: CompactionTransactionStore, instruction: string
   const handoffId = /handoff_id (handoff_\w+)/.exec(instruction)![1]!;
   store.submit(token, handoffId, summary);
 }
+
+test("source settlement reserves a full separate deadline for retained compaction", async () => {
+  const f = fixture(true);
+  f.release.resolve();
+  const store = new CompactionTransactionStore();
+  const broker = {
+    beginCompactionTransaction: async (trace: string, ttl: number) => store.begin(trace, ttl),
+    waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
+    abortCompactionTransaction: (token: string) => store.abort(token),
+  } as unknown as TurnBroker;
+  const events: AdapterEvent[] = [];
+  mock.timers.enable({ apis: ["setTimeout"] });
+  let run: ReturnType<typeof runEnhancedCompaction> | undefined;
+  try {
+    run = runEnhancedCompaction({ ...f.options, broker, timeoutMs: 40,
+      worker: { run: async turn => {
+        mock.timers.tick(25);
+        expect(turn.abortSignal?.aborted).toBeFalse();
+        const prepared = await turn.prepare();
+        submitCompaction(store, prepared.text, "Retained summary after source settled.");
+        prepared.release();
+        return "turn complete";
+      } }, emit: event => events.push(event),
+    });
+    await new Promise<void>(resolve => setImmediate(resolve));
+    mock.timers.tick(25);
+    f.browser.resolve("Previous response finished");
+    await run;
+    expect(events.at(-1)).toMatchObject({ type: "done", endTurn: true });
+    expect(events.some(event => event.type === "text_delta"
+      && event.text.includes("Retained summary after source settled."))).toBeTrue();
+  } finally {
+    mock.timers.reset();
+    await f.cleanup();
+    await run?.catch(() => {});
+  }
+});
 
 for (const sourceSettlement of ["handoff", "final", "missing_completion_evidence"] as const) test(`active compact avoids preemption and reserves another message for a stopped source (${sourceSettlement})`, async () => {
   const f = fixture(true, true);

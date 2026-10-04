@@ -83,7 +83,7 @@ test("Think polling removes each abort listener after its timer settles", async 
   expect(listeners.removed).toBe(listeners.added);
 });
 
-test("Think attachment runs after connector selection and rolls back connector loss", async () => {
+test("Think attachment rolls back a lost connector and never inserts the prompt", async () => {
   const attach = (ChatGptBrowserWorker.prototype as unknown as { attachPrompt: (...args: unknown[]) => Promise<void> }).attachPrompt;
   const ui = fixture();
   const submitted: boolean[] = [];
@@ -108,4 +108,29 @@ test("Think attachment runs after connector selection and rolls back connector l
     failingWorker, lost.page, "must not be inserted", true, undefined, undefined, false, undefined, true,
   )).rejects.toThrow("selected connectors");
   expect(cleanup).toBe(1);
+});
+
+test("Think attachment preserves the plugin on first and follow-up messages and supports Browser-only turns", async () => {
+  const attach = (ChatGptBrowserWorker.prototype as unknown as { attachPrompt: (...args: unknown[]) => Promise<void> }).attachPrompt;
+  for (const localTools of [true, false]) {
+    const ui = fixture();
+    let selections = 0;
+    const submitted: boolean[] = [];
+    const worker = {
+      activeComposer: async () => ui.composer,
+      selectConnector: async () => { selections++; ui.state.connectors = ["Codex Native2"]; return ui.composer; },
+      insertPromptText: async () => { submitted.push(ui.state.pressed); }, assertPromptAttached: async () => {},
+      clearChatGptComposerState: async () => { ui.state.draft = ""; ui.state.connectors = []; },
+    };
+    await attach.call(worker, ui.page, "requested task", localTools, undefined, undefined, false, undefined, true);
+    expect(submitted).toEqual([true]);
+    expect(selections).toBe(localTools ? 1 : 0);
+    if (localTools) expect(ui.state.connectors).toEqual(["Codex Native2"]);
+    ui.state.pressed = false;
+    ui.state.connectors = [];
+    await attach.call(worker, ui.page, "follow-up task", localTools, undefined, undefined, false, undefined, true);
+    expect(submitted).toEqual([true, true]);
+    expect(ui.state.commands).toEqual(["/think", "/think"]);
+    expect(selections).toBe(localTools ? 2 : 0);
+  }
 });

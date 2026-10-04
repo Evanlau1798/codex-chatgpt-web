@@ -1,6 +1,21 @@
 import { randomBytes } from "node:crypto";
 import type { ChatGptTurnEnvironment } from "./environment";
 
+export interface BrokerRetirementFailure {
+  code: "codex_tool_timeout";
+  tool: string;
+  timeoutMs: number;
+}
+
+export function assertRetirementFailure(value: unknown): asserts value is BrokerRetirementFailure {
+  const failure = value as Partial<BrokerRetirementFailure> | null;
+  if (!failure || failure.code !== "codex_tool_timeout"
+    || typeof failure.tool !== "string" || !/^[A-Za-z0-9_.-]{1,256}$/.test(failure.tool)
+    || !Number.isSafeInteger(failure.timeoutMs) || failure.timeoutMs! <= 0) {
+    throw new Error("Invalid Codex tool retirement failure");
+  }
+}
+
 export interface BrokerToolRequest {
   callId: string;
   wireName: string;
@@ -26,6 +41,7 @@ export interface BrokerTurnOutputEvent {
 }
 
 export interface BrokerRequest {
+  failure?: BrokerRetirementFailure;
   id: string;
   method: "claim" | "resolve" | "release" | "invoke" | "read_context" | "submit_compaction_handoff" | "submit_recovery_checkpoint" | "submit_output"
     | "owner_status" | "owner_register" | "owner_register_safe" | "owner_update" | "owner_safe_sent"
@@ -36,7 +52,7 @@ export interface BrokerRequest {
     | "owner_cancel_finalization"
     | "owner_arm_finalization_output"
     | "owner_reset_output" | "owner_seal_output" | "owner_wait_retirement" | "owner_revoke" | "activity_complete"
-    | "start_agent_wait" | "read_agent_wait";
+    | "start_agent_wait" | "read_agent_wait" | "read_output_control";
   waitId?: string;
   token?: string;
   bindingId?: string;

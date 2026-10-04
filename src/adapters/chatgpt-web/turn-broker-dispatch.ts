@@ -25,6 +25,8 @@ import {
 } from "./turn-broker-protocol";
 import { submitTurnOutput } from "./turn-broker-output";
 import { readAgentWait, startAgentWait } from "./turn-broker-agent-wait";
+import { assertRetirementFailure } from "./turn-broker-protocol";
+import { chatGptToolTimeoutError } from "./adapter-error";
 
 interface DispatchState {
   acceptingExternalOwners(): boolean;
@@ -118,6 +120,17 @@ export async function dispatchTurnBrokerRequest(
     if (typeof request.token !== "string" || request.token.length === 0) throw new Error("context token is required");
     return state.contexts.read(request.token, request.index, request.chunkChars, state.channels);
   }
+  if (request.method === "read_output_control") {
+    const channel = request.token ? state.channels.get(request.token) : undefined;
+    if (!channel || (channel.environment.expiresAt !== undefined && channel.environment.expiresAt <= Date.now())
+      || channel.completionCommitted || channel.outputSealed
+      || channel.safe || !channel.outputEnabled) {
+      throw new Error("output control is unavailable for this turn");
+    }
+    // Schema discovery is not work: no activity, task data, work reopening,
+    // or mutation of the finalization/completion revision.
+    return { outputEnabled: true, finalizationOnly: channel.finalizationOnly };
+  }
   if (request.method === "read_agent_wait") {
     const channel = request.token ? state.channels.get(request.token) : undefined;
     if (!channel || channel.completionCommitted) throw new Error("turn token is invalid, expired, or revoked");
@@ -206,7 +219,12 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
       : "internal Codex turn binding is invalid or expired");
   }
   if (request.method === "release") {
-    state.owner.revoke(binding.token);
+    if (request.failure !== undefined) {
+      assertRetirementFailure(request.failure);
+      state.owner.revoke(binding.token, chatGptToolTimeoutError(request.failure.tool, request.failure.timeoutMs), request.failure);
+    } else {
+      state.owner.revoke(binding.token);
+    }
     return { released: true };
   }
   if (request.method === "resolve") return { environment: binding.channel.environment };

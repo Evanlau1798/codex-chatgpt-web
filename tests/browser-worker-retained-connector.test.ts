@@ -27,6 +27,49 @@ type BrowserWorkerInternals = {
 
 const workerMethods = ChatGptBrowserWorker.prototype as unknown as BrowserWorkerInternals;
 
+test("each new tool prompt verifies its connector after the previous Send cleared the mention", async () => {
+  let selected = false;
+  let selections = 0;
+  const prompts: string[] = [];
+  const composer = { fill: async () => { selected = false; }, focus: async () => {}, press: async () => {} };
+  const absent = { filter: () => absent, last: () => absent, isVisible: async () => false };
+  const worker = {
+    activeComposer: async () => composer,
+    selectConnector: async () => { selected = true; selections++; return composer; },
+    insertPromptText: async (_page: unknown, text: string) => {
+      expect(selected).toBeTrue();
+      prompts.push(text.trim());
+    },
+    assertPromptAttached: async () => {}, clearChatGptComposerState: async () => { selected = false; },
+  };
+  const page = { locator: () => absent, keyboard: { press: async () => {} } };
+  await workerMethods.attachPrompt.call(worker, page, "first task", true);
+  selected = false;
+  await workerMethods.attachPrompt.call(worker, page, "follow-up task", true);
+  expect(selections).toBe(2);
+  expect(prompts).toEqual(["first task", "follow-up task"]);
+});
+
+test("recovery revalidation can stop before selecting the current message connector", async () => {
+  const actions: string[] = [];
+  const composer = {};
+  const fixture = {
+    config: { appName: "Codex Native2" },
+    activeComposer: async () => composer,
+    selectConnector: async () => { actions.push("select"); return composer; },
+    insertPromptText: async () => { actions.push("insert"); },
+    assertPromptAttached: async () => { actions.push("assert"); },
+  };
+  const methods = ChatGptBrowserWorker.prototype as unknown as {
+    attachPrompt(...args: unknown[]): Promise<void>;
+  };
+  const absent = { filter: () => absent, last: () => absent, isVisible: async () => false };
+  await methods.attachPrompt.call(fixture, { locator: () => absent },
+    "Recovery prompt", true, undefined, undefined, false, undefined, false, false, false,
+    async () => false);
+  expect(actions).toEqual([]);
+});
+
 for (const pill of ["missing", "selected", "unrecoverable"] as const) test.each([
   ["prompt attachment", async (fixture: object, page: object) => {
     await workerMethods.attachPrompt.call(fixture, page, "new suffix", true);

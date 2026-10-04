@@ -1,23 +1,36 @@
 import { expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
 import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
-import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_STOP_BUTTON_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL } from "../src/chatgpt-session";
+import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_STOP_BUTTON_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
 import type { BrokerTurnOutputEvent } from "../src/adapters/chatgpt-web/turn-broker-protocol";
 import { activeCompactionToolResultInstruction } from "../src/adapters/chatgpt-web/native-compaction-control";
 import { publishPendingFinalizationOutput, submitTurnOutput, waitForTurnOutput, sealTurnOutput, resetTurnOutput } from "../src/adapters/chatgpt-web/turn-broker-output";
 import type { TurnChannel } from "../src/adapters/chatgpt-web/turn-broker-state";
 import { chatGptSameSurfaceRecoveryDecision, CHATGPT_SAME_SURFACE_RECOVERY_PROMPT } from "../src/adapters/chatgpt-web/runtime-lifecycle";
 import { chatGptSameSurfaceRecoveryPrompt } from "../src/adapters/chatgpt-web/same-surface-recovery";
+import * as launcherControl from "../src/launcher-browser-host";
+const hostSource = createRequire(import.meta.url).resolve("../launcher/electron/browser-host.cjs");
+const hostRequire = createRequire(hostSource);
+const hostModule = { exports: {} as any };
+runInNewContext(readFileSync(hostSource, "utf8"), {
+  require: (id: string) => id === "electron" ? {} : hostRequire(id),
+  module: hostModule, exports: hostModule.exports, Buffer, URL, process,
+});
+const { BrowserHost } = hostModule.exports;
 
 const OLD = "Review in progress.";
 const FINAL = "Findings: No blocking defects. Review complete.";
 
 async function runFixture(options: {
+  manualApproval?: boolean;
+  approvalOutcome?: "timeout" | "aborted";
   stale?: boolean; tunneledFinal?: boolean; steering?: boolean; batches?: number;
   missingBaseline?: boolean; missingAssistantTurn?: boolean; abortAtBaseline?: boolean; delayedResult?: boolean;
   pastToolBatch?: boolean; retained?: boolean; tunneledRetry?: "answer" | "preemptive";
@@ -71,6 +84,8 @@ async function runFixture(options: {
   const progressTimes: number[] = [];
   let progressStartedAt = now;
   let composerText = options.composerBusy ? "User draft" : "";
+  // Recorded Web behavior: the sent app mention does not bind the next message.
+  let currentMessageConnector = false;
   const localizedComposer = options.localizedGeneration
     ? (require("@mixmark-io/domino") as { createDocument(html: string): Document }).createDocument(
       '<form data-chatgpt-composer><button type="button" aria-label="停止"><svg class="icon-primary-action"><path d="M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"></path></svg></button></form>',
@@ -163,11 +178,14 @@ async function runFixture(options: {
   };
   const page: any = Object.assign(new EventEmitter(), {
     isClosed: () => false, url: () => submitted && options.conversationRoute || options.initialRoute || CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
+    keyboard: { press: async () => { actions.push("composer-end"); } },
     locator: (selector: string) => {
+      if (options.manualApproval && selector === '[role="dialog"], [data-testid="tool-approval-card"]') return approvalDialog;
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
       if (selector === CHATGPT_STOP_BUTTON_SELECTOR && options.progressScenario) return {
         ...hidden, isVisible: async () => submitted > 0 && progressObservations < 9,
       };
+      if (selector === CHATGPT_USER_TURN_SELECTOR) return { ...hidden, evaluateAll: async () => [] };
       if (selector === "[data-turn-id-container], [data-turn-key]") return {
         evaluateAll: async () => ["historical", ...Array.from({ length: submitted }, (_, index) => `current${index || ""}`)],
       };
@@ -206,8 +224,48 @@ async function runFixture(options: {
       return hidden;
     },
   });
+  const approvalVisibility: boolean[] = [];
+  const approvalTab = { id: "approval-tab", traceId: "boole_fallback_fixture", helperPid: process.pid,
+    status: "running", interactionMode: "automatic", interactionLocked: true,
+    interactionShield: { setVisible: (visible: boolean) => approvalVisibility.push(visible),
+      webContents: { isDestroyed: () => false, focus: () => actions.push("approval-shield-focus") } },
+    view: { webContents: { isDestroyed: () => false, focus: () => actions.push("approval-focus") } } };
+  const otherTab = { ...approvalTab, id: "other", traceId: "other-turn", interactionShield: undefined };
+  const approvalHost = Object.assign(Object.create(BrowserHost.prototype), {
+    turnTabs: new Map<string, typeof approvalTab | typeof otherTab>([[approvalTab.id, approvalTab], [otherTab.id, otherTab]]), closedTurnOwners: new Map(),
+    selectedTabId: approvalTab.id, visible: true, surfaceActive: true, boundsReady: true,
+    window: { isVisible: () => true, isMinimized: () => false },
+    presentPrimaryView() {}, presentTurnView() {}, snapshot: () => ({}),
+  });
+  let approvalShown = options.manualApproval === true;
+  let approvalReads = 0;
+  const approvalDialog: any = { ...hidden, waitFor: async () => {}, isVisible: async () => {
+    if (++approvalReads > 1 && approvalShown) {
+      if (options.approvalOutcome === "aborted") controller.abort();
+      else if (approvalVisibility.at(-1) === false && !options.approvalOutcome) approvalShown = false; // User can only approve through the unlocked UI.
+      else now += 60_001; // A blocked user reaches the production manual-approval deadline.
+    }
+    return approvalShown;
+  }, getByRole: (_role: string, query: { name: string | RegExp }) => ({ ...hidden,
+    waitFor: async () => {}, press: async () => {
+      const label = ["Allow once", "Deny"].find(label => typeof query.name === "string"
+        ? label === query.name : query.name.test(label));
+      if (!label) throw Error("No matching approval button in fixture");
+      actions.push(`approval-${label}`); approvalShown = false;
+    },
+  }) };
+  const approvalControl = options.manualApproval ? spyOn(launcherControl, "notifyLauncherTurn").mockImplementation(async (_path, activity) => {
+    expect(activity.phase).toBe("approval");
+    if (activity.phase !== "approval") throw new Error("unexpected control request");
+    approvalHost.setTurnApprovalPending(activity.traceId, activity.helperPid, activity.pending);
+    approvalHost.focusActiveSurface();
+    actions.push(`approval-pending:${activity.pending}`);
+    return {};
+  }) : undefined;
+  if (options.manualApproval) approvalHost.syncViewVisibility();
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
-    config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics },
+    config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics, autoApproveToolCalls: false,
+      ...(options.manualApproval ? { browserHostDescriptorPath: "fixture-control" } : {}) },
     finalizingRuns: new Set<string>(),
     takePreemptiveRetry: () => {
       if (options.steeringBeforeRecoverySend && actions.includes("insert") && !actions.includes("steering-issued")) {
@@ -229,7 +287,7 @@ async function runFixture(options: {
     },
     attachPromptWithCompactionRetry: async (...args: any[]) => {
       const bindConnector = args[2];
-      expect(bindConnector).toBe(!options.retained && submitted === 0);
+      expect(bindConnector).toBe(true);
       if (recoverable && submitted > 0) {
         if (options.toolBatchAtRecoveryInsertion && !actions.includes("recovery-tool-started")) {
           progress.recordToolBatch(1);
@@ -237,12 +295,19 @@ async function runFixture(options: {
         }
         if (options.generationResumesAtRecoveryInsertion) actions.push("recovery-attachment-started");
         await (ChatGptBrowserWorker.prototype as any).attachPromptWithCompactionRetry.apply(worker, args);
+      } else {
+        currentMessageConnector = true;
+        actions.push("message-connector-selected");
       }
       actions.push("attach");
     },
     clearChatGptComposerState: async () => { composerText = ""; actions.push("clear"); },
     insertPromptText: async (_page: unknown, prompt: string) => { composerText = prompt; actions.push("insert"); },
-    attachFiles: async () => {}, assertPromptAttached: async () => {}, connectorIsSelected: async () => true,
+    attachFiles: async () => {}, assertPromptAttached: async () => {},
+    attachedPromptText: async (_page: unknown, _signal?: AbortSignal, _operation?: unknown, preserveLeading = false) =>
+      preserveLeading ? composerText : composerText.trimStart(),
+    connectorIsSelected: async () => currentMessageConnector,
+    selectConnector: async () => { currentMessageConnector = true; actions.push("message-connector-selected"); return worker.activeComposer(); },
     activeComposer: async () => {
       if (options.composerBusyAfterAdmission && actions.includes("recovery:eligible")) composerText = "User draft";
       return { textContent: async () => {
@@ -260,7 +325,7 @@ async function runFixture(options: {
         sendButtonSelector: string;
       } | { nonce: string; sendButtonSelector: string }) => {
         if (typeof input === "string") {
-          if (composerText !== input) return false;
+          if (composerText.trimStart() !== input) return false;
           composerText = "";
           actions.push("clear");
           return true;
@@ -281,7 +346,7 @@ async function runFixture(options: {
           composerText = "User draft at atomic submission";
           actions.push("user-draft-at-atomic-submission");
         }
-        if (composerText !== input.expectedPrompt || input.guard.responseHtml !== text) return false;
+        if (composerText.trimStart() !== input.expectedPrompt || input.guard.responseHtml !== text) return false;
         recoveryGuardNonce = input.nonce;
         return true;
       }, isEditable: async () => true,
@@ -292,17 +357,21 @@ async function runFixture(options: {
       waitFor: async () => {}, isEnabled: async () => true,
       click: async ({ signal }: { signal?: AbortSignal }) => {
         signal?.throwIfAborted();
+        expect(currentMessageConnector).toBe(true);
         if (!recoveryGuardNonce) throw new Error("recovery send guard was not installed");
         recoveryGuardSent = true;
         composerText = "";
          submitted++;
+         currentMessageConnector = false;
          if (options.postToolRecovery && submitted === 2 && options.recoveryFails) text = "";
          if (options.finalDuringRecoverySubmission) submitTurnOutput(channel, "final", FINAL);
          actions.push("send");
       },
       press: async () => {
+        expect(currentMessageConnector).toBe(true);
         if (submitted > 0) composerText = "";
         submitted++;
+        currentMessageConnector = false;
         if (options.postToolRecovery && submitted === 2 && options.recoveryFails) text = "";
         if (options.pastToolBatch) text = FINAL;
         if (options.compactionSettlement && submitted === 2) text = "CODEX_COMPACTION_SOURCE_SETTLED";
@@ -484,13 +553,14 @@ async function runFixture(options: {
   };
   let answer: string | undefined;
   let error: unknown;
-  try { answer = await worker.runBrowserTurn(turn, undefined, page, options.retained); }
+  try { answer = await worker.runBrowserTurn(turn, options.manualApproval ? approvalTab.id : undefined, page, options.retained); }
   catch (cause) { error = cause; }
   finally {
     clearTimeout(guard);
     clock.mockRestore();
     info.mockRestore();
     warn.mockRestore();
+    approvalControl?.mockRestore();
     progress.retire(new Error("fixture finished"));
     rmSync(diagnostics, { recursive: true, force: true });
   }
@@ -502,8 +572,26 @@ async function runFixture(options: {
     expect(actions.filter(a => a === "submitted")).toHaveLength(options.tunneledRetry ? 2 : 1);
   }
   return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText,
-    fallbackAgeMs, recoveryDecisionAgeMs, selections, progressTimes, progressStartedAt };
+    fallbackAgeMs, recoveryDecisionAgeMs, selections, progressTimes, progressStartedAt, approvalVisibility, approvalTab, otherTab };
 }
+
+test.each([false, true])("manual approval restores its owned protection (DOM=%s)", async untunneled => {
+  for (const approvalOutcome of [undefined, "timeout", "aborted"] as const) {
+  const result = await runFixture({ manualApproval: true, untunneled, approvalOutcome });
+  if (approvalOutcome === "aborted") expect(result.error).toBeInstanceOf(DOMException);
+  else expect(result.error).toBeUndefined();
+  expect(result.actions.filter(action => action.startsWith("approval-pending:"))).toEqual([
+    "approval-pending:true", "approval-pending:false",
+  ]);
+  expect(result.actions).toContain("approval-focus");
+  if (approvalOutcome === "timeout") expect(result.actions).toContain("approval-Deny");
+  else expect(result.actions).not.toContain("approval-Deny");
+  expect(result.approvalVisibility).toEqual([true, false, true]);
+  expect(result.approvalTab.interactionLocked).toBe(true);
+  expect((result.otherTab as any).approvalPending).toBeUndefined();
+  if (approvalOutcome !== "aborted") expect(result.answer).toBe(FINAL);
+  }
+});
 
 async function runLateCompletionActionFixture() {
   const diagnostics = mkdtempSync(join(tmpdir(), "late-completion-action-"));
@@ -536,6 +624,7 @@ async function runLateCompletionActionFixture() {
     evaluate: async () => ({}),
     locator: (selector: string) => {
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
+      if (selector === CHATGPT_USER_TURN_SELECTOR) return { ...hidden, evaluateAll: async () => [] };
       if (selector === '[data-turn-id="current"]') return current;
       if (selector === '[data-turn-id="historical"]') return historical;
       if (selector === "[data-turn-id-container], [data-turn-key]") return {
@@ -907,13 +996,14 @@ test("a new response does not classify settled historical tools against its curr
   expect(result.actions).not.toContain("tool-dispatched");
 });
 
-test("retained conversation keeps native tools and final delivery without another connector mention", async () => {
+test("retained conversation reselects its message-scoped connector before native work", async () => {
   const result = await runFixture({ retained: true });
   expect(result.error).toBeUndefined();
   expect(result.answer).toBe(FINAL);
   expect(result.deltas).toEqual([FINAL]);
   expect(result.actions.filter(a => a === "tool-dispatched")).toHaveLength(1);
   expect(result.actions.filter(a => a === "fence-commit")).toHaveLength(1);
+  expect(result.actions.filter(a => a === "message-connector-selected")).toHaveLength(1);
 });
 
 test("DOM fallback still rejects an unchanged pre-tool answer", async () => {

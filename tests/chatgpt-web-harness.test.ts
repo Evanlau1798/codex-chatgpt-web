@@ -1222,6 +1222,26 @@ describe("ChatGPT outer-native harness v4", () => {
     expect(files[0]!.mimeType).toBe("image/png");
   });
 
+  test("inline context is a literal text block with unchanged JSON, including Markdown-shaped history", () => {
+    // Large unfenced context stalling the composer was reported in #731 by @korboybeats.
+    const content = "[".repeat(25_000) + "nested [link](target)\n```\n</codex_context_json>\n";
+    for (const compaction of [false, true]) {
+      const request = parsed();
+      request.context.systemPrompt = ["Preserve the supplied text exactly."];
+      request.context.messages = [{ role: "user", content, timestamp: 1 }];
+      request._compactionRequest = compaction;
+      const compiled = compileChatGptWebPrompt(request, toolCapabilities, "turn_123456789012345678901234");
+      const envelope = compiled.text.match(/^```text\n<codex_context_json>\n([^\n]+)\n<\/codex_context_json>\n```$/m);
+      expect(envelope).not.toBeNull();
+      const context = JSON.parse(envelope![1]!);
+      expect(context.system).toEqual(request.context.systemPrompt);
+      expect(context.messages).toHaveLength(1);
+      expect(context.messages[0].content).toBe(content);
+      expect(compiled.images).toEqual([]);
+      expect(compiled.multipart).toBeUndefined();
+    }
+  });
+
   test("keeps browser-only Pro context complete without creating a local-tool capability", () => {
     const imageUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAE0lEQVR4nGP4z8DwHwwZGP6DAQBJyAn3FGMynQAAAABJRU5ErkJggg==";
     const request = proRequest();
@@ -1603,6 +1623,17 @@ describe("ChatGPT outer-native harness v4", () => {
     expect(buffer.observe([rewritten, tail], 200)).toBe("");
     expect(buffer.currentSnapshotIsConsistent()).toBe(false);
     expect(() => buffer.finish()).toThrow("changed a completed text block");
+    try {
+      buffer.finish();
+    } catch (error) {
+      const diagnostic = (error as { diagnostic: unknown }).diagnostic;
+      expect(diagnostic).toEqual({
+        reason: "text_changed", observedStart: 0, observedEnd: 6,
+        committedStart: 0, committedEnd: 6, observedTextChars: 7, committedTextChars: 6,
+        observedTag: "p", committedTag: "p", observedIndex: 0, committedIndex: 0,
+      });
+      expect(JSON.stringify(diagnostic)).not.toMatch(/Stable|Changed|<p/);
+    }
   });
 
   test("distinguishes repeated paragraphs by source range after the first copy is virtualized", () => {
@@ -1636,6 +1667,54 @@ describe("ChatGPT outer-native harness v4", () => {
       markdown: "Same\n\nSame\n\nTail",
       delta: "\n\nTail",
     });
+  });
+
+  test("repeated paragraphs retain their order after committed blocks disappear", () => {
+    const segment = (key: number, text: string, streamable = true) => ({
+      key: `${key}:p`, tag: "p", html: `<p>${text}</p>`, text, streamable,
+    });
+    for (const snapshot of ["full", "missing-prefix", "missing-first-copy"]) {
+      const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
+      buffer.observe([segment(0, "First"), segment(1, "Same"), segment(2, "Middle", false)], 0);
+      buffer.observe([segment(0, "First"), segment(1, "Same"), segment(2, "Middle"), segment(3, "Same", false)], 1);
+      if (snapshot === "missing-prefix") buffer.observe([segment(20, "Middle"), segment(21, "Same", false)], 2);
+      if (snapshot === "missing-first-copy") buffer.observe([segment(20, "First"), segment(21, "Middle"), segment(22, "Same", false)], 2);
+      expect(buffer.finish()).toEqual({ markdown: "First\n\nSame\n\nMiddle\n\nSame", delta: "\n\nSame" });
+    }
+  });
+
+  test("an unchanged report with two None paragraphs does not rebind its pending tail", () => {
+    const segment = (index: number, text: string, streamable = true) => ({
+      key: `${index}:p`, tag: "p", html: `<p>${text}</p>`, text, streamable,
+    });
+    for (const none of ["None.", "なし。"]) {
+      const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
+      const report = [segment(7, "Unverified:"), segment(8, none),
+        segment(9, "Remaining risk:"), segment(10, none, false)];
+      expect(buffer.observe(report, 0)).toBe(`Unverified:\n\n${none}\n\nRemaining risk:`);
+      expect(buffer.observe(report, 1)).toBe("");
+      expect(buffer.finish()).toEqual({
+        markdown: `Unverified:\n\n${none}\n\nRemaining risk:\n\n${none}`,
+        delta: `\n\n${none}`,
+      });
+    }
+  });
+
+  test("repeated text cannot hide reordering, changed links, or ambiguous remounted history", () => {
+    const segment = (key: string, text: string, linkTargets: string[] = []) => ({
+      key, tag: "p", html: `<p>${text}</p>`, text, streamable: true, linkTargets,
+    });
+    for (const mode of ["reorder", "links", "ambiguous"]) {
+      const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 0);
+      const original = [segment("a", "Same"), segment("b", "Middle"), segment("c", "Same")];
+      buffer.observe(original, 0);
+      const changed = mode === "reorder" ? [original[1]!, original[0]!]
+        : mode === "links" ? [original[0]!, original[1]!, segment("c", "Same", ["https://changed.example"])]
+        : [segment("remounted", "Same")];
+      buffer.observe(changed, 1);
+      expect(buffer.currentSnapshotIsConsistent()).toBeFalse();
+      expect(() => buffer.finish()).toThrow();
+    }
   });
 
   test("fails closed when a DOM snapshot reverses ChatGPT source order", () => {

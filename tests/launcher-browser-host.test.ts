@@ -47,6 +47,51 @@ test("claimed startup cleanup failure still settles the newly acquired real turn
   }
 });
 
+test("launcher activity follows actual send callbacks and current-turn tool counts", async () => {
+  const messages: Array<{ phase: string; progress?: { stage: string; activeToolCalls: number } }> = [];
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    const message = await request.json() as typeof messages[number];
+    messages.push(message);
+    return Response.json(message.phase === "start"
+      ? { surfaceId: "a".repeat(32), reused: false, connectorBound: false }
+      : { cancelledByUser: false });
+  } });
+  const waitForStage = async (stage: string) => {
+    const deadline = Date.now() + 1_000;
+    while (!messages.some(message => message.progress?.stage === stage) && Date.now() < deadline) await Bun.sleep(5);
+    expect(messages.some(message => message.progress?.stage === stage)).toBeTrue();
+  };
+  let activeToolCalls = 0;
+  let activated = 0;
+  let submitted = 0;
+  try {
+    const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+      config: { browserHost: "launcher", browserHostDescriptorPath: descriptorFile(`http://127.0.0.1:${server.port}`) },
+      runBrowserTurn: async (turn: { onSendActivated(): Promise<void>; onSubmitted(): Promise<void> }) => {
+        await waitForStage("preparing");
+        await turn.onSendActivated();
+        await waitForStage("sending");
+        activeToolCalls = 2;
+        await turn.onSubmitted();
+        await waitForStage("chatgpt");
+        return "done";
+      },
+    });
+    await expect(worker.runExclusive({
+      traceId: "activity-fixture", modelId: "gpt-5.6-sol", reasoning: "high", modelFamily: "5.6",
+      capabilities: { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+      externalProgress: { snapshot: () => ({ activeToolCalls }) },
+      onSendActivated: () => { activated++; }, onSubmitted: () => { submitted++; },
+    })).resolves.toBe("done");
+    expect(messages.filter(message => message.progress).map(message => message.progress)).toEqual([
+      { stage: "preparing", activeToolCalls: 0 }, { stage: "sending", activeToolCalls: 0 },
+      { stage: "chatgpt", activeToolCalls: 2 },
+    ]);
+    expect(messages.at(-1)?.phase).toBe("end");
+    expect([activated, submitted]).toEqual([1, 1]);
+  } finally { server.stop(true); }
+});
+
 test("a blocked sign-in replaces an opaque navigation abort with a non-retryable session error", async () => {
   let needsSignIn: unknown = true;
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {

@@ -28,6 +28,7 @@ function submittedFailure(
     && (session.runtime.manualControl
       || error.retireSession
       || error.code === "chatgpt_submission_ambiguous"
+      || error.code === "codex_tool_timeout"
       || error.code === "chatgpt_submitted_turn_failed")
     ? error
     : terminalError(error, phase);
