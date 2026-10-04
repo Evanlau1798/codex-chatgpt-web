@@ -13,14 +13,25 @@ export function normalizeClaudeLongCommands(parsed: CodexParsedRequest, requests
     Object.hasOwn(bash.parameters.properties, "run_in_background");
   const supportsOutputWait = output?.parameters?.properties &&
     Object.hasOwn(output.parameters.properties, "timeout");
-  if (!supportsBackground || !supportsOutputWait) return;
+  const timeoutFor = (args: Record<string, unknown>, tool: typeof bash): unknown => {
+    if (Object.hasOwn(args, "timeout")) return args.timeout;
+    const properties = tool?.parameters?.properties;
+    if (!properties || typeof properties !== "object" || Array.isArray(properties)) return undefined;
+    const schema = (properties as Record<string, unknown>).timeout;
+    return schema && typeof schema === "object" && !Array.isArray(schema)
+      ? (schema as Record<string, unknown>).default : undefined;
+  };
   for (const request of requests) {
     if (request.freeform || !request.arguments) continue;
     const args = request.arguments;
-    if (request.wireName === "Bash" && typeof args.timeout === "number" && args.timeout > CLAUDE_CONNECTOR_WAIT_MS) {
+    const bashTimeout = timeoutFor(args, bash);
+    const outputTimeout = timeoutFor(args, output);
+    if (request.wireName === "Bash" && supportsBackground && supportsOutputWait
+      && typeof bashTimeout === "number" && bashTimeout > CLAUDE_CONNECTOR_WAIT_MS) {
       request.arguments = { ...args, run_in_background: true };
     }
-    if (request.wireName === "TaskOutput" && typeof args.timeout === "number" && args.timeout > CLAUDE_CONNECTOR_WAIT_MS) {
+    if (request.wireName === "TaskOutput" && supportsOutputWait
+      && typeof outputTimeout === "number" && outputTimeout > CLAUDE_CONNECTOR_WAIT_MS) {
       request.arguments = { ...args, timeout: CLAUDE_CONNECTOR_WAIT_MS };
     }
   }

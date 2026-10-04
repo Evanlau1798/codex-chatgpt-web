@@ -29,3 +29,23 @@ test("unsupported catalogs and unrelated or short calls remain unchanged", () =>
   normalizeClaudeLongCommands(parsed(), calls);
   expect(calls).toEqual(before);
 });
+
+test("TaskOutput response wait is bounded without requiring Bash in the advertised catalog", () => {
+  const context: any = { context: { tools: [
+    { name: "TaskOutput", parameters: { properties: { timeout: { type: "number" } } } },
+  ] } };
+  const calls: any = [{ wireName: "TaskOutput", arguments: { task_id: "owned", timeout: 400000 } }];
+  normalizeClaudeLongCommands(context, calls);
+  expect(calls[0].arguments).toEqual({ task_id: "owned", timeout: 30000 });
+});
+
+test("advertised long timeout defaults cannot bypass native task handoff", () => {
+  const context = parsed();
+  context.context.tools[0].parameters.properties.timeout = { type: "number", default: 120000 };
+  context.context.tools[1].parameters.properties.timeout.default = 120000;
+  const calls: any = [{ wireName: "Bash", arguments: { command: "owned-command" } },
+    { wireName: "TaskOutput", arguments: { task_id: "owned", block: true } }];
+  normalizeClaudeLongCommands(context, calls);
+  expect(calls[0].arguments).toEqual({ command: "owned-command", run_in_background: true });
+  expect(calls[1].arguments).toEqual({ task_id: "owned", block: true, timeout: 30000 });
+});
