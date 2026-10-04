@@ -23,3 +23,7 @@ Acceptance is external: inspect disk diffs/hashes, unchanged tests and independe
 `workflow_accepted` is separate from Pro `accepted`: the latter always requires an owned wire receipt reporting `gpt-6-pro`. Missing provider logs or identity never waive that oracle. Read/repeated-read counts currently cover explicit Claude Read and simple quoted cat commands only; they are lower bounds, not comparable exhaustive read totals. Neither partial counts nor heartbeats establish efficiency or task completion.
 
 Client tool-item counts also declare limited coverage. Prefer `returned_native_tool_results` for observed outer-native round trips: these come from the shared broker boundary, correlate by owner trace, and deduplicate hashed call IDs. They count returned results, not in-flight calls or every provider plugin/discovery operation.
+
+Model attestation requires a consistent owned receipt for every observed physical
+Send. One resolved Pro receipt cannot cover an unidentified recovery or child Send;
+conflicting duplicate receipts also make aggregate identity unavailable.
