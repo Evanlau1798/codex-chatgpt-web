@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { recordChatGptMetadataDiagnostic } from "../src/adapters/chatgpt-web/model-receipt-artifact";
@@ -55,5 +55,18 @@ test("recording failure is isolated and unsafe diagnostic fields are rejected be
     expect(readdirSync(root)).toHaveLength(0);
     expect(() => recordChatGptMetadataDiagnostic({ ...diagnostic(), prompt: "PRIVATE_PROMPT" } as never, root)).toThrow();
     expect(readdirSync(root)).toHaveLength(0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test.skipIf(process.platform === "win32")("diagnostic storage saturation stops new writes without deleting retained evidence", () => {
+  const root = mkdtempSync(join(tmpdir(), "metadata-artifact-capacity-"));
+  try {
+    for (let i = 0; i < 256; i++) writeFileSync(join(root, `metadata-existing-${i}.json`), "retained", { mode: 0o600 });
+    const brief = recordChatGptMetadataDiagnostic(diagnostic(), root);
+    expect(brief.recording).toEqual({ status: "unavailable", reason: "bounded" });
+    expect(readdirSync(root)).toHaveLength(256);
+    expect(readFileSync(join(root, "metadata-existing-0.json"), "utf8")).toBe("retained");
+    expect(brief.outcome).toBe("unavailable");
+    expect(brief.parser?.traces).toBeUndefined();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

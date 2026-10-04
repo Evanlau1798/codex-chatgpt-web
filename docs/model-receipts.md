@@ -40,7 +40,11 @@ attachments, tool arguments, credentials, URLs, and unknown key names are never 
 This does not change production parser authority or infer a served model from structural traces.
 
 Complete sanitized diagnostics are stored under the private config directory's
-`diagnostics/model-receipts/` with unique filenames, mode `0600`, and a 1 MiB file ceiling. The
+`diagnostics/model-receipts/` with unique filenames, mode `0600`, and a 1 MiB file ceiling.
+At 256 existing directory entries, the writer refuses new recordings with `bounded`
+without deleting retained evidence; receipt identity and inference are unaffected.
+The synchronous capacity check serializes one process, not an atomic multi-process
+disk quota. Separate concurrent writers can overshoot the entry threshold. The
 launcher log receives a short filename/SHA-256/byte-count reference, avoiding its 16 KiB string
 limit. IO/size/privacy failures remain telemetry-only and fail closed. Recording is currently
 unavailable on Windows because POSIX mode bits cannot establish Windows ACL privacy.
