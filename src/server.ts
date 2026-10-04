@@ -40,7 +40,7 @@ import { handleCompactRequest } from "./responses/compact-handler";
 import { parseRequest } from "./responses/parser";
 import { expandPreviousResponseInput, flushResponseState, rememberResponseState } from "./responses/state";
 import { codexTitleAuxiliaryResponse } from "./responses/title-auxiliary";
-import { inspectLauncherNativeReadiness } from "./adapters/chatgpt-web/native-readiness-client";
+import { inspectLauncherNativeReadiness, NativeReadinessInspectionError } from "./adapters/chatgpt-web/native-readiness-client";
 import { namespacedToolName, type AdapterEvent, type CodexParsedRequest } from "./types";
 import { VERSION } from "./version";
 import { messagesRequest } from "./messages";
@@ -474,7 +474,9 @@ export function startServer(
         }
         nativeReadinessInProgress = true;
         try { return Response.json(await inspectLauncherNativeReadiness(config.browserHostDescriptorPath)); }
-        catch { return Response.json({ code: "native_readiness_unverified" }, { status: 409 }); }
+        catch (error) { return Response.json({ code: "native_readiness_unverified",
+          reason: error instanceof NativeReadinessInspectionError ? error.reason : "inspection_failed",
+        }, { status: 409 }); }
         finally { nativeReadinessInProgress = false; }
       }
       if (req.method === "POST" && url.pathname === "/admin/drain-if-idle") {
