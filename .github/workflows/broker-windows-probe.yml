@@ -31,3 +31,5 @@ jobs:
         run: bun test --no-orphans tests/turn-broker-lifecycle.test.ts tests/turn-broker-compaction.test.ts tests/turn-broker-compaction-control.test.ts
         env:
           CODEX_CHATGPT_WEB_BROKER_TRACE: '1'
+      - name: Probe actual Zero Risk remote lifecycle and cancellation
+        run: bun test --no-orphans tests/zero-risk-mcp-lifecycle.test.ts tests/zero-risk-broker-admission.test.ts
