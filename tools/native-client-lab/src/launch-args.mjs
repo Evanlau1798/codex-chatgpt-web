@@ -217,6 +217,7 @@ export function buildCodexArgs({ cwd, resume, proxyUrl, catalogPath, catalog, un
     // A canonical home can choose another worker default absent from this
     // invocation's one-row Pro catalogue. Pin only the native child default.
     overrides['agents.default_subagent_model'] = CODEX_MODEL;
+    overrides['agents.default_subagent_reasoning_effort'] = 'max';
     overrides['agents.max_depth'] = 1;
   }
   const args = headless
