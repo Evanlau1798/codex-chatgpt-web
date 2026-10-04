@@ -33,3 +33,17 @@ test("Pi RPC cleanup rejects a natural nonzero exit after the required event", a
   await run.waitFor(value => value.type === "agent_settled", 5_000);
   await expect(closePiRpcRuns([run])).rejects.toThrow("Pi RPC cleanup failed");
 });
+
+test("Pi RPC cleanup rejects a natural exit racing termination before awaiting a pending pipe", async () => {
+  let resolveExit!: (code: number) => void;
+  const exited = new Promise<number>(resolve => { resolveExit = resolve; });
+  let killed = false;
+  const run = Object.create(PiRpcRun.prototype) as PiRpcRun;
+  Object.assign(run, {
+    process: { exited, signalCode: null, stdin: { end() {} },
+      kill() { killed = true; resolveExit(7); } },
+    readTask: new Promise(() => {}), errorTask: Promise.resolve(""), events: [],
+  });
+  await expect(closePiRpcRuns([run])).rejects.toThrow("Pi RPC cleanup failed");
+  expect(killed).toBe(true);
+});
