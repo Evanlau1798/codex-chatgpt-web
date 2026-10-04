@@ -36,6 +36,10 @@ ordinary lab tests continue disabling delegation. Pinned Codex v2 ignores
 before Send; the compatibility flag is not the enforcement boundary. Claude's
 client metadata identifies workers but not their nesting depth, so its measured
 bound is two simultaneous worker turns, not proven nested-spawn prevention.
+The opt-in lab pins `agents.default_subagent_model` to its one-row Pro catalogue
+for that invocation only. An inherited canonical-home worker default must not
+silently select an unavailable or differently routed model. Ordinary invocations
+and global Codex configuration remain unchanged.
 Receipt/visible-generation
 correlation requires the diagnostics and receipt packets (#74/#76) in the
 deployed composition. Overlap means distinct owned visible generation intervals

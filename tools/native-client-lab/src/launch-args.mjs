@@ -214,6 +214,9 @@ export function buildCodexArgs({ cwd, resume, proxyUrl, catalogPath, catalog, un
     delete overrides['features.multi_agent_v2'];
     overrides['features.multi_agent_v2.enabled'] = true;
     overrides['features.multi_agent_v2.max_concurrent_threads_per_session'] = 3;
+    // A canonical home can choose another worker default absent from this
+    // invocation's one-row Pro catalogue. Pin only the native child default.
+    overrides['agents.default_subagent_model'] = CODEX_MODEL;
     overrides['agents.max_depth'] = 1;
   }
   const args = headless

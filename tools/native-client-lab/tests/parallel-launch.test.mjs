@@ -8,10 +8,12 @@ test('native parallel acceptance enables invocation-scoped v2 with a residency b
     unsafe: false, headless: true };
   const ordinary = buildCodexArgs(options).join('\n');
   assert.match(ordinary, /features.multi_agent_v2=false/);
+  assert.doesNotMatch(ordinary, /agents.default_subagent_model/);
   const parallel = buildCodexArgs({ ...options, parallelAgents: true }).join('\n');
   assert.match(parallel, /features.multi_agent_v2.enabled=true/);
   assert.match(parallel, /features.multi_agent_v2.max_concurrent_threads_per_session=3/);
   assert.match(parallel, /agents.max_depth=1/);
+  assert.ok(parallel.includes(`agents.default_subagent_model=${JSON.stringify(CODEX_MODEL)}`));
   assert.match(parallel, /approval_policy="never"/);
   assert.ok(parallel.includes(CODEX_MODEL));
   assert.doesNotMatch(parallel, /dangerously/);
