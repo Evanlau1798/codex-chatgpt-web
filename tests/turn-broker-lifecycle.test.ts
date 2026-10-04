@@ -305,8 +305,8 @@ test("turn broker tokens do not expire while their browser turn is still alive",
     });
     expect(token).toMatch(/^turn_[a-f0-9]{32}$/);
     await Bun.sleep(5);
-    await expect(callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token }))
-      .resolves.toMatchObject({ bindingId: expect.any(String) });
+    expect(await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token }))
+      .toMatchObject({ bindingId: expect.any(String) });
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
@@ -425,8 +425,8 @@ test("turn broker revokes only channels owned by the closed browser trace", asyn
     expect(broker.revokeTrace("trace_target")).toBe(1);
     await expect(callTurnBroker(socketPath, { method: "claim", token: target }))
       .rejects.toThrow("already finished");
-    await expect(callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token: other }))
-      .resolves.toMatchObject({ bindingId: expect.any(String) });
+    expect(await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token: other }))
+      .toMatchObject({ bindingId: expect.any(String) });
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
@@ -459,7 +459,7 @@ test("an unbounded broker call fails when the broker closes without answering", 
   }
 }, 10_000);
 
-test("bounded broker calls preserve server-owned closure before advancing the lifecycle", async () => {
+test("bounded broker calls settle validated replies without depending on peer closure", async () => {
   let peer!: Socket;
   let finishFrame!: () => void;
   const frameWritten = new Promise<void>(resolve => { finishFrame = resolve; });
@@ -474,16 +474,10 @@ test("bounded broker calls preserve server-owned closure before advancing the li
   });
   await broker.listen();
   try {
-    let settled = false;
-    const call = callTurnBroker(broker.socketPath, { method: "owner_status" }).then(result => {
-      settled = true;
-      return result;
-    });
+    const call = callTurnBroker(broker.socketPath, { method: "owner_status" });
     await frameWritten;
-    await Bun.sleep(25);
-    expect(settled).toBeFalse();
-    peer.end();
-    await expect(call).resolves.toEqual({ ready: true });
+    expect(await call).toEqual({ ready: true });
+    expect(peer.writableEnded).toBeFalse();
   } finally {
     peer?.destroy();
     await broker.close();
