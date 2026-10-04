@@ -8,4 +8,6 @@ test.each([claudeSessionThreadId, claudeAgentTurnId])("Claude identity normaliza
   expect(normalize("ordinary-UUID_123")).toBe("claude_ordinary-UUID_123");
   const escaped = normalize("left/right").slice("claude_".length);
   expect(normalize(escaped)).not.toBe(normalize("left/right"));
+  expect(normalize("")).not.toBe(normalize("root"));
+  expect(normalize("")).not.toBe(normalize("ephemeral"));
 });

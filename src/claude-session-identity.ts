@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 
-function safeClaudeIdentityPart(value: string, fallback: string): string {
-  if (!value) return fallback;
+function safeClaudeIdentityPart(value: string): string {
   if (/^[A-Za-z0-9_-]{1,80}$/.test(value) && !value.startsWith("encoded_")) return value;
   // Sanitizing or truncating alone aliases distinct session/agent owners.
   // Preserve ordinary native IDs; escape unusual IDs with a full digest.
@@ -9,9 +8,9 @@ function safeClaudeIdentityPart(value: string, fallback: string): string {
 }
 
 export function claudeSessionThreadId(sessionId: string): string {
-  return `claude_${safeClaudeIdentityPart(sessionId, "ephemeral")}`;
+  return `claude_${safeClaudeIdentityPart(sessionId)}`;
 }
 
 export function claudeAgentTurnId(agentId: string): string {
-  return `claude_${safeClaudeIdentityPart(agentId, "root")}`;
+  return `claude_${safeClaudeIdentityPart(agentId)}`;
 }
