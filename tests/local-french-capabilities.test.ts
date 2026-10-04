@@ -5,12 +5,44 @@ import { availableChatGptWebModelRoutes, chatGptWebRouteEfforts, requireChatGptW
 import { assertChatGptModelFamily, chatGptUnversionedEffortMatches } from "../src/adapters/chatgpt-web/model-selection";
 import { activateChatGptEffortMenu } from "../src/chatgpt-session";
 import { launcherCapabilityProbeRequired } from "../src/setup-config";
+import { defaultConfig } from "../src/config";
+import { augmentNativeModelCatalog } from "../src/model-catalog";
 
 const evidence = { observedAt: Date.now(), families: {
   "5.6": ["low", "medium", "high", "xhigh", "max"] as const,
   "6": ["low", "medium", "high", "xhigh"] as const,
 } };
 const capabilities = { solAvailable: true, extraHighAvailable: true, proAvailable: true, modelCapabilities: evidence };
+
+test.each(["5.6", "6"] as const)("independently locked efforts retain only the available %s routes and catalog defaults", family => {
+  const slug = family === "5.6" ? "chatgpt-web/gpt-5.6-sol" : "chatgpt-web/latest";
+  const all = ["low", "medium", "high", "xhigh", "max"] as const;
+  for (let mask = 0; mask < 32; mask++) {
+    const observed = all.filter((_effort, index) => mask & (1 << index));
+    const config = { ...defaultConfig(), extraHighAvailable: observed.includes("xhigh"), proAvailable: observed.includes("max"),
+      modelCapabilities: { observedAt: Date.now(), families: { [family]: observed } } };
+    const supported = observed.filter(effort => ["medium", "high", "xhigh"].includes(effort));
+    const route = availableChatGptWebModelRoutes(config).find(value => value.slug === slug);
+    expect(Boolean(route)).toBe(supported.length > 0);
+    const catalog = augmentNativeModelCatalog({ models: [{ slug: "gpt-5.6-sol", priority: 1,
+      visibility: "list", supported_reasoning_levels: [{ effort: "high" }] }] }, config).models as Record<string, any>[];
+    const row = catalog.find(value => value.slug === slug);
+    expect(Boolean(row)).toBe(supported.length > 0);
+    if (!supported.length) {
+      expect(() => requireChatGptWebModelRoute(slug, config)).toThrow("not available");
+      continue;
+    }
+    expect(chatGptWebRouteEfforts(route!, config)).toEqual(supported);
+    const expectedDefault = supported.includes("high") ? "high" : supported[0];
+    expect(row!.supported_reasoning_levels.map((value: any) => value.effort)).toEqual(supported);
+    expect(row!.default_reasoning_level).toBe(expectedDefault);
+    expect(requireChatGptWebModelRoute(slug, config).adapterEffort).toBe(expectedDefault);
+    for (const effort of all) {
+      if (supported.includes(effort)) expect(requireChatGptWebModelRoute(slug, config, effort).adapterEffort).toBe(effort);
+      else expect(() => requireChatGptWebModelRoute(slug, config, effort)).toThrow("does not support effort");
+    }
+  }
+});
 
 test("per-family catalog exposes 5.6 Pro without enabling unavailable Latest Pro", () => {
   const routes = availableChatGptWebModelRoutes(capabilities);

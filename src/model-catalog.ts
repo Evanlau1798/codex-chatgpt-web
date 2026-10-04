@@ -3,6 +3,7 @@ import type { CodexModelContextOverride } from "./codex-integration";
 import {
   availableChatGptWebModelRoutes,
   chatGptWebRouteEfforts,
+  chatGptWebRouteDefaultEffort,
   CHATGPT_WEB_MODEL_PREFIX,
   resolveChatGptWebContextLimits,
   type ChatGptWebModelRoute,
@@ -143,7 +144,7 @@ export function buildChatGptWebModel(
     supports_search_tool: config.useEnhancedWebSessionMode,
     prefer_websockets: false,
     upgrade: null,
-    default_reasoning_level: route.codexEffort,
+    default_reasoning_level: chatGptWebRouteDefaultEffort(route, config),
     supported_reasoning_levels: efforts.map(effort => reasoningLevel(template, effort,
       efforts.length === 1 ? route.displayName
         : route.backendModel === "gpt-5.6-luna" ? effort === "low" ? "Ordinary Luna" : "Think"

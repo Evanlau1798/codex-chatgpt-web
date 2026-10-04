@@ -542,8 +542,7 @@ export function availableChatGptWebModelRoutes(
     ? [...CHATGPT_WEB_MODEL_ROUTES, ...CHATGPT_WEB_LATEST_MODEL_ROUTES] : CHATGPT_WEB_MODEL_ROUTES;
   const candidates = includeLegacy ? [...current, ...CHATGPT_WEB_LEGACY_MODEL_ROUTES] : current;
   return candidates.filter(route => {
-    const observed = route.modelFamily && capabilities.modelCapabilities?.families[route.modelFamily];
-    if (route.modelFamily && capabilities.modelCapabilities) return Boolean(observed?.includes(route.adapterEffort));
+    if (route.modelFamily && capabilities.modelCapabilities) return chatGptWebRouteEfforts(route, capabilities).length > 0;
     // New Latest routes need explicit evidence; preserve the older saved catalog as a fallback.
     if (route.slug.startsWith("chatgpt-web/latest")) return false;
     return (!route.requiresPro || capabilities.proAvailable)
@@ -558,8 +557,18 @@ export function chatGptWebRouteEfforts(
   const observed = route.interactionMode === "automatic" && route.modelFamily && capabilities.modelCapabilities
     ? capabilities.modelCapabilities.families[route.modelFamily] ?? [] : undefined;
   return (route.supportedCodexEfforts ?? [route.codexEffort])
-    .filter(effort => observed ? observed.includes(effort as ChatGptWebAdapterEffort)
+    .filter(effort => observed ? observed.includes(route.supportedCodexEfforts ? effort as ChatGptWebAdapterEffort : route.adapterEffort)
       : effort !== "xhigh" || capabilities.extraHighAvailable === true);
+}
+
+export function chatGptWebRouteDefaultEffort(
+  route: ChatGptWebModelRoute,
+  capabilities: ChatGptWebAccountCapabilities,
+): ChatGptWebCodexEffort {
+  const efforts = chatGptWebRouteEfforts(route, capabilities);
+  const effort = efforts.includes(route.codexEffort) ? route.codexEffort : efforts[0];
+  if (!effort) throw new Error(`${route.displayName} is not available for this account`);
+  return effort;
 }
 
 export function requireChatGptWebModelRoute(
@@ -594,7 +603,7 @@ export function requireChatGptWebModelRoute(
     throw new Error(`${route.displayName} is not available for this Luna-only account`);
   }
   if (route.modelFamily && capabilities.modelCapabilities
-    ? !capabilities.modelCapabilities.families[route.modelFamily]?.includes(route.adapterEffort)
+    ? chatGptWebRouteEfforts(route, capabilities).length === 0
     : (route.requiresPro && !capabilities.proAvailable)
       || (route.requiresExtraHigh && !capabilities.extraHighAvailable)) {
     throw new Error(`${route.displayName} is not available for this account`);
@@ -608,7 +617,7 @@ function resolveRouteEffort(
   reasoning?: string,
 ): ChatGptWebAutomaticModelRoute {
   if (!route.supportedCodexEfforts) return route;
-  const effort = reasoning ?? route.codexEffort;
+  const effort = reasoning ?? chatGptWebRouteDefaultEffort(route, capabilities);
   if (!chatGptWebRouteEfforts(route, capabilities).includes(effort as ChatGptWebCodexEffort)) {
     throw new Error(`${route.displayName} does not support effort ${JSON.stringify(effort)} for this account`);
   }

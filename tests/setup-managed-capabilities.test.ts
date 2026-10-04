@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { tmpdir } from "node:os";
+import { defaultConfig, loadConfig, saveConfig, type AppConfig } from "../src/config";
 
 // Execute the actual setup capability phase, without platform installation or account access.
 const source = readFileSync(resolve(import.meta.dir, "../src/setup.ts"), "utf8");
@@ -16,14 +18,14 @@ const javascript = new Bun.Transpiler({ loader: "ts" }).transformSync(`async fun
 }`);
 const probe = new Function(`${javascript}; return probe;`)() as (context: Record<string, unknown>) => Promise<{
   solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean;
-  modelCapabilities?: unknown;
+  modelCapabilities?: AppConfig["modelCapabilities"];
 }>;
 
 test.each(["fresh", "missing", "expired", "refresh"] as const)(
   "external service setup uses stored model capabilities only when fresh: %s", async state => {
     const capabilities = { observedAt: state === "expired" ? 0 : Date.now(),
-      families: { "5.6": ["low", "medium", "high"] } };
-    const observed = { observedAt: Date.now(), families: { "latest": ["medium", "high", "xhigh"] } };
+      families: { "5.6": ["low", "medium", "high"] as const } };
+    const observed = { observedAt: Date.now(), families: { "6": ["medium", "high", "xhigh"] as const } };
     const calls: string[] = [];
     const result = await probe({
       config: { browserHost: "managed-chrome", browserInteractionMode: "automatic" },
@@ -43,6 +45,17 @@ test.each(["fresh", "missing", "expired", "refresh"] as const)(
     expect(calls).toEqual(state === "fresh" ? [] : ["idle", "inspect"]);
     expect(result.modelCapabilities).toEqual(state === "fresh" ? capabilities : observed);
     expect(result.extraHighAvailable).toBe(state !== "fresh");
+    const home = mkdtempSync(join(tmpdir(), "setup-capability-round-trip-"));
+    const previousHome = process.env.CODEX_CHATGPT_WEB_HOME;
+    try {
+      process.env.CODEX_CHATGPT_WEB_HOME = home;
+      saveConfig({ ...defaultConfig(), ...result } as AppConfig);
+      expect(loadConfig().modelCapabilities).toEqual(result.modelCapabilities);
+    } finally {
+      if (previousHome === undefined) delete process.env.CODEX_CHATGPT_WEB_HOME;
+      else process.env.CODEX_CHATGPT_WEB_HOME = previousHome;
+      rmSync(home, { recursive: true, force: true });
+    }
   },
 );
 

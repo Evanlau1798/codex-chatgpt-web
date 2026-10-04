@@ -4,6 +4,11 @@ import { startServer } from "../src/server";
 import { chatCompletionApiKey, chatCompletionRequestGuard, chatCompletionRequest, publicChatError } from "../src/chat-completions/http";
 import { ChatCompletionError } from "../src/chat-completions/contract";
 import type { ChatCompletionExecutor } from "../src/chat-completions/runtime";
+import { createChatCompletionExecutor } from "../src/chat-completions/runtime";
+import { ChatGptAccountSafety } from "../src/adapters/chatgpt-web/account-safety";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const key = "local-test-key-not-a-real-credential-0123456789";
 const previous = process.env.CODEX_CHATGPT_WEB_API_KEY;
@@ -18,6 +23,39 @@ function send(server: ReturnType<typeof startServer>, data: unknown, headers: Re
   return fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, { method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${key}`, ...headers }, body: JSON.stringify(data) });
 }
+
+test.each(["5.6", "6"] as const)("HTTP Medium succeeds with High locked for family %s without a fallback", async family => {
+  const root = mkdtempSync(join(tmpdir(), "http-locked-effort-"));
+  const model = family === "5.6" ? "chatgpt-web/gpt-5.6-sol" : "chatgpt-web/latest";
+  process.env.CODEX_CHATGPT_WEB_API_KEY = key;
+  const config = { ...defaultConfig(), port: 0,
+    modelCapabilities: { observedAt: Date.now(), families: { [family]: ["low", "medium"] as const } } };
+  const selected: unknown[] = [];
+  const execute = createChatCompletionExecutor({ safety: new ChatGptAccountSafety(join(root, "safety.json")),
+    worker: () => ({ async run(turn) {
+      selected.push({ family: turn.modelFamily, effort: turn.reasoning });
+      return "medium-result";
+    } }),
+  });
+  const server = startServer(config, { chatCompletionExecutor: execute });
+  try {
+    const catalog = await (await fetch(`http://127.0.0.1:${server.port}/v1/models`, {
+      headers: { authorization: `Bearer ${key}` },
+    })).json() as any;
+    expect(catalog.data.some((row: any) => row.id === model)).toBe(true);
+    const response = await send(server, body({ model, reasoning_effort: "medium" }));
+    expect(response.status).toBe(200);
+    expect((await response.json() as any).choices[0].message.content).toBe("medium-result");
+    expect(selected).toEqual([{ family, effort: "medium" }]);
+    const rejected = await send(server, body({ model, reasoning_effort: "high" }));
+    expect(rejected.status).toBe(400);
+    expect((await rejected.json() as any).error.param).toBe("reasoning_effort");
+    expect(selected).toHaveLength(1);
+    const implicit = await send(server, body({ model }));
+    expect(implicit.status).toBe(200);
+    expect(selected).toEqual([{ family, effort: "medium" }, { family, effort: "medium" }]);
+  } finally { await server.stop(true); rmSync(root, { recursive: true, force: true }); }
+});
 test("disabled by default and refuses shared/native or malformed admission keys", async () => {
   delete process.env.CODEX_CHATGPT_WEB_API_KEY;
   expect(chatCompletionApiKey(defaultConfig())).toBeUndefined();
