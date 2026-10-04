@@ -301,6 +301,7 @@ async function maintain(message: Exclude<MaintenanceMessage, { type: "verify" }>
     const worker = maintenanceWorker(message);
     const value = message.type === "inspect"
       ? await worker.inspectSession(message.detectCapabilities)
+      : message.type === "native_readiness" ? await worker.inspectNativeReadiness()
       : message.type === "limits" ? await worker.inspectLimitsPlan()
       : await worker.smokeTest(abortController.signal);
     writeProtocol({ type: "result", id: message.id, value });
@@ -465,7 +466,7 @@ input.on("line", line => {
       id: message.id,
       message: error instanceof Error ? error.message : String(error),
     }));
-  } else if (message.type === "inspect" || message.type === "smoke" || message.type === "limits") {
+  } else if (message.type === "inspect" || message.type === "smoke" || message.type === "limits" || message.type === "native_readiness") {
     void maintain(message).catch(error => writeProtocol({
       type: "error",
       id: message.id,

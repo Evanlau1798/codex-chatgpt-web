@@ -12,6 +12,7 @@ import {
   inspectLauncherBrowserHostLiveness,
   readLauncherBrowserHostDescriptor,
 } from "./launcher-browser-host";
+import { inspectLauncherNativeReadiness } from "./adapters/chatgpt-web/native-readiness-client";
 import { processRunning } from "./process";
 
 export type CheckStatus = "ok" | "warning" | "error";
@@ -97,7 +98,17 @@ async function proxyCheck(config: AppConfig): Promise<DoctorCheck> {
   }
 }
 
-export async function runDoctor(): Promise<DoctorReport> {
+export async function inspectDoctorLauncher(config: AppConfig, native = false) {
+  const descriptor = native || config.browserInteractionMode === "manual"
+    ? await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath!, { timeoutMs: 5_000 })
+    : readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!);
+  if (config.browserInteractionMode === "automatic" && !native) {
+    await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: 30_000 });
+  }
+  return descriptor;
+}
+
+export async function runDoctor(options: { native?: boolean } = {}): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   let config: AppConfig;
   try {
@@ -110,16 +121,13 @@ export async function runDoctor(): Promise<DoctorReport> {
 
   if (config.browserHost === "launcher") {
     try {
-      const descriptor = config.browserInteractionMode === "manual"
-        ? await inspectLauncherBrowserHostLiveness(config.browserHostDescriptorPath!, { timeoutMs: 5_000 })
-        : readLauncherBrowserHostDescriptor(config.browserHostDescriptorPath!);
-      if (config.browserInteractionMode === "automatic") {
-        await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, { timeoutMs: 30_000 });
-      }
+      const descriptor = await inspectDoctorLauncher(config, options.native);
       checks.push({
         id: "browser-host",
         status: "ok",
-        message: config.browserInteractionMode === "manual"
+        message: options.native
+          ? `Embedded launcher browser is reachable for guarded Native inspection (pid ${descriptor.pid})`
+          : config.browserInteractionMode === "manual"
           ? `Embedded launcher browser is reachable for Zero Risk (pid ${descriptor.pid})`
           : `Embedded launcher browser is authenticated and reachable (pid ${descriptor.pid})`,
       });
@@ -219,6 +227,19 @@ export async function runDoctor(): Promise<DoctorReport> {
     checks.push({ id: "tools", status: "warning", message: "Browser-only mode intentionally has no local tools or MCP tunnel" });
   }
 
+  if (options.native) {
+    if (config.browserHost !== "launcher" || config.browserInteractionMode === "manual" || !config.browserHostDescriptorPath) {
+      checks.push({ id: "native-readiness", status: "error", message: "Native permission/catalog inspection requires an idle automatic launcher browser" });
+    } else {
+      try {
+        const observed = await inspectLauncherNativeReadiness(config.browserHostDescriptorPath);
+        checks.push({ id: "native-permission", status: observed.permission === "all_tools" ? "ok" : "error",
+          message: `Observed Native plugin permission: ${observed.permission}; no permission was changed` });
+        checks.push({ id: "native-catalog", status: observed.missing.length ? "error" : "ok",
+          message: observed.missing.length ? `Missing attached Native tools: ${observed.missing.join(", ")}` : "All seven Native shortcuts were observed in the app catalog" });
+      } catch { checks.push({ id: "native-readiness", status: "error", message: "Native readiness is unverified or the browser is busy; no inference was started" }); }
+    }
+  }
   return {
     ok: !checks.some(check => check.status === "error"),
     mode: config.mode,
