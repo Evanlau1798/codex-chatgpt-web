@@ -188,7 +188,7 @@ function authMatches(req, expected) {
   return false;
 }
 
-const CODEX_IDENTITY_FIELDS = ['installation_id', 'session_id', 'thread_id', 'turn_id', 'root_turn_id', 'window_id', 'thread_source', 'request_kind'];
+const CODEX_IDENTITY_FIELDS = ['installation_id', 'session_id', 'thread_id', 'turn_id', 'root_turn_id', 'window_id', 'thread_source', 'request_kind', 'parent_thread_id', 'parent_turn_id', 'subagent_kind', 'agent_name'];
 
 function parseMetadataObject(raw) {
   if (typeof raw !== 'string') return undefined;
@@ -309,6 +309,9 @@ function codexIdentityDiagnostic(req, metadata, metadataInfo, reason) {
     headerMetadataPresent: metadataInfo.headerMetadataPresent,
     bodyMetadataPresent: metadataInfo.bodyMetadataPresent,
     identityMismatchFields: metadataInfo.mismatches,
+    lineage: { thread: metadata.thread_id, parent: metadata.parent_thread_id,
+      rootTurn: metadata.root_turn_id, parentTurn: metadata.parent_turn_id,
+      subagentKind: metadata.subagent_kind, agentName: metadata.agent_name },
     projectMarkerPresent: typeof req.headers['openai-project'] === 'string',
   };
 }
@@ -513,11 +516,19 @@ function requestIdentity(options, req, body, metadata, pathname) {
     if (!uuid(installation)) return { ok: false, reason: 'codex_installation_id' };
     const session = metadata.session_id;
     if (!uuid(session)) return { ok: false, reason: 'codex_session_id' };
-    if (options.expectedRootThreadId && metadata.thread_source !== 'thread_title' && thread !== options.expectedRootThreadId) {
+    const isChild = options.parallelAgents === true && uuid(options.expectedRootThreadId)
+      && uuid(options.codexInstallationId) && uuid(options.codexSessionId)
+      && thread !== options.expectedRootThreadId
+      && metadata.parent_thread_id === options.expectedRootThreadId
+      && metadata.subagent_kind === 'thread_spawn'
+      && /^\/root\/[^/]+$/.test(String(metadata.agent_name || ''))
+      && bodyContainsCwd(body, options.cwd);
+    if (options.expectedRootThreadId && metadata.thread_source !== 'thread_title' && thread !== options.expectedRootThreadId && !isChild) {
       return { ok: false, reason: 'codex_resume_thread_id' };
     }
     if (options.codexInstallationId && installation !== options.codexInstallationId) return { ok: false, reason: 'codex_installation_changed' };
-    if (options.codexSessionId && session !== options.codexSessionId && metadata.thread_source !== 'thread_title') {
+    if (options.codexSessionId && session !== options.codexSessionId && metadata.thread_source !== 'thread_title'
+      && !(isChild && session === thread)) {
       return { ok: false, reason: 'codex_session_changed' };
     }
     if (metadata.turn_started_at_unix_ms !== undefined && Number(metadata.turn_started_at_unix_ms) < options.launchedAt) {
@@ -532,7 +543,7 @@ function requestIdentity(options, req, body, metadata, pathname) {
       || metadata.cwd === options.cwd
       || req.headers['x-codex-project'] === options.cwd;
     if (!ownedProject && !options.codexProjectSeen) return { ok: false, reason: 'codex_project_identity' };
-    return { ok: true, auxiliary: undefined, thread, installation, session, version: uaVersion, ownedProject };
+    return { ok: true, auxiliary: undefined, thread, installation, session, version: uaVersion, ownedProject, isChild };
   }
   const parsedVersion = claudeVersionFromUserAgent(version);
   if (!atLeastVersion(parsedVersion, options.minimumClaudeVersion)) return { ok: false, reason: 'claude_version' };
@@ -705,8 +716,8 @@ export function createRecordingProxy(options) {
       }
       if (client === 'codex') {
         if (identity.installation) state.codexInstallationId ??= identity.installation;
-        if (identity.session && identity.auxiliary !== 'title') state.codexSessionId ??= identity.session;
-        if (identity.thread && identity.auxiliary !== 'title') state.codexRootThreadId ??= identity.thread;
+        if (identity.session && identity.auxiliary !== 'title' && !identity.isChild) state.codexSessionId ??= identity.session;
+        if (identity.thread && identity.auxiliary !== 'title' && !identity.isChild) state.codexRootThreadId ??= identity.thread;
         if (identity.ownedProject) state.codexProjectSeen = true;
       }
       const isTitle = identity.auxiliary === 'title';

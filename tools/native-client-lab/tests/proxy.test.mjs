@@ -93,6 +93,59 @@ async function stop(proxy, upstream) {
   await new Promise(resolve => upstream.close(() => resolve()));
 }
 
+test('explicit parallel harness admits only current owned flat native descendants', async t => {
+  const fixture = await startFixture('data: [DONE]\n\n');
+  const artifact = tempRoot(), marker = randomUUID(), installation = randomUUID(), rootThread = randomUUID();
+  const rootMeta = codexMeta({ thread: rootThread, installation, session: rootThread });
+  const proxy = createRecordingProxy({ client: 'codex', artifactRoot: artifact, childToken: marker,
+    controlToken: randomUUID(), upstreamHost: '127.0.0.1', upstreamPort: fixture.port,
+    cwd: '/private/tmp/project', launchedAt: Date.now() - 1000, parallelAgents: true });
+  t.after(() => stop(proxy, fixture.upstream));
+  const endpoint = await proxy.listen();
+  const send = (meta, body = codexBody(meta), token = marker) => fetch(endpoint.url + '/v1/responses', {
+    method: 'POST', headers: codexHeaders(token, meta), body: JSON.stringify(body),
+  });
+  assert.equal((await send(rootMeta)).status, 200);
+  const childThread = randomUUID();
+  const child = { ...codexMeta({ thread: childThread, installation, session: childThread, source: 'subagent' }),
+    parent_thread_id: rootThread, parent_turn_id: rootMeta.turn_id, root_turn_id: rootMeta.turn_id,
+    subagent_kind: 'thread_spawn', agent_name: '/root/left' };
+  assert.equal((await send(child)).status, 200);
+  assert.equal(proxy.state.codexRootThreadId, rootThread);
+  for (const invalid of [
+    { ...child, parent_thread_id: randomUUID() },
+    { ...child, agent_name: '/root/left/nested' },
+    { ...child, installation_id: randomUUID() },
+    { ...child, session_id: randomUUID() },
+  ]) assert.equal((await send(invalid)).status, 403);
+  const outside = codexBody(child); outside.input = [{ type: 'message', content: '<cwd>/outside</cwd>' }];
+  assert.equal((await send(child, outside)).status, 403);
+  const mismatch = codexBody(child);
+  mismatch.client_metadata['x-codex-turn-metadata'] = JSON.stringify({ ...child, parent_thread_id: randomUUID() });
+  assert.equal((await send(child, mismatch)).status, 403);
+  assert.equal((await send(child, codexBody(child), 'unowned')).status, 403);
+  assert.equal(fixture.seen.length, 2);
+});
+
+test('ordinary harness remains root-only even for a native child with the same marker', async t => {
+  const fixture = await startFixture('data: [DONE]\n\n');
+  const marker = randomUUID(), installation = randomUUID(), thread = randomUUID();
+  const proxy = createRecordingProxy({ client: 'codex', artifactRoot: tempRoot(), childToken: marker,
+    controlToken: randomUUID(), upstreamHost: '127.0.0.1', upstreamPort: fixture.port,
+    cwd: '/private/tmp/project', launchedAt: Date.now() - 1000 });
+  t.after(() => stop(proxy, fixture.upstream));
+  const endpoint = await proxy.listen();
+  const send = meta => fetch(endpoint.url + '/v1/responses', { method: 'POST',
+    headers: codexHeaders(marker, meta), body: JSON.stringify(codexBody(meta)) });
+  const root = codexMeta({ thread, installation, session: thread });
+  assert.equal((await send(root)).status, 200);
+  const id = randomUUID();
+  const child = { ...codexMeta({ thread: id, installation, session: id, source: 'subagent' }),
+    parent_thread_id: thread, subagent_kind: 'thread_spawn', agent_name: '/root/left' };
+  assert.equal((await send(child)).status, 403);
+  assert.equal(fixture.seen.length, 1);
+});
+
 function findArtifact(root, suffix) {
   return fs.readdirSync(root).find(file => file.endsWith(suffix));
 }

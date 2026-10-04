@@ -271,6 +271,7 @@ export async function runLauncher(client, argv) {
     sessionId: client === 'claude' ? (options.resume || randomUUID()) : undefined,
     minimumClaudeVersion: CLAUDE_MIN_VERSION,
     headless: options.headless,
+    parallelAgents: options.parallelAgents,
     diagnostic: options.diagnostic,
     launchedAt,
   });
