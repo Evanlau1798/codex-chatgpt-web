@@ -132,6 +132,10 @@ test("a peer reset during JSON upload cannot crash the MCP listener or leak admi
     const response = await fetch(http.endpoint, { method: "POST", body: "{}" });
     expect(response.status).toBe(401);
     await response.text();
+    // The following request can finish before the reset is dispatched on
+    // another socket. Observe graceful listener settlement before judging
+    // admission release; a response on an unrelated connection is no barrier.
+    await http.close();
     expect(http.activeRequests()).toBe(0);
   } finally { await http.close(); }
 });
