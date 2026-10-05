@@ -23,7 +23,11 @@ fs.mkdirSync(cwd, { mode: 0o700 });
 const assets = path.join(LAB_ROOT, 'assets', 'parallel');
 for (const name of ['left.mjs', 'right.mjs', 'integration.mjs', 'parallel.test.mjs']) fs.copyFileSync(path.join(assets, name), path.join(cwd, name));
 const testHash = digest(fs.readFileSync(path.join(cwd, 'parallel.test.mjs')));
-let prompt = fs.readFileSync(path.join(assets, 'prompt.txt'), 'utf8');
+// Preserve the exact client-specific task across comparisons without changing
+// shared assets or mixing Codex and Claude completion instructions.
+const requestedPrompt = option('--prompt-file');
+if (requestedPrompt && !fs.statSync(requestedPrompt).isFile()) throw new Error('--prompt-file must be a regular file');
+let prompt = fs.readFileSync(requestedPrompt || path.join(assets, 'prompt.txt'), 'utf8');
 if (mode === 'sequential') prompt = prompt.replace('exactly two native child agents concurrently', 'exactly two native child agents sequentially, completing the left worker before starting the right worker');
 const promptFile = path.join(root, 'prompt.txt'); fs.writeFileSync(promptFile, prompt, { mode: 0o600 });
 const args = [path.join(LAB_ROOT, 'bin', `${client}-astrapro.mjs`), '--headless', '--diagnostic', '--parallel-agents',
