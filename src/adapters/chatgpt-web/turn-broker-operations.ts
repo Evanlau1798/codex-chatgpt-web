@@ -14,6 +14,7 @@ export interface NativeOperation {
   activityId: string;
   requestHash: string;
   consumed: boolean;
+  dispatchUnknown?: boolean;
   bytes: number;
   result?: BrokerToolResult;
   waiters: Set<() => void>;
@@ -37,6 +38,7 @@ export function startNativeOperation(channel: TurnChannel, key: unknown,
   const prior = operations.get(key);
   if (prior) {
     if (prior.requestHash !== requestHash) throw new Error("Native operation key was reused for different work");
+    if (prior.dispatchUnknown) throw new Error("Native operation dispatch outcome is unknown; do not replay this key");
     return receipt(prior);
   }
   if ([...operations.values()].some(item => !item.consumed)) {
@@ -71,7 +73,10 @@ export function startNativeOperation(channel: TurnChannel, key: unknown,
       content: [{ type: "text", text: "Native operation failed or its owner was retired; do not replay." }],
       structuredContent: { code: "native_operation_failed", retryable: false } }));
   } catch (error) {
-    operations.delete(key);
+    // Enqueue can throw after dispatching an effect. Keep a tombstone rather
+    // than making a response-loss retry eligible to execute the effect again.
+    operation.dispatchUnknown = true;
+    operation.consumed = true;
     completeTurnActivity(channel, operation.activityId);
     throw error;
   }
@@ -82,6 +87,7 @@ export async function readNativeOperation(channel: TurnChannel, id: unknown, wai
   if (typeof id !== "string" || !Number.isSafeInteger(waitMs) || (waitMs as number) < 0 || (waitMs as number) > 30000) throw new Error("Invalid native operation read");
   const operation = [...(channel.nativeOperations?.values() ?? [])].find(item => item.id === id);
   if (!operation) throw new Error("Native operation is invalid, expired or belongs to another turn");
+  if (operation.dispatchUnknown) throw new Error("Native operation dispatch outcome is unknown; do not replay this key");
   if (signal.aborted) throw new DOMException("Operation response wait aborted", "AbortError");
   if (operation.result === undefined && (waitMs as number) > 0) {
     if (operation.waiters.size >= MAX_WAITERS) throw new Error("Too many readers for this native operation");
