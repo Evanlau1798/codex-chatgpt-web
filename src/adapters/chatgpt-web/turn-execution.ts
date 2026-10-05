@@ -279,7 +279,13 @@ export class ChatGptTurnSession {
   }
 
   observeCanonicalRequest(parsed: CodexParsedRequest): void {
+    const priorAgentInputCount = this.nativeAgentInputs.peek().length;
     this.nativeAgentInputs.observe(parsed);
+    const pendingAgentInputCount = this.nativeAgentInputs.peek().length;
+    if (pendingAgentInputCount > priorAgentInputCount) {
+      console.info(`[chatgpt-web] native_agent_input_delivery ${JSON.stringify({ traceId: this.traceId,
+        phase: "queued", count: pendingAgentInputCount - priorAgentInputCount, pending: pendingAgentInputCount })}`);
+    }
     this.canonicalGeneration += 1;
     this.canonicalComplete = parsed._canonicalContextComplete === true;
     this.canonicalCallIds = new Set(parsed.context.messages.flatMap(message => (

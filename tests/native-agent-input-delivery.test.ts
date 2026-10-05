@@ -32,6 +32,8 @@ test("retained parent receives new native agent input with wait result, without 
   expect(JSON.stringify(delivered)).toContain("Worker applied left.mjs");
   expect(JSON.stringify(delivered)).toContain('agent_message');
   expect(JSON.stringify(delivered)).not.toContain("Additional user guidance");
+  // Keep additive data in the primary text result, not a separate optional block.
+  expect((delivered[0] as { content: Array<{ text?: string }> }).content[0]?.text).toContain("Worker applied left.mjs");
   session.observeCanonicalRequest(parsed([completion]));
   session.setOutstanding([{ callId: "wait-2", wireName: "collaboration__wait_agent", freeform: false, arguments: {} }], []);
   await completeChatGptToolResults(session, { completeTool: async (_token, _id, result) => { delivered.push(result); } }, "owned-token",
