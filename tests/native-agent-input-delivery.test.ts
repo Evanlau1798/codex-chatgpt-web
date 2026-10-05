@@ -3,6 +3,14 @@ import { ChatGptTurnSession, ChatGptTextFeed, ChatGptTraceFeed } from "../src/ad
 import { completeChatGptToolResults } from "../src/adapters/chatgpt-web/tool-result-delivery";
 import type { CodexParsedRequest, CodexToolResultMessage } from "../src/types";
 import { NativeAgentInputInbox } from "../src/adapters/chatgpt-web/native-agent-input";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { defaultBrokerEndpoint } from "../src/config";
+import { startChatGptMcpHttpServer } from "../src/adapters/chatgpt-web/mcp-http-server";
 
 // Shape taken from the captured real Codex V2 parent request: completion is
 // separate agent_message input, while wait_agent itself says "Wait completed".
@@ -67,4 +75,41 @@ test("a failed broker acknowledgement cannot consume pending agent data", async 
   await completeChatGptToolResults(session, { completeTool: async (_token, _id, result) => { delivered.push(result); } }, "token", results);
   expect(JSON.stringify(delivered)).toContain("Worker applied left.mjs");
   expect(session.nativeAgentInputs.peek()).toEqual([]);
+});
+
+test("agent input survives real broker socket and MCP SDK response serialization", async () => {
+  const root = mkdtempSync(join(tmpdir(), "agent-input-wire-"));
+  const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
+  const key = "agent-input-wire-private-fixture-token";
+  const token = await broker.register({ cwd: root, roots: [root], writableRoots: [root],
+    sandboxPolicy: { type: "dangerFullAccess" }, tools: [{ name: "collaboration__wait_agent", description: "wait", parameters: {} }],
+  }, undefined, "agent-input-wire", undefined, true);
+  const http = await startChatGptMcpHttpServer({ brokerSocketPath: broker.socketPath, controlToken: key, port: 0 });
+  const client = new Client({ name: "agent-input-wire", version: "1" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(http.endpoint), { requestInit: { headers: { authorization: `Bearer ${key}` } } }));
+    const response = client.callTool({ name: "codex_tool_call", arguments: { turn_token: token,
+      wire_name: "collaboration__wait_agent", arguments: { timeout_ms: 30000, targets: ["/root/left"] } } });
+    const [request] = await broker.nextToolBatch(token, AbortSignal.timeout(5000));
+    const session = new ChatGptTurnSession({ mode: "read-only", browser: new Promise<string>(() => {}),
+      trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), cancel() {} });
+    session.observeCanonicalRequest(parsed([]));
+    session.setOutstanding([request!]);
+    session.observeCanonicalRequest(parsed([completion]));
+    await completeChatGptToolResults(session, broker, token, [{ role: "toolResult", toolCallId: request!.callId,
+      toolName: request!.wireName, isError: false, content: "Wait completed", timestamp: 0 }]);
+    const initial = await response;
+    const pending = initial.structuredContent as { operation_status?: string; next_query?: string };
+    expect(pending.operation_status).toBe("pending");
+    expect(pending.next_query).toBeString();
+    const actual = await client.callTool({ name: "codex_tool_inventory", arguments: { turn_token: token,
+      query: pending.next_query! } });
+    expect(JSON.stringify(actual.content)).toContain("Worker applied left.mjs");
+    expect(JSON.stringify(actual.content)).toContain("agent_message");
+    expect(actual.isError).not.toBeTrue();
+    expect(session.nativeAgentInputs.peek()).toEqual([]);
+  } finally {
+    await client.close(); await http.close(); await broker.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
