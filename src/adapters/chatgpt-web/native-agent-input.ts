@@ -12,7 +12,9 @@ export class NativeAgentInputInbox {
     try { name = JSON.parse(String(raw?.client_metadata?.["x-codex-turn-metadata"] ?? "{}"))?.agent_name; }
     catch { return; }
     if (typeof name !== "string" || !Array.isArray(raw?.input)) return;
-    const candidates: Array<{ id: string; text: string }> = [];
+    const candidates = new Map<string, string>();
+    let seenBytes = [...this.seen.values()].reduce((bytes, text) => bytes + Buffer.byteLength(text), 0);
+    let pendingBytes = Buffer.byteLength(this.pending.join("\n"));
     for (const value of raw.input) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const item = value as Record<string, unknown>;
@@ -31,22 +33,25 @@ export class NativeAgentInputInbox {
         recipient: item.recipient, content });
       const prior = this.seen.get(item.id);
       if (prior !== undefined && prior !== text) throw new Error("Native inter-agent input identity changed its content");
-      if (prior === undefined && !candidates.some(candidate => candidate.id === item.id)) candidates.push({ id: item.id, text });
-      else if (candidates.some(candidate => candidate.id === item.id && candidate.text !== text)) {
+      const candidate = candidates.get(item.id);
+      if (candidate !== undefined && candidate !== text) {
         throw new Error("Conflicting native inter-agent input in one snapshot");
       }
+      if (prior !== undefined || candidate !== undefined) continue;
+      const bytes = Buffer.byteLength(text);
+      if (this.seeded) pendingBytes += bytes + (this.pending.length + candidates.size > 0 ? 1 : 0);
+      seenBytes += bytes;
+      candidates.set(item.id, text);
+      // Bound scanning work too, not only the eventually committed inbox.
+      if (this.seen.size + candidates.size > 1024 || seenBytes > 1048576
+        || (this.seeded && (this.pending.length + candidates.size > 128 || pendingBytes > 262144))) {
+        throw new Error("Native inter-agent delivery capacity exceeded");
+      }
     }
-    if (this.seen.size + candidates.length > 1024
-      || [...this.seen.values(), ...candidates.map(item => item.text)]
-        .reduce((bytes, text) => bytes + Buffer.byteLength(text), 0) > 1048576
-      || (this.seeded && (this.pending.length + candidates.length > 128
-        || Buffer.byteLength([...this.pending, ...candidates.map(item => item.text)].join("\n")) > 262144))) {
-      throw new Error("Native inter-agent delivery capacity exceeded");
-    }
-    for (const candidate of candidates) {
-      this.seen.set(candidate.id, candidate.text);
+    for (const [id, text] of candidates) {
+      this.seen.set(id, text);
       // Initial inputs are already in the initial prompt; never replay them.
-      if (this.seeded) this.pending.push(candidate.text);
+      if (this.seeded) this.pending.push(text);
     }
     this.seeded = true;
   }

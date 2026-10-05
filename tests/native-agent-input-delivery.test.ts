@@ -64,6 +64,18 @@ test("changed identities, opaque content and capacity excess fail before deliver
   expect(inbox.peek()).toHaveLength(1);
 });
 
+test("capacity is enforced during scanning, without inspecting excess input or partially committing it", () => {
+  const inbox = new NativeAgentInputInbox();
+  const entries = Array.from({ length: 1025 }, (_, i) => ({ ...completion, id: `entry-${i}`, content: "small" }));
+  const excess = { type: "agent_message", recipient: "/root", id: "excess", author: "/root/left",
+    get content() { throw new Error("excess input should not be inspected"); } };
+  expect(() => inbox.observe(parsed([...entries, excess]))).toThrow("capacity exceeded");
+  expect(inbox.peek()).toEqual([]);
+  inbox.observe(parsed([]));
+  inbox.observe(parsed([completion]));
+  expect(inbox.peek()).toHaveLength(1);
+});
+
 test("a failed broker acknowledgement cannot consume pending agent data", async () => {
   const session = new ChatGptTurnSession({ mode: "read-only", browser: new Promise<string>(() => {}),
     trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), cancel() {} });
