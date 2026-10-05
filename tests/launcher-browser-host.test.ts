@@ -16,6 +16,7 @@ import {
 } from "../src/launcher-browser-host";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptStartupPagePool } from "../src/adapters/chatgpt-web/startup-page-pool";
 
 const roots: string[] = [];
 
@@ -30,17 +31,25 @@ test("claimed startup cleanup failure still settles the newly acquired real turn
   } });
   const prior = process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
   process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = "1";
+  const pool = new ChatGptStartupPagePool<any>();
+  let acknowledged = false;
   try {
     const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
       config: { browserHost: "launcher", browserHostDescriptorPath: descriptorFile(`http://127.0.0.1:${server.port}`) },
-      startupPages: { take: () => ({ surfaceId: "a".repeat(32), release: async () => { throw new Error("startup cleanup failed"); } }) },
+      startupPages: pool,
       runBrowserTurn: async () => { throw new Error("must not run after failed cleanup"); },
     });
-    await expect(worker.runExclusive({ traceId: "claim-cleanup", modelId: "gpt-5.6-sol", reasoning: "high",
+    const turn = { traceId: "claim-cleanup", modelId: "gpt-5.6-sol", reasoning: "high",
       modelFamily: "5.6", nativeConnector: true, allowStartupPreparation: true,
-      capabilities: { localToolsEnabled: true, solAvailable: true } })).rejects.toThrow("startup cleanup failed");
+      capabilities: { localToolsEnabled: true, solAvailable: true } };
+    await pool.prime(worker.startupPageKey(turn), "Harness", async () => ({ surfaceId: "a".repeat(32),
+      prefix: "Harness", pauseHeartbeat() {}, release: async () => { if (!acknowledged) throw new Error("startup cleanup failed"); } }));
+    await expect(worker.runExclusive(turn)).rejects.toThrow("startup cleanup failed");
     expect(events.filter(e => e.phase === "end" && e.traceId === "claim-cleanup")).toHaveLength(1);
+    await expect(pool.cancel()).rejects.toThrow("startup cleanup failed");
+    acknowledged = true; await pool.cancel();
   } finally {
+    acknowledged = true; await pool.cancel();
     if (prior === undefined) delete process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS;
     else process.env.CODEX_CHATGPT_WEB_BROWSER_HELPER_PROCESS = prior;
     server.stop(true);

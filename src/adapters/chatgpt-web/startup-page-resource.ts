@@ -4,6 +4,7 @@ import { connectLauncherBrowserHost, notifyLauncherTurn, LAUNCHER_TURN_HEARTBEAT
 import { readChatGptUsageAccount, type ChatGptUsageModel } from "./limits";
 import type { ChatGptWebModelMode } from "./model";
 import type { StartupPageResource } from "./startup-page-pool";
+import { closeLauncherBrowserConnection } from "../../launcher-browser-connection";
 
 export type StartupPageSelection = ChatGptWebModelMode & {
   modelFamily?: "5.6" | "6";
@@ -22,7 +23,7 @@ export async function prepareChatGptStartupPage(options: {
   connectorIdentity: string;
   prefix: string;
   prepare(page: Page, signal: AbortSignal): Promise<StartupPageSelection>;
-}, signal: AbortSignal): Promise<PreparedChatGptStartupPage> {
+}, signal: AbortSignal, registerCleanup?: (release: () => Promise<void>) => void): Promise<PreparedChatGptStartupPage> {
   const traceId = `startup_${randomUUID().replaceAll("-", "")}`;
   const owner = { traceId, helperPid: process.pid };
   let leased = false;
@@ -31,6 +32,7 @@ export async function prepareChatGptStartupPage(options: {
   let released: Promise<void> | undefined;
   let available = true;
   const pauseHeartbeat = () => { if (timer) clearInterval(timer); timer = undefined; };
+  const closeBrowser = () => browser ? closeLauncherBrowserConnection(browser) : Promise.resolve();
   const release = (): Promise<void> => {
     available = false;
     pauseHeartbeat();
@@ -38,8 +40,11 @@ export async function prepareChatGptStartupPage(options: {
     return released ??= (async () => {
       signal.removeEventListener("abort", onAbort);
       try { await notifyLauncherTurn(options.descriptorPath, { ...owner, phase: "end", status: "aborted" }); }
-      finally { await browser?.close(); }
-    })();
+      finally { await closeBrowser(); }
+    })().catch(error => {
+      released = undefined;
+      throw error;
+    });
   };
   const onAbort = () => { void release().catch(() => {}); }; // The preparation/owner awaits the same cleanup.
   signal.addEventListener("abort", onAbort, { once: true });
@@ -49,6 +54,7 @@ export async function prepareChatGptStartupPage(options: {
       ...owner, phase: "start", connectorIdentity: options.connectorIdentity, startupPreparation: true,
     }, undefined, signal);
     leased = true;
+    registerCleanup?.(release);
     signal.throwIfAborted();
     if (!lease.surfaceId || lease.reused || lease.startupPrepared) throw new Error("Invalid startup page lease");
     timer = setInterval(() => {
@@ -78,7 +84,7 @@ export async function prepareChatGptStartupPage(options: {
   } catch (error) {
     signal.removeEventListener("abort", onAbort);
     try { await release(); }
-    finally { await browser?.close(); }
+    finally { await closeBrowser(); }
     throw error;
   }
 }
