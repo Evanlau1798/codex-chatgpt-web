@@ -39,9 +39,10 @@ function timedOut(result: BrokerToolResult): boolean {
     && (structured as Record<string, unknown>).timed_out === true;
 }
 
-function carriesNativeAgentInputs(result: BrokerToolResult): boolean {
+function carriesAdditiveBoundary(result: BrokerToolResult): boolean {
   const meta = result._meta;
   if (!meta || typeof meta !== "object" || Array.isArray(meta)) return false;
+  if ((meta as Record<string, unknown>).codex_additive_tool_boundary === true) return true;
   const count = (meta as Record<string, unknown>).codex_native_agent_input_count;
   return typeof count === "number" && Number.isInteger(count) && count > 0 && count <= 128;
 }
@@ -118,7 +119,7 @@ export function startAgentWait(
       // A timeout slice can carry separately delivered mailbox data. Surface it
       // immediately; another slice would discard an already-acknowledged report.
       // Keep timed_out unchanged: mailbox delivery does not rewrite native status.
-      if (timedOut(result) && remainingSlices > 0 && !carriesNativeAgentInputs(result)) {
+      if (timedOut(result) && remainingSlices > 0 && !carriesAdditiveBoundary(result)) {
         try {
           startSlice();
         } catch {

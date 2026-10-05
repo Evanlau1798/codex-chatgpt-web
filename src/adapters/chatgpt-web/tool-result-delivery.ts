@@ -177,6 +177,14 @@ export async function completeChatGptToolResults(
         phase: "submitted", count: nativeAgentInputs.length, primary_text: primary >= 0,
         payload_sha256: createHash("sha256").update(JSON.stringify(delivered.content)).digest("hex") })}`);
     }
+    const checkpointBoundary = Boolean(options.recoveryCheckpointInstruction && index === results.length - 1);
+    if (isBoundary || agentBoundary || checkpointBoundary) {
+      delivered = { ...delivered, _meta: {
+        ...(delivered._meta && typeof delivered._meta === "object" && !Array.isArray(delivered._meta)
+          ? delivered._meta : {}),
+        codex_additive_tool_boundary: true,
+      } };
+    }
     await broker.completeTool(token, message.toolCallId,
       options.recoveryCheckpointInstruction && index === results.length - 1
         ? { ...delivered, content: [...delivered.content,

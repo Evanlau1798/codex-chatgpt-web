@@ -79,7 +79,7 @@ test("a failed broker acknowledgement cannot consume pending agent data", async 
   expect(session.nativeAgentInputs.peek()).toEqual([]);
 });
 
-test("agent input survives a timed-out native wait slice through real broker and MCP SDK", async () => {
+test.each(["agent", "steering", "checkpoint"] as const)("%s input survives a timed-out native wait slice through real broker and MCP SDK", async kind => {
   const root = mkdtempSync(join(tmpdir(), "agent-input-wire-"));
   const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
   const key = "agent-input-wire-private-fixture-token";
@@ -97,18 +97,21 @@ test("agent input survives a timed-out native wait slice through real broker and
       trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), cancel() {} });
     session.observeCanonicalRequest(parsed([]));
     session.setOutstanding([request!]);
-    session.observeCanonicalRequest(parsed([completion]));
+    if (kind === "agent") session.observeCanonicalRequest(parsed([completion]));
+    if (kind === "steering") session.queueSteering("USER_GUIDANCE_AFTER_WAIT", true, "owned-guidance");
     await completeChatGptToolResults(session, broker, token, [{ role: "toolResult", toolCallId: request!.callId,
       toolName: request!.wireName, isError: false,
-      content: JSON.stringify({ message: "Wait timed out.", timed_out: true }), timestamp: 0 }]);
+      content: JSON.stringify({ message: "Wait timed out.", timed_out: true }), timestamp: 0 }],
+      kind === "checkpoint" ? { recoveryCheckpointInstruction: "OWNED_RECOVERY_CHECKPOINT" } : {});
     const initial = await response;
     const pending = initial.structuredContent as { operation_status?: string; next_query?: string };
     expect(pending.operation_status).toBe("pending");
     expect(pending.next_query).toBeString();
     const actual = await client.callTool({ name: "codex_tool_inventory", arguments: { turn_token: token,
       query: pending.next_query! } });
-    expect(JSON.stringify(actual.content)).toContain("Worker applied left.mjs");
-    expect(JSON.stringify(actual.content)).toContain("agent_message");
+    expect(JSON.stringify(actual.content)).toContain(kind === "agent" ? "Worker applied left.mjs"
+      : kind === "steering" ? "USER_GUIDANCE_AFTER_WAIT" : "OWNED_RECOVERY_CHECKPOINT");
+    if (kind === "agent") expect(JSON.stringify(actual.content)).toContain("agent_message");
     const ready = actual.structuredContent as { operation_status?: string; result?: { structuredContent?: { timed_out?: boolean } } };
     expect(ready.operation_status).toBe("ready");
     expect(ready.result?.structuredContent?.timed_out).toBe(true);
