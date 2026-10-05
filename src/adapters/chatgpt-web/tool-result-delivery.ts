@@ -168,7 +168,11 @@ export async function completeChatGptToolResults(
         const item = content[primary] as { type: "text"; text: string };
         content[primary] = { ...item, text: `${item.text}\n\n${text}` };
       } else content.push({ type: "text", text });
-      delivered = { ...delivered, content };
+      delivered = { ...delivered, content, _meta: {
+        ...(delivered._meta && typeof delivered._meta === "object" && !Array.isArray(delivered._meta)
+          ? delivered._meta : {}),
+        codex_native_agent_input_count: nativeAgentInputs.length,
+      } };
       console.info(`[chatgpt-web] native_agent_input_delivery ${JSON.stringify({ traceId: session.traceId,
         phase: "submitted", count: nativeAgentInputs.length, primary_text: primary >= 0,
         payload_sha256: createHash("sha256").update(JSON.stringify(delivered.content)).digest("hex") })}`);

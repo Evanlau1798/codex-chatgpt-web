@@ -79,7 +79,7 @@ test("a failed broker acknowledgement cannot consume pending agent data", async 
   expect(session.nativeAgentInputs.peek()).toEqual([]);
 });
 
-test("agent input survives real broker socket and MCP SDK response serialization", async () => {
+test("agent input survives a timed-out native wait slice through real broker and MCP SDK", async () => {
   const root = mkdtempSync(join(tmpdir(), "agent-input-wire-"));
   const broker = TurnBroker.forSocket(defaultBrokerEndpoint(root));
   const key = "agent-input-wire-private-fixture-token";
@@ -91,7 +91,7 @@ test("agent input survives real broker socket and MCP SDK response serialization
   try {
     await client.connect(new StreamableHTTPClientTransport(new URL(http.endpoint), { requestInit: { headers: { authorization: `Bearer ${key}` } } }));
     const response = client.callTool({ name: "codex_tool_call", arguments: { turn_token: token,
-      wire_name: "collaboration__wait_agent", arguments: { timeout_ms: 30000, targets: ["/root/left"] } } });
+      wire_name: "collaboration__wait_agent", arguments: { timeout_ms: 60000 } } });
     const [request] = await broker.nextToolBatch(token, AbortSignal.timeout(5000));
     const session = new ChatGptTurnSession({ mode: "read-only", browser: new Promise<string>(() => {}),
       trace: new ChatGptTraceFeed(), text: new ChatGptTextFeed(), cancel() {} });
@@ -99,7 +99,8 @@ test("agent input survives real broker socket and MCP SDK response serialization
     session.setOutstanding([request!]);
     session.observeCanonicalRequest(parsed([completion]));
     await completeChatGptToolResults(session, broker, token, [{ role: "toolResult", toolCallId: request!.callId,
-      toolName: request!.wireName, isError: false, content: "Wait completed", timestamp: 0 }]);
+      toolName: request!.wireName, isError: false,
+      content: JSON.stringify({ message: "Wait timed out.", timed_out: true }), timestamp: 0 }]);
     const initial = await response;
     const pending = initial.structuredContent as { operation_status?: string; next_query?: string };
     expect(pending.operation_status).toBe("pending");
@@ -108,6 +109,9 @@ test("agent input survives real broker socket and MCP SDK response serialization
       query: pending.next_query! } });
     expect(JSON.stringify(actual.content)).toContain("Worker applied left.mjs");
     expect(JSON.stringify(actual.content)).toContain("agent_message");
+    const ready = actual.structuredContent as { operation_status?: string; result?: { structuredContent?: { timed_out?: boolean } } };
+    expect(ready.operation_status).toBe("ready");
+    expect(ready.result?.structuredContent?.timed_out).toBe(true);
     expect(actual.isError).not.toBeTrue();
     expect(session.nativeAgentInputs.peek()).toEqual([]);
   } finally {
