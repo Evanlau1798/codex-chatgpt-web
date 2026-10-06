@@ -136,9 +136,8 @@ test("browser turn orchestration retains owned prompt insertion and semantic sub
   expect(runBrowserTurn).toContain("this.attachPromptWithCompactionRetry(");
   expect(runBrowserTurn).toContain('.locator("xpath=ancestor::form[1]")');
   expect(runBrowserTurn).toContain('.locator(CHATGPT_SEND_BUTTON_SELECTOR)');
-  expect(runBrowserTurn).toContain(
-    "await activateChatGptSendControl(sendButton, stageSignal, () => submissionRejection.activate())",
-  );
+  expect(runBrowserTurn).toContain("await activateChatGptSendControl(sendButton, stageSignal, () => {");
+  expect(runBrowserTurn).toMatch(/submissionRejection\.activate\(\);\s+modelReceipts\.activate\(\);/);
   expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
     .toBeGreaterThanOrEqual(0);
   expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
@@ -1332,7 +1331,7 @@ test("connector verification persists ordered browser checkpoints when selection
 });
 
 test("successful connector verification clears the proven selection before releasing the page", async () => {
-  const diagnosticsRoot = mkdtempSync(join(tmpdir(), "cgw-connector-verification-success-"));
+  const diagnosticsRoot = mkdtempSync(join(tmpdir(), "cgw-cv-"));
   const socket = defaultBrokerEndpoint(diagnosticsRoot);
   const broker = TurnBroker.forSocket(socket);
   await broker.listen();

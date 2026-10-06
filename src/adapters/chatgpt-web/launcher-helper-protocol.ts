@@ -2,6 +2,12 @@ import {
   parseChatGptLunaCheckpoint,
   type ChatGptLunaCheckpoint,
 } from "./rolling-checkpoint";
+import {
+  assertChatGptModelReceipt,
+  assertChatGptModelReceiptDiagnostic,
+  type ChatGptModelReceipt,
+  type ChatGptModelReceiptDiagnostic,
+} from "./model-receipt";
 
 export type LauncherHelperMessage =
   | { type: "event"; id: string; event: "multipart_stage_acknowledged"; stageIndex: number }
@@ -31,6 +37,8 @@ export type LauncherHelperMessage =
       retireSession?: boolean;
     }
   | { type: "event"; id: string; event: "luna_checkpoint"; checkpoint: ChatGptLunaCheckpoint; answerHash: string }
+  | { type: "event"; id: string; event: "model_receipt"; receipt: ChatGptModelReceipt }
+  | { type: "event"; id: string; event: "model_receipt_diagnostic"; diagnostic: ChatGptModelReceiptDiagnostic }
   | { type: "result"; id: string; text: string }
   | {
       type: "error";
@@ -43,6 +51,41 @@ export type LauncherHelperMessage =
       retryable?: boolean;
       retireSession?: boolean;
     };
+
+const EVENT_FIELDS: Record<string, readonly string[]> = {
+  multipart_stage_acknowledged: ["stageIndex"],
+  tool_batch_observed: ["revision"],
+  completion_fence_begin: ["requestId"],
+  completion_fence_commit: ["requestId", "revision"],
+  finalization_begin: ["requestId", "expectedRevision"],
+  finalization_cancel: ["requestId", "expectedRevision"],
+  finalization_output_arm: ["requestId", "expectedRevision"],
+  tunneled_output_reset: ["requestId", "finalSequence"],
+  tunneled_output_seal: ["requestId", "afterSequence", "expectedRevision"],
+  answer: ["text", "attempt"],
+  error_retry: ["text", "attempt", "status", "errorType", "code", "retryable", "retireSession"],
+  luna_checkpoint: ["checkpoint", "answerHash"],
+  model_receipt: ["receipt"],
+  model_receipt_diagnostic: ["diagnostic"],
+  prepared_selected: ["reused"],
+  compaction_boundary_retention_armed: ["armed"],
+  heartbeat: ["text", "continuation"],
+  send_activated: ["text", "continuation"],
+  submitted: ["text", "continuation"],
+  retry_submitted: ["text", "continuation"],
+  reasoning: ["text", "continuation"],
+  commentary: ["text", "continuation"],
+  text: ["text", "continuation"],
+};
+
+function assertEventFields(message: Record<string, unknown>, event: string): void {
+  const fields = EVENT_FIELDS[event];
+  if (!fields) throw new Error("Launcher browser helper emitted an unknown event");
+  const allowed = new Set(["type", "id", "event", ...fields]);
+  if (Object.keys(message).some(key => !allowed.has(key))) {
+    throw new Error("Launcher browser helper event contains an unsupported field");
+  }
+}
 
 export function parseLauncherHelperMessage(line: string): LauncherHelperMessage {
   const value = JSON.parse(line) as unknown;
@@ -76,6 +119,8 @@ export function parseLauncherHelperMessage(line: string): LauncherHelperMessage 
 
 function parseEvent(message: Record<string, unknown> & { id: string }): LauncherHelperMessage {
   const event = message.event;
+  if (typeof event !== "string") throw new Error("Launcher browser helper event is invalid");
+  assertEventFields(message, event);
   if (event === "multipart_stage_acknowledged") {
     if (!Number.isSafeInteger(message.stageIndex) || Number(message.stageIndex) <= 0) {
       throw new Error("Launcher browser helper multipart stage index is invalid");
@@ -172,6 +217,12 @@ function parseEvent(message: Record<string, unknown> & { id: string }): Launcher
       checkpoint: parseChatGptLunaCheckpoint(message.checkpoint),
       answerHash: message.answerHash,
     };
+  }
+  if (event === "model_receipt") {
+    return { type: "event", id: message.id, event, receipt: assertChatGptModelReceipt(message.receipt, message.id) };
+  }
+  if (event === "model_receipt_diagnostic") {
+    return { type: "event", id: message.id, event, diagnostic: assertChatGptModelReceiptDiagnostic(message.diagnostic, message.id) };
   }
   if (event === "prepared_selected") {
     if (typeof message.reused !== "boolean") {

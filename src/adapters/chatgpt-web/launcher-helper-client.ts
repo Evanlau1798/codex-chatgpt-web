@@ -103,6 +103,9 @@ export class LauncherBrowserHelperClient {
           turn: {
             traceId: turn.traceId,
             modelId: turn.modelId,
+            ...(turn.requestedModel ? { requestedModel: turn.requestedModel } : {}),
+            ...(turn.backendContextModel ? { backendContextModel: turn.backendContextModel } : {}),
+            ...(turn.modelReceiptProvenance ? { modelReceiptProvenance: turn.modelReceiptProvenance } : {}),
             reasoning: turn.reasoning,
             ...(turn.modelFamily ? { modelFamily: turn.modelFamily } : {}),
             capabilities: turn.capabilities,
@@ -429,6 +432,20 @@ export class LauncherBrowserHelperClient {
           pending.turn.onLunaCheckpoint!({ checkpoint: message.checkpoint, answerHash: message.answerHash });
         });
       }
+      else if (message.event === "model_receipt") {
+        if (message.receipt.traceId !== pending.turn.traceId) {
+          this.abortWithLocalFailure(message.id, new Error("Launcher browser helper model receipt trace does not match the pending turn"), pending);
+          return;
+        }
+        this.invokeTelemetryCallback(pending, () => pending.turn.onModelReceipt?.(message.receipt));
+      }
+      else if (message.event === "model_receipt_diagnostic") {
+        if (message.diagnostic.traceId !== pending.turn.traceId) {
+          this.abortWithLocalFailure(message.id, new Error("Launcher browser helper model receipt diagnostic trace does not match the pending turn"), pending);
+          return;
+        }
+        this.invokeTelemetryCallback(pending, () => pending.turn.onModelReceiptDiagnostic?.(message.diagnostic));
+      }
       else if (message.event === "reasoning" && message.text) {
         const text = message.text;
         this.invokeEventCallback(message.id, pending, () => {
@@ -476,6 +493,16 @@ export class LauncherBrowserHelperClient {
       void Promise.resolve(callback()).catch(fail);
     } catch (error) {
       fail(error);
+    }
+  }
+
+  private invokeTelemetryCallback(pending: PendingTurn, callback: () => void | Promise<void>): void {
+    try {
+      void Promise.resolve(callback()).catch(error => {
+        console.debug(`[chatgpt-web] helper receipt telemetry callback failed (${error instanceof Error ? error.name : "unknown"})`);
+      });
+    } catch (error) {
+      console.debug(`[chatgpt-web] helper receipt telemetry callback failed (${error instanceof Error ? error.name : "unknown"})`);
     }
   }
 

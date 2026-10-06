@@ -15,6 +15,8 @@ import { deferred } from "./runtime-lifecycle";
 import { createChatGptSameSurfaceRetry } from "./same-surface-recovery";
 import { browserSteeringRetry, retainedConversationResumeRequest } from "./steering";
 import { ChatGptToolEvidenceGuard } from "./tool-evidence-guard";
+import type { ChatGptModelReceipt, ChatGptModelReceiptDiagnostic } from "./model-receipt";
+import { recordChatGptMetadataDiagnostic } from "./model-receipt-artifact";
 import { assertChatGptToolRequirementSatisfied, effectiveChatGptToolPolicy } from "./tool-policy";
 import { ChatGptExternalTurnProgress } from "./turn-progress";
 import { TurnBroker, type TurnBrokerOwner } from "./turn-broker";
@@ -50,6 +52,27 @@ interface ChatGptRuntimeFactoryOptions {
 export type ChatGptRuntimeWorker = Pick<ChatGptBrowserWorker, "run">
   & Partial<Pick<ChatGptBrowserWorker, "requestPreemptiveRetry" | "armCompactionBoundaryRetention">>;
 
+function requestedResponsesModel(parsed: CodexParsedRequest): string {
+  const raw = parsed._rawBody;
+  if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+    const value = (raw as { model?: unknown }).model;
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return parsed.modelId;
+}
+
+function logChatGptModelReceipt(receipt: ChatGptModelReceipt): void {
+  // Provider-private Activity evidence. The receipt contains only allowlisted metadata and
+  // hashed identifiers; it must never alter the public Responses `model` field or turn output.
+  console.info(`[chatgpt-web] model_receipt ${JSON.stringify(receipt)}`);
+}
+
+function logChatGptModelReceiptDiagnostic(diagnostic: ChatGptModelReceiptDiagnostic): void {
+  console.info(`[chatgpt-web] model_receipt_diagnostic ${JSON.stringify(recordChatGptMetadataDiagnostic(
+    diagnostic, undefined, process.env.CODEX_CHATGPT_WEB_CAPTURE_MODEL_TRACES === "1",
+  ))}`);
+}
+
 export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOptions) {
   const {
     provider,
@@ -76,6 +99,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
   ): ChatGptTurnRuntime => {
     const toolPolicy = effectiveChatGptToolPolicy(parsed);
     const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities);
+    const requestedModel = requestedResponsesModel(parsed);
+    const backendContextModel = parsed.modelId;
     const finalizationOnly = parsed._chatgptFinalizationOnly === true;
     const browserCompaction = parsed._compactionRequest === true || parsed._localCompactionRequest === true;
     const localTools = mode.localTools && !finalizationOnly;
@@ -210,6 +235,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     if (!localTools) {
       const base = {
         modelId: parsed.modelId,
+        requestedModel,
+        backendContextModel,
         ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
         reasoning: parsed.options.reasoning,
         capabilities: turnCapabilities,
@@ -259,6 +286,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
           : false,
         onSendActivated: () => { submission.phase = "send_activated"; },
         onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
+        onModelReceipt: logChatGptModelReceipt,
+        onModelReceiptDiagnostic: logChatGptModelReceiptDiagnostic,
         ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),
         onTextDelta: delta => text.push(delta),
         ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
@@ -320,6 +349,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     const browserRun = worker.run({
       traceId,
       modelId: parsed.modelId,
+      requestedModel,
+      backendContextModel,
       ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
       reasoning: parsed.options.reasoning,
       capabilities: turnCapabilities,
@@ -370,6 +401,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         : false,
       onSendActivated: () => { submission.phase = "send_activated"; },
       onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
+      onModelReceipt: logChatGptModelReceipt,
+      onModelReceiptDiagnostic: logChatGptModelReceiptDiagnostic,
         ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),
       onTextDelta: delta => text.push(delta),
       ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),

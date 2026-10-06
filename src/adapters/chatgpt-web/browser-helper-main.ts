@@ -10,6 +10,12 @@ import type { ChatGptRetryPrompt } from "./steering";
 import { createBrowserHelperPromptSelection } from "./browser-helper-prompt-selection";
 import { BrowserHelperFenceRegistry } from "./browser-helper-fence";
 import { BrowserHelperOutputRegistry } from "./browser-helper-output";
+import {
+  assertChatGptModelReceipt,
+  assertChatGptModelReceiptDiagnostic,
+  type ChatGptModelReceipt,
+  type ChatGptModelReceiptDiagnostic,
+} from "./model-receipt";
 import type { BrowserHelperInputMessage as InputMessage, BrowserHelperMaintenanceMessage as MaintenanceMessage, BrowserHelperRunMessage as RunMessage } from "./browser-helper-input";
 
 let outputFailure: Error | undefined;
@@ -115,6 +121,18 @@ async function run(message: RunMessage): Promise<void> {
   if (message.turn.tunneledOutput !== undefined && typeof message.turn.tunneledOutput !== "boolean") {
     throw new Error("Browser helper tunneled output flag is invalid");
   }
+  const safeModelField = (name: string, value: unknown): void => {
+    if (value !== undefined && (typeof value !== "string" || value.length === 0 || value.length > 160
+      || !/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value))) {
+      throw new Error(`Browser helper ${name} is invalid`);
+    }
+  };
+  safeModelField("requested model", message.turn.requestedModel);
+  safeModelField("backend context model", message.turn.backendContextModel);
+  if (message.turn.modelReceiptProvenance !== undefined
+    && !["initial", "response_retry", "multipart_stage", "surface_recovery"].includes(message.turn.modelReceiptProvenance)) {
+    throw new Error("Browser helper model receipt provenance is invalid");
+  }
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: "https://chatgpt.com",
@@ -147,6 +165,9 @@ async function run(message: RunMessage): Promise<void> {
   const turn: BrowserTurn = {
     traceId: message.turn.traceId,
     modelId: message.turn.modelId,
+    ...(message.turn.requestedModel ? { requestedModel: message.turn.requestedModel } : {}),
+    ...(message.turn.backendContextModel ? { backendContextModel: message.turn.backendContextModel } : {}),
+    ...(message.turn.modelReceiptProvenance ? { modelReceiptProvenance: message.turn.modelReceiptProvenance } : {}),
     reasoning: message.turn.reasoning,
     ...(message.turn.modelFamily ? { modelFamily: message.turn.modelFamily } : {}),
     capabilities: message.turn.capabilities,
@@ -176,6 +197,18 @@ async function run(message: RunMessage): Promise<void> {
     onSubmitted: () => {
       if (!writeProtocol({ type: "event", id: message.id, event: "submitted" })) {
         throw new Error("Browser helper could not publish submission receipt");
+      }
+    },
+    onModelReceipt: (receipt: ChatGptModelReceipt) => {
+      const safe = assertChatGptModelReceipt(receipt, message.id);
+      if (!writeProtocol({ type: "event", id: message.id, event: "model_receipt", receipt: safe })) {
+        throw new Error("Browser helper could not publish model receipt");
+      }
+    },
+    onModelReceiptDiagnostic: (diagnostic: ChatGptModelReceiptDiagnostic) => {
+      const safe = assertChatGptModelReceiptDiagnostic(diagnostic, message.id);
+      if (!writeProtocol({ type: "event", id: message.id, event: "model_receipt_diagnostic", diagnostic: safe })) {
+        throw new Error("Browser helper could not publish model receipt diagnostic");
       }
     },
     onPreparedSelected: reused => {
