@@ -46,13 +46,13 @@ export async function run(args: string[], showOutput = verbose): Promise<void> {
   const child = Bun.spawn([process.execPath, ...args], {
     cwd: root,
     stdin: "inherit",
-    stdout: "pipe",
-    stderr: "pipe",
+    stdout: showOutput ? "inherit" : "pipe",
+    stderr: showOutput ? "inherit" : "pipe",
   });
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
+    showOutput ? Promise.resolve("") : new Response(child.stdout).text(),
+    showOutput ? Promise.resolve("") : new Response(child.stderr).text(),
   ]);
   if (showOutput || exitCode !== 0) {
     if (stderr) writeBufferedOutput(stderr, chunk => process.stderr.write(chunk));
