@@ -117,3 +117,44 @@ test("a failed ownership release prevents another speculative allocation", async
   expect(allocated).toBeFalse();
   expect(pool.take("next")).toBeUndefined();
 });
+
+test("failed retirement retries its exact owner and unblocks only after a release acknowledgement", async () => {
+  const pool = new ChatGptStartupPagePool<ReturnType<typeof page>>();
+  let acknowledged = false, releases = 0, allocations = 0;
+  await pool.prime("old", "harness", async () => ({ ...page(), release: async () => {
+    releases++;
+    if (!acknowledged) throw new Error("Launcher browser control end timed out after 15000ms");
+  } }));
+  const prepare = async () => { allocations++; return page(); };
+  await expect(pool.prime("new", "harness", prepare)).rejects.toThrow("end timed out");
+  await expect(pool.cancel()).rejects.toThrow("end timed out");
+  expect(allocations).toBe(0);
+  expect(releases).toBe(2);
+  acknowledged = true;
+  await pool.cancel();
+  await pool.prime("new", "harness", prepare);
+  expect(releases).toBe(3);
+  expect(allocations).toBe(1);
+  expect(pool.take("new")).toBeDefined();
+});
+
+test("a preparation that rejects before returning its resource retains its early cleanup owner", async () => {
+  const pool = new ChatGptStartupPagePool<ReturnType<typeof page>>();
+  let finish!: () => void, ready!: () => void, acknowledged = false, releases = 0, allocations = 0;
+  const started = new Promise<void>(resolve => { ready = resolve; });
+  const pending = new Promise<void>(resolve => { finish = resolve; });
+  const initial = pool.prime("old", "harness", async (_signal, registerCleanup) => {
+    registerCleanup?.(async () => { releases++; if (!acknowledged) throw new Error("end unacknowledged"); });
+    ready(); await pending; throw new Error("preparation aborted before resource return");
+  });
+  await started;
+  const cancel = pool.cancel(); finish(); await initial;
+  await expect(cancel).rejects.toThrow("end unacknowledged");
+  const prepare = async () => { allocations++; return page(); };
+  await expect(pool.prime("new", "harness", prepare)).rejects.toThrow("end unacknowledged");
+  expect(allocations).toBe(0); expect(releases).toBe(2);
+  acknowledged = true;
+  await pool.prime("new", "harness", prepare);
+  expect(releases).toBe(3); expect(allocations).toBe(1);
+  await pool.cancel();
+});
