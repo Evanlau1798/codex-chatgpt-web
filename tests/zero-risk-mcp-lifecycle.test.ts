@@ -103,7 +103,7 @@ describe("Zero Risk turn broker lifecycle", () => {
       expect(() => broker.completeSafeTurn(requestId, "premature"))
         .toThrow("1 pending Codex tool invocation");
       broker.completeTool(requestId, request!.callId, toolResult({ output: root }));
-      await expect(invocation).resolves.toMatchObject({ structuredContent: { output: root } });
+      expect(await invocation).toMatchObject({ structuredContent: { output: root } });
       expect(() => broker.completeSafeTurn(requestId, "activity still settling"))
         .toThrow("1 active Codex MCP request");
       expect(logs.filter(line => line.includes("safe_completion accepted"))).toEqual([]);
@@ -118,7 +118,7 @@ describe("Zero Risk turn broker lifecycle", () => {
         completed: true,
         duplicate: false,
       });
-      await expect(completed).resolves.toBe("final answer");
+      expect(await completed).toBe("final answer");
       expect(broker.completeSafeTurn(requestId, "final answer")).toEqual({
         completed: true,
         duplicate: true,
@@ -156,15 +156,15 @@ describe("Zero Risk turn broker lifecycle", () => {
         token: requestId,
         finalAnswer: "early final",
       })).rejects.toThrow("has not started");
-      const start = callTurnBroker(socketPath, { method: "safe_start", token: requestId }, null);
+      const start = callTurnBroker<{ started: boolean; duplicate: boolean }>(socketPath, { method: "safe_start", token: requestId }, null);
       expect(await Promise.race([
         start.then(() => "started"),
         Bun.sleep(20).then(() => "waiting_for_confirmation"),
       ])).toBe("waiting_for_confirmation");
       broker.confirmSafeTurnSent(requestId, nonceA);
-      await expect(start).resolves.toEqual({ started: true, duplicate: false });
+      expect(await start).toEqual({ started: true, duplicate: false });
       broker.completeSafeTurn(requestId, "final after start");
-      await expect(broker.waitForSafeCompletion(requestId)).resolves.toBe("final after start");
+      expect(await broker.waitForSafeCompletion(requestId)).toBe("final after start");
     } finally {
       await broker.close();
     }
@@ -186,7 +186,7 @@ describe("Zero Risk turn broker lifecycle", () => {
       expect(() => broker.startSafeTurn(`${first}_wrong`)).toThrow("request_id is invalid");
       broker.confirmSafeTurnSent(first, nonceA);
       broker.startSafeTurn(first);
-      await expect(broker.waitForSafeStart(first)).resolves.toBeUndefined();
+      expect(await broker.waitForSafeStart(first)).toBeUndefined();
       expect(await Promise.race([
         secondStart.then(() => "started"),
         Bun.sleep(20).then(() => "pending"),
@@ -201,7 +201,7 @@ describe("Zero Risk turn broker lifecycle", () => {
       broker.confirmSafeTurnSent(second, nonceB);
       broker.startSafeTurn(second);
       broker.completeSafeTurn(second, "second survived");
-      await expect(secondCompletion).resolves.toBe("second survived");
+      expect(await secondCompletion).toBe("second survived");
 
       expect(() => broker.startSafeTurn(first)).toThrow("invalid, expired, or revoked");
     } finally {
@@ -225,7 +225,7 @@ describe("Zero Risk turn broker lifecycle", () => {
         completed: true,
         duplicate: false,
       });
-      await expect(summary).resolves.toBe("complete compacted summary");
+      expect(await summary).toBe("complete compacted summary");
     } finally {
       await broker.close();
     }
@@ -257,7 +257,7 @@ describe("Zero Risk turn broker lifecycle", () => {
         token: requestId,
         finalAnswer: "remote final",
       });
-      await expect(completed).resolves.toBe("remote final");
+      expect(await completed).toBe("remote final");
       await remote.revoke(requestId);
     } finally {
       await broker.close();
@@ -401,7 +401,7 @@ describe("Zero Risk public MCP ABI", () => {
         completed: true,
         duplicate: false,
       });
-      await expect(broker.waitForSafeCompletion(requestId)).resolves.toBe("done");
+      expect(await broker.waitForSafeCompletion(requestId)).toBe("done");
     } finally {
       await client.close().catch(() => {});
       broker.revoke(requestId);
