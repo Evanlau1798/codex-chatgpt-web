@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
 import type { callTurnBroker as CallTurnBroker } from "../src/adapters/chatgpt-web/turn-broker-client";
 
-// Exercise the shipped parser and settlement callbacks with explicit server-EOF events.
-// Real Windows pipe transport is separately covered by turn-broker-lifecycle and manual tool turns.
+// Retain partial-frame and late error/abort coverage without depending on peer EOF.
+// Natural process/socket retirement is independently exercised with real children.
 const source = readFileSync(new URL("../src/adapters/chatgpt-web/turn-broker-client.ts", import.meta.url), "utf8");
 const body = source.slice(source.indexOf("export class TurnBrokerTimeoutError")).replaceAll("export ", "");
 const createCall = new Function("createConnection", "opaqueId", "MAX_BROKER_LINE_CHARS", "errorOf",
@@ -13,10 +13,11 @@ const createCall = new Function("createConnection", "opaqueId", "MAX_BROKER_LINE
 
 for (const unbounded of [false, true]) test(`broker complete frame settlement (unbounded: ${unbounded})`, async () => {
   const socket = Object.assign(new EventEmitter(), {
-    ended: false, destroyed: false,
+    ended: false, destroyed: false, unreferenced: false,
     setEncoding() {}, write() {},
     end() { this.ended = true; },
     destroy() { this.destroyed = true; },
+    unref() { this.unreferenced = true; },
   });
   const callTurnBroker = createCall(() => socket, () => "request_test", 1_000,
     (value: unknown) => value instanceof Error ? value : new Error(String(value))) as typeof CallTurnBroker;
@@ -30,24 +31,14 @@ for (const unbounded of [false, true]) test(`broker complete frame settlement (u
     await setImmediate();
     expect(settled).toBe(false);
     socket.emit("data", "\n");
+    socket.emit("error", new Error("late socket error"));
+    abort.abort();
+    expect(await call).toEqual({ ready: true });
+    expect(socket.unreferenced).toBe(true);
+    expect(socket.destroyed).toBe(false);
     await setImmediate();
-    if (unbounded) {
-      expect(await call).toEqual({ ready: true });
-      expect(socket.destroyed).toBe(true);
-    } else {
-      expect(socket.ended).toBe(false);
-      expect(settled).toBe(false);
-      socket.emit("error", new Error("late socket error"));
-      abort.abort();
-      expect(settled).toBe(false);
-      socket.emit("end");
-      expect(socket.ended).toBe(true);
-      expect(settled).toBe(false);
-      expect(socket.destroyed).toBe(false);
-      await setImmediate();
-      expect(await call).toEqual({ ready: true });
-      expect(socket.destroyed).toBe(false);
-    }
+    expect(socket.ended).toBe(true);
+    expect(socket.destroyed).toBe(false);
   } finally {
     abort.abort();
     await call.catch(() => {});
