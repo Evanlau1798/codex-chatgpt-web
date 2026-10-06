@@ -1,0 +1,9 @@
+diff --git a/index.js b/index.js
+index 56c26025074cbcf218e3ec4d810662da93f8024e..bcd905fad3a42239a73b5d1a17a63ffbdf21fa02 100644
+--- a/index.js
++++ b/index.js
+@@ -399 +399,3 @@ module.exports = class CachePolicy {
+-        if (this._rescc['must-revalidate']) {
++        if (this._rescc['must-revalidate'] || !this.storable() || this._rescc['no-cache'] ||
++            (this._isShared && (this._rescc['proxy-revalidate'] ||
++                (this._resHeaders['set-cookie'] && !this._rescc.public && !this._rescc.immutable)))) {

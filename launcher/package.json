@@ -39,7 +39,11 @@
   "overrides": {
     "@xmldom/xmldom": "0.8.15",
     "fast-uri": "3.1.8",
+    "global-agent": "4.1.3",
     "js-yaml": "4.3.2"
+  },
+  "patchedDependencies": {
+    "http-cache-semantics@4.3.0": "patches/http-cache-semantics@4.3.0.patch"
   },
   "build": {
     "appId": "dev.codexwebgpt.launcher",

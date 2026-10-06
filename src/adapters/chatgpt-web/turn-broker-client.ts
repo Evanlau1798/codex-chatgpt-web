@@ -93,7 +93,7 @@ export async function callTurnBroker<T>(
     });
     socket.once("end", () => {
       if (response) responseAccepted = true;
-      if (!socket.destroyed && !socket.writableEnded) socket.end();
+      socket.end();
       setImmediate(finishResponse);
     });
     socket.once("close", () => {
@@ -129,7 +129,10 @@ export async function callTurnBroker<T>(
       }
       response = parsed;
       responseAccepted = true;
-      finishResponse();
+      // Prefer the existing end/close settlement when Bun delivers Windows pipe
+      // EOF, but still settle a complete frame when its peer withholds EOF.
+      if (process.platform === "win32" && process.versions.bun) setTimeout(finishResponse, 50);
+      else finishResponse();
     });
   });
 }
