@@ -27,10 +27,6 @@ export async function callTurnBroker<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   const id = opaqueId("request");
-  const trace = (phase: string) => {
-    if (process.env.CODEX_CHATGPT_WEB_BROKER_TRACE !== "1") return;
-    try { console.error(`[broker-rpc] ${JSON.stringify({ id, method: request.method, phase })}`); } catch {}
-  };
   const wireRequest = request.method === "claim" && request.activityId === undefined
     ? { ...request, activityId: opaqueId("activity") }
     : request.method === "invoke" && timeoutMs !== null
@@ -53,7 +49,6 @@ export async function callTurnBroker<T>(
     const finishError = (error: Error) => {
       if (settled) return;
       settled = true;
-      trace("rejected");
       clearTimeout(timer);
       cleanup();
       setImmediate(() => socket.destroy());
@@ -66,9 +61,19 @@ export async function callTurnBroker<T>(
         return;
       }
       settled = true;
-      trace(response.error ? "reply_error" : "reply_result");
       clearTimeout(timer);
       cleanup();
+      // This RPC is finished, regardless of whether its peer sends EOF.
+      // Do not leave a referenced socket alive after removing its abort/timer.
+      // Graceful shutdown is deferred out of the data callback; successful
+      // Windows/Bun pipes must not race a force-destroy against their end path.
+      if (!(process.platform === "win32" && process.versions.bun)) socket.unref();
+      const retire = () => {
+        if (!socket.destroyed && !socket.writableEnded && !socket.readableEnded) socket.end();
+      };
+      // Grace for completed Bun/Windows pipe callbacks, not a running-work deadline.
+      if (process.platform === "win32" && process.versions.bun) setTimeout(retire, 50);
+      else setImmediate(retire);
       if (response.error) rejectCall(new Error(response.error));
       else resolveCall(response.result as T);
     };
@@ -87,17 +92,15 @@ export async function callTurnBroker<T>(
       if (!responseAccepted) finishError(new Error(`ChatGPT web turn broker unavailable: ${error.message}`));
     });
     socket.once("end", () => {
-      trace("peer_end");
       if (response) responseAccepted = true;
-      socket.end();
+      if (!socket.destroyed && !socket.writableEnded) socket.end();
       setImmediate(finishResponse);
     });
     socket.once("close", () => {
-      trace("socket_close");
       if (response) responseAccepted = true;
       setImmediate(finishResponse);
     });
-    socket.once("connect", () => { trace("connected"); socket.write(`${JSON.stringify({ id, ...wireRequest })}\n`); });
+    socket.once("connect", () => socket.write(`${JSON.stringify({ id, ...wireRequest })}\n`));
     socket.on("data", chunk => {
       if (settled || response) return;
       buffered += chunk;
@@ -125,15 +128,8 @@ export async function callTurnBroker<T>(
         return;
       }
       response = parsed;
-      trace("valid_frame");
       responseAccepted = true;
-      // One validated newline-delimited frame is the complete RPC response.
-      // Waiting for peer EOF afterward can hang Windows named pipes forever:
-      // responseAccepted has already disabled timeout/cancellation settlement.
       finishResponse();
-      // The server owns normal socket closure after its response. Force-close
-      // races Bun's Windows pipe end path even when deferred. Settlement is
-      // independent of EOF; failed/cancelled requests still retire their socket.
     });
   });
 }

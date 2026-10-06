@@ -1889,7 +1889,7 @@ test("an uninitialized browser surface cancels runtime ownership before reaping 
 
   assert.equal(fixture.turnTabs.size, 0);
   assert.equal(fixture.selectedTabId, "home");
-  assert.equal(fixture.closedTurnOwners.get(tab.traceId), tab.helperPid);
+  assert.deepEqual(fixture.closedTurnOwners.get(tab.traceId), { helperPid: tab.helperPid, remainingAcks: 2 });
   assert.deepEqual(closed, ["cancel:trace_orphan:browser_surface_bootstrap_timeout", "view", "contents"]);
   const detail = {
     tabId: tab.id,
@@ -2181,7 +2181,9 @@ test("closing a running browser tab reports terminal user cancellation to its he
   await BrowserHost.prototype.closeTab.call(fixture, tab.id);
 
   assert.deepEqual(closed, ["cancel:trace_running", "view", "contents"]);
-  assert.equal(fixture.closedTurnOwners.get("trace_running"), 333);
+  assert.deepEqual(fixture.closedTurnOwners.get("trace_running"), { helperPid: 333, remainingAcks: 2 });
+  assert.throws(() => fixture.heartbeatTurn(tab.traceId, tab.helperPid), /already released/);
+  assert.throws(() => fixture.heartbeatTurn(tab.traceId, 444), /ownership mismatch/);
   assert.equal(fixture.userCancelledTurnOwners.get("trace_running"), 333);
   assert.equal(fixture.selectedTabId, "home");
   await assert.rejects(
@@ -2200,6 +2202,9 @@ test("closing a running browser tab reports terminal user cancellation to its he
     ),
     { cancelledByUser: true },
   );
+  assert.deepEqual(fixture.closedTurnOwners.get("trace_running"), { helperPid: 333, remainingAcks: 1 });
+  await assert.rejects(fixture.endTurn(tab.traceId, 444, "failed", false), /ownership mismatch/);
+  assert.deepEqual(await fixture.endTurn(tab.traceId, tab.helperPid, "failed", false), { cancelledByUser: true });
   assert.equal(fixture.closedTurnOwners.has("trace_running"), false);
   assert.equal(fixture.userCancelledTurnOwners.get("trace_running"), 333);
 });

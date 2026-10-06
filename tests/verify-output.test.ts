@@ -1,7 +1,5 @@
 import { expect, test } from "bun:test";
-import { join, resolve } from "node:path";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { rootTestBatchCommands, writeBufferedOutput } from "../scripts/verify";
@@ -72,35 +70,3 @@ test("release verification launches root tests through bounded worker processes"
     ["run", "scripts/run-root-tests.ts", "--worker-start", "4", "--worker-count", "1"],
   ]);
 });
-
-test("verbose verification exposes real child output before the child can finish", async () => {
-  const folder = mkdtempSync(join(tmpdir(), "verify-stream-"));
-  const release = join(folder, "release");
-  // The child cannot exit until this independent observer sees its marker.
-  const task = `process.stdout.write("LIVE_MARKER\\n");const fs=require("node:fs");const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(release)})){clearInterval(t);process.exit(0)}},20);`;
-  const source = `import { run } from ${JSON.stringify(verifyModule)}; await run(["-e", ${JSON.stringify(task)}], true);`;
-  const child = Bun.spawn([process.execPath, "-e", source], { cwd: repo, stdout: "pipe", stderr: "pipe" });
-  const { writeFileSync } = await import("node:fs");
-  let marker = false;
-  const timer = setTimeout(() => child.kill(), 30000); // Disposable test only.
-  try {
-    const reader = child.stdout.getReader();
-    const decoder = new TextDecoder();
-    let text = "";
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      text += decoder.decode(chunk.value, { stream: true });
-      if (text.includes("LIVE_MARKER\n") && !marker) {
-        marker = true;
-        writeFileSync(release, "observed");
-      }
-    }
-    expect(marker).toBeTrue();
-    expect(await child.exited).toBe(0);
-  } finally {
-    clearTimeout(timer);
-    if (child.exitCode === null) child.kill();
-    rmSync(folder, { recursive: true, force: true });
-  }
-}, 45000);

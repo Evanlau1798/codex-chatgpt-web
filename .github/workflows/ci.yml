@@ -8,11 +8,6 @@ on:
 permissions:
   contents: read
 
-# Retire only superseded PR checks, never release/production inference work.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
   lifecycle-sim:
     runs-on: ubuntu-latest
@@ -26,6 +21,8 @@ jobs:
         with:
           node-version: 22.19.0
       - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: launcher
       - run: bun run lifecycle:sim --lane=all
 
   lifecycle-client-probe:
@@ -60,7 +57,6 @@ jobs:
       matrix:
         os: [macos-15, ubuntu-latest, windows-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
         with:
@@ -99,7 +95,7 @@ jobs:
       - name: Prepare owned AppImage toolset
         if: runner.os == 'Linux'
         run: bun run launcher/scripts/prepare-linux-appimage-tools.cjs
-      - run: bun run verify --verbose
+      - run: bun run verify
       - run: bun run app:package
       - name: Verify Linux AppImage ABI on current Arch
         if: runner.os == 'Linux' && runner.arch == 'X64'

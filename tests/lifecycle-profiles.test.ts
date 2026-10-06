@@ -34,10 +34,7 @@ test("the local release gate runs verification before the account-bound Web smok
   const verify = readFileSync(resolve(repo, "scripts", "verify.ts"), "utf8");
   expect(verify).toContain('process.argv.includes("--live-web")');
   expect(verify).toContain('process.argv.includes("--verbose")');
-  // Default release output stays buffered; only explicit verbose mode streams.
-  // verify-output tests independently exercise both real child-process profiles.
-  expect(verify).toContain('stdout: showOutput ? "inherit" : "pipe"');
-  expect(verify).toContain('stderr: showOutput ? "inherit" : "pipe"');
+  expect(verify).toContain('stdout: "pipe"');
   expect(verify).toContain('if (showOutput || exitCode !== 0)');
   expect(verify).toContain("export async function run(");
   expect(verify).toContain("if (import.meta.main)");
