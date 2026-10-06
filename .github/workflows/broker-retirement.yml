@@ -1,0 +1,29 @@
+name: Completed broker RPC retirement
+on:
+  pull_request:
+    paths:
+      - 'src/adapters/chatgpt-web/turn-broker*.ts'
+      - 'tests/turn-broker*.test.ts'
+      - '.github/workflows/broker-retirement.yml'
+permissions:
+  contents: read
+jobs:
+  retirement:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - run: bun install --frozen-lockfile
+      - run: bun test --no-orphans tests/turn-broker-natural-exit.test.ts
+        env:
+          TMPDIR: ${{ runner.temp }}
+      - run: bun test --no-orphans tests/turn-broker-frame-settlement.test.ts tests/turn-broker-lifecycle.test.ts tests/turn-broker-compaction.test.ts tests/turn-broker-compaction-control.test.ts
+        env:
+          TMPDIR: ${{ runner.temp }}

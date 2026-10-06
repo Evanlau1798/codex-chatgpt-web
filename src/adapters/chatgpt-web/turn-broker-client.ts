@@ -27,13 +27,16 @@ export async function callTurnBroker<T>(
   signal?: AbortSignal,
 ): Promise<T> {
   const id = opaqueId("request");
-  const settleOnResponseFrame = timeoutMs === null;
   const wireRequest = request.method === "claim" && request.activityId === undefined
     ? { ...request, activityId: opaqueId("activity") }
     : request.method === "invoke" && timeoutMs !== null
       ? { ...request, invokeDeadlineAt: Date.now() + timeoutMs }
       : request;
   return new Promise<T>((resolveCall, rejectCall) => {
+    if (signal?.aborted) {
+      rejectCall(new DOMException("turn broker call aborted", "AbortError"));
+      return;
+    }
     const socket = createConnection(socketPath);
     let buffered = "";
     let settled = false;
@@ -48,7 +51,7 @@ export async function callTurnBroker<T>(
       settled = true;
       clearTimeout(timer);
       cleanup();
-      socket.destroy();
+      setImmediate(() => socket.destroy());
       rejectCall(error);
     };
     const finishResponse = () => {
@@ -60,6 +63,17 @@ export async function callTurnBroker<T>(
       settled = true;
       clearTimeout(timer);
       cleanup();
+      // This RPC is finished, regardless of whether its peer sends EOF.
+      // Do not leave a referenced socket alive after removing its abort/timer.
+      // Graceful shutdown is deferred out of the data callback; successful
+      // Windows/Bun pipes must not race a force-destroy against their end path.
+      if (!(process.platform === "win32" && process.versions.bun)) socket.unref();
+      const retire = () => {
+        if (!socket.destroyed && !socket.writableEnded && !socket.readableEnded) socket.end();
+      };
+      // Grace for completed Bun/Windows pipe callbacks, not a running-work deadline.
+      if (process.platform === "win32" && process.versions.bun) setTimeout(retire, 50);
+      else setImmediate(retire);
       if (response.error) rejectCall(new Error(response.error));
       else resolveCall(response.result as T);
     };
@@ -79,7 +93,7 @@ export async function callTurnBroker<T>(
     });
     socket.once("end", () => {
       if (response) responseAccepted = true;
-      socket.end();
+      if (!socket.destroyed && !socket.writableEnded) socket.end();
       setImmediate(finishResponse);
     });
     socket.once("close", () => {
@@ -115,10 +129,7 @@ export async function callTurnBroker<T>(
       }
       response = parsed;
       responseAccepted = true;
-      if (settleOnResponseFrame) {
-        finishResponse();
-        socket.destroy();
-      }
+      finishResponse();
     });
   });
 }

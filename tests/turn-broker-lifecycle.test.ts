@@ -459,7 +459,7 @@ test("an unbounded broker call fails when the broker closes without answering", 
   }
 }, 10_000);
 
-test("bounded broker calls preserve server-owned closure before advancing the lifecycle", async () => {
+test("bounded broker calls settle complete frames without waiting for server-owned EOF", async () => {
   let peer!: Socket;
   let finishFrame!: () => void;
   const frameWritten = new Promise<void>(resolve => { finishFrame = resolve; });
@@ -474,15 +474,8 @@ test("bounded broker calls preserve server-owned closure before advancing the li
   });
   await broker.listen();
   try {
-    let settled = false;
-    const call = callTurnBroker(broker.socketPath, { method: "owner_status" }).then(result => {
-      settled = true;
-      return result;
-    });
+    const call = callTurnBroker(broker.socketPath, { method: "owner_status" });
     await frameWritten;
-    await Bun.sleep(25);
-    expect(settled).toBeFalse();
-    peer.end();
     await expect(call).resolves.toEqual({ ready: true });
   } finally {
     peer?.destroy();
