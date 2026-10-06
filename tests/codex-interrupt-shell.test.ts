@@ -18,7 +18,7 @@ test.skipIf(process.platform !== "win32")("Interrupt hook reaches the exact auth
   const command = codexInterruptHookCommand(
     { runtimeCommand: [process.execPath, join(import.meta.dir, "../src/cli.ts")] },
     root,
-  );
+  ) + " --diagnostic";
   const run = async (shell: "cmd" | "powershell", payload: string, keepStdinOpen = false) => {
     const child = spawn(shell === "cmd" ? process.env.COMSPEC || "C:\\Windows\\System32\\cmd.exe"
       : join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
@@ -26,16 +26,37 @@ test.skipIf(process.platform !== "win32")("Interrupt hook reaches the exact auth
       { cwd: root, windowsHide: true, windowsVerbatimArguments: shell === "cmd", stdio: ["pipe", "pipe", "pipe"] });
     let output = "";
     let error = "";
+    const startedAt = Date.now(), requestStart = requests.length;
+    const stages: string[] = [];
+    let spawned = false, stdinWritten = false, stdinError: string | undefined;
+    child.once("spawn", () => { spawned = true; });
+    child.stdin.on("error", err => { stdinError = err.message; });
     child.stdout.on("data", chunk => { output += chunk; });
     child.stderr.on("data", chunk => { error += chunk; });
-    if (keepStdinOpen) child.stdin.write(`${payload}\n`);
+    if (keepStdinOpen) child.stdin.write(`${payload}\n`, err => { stdinWritten = !err; if (err) stdinError = err.message; });
     else child.stdin.end(payload);
-    const timer = setTimeout(() => child.kill(), 10_000);
+    const timer = setTimeout(() => {
+      console.error("[interrupt-shell-probe] " + JSON.stringify({ shell, keepStdinOpen, spawned, stdinWritten,
+        stdinError, requestsObserved: requests.length - requestStart,
+        stages: error.split(/\r?\n/).filter(line => line.startsWith("[interrupt-hook-stage] ")),
+        elapsedMs: Date.now() - startedAt }));
+      child.kill();
+    }, 10_000);
     const status = await new Promise<number | null>((resolve, reject) => {
       child.once("error", reject);
       child.once("close", resolve);
     }).finally(() => clearTimeout(timer));
     child.stdin.destroy();
+    error = error.split(/\r?\n/).filter(line => {
+      if (/^\[interrupt-hook-stage\] (stdin_begin|stdin_complete|config_begin|config_complete|http_begin|http_returned|acknowledged)$/.test(line)) {
+        stages.push(line.slice("[interrupt-hook-stage] ".length));
+        return false;
+      }
+      return true;
+    }).join("\r\n");
+    if (status === 0) expect(stages).toEqual([
+      "stdin_begin", "stdin_complete", "config_begin", "config_complete", "http_begin", "http_returned", "acknowledged",
+    ]);
     return { shell, status, output, error };
   };
   try {
