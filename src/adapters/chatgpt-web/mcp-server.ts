@@ -1,6 +1,8 @@
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { resultMcpOperation, startMcpOperation } from "./mcp-operations";
 import * as z from "zod/v4";
 import { namespacedToolName, type CodexTool } from "../../types";
 import { VERSION } from "../../version";
@@ -78,6 +80,7 @@ const nativeGatewayInput = { turn_token: turnTokenSchema, wire_name: z.string().
 const BRIDGE_TOOL_NAMES = new Set([
   "codex_read_context", "codex_turn_start", "codex_exec", "codex_write_stdin",
   "codex_apply_patch", "codex_view_image", "codex_tool_inventory", "codex_tool_call", "codex_turn_complete",
+  "codex_operation_start", "codex_operation_result",
 ]);
 
 function wireName(tool: CodexTool): string {
@@ -89,12 +92,15 @@ export type { ChatGptMcpContract } from "./mcp-zero-risk";
 export function createChatGptMcpServer(options: {
   brokerSocketPath: string;
   contract?: ChatGptMcpContract;
+  resumableOperations?: boolean;
+  operationWaitMaxMs?: number;
 }): McpServer {
   const contract = options.contract ?? "native";
   const server = new McpServer(
     { name: contract === "safe" ? "codex-safe" : "codex-native", version: VERSION },
     contract === "safe" ? { instructions: ZERO_RISK_MCP_INSTRUCTIONS } : undefined,
   );
+  const operationContext = new AsyncLocalStorage<{ key: string; token: string }>();
   if (contract === "safe") registerZeroRiskLifecycleTools(server, options.brokerSocketPath);
   const connectorTools = new Map<string, RegisteredTool>();
   const remember = (name: string, tool: RegisteredTool) => { connectorTools.set(name, tool); return tool; };
@@ -126,6 +132,11 @@ export function createChatGptMcpServer(options: {
   ) => {
     const name = wireName(tool);
     const binding = scopeHash(bindingId);
+    const operation = operationContext.getStore();
+    if (operation) return startMcpOperation(options.brokerSocketPath, bindingId, operation.key, {
+      wireName: name, freeform: tool.freeform === true,
+      ...(tool.freeform ? { input: payload.input ?? "" } : { arguments: payload.arguments ?? {} }),
+    }, operation.token, signal);
     logMcpToolPhase(name, "invoke", "started", ` binding=${binding}`);
     try {
       const response = await invokeChatGptMcpTool(options.brokerSocketPath, bindingId, bound, {
@@ -471,20 +482,9 @@ export function createChatGptMcpServer(options: {
       }).catch(recoverClosedInventory);
     },
   ));
-  remember("codex_tool_call", server.registerTool(
-    "codex_tool_call",
-    {
-      title: "Call any tool from the current Codex harness",
-      description: afterSafeStart(contract, "Invoke an exact wire_name returned by codex_tool_inventory. The outer Codex runtime performs the call, approvals, and UI lifecycle."),
-      inputSchema: {
-        ...turnReferenceInput(contract, turnTokenSchema),
-        wire_name: nativeGatewayInput.wire_name,
-        arguments: nativeGatewayInput.arguments,
-        input: nativeGatewayInput.input,
-      },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-    },
-    async (toolInput, extra) => {
+  const callNativeTool = async (toolInput: {
+    turn_token?: string; request_id?: string; wire_name: string; arguments?: Record<string, unknown>; input?: string;
+  }, extra: McpRequestExtra) => {
       const { wire_name, arguments: args, input } = toolInput;
       const requestId = turnReference(contract, toolInput);
       if (contract === "native" && wire_name === CODEX_OUTPUT_CONTROL_WIRE_NAME) {
@@ -569,8 +569,33 @@ export function createChatGptMcpServer(options: {
         }
         return invoke(claimed.bindingId, bound, tool, { arguments: toolArguments }, extra.signal);
       });
-    },
-  ));
+  };
+  remember("codex_tool_call", server.registerTool("codex_tool_call", {
+    title: "Call any tool from the current Codex harness",
+    description: afterSafeStart(contract, "Invoke an exact wire_name returned by codex_tool_inventory. The outer Codex runtime performs the call, approvals, and UI lifecycle."),
+    inputSchema: { ...turnReferenceInput(contract, turnTokenSchema), wire_name: nativeGatewayInput.wire_name,
+      arguments: nativeGatewayInput.arguments, input: nativeGatewayInput.input },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  }, callNativeTool));
+  if (options.resumableOperations && contract === "native") {
+    remember("codex_operation_start", server.registerTool("codex_operation_start", {
+      description: "Start one slow native tool with a stable operation_key. Reuse that key only to recover the same invocation after response loss. A pending handle is not success; retrieve its real result with codex_operation_result. Native permissions apply unchanged.",
+      inputSchema: { ...nativeGatewayInput, turn_token: turnTokenSchema,
+        operation_key: z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/) },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    }, async (input, extra) => {
+      if (isGatewayAgentWaitTool(input.wire_name) || input.wire_name.startsWith("codex.control.")) {
+        throw new Error("Lifecycle/output controls and agent waits use their existing native tools");
+      }
+      return operationContext.run({ key: input.operation_key, token: input.turn_token }, () => callNativeTool(input, extra));
+    }));
+    remember("codex_operation_result", server.registerTool("codex_operation_result", {
+      description: "Retrieve the same broker-owned native invocation. HTTP supports wait_ms up to 30000; stdio is immediate to avoid blocking other agents. Do not busy-poll, repeat its command, or treat invocation completion as child-agent completion.",
+      inputSchema: { turn_token: turnTokenSchema, operation_id: z.string().min(20).max(256),
+        wait_ms: z.number().int().min(0).max(options.operationWaitMaxMs ?? 0).default(0) },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    }, (input, extra) => resultMcpOperation(options.brokerSocketPath, input.turn_token, input.operation_id, input.wait_ms, extra.signal)));
+  }
   return server;
 }
 
@@ -583,6 +608,7 @@ export function connectChatGptMcpServer(server: McpServer, transport: Transport,
 export async function runChatGptMcpServer(options: {
   brokerSocketPath: string;
   contract?: ChatGptMcpContract;
+  resumableOperations?: boolean;
 }): Promise<void> {
   await connectChatGptMcpServer(createChatGptMcpServer(options), new StdioServerTransport());
 }

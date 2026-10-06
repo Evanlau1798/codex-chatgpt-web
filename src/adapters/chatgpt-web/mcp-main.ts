@@ -13,6 +13,8 @@ function option(args: string[], name: string, fallback: string): string {
 
 export async function runChatGptMcpMain(args: string[]): Promise<void> {
   const remaining = [...args];
+  const resumableOperations = remaining.includes("--resumable-operations");
+  if (resumableOperations) remaining.splice(remaining.indexOf("--resumable-operations"), 1);
   const brokerSocketPath = resolveBrokerEndpoint(option(remaining, "--broker-socket", defaultBrokerEndpoint()));
   const requestedContract = option(remaining, "--contract", "native");
   const transport = option(remaining, "--transport", "stdio");
@@ -27,12 +29,13 @@ export async function runChatGptMcpMain(args: string[]): Promise<void> {
   if (transport === "http") {
     if (!/^\d+$/.test(portText)) throw new Error("--port must be an integer");
     const server = await startChatGptMcpHttpServer({ brokerSocketPath, contract: requestedContract,
-      controlToken: loadConfig().controlToken, port: Number(portText) });
+      controlToken: loadConfig().controlToken, port: Number(portText), resumableOperations });
     process.stdout.write(`Codex Native MCP HTTP listening at ${server.endpoint}\n`);
     return;
   }
   await runChatGptMcpServer({
     brokerSocketPath,
     contract: requestedContract as ChatGptMcpContract,
+    resumableOperations,
   });
 }

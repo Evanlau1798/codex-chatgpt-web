@@ -66,6 +66,7 @@ export async function startChatGptMcpHttpServer(options: {
   contract?: ChatGptMcpContract;
   controlToken: string;
   port?: number;
+  resumableOperations?: boolean;
 }) {
   if (options.controlToken.length < 32) throw new Error("MCP HTTP requires the existing private control token");
   const portOption = options.port ?? 17842;
@@ -98,7 +99,7 @@ export async function startChatGptMcpHttpServer(options: {
     try {
       const value = await body(request);
       if (request.aborted || response.destroyed) return;
-      mcp = createChatGptMcpServer(options);
+      mcp = createChatGptMcpServer({ ...options, operationWaitMaxMs: 30000 });
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       await connectChatGptMcpServer(mcp, transport, requestId);
       if (response.destroyed) return;
