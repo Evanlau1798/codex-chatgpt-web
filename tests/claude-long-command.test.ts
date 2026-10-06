@@ -49,3 +49,16 @@ test("advertised long timeout defaults cannot bypass native task handoff", () =>
   expect(calls[0].arguments).toEqual({ command: "owned-command", run_in_background: true });
   expect(calls[1].arguments).toEqual({ task_id: "owned", block: true, timeout: 30000 });
 });
+
+test("captured modern Claude Bash shape has no timeout default or TaskOutput but supplies Read completion", () => {
+  const context: any = { context: { tools: [
+    { name: "Bash", parameters: { properties: { command: { type: "string" }, timeout: { type: "number" }, run_in_background: { type: "boolean" } } } },
+    { name: "Read", parameters: { properties: { file_path: { type: "string" } } } },
+  ] } };
+  const calls: any = [{ wireName: "Bash", arguments: { command: "node long-operation.mjs" } },
+    { wireName: "Bash", arguments: { command: "bounded", timeout: 30000 } }];
+  normalizeClaudeLongCommands(context, calls);
+  expect(calls[0].arguments).toEqual({ command: "node long-operation.mjs", run_in_background: true });
+  expect(calls[0].arguments).not.toHaveProperty("timeout");
+  expect(calls[1].arguments).toEqual({ command: "bounded", timeout: 30000 });
+});

@@ -9,6 +9,7 @@ export function normalizeClaudeLongCommands(parsed: CodexParsedRequest, requests
   const tools = parsed.context.tools ?? [];
   const bash = tools.find(tool => !tool.namespace && tool.name === "Bash");
   const output = tools.find(tool => !tool.namespace && tool.name === "TaskOutput");
+  const read = tools.find(tool => !tool.namespace && tool.name === "Read");
   const supportsBackground = bash?.parameters?.properties &&
     Object.hasOwn(bash.parameters.properties, "run_in_background");
   const supportsOutputWait = output?.parameters?.properties &&
@@ -26,8 +27,13 @@ export function normalizeClaudeLongCommands(parsed: CodexParsedRequest, requests
     const args = request.arguments;
     const bashTimeout = timeoutFor(args, bash);
     const outputTimeout = timeoutFor(args, output);
-    if (request.wireName === "Bash" && supportsBackground && supportsOutputWait
-      && typeof bashTimeout === "number" && bashTimeout > CLAUDE_CONNECTOR_WAIT_MS) {
+    // Modern Claude advertises Read rather than TaskOutput for background
+    // output. Its Bash schema can also omit the native 120s default. An
+    // unspecified wait must not hold the connector past its response budget.
+    // Leave timeout absent: the native background task retains its own default
+    // lifetime, and completion is observed via the returned output path.
+    if (request.wireName === "Bash" && supportsBackground && (supportsOutputWait || read)
+      && (bashTimeout === undefined || (typeof bashTimeout === "number" && bashTimeout > CLAUDE_CONNECTOR_WAIT_MS))) {
       request.arguments = { ...args, run_in_background: true };
     }
     if (request.wireName === "TaskOutput" && supportsOutputWait
