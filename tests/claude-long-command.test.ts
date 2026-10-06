@@ -8,7 +8,7 @@ const parsed = (background = true, output = true): any => ({ context: { tools: [
 
 test("long Bash retains exact command and lifetime while native task owns completion", () => {
   const requests: any = [
-    { wireName: "Bash", freeform: false, arguments: { command: "sleep 330; echo READY", timeout: 400000, run_in_background: false } },
+    { wireName: "Bash", freeform: false, arguments: { command: "sleep 330; echo READY", timeout: 400000 } },
     { wireName: "TaskOutput", freeform: false, arguments: { task_id: "owned", block: true, timeout: 400000 } },
   ];
   normalizeClaudeLongCommands(parsed(), requests);
@@ -50,7 +50,7 @@ test("advertised long timeout defaults cannot bypass native task handoff", () =>
   expect(calls[1].arguments).toEqual({ task_id: "owned", block: true, timeout: 30000 });
 });
 
-test("captured modern Claude Bash shape has no timeout default or TaskOutput but supplies Read completion", () => {
+test("captured modern Claude Bash/Read shape permits handoff without inventing a timeout", () => {
   const context: any = { context: { tools: [
     { name: "Bash", parameters: { properties: { command: { type: "string" }, timeout: { type: "number" }, run_in_background: { type: "boolean" } } } },
     { name: "Read", parameters: { properties: { file_path: { type: "string" } } } },
@@ -61,4 +61,22 @@ test("captured modern Claude Bash shape has no timeout default or TaskOutput but
   expect(calls[0].arguments).toEqual({ command: "node long-operation.mjs", run_in_background: true });
   expect(calls[0].arguments).not.toHaveProperty("timeout");
   expect(calls[1].arguments).toEqual({ command: "bounded", timeout: 30000 });
+});
+
+test("explicit foreground intent is never silently converted to background", () => {
+  for (const timeout of [undefined, 30000, 400000]) {
+    const args = { command: "owned-command", run_in_background: false, ...(timeout === undefined ? {} : { timeout }) };
+    const calls: any = [{ wireName: "Bash", arguments: args }];
+    normalizeClaudeLongCommands(parsed(), calls);
+    expect(calls[0].arguments).toEqual(args);
+  }
+});
+
+test("a generic Read without file_path does not advertise background output support", () => {
+  const context = parsed(true, false);
+  context.context.tools.push({ name: "Read", parameters: { properties: {} } });
+  const calls: any = [{ wireName: "Bash", arguments: { command: "owned-command" } }];
+  const before = structuredClone(calls);
+  normalizeClaudeLongCommands(context, calls);
+  expect(calls).toEqual(before);
 });

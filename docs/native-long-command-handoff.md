@@ -8,11 +8,15 @@ the control-plane command's response_timeout. A connection TTL does not remove
 that per-command deadline. This is not evidence that slow Pro inference should
 be cancelled, nor that MCP progress notifications extend the deadline.
 
-When the current Claude catalog advertises Bash.run_in_background and
-TaskOutput.timeout, this candidate projects Bash calls with an explicit timeout
-above 30000ms into native background tasks. The command and its original timeout
+When the current Claude catalog advertises Bash.run_in_background and either
+TaskOutput.timeout or Read.file_path, this candidate projects Bash calls with an
+explicit/advertised timeout above 30000ms, or an unspecified timeout, into native
+background tasks unless the caller explicitly sets run_in_background:false.
+This is an experimental behavior change, not an inferred command lifetime.
+An absent timeout stays absent. The command and its original timeout
 remain unchanged. Only TaskOutput's response-wait timeout is capped to 30000ms;
-the task remains alive. Instructions require retrieving the same native task id,
+the task remains alive. A generic Read or existing output file is not proof of
+completion/exit status. Instructions require retrieving the same native task id,
 not repeating the command or treating a pending handle as successful completion.
 Other clients/tools, short commands, freeform requests and unsupported catalogs
 are not rewritten. This is not a generic asynchronous adapter for all tools.

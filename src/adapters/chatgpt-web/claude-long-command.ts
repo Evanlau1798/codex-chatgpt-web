@@ -14,6 +14,8 @@ export function normalizeClaudeLongCommands(parsed: CodexParsedRequest, requests
     Object.hasOwn(bash.parameters.properties, "run_in_background");
   const supportsOutputWait = output?.parameters?.properties &&
     Object.hasOwn(output.parameters.properties, "timeout");
+  const supportsReadOutput = read?.parameters?.properties &&
+    Object.hasOwn(read.parameters.properties, "file_path");
   const timeoutFor = (args: Record<string, unknown>, tool: typeof bash): unknown => {
     if (Object.hasOwn(args, "timeout")) return args.timeout;
     const properties = tool?.parameters?.properties;
@@ -31,8 +33,9 @@ export function normalizeClaudeLongCommands(parsed: CodexParsedRequest, requests
     // output. Its Bash schema can also omit the native 120s default. An
     // unspecified wait must not hold the connector past its response budget.
     // Leave timeout absent: the native background task retains its own default
-    // lifetime, and completion is observed via the returned output path.
-    if (request.wireName === "Bash" && supportsBackground && (supportsOutputWait || read)
+    // lifetime. Reading output alone is not proof of completion or exit status.
+    if (request.wireName === "Bash" && args.run_in_background !== false
+      && supportsBackground && (supportsOutputWait || supportsReadOutput)
       && (bashTimeout === undefined || (typeof bashTimeout === "number" && bashTimeout > CLAUDE_CONNECTOR_WAIT_MS))) {
       request.arguments = { ...args, run_in_background: true };
     }
