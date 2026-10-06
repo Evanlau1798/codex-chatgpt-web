@@ -33,10 +33,30 @@ export class ChatGptAgentSessionGraph {
 
   descendants(group: string): string[] {
     const groups = [group];
+    const seen = new Set(groups);
     for (let index = 0; index < groups.length; index += 1) {
-      groups.push(...(this.children.get(groups[index]!) ?? []));
+      for (const child of this.children.get(groups[index]!) ?? []) {
+        if (!seen.has(child)) { seen.add(child); groups.push(child); }
+      }
     }
-    return [...new Set(groups)];
+    return groups;
+  }
+
+  rootOf(group: string): string {
+    return this.ancestryOf(group).root;
+  }
+
+  ancestryOf(group: string): { root: string; depth: number } {
+    const seen = new Set<string>();
+    while (!seen.has(group)) {
+      seen.add(group);
+      if (seen.size > 64) throw new Error("Native agent ancestry exceeds admission depth");
+      const parents = [...this.children].filter(([, children]) => children.has(group)).map(([parent]) => parent);
+      if (parents.length === 0) return { root: group, depth: seen.size - 1 };
+      if (parents.length > 1) throw new Error("Native agent ancestry is ambiguous");
+      group = parents[0]!;
+    }
+    throw new Error("Native agent ancestry contains a cycle");
   }
 
   forget(groups: Iterable<string>): void {

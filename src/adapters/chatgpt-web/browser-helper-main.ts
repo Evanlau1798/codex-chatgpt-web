@@ -148,6 +148,7 @@ async function run(message: RunMessage): Promise<void> {
   });
   const prepareSelected = async () => ({ ...await promptSelection.wait(), release: () => {} });
   const turn: BrowserTurn = {
+    ...(message.turn.parallelAdmission ? { parallelAdmission: message.turn.parallelAdmission } : {}),
     traceId: message.turn.traceId,
     modelId: message.turn.modelId,
     reasoning: message.turn.reasoning,

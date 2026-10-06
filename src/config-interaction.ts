@@ -114,6 +114,7 @@ export interface AppConfig {
   proAvailable: boolean;
   experimentalBiggerContext: boolean;
   experimentalSkillAttachments: boolean;
+  experimentalParallelSubagents?: boolean;
   /** Rebuild Original-mode turns; Enhanced always disables this preference. */
   experimentalFreshConversationPerTurn: boolean;
   /** Save Codex/Claude chats to history. API Access always remains Temporary Chat. */

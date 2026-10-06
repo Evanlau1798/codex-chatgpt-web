@@ -1,7 +1,7 @@
 import { ChatGptPromptIntegrityMismatchError, isChatGptPromptIntegrityMismatch } from "./adapter-error";
 import { ChatGptPromptOperation } from "./prompt-operation";
 import { chatGptPromptCodeUnitEquivalent, chatGptPromptTextEquivalent, chatGptPromptEquivalentPrefixLength, readChatGptPromptText } from "./prompt-text";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { validateSkillFiles } from "./skill-attachments";
@@ -155,6 +155,7 @@ import {
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
+import { chatGptParallelAdmission, type ParallelAdmissionIdentity } from "./parallel-admission";
 import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptRetainedSurfaceUnavailableError, chatGptSessionExpiredError, chatGptStoppedThinkingError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, readChatGptUpstreamFailureUiState, redactChatGptUiDiagnostic } from "./browser-diagnostics";
@@ -736,6 +737,7 @@ function throwIfPromptAttachmentAborted(signal?: AbortSignal): void {
 }
 
 export interface BrowserTurn {
+  parallelAdmission?: ParallelAdmissionIdentity;
   traceId: string;
   modelId: string;
   reasoning?: string;
@@ -1177,9 +1179,17 @@ export class ChatGptBrowserWorker {
     if (useHelper) {
       this.launcherHelper ??= new LauncherBrowserHelperClient(this.config);
     }
-    const run = runWithChatGptBrowserSlot(turn.abortSignal, () => (
-      useHelper ? this.launcherHelper!.run(turn) : this.runWithSurfaceRetry(turn)
-    ), this.config.maxBrowserTabs ?? MAX_CHATGPT_BROWSER_TABS);
+    const execute = () => runWithChatGptBrowserSlot(turn.abortSignal, () => {
+      if (turn.parallelAdmission && !useHelper) {
+        try { console.info(`[chatgpt-web] parallel_admission ${JSON.stringify({
+          traceId: turn.traceId, at: Date.now(), role: turn.parallelAdmission.role,
+          group_hash: createHash("sha256").update(turn.parallelAdmission.group).digest("hex"),
+        })}`); } catch { /* Diagnostics cannot change native work. */ }
+      }
+      return useHelper ? this.launcherHelper!.run(turn) : this.runWithSurfaceRetry(turn);
+    }, this.config.maxBrowserTabs ?? MAX_CHATGPT_BROWSER_TABS);
+    const run = turn.parallelAdmission
+      ? chatGptParallelAdmission.run(turn.parallelAdmission, turn.abortSignal, execute) : execute();
     this.activeRuns.set(turn.traceId, run);
     void run.finally(() => {
       if (this.activeRuns.get(turn.traceId) === run) this.activeRuns.delete(turn.traceId);

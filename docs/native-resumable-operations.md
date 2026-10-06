@@ -23,8 +23,6 @@ finalization is fenced until its operation result is consumed.
 There is one unconsumed operation per native turn and at most 64 retained keys.
 Keys are not evicted within a turn, so capacity cannot turn an ambiguous retry
 into a repeated side effect. Results are capped at 16 MiB each/32 MiB per turn;
-Even a synchronous dispatch exception retains its key as an unknown-outcome
-tombstone. It cannot report invocation completion or make a retry replay work.
 delivery-capacity failures are explicit errors and forbid command replay.
 Operations are process-local: a broker restart invalidates handles rather than
 claiming a running command is resumable. Durable native task recovery is a

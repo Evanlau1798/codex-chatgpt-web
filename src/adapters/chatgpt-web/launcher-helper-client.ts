@@ -101,6 +101,7 @@ export class LauncherBrowserHelperClient {
             useSavedChats: this.config.useSavedChats,
           },
           turn: {
+            ...(turn.parallelAdmission ? { parallelAdmission: turn.parallelAdmission } : {}),
             traceId: turn.traceId,
             modelId: turn.modelId,
             reasoning: turn.reasoning,
