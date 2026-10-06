@@ -187,6 +187,7 @@ import { chatGptPromptPreservesLeading, planChatGptPromptInsertion, type ChatGpt
 import { ChatGptCandidateAttachmentBudget } from "./prompt-candidate-budget";
 import { ChatGptStartupPagePool } from "./startup-page-pool";
 import { prepareChatGptStartupPage, type PreparedChatGptStartupPage } from "./startup-page-resource";
+import { closeLauncherBrowserConnection } from "../../launcher-browser-connection";
 import { chatGptStartupHarnessPrefix } from "./startup-harness-prefix";
 import { discardLauncherStartupPages } from "./startup-page-control";
 import {
@@ -1333,7 +1334,7 @@ export class ChatGptBrowserWorker {
     const prefix = chatGptStartupHarnessPrefix(prepared.text);
     if (!prefix) return;
     const { modelId, reasoning, capabilities, modelFamily } = turn;
-    await this.startupPages.maintain(this.startupPageKey(turn), ` ${prefix}`, signal => prepareChatGptStartupPage({
+    await this.startupPages.maintain(this.startupPageKey(turn), ` ${prefix}`, (signal, registerCleanup) => prepareChatGptStartupPage({
       descriptorPath: this.config.browserHostDescriptorPath!, connectorIdentity: this.config.appName,
       prefix: ` ${prefix}`,
       prepare: async (page, signal) => {
@@ -1347,7 +1348,7 @@ export class ChatGptBrowserWorker {
           mode.thinkEnabled, false, false, undefined, { traceId: "startup", stage: "startup_harness", operation });
         return mode;
       },
-    }, signal));
+    }, signal, registerCleanup));
   }
 
   private async runStage<T>(
@@ -3892,10 +3893,12 @@ export class ChatGptBrowserWorker {
       ...(startup ? { startupSurfaceId: startup.surfaceId } : {}),
       ...(canWarm ? { allowStartupPreparation: true } : {}),
     }, undefined, turn.abortSignal).catch(async error => {
-      try { await startup?.release(); }
-      catch { console.warn("[chatgpt-web] startup cleanup failed after rejected acquisition"); }
-      if (error instanceof LauncherBrowserTurnCancelledError) throw chatGptBrowserTabClosedError();
-      throw error;
+      const acquisitionError = error instanceof LauncherBrowserTurnCancelledError ? chatGptBrowserTabClosedError() : error;
+      try { if (startup) await this.startupPages.releaseClaim(startup); }
+      catch (cleanupError) {
+        throw new AggregateError([acquisitionError, cleanupError], "Launcher acquisition failed with unacknowledged startup cleanup", { cause: acquisitionError });
+      }
+      throw acquisitionError;
     });
     const surfaceId = lease.surfaceId;
     let startupConnection: LauncherBrowserConnection | undefined;
@@ -3931,7 +3934,7 @@ export class ChatGptBrowserWorker {
     };
     try {
       if (lease.startupPrepared === true && startup && startup.surfaceId === surfaceId) startupConnection = startup.takeConnection?.();
-      await startup?.release();
+      if (startup) await this.startupPages.releaseClaim(startup);
       if (!surfaceId) throw new Error("Launcher did not lease a browser tab for the ChatGPT turn");
       if (turn.requireRetainedConversation && lease.reused !== true) {
         throw new Error("The retained ChatGPT conversation is no longer available");
@@ -3985,7 +3988,7 @@ export class ChatGptBrowserWorker {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       await heartbeatInFlight;
       // Also covers failures before runBrowserTurn reaches its connection owner.
-      await startupConnection?.browser.close().catch(error => {
+      await (startupConnection ? closeLauncherBrowserConnection(startupConnection.browser) : undefined)?.catch(error => {
         console.warn(`[chatgpt-web] prepared transport cleanup failed (${error instanceof Error ? error.name : "unknown"})`);
       });
       try {
@@ -4111,7 +4114,7 @@ export class ChatGptBrowserWorker {
           startupConnection,
         );
         if (abortSignal.aborted) {
-          await connection.browser.close().catch(() => {});
+          await closeLauncherBrowserConnection(connection.browser).catch(() => {});
           throw new DOMException("ChatGPT browser page acquisition aborted", "AbortError");
         }
         turnConnection = connection.browser;
@@ -4164,7 +4167,7 @@ export class ChatGptBrowserWorker {
                 }
               } catch (error) {
                 // A late connect may outlive cancellation; it never replaces the next owner.
-                await rebound.browser.close().catch(() => {});
+                await closeLauncherBrowserConnection(rebound.browser).catch(() => {});
                 throw error;
               }
               // Own the transport before viewport preparation can fail or be cancelled.
@@ -5595,7 +5598,7 @@ export class ChatGptBrowserWorker {
       await Promise.all(usageWrites);
       prepared.release();
       if (turnConnection) {
-        await turnConnection.close().catch(error => {
+        await closeLauncherBrowserConnection(turnConnection).catch(error => {
           console.error(
             `[chatgpt-web] failed to release launcher browser connection for ${turn.traceId}: ${error instanceof Error ? error.message : String(error)}`,
           );
