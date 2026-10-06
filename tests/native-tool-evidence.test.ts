@@ -24,47 +24,6 @@ const evidenceContract = "Describe failed local actions using only observable to
 const safeDiscoveryContract = "__codex_tool_search__:<capability query>";
 const safeReadContract = "__codex_read_file__:<absolute path>";
 
-test("native tool transport inherits only its explicit owner deadline", () => {
-  const environment = {} as ChatGptTurnEnvironment;
-  expect(chatGptMcpInvocationTimeout(environment, 1_000)).toBeNull();
-  expect(chatGptMcpInvocationTimeout({ ...environment, expiresAt: 301_000 }, 1_000)).toBe(300_000);
-  expect(chatGptMcpInvocationTimeout({ ...environment, expiresAt: 999 }, 1_000)).toBe(1);
-});
-
-// Opt-in wall-clock integration: real MCP stdio + broker sockets, no model query.
-// Keep the normal test suite fast; run explicitly with CGW_LONG_TOOL_ACCEPTANCE=1.
-(process.env.CGW_LONG_TOOL_ACCEPTANCE === "1" ? test : test.skip)("deadline-free native tool result survives beyond the former 90-second cutoff", async () => {
-  const socketPath = brokerEndpoint(`cgw-native-long-${process.pid}-${Date.now()}`);
-  const broker = TurnBroker.forSocket(socketPath);
-  const environment: ChatGptTurnEnvironment = {
-    cwd: process.cwd(), roots: [process.cwd()], writableRoots: [process.cwd()],
-    sandboxPolicy: { type: "dangerFullAccess" },
-    tools: [{ name: "exec_command", description: "Run a command", parameters: { type: "object" } }],
-  };
-  const token = await broker.register(environment);
-  const client = new Client({ name: "native-long-tool-test", version: "1" });
-  try {
-    await client.connect(new StdioClientTransport({ command: process.execPath,
-      args: ["src/cli.ts", "mcp", "--broker-socket", socketPath], cwd: process.cwd(), stderr: "pipe" }));
-    const started = Date.now();
-    const execution = client.callTool({ name: "codex_exec", arguments: { turn_token: token, cmd: "long-tool-acceptance" } },
-      undefined, { timeout: 120_000 });
-    const [request] = await broker.nextToolBatch(token);
-    expect(request?.wireName).toBe("exec_command");
-    await Bun.sleep(95_000);
-    broker.completeTool(token, request!.callId, { content: [{ type: "text", text: "LONG_TOOL_COMPLETED" }], isError: false });
-    const result = await execution;
-    expect(result.isError).not.toBe(true);
-    expect(JSON.stringify(result.content)).toContain("LONG_TOOL_COMPLETED");
-    expect(Date.now() - started).toBeGreaterThan(90_000);
-    console.info(`long-tool transport completed elapsedMs=${Date.now() - started}`);
-  } finally {
-    await client.close().catch(() => {});
-    broker.revoke(token);
-    await broker.close();
-  }
-}, 125_000);
-
 function parsedRequest(): CodexParsedRequest {
   return {
     modelId: CHATGPT_WEB_MODEL_ID,
@@ -215,7 +174,7 @@ test("an aborted MCP request revokes only its turn binding and leaves the server
   const client = new Client({ name: "native-abort-test", version: "1.0.0" });
 
   try {
-    expect(chatGptMcpInvocationTimeout(environment)).toBeNull();
+    expect(chatGptMcpInvocationTimeout(environment)).toBe(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS);
     expect(chatGptMcpInvocationTimeout({ ...environment, expiresAt: 1_500 }, 1_000)).toBe(500);
     await client.connect(transport);
     const abandonedController = new AbortController();

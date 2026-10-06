@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { expandUserPath, stripUtf8Bom } from "./config";
 import { assertLauncherLoopbackEndpoint } from "./launcher-loopback-endpoint";
-import { runLauncherBrowserConnection } from "./launcher-browser-connection";
+import { closeLauncherBrowserConnection, runLauncherBrowserConnection } from "./launcher-browser-connection";
 import { processRunning } from "./process";
 
 export const LAUNCHER_BROWSER_HOST_KIND = "codex-web-gpt-launcher";
@@ -244,7 +244,7 @@ export async function connectLauncherBrowserHost(
       catch (error) { throw new Error(`Could not connect Playwright to the launcher browser: ${error instanceof Error ? error.message : String(error)}`); }
     },
     select: async (browser, budget) => {
-      const closeOnAbort = () => { void browser.close().catch(() => {}); };
+      const closeOnAbort = () => { void closeLauncherBrowserConnection(browser).catch(() => {}); };
       abortSignal?.addEventListener("abort", closeOnAbort, { once: true });
       try {
         if (abortSignal?.aborted) throw new DOMException("Launcher browser connection aborted", "AbortError");
@@ -254,7 +254,7 @@ export async function connectLauncherBrowserHost(
         return { descriptor, browser, context, page };
       } finally { abortSignal?.removeEventListener("abort", closeOnAbort); }
     },
-    close: browser => browser.close(),
+    close: browser => closeLauncherBrowserConnection(browser),
   });
 }
 

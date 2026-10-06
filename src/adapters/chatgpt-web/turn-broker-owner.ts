@@ -165,10 +165,7 @@ export function dispatchExternalOwnerRequest(
     return target.waitForRetirement(request.token, signal).then(failure => ({ retired: true, ...(failure ? { failure } : {}) }));
   }
   if (request.method === "owner_revoke") {
-    if (request.revokeReason !== undefined && typeof request.revokeReason !== "string") {
-      throw new Error("turn owner revoke reason is invalid");
-    }
-    target.revoke(request.token, request.revokeReason === undefined ? undefined : new Error(request.revokeReason));
+    target.revoke(request.token);
     return { revoked: true };
   }
   throw new Error("turn owner method is invalid");
@@ -427,12 +424,8 @@ export class RemoteTurnBroker implements TurnBrokerOwner {
     return response.sealed;
   }
 
-  async revoke(token: string, reason?: Error): Promise<void> {
-    await callTurnBroker(this.socketPath, {
-      method: "owner_revoke",
-      token,
-      ...(reason === undefined ? {} : { revokeReason: reason.message }),
-    });
+  async revoke(token: string, _reason?: Error): Promise<void> {
+    await callTurnBroker(this.socketPath, { method: "owner_revoke", token });
   }
 }
 
