@@ -2,6 +2,7 @@ import { namespacedToolName, type CodexParsedRequest } from "../../types";
 import { extractChatGptTurnIdentity } from "./environment";
 import type { BrokerToolRequest } from "./turn-broker";
 import type { ChatGptTurnSessions } from "./turn-execution";
+import { normalizeClaudeLongCommands } from "./claude-long-command";
 
 type AnswerRetry = (answer: string, attempt: number) => string | undefined;
 
@@ -29,6 +30,7 @@ function clientMetadata(parsed: CodexParsedRequest): ClaudeClientMetadata | unde
 
 export function normalizeClaudeToolRequests(parsed: CodexParsedRequest, requests: BrokerToolRequest[]): void {
   if (typeof clientMetadata(parsed)?.claude_subagent !== "boolean") return;
+  normalizeClaudeLongCommands(parsed, requests);
   for (const request of requests) {
     if (request.wireName === "Agent") {
       request.arguments = { ...request.arguments, run_in_background: true };
