@@ -1,6 +1,7 @@
 import type { BrokerToolRequest } from "./turn-broker-protocol";
 import type { TurnChannel } from "./turn-broker-state";
 import { clearAgentWait } from "./turn-broker-agent-wait";
+import { clearNativeOperations } from "./turn-broker-operations";
 
 export function takeQueuedTools(channel: TurnChannel): BrokerToolRequest[] {
   const ids = channel.queuedCallIds.splice(0);
@@ -46,6 +47,7 @@ function wakeToolWaiters(channel: TurnChannel): void {
 }
 
 export function rejectTurnChannel(channel: TurnChannel, error: Error): void {
+  clearNativeOperations(channel);
   clearAgentWait(channel);
   if (channel.batchTimer) clearTimeout(channel.batchTimer);
   channel.batchTimer = undefined;

@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFil
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import { VERSION } from "./version";
+import { validateExperimentalFeatures } from "./config-feature-validation";
 import { effectiveExperimentalBiggerContext } from "./context-mode";
 import {
   CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, ZERO_RISK_CHATGPT_CONNECTOR_NAME,
@@ -110,6 +111,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     proAvailable: false,
     experimentalBiggerContext: false,
     experimentalSkillAttachments: false,
+    experimentalParallelSubagents: false,
     experimentalNoAutoCompact: false,
     experimentalFreshConversationPerTurn: false,
     useSavedChats: false,
@@ -405,12 +407,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.extraHighAvailable !== undefined && typeof parsed.extraHighAvailable !== "boolean") {
     throw new Error(`Invalid extraHighAvailable in ${path}`);
   }
-  for (const feature of ["experimentalBiggerContext", "experimentalSkillAttachments",
-    "experimentalComposerPlainText", "experimentalNoAutoCompact"] as const) {
-    if (parsed[feature] !== undefined && typeof parsed[feature] !== "boolean") {
-      throw new Error(`Invalid ${feature} in ${path}`);
-    }
-  }
+  validateExperimentalFeatures(parsed, path);
   if (parsed.zeroRiskProEnabled !== undefined && typeof parsed.zeroRiskProEnabled !== "boolean") {
     throw new Error(`Invalid zeroRiskProEnabled in ${path}`);
   }
@@ -479,6 +476,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     modelCapabilities: parseChatGptWebModelCapabilities(parsed.modelCapabilities),
     experimentalBiggerContext,
     experimentalSkillAttachments,
+    experimentalParallelSubagents: parsed.experimentalParallelSubagents === true,
     experimentalNoAutoCompact: parsed.experimentalNoAutoCompact === true,
     ...(parsed.experimentalComposerPlainText === true ? { experimentalComposerPlainText: true } : {}),
     experimentalFreshConversationPerTurn,

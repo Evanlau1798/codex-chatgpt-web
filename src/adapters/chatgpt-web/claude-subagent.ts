@@ -1,7 +1,7 @@
 import { namespacedToolName, type CodexParsedRequest } from "../../types";
 import { extractChatGptTurnIdentity } from "./environment";
 import type { BrokerToolRequest } from "./turn-broker";
-import type { ChatGptTurnSessions } from "./turn-execution";
+import { chatGptTurnSteeringId, type ChatGptTurnSessions } from "./turn-execution";
 
 type AnswerRetry = (answer: string, attempt: number) => string | undefined;
 
@@ -59,7 +59,16 @@ export function bindClaudeSessionAbort(
   const rawGroup = claudeBrowserSessionGroup(parsed);
   if (!rawGroup) return () => {};
   const group = executionNamespace ? `${executionNamespace}:${rawGroup}` : rawGroup;
-  const retire = () => { sessions.retireGroup(group); };
+  const child = clientMetadata(parsed)?.claude_subagent === true;
+  const identity = extractChatGptTurnIdentity(parsed);
+  // Claude children share the root's thread/group but have distinct agent turn
+  // identities. A child disconnect (including TaskStop) must not cancel its
+  // parent or sibling's still-running Pro work. Root cancellation remains
+  // task-group cancellation. Missing child identity never widens cancellation.
+  const retire = () => {
+    if (!child) sessions.retireGroup(group);
+    else if (identity.turnId) sessions.retireGroup(group, chatGptTurnSteeringId(rawGroup, identity.turnId));
+  };
   if (signal.aborted) retire();
   else signal.addEventListener("abort", retire, { once: true });
   return () => signal.removeEventListener("abort", retire);

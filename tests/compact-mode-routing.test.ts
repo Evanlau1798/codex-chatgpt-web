@@ -442,10 +442,10 @@ describe("compact mode routing", () => {
     expect(tools[1]!.arguments).toEqual({ command: "Get-Location" });
   });
 
-  test("aborting a Claude round retires every browser turn in the same session", () => {
+  test("aborting a Claude root retires every browser turn in the same session", () => {
     const request = compactRequest();
     const metadata = (request._rawBody as { client_metadata: Record<string, unknown> }).client_metadata;
-    metadata.claude_subagent = true;
+    metadata.claude_subagent = false;
     const sessions = new ChatGptTurnSessions();
     let cancelled = 0;
     const runtime = () => ({

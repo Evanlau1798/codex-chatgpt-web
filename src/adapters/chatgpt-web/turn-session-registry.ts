@@ -355,15 +355,18 @@ export class ChatGptTurnSessions {
     return targets.length === 1 ? targets[0]!.claudeSteeringSuppressionCount(instruction) : 0;
   }
 
-  retireGroup(group: string): number {
+  retireGroup(group: string, steeringId?: string): number {
     let retired = 0;
     for (const [key, session] of this.entries) {
-      if (session.group === group && this.retire(key, session)) retired += 1;
+      if (session.group === group && (steeringId === undefined || session.steeringId === steeringId)
+        && this.retire(key, session)) retired += 1;
     }
     return retired;
   }
 
   linkGroups(parent: string, child: string): void { this.agentGraph.link(parent, child); }
+  rootGroup(group: string): string { return this.agentGraph.rootOf(group); }
+  groupAncestry(group: string): { root: string; depth: number } { return this.agentGraph.ancestryOf(group); }
   linkAgentReference(parent: string, reference: string): void { this.agentGraph.linkReference(parent, reference); }
 
   retireAgentReference(parent: string, reference: string, descendants: boolean): number {
