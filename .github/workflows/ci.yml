@@ -26,6 +26,8 @@ jobs:
         with:
           node-version: 22.19.0
       - run: bun install --frozen-lockfile
+      - run: bun install --frozen-lockfile
+        working-directory: launcher
       - run: bun run lifecycle:sim --lane=all
 
   lifecycle-client-probe:
