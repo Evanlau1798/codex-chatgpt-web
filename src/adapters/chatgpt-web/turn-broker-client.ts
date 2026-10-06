@@ -69,7 +69,7 @@ export async function callTurnBroker<T>(
       // Windows/Bun pipes must not race a force-destroy against their end path.
       socket.unref();
       setImmediate(() => {
-        if (!socket.destroyed) socket.end();
+        if (!socket.destroyed && !socket.writableEnded && !socket.readableEnded) socket.end();
       });
       if (response.error) rejectCall(new Error(response.error));
       else resolveCall(response.result as T);
