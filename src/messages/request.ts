@@ -126,7 +126,9 @@ function xml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
-function workingDirectory(system: string, messages: unknown[]): string {
+const retainedClaudeWorkspaces = new Map<string, string>();
+
+function workingDirectory(system: string, messages: unknown[], retained?: string): { root: string; explicit: boolean } {
   // Current Claude Code sends per-turn machine context as message-level system
   // content, separately from its stable top-level system prompt. Prefer the latest
   // system context, then the top-level prompt; never revive an older workspace.
@@ -139,9 +141,10 @@ function workingDirectory(system: string, messages: unknown[]): string {
   for (const context of [latestSystem, system]) {
     const match = context.match(/^\s*-?\s*(?:Primary )?working directory:\s*(.+?)\s*$/mi);
     const candidate = match?.[1]?.replace(/^`|`$/g, "").trim();
-    if (candidate && isAbsolute(candidate)) return candidate;
+    if (candidate && isAbsolute(candidate)) return { root: candidate, explicit: true };
+    if (match) throw new Error("Claude machine context has an invalid working directory");
   }
-  return cwd();
+  return { root: retained ?? cwd(), explicit: false };
 }
 
 function environment(turnId: string, root: string): Json {
@@ -298,7 +301,14 @@ export function translateClaudeMessages(
   const turnId = claudeAgentTurnId(agent);
   const system = textBlocks(request.system);
   const auxiliaryResponse = claudeTitleResponse(request, system);
-  const root = workingDirectory(system, request.messages);
+  const workspaceKey = headers.has("x-claude-code-session-id") ? JSON.stringify([session, agent]) : undefined;
+  const workspace = workingDirectory(system, request.messages, workspaceKey ? retainedClaudeWorkspaces.get(workspaceKey) : undefined);
+  const root = workspace.root;
+  if (workspaceKey && !auxiliaryResponse && (workspace.explicit || retainedClaudeWorkspaces.has(workspaceKey))) {
+    retainedClaudeWorkspaces.delete(workspaceKey);
+    retainedClaudeWorkspaces.set(workspaceKey, root);
+    if (retainedClaudeWorkspaces.size > 256) retainedClaudeWorkspaces.delete(retainedClaudeWorkspaces.keys().next().value!);
+  }
   const input: Json[] = [];
   const suppressedByInstruction = new Map<string, number>();
   let suppressedSteeringReplays = 0;
