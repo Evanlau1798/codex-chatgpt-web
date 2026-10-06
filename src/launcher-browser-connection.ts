@@ -5,6 +5,18 @@ export interface LauncherBrowserConnectionStages<TBrowser, TResult> {
   close(browser: TBrowser): Promise<unknown>;
 }
 
+const connectionClosures = new WeakMap<object, Promise<void>>();
+
+/** Shared across startup, acquisition and turn cleanup, including aborted/failed selection. */
+export function closeLauncherBrowserConnection(browser: { close(): Promise<void> }): Promise<void> {
+  let closing = connectionClosures.get(browser);
+  if (!closing) {
+    closing = Promise.resolve().then(() => browser.close());
+    connectionClosures.set(browser, closing);
+  }
+  return closing;
+}
+
 export async function runLauncherBrowserConnection<TBrowser, TResult>(
   timeoutMs: number,
   stages: LauncherBrowserConnectionStages<TBrowser, TResult>,

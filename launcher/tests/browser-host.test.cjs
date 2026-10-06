@@ -282,7 +282,7 @@ test("the idle home browser performs one bounded reload for a Cloudflare challen
   });
   const challenge = {
     statusCode: 403,
-    url: "https://chatgpt.com/backend-api/subscriptions",
+    url: "https://chatgpt.com/backend-api/subscriptions?private=PRIVATE_QUERY",
     webContentsId: 42,
     responseHeaders: { "cf-mitigated": ["challenge"] },
   };
@@ -295,6 +295,7 @@ test("the idle home browser performs one bounded reload for a Cloudflare challen
     ["loadURL", "https://chatgpt.com/?temporary-chat=true"],
   ]);
   assert.equal(fixture.cloudflareChallengeRecoveryArmed, false);
+  assert.doesNotMatch(JSON.stringify(calls.filter(([name]) => name === "warn")), /PRIVATE_QUERY|https:\/\//);
 
   BrowserHost.prototype.handleChatGptBackendResponse.call(fixture, {
     statusCode: 200,
@@ -334,6 +335,21 @@ test("security refresh preserves manually running generation, draft and unverifi
       setState() {},
     };
     await assert.rejects(BrowserHost.prototype.reloadHomeAfterCloudflareChallenge.call(fixture), /refresh refused/);
+    assert.deepEqual(calls, []);
+  }
+});
+
+test("security refresh rejects lookalike, foreign and malformed origins without inspection or navigation", async () => {
+  for (const url of ["https://chatgpt.com.attacker.test/", "https://chatgpt.com@attacker.test/", "http://chatgpt.com/", "not a URL"]) {
+    const calls = [];
+    const fixture = {
+      cloudflareChallengeRecoveryDelayMs: 0,
+      view: { webContents: { isDestroyed: () => false, getURL: () => url,
+        executeJavaScript: async () => { calls.push("inspect"); return { draft: false, running: false }; },
+        loadURL: async () => calls.push("reload") } },
+      setState() {},
+    };
+    await assert.rejects(BrowserHost.prototype.reloadHomeAfterCloudflareChallenge.call(fixture), /lost its owned browser page/);
     assert.deepEqual(calls, []);
   }
 });
@@ -1923,7 +1939,7 @@ test("an uninitialized browser surface cancels runtime ownership before reaping 
 
   assert.equal(fixture.turnTabs.size, 0);
   assert.equal(fixture.selectedTabId, "home");
-  assert.equal(fixture.closedTurnOwners.get(tab.traceId), tab.helperPid);
+  assert.deepEqual(fixture.closedTurnOwners.get(tab.traceId), { helperPid: tab.helperPid, remainingAcks: 2 });
   assert.deepEqual(closed, ["cancel:trace_orphan:browser_surface_bootstrap_timeout", "view", "contents"]);
   const detail = {
     tabId: tab.id,
@@ -2215,7 +2231,9 @@ test("closing a running browser tab reports terminal user cancellation to its he
   await BrowserHost.prototype.closeTab.call(fixture, tab.id);
 
   assert.deepEqual(closed, ["cancel:trace_running", "view", "contents"]);
-  assert.equal(fixture.closedTurnOwners.get("trace_running"), 333);
+  assert.deepEqual(fixture.closedTurnOwners.get("trace_running"), { helperPid: 333, remainingAcks: 2 });
+  assert.throws(() => fixture.heartbeatTurn(tab.traceId, tab.helperPid), /already released/);
+  assert.throws(() => fixture.heartbeatTurn(tab.traceId, 444), /ownership mismatch/);
   assert.equal(fixture.userCancelledTurnOwners.get("trace_running"), 333);
   assert.equal(fixture.selectedTabId, "home");
   await assert.rejects(
@@ -2234,6 +2252,9 @@ test("closing a running browser tab reports terminal user cancellation to its he
     ),
     { cancelledByUser: true },
   );
+  assert.deepEqual(fixture.closedTurnOwners.get("trace_running"), { helperPid: 333, remainingAcks: 1 });
+  await assert.rejects(fixture.endTurn(tab.traceId, 444, "failed", false), /ownership mismatch/);
+  assert.deepEqual(await fixture.endTurn(tab.traceId, tab.helperPid, "failed", false), { cancelledByUser: true });
   assert.equal(fixture.closedTurnOwners.has("trace_running"), false);
   assert.equal(fixture.userCancelledTurnOwners.get("trace_running"), 333);
 });
