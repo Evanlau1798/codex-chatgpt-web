@@ -5,7 +5,7 @@ import { CHATGPT_STOP_BUTTON_SELECTOR } from "../src/chatgpt-session";
 const stopPath = "M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z";
 const icon = `<svg class="icon-primary-action"><path d="${stopPath}"></path></svg>`;
 
-test.each(["停止", "Stop", "停止する", "중지", ""])("generation detection recognizes the verified composer stop glyph regardless of label (%s)", label => {
+test.each(["停止", "Stop", "Arrêter", "停止する", "중지", ""])("generation detection recognizes the verified composer stop glyph regardless of label (%s)", label => {
   const { createDocument } = require("@mixmark-io/domino") as { createDocument(html: string): Document };
   const document = createDocument(`<body>
     <button id="unowned" type="button" aria-label="${label}">${icon}</button>

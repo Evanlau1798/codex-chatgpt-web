@@ -50,6 +50,10 @@ type CurrentTurnAnchor = {
   content: unknown;
   author: unknown;
   recipient: unknown;
+  name?: unknown;
+  namespace?: unknown;
+  output?: unknown;
+  call_id?: unknown;
 };
 
 interface StoredThreadEnvironmentFile {
@@ -100,7 +104,11 @@ function isPassiveCurrentContextualContinuation(item: Record<string, unknown> | 
 }
 
 function rolloutAnchor(item: Record<string, unknown> | undefined): CurrentTurnAnchor | undefined {
-  if (!item || typeof item.id !== "string" || !item.id || typeof item.type !== "string" || !("content" in item)) return undefined;
+  if (!item || typeof item.id !== "string" || !item.id || typeof item.type !== "string") return undefined;
+  // Cross-task instructions use output rather than content. Keep the native shape guard;
+  // the rollout must still authenticate every field in this exact current-turn message.
+  const delegated = item.type === "function_call_output" && isNativeInstruction(item);
+  if (!("content" in item) && !delegated) return undefined;
   return {
     id: item.id,
     type: item.type,
@@ -108,6 +116,7 @@ function rolloutAnchor(item: Record<string, unknown> | undefined): CurrentTurnAn
     content: item.content,
     author: item.author,
     recipient: item.recipient,
+    ...(delegated ? { name: item.name, namespace: item.namespace, output: item.output, call_id: item.call_id } : {}),
   };
 }
 

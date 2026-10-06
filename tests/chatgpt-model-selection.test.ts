@@ -51,7 +51,7 @@ for (const visibility of ["true", "hidden", "duplicate"] as const) {
 
 test("model selection recognizes Latest in the launcher languages without accepting other model names", async () => {
   for (const [label, accepted] of [
-    ["Latest", true], ["最新", true], ["최신", true], ["GPT-6 Pro", true],
+    ["Latest", true], ["Le plus récent", true], ["最新", true], ["최신", true], ["GPT-6 Pro", true],
     ["GPT-5.6 Sol", false], ["GPT-7 Pro", false], ["Latest preview", false],
   ] as const) {
     const menu = { menu: {

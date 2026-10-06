@@ -361,6 +361,65 @@ test("completed subagent notification after compact Goal keeps exact rollout aut
   expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(parseRequest(body))).toEqual(initial);
 });
 
+test.each(["v1", "v2"] as const)("a delegated restart after %s compaction recovers from its exact canonical message", checkpointKind => {
+  const recoveryThreadId = `01a09103-0000-7000-8000-00000000020${checkpointKind === "v1" ? "1" : "3"}`;
+  const recoveryTurnId = `01a09103-0000-7000-8000-00000000020${checkpointKind === "v1" ? "2" : "4"}`;
+  const { body, codexHome, root, rollout } = fixture({
+    checkpointKind, remember: false, threadId: recoveryThreadId, turnId: recoveryTurnId,
+  });
+  const [, source, checkpoint] = body.input;
+  const delegation = {
+    type: "function_call_output", id: "fco_canonical_restart", name: "send_message_to_thread",
+    namespace: "codex_app",
+    output: "<codex_delegation><source_thread_id>source_thread</source_thread_id><input>Resume the existing task.</input></codex_delegation>",
+    internal_chat_message_metadata_passthrough: { turn_id: recoveryTurnId },
+  };
+  body.input = [source!, checkpoint!, delegation];
+  appendCanonicalTurn(rollout, recoveryTurnId, root, [delegation]);
+
+  const resolveEnvironment = (request = body) => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome)
+    .resolve(parseRequest(request));
+  expect(resolveEnvironment().cwd).toBe(root);
+  body.input.push(
+    { type: "function_call", call_id: "call_after_restart", name: "exec_command", arguments: "{}" },
+    { type: "function_call_output", call_id: "call_after_restart", output: "fixture" },
+  );
+  expect(resolveEnvironment().cwd).toBe(root);
+
+  for (const mutation of [
+    { id: "fco_missing_from_rollout" },
+    { output: delegation.output.replace("Resume", "Change") },
+    { output: delegation.output.replace(">source_thread<", ">different_source<") },
+    { name: "different_tool" },
+    { namespace: "different_namespace" },
+    { call_id: "ordinary_tool_result" },
+    { internal_chat_message_metadata_passthrough: { turn_id: sourceTurnId } },
+  ]) {
+    const changed = structuredClone(body);
+    changed.input[2] = { ...delegation, ...mutation };
+    expect(() => resolveEnvironment(changed)).toThrow();
+  }
+});
+
+test.each(["output", "name", "namespace", "call_id"] as const)("delegated restart binds canonical %s", field => {
+  const recoveryThreadId = "01a09103-0000-7000-8000-000000000205";
+  const recoveryTurnId = "01a09103-0000-7000-8000-000000000206";
+  const { body, codexHome, root, rollout } = fixture({
+    remember: false, threadId: recoveryThreadId, turnId: recoveryTurnId,
+  });
+  const [, source, checkpoint] = body.input;
+  const delegation = {
+    type: "function_call_output", id: "fco_changed_canonical_restart", name: "send_message_to_thread",
+    namespace: "codex_app",
+    output: "<codex_delegation><source_thread_id>source_thread</source_thread_id><input>Resume.</input></codex_delegation>",
+    internal_chat_message_metadata_passthrough: { turn_id: recoveryTurnId },
+  };
+  body.input = [source!, checkpoint!, delegation];
+  appendCanonicalTurn(rollout, recoveryTurnId, root, [{ ...delegation, [field]: "different_native_value" }]);
+  expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(parseRequest(body)))
+    .toThrow("Current-turn anchor differs from its native Codex record");
+});
+
 test("an existing compacted task recovers from an untagged Plan acceptance anchor", () => {
   const recoveryThreadId = "01a09103-0000-7000-8000-000000000061";
   const recoveryTurnId = "01a09103-0000-7000-8000-000000000062";

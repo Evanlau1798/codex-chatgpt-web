@@ -2262,8 +2262,8 @@ function toolConfirmationPage(options: {
     };
   };
   const dialog = {
-    filter: ({ hasText }: { hasText: string }) => {
-      expect(hasText).toBe("Allow ChatGPT to use Codex Native?");
+    filter: ({ hasText }: { hasText: string | RegExp }) => {
+      expect(typeof hasText === "string" ? hasText === "Allow ChatGPT to use Codex Native?" : hasText.test("Allow ChatGPT to use Codex Native?")).toBeTrue();
       return dialog;
     },
     last: () => dialog,

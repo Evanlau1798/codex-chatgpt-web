@@ -32,6 +32,10 @@ type CurrentTurnAnchor = {
   content: unknown;
   author: unknown;
   recipient: unknown;
+  name?: unknown;
+  namespace?: unknown;
+  output?: unknown;
+  call_id?: unknown;
 };
 
 const CODEX_ID_SOURCE = "[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}";
@@ -350,6 +354,9 @@ function verifyCurrentTurnAnchor(
           content: payload.content,
           author: payload.author,
           recipient: payload.recipient,
+          ...(payload.type === "function_call_output" ? {
+            name: payload.name, namespace: payload.namespace, output: payload.output, call_id: payload.call_id,
+          } : {}),
         };
         if (!isDeepStrictEqual(candidate, anchor)) {
           mismatched = true;

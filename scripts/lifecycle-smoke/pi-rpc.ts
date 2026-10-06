@@ -104,7 +104,12 @@ export class PiRpcRun {
       throw new Error(`Pi RPC exited with code ${naturalCode}`);
     }
     this.process.stdin.end();
-    await this.process.exited;
+    const exitCode = await this.process.exited;
+    // The child can exit naturally after the grace period but before kill is delivered.
+    // Validate that result before waiting for EOF: Windows may leave that pipe pending.
+    if (exitCode !== 0 && this.process.signalCode === null) {
+      throw new Error(`Pi RPC exited with code ${exitCode}`);
+    }
     await this.readTask;
     const stderr = await this.errorTask;
     if (this.readError) throw this.readError;

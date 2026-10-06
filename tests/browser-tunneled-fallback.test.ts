@@ -63,6 +63,7 @@ async function runFixture(options: {
   untunneled?: boolean;
   conversationRoute?: string;
   initialRoute?: string;
+  progressScenario?: "status" | "native-tool" | "static" | "foreign";
 } = {}) {
   const recoverable = options.emptyStopped || options.postToolRecovery;
   const diagnostics = mkdtempSync(join(tmpdir(), "boole-browser-"));
@@ -79,6 +80,9 @@ async function runFixture(options: {
   let now = Date.now();
   const clock = spyOn(Date, "now").mockImplementation(() => now);
   let submitted = 0;
+  let progressObservations = 0;
+  const progressTimes: number[] = [];
+  let progressStartedAt = now;
   let composerText = options.composerBusy ? "User draft" : "";
   // Recorded Web behavior: the sent app mention does not bind the next message.
   let currentMessageConnector = false;
@@ -152,6 +156,7 @@ async function runFixture(options: {
     ...hidden, nth: () => response, page: () => page,
     evaluateAll: async () => {
       now += options.recentToolProgress ? 500 : options.emptyStopped ? 15_000 : 61_000; // Advance observation time, never sleep to guess tool completion.
+      if (options.progressScenario && submitted && ++progressObservations === 9) submitTurnOutput(channel, "final", FINAL);
       if (pendingSecondBatch && now - lastToolResultAt >= 75_000) {
         pendingSecondBatch = false;
         progress.recordToolBatch(1);
@@ -165,7 +170,7 @@ async function runFixture(options: {
         text = FINAL;
         pendingResult = false;
       }
-      const projected = (options.missingAssistantTurn && !actions.includes("tool-dispatched"))
+      const projected = options.progressScenario === "foreign" || (options.missingAssistantTurn && !actions.includes("tool-dispatched"))
         || options.finalAfterToolWithoutAssistantTurn ? 0 : submitted;
       const identities = ["historical", ...Array.from({ length: projected }, (_, index) => `current${index || ""}`)];
       return { count: identities.length, lastId: identities.at(-1), identities };
@@ -177,6 +182,9 @@ async function runFixture(options: {
     locator: (selector: string) => {
       if (options.manualApproval && selector === '[role="dialog"], [data-testid="tool-approval-card"]') return approvalDialog;
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
+      if (selector === CHATGPT_STOP_BUTTON_SELECTOR && options.progressScenario) return {
+        ...hidden, isVisible: async () => submitted > 0 && progressObservations < 9,
+      };
       if (selector === CHATGPT_USER_TURN_SELECTOR) return { ...hidden, evaluateAll: async () => [] };
       if (selector === "[data-turn-id-container], [data-turn-key]") return {
         evaluateAll: async () => ["historical", ...Array.from({ length: submitted }, (_, index) => `current${index || ""}`)],
@@ -238,8 +246,13 @@ async function runFixture(options: {
       else now += 60_001; // A blocked user reaches the production manual-approval deadline.
     }
     return approvalShown;
-  }, getByRole: (_role: string, query: { name: string }) => ({ ...hidden,
-    waitFor: async () => {}, press: async () => { actions.push(`approval-${query.name}`); approvalShown = false; },
+  }, getByRole: (_role: string, query: { name: string | RegExp }) => ({ ...hidden,
+    waitFor: async () => {}, press: async () => {
+      const label = ["Allow once", "Deny"].find(label => typeof query.name === "string"
+        ? label === query.name : query.name.test(label));
+      if (!label) throw Error("No matching approval button in fixture");
+      actions.push(`approval-${label}`); approvalShown = false;
+    },
   }) };
   const approvalControl = options.manualApproval ? spyOn(launcherControl, "notifyLauncherTurn").mockImplementation(async (_path, activity) => {
     expect(activity.phase).toBe("approval");
@@ -387,7 +400,11 @@ async function runFixture(options: {
       return {
         responsePresent: !(options.missingBaseline && progress.snapshot().activeToolCalls),
         visibleText: projectedText, fullHtml: projectedText, plainTextFallback: projectedText,
-        markdownSegments: [], markdownRoots: [], traceBlocks: [], nativeToolCandidates: [],
+        markdownSegments: [], markdownRoots: [],
+        traceBlocks: options.progressScenario ? [{ kind: "status", key: "thinking",
+          text: options.progressScenario === "status" ? `Étape de réflexion ${progressObservations}` : "Réflexion" }] : [],
+        nativeToolCandidates: options.progressScenario === "native-tool" ? [{ kind: "native_tool",
+          withinStreamingStatus: true, ancestorsVisible: true, ariaBusy: true, runningFiniteAnimation: false }] : [],
         completionActionVisible: !options.emptyStopped || actions.includes("late-dom-final")
           || Boolean(options.settledPreToolProjection && progress.snapshot().activeToolCalls),
         globalCompletionActionVisible: !options.emptyStopped || actions.includes("late-dom-final")
@@ -412,6 +429,7 @@ async function runFixture(options: {
       release: () => { actions.push("release"); } }),
     onSubmitted: () => {
       actions.push("submitted");
+      progressStartedAt = now;
       if (options.untunneled) batch = progress.recordToolBatch(1);
     }, onTextDelta: delta => { deltas.push(delta); },
     onSendActivated: () => {
@@ -421,6 +439,7 @@ async function runFixture(options: {
       }
     },
     onCommentary: text => { commentary.push(text); },
+    onProgress: () => { progressTimes.push(now); },
     retryPromptForError: async (error, attempt) => {
       if (!recoverable) return undefined;
       if (pendingSecondBatch) actions.push("recovery-before-delayed-tool");
@@ -499,6 +518,7 @@ async function runFixture(options: {
     },
     tunneledOutput: options.untunneled ? undefined : {
       next: (after, signal) => {
+        if (options.progressScenario) return waitForTurnOutput(channel, after, signal);
         if (recoverable) {
           if (!batch) batch = progress.recordToolBatch(1);
           return waitForTurnOutput(channel, after, signal);
@@ -552,7 +572,7 @@ async function runFixture(options: {
     expect(actions.filter(a => a === "submitted")).toHaveLength(options.tunneledRetry ? 2 : 1);
   }
   return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText,
-    fallbackAgeMs, recoveryDecisionAgeMs, selections, approvalVisibility, approvalTab, otherTab };
+    fallbackAgeMs, recoveryDecisionAgeMs, selections, progressTimes, progressStartedAt, approvalVisibility, approvalTab, otherTab };
 }
 
 test.each([false, true])("manual approval restores its owned protection (DOM=%s)", async untunneled => {
@@ -1203,3 +1223,22 @@ test("cancellation during baseline observation cannot release a waiting tool bat
   expect(result.actions).not.toContain("tool-dispatched");
   expect(result.deltas).toEqual([]);
 });
+
+for (const scenario of ["status", "native-tool", "static", "foreign"] as const) {
+  test(`tunneled progress observes ${scenario} without treating the stop button as progress`, async () => {
+    const result = await runFixture({ progressScenario: scenario });
+    expect(result.error).toBeUndefined();
+    expect(result.answer).toBe(FINAL);
+    expect(result.deltas).toEqual([FINAL]);
+    expect(result.commentary).toEqual([]);
+    const times = [result.progressStartedAt, ...result.progressTimes];
+    const longestSilence = Math.max(...times.slice(1).map((time, index) => time - times[index]!));
+    if (scenario === "status" || scenario === "native-tool") {
+      expect(result.progressTimes.length).toBeGreaterThan(2);
+      expect(longestSilence).toBeLessThan(300_000);
+    } else {
+      expect(longestSilence).toBeGreaterThan(300_000);
+      expect(result.progressTimes.length).toBeLessThanOrEqual(2);
+    }
+  });
+}

@@ -11,7 +11,7 @@ import {
   CHATGPT_TEMPORARY_CHAT_URL,
   detectChatGptAccountCapabilities,
 } from "./chatgpt-session";
-import type { ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
+import { parseChatGptWebModelCapabilities, type ChatGptWebModelCapabilities, type ChatGptWebAccountCapabilities } from "./chatgpt-web-models";
 
 export interface BrowserLoginResult {
   storageStatePath: string;
@@ -19,6 +19,7 @@ export interface BrowserLoginResult {
   solAvailable: boolean;
   extraHighAvailable: boolean;
   proAvailable: boolean;
+  modelCapabilities?: ChatGptWebModelCapabilities;
 }
 
 import { sanitizeBrowserLoginStorageState, type BrowserLoginStorageState } from "./browser-login-storage";
@@ -48,6 +49,7 @@ interface LoginVerificationMarker {
   solAvailable?: boolean;
   extraHighAvailable?: boolean;
   proAvailable?: boolean;
+  modelCapabilities?: ChatGptWebModelCapabilities;
 }
 
 const SYSTEM_LOGIN_TIMEOUT_MS = 10 * 60_000;
@@ -190,6 +192,7 @@ async function inspectStoredState(
           solAvailable: config.solAvailable,
           extraHighAvailable: config.extraHighAvailable === true,
           proAvailable: config.proAvailable,
+          modelCapabilities: config.modelCapabilities,
         }
         : await detectChatGptAccountCapabilities(verifierPage);
       return { ...capabilities, url: verifierPage.url() };
@@ -209,6 +212,7 @@ export async function inspectBrowserLoginCapabilities(config: AppConfig): Promis
     solAvailable: inspected.solAvailable,
     extraHighAvailable: inspected.extraHighAvailable === true,
     proAvailable: inspected.proAvailable,
+    modelCapabilities: inspected.modelCapabilities,
   };
 }
 
@@ -222,6 +226,7 @@ export function storedBrowserLoginCapabilities(
       ...(typeof marker.solAvailable === "boolean" ? { solAvailable: marker.solAvailable } : {}),
       ...(typeof marker.extraHighAvailable === "boolean" ? { extraHighAvailable: marker.extraHighAvailable } : {}),
       ...(typeof marker.proAvailable === "boolean" ? { proAvailable: marker.proAvailable } : {}),
+      modelCapabilities: parseChatGptWebModelCapabilities(marker.modelCapabilities),
     };
   } catch {
     return {};
@@ -450,6 +455,7 @@ export async function loginToChatGpt(
         solAvailable: inspected.solAvailable,
         extraHighAvailable: inspected.extraHighAvailable === true,
         proAvailable: inspected.proAvailable,
+        modelCapabilities: inspected.modelCapabilities,
       };
     } finally {
       await context.close();

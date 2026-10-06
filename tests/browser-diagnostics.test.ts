@@ -3,7 +3,35 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
+import { chromium } from "playwright-core";
 import { ChatGptBrowserDiagnostics, readChatGptUpstreamFailureUiState, sanitizeChatGptBrowserDiagnosticState } from "../src/adapters/chatgpt-web/browser-diagnostics";
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("composer diagnostics recognize native textarea editability without recording its content", async () => {
+  const root = mkdtempSync(join(tmpdir(), "textarea-diagnostics-"));
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    const cases = [
+      ['<textarea id="prompt-textarea">private-draft</textarea>', true],
+      ['<textarea id="prompt-textarea" readonly>private-draft</textarea>', false],
+      ['<textarea id="prompt-textarea" disabled>private-draft</textarea>', false],
+      ['<fieldset disabled><textarea id="prompt-textarea">private-draft</textarea></fieldset>', false],
+      ['<div id="prompt-textarea" contenteditable="true">private-draft</div>', true],
+      ['<div id="prompt-textarea" contenteditable="false">private-draft</div>', false],
+      ['<textarea id="prompt-textarea" style="display:none">private-draft</textarea>', false],
+      ['<textarea id="prompt-textarea"></textarea><textarea data-testid="prompt-textarea"></textarea>', false],
+    ] as const;
+    for (const [index, [html, editable]] of cases.entries()) {
+      await page.setContent(`<form>${html}</form>`);
+      const trace = `textarea_case_${index}`;
+      await new ChatGptBrowserDiagnostics(trace, root, true).capture(page, "connector-verification-started");
+      const directory = readdirSync(root).find(name => name.startsWith(trace))!;
+      const content = readFileSync(join(root, directory, "01-connector-verification-started.json"), "utf8");
+      expect(JSON.parse(content).state.composerEditable).toBe(editable);
+      expect(content).not.toContain("private-draft");
+    }
+  } finally { await browser.close(); rmSync(root, { recursive: true, force: true }); }
+}, 30_000);
 
 test("upstream failure UI summary records only visible control counts", async () => {
   const selectors: string[] = [];

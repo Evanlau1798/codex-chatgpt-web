@@ -27,11 +27,12 @@ const loadI18nModule = () => {
   modules["./i18n-ja"] = load("i18n-ja.ts");
   modules["./i18n-ko"] = load("i18n-ko.ts");
   modules["./i18n-zh-tw"] = load("i18n-zh-tw.ts");
+  modules["./i18n-fr"] = load("i18n-fr.ts");
   return load("i18n.ts");
 };
 
 test("every declared launcher language is wired across state, IPC, onboarding, and Settings", () => {
-  assert.deepEqual(Object.keys(languages), ["en", "zh-CN", "zh-TW", "ja", "ko"]);
+  assert.deepEqual(Object.keys(languages), ["en", "zh-CN", "zh-TW", "ja", "ko", "fr"]);
   assert.match(languageTypes, /import languages from "\.\.\/electron\/languages\.json";/);
   assert.match(languageTypes, /export type Language = keyof typeof languages;/);
   assert.match(stateSource, /Object\.hasOwn\(languages, state\.language\)/);
@@ -39,6 +40,7 @@ test("every declared launcher language is wired across state, IPC, onboarding, a
   assert.match(i18nSource, /import \{ ja \} from "\.\/i18n-ja"/);
   assert.match(i18nSource, /import \{ ko \} from "\.\/i18n-ko"/);
   assert.match(i18nSource, /import \{ zhTW \} from "\.\/i18n-zh-tw"/);
+  assert.match(i18nSource, /import \{ fr \} from "\.\/i18n-fr"/);
   assert.match(read("launcher", "src", "i18n-ja.ts"), /export const ja: Record<keyof Copy, string> = \{/);
   assert.match(i18nSource, /if \(language === "ja"\) return ja as Copy;/);
   assert.match(i18nSource, /if \(language === "zh-TW"\) return \{ \.\.\.en, \.\.\.zhTW \} as Copy;/);
