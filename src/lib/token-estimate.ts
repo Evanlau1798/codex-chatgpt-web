@@ -25,10 +25,6 @@ export function estimateTokens(text: string, modelId?: string): number {
   if (!text) return 0;
 
   const encoding = chatGptTokenizer();
-  // Repetitive tool output can repeat hundreds of identical chunks. Reuse only
-  // exact chunk counts within this invocation: no approximation, global prompt
-  // retention, or cross-boundary merge changes. Cap retained text at ~1 MiB.
-  const chunkCounts = new Map<string, number>();
   let count = 0;
   for (let start = 0; start < text.length;) {
     let end = Math.min(start + TOKENIZER_CHUNK_CHARS, text.length);
@@ -39,13 +35,7 @@ export function estimateTokens(text: string, modelId?: string): number {
         end -= 1;
       }
     }
-    const chunk = text.slice(start, end);
-    let chunkCount = chunkCounts.get(chunk);
-    if (chunkCount === undefined) {
-      chunkCount = encoding.encode_ordinary(chunk).length;
-      if (chunkCounts.size < 256) chunkCounts.set(chunk, chunkCount);
-    }
-    count += chunkCount;
+    count += encoding.encode_ordinary(text.slice(start, end)).length;
     start = end;
   }
   return count;

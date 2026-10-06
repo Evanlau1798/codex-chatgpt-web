@@ -1,8 +1,4 @@
 (function () {
-  var diagnostic = WScript.Arguments.length === 2 && WScript.Arguments.Item(1) === "--diagnostic";
-  function stage(name) {
-    if (diagnostic) WScript.StdErr.WriteLine("[interrupt-hook-stage] " + name);
-  }
   function decodeHex(value) {
     if (!/^(?:[0-9a-f]{4})+$/i.test(value)) throw new Error("invalid path");
     var result = "";
@@ -110,10 +106,8 @@
   }
 
   try {
-    if (WScript.Arguments.length !== 1 && !diagnostic) throw new Error("invalid arguments");
-    stage("stdin_begin");
+    if (WScript.Arguments.length !== 1) throw new Error("invalid arguments");
     var raw = WScript.StdIn.ReadLine();
-    stage("stdin_complete");
     if (unescape(encodeURIComponent(raw)).length > 32768) throw new Error("payload too large");
     var payload = parseJson(raw);
     if (typeof payload.session_id !== "string" || typeof payload.turn_id !== "string") {
@@ -127,9 +121,7 @@
       throw new Error("invalid payload");
     }
 
-    stage("config_begin");
     var config = parseJson(readUtf8(decodeHex(WScript.Arguments.Item(0))).replace(/^\uFEFF/, ""));
-    stage("config_complete");
     var port = Number(config.port);
     var token = String(config.controlToken || "");
     if (config.host !== "127.0.0.1" || !nonnegativeInteger(port) || port < 1 || port > 65535
@@ -137,7 +129,6 @@
       throw new Error("invalid endpoint");
     }
 
-    stage("http_begin");
     var request = new ActiveXObject("MSXML2.ServerXMLHTTP.6.0");
     request.setProxy(1);
     request.setTimeouts(250, 250, 250, 250);
@@ -145,7 +136,6 @@
     request.setRequestHeader("authorization", "Bearer " + token);
     request.setRequestHeader("content-type", "application/json");
     request.send('{"threadId":"' + threadId + '","turnId":"' + turnId + '"}');
-    stage("http_returned");
     if (request.status < 200 || request.status >= 300) throw new Error("request failed");
     var result = parseJson(request.responseText);
     if (result.status !== "ok"
@@ -153,7 +143,6 @@
         || !nonnegativeInteger(result.cancelled_browser_turns)) {
       throw new Error("invalid acknowledgement");
     }
-    stage("acknowledged");
   } catch (error) {
     WScript.StdErr.WriteLine("codex-chatgpt-web: Interrupt hook failed");
     WScript.Quit(1);
