@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const { resolve } = require("node:path");
+const { createLogger } = require("../electron/logging.cjs");
 const {
   browserViewVisible,
   constrainBrowserBounds,
@@ -324,6 +325,63 @@ test("managed challenge is reported without reloading, cancelling or trusting a 
   assert.equal(messages[0][1].traceId, "owned");
   assert.doesNotMatch(JSON.stringify(messages), /PRIVATE_QUERY|https:\/\//);
 });
+
+for (const scenario of ["active-turn", "manual-operation", "persisted", "recovered", "recovery-failed"]) {
+  test(`challenge ${scenario} diagnostics exclude private URLs from disk, Activity and published records`, async () => {
+    const dir = fs.mkdtempSync(resolve(require("node:os").tmpdir(), "challenge-privacy-"));
+    const filePath = resolve(dir, "launcher.log");
+    const published = [];
+    const loads = [];
+    const states = [];
+    const logger = createLogger({ filePath, publish: record => published.push(record) });
+    const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+      turnTabs: new Map(scenario === "active-turn" ? [["owned", { status: "running", traceId: "owned" }]] : []),
+      manualOperation: scenario === "manual-operation" ? {} : null,
+      cloudflareChallengeRecovery: null,
+      cloudflareChallengeRecoveryArmed: scenario !== "persisted",
+      cloudflareChallengeRecoveryDelayMs: 0,
+      cloudflareChallengeRecoverySettleMs: 0,
+      logger,
+      view: { webContents: {
+        id: 42, isDestroyed: () => false,
+        getURL: () => "https://chatgpt.com/c/PRIVATE_PATH?private=PRIVATE_QUERY",
+        executeJavaScript: async () => ({ draft: false, running: false }),
+        loadURL: async url => {
+          loads.push(url);
+          if (scenario === "recovery-failed") throw Object.assign(new Error(`ERR_FAILED loading '${url}'`), { code: "ERR_FAILED" });
+          fixture.cloudflareChallengeRecoveryArmed = true;
+        },
+      } },
+      setState: patch => states.push(patch), probeAuthentication: async () => {},
+    });
+    try {
+      assert.equal(fixture.handleChatGptBackendResponse({
+        statusCode: 403, webContentsId: 42,
+        url: "https://chatgpt.com/backend-api/subscriptions?private=PRIVATE_QUERY",
+        responseHeaders: { "cf-mitigated": ["challenge"] },
+      }), true);
+      await fixture.cloudflareChallengeRecovery;
+      const expected = scenario === "recovered" ? "browser.cloudflare_challenge_recovered"
+        : scenario === "recovery-failed" ? "browser.cloudflare_challenge_recovery_failed"
+        : scenario === "persisted" ? "browser.cloudflare_challenge_persisted" : "browser.cloudflare_challenge_not_reloaded";
+      assert.equal(published.at(-1).event, expected);
+      assert.equal(loads.length, scenario === "recovered" || scenario === "recovery-failed" ? 1 : 0);
+      if (scenario === "recovery-failed") {
+        assert.match(states.at(-1).message, /ERR_FAILED.*PRIVATE_QUERY/);
+      }
+      for (const records of [fs.readFileSync(filePath, "utf8"), JSON.stringify(logger.recent()), JSON.stringify(published)]) {
+        assert.doesNotMatch(records, /PRIVATE_QUERY|PRIVATE_PATH|https:\/\//);
+      }
+      const expectedDetail = scenario === "recovered" ? {}
+        : scenario === "recovery-failed" ? { errorType: "Error", errorCode: "ERR_FAILED" }
+        : scenario === "persisted" ? { statusCode: 403 }
+        : { reason: scenario === "active-turn" ? "turn-active" : "manual-operation-active", statusCode: 403 };
+      assert.deepEqual(published.at(-1).detail, expectedDetail);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
 
 test("security refresh preserves manually running generation, draft and unverifiable renderer", async () => {
   for (const observed of [{ draft: true, running: false }, { draft: false, running: true }, null]) {

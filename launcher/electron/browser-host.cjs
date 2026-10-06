@@ -1160,12 +1160,12 @@ class BrowserHost {
     if (this.activeTraceId || this.manualOperation) {
       this.logger.warn("browser.cloudflare_challenge_not_reloaded", {
         reason: this.activeTraceId ? "turn-active" : "manual-operation-active",
-        url: details.url,
+        statusCode: 403,
       });
       return true;
     }
     if (!this.cloudflareChallengeRecoveryArmed) {
-      this.logger.warn("browser.cloudflare_challenge_persisted", { url: details.url });
+      this.logger.warn("browser.cloudflare_challenge_persisted", { statusCode: 403 });
       return true;
     }
     this.cloudflareChallengeRecoveryArmed = false;
@@ -1176,7 +1176,7 @@ class BrowserHost {
     const tracked = recovery
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
-        this.logger.error("browser.cloudflare_challenge_recovery_failed", { message });
+        this.logger.error("browser.cloudflare_challenge_recovery_failed", navigationErrorForLog(error));
         this.setState({ status: "error", message, loading: false });
       })
       .finally(() => {
@@ -1229,7 +1229,7 @@ class BrowserHost {
       throw new Error("ChatGPT security check is still blocking backend requests. Reload ChatGPT and retry.");
     }
     await this.probeAuthentication();
-    this.logger.info("browser.cloudflare_challenge_recovered", { url });
+    this.logger.info("browser.cloudflare_challenge_recovered");
   }
 
   snapshot() {
