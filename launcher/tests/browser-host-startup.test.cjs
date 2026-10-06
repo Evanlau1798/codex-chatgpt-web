@@ -35,6 +35,30 @@ test("one prepared page transfers ownership without allocating or replaying a co
   assert.equal(warm.bootstrapReady, true);
 });
 
+test("prepared transfers bound old-owner receipts and retain the exact previous helper", async () => {
+  const warm = ready(), f = fixture([warm]);
+  f.host.closedTurnOwners = new Map(Array.from({ length: 256 }, (_, i) => [`old-${i}`, { helperPid: process.pid, remainingAcks: 1 }]));
+  await f.host.beginTurn("trace_new", false, process.pid, true, undefined, "Codex Native2",
+    false, undefined, { surfaceId: warm.surfaceId });
+  assert.deepEqual(f.host.closedTurnOwners.get("startup_old"), { helperPid: process.pid, remainingAcks: 2 });
+  assert.equal(f.host.closedTurnOwners.size, 256);
+  assert.equal(f.host.closedTurnOwners.has("old-0"), false);
+});
+
+test("prepared transfer keeps one old-owner retry after its original end response is lost", async () => {
+  const warm = ready(), f = fixture([warm]);
+  await f.host.beginTurn("trace_new", false, process.pid, true, undefined, "Codex Native2",
+    false, undefined, { surfaceId: warm.surfaceId });
+  await assert.rejects(f.host.endTurn("startup_old", process.pid + 1, "aborted", false), /ownership mismatch/);
+  assert.deepEqual(await f.host.endTurn("startup_old", process.pid, "aborted", false), { cancelledByUser: false });
+  await assert.rejects(f.host.endTurn("startup_old", process.pid + 1, "aborted", false), /ownership mismatch/);
+  assert.deepEqual(await f.host.endTurn("startup_old", process.pid, "aborted", false), { cancelledByUser: false });
+  await assert.rejects(f.host.endTurn("startup_old", process.pid, "aborted", false), /ownership mismatch/);
+  assert.equal(f.host.turnTabs.get(warm.id), warm);
+  assert.equal(warm.traceId, "trace_new");
+  assert.equal(warm.status, "running");
+});
+
 test("speculative startup does not evict a retained page at the configured capacity", async () => {
   const retained = ready({ startupPreparation: false, startupReady: false, conversationKey: "a".repeat(64) });
   const f = fixture([retained], 1);
