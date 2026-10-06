@@ -8,11 +8,15 @@ import { assertChatGptModelReceiptDiagnostic, type ChatGptModelReceiptDiagnostic
 export function recordChatGptMetadataDiagnostic(
   diagnostic: ChatGptModelReceiptDiagnostic,
   directory = join(getConfigDir(), "diagnostics", "model-receipts"),
+  enabled = false,
 ): ChatGptModelReceiptDiagnostic {
   assertChatGptModelReceiptDiagnostic(diagnostic);
   if (!diagnostic.parser?.traces) return diagnostic;
   const { traces: _traces, ...parser } = diagnostic.parser;
   const brief: ChatGptModelReceiptDiagnostic = { ...diagnostic, parser };
+  // Ordinary receipts need counters/identity, not replay artifacts. Drop traces
+  // before logging and perform no filesystem operation without explicit consent.
+  if (!enabled) return brief;
   // Do not pretend POSIX mode bits establish a private Windows ACL.
   if (process.platform === "win32") return { ...brief, recording: { status: "unavailable", reason: "unsupported_platform" } };
   const encoded = `${JSON.stringify(diagnostic)}\n`;

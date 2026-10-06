@@ -68,7 +68,9 @@ function logChatGptModelReceipt(receipt: ChatGptModelReceipt): void {
 }
 
 function logChatGptModelReceiptDiagnostic(diagnostic: ChatGptModelReceiptDiagnostic): void {
-  console.info(`[chatgpt-web] model_receipt_diagnostic ${JSON.stringify(recordChatGptMetadataDiagnostic(diagnostic))}`);
+  console.info(`[chatgpt-web] model_receipt_diagnostic ${JSON.stringify(recordChatGptMetadataDiagnostic(
+    diagnostic, undefined, process.env.CODEX_CHATGPT_WEB_CAPTURE_MODEL_TRACES === "1",
+  ))}`);
 }
 
 export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOptions) {
