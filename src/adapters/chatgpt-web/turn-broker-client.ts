@@ -67,10 +67,13 @@ export async function callTurnBroker<T>(
       // Do not leave a referenced socket alive after removing its abort/timer.
       // Graceful shutdown is deferred out of the data callback; successful
       // Windows/Bun pipes must not race a force-destroy against their end path.
-      socket.unref();
-      setImmediate(() => {
+      if (!(process.platform === "win32" && process.versions.bun)) socket.unref();
+      const retire = () => {
         if (!socket.destroyed && !socket.writableEnded && !socket.readableEnded) socket.end();
-      });
+      };
+      // Grace for completed Bun/Windows pipe callbacks, not a running-work deadline.
+      if (process.platform === "win32" && process.versions.bun) setTimeout(retire, 50);
+      else setImmediate(retire);
       if (response.error) rejectCall(new Error(response.error));
       else resolveCall(response.result as T);
     };
@@ -90,7 +93,7 @@ export async function callTurnBroker<T>(
     });
     socket.once("end", () => {
       if (response) responseAccepted = true;
-      socket.end();
+      if (!socket.destroyed && !socket.writableEnded) socket.end();
       setImmediate(finishResponse);
     });
     socket.once("close", () => {

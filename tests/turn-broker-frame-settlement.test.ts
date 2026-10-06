@@ -12,10 +12,11 @@ const createCall = new Function("createConnection", "opaqueId", "MAX_BROKER_LINE
   new Bun.Transpiler({ loader: "ts" }).transformSync(body) + "\nreturn callTurnBroker;");
 
 for (const unbounded of [false, true]) test(`broker complete frame settlement (unbounded: ${unbounded})`, async () => {
+  const retired = Promise.withResolvers<void>();
   const socket = Object.assign(new EventEmitter(), {
     ended: false, destroyed: false, unreferenced: false,
     setEncoding() {}, write() {},
-    end() { this.ended = true; },
+    end() { this.ended = true; retired.resolve(); },
     destroy() { this.destroyed = true; },
     unref() { this.unreferenced = true; },
   });
@@ -34,9 +35,9 @@ for (const unbounded of [false, true]) test(`broker complete frame settlement (u
     socket.emit("error", new Error("late socket error"));
     abort.abort();
     expect(await call).toEqual({ ready: true });
-    expect(socket.unreferenced).toBe(true);
+    expect(socket.unreferenced).toBe(!(process.platform === "win32" && process.versions.bun));
     expect(socket.destroyed).toBe(false);
-    await setImmediate();
+    await retired.promise;
     expect(socket.ended).toBe(true);
     expect(socket.destroyed).toBe(false);
   } finally {

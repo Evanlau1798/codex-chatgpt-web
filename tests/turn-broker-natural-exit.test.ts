@@ -35,14 +35,40 @@ for (const runtime of ["node", "bun"] as const) for (const timeout of [5000, nul
     });
     server.listen(endpoint); await once(server, "listening");
     const child = Bun.spawn([runtime === "bun" ? process.execPath : "node", childScript], { stdout: "pipe", stderr: "pipe" });
+    const replyObserved = Promise.withResolvers<void>();
+    let output = "";
+    const outputDrain = (async () => {
+      const reader = child.stdout.getReader();
+      const decoder = new TextDecoder();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          output += decoder.decode(value, { stream: true });
+          if (output.includes("\n")) replyObserved.resolve();
+        }
+        output += decoder.decode();
+      } finally { reader.releaseLock(); }
+    })();
+    const stderrDrain = new Response(child.stderr).text();
     let guard: ReturnType<typeof setTimeout> | undefined;
     let retirementGuard: ReturnType<typeof setTimeout> | undefined;
     try {
+      // Separate cold Windows process startup from post-reply retirement.
+      // The leak oracle still permits only 2s after the actual returned value.
+      await Promise.race([replyObserved.promise, child.exited.then(async code => {
+        await outputDrain;
+        if (!output.includes("\n")) throw new Error(`Child exited before reply (${code}): ${await stderrDrain}`);
+      }), new Promise<never>((_, reject) => {
+        guard = setTimeout(() => reject(new Error("Child did not produce its RPC reply during startup")), 10_000);
+      })]);
+      clearTimeout(guard);
       const code = await Promise.race([child.exited, new Promise<never>((_, reject) => {
         guard = setTimeout(() => reject(new Error("Returned RPC kept its child process alive")), 2000);
       })]);
       expect(code).toBe(0);
-      expect((await new Response(child.stdout).text()).trim()).toBe('{"acknowledged":true}');
+      await outputDrain;
+      expect(output.trim()).toBe('{"acknowledged":true}');
       await Promise.race([peerClosed.promise, new Promise<never>((_, reject) => {
         retirementGuard = setTimeout(() => reject(new Error("Completed RPC left its peer socket alive")), 1000);
       })]);
@@ -51,9 +77,11 @@ for (const runtime of ["node", "bun"] as const) for (const timeout of [5000, nul
       clearTimeout(guard); clearTimeout(retirementGuard);
       if (child.exitCode === null && child.signalCode === null) child.kill();
       await child.exited;
+      await outputDrain;
+      await stderrDrain;
       for (const peer of peers) peer.destroy();
       await new Promise<void>(resolve => server.close(() => resolve()));
       rmSync(root, { recursive: true, force: true });
     }
-  }, 10_000);
+  }, 20_000);
 }
