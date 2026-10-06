@@ -523,6 +523,7 @@ export class ChatGptModelReceiptCollector {
   private doneMarkers = 0;
   private assistantMessageFrames = 0;
   private replayRole: string | undefined;
+  constructor(private readonly captureReplay = true) {}
 
   private replayFragment(value: unknown): { fragment: ChatGptMetadataReplayValue; complete: boolean } {
     let nodes = 0;
@@ -723,6 +724,7 @@ export class ChatGptModelReceiptCollector {
   }
 
   private recordFrame(value: unknown): void {
+    if (!this.captureReplay) return;
     const record = this.traceFrame(value);
     const replay = this.replayFragment(value);
     record.fragment = replay.fragment;
@@ -738,7 +740,7 @@ export class ChatGptModelReceiptCollector {
       droppedFrames: this.traceDropped,
       doneMarkers: this.doneMarkers,
       assistantMessageFrames: this.assistantMessageFrames,
-      replayComplete: this.traceDropped === 0 && [...this.traceHead, ...this.traceTail].every(frame => frame.fragmentComplete === true),
+      replayComplete: this.captureReplay && this.traceDropped === 0 && [...this.traceHead, ...this.traceTail].every(frame => frame.fragmentComplete === true),
     };
   }
 
@@ -1280,13 +1282,13 @@ export class ChatGptModelReceiptObserver {
     };
     const cdp = source(active.captures.filter(capture => capture.source === "cdp"));
     const page = source(active.captures.filter(capture => capture.source === "page"));
-    const traces = active.captures.map(capture => ({
+    const traces = this.detailedCapture ? active.captures.map(capture => ({
       source: capture.source,
       transport: capture.source === "cdp" ? "cdp_stream" as const : "page_tee" as const,
       terminal: capture.traceTerminal ?? "pending" as const,
       ...(capture.failureCode ? { failureCode: capture.failureCode } : {}),
       ...capture.collector.diagnosticTrace(),
-    }));
+    })) : [];
     return {
       ...(cdp ? { cdp } : {}),
       ...(page ? { page } : {}),
@@ -1423,7 +1425,7 @@ export class ChatGptModelReceiptObserver {
         send: active,
         source: "page",
         ...(requestBodyHash !== undefined ? { requestBodyHash } : {}),
-        collector: new ChatGptModelReceiptCollector(),
+        collector: new ChatGptModelReceiptCollector(this.detailedCapture),
         contentType,
         responseSeen: true,
         terminal: false,
@@ -1522,7 +1524,7 @@ export class ChatGptModelReceiptObserver {
       ...(context.conversationId ?? active.expectedConversationId
         ? { expectedConversationId: context.conversationId ?? active.expectedConversationId }
         : {}),
-      collector: new ChatGptModelReceiptCollector(),
+      collector: new ChatGptModelReceiptCollector(this.detailedCapture),
       responseSeen: false,
       terminal: false,
       failed: false,
@@ -2092,6 +2094,7 @@ export class ChatGptModelReceiptObserver {
   private readonly onReceipt?: ChatGptModelReceiptCallback,
   private readonly conversationUrl = CHATGPT_CONVERSATION_URL,
   private readonly onDiagnostic?: ChatGptModelReceiptDiagnosticCallback,
+  private readonly detailedCapture = false,
 ) {}
 
   private async attachTransport(page: Page, candidate: Page & {

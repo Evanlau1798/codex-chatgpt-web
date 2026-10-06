@@ -792,4 +792,12 @@ test("every activated Send gets one safe diagnostic outcome when CDP or metadata
   await missing.flushCurrent();
   await missing.dispose();
   expect(missingDiagnostics).toMatchObject([{ outcome: "unavailable", reason: "missing_resolved_model" }]);
+  expect((missingDiagnostics[0] as any).parser?.traces).toBeUndefined();
+});
+
+test("minimal collector does not retain replay fragments while parsing model metadata", () => {
+  const collector = new ChatGptModelReceiptCollector(false);
+  collector.consumeJson({ message: { id: "owned", author: { role: "assistant" }, metadata: { resolved_model_slug: "gpt-6-pro" } } });
+  expect(collector.finish()).toMatchObject({ status: "resolved", metadata: { resolvedModelSlug: "gpt-6-pro" } });
+  expect(collector.diagnosticTrace()).toMatchObject({ frames: [], replayComplete: false });
 });

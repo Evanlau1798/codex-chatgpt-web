@@ -123,6 +123,7 @@ test.skipIf(!existsSync(ELECTRON_PATH))("installed Electron CDP observer capture
     receipt => receipts.push(receipt as unknown as Record<string, unknown>),
     `${origin}/backend-api/f/conversation`,
     diagnostic => diagnostics.push(diagnostic as unknown as Record<string, unknown>),
+    true, // This isolated fixture explicitly exercises detailed capture.
   );
   let rebound: ChatGptModelReceiptObserver | undefined;
   let stalled: ChatGptModelReceiptObserver | undefined;

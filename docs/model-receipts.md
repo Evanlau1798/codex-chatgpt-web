@@ -40,7 +40,8 @@ attachments, tool arguments, credentials, URLs, and unknown key names are never 
 This does not change production parser authority or infer a served model from structural traces.
 
 Ordinary turns run the ownership-correlated receipt observer and log bounded
-summary counters. They do not write detailed trace/replay artifacts by default.
+summary counters. They neither retain replay fragments nor transport detailed
+traces or write detailed trace/replay artifacts by default.
 Only an explicit daemon-process `CODEX_CHATGPT_WEB_CAPTURE_MODEL_TRACES=1` enables
 artifact recording; unset, `0`, or any other value keeps recording disabled.
 This does not alter model routing, tool permissions or inference lifetimes.

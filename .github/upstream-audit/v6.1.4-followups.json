@@ -1,8 +1,0 @@
-[
-  {
-    "path": "tests/browser-worker-contract.test.ts",
-    "baselineSha256": "0111862276e04f85a8d4c7f2b054f6702a434869b2eec089b587a77c00ea30f4",
-    "currentSha256": "c7b9b2865b33869e9d9ee65516a8ce09ff739fc7ccc97ba8dbc1e46799e3ce9d",
-    "reason": "PR 74: owner-verified receipt observer regression coverage"
-  }
-]

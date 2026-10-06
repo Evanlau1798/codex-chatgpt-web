@@ -53,6 +53,9 @@ test.skipIf(!existsSync(CHROME_PATH))("real Chromium CDP transport captures head
       "cache-control": "no-cache",
       connection: "keep-alive",
     });
+    // Publish headers independently of the delayed body so real CDP can
+    // enable streaming while the response is in flight, without telemetry gates.
+    response.flushHeaders();
     const frame = `data: ${JSON.stringify({
       conversation_id: FIXTURE.conversationId,
       message: {
@@ -151,6 +154,7 @@ test.skipIf(!existsSync(CHROME_PATH))("real Chromium CDP transport captures head
     await observer.dispose();
     expect(result.status).toBe(200);
     expect(result.body).toContain("resolved_model_slug");
+    if (!streamCommandResolved) console.info("[offline-cdp-stream-failure]", JSON.stringify({ version: browser.browser()?.version(), phases, diagnostics }));
     expect(streamCommandResolved).toBeTrue();
     expect(streamCommands).toBe(1);
     for (const event of FIXTURE.requiredEvents) expect(events.has(event)).toBeTrue();
