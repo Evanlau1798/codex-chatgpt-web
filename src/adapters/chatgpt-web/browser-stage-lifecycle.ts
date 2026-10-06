@@ -1,5 +1,6 @@
 import type { Browser, Page } from "playwright-core";
 import { withAbort } from "./runtime-lifecycle";
+import { closeLauncherBrowserConnection } from "../../launcher-browser-connection";
 
 export class ChatGptSuspensionClock {
   private suspendedTotalMs = 0;
@@ -44,7 +45,7 @@ export async function connectAfterClosingBrowserConnection<T>(
   previousConnection: Pick<Browser, "close"> | undefined,
   connect: () => Promise<T>,
 ): Promise<T> {
-  if (previousConnection) await previousConnection.close();
+  if (previousConnection) await closeLauncherBrowserConnection(previousConnection);
   return connect();
 }
 

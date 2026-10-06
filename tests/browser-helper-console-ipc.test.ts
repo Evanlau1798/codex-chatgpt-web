@@ -37,8 +37,5 @@ test("real child helper reserves stdout for protocol when a worker logs and debu
       prepare: async () => ({ text: "private transport fixture", images: [], release() {} }), onTextDelta() {},
     } as BrowserTurn);
     expect(answer).toBe("PROTOCOL_OK");
-  } finally {
-    await client.close();
-    rmSync(root, { recursive: true, force: true });
-  }
+  } finally { await client.close(); rmSync(root, { recursive: true, force: true }); }
 });
