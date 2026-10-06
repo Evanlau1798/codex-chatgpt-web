@@ -1134,7 +1134,18 @@ class BrowserHost {
 
   handleChatGptBackendResponse(details) {
     const contents = this.view?.webContents;
-    if (!contents || contents.isDestroyed() || details?.webContentsId !== contents.id) return false;
+    if (!contents || contents.isDestroyed()) return false;
+    const managed = [...this.turnTabs.values()].find(tab => tab.view?.webContents?.id === details?.webContentsId
+      && !tab.view.webContents.isDestroyed());
+    if (details?.webContentsId !== contents.id) {
+      if (!managed || !isChatGptCloudflareChallengeResponse(details)) return false;
+      managed.message = "ChatGPT blocked an owned request with a security challenge. Complete verification manually in the private browser; this turn will not be reloaded or resubmitted.";
+      this.logger.warn("browser.managed_cloudflare_challenge_detected", {
+        traceId: managed.traceId, statusCode: 403, classification: "owned_provider_security_challenge",
+      });
+      this.setState({ status: "error", message: managed.message, loading: false });
+      return true;
+    }
     if (!isChatGptBackendUrl(details.url)) return false;
 
     if (details.statusCode >= 200 && details.statusCode < 400) {
@@ -1158,7 +1169,9 @@ class BrowserHost {
       return true;
     }
     this.cloudflareChallengeRecoveryArmed = false;
-    this.logger.warn("browser.cloudflare_challenge_detected", { url: details.url });
+    this.logger.warn("browser.cloudflare_challenge_detected", {
+      statusCode: 403, classification: "owned_provider_security_challenge",
+    });
     const recovery = this.reloadHomeAfterCloudflareChallenge();
     const tracked = recovery
       .catch((error) => {
@@ -1183,8 +1196,29 @@ class BrowserHost {
     await sleep(this.cloudflareChallengeRecoveryDelayMs);
     if (contents.isDestroyed()) throw new Error("ChatGPT browser closed during security-check recovery");
     const url = contents.getURL();
-    if (!url.startsWith(CHATGPT_ORIGIN)) {
+    let origin;
+    try { origin = new URL(url).origin; } catch {}
+    if (origin !== CHATGPT_ORIGIN) {
       throw new Error("ChatGPT security-check recovery lost its owned browser page");
+    }
+    // Manual browser work is not represented by activeTraceId. Never reload it just
+    // because an auxiliary API request received a security challenge.
+    let timer;
+    let work;
+    try {
+      work = await Promise.race([
+        contents.executeJavaScript(`(() => {
+          const visible = el => !!el && el.getClientRects().length > 0;
+          const draft = [...document.querySelectorAll('[contenteditable="true"]')].some(el => visible(el) && (el.innerText || '').trim());
+          const running = [...document.querySelectorAll('button')].some(el => visible(el) &&
+            (el.getAttribute('data-testid') === 'stop-button' || /^(Stop|Stop generating|Stop streaming|Arrêter|Arrêter la génération|停止|停止生成)$/i.test(el.getAttribute('aria-label') || '')));
+          return { draft, running };
+        })()`, false),
+        new Promise(resolve => { timer = setTimeout(() => resolve(null), 1000); }),
+      ]);
+    } finally { clearTimeout(timer); }
+    if (!work || typeof work.draft !== "boolean" || typeof work.running !== "boolean" || work.draft || work.running) {
+      throw new Error("Security refresh refused: the private browser is busy or idle state is unverified. Complete verification manually; no navigation occurred.");
     }
 
     // Only responses from this new document may prove that the challenge cleared.

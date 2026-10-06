@@ -269,6 +269,7 @@ test("the idle home browser performs one bounded reload for a Cloudflare challen
         getURL: () => "https://chatgpt.com/?temporary-chat=true",
         isDestroyed: () => false,
         loadURL: async (url) => calls.push(["loadURL", url]),
+        executeJavaScript: async () => ({ draft: false, running: false }),
       },
     },
     logger: {
@@ -281,7 +282,7 @@ test("the idle home browser performs one bounded reload for a Cloudflare challen
   });
   const challenge = {
     statusCode: 403,
-    url: "https://chatgpt.com/backend-api/subscriptions",
+    url: "https://chatgpt.com/backend-api/subscriptions?private=PRIVATE_QUERY",
     webContentsId: 42,
     responseHeaders: { "cf-mitigated": ["challenge"] },
   };
@@ -294,6 +295,7 @@ test("the idle home browser performs one bounded reload for a Cloudflare challen
     ["loadURL", "https://chatgpt.com/?temporary-chat=true"],
   ]);
   assert.equal(fixture.cloudflareChallengeRecoveryArmed, false);
+  assert.doesNotMatch(JSON.stringify(calls.filter(([name]) => name === "warn")), /PRIVATE_QUERY|https:\/\//);
 
   BrowserHost.prototype.handleChatGptBackendResponse.call(fixture, {
     statusCode: 200,
@@ -302,6 +304,54 @@ test("the idle home browser performs one bounded reload for a Cloudflare challen
     responseHeaders: { "content-type": ["application/json"] },
   });
   assert.equal(fixture.cloudflareChallengeRecoveryArmed, true);
+});
+
+test("managed challenge is reported without reloading, cancelling or trusting a foreign view", () => {
+  const messages = [];
+  const tab = { traceId: "owned", status: "running", view: { webContents: { id: 43, isDestroyed: () => false } } };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    turnTabs: new Map([["owned", tab]]),
+    view: { webContents: { id: 42, isDestroyed: () => false } },
+    logger: { warn: (...args) => messages.push(args) },
+    setState: patch => messages.push(patch),
+    reloadHomeAfterCloudflareChallenge: () => { throw new Error("must not reload"); },
+  });
+  const details = { statusCode: 403, webContentsId: 43, url: "https://chatgpt.com/backend-api/f/conversation?private=PRIVATE_QUERY", responseHeaders: { "cf-mitigated": ["challenge"] } };
+  assert.equal(fixture.handleChatGptBackendResponse({ ...details, webContentsId: 999 }), false);
+  assert.equal(fixture.handleChatGptBackendResponse(details), true);
+  assert.equal(tab.status, "running");
+  assert.match(tab.message, /manually/);
+  assert.equal(messages[0][1].traceId, "owned");
+  assert.doesNotMatch(JSON.stringify(messages), /PRIVATE_QUERY|https:\/\//);
+});
+
+test("security refresh preserves manually running generation, draft and unverifiable renderer", async () => {
+  for (const observed of [{ draft: true, running: false }, { draft: false, running: true }, null]) {
+    const calls = [];
+    const fixture = {
+      cloudflareChallengeRecoveryDelayMs: 0,
+      view: { webContents: { isDestroyed: () => false, getURL: () => "https://chatgpt.com/?temporary-chat=true",
+        executeJavaScript: async () => observed, loadURL: async () => calls.push("reload") } },
+      setState() {},
+    };
+    await assert.rejects(BrowserHost.prototype.reloadHomeAfterCloudflareChallenge.call(fixture), /refresh refused/);
+    assert.deepEqual(calls, []);
+  }
+});
+
+test("security refresh rejects lookalike, foreign and malformed origins without inspection or navigation", async () => {
+  for (const url of ["https://chatgpt.com.attacker.test/", "https://chatgpt.com@attacker.test/", "http://chatgpt.com/", "not a URL"]) {
+    const calls = [];
+    const fixture = {
+      cloudflareChallengeRecoveryDelayMs: 0,
+      view: { webContents: { isDestroyed: () => false, getURL: () => url,
+        executeJavaScript: async () => { calls.push("inspect"); return { draft: false, running: false }; },
+        loadURL: async () => calls.push("reload") } },
+      setState() {},
+    };
+    await assert.rejects(BrowserHost.prototype.reloadHomeAfterCloudflareChallenge.call(fixture), /lost its owned browser page/);
+    assert.deepEqual(calls, []);
+  }
 });
 
 function createContents() {
