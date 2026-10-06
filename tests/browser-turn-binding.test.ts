@@ -3,15 +3,14 @@ import { chromium, type Locator, type Page } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { readFileSync } from "node:fs";
 
-test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("activity tone and collapsed content invalidate the response cache", async () => {
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("activity tone and collapsed content update the response snapshot", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {
     const page = await browser.newPage();
     await page.setContent(readFileSync(new URL("./fixtures/chatgpt-activity-summaries.html", import.meta.url), "utf8"));
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
-    const cache = {};
     const turn = page.locator("#turn");
-    const observe = () => worker.responseDomSnapshot(turn, cache);
+    const observe = () => worker.responseDomSnapshot(turn);
     const first = await observe();
     expect(first.traceBlocks.filter((block: any) => block.kind === "status")).toHaveLength(10);
     expect((await observe()).traceBlocks).toEqual(first.traceBlocks);
