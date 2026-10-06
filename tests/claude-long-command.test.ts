@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { normalizeClaudeLongCommands } from "../src/adapters/chatgpt-web/claude-long-command";
+import { normalizeClaudeToolRequests } from "../src/adapters/chatgpt-web/claude-subagent";
 
 const parsed = (background = true, output = true): any => ({ context: { tools: [
   { name: "Bash", parameters: { properties: background ? { run_in_background: { type: "boolean" } } : {} } },
@@ -79,4 +80,16 @@ test("a generic Read without file_path does not advertise background output supp
   const before = structuredClone(calls);
   normalizeClaudeLongCommands(context, calls);
   expect(calls).toEqual(before);
+});
+
+test("routing enables handoff only for identified Claude metadata", () => {
+  for (const identity of [undefined, "false", false, true]) {
+    const context = parsed();
+    context._rawBody = { client_metadata: { claude_subagent: identity } };
+    const calls: any = [{ wireName: "Bash", arguments: { command: "owned-command" } }];
+    normalizeClaudeToolRequests(context, calls);
+    expect(calls[0].arguments).toEqual(typeof identity === "boolean"
+      ? { command: "owned-command", run_in_background: true }
+      : { command: "owned-command" });
+  }
 });
