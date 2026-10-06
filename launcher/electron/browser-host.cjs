@@ -1253,7 +1253,7 @@ class BrowserHost {
     const tab = [...this.turnTabs.values()].find(candidate => candidate.traceId === traceId);
     if (!tab) {
       const closedOwner = this.closedTurnOwners.get(traceId);
-      if (closedOwner === helperPid) throw new Error(`Browser turn ${traceId} was already released`);
+      if (closedOwner?.helperPid === helperPid) throw new Error(`Browser turn ${traceId} was already released`);
       throw new Error(`Browser turn ownership mismatch: no browser tab owns ${traceId}`);
     }
     if (tab.helperPid !== helperPid) {
@@ -1544,9 +1544,9 @@ class BrowserHost {
     this.manualTurns?.removed(tab, abortRunning ? "cancelled" : "failed");
     this.turnTabs.delete(tab.id);
     this.syncPowerSaveBlocker();
-    if (tab.startupPreparation === true) this.closedTurnOwners.set(tab.traceId, tab.helperPid);
+    if (tab.startupPreparation === true) this.rememberClosedTurnOwner(tab.traceId, tab.helperPid);
     if (abortRunning && tab.status === "running") {
-      this.closedTurnOwners.set(tab.traceId, tab.helperPid);
+      this.rememberClosedTurnOwner(tab.traceId, tab.helperPid);
       tab.status = "aborted";
     }
     if (tab.interactionShield) {
@@ -1571,6 +1571,14 @@ class BrowserHost {
     this.syncViewVisibility();
     this.publishState?.(this.snapshot());
     this.writeDescriptor();
+  }
+
+  rememberClosedTurnOwner(traceId, helperPid, remainingAcks = 2) {
+    this.closedTurnOwners.delete(traceId);
+    this.closedTurnOwners.set(traceId, { helperPid, remainingAcks });
+    while (this.closedTurnOwners.size > MAX_CANCELLED_TURN_TRACES) {
+      this.closedTurnOwners.delete(this.closedTurnOwners.keys().next().value);
+    }
   }
 
   rememberUserCancelledTurn(traceId, helperPid) {
@@ -1907,8 +1915,8 @@ class BrowserHost {
           evidence: "previous helper exited",
         });
       }
+      if (startupPrepared) this.rememberClosedTurnOwner(existing.traceId, existing.helperPid);
       existing.helperPid = helperPid;
-      if (startupPrepared) this.closedTurnOwners.set(existing.traceId, existing.helperPid);
       existing.traceId = traceId;
       if (startupPrepared) {
         existing.startupPreparation = false;
@@ -1969,9 +1977,9 @@ class BrowserHost {
     const tab = [...this.turnTabs.values()].find((candidate) => candidate.traceId === traceId);
     if (!tab) {
       const closedOwner = this.closedTurnOwners.get(traceId);
-      if (closedOwner === helperPid) {
+      if (closedOwner?.helperPid === helperPid) {
         const cancelledByUser = this.userCancelledTurnOwners.get(traceId) === helperPid;
-        this.closedTurnOwners.delete(traceId);
+        if (--closedOwner.remainingAcks === 0) this.closedTurnOwners.delete(traceId);
         return { cancelledByUser };
       }
       throw new Error(`Browser turn ownership mismatch: no browser tab owns ${traceId}`);
@@ -1983,6 +1991,8 @@ class BrowserHost {
     }
     const cancelledByUser = this.userCancelledTurnOwners.get(traceId) === helperPid;
     const authenticationRequired = tab.authenticationRequired === true;
+    const startupPreparation = tab.startupPreparation === true;
+    if (cancelledByUser) status = "aborted";
     if (authenticationRequired && status === "completed") status = "failed";
     tab.status = status === "completed" ? "ready" : status === "aborted" ? "aborted" : "error";
     tab.startupPreparation = false;
@@ -2011,6 +2021,10 @@ class BrowserHost {
     // turns fail. The result already lives in Codex; release the browser document on every
     // terminal path while leaving other concurrently running tabs untouched.
     this.removeTurnTab(tab, false);
+    if (startupPreparation || cancelledByUser) {
+      // Keep one same-owner acknowledgement when the original end response is lost.
+      this.rememberClosedTurnOwner(traceId, helperPid, 1);
+    }
     if (hideAfterTurn && !this.activeTraceId) this.hide();
     this.logger.info("browser.tab_released", { tabId: tab.id, traceId, status: tab.status });
     return { cancelledByUser, ...(authenticationRequired ? { authenticationRequired: true } : {}) };

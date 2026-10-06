@@ -29,10 +29,10 @@ test("compaction preserves an already delivered call and intercepts only later c
     const [request] = await broker.nextToolBatch(token);
     broker.requestCompaction(token, { content: [{ type: "text", text: "compact now" }], isError: true });
     broker.completeTool(token, request!.callId, { content: [{ type: "text", text: "current result" }] });
-    expect(await current).toMatchObject({ content: [{ type: "text", text: "current result" }] });
-    expect(await callTurnBroker<BrokerToolResult>(broker.socketPath, {
+    await expect(current).resolves.toMatchObject({ content: [{ type: "text", text: "current result" }] });
+    await expect(callTurnBroker(broker.socketPath, {
       method: "invoke", bindingId, wireName: "exec_command", arguments: { cmd: "git status" },
-    })).toMatchObject({ content: [{ type: "text", text: "compact now" }], isError: true });
+    })).resolves.toMatchObject({ content: [{ type: "text", text: "compact now" }], isError: true });
     expect(broker.compactionDeliveryCount(token)).toBe(1);
   } finally {
     await broker.close();
@@ -50,13 +50,13 @@ test("compaction reports the first intercepted tool boundary", async () => {
       { content: [{ type: "text", text: "compact now" }], isError: true },
       () => { delivered += 1; },
     );
-    expect(await callTurnBroker<BrokerToolResult>(broker.socketPath, {
+    await expect(callTurnBroker(broker.socketPath, {
       method: "invoke", bindingId, wireName: "exec_command", arguments: { cmd: "git status" },
-    })).toMatchObject({ isError: true });
+    })).resolves.toMatchObject({ isError: true });
     expect(delivered).toBe(1);
-    expect(await callTurnBroker<BrokerToolResult>(broker.socketPath, {
+    await expect(callTurnBroker(broker.socketPath, {
       method: "invoke", bindingId, wireName: "exec_command", arguments: { cmd: "git diff" },
-    })).toMatchObject({ isError: true });
+    })).resolves.toMatchObject({ isError: true });
     expect(delivered).toBe(1);
   } finally {
     await broker.close();
@@ -75,7 +75,7 @@ test("compaction drains a queued call and retires its delivery counter with the 
     expect(broker.requestCompaction(token, {
       content: [{ type: "text", text: "compact instead" }], isError: true,
     })).toBe(1);
-    expect(await invocation).toMatchObject({
+    await expect(invocation).resolves.toMatchObject({
       content: [{ type: "text", text: "compact instead" }], isError: true,
     });
     expect(broker.compactionDeliveryCount(token)).toBe(1);

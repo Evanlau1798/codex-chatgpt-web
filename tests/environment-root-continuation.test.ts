@@ -99,11 +99,6 @@ function createRolloutState(databasePath: string, rolloutPath: string): void {
   database.close();
 }
 
-function updateRolloutState(databasePath: string, update: (database: Database) => void): void {
-  const database = new Database(databasePath);
-  try { update(database); } finally { database.close(); }
-}
-
 import { extractChatGptTurnIdentity } from "../src/adapters/chatgpt-web/environment";
 import { rememberCompactionContinuation } from "../src/adapters/chatgpt-web/compaction-continuation";
 import { COMPACT_PROMPT, encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
@@ -374,12 +369,9 @@ test("root rollout lookup authenticates the indexed owner and current sandbox", 
   const { codexHome, request, rolloutPath } = resumedRootFixture();
   const databasePath = join(codexHome, "state_5.sqlite");
   createRolloutState(databasePath, rolloutPath);
-  // Finish fixture writes before the independent authority reader opens it.
-  // A failed assertion must never strand a writer across Windows teardown.
-  updateRolloutState(databasePath, database => {
-    database.exec("DELETE FROM thread_spawn_edges");
-    database.query("UPDATE threads SET agent_path = NULL WHERE id = ?").run(rolloutThreadId);
-  });
+  const database = new Database(databasePath);
+  database.exec("DELETE FROM thread_spawn_edges");
+  database.query("UPDATE threads SET agent_path = NULL WHERE id = ?").run(rolloutThreadId);
   expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
   const body = request._rawBody as { client_metadata: Record<string, string> };
   const metadata = JSON.parse(body.client_metadata["x-codex-turn-metadata"]!);
@@ -389,9 +381,8 @@ test("root rollout lookup authenticates the indexed owner and current sandbox", 
     .toThrow("sandbox metadata conflicts");
   metadata.sandbox_mode = "danger-full-access";
   body.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
-  updateRolloutState(databasePath, database => {
-    database.query("INSERT INTO thread_spawn_edges VALUES (?, ?, ?)").run(rolloutParentId, rolloutThreadId, "open");
-  });
+  database.query("INSERT INTO thread_spawn_edges VALUES (?, ?, ?)").run(rolloutParentId, rolloutThreadId, "open");
+  database.close();
   expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request))
     .toThrow("does not authenticate");
 });

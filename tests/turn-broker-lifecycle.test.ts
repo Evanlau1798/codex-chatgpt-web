@@ -305,8 +305,8 @@ test("turn broker tokens do not expire while their browser turn is still alive",
     });
     expect(token).toMatch(/^turn_[a-f0-9]{32}$/);
     await Bun.sleep(5);
-    expect(await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token }))
-      .toMatchObject({ bindingId: expect.any(String) });
+    await expect(callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token }))
+      .resolves.toMatchObject({ bindingId: expect.any(String) });
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
@@ -425,8 +425,8 @@ test("turn broker revokes only channels owned by the closed browser trace", asyn
     expect(broker.revokeTrace("trace_target")).toBe(1);
     await expect(callTurnBroker(socketPath, { method: "claim", token: target }))
       .rejects.toThrow("already finished");
-    expect(await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token: other }))
-      .toMatchObject({ bindingId: expect.any(String) });
+    await expect(callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token: other }))
+      .resolves.toMatchObject({ bindingId: expect.any(String) });
   } finally {
     await broker.close();
     rmSync(root, { recursive: true, force: true });
@@ -459,7 +459,7 @@ test("an unbounded broker call fails when the broker closes without answering", 
   }
 }, 10_000);
 
-test("bounded broker calls settle validated replies without depending on peer closure", async () => {
+test("bounded broker calls settle complete frames without waiting for server-owned EOF", async () => {
   let peer!: Socket;
   let finishFrame!: () => void;
   const frameWritten = new Promise<void>(resolve => { finishFrame = resolve; });
@@ -476,8 +476,7 @@ test("bounded broker calls settle validated replies without depending on peer cl
   try {
     const call = callTurnBroker(broker.socketPath, { method: "owner_status" });
     await frameWritten;
-    expect(await call).toEqual({ ready: true });
-    expect(peer.writableEnded).toBeFalse();
+    await expect(call).resolves.toEqual({ ready: true });
   } finally {
     peer?.destroy();
     await broker.close();

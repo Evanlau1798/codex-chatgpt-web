@@ -4,8 +4,8 @@ import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError } from "./adap
 import type { ChatGptBrowserWorker } from "./browser-worker";
 import {
   canonicalizeCompactionHandoff,
-  chatGptCompactionDeadlineMs,
   existingStructuredCompactionRun,
+  MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
   runStructuredCompactionOnce,
   settleActiveCompactionSource,
   withCompactionAbort,
@@ -69,15 +69,16 @@ export async function runEnhancedCompaction(
     traceIds: [traceId, `${traceId}_fallback`],
     nativeThreadId: identity.threadId, nativeTurnId: identity.turnId,
   }, async (operatorSignal, retainOwnershipUntil) => {
-    // No implicit inference deadline. The operator/owner controls cancellation;
-    // an explicitly configured timeout remains authoritative.
-    const handoffTimeoutMs = chatGptCompactionDeadlineMs(timeoutMs);
+    const handoffTimeoutMs = Math.min(
+      timeoutMs ?? MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+      MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
+    );
     const deadline = new AbortController();
     let phase = "source_settlement";
     let timer: ReturnType<typeof setTimeout> | undefined;
     let fallbackTransaction: Awaited<ReturnType<TurnBroker["beginCompactionTransaction"]>> | undefined;
     const armDeadline = (): void => {
-      if (deadline.signal.aborted || handoffTimeoutMs === null) return;
+      if (deadline.signal.aborted) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(
         () => deadline.abort(new ChatGptWebAdapterError(`ChatGPT compaction did not fully settle within ${handoffTimeoutMs}ms (phase=${phase})`, { status: 409, errorType: "invalid_request_error", code: "compaction_handoff_timeout", retryable: false })),
@@ -85,7 +86,7 @@ export async function runEnhancedCompaction(
       );
       timer.unref?.();
       if (fallbackTransaction) {
-        broker.refreshCompactionTransaction(fallbackTransaction.token, handoffTimeoutMs);
+        broker.refreshCompactionTransaction(fallbackTransaction.token, MAX_COMPACTION_HANDOFF_TIMEOUT_MS);
       }
     };
     armDeadline();
@@ -105,7 +106,7 @@ export async function runEnhancedCompaction(
       try {
         // Multipart prompt stages refresh the operation deadline, while the one-shot control token
         // cannot be reissued after it has been embedded in the final browser message.
-        const pending = broker.beginCompactionTransaction(`${traceId}_fallback`, handoffTimeoutMs);
+        const pending = broker.beginCompactionTransaction(`${traceId}_fallback`, MAX_COMPACTION_HANDOFF_TIMEOUT_MS);
         void pending.then(late => {
           if (operationSignal.aborted && fallbackTransaction !== late) broker.abortCompactionTransaction(late.token);
         }, () => {});
