@@ -81,7 +81,6 @@ export interface BrokerRequest {
   expectedRevision?: number;
   outputSequence?: number;
   contract?: "native" | "safe";
-  revokeReason?: string;
 }
 
 export interface BrokerResponse {

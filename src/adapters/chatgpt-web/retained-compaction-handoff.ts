@@ -5,7 +5,7 @@ import {
   ChatGptWebAdapterError,
 } from "./adapter-error";
 import type { ChatGptBrowserWorker } from "./browser-worker";
-import { chatGptCompactionDeadlineMs, withCompactionAbort } from "./compaction-handoff";
+import { MAX_COMPACTION_HANDOFF_TIMEOUT_MS, withCompactionAbort } from "./compaction-handoff";
 import type { ChatGptWebCapabilities } from "./model";
 import { structuredCompactionHandoffInstruction } from "./native-compaction-control";
 import type { TurnBroker } from "./turn-broker";
@@ -26,19 +26,19 @@ export async function requestRetainedCompactionHandoff(
   capabilities: ChatGptWebCapabilities,
   traceId: string,
   signal?: AbortSignal,
-  timeoutMs: number | null = null,
+  timeoutMs = MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
   requireAutomaticAdmission?: (traceId: string) => void,
   retainOwnershipUntil?: (settlement: Promise<void>) => void,
 ): Promise<string> {
   const conversationKey = source.conversationKey();
   if (!conversationKey) throw new RetainedCompactionSourceUnavailableError();
-  const operationTimeoutMs = chatGptCompactionDeadlineMs(timeoutMs);
+  const operationTimeoutMs = Math.min(timeoutMs, MAX_COMPACTION_HANDOFF_TIMEOUT_MS);
   const deadline = new AbortController();
-  const timer = operationTimeoutMs === null ? undefined : setTimeout(
+  const timer = setTimeout(
     () => deadline.abort(new Error(`ChatGPT compaction handoff timed out after ${operationTimeoutMs}ms`)),
     operationTimeoutMs,
   );
-  timer?.unref?.();
+  timer.unref?.();
   const operationSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
   const browserAbort = new AbortController();
   const abortBrowser = () => browserAbort.abort(operationSignal.reason);
@@ -102,10 +102,9 @@ export async function requestRetainedCompactionHandoff(
   } finally {
     if (!completed) browserAbort.abort();
     if (transaction) broker.abortCompactionTransaction(transaction.token);
-    // Physical ownership is retained independently; explicit cancellation may return
-    // without waiting for an uncooperative renderer, without admitting overlapping work.
-    if (settlement) await withCompactionAbort(settlement,
-      operationTimeoutMs === null && retainOwnershipUntil ? operationSignal : deadline.signal).catch(() => {});
+    // Cancellation waits for cleanup, but never past the deadline. The owner retains
+    // physical settlement independently so timeout cannot admit an overlapping run.
+    if (settlement) await withCompactionAbort(settlement, deadline.signal).catch(() => {});
     operationSignal.removeEventListener("abort", abortBrowser);
     clearTimeout(timer);
   }

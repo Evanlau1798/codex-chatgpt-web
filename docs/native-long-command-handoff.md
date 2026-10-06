@@ -13,6 +13,8 @@ TaskOutput.timeout or Read.file_path, this candidate projects Bash calls with an
 explicit/advertised timeout above 30000ms, or an unspecified timeout, into native
 background tasks unless the caller explicitly sets run_in_background:false.
 This is an experimental behavior change, not an inferred command lifetime.
+The normalizer is reached only for identified Claude requests carrying boolean
+client_metadata.claude_subagent; other client requests are not normalized.
 An absent timeout stays absent. The command and its original timeout
 remain unchanged. Only TaskOutput's response-wait timeout is capped to 30000ms;
 the task remains alive. A generic Read or existing output file is not proof of
@@ -21,9 +23,9 @@ not repeating the command or treating a pending handle as successful completion.
 Other clients/tools, short commands, freeform requests and unsupported catalogs
 are not rewritten. This is not a generic asynchronous adapter for all tools.
 
-Verification: focused normalization and routing tests, exact command/lifetime
+Historical verification: focused normalization and routing tests, exact command/lifetime
 preservation, catalog gating, and root typecheck. Live acceptance is outstanding:
-the current installed v6.1.4 app returns HTTP404 for guarded native readiness and
+the installed v6.1.4 app at that trial returned HTTP404 for guarded native readiness and
 desktop-control startup failed. No provider request was sent around that gate.
 
 Required live oracle: one native command increments a disposable counter once,
