@@ -69,6 +69,14 @@ export async function callTurnBroker<T>(
       trace(response.error ? "reply_error" : "reply_result");
       clearTimeout(timer);
       cleanup();
+      // Retire the completed RPC, never a running worker/native operation.
+      const windowsBun = process.platform === "win32" && process.versions.bun;
+      if (!windowsBun) socket.unref();
+      const retire = () => {
+        if (!socket.destroyed && !socket.writableEnded && !socket.readableEnded) socket.end();
+      };
+      if (windowsBun) setTimeout(retire, 50);
+      else setImmediate(retire);
       if (response.error) rejectCall(new Error(response.error));
       else resolveCall(response.result as T);
     };
@@ -89,7 +97,7 @@ export async function callTurnBroker<T>(
     socket.once("end", () => {
       trace("peer_end");
       if (response) responseAccepted = true;
-      socket.end();
+      if (!socket.destroyed && !socket.writableEnded) socket.end();
       setImmediate(finishResponse);
     });
     socket.once("close", () => {
