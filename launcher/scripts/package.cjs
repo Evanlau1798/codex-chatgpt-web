@@ -52,7 +52,7 @@ if (runtimeArgument !== undefined) {
   // Only the fixed packaging output may be replaced; never mutate the verified source.
   if (sourceKey !== outputKey) {
     fs.rmSync(runtimeRoot, { recursive: true, force: true });
-    fs.cpSync(source, runtimeRoot, { recursive: true });
+    fs.cpSync(source, runtimeRoot, { recursive: true, verbatimSymlinks: true });
   }
 }
 validateRuntimeBundle(runtimeRoot, runtimeIdentity);

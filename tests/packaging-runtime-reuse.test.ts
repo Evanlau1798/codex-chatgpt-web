@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve, join, win32 } from "node:path";
 import { runInNewContext } from "node:vm";
@@ -11,14 +11,16 @@ const source = readFileSync(script, "utf8");
 const verified = resolve(root, "..", "tmp", "verified-package-runtime");
 
 function packageFixture(args: string[], invalid = false, code = source, aliases: Record<string, string> = {},
-  windowsScriptDirectory?: string, absent: string[] = []) {
-  const events: Array<{ kind: string; path?: string; identity?: unknown }> = [];
+  windowsScriptDirectory?: string, absent: string[] = [], copy?: typeof cpSync) {
+  const events: Array<{ kind: string; path?: string; identity?: unknown; options?: unknown }> = [];
   const fs = {
     readFileSync: () => readFileSync(join(root, "package.json"), "utf8"),
     realpathSync: (path: string) => aliases[path] ?? path,
     existsSync: (path: string) => !absent.includes(path),
     rmSync: (path: string) => { events.push({ kind: "remove", path }); },
-    cpSync: (path: string) => { events.push({ kind: "copy", path }); },
+    cpSync: (path: string, destination: string, options: Parameters<typeof cpSync>[2]) => {
+      events.push({ kind: "copy", path, options }); copy?.(path, destination, options);
+    },
     mkdirSync: () => {}, copyFileSync: () => {},
     mkdtempSync: () => "package-staging",
     readdirSync: (path: string) => path === "package-staging"
@@ -55,6 +57,29 @@ test("packaging reuses only an identity-validated bundle and validates the copie
   expect(events[1]?.path).toBe(join(root, "build", "runtime"));
   expect(events[3]?.identity).toEqual({ version: JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version,
     platform: "win32", arch: "x64" });
+});
+
+test("verified runtime copying preserves symlink targets verbatim", () => {
+  const {events, error} = packageFixture([`--runtime=${verified}`]);
+  expect(error).toBeUndefined();
+  expect(events.find(event => event.kind === "copy")?.options).toEqual({recursive:true, verbatimSymlinks:true});
+});
+
+test.skipIf(process.platform === "win32")("relocated runtime bin links resolve inside the copied bundle", () => {
+  const fixture = mkdtempSync(resolve(root, "..", "tmp", "package-symlink-"));
+  const input = join(fixture, "source"), output = join(fixture, "copy");
+  try {
+    mkdirSync(join(input, "app", "node_modules", ".bin"), {recursive:true});
+    mkdirSync(join(input, "app", "node_modules", "which", "bin"), {recursive:true});
+    writeFileSync(join(input, "app", "node_modules", "which", "bin", "node-which"), "fixture");
+    symlinkSync("../which/bin/node-which", join(input, "app", "node_modules", ".bin", "node-which"));
+    const {error} = packageFixture([`--runtime=${input}`], false, source, {}, undefined, [],
+      (from, _to, options) => cpSync(from, output, options));
+    expect(error).toBeUndefined();
+    const link = join(output, "app", "node_modules", ".bin", "node-which");
+    expect(readlinkSync(link)).toBe("../which/bin/node-which");
+    expect(realpathSync(link)).toBe(realpathSync(join(output, "app", "node_modules", "which", "bin", "node-which")));
+  } finally { rmSync(fixture, {recursive:true,force:true}); }
 });
 
 test("Windows namespace aliases and root boundaries preserve same-output reuse and reject overlap", () => {
