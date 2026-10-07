@@ -15,6 +15,7 @@ import {
   CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL,
   CHATGPT_WEB_ZERO_RISK_PRO_MODEL_ROUTE,
   CHATGPT_WEB_MODEL_ROUTES,
+  CHATGPT_WEB_LATEST_MODEL_ROUTES,
   requireChatGptWebModelRoute,
   resolveChatGptWebContextLimits,
   resolveChatGptWebTransportLimits,
@@ -36,6 +37,17 @@ function parsed(modelId: string, reasoning = "medium"): CodexParsedRequest {
 describe("fixed ChatGPT Web model routes", () => {
   const plus = { solAvailable: true, extraHighAvailable: false, proAvailable: false };
   const pro = { solAvailable: true, extraHighAvailable: true, proAvailable: true };
+
+  test("GPT-6 replaces Latest display names without changing saved task identities or budgets", () => {
+    expect(CHATGPT_WEB_LATEST_MODEL_ROUTES.map(r => [r.slug, r.displayName, r.modelFamily])).toEqual([
+      ["chatgpt-web/latest-instant", "GPT-6 Instant (Web)", "6"],
+      ["chatgpt-web/latest", "GPT-6 (Web)", "6"],
+    ]);
+    const config = { ...pro, modelCapabilities: { observedAt: Date.now(), families: { "6": ["low", "medium", "high", "xhigh"] as const } } };
+    expect(requireChatGptWebModelRoute("chatgpt-web/latest", config, "xhigh").adapterEffort).toBe("xhigh");
+    expect(availableChatGptWebModelRoutes(config).filter(r => r.interactionMode === "automatic" && r.modelFamily === "6").map(r => r.displayName))
+      .toEqual(["GPT-6 Instant (Web)", "GPT-6 (Web)"]);
+  });
 
   test("keeps the published legacy bindings while advertising named families", () => {
     expect(new Set(CHATGPT_WEB_MODEL_ROUTES.map(route => route.slug)).size).toBe(CHATGPT_WEB_MODEL_ROUTES.length);

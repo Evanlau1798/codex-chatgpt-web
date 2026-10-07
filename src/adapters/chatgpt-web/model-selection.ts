@@ -14,8 +14,8 @@ function familyError(family: ChatGptWebModelFamily, cause?: unknown): ChatGptWeb
 export function familyOption(menu: EffortMenu, family: ChatGptWebModelFamily) {
   return menu.menu.getByRole("menuitemradio", {
     name: family === "5.6" ? /^GPT[-\s]?5\.6\s+Sol(?:\s+Pro)?$/i
-      // Match the localized Latest label using the same anchored selector in every language.
-      : /^(?:Latest|Le plus récent|最新(?:模型)?|최신|GPT[-\s]?6(?:\s+Astra)?(?:\s+Pro)?)$/i,
+      // Keep the old localized Latest labels and the explicit current version.
+      : /^(?:Latest|Le plus récent|最新(?:模型)?|최신|(?:GPT[-\s]?)?6(?:\s+Astra)?(?:\s+Pro)?)$/i,
     exact: true,
     includeHidden: true,
   });
@@ -70,9 +70,7 @@ export function chatGptModelFamilyMatches(
   family: ChatGptWebModelFamily,
   effort: ChatGptWebAdapterEffort,
 ): boolean {
-  // Latest uses 5.6 for the existing lower-effort multipart acknowledgements and 6 for Pro.
-  // Never interpret a future Latest Pro model as 6, or a lower effort as the final Pro response.
-  const expected = family === "6" && effort !== "max" ? "5.6" : family;
+  const expected = family;
   const states = descriptions.flatMap(text => {
     const match = /^(?:GPT[-\s]?)?(\d+(?:\.\d+)?)(?:\s+(Sol|Astra))?\s+([^,，]+)(?:[,，]|$)/i
       .exec(text.replace(/\s+/g, " ").trim());
@@ -99,7 +97,12 @@ export async function assertChatGptModelFamily(
       await menu.slider.getAttribute("aria-valuenow"),
     );
     const descriptions = await readChatGptModelAnnouncements(menu.slider);
-    if (checked && state && state.value === state.min + effortIndex && (chatGptModelFamilyMatches(descriptions, family, effort)
+    // The retired Latest picker used 5.6 below Pro. Only its actual radio label authorizes
+    // that compatibility mapping; an explicit 6 picker must prove 6 at every effort.
+    const legacyLatest = family === "6" && checked && effort !== "max"
+      && /^(?:Latest|Le plus récent|最新(?:模型)?|최신)$/i.test((await option.innerText()).trim());
+    const expectedFamily = legacyLatest ? "5.6" : family;
+    if (checked && state && state.value === state.min + effortIndex && (chatGptModelFamilyMatches(descriptions, expectedFamily, effort)
       || (family === "5.6" && chatGptUnversionedEffortMatches(descriptions, effort)))) return;
     if (Date.now() >= deadline) break;
     await new Promise(resolve => setTimeout(resolve, 50));

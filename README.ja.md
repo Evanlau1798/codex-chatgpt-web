@@ -19,9 +19,11 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **リリース：`6.1.5-Enhanced.1`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。[紹介動画を見る（英語 MP4）](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4)。
+> **リリース：`6.1.5-Enhanced.2`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。[紹介動画を見る（英語 MP4）](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4)。
 
 上流 v6.1.5 を統合し、Enhanced セッション、Native2 ツール、Fast startup を維持しています。
+
+名称が変更された ChatGPT の GPT-6 選択メニューと全5段階の推論レベルに対応。Codex には GPT-6 と GPT-6 Instant を表示し、既存の `chatgpt-web/latest` と `chatgpt-web/latest-instant` タスク ID は引き続き利用できます。
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">トラブルシューティング</a> · <a href="SECURITY.md">セキュリティ</a> · <a href="CONTRIBUTING.md">コントリビューション</a>

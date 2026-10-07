@@ -16,9 +16,11 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **릴리스: `6.1.5-Enhanced.1`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다. [소개 영상 보기 (영어 MP4)](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4).
+> **릴리스: `6.1.5-Enhanced.2`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다. [소개 영상 보기 (영어 MP4)](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4).
 
 upstream v6.1.5를 통합하면서 Enhanced 세션, Native2 도구 및 Fast startup을 유지합니다.
+
+이름이 변경된 ChatGPT GPT-6 선택 메뉴와 다섯 가지 추론 단계를 지원합니다. Codex에는 GPT-6와 GPT-6 Instant가 표시되며, 기존 `chatgpt-web/latest`와 `chatgpt-web/latest-instant` 작업 ID는 계속 호환됩니다.
 
 <p align="center">
   <img src="assets/demo.gif" width="960" alt="네이티브 Codex 하네스를 사용하는 ChatGPT Web 실시간 턴">

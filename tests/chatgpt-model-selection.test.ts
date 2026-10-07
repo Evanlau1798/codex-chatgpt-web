@@ -51,7 +51,7 @@ for (const visibility of ["true", "hidden", "duplicate"] as const) {
 
 test("model selection recognizes Latest in the launcher languages without accepting other model names", async () => {
   for (const [label, accepted] of [
-    ["Latest", true], ["Le plus récent", true], ["最新", true], ["最新模型", true], ["최신", true], ["GPT-6 Pro", true],
+    ["Latest", true], ["Le plus récent", true], ["最新", true], ["最新模型", true], ["최신", true], ["GPT-6 Pro", true], ["GPT-6", true], ["6", true],
     ["GPT-5.6 Sol", false], ["GPT-7 Pro", false], ["Latest preview", false], ["最新模型預覽", false],
   ] as const) {
     const menu = { menu: {
@@ -70,7 +70,7 @@ test("model selection recognizes Latest in the launcher languages without accept
 
 test("family confirmation separates Latest staging from the actual Pro response", () => {
   expect(chatGptModelFamilyMatches(["5.6 High, 3 of 5."], "5.6", "high")).toBe(true);
-  expect(chatGptModelFamilyMatches(["5.6 Extra High, 4 of 5."], "6", "xhigh")).toBe(true);
+  expect(chatGptModelFamilyMatches(["5.6 Extra High, 4 of 5."], "6", "xhigh")).toBe(false);
   expect(chatGptModelFamilyMatches(["6 Pro, 5 of 5."], "6", "max")).toBe(true);
   expect(chatGptModelFamilyMatches(["GPT-5.6 Sol Pro, 5 of 5."], "5.6", "max")).toBe(true);
   for (const descriptions of [[], ["Try Pro for more reasoning"], ["5.6 High, 3 of 5."], ["5.6 Pro, 5 of 5."],
@@ -79,4 +79,11 @@ test("family confirmation separates Latest staging from the actual Pro response"
   }
   expect(chatGptModelFamilyMatches(["6 Pro, 5 of 5."], "5.6", "max")).toBe(false);
   expect(chatGptModelFamilyMatches(["6 Pro, 5 of 5."], "6", "xhigh")).toBe(false);
+});
+
+test("explicit GPT-6 verifies every non-Pro effort without accepting the older 5.6 family", () => {
+  for (const [effort, label] of [["low", "Instant"], ["medium", "中"], ["high", "High"], ["xhigh", "極高"]] as const) {
+    expect(chatGptModelFamilyMatches([`6 ${label}, 3 of 5.`], "6", effort)).toBe(true);
+    expect(chatGptModelFamilyMatches([`5.6 ${label}, 3 of 5.`], "6", effort)).toBe(false);
+  }
 });

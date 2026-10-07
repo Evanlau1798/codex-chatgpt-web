@@ -450,8 +450,8 @@ export const CHATGPT_WEB_LEGACY_MODEL_ROUTES: readonly ChatGptWebAutomaticModelR
 export const CHATGPT_WEB_LATEST_MODEL_ROUTES: readonly ChatGptWebAutomaticModelRoute[] = [
   {
     slug: "chatgpt-web/latest-instant",
-    displayName: "Latest Instant (Web)",
-    description: "ChatGPT Latest Instant, with its own context and compaction budget.",
+    displayName: "GPT-6 Instant (Web)",
+    description: "GPT-6 Instant through ChatGPT, with its own context and compaction budget.",
     interactionMode: "automatic",
     backendModel: CHATGPT_WEB_BACKEND_MODEL,
     modelFamily: "6",
@@ -462,8 +462,8 @@ export const CHATGPT_WEB_LATEST_MODEL_ROUTES: readonly ChatGptWebAutomaticModelR
   },
   {
     slug: "chatgpt-web/latest",
-    displayName: "Latest (Web)",
-    description: "ChatGPT Latest with the reasoning levels available for this model.",
+    displayName: "GPT-6 (Web)",
+    description: "GPT-6 through ChatGPT with the reasoning levels available for this model.",
     interactionMode: "automatic",
     backendModel: CHATGPT_WEB_BACKEND_MODEL,
     modelFamily: "6",

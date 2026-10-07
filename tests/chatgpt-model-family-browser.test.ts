@@ -81,16 +81,17 @@ const FIXTURE = `<form><div id="prompt-textarea" contenteditable="true">Draft</d
     });
   </script>`;
 
-async function selectGpt6Pro(picker: Picker) {
+async function selectGpt6Pro(picker: Picker, effort: "low" | "medium" | "high" | "xhigh" | "max" = "max", familyLabel = "Latest") {
   const page = await browser.newPage();
   try {
     page.setDefaultTimeout(5_000);
     const config = "<script>window.pickerHeader = " + (picker.header ? picker.header.toString() : "null")
       + "; window.pickerStatus = " + picker.status.toString() + ";</script>";
     await page.setContent(config + FIXTURE);
+    await page.getByRole("menuitemradio", { name: "Latest", exact: true, includeHidden: true }).evaluate((element, label) => { element.textContent = label; }, familyLabel);
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     try {
-      const mode = await worker.selectModelAndEffort(page, CHATGPT_WEB_MODEL_ID, "max", {
+      const mode = await worker.selectModelAndEffort(page, CHATGPT_WEB_MODEL_ID, effort, {
         localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true,
       }, undefined, true, "6");
       return { ok: true, label: mode.selection.label, usageModel: mode.usageModel, draft: await page.locator("#prompt-textarea").innerText() };
@@ -101,6 +102,25 @@ async function selectGpt6Pro(picker: Picker) {
     await page.close();
   }
 }
+
+for (const effort of ["low", "medium", "high", "xhigh", "max"] as const)
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`renamed 6 picker verifies ${effort} through the production worker`, async () => {
+  const picker = { header: () => "6", status: PICKERS.current.status };
+  const result = await selectGpt6Pro(picker, effort, "6");
+  expect(result.ok).toBe(true);
+  expect(result.draft).toBe("Draft");
+}, 60_000);
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("renamed 6 picker accepts the visible Pro-only header using its versioned Chinese announcement", async () => {
+  const picker = { header: () => "", status: (effort: string, value: number) => `6 ${effort}，第 ${value + 1} 個，共 5 個。` };
+  expect(await selectGpt6Pro(picker, "max", "6")).toEqual({ ok: true, label: "Pro", usageModel: "gpt-6-pro", draft: "Draft" });
+}, 60_000);
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("explicit GPT-6 rejects stale 5.6 effort evidence without sending the draft", async () => {
+  const result = await selectGpt6Pro(PICKERS.current, "high", "GPT-6");
+  expect(result.ok).toBe(false);
+  expect(result.draft).toBe("Draft");
+}, 60_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-6 Pro is verified from the current picker header when the slider announces only the effort", async () => {
   expect(await selectGpt6Pro(PICKERS.current)).toEqual({ ok: true, label: "Pro", usageModel: "gpt-6-pro", draft: "Draft" });

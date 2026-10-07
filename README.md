@@ -19,9 +19,11 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **Release: `6.1.5-Enhanced.1`.** Download buttons always open the latest published Enhanced release. [Watch the introduction (MP4)](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4).
+> **Release: `6.1.5-Enhanced.2`.** Download buttons always open the latest published Enhanced release. [Watch the introduction (MP4)](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4).
 
 Integrates upstream v6.1.5 while preserving Enhanced sessions, Native2 tools, and Fast startup.
+
+Supports ChatGPT's renamed GPT-6 picker and all five effort levels. Codex displays GPT-6 and GPT-6 Instant; existing `chatgpt-web/latest` and `chatgpt-web/latest-instant` task IDs remain compatible.
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">Troubleshooting</a> · <a href="SECURITY.md">Security</a> · <a href="CONTRIBUTING.md">Contributing</a>

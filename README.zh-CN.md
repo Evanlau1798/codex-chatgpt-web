@@ -19,9 +19,11 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **发布版本：`6.1.5-Enhanced.1`。** 下载按钮会始终打开最新发布的 Enhanced 版本。[观看介绍影片（英文 MP4）](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4)。
+> **发布版本：`6.1.5-Enhanced.2`。** 下载按钮会始终打开最新发布的 Enhanced 版本。[观看介绍影片（英文 MP4）](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4)。
 
 已整合上游 v6.1.5，保留 Enhanced 会话、Native2 工具与快速启动。
+
+支持 ChatGPT 更名后的 GPT-6 模型选择器及五种推理档位。Codex 显示 GPT-6 和 GPT-6 Instant；已有 `chatgpt-web/latest` 与 `chatgpt-web/latest-instant` 任务 ID 保持兼容。
 
 <p align="center">
   <a href="TROUBLESHOOTING.md">故障排除</a> · <a href="SECURITY.md">安全</a> · <a href="CONTRIBUTING.md">贡献</a>
