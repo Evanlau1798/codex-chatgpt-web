@@ -78,7 +78,8 @@ test("unversioned French descriptions require the exact effort and position", ()
 });
 
 // Reproduces the current French picker without opening an account or sending messages.
-test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("French picker: per-family probing, selection verification and restoration", async () => {
+for (const [label, originalFamily] of [["Le plus récent", "5.6"], ["最新模型", "6"]] as const)
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`Localized picker ${label}: per-family probing, selection verification and restoration`, async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
   try {
     const page = await browser.newPage();
@@ -87,16 +88,16 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("French picker: per-family pr
       <div id="picker" role="menu" hidden><div data-model-picker-view="simple">
       <div role="menuitem" data-model-picker-view-toggle="true" aria-hidden="false" tabindex="0">Sélectionner le modèle</div>
       <div id="power" role="menuitem" aria-describedby="status hint" tabindex="0"><div data-model-picker-power-slider style="height:30px;width:250px"></div></div>
-      <div id="radios"><div role="menuitemradio" data-family="6">Le plus récent</div><div role="menuitemradio" data-family="5.6">GPT-5.6 Sol</div></div>
+      <div id="radios"><div role="menuitemradio" data-family="6">${label}</div><div role="menuitemradio" data-family="5.6">GPT-5.6 Sol</div></div>
       <span id="status"></span><span id="hint">Utilisez les touches fléchées gauche et droite pour régler la puissance</span></div></div>
       <script>
-      let family='5.6', value=4; const control=document.querySelector('button'),menu=document.querySelector('#picker'),view=document.querySelector('[data-model-picker-view]');
+      let family=${JSON.stringify(originalFamily)}, value=${originalFamily === "5.6" ? 4 : 3}; const control=document.querySelector('button'),menu=document.querySelector('#picker'),view=document.querySelector('[data-model-picker-view]');
       function render(){const max=family==='5.6'?4:3,advanced=view.dataset.modelPickerView==='advanced';
         document.querySelector('#radios').style.display=advanced?'block':'none';
         document.querySelector('#power').style.display=advanced?'none':'block';
         for(const radio of document.querySelectorAll('[data-family]'))radio.setAttribute('aria-checked',String(radio.dataset.family===family));
         document.querySelector('[data-model-picker-power-slider]').innerHTML='<span data-orientation="horizontal" aria-disabled="false">'+Array.from({length:max+1},(_,i)=>'<span data-selected="'+(i<=value)+'"></span>').join('')+'<span role="slider" aria-hidden="true" aria-valuemin="0" aria-valuemax="'+max+'" aria-valuenow="'+value+'"></span></span>';
-        document.querySelector('#status').textContent=['Instantané','Moyen','Élevée','Très élevé','Pro'][value]+', '+(value+1)+' sur '+(max+1)+'.'; }
+        document.querySelector('#status').textContent=(family==='6'?'5.6 ':'')+['Instantané','Moyen','Élevée','Très élevé','Pro'][value]+', '+(value+1)+' sur '+(max+1)+'.'; }
       control.onclick=()=>{menu.hidden=false;control.setAttribute('aria-expanded','true');view.dataset.modelPickerView='simple';render()};
       document.querySelector('[data-model-picker-view-toggle]').onclick=()=>{view.dataset.modelPickerView='advanced';render()};
       for(const radio of document.querySelectorAll('[data-family]'))radio.onclick=()=>{family=radio.dataset.family;value=0;view.dataset.modelPickerView='simple';render()};
@@ -109,7 +110,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("French picker: per-family pr
     expect(result.proAvailable).toBe(true);
     expect(await page.locator('#prompt-textarea').innerText()).toBe("Brouillon à conserver");
     const menu = await activateChatGptEffortMenu(page, page.locator('button'));
-    await assertChatGptModelFamily(menu, "5.6", "max", 4);
+    await assertChatGptModelFamily(menu, originalFamily, originalFamily === "5.6" ? "max" : "xhigh", originalFamily === "5.6" ? 4 : 3);
     await expect(assertChatGptModelFamily(menu, "6", "max", 4)).rejects.toThrow();
     await page.close();
   } finally { await browser.close(); }
