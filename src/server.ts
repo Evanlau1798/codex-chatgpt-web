@@ -498,7 +498,7 @@ export function startServer(
         if (draining) {
           return formatErrorResponse(
             503,
-            "server_error",
+            "service_draining",
             "codex-chatgpt-web is draining for a requested service operation",
           );
         }
@@ -547,7 +547,7 @@ export function startServer(
         });
       }
       if (req.method === "POST" && url.pathname === "/v1/responses") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (draining) return formatErrorResponse(503, "service_draining", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
           (signal, bindIdentity) => responseRequest(
             new Request(req, { signal }),
@@ -561,7 +561,7 @@ export function startServer(
         );
       }
       if (req.method === "POST" && url.pathname === "/v1/messages") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (draining) return formatErrorResponse(503, "service_draining", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
           signal => messagesRequest(new Request(req, { signal }), config, dependencies.adapterFactory),
           req.signal,
@@ -574,7 +574,7 @@ export function startServer(
         return handleClaudeSteeringHook(req);
       }
       if (req.method === "POST" && url.pathname === "/v1/responses/compact") {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (draining) return formatErrorResponse(503, "service_draining", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
           (signal, bindIdentity) => compactRequest(
             new Request(req, { signal }),
@@ -589,7 +589,7 @@ export function startServer(
       }
       const nativeAuxiliary = req.method === "POST" ? nativeAuxiliaryEndpoint(url.pathname) : undefined;
       if (nativeAuxiliary) {
-        if (draining) return formatErrorResponse(503, "server_error", "codex-chatgpt-web is draining for a requested service operation");
+        if (draining) return formatErrorResponse(503, "service_draining", "codex-chatgpt-web is draining for a requested service operation");
         return httpTurns.track(
           signal => nativeAuxiliaryRequest(new Request(req, { signal }), nativeAuxiliary, dependencies.fetchUpstream),
           req.signal,

@@ -49,6 +49,8 @@ export const sharedLifecycleTests = [
   "tests/startup-page-pool.test.ts",
   "tests/browser-startup-continuation.test.ts",
   "tests/browser-submission-recovery.test.ts",
+  "tests/turn-identity-remount.test.ts",
+  "tests/server-drain-classification.test.ts",
   "tests/launcher-helper-send-activation.test.ts",
   "tests/model-startup-cache.test.ts",
   "tests/chatgpt-model-selection.test.ts",

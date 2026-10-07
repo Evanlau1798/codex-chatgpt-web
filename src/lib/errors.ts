@@ -144,6 +144,9 @@ export function classifyError(status: number, type: string, message: string): Co
   ) {
     return { message, type: "permission_error", code: "permission_denied" };
   }
+  if (status === 503 && type === "service_draining") {
+    return { message, type: "server_error", code: "service_draining" };
+  }
   if (
     status === 503 ||
     text.includes("overloaded") ||
@@ -269,7 +272,8 @@ export function httpStatusFromTerminalError(error: {
     error.code === "subscription_required"
   ) return 403;
   if (error.type === "insufficient_quota" || error.code === "insufficient_quota") return 429;
-  if (error.type === "server_error" && error.code === "server_is_overloaded") return 503;
+  if (error.type === "server_error" &&
+    (error.code === "server_is_overloaded" || error.code === "service_draining")) return 503;
   // Client-closed messages often arrive as invalid_request_error after classifyError; check message
   // before treating every invalid_request_error as HTTP 400.
   const message = error.message ?? "";
