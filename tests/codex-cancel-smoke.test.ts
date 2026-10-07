@@ -1,11 +1,18 @@
 import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 // Only the external CLI and clock are controlled; the real smoke owns HTTP/SSE,
 // cancellation assertions, process watchdogs and cleanup in an isolated Bun process.
 for (const scenario of ["slow-startup", "slow-cancellation", "startup-stall"] as const) {
   test(`cancellation smoke distinguishes ${scenario} from provider cancellation latency`, async () => {
     const script = new URL("../scripts/smoke-codex-cancel.ts", import.meta.url);
-    const child = Bun.spawn([process.execPath, "--eval", `
+    const scratch = join(import.meta.dir, "..", "tmp");
+    mkdirSync(scratch, { recursive: true });
+    const root = mkdtempSync(join(scratch, "cancel-smoke-worker-"));
+    const worker = join(root, "worker.ts");
+    // defaultConfig intentionally rejects evaluated Bun entry points on POSIX.
+    writeFileSync(worker, `
       import { readFileSync } from "node:fs";
       import { join } from "node:path";
       const scenario = ${JSON.stringify(scenario)};
@@ -51,7 +58,8 @@ for (const scenario of ["slow-startup", "slow-cancellation", "startup-stall"] as
       } catch (error) {
         console.log(JSON.stringify({ ok: false, error: error.message, requests, timers, kills }));
       }
-    `], { stdout: "pipe", stderr: "pipe" });
+    `);
+    const child = Bun.spawn([process.execPath, worker], { stdout: "pipe", stderr: "pipe" });
     const deadline = setTimeout(() => child.kill(), 10_000);
     try {
       const [output, errors, code] = await Promise.all([
@@ -74,6 +82,6 @@ for (const scenario of ["slow-startup", "slow-cancellation", "startup-stall"] as
         expect(result.kills).toBe(1);
         expect(result.timers).toEqual([30_000]);
       }
-    } finally { clearTimeout(deadline); }
+    } finally { clearTimeout(deadline); rmSync(root, { recursive: true, force: true }); }
   }, 15_000);
 }
