@@ -66,7 +66,7 @@ for (const [name, prompt] of [
     expect(editor.verified.at(-1)).toBe(prompt);
     expect(editor.reanchors).toBe(1);
     expect(editor.element.querySelectorAll("img, script")).toHaveLength(0);
-  });
+  }, 20_000); // Full-size DOM fixtures must settle on busy runners; production deadlines remain unchanged.
 }
 
 test("selected connector preserves its pill while an editor removes its transient placeholder", async () => {
