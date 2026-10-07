@@ -194,7 +194,7 @@ test("CI packages and smoke-launches on macOS, Windows, and Linux", () => {
   const ci = fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "ci.yml"), "utf8");
   const release = fs.readFileSync(path.join(repositoryRoot, ".github", "workflows", "release.yml"), "utf8");
   assert.match(ci, /macos-15, ubuntu-latest, windows-latest/);
-  assert.match(ci, /bun run app:package/);
+  assert.match(ci, /bun run verify --verbose --package/);
   assert.match(ci, /bun run app:smoke/);
   assert.match(ci, /prepare-windows-baseline-bun\.ps1 -Version 1\.4\.0 -Revision 1\.4\.0\+34cbb9a40/);
   assert.match(ci, /prepare-linux-libnotify\.sh/);
@@ -374,7 +374,7 @@ test("Linux ARM64 is built and smoked on native PR and release runners", () => {
   for (const workflow of [ci, release]) {
     assert.match(workflow, /ubuntu-24\.04-arm/);
     assert.match(workflow, /runner\.os == 'Linux' && runner\.arch == 'X64'/);
-    assert.match(workflow, /bun run app:package/);
+    assert.match(workflow, /bun run verify(?: --verbose)? --package/);
     assert.match(workflow, /bun run app:smoke/);
   }
   assert.match(release, /runtime_asset: codex-chatgpt-web-linux-arm64\.tar\.gz/);

@@ -28,7 +28,6 @@ jobs:
       - run: bun run lifecycle:sim --lane=all
 
   build:
-    needs: lifecycle-gate
     strategy:
       fail-fast: false
       matrix:
@@ -67,8 +66,7 @@ jobs:
       - name: Prepare owned AppImage toolset
         if: runner.os == 'Linux'
         run: bun run launcher/scripts/prepare-linux-appimage-tools.cjs
-      - run: bun run verify
-      - run: bun run app:package
+      - run: bun run verify --package
       - name: Verify Linux AppImage ABI on current Arch
         if: runner.os == 'Linux' && runner.arch == 'X64'
         run: |
@@ -110,7 +108,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [lifecycle-gate, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

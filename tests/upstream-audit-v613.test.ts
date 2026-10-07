@@ -255,13 +255,10 @@ test.each(["v6.1.4", "v6.1.5"])("continuing %s evidence closes source anchors an
     for (const target of item.targets) {
       const text = blob(target.blob).toString("utf8").replaceAll("\r\n", "\n");
       expect(textDigest(text.split("\n").slice(target.start - 1, target.end).join("\n")), target.path).toBe(target.lineSha256);
-      if (release === "v6.1.5" && JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version.startsWith("6.1.5-")) {
-        expect(textDigest(readFileSync(resolve(root, target.path), "utf8")), target.path).toBe(textDigest(text));
-      }
-      if (JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version.startsWith("6.1.4-")) {
+      if (JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version.startsWith(`${release.slice(1)}-`)) {
         // Historical source anchors stay immutable; follow-ups attest exact bytes.
         const followups: Array<{path: string; baselineSha256: string; currentSha256: string; reason: string}> =
-          JSON.parse(readFileSync(resolve(root, ".github/upstream-audit/v6.1.4-followups.json"), "utf8"));
+          JSON.parse(readFileSync(resolve(root, `.github/upstream-audit/${release}-followups.json`), "utf8"));
         const matching = followups.filter(entry => entry.path === target.path);
         expect(matching.length, target.path).toBeLessThanOrEqual(1);
         const followup = matching[0];

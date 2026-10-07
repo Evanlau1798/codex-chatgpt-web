@@ -1,0 +1,8 @@
+[
+  {
+    "path": "tests/browser-tunneled-fallback.test.ts",
+    "baselineSha256": "0746a14d75c306baeaeba67c0d862014a87792250dec4c7230883c16a3af928a",
+    "currentSha256": "7b52bcd430206e262d931c16ba5450b78d1a27a48426b8d451e3bddd72e55e1f",
+    "reason": "Retain all upstream-mapped fallback assertions while replacing real polling sleeps with the production worker scheduler seam in controlled fixtures; add direct scheduler and tool-settlement coverage. The original merge source anchors remain immutable."
+  }
+]

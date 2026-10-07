@@ -267,6 +267,8 @@ async function runFixture(options: {
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics, autoApproveToolCalls: false,
       ...(options.manualApproval ? { browserHostDescriptorPath: "fixture-control" } : {}) },
+    // Date.now is already controlled by this fixture; yield I/O without a real 250ms poll.
+    pauseObservation: () => { actions.push("observation-poll"); return new Promise<void>(resolve => setImmediate(resolve)); },
     finalizingRuns: new Set<string>(),
     takePreemptiveRetry: () => {
       if (options.steeringBeforeRecoverySend && actions.includes("insert") && !actions.includes("steering-issued")) {
@@ -575,6 +577,14 @@ async function runFixture(options: {
   return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText,
     fallbackAgeMs, recoveryDecisionAgeMs, selections, progressTimes, progressStartedAt, approvalVisibility, approvalTab, otherTab };
 }
+
+test("native fallback observation uses the worker scheduler while preserving final and tool settlement", async () => {
+  const result = await runFixture();
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.actions).toContain("observation-poll");
+  expect(result.actions.indexOf("tool-settled")).toBeLessThan(result.actions.indexOf("output-seal"));
+});
 
 test.each([false, true])("manual approval restores its owned protection (DOM=%s)", async untunneled => {
   for (const approvalOutcome of [undefined, "timeout", "aborted"] as const) {

@@ -1195,6 +1195,10 @@ export class ChatGptBrowserWorker {
 
   private constructor(private readonly config: ResolvedBrowserConfig) {}
 
+  private async pauseObservation(): Promise<void> {
+    await new Promise<void>(resolveSleep => setTimeout(resolveSleep, 250));
+  }
+
   /**
    * Lexical/contenteditable may preserve runs of ASCII spaces by exposing some of them as NBSP
    * through DOM textContent. Treat that DOM-only representation as equivalent only when the
@@ -4960,6 +4964,7 @@ export class ChatGptBrowserWorker {
           );
           const tunneled = await runChatGptTunneledOutputTurn({
             output: turn.tunneledOutput,
+            waitForPoll: () => this.pauseObservation(),
             afterSequence: tunneledOutputSequence,
             attempt: responseAttempt,
             completionFence: turn.completionFence,
@@ -5344,7 +5349,7 @@ export class ChatGptBrowserWorker {
           notifyApprovalPending,
         )) {
           internalObservationFaults = 0;
-          await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+          await this.pauseObservation();
           continue;
         }
 
@@ -5376,7 +5381,7 @@ export class ChatGptBrowserWorker {
             console.info(`[chatgpt-web] browser turn ${turn.traceId} stopped the active generation for same-surface checkpoint continuation`);
           }
           if (stopDecision.action !== "proceed") {
-            await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+            await this.pauseObservation();
             continue;
           }
           if (!responseTurnBinding) {
@@ -5404,7 +5409,7 @@ export class ChatGptBrowserWorker {
           await turn.externalProgress.acknowledgeToolBatch(externalProgressSnapshot.lastToolBatchRevision);
         }
         if (!snapshot) {
-          await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+          await this.pauseObservation();
           continue;
         }
         internalObservationFaults = 0;
@@ -5634,7 +5639,7 @@ export class ChatGptBrowserWorker {
               + ` ${internalObservationFaults}/${MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS}: ${observationError.message}`,
             );
             await diagnostics.capture(page, "internal-observation-fault");
-            await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+            await this.pauseObservation();
           }
         }
         }

@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { listRootTestFiles, rootTestBatches } from "./run-root-tests";
+import { ensurePinnedLifecycleClients } from "./lifecycle-sim/entry";
+import { runLifecycleSimulation } from "./lifecycle-sim/run";
 
 const root = resolve(import.meta.dir, "..");
 let verbose = false;
@@ -40,11 +42,11 @@ export function rootTestBatchCommands(files: string[], batchSize?: number): stri
   });
 }
 
-export async function run(args: string[], showOutput = verbose): Promise<void> {
+export async function run(args: string[], showOutput = verbose, cwd = root): Promise<void> {
   const label = `bun ${args.join(" ")}`;
   console.log(`[verify] ${label}`);
   const child = Bun.spawn([process.execPath, ...args], {
-    cwd: root,
+    cwd,
     stdin: "inherit",
     stdout: showOutput ? "inherit" : "pipe",
     stderr: showOutput ? "inherit" : "pipe",
@@ -61,10 +63,20 @@ export async function run(args: string[], showOutput = verbose): Promise<void> {
   if (exitCode !== 0) throw new Error(`Verification command failed (${exitCode}): ${label}`);
 }
 
-async function runRootTests(): Promise<void> {
+async function runRootTests(): Promise<ReadonlySet<string>> {
   const files = listRootTestFiles();
   if (files.length === 0) throw new Error("No root TypeScript test files were found");
   for (const command of rootTestBatchCommands(files)) await run(command);
+  return new Set(files);
+}
+
+export async function verifyBuild(runtimeBundle: string, liveWeb: boolean, packageApp = false, execute = run): Promise<void> {
+  // The same wrapper has already passed launcher:typecheck.
+  await execute(["run", "--cwd", "launcher", "build:renderer"]);
+  await execute(["run", "scripts/build-runtime-bundle.ts", runtimeBundle]);
+  await execute(["run", "scripts/smoke-release.ts", runtimeBundle]);
+  if (liveWeb) await execute(["run", "scripts/smoke-candidate-web.ts", runtimeBundle]);
+  if (packageApp) await execute(["run", "scripts/package.cjs", `--runtime=${runtimeBundle}`], verbose, join(root, "launcher"));
 }
 
 async function main(): Promise<void> {
@@ -77,20 +89,16 @@ async function main(): Promise<void> {
     await run(["run", "audit"]);
     await run(["run", "launcher:audit"]);
     await run(["run", "typecheck"]);
-    await runRootTests();
+    const passedRootTests = await runRootTests();
     await run(["run", "launcher:typecheck"]);
     await run(["run", "launcher:test"]);
-    if (liveWeb) await run(["run", "lifecycle:sim", "--lane=all"]);
-    await run(["run", "launcher:build"]);
-    await run(["run", "scripts/build-runtime-bundle.ts", runtimeBundle]);
-    await run([
-      "run",
-      "scripts/generate-third-party-notices.ts",
-      join(scratch, "THIRD_PARTY_NOTICES.txt"),
-      "--include-launcher",
-    ]);
-    await run(["run", "scripts/smoke-release.ts", runtimeBundle]);
-    if (liveWeb) await run(["run", "scripts/smoke-candidate-web.ts", runtimeBundle]);
+    if (liveWeb) {
+      // In-memory evidence from this wrapper only; standalone lifecycle remains complete.
+      const clients = await ensurePinnedLifecycleClients();
+      await runLifecycleSimulation("all", name => clients[name],
+        (args, cwd) => run(args.slice(1), verbose, cwd), passedRootTests);
+    }
+    await verifyBuild(runtimeBundle, liveWeb, process.argv.includes("--package"));
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

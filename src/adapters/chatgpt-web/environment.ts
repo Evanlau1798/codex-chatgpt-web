@@ -343,6 +343,14 @@ export function hasChatGptCalendarEnvironmentDelta(parsed: CodexParsedRequest): 
   return deltas > 0;
 }
 
+function isPassivePageContext(item: Record<string, unknown> | undefined): boolean {
+  if (item?.type !== "message" || item.role !== "user" || Boolean(hasEnvironmentContextFragment(item))
+    || !Array.isArray(item.content) || item.content.length !== 1) return false;
+  const part = record(item.content[0]);
+  return (part?.type === "input_text" || part?.type === "text") && typeof part.text === "string"
+    && part.text.trim().startsWith("<external_codex_apps_open_page>") && isPureContextualCodexUserText(part.text);
+}
+
 function environmentBeforeUser(input: unknown[], userIndex: number, expectedTurnId?: string, metadata?: Record<string, unknown>): string | undefined {
   if (userIndex <= 0) return undefined;
   const user = record(input[userIndex]);
@@ -353,7 +361,7 @@ function environmentBeforeUser(input: unknown[], userIndex: number, expectedTurn
 
   let candidateIndex = userIndex - 1;
   let candidate = record(input[candidateIndex]);
-  while (candidate?.type === "message" && candidate.role === "developer") {
+  while (candidate && ((candidate.type === "message" && candidate.role === "developer") || isPassivePageContext(candidate))) {
     const developerTurnId = itemTurnId(candidate);
     if (developerTurnId !== userTurnId) return undefined;
     candidateIndex -= 1;
@@ -478,7 +486,8 @@ function canonicalMetadataEnvironmentBefore(
 
   let candidateIndex = anchorIndex - 1;
   let candidate = record(input[candidateIndex]);
-  while (candidate?.type === "message" && (candidate.role === "developer" || compactionSummaryMessage(candidate))) {
+  while (candidate && ((candidate.type === "message" && (candidate.role === "developer" || compactionSummaryMessage(candidate)))
+    || isPassivePageContext(candidate))) {
     const developerTurnId = itemTurnId(candidate);
     const serverOwnedId = typeof candidate.id === "string" && candidate.id.length > 0;
     if (developerTurnId === undefined ? !serverOwnedId : developerTurnId !== metadataTurnId) return undefined;

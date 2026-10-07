@@ -9,7 +9,8 @@ const root = path.resolve(__dirname, "..");
 const launcherManifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const executable = "node";
 const electronBuilderCli = require.resolve("electron-builder/out/cli/cli.js", { paths: [root] });
-const requested = process.argv[2];
+const runtimeArgument = process.argv.slice(2).find(arg => arg.startsWith("--runtime="))?.slice(10);
+const requested = process.argv.slice(2).find(arg => !arg.startsWith("--runtime="));
 const target = requested || (process.platform === "darwin" ? "--mac"
   : process.platform === "win32" ? "--win"
     : process.platform === "linux" ? "--linux"
@@ -29,6 +30,32 @@ if (target !== nativeTarget) {
 }
 
 const env = { ...process.env };
+const runtimeIdentity = { version: launcherManifest.version, platform: process.platform, arch: process.arch };
+const runtimeRoot = path.join(root, "build", "runtime");
+if (runtimeArgument !== undefined) {
+  if (!path.isAbsolute(runtimeArgument)) throw new Error("Verified runtime path must be absolute");
+  const source = fs.realpathSync(runtimeArgument);
+  validateRuntimeBundle(source, runtimeIdentity);
+  // Resolve existing parents too: the output may not exist yet or may be reached through a junction.
+  let existingOutput = runtimeRoot;
+  while (!fs.existsSync(existingOutput)) existingOutput = path.dirname(existingOutput);
+  const output = path.resolve(fs.realpathSync(existingOutput), path.relative(existingOutput, runtimeRoot));
+  const sourceKey = process.platform === "win32" ? path.toNamespacedPath(source).toLowerCase() : source;
+  const outputKey = process.platform === "win32" ? path.toNamespacedPath(output).toLowerCase() : output;
+  const contains = (parent, child) => {
+    const relative = path.relative(parent, child);
+    return !path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(".." + path.sep);
+  };
+  if (sourceKey !== outputKey && (contains(sourceKey, outputKey) || contains(outputKey, sourceKey))) {
+    throw new Error("Verified runtime cannot overlap the packaging output");
+  }
+  // Only the fixed packaging output may be replaced; never mutate the verified source.
+  if (sourceKey !== outputKey) {
+    fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    fs.cpSync(source, runtimeRoot, { recursive: true });
+  }
+}
+validateRuntimeBundle(runtimeRoot, runtimeIdentity);
 if (!env.CSC_LINK && !env.CSC_NAME) env.CSC_IDENTITY_AUTO_DISCOVERY = "false";
 const builderArgs = [
   electronBuilderCli,
@@ -45,11 +72,6 @@ if (target === "--linux") {
     throw new Error(`Unsupported Linux AppImage architecture: ${process.arch}`);
   }
   builderArgs.push(`--${process.arch}`);
-  validateRuntimeBundle(path.join(root, "build", "runtime"), {
-    version: launcherManifest.version,
-    platform: "linux",
-    arch: process.arch,
-  });
   if (process.arch === "arm64") {
     const toolsRoot = env.APPIMAGE_TOOLS_PATH;
     if (!toolsRoot || !path.isAbsolute(toolsRoot)) {

@@ -41,9 +41,11 @@ test("the local release gate runs verification before the account-bound Web smok
   expect(verify).toContain('if (showOutput || exitCode !== 0)');
   expect(verify).toContain("export async function run(");
   expect(verify).toContain("if (import.meta.main)");
-  expect(verify).toContain('if (liveWeb) await run(["run", "lifecycle:sim", "--lane=all"]);');
+  expect(verify).toContain('await runLifecycleSimulation("all"');
+  expect(verify).toContain("passedRootTests");
   expect(verify).toContain('"scripts/smoke-candidate-web.ts", runtimeBundle');
-  expect(verify.indexOf('"lifecycle:sim"')).toBeLessThan(verify.indexOf('"scripts/smoke-candidate-web.ts"'));
+  expect(verify.indexOf("const passedRootTests = await runRootTests()")).toBeLessThan(verify.indexOf('await runLifecycleSimulation("all"'));
+  expect(verify.indexOf('await runLifecycleSimulation("all"')).toBeLessThan(verify.indexOf("await verifyBuild(runtimeBundle, liveWeb"));
 
   for (const workflowName of ["ci.yml", "release.yml"]) {
     const workflow = readFileSync(resolve(repo, ".github", "workflows", workflowName), "utf8");
@@ -93,7 +95,7 @@ test("the aggregate gate checks the actual PR head preserves the pinned v5 ances
   expect(gate).toContain('git merge-base --is-ancestor 212ceef2acac9d6ee0f3c9037abfaf4ad8ff9827 "$CANDIDATE_HEAD"');
 });
 
-test("tag release checks the pinned v6 ancestor before building packages", () => {
+test("tag release checks the pinned v6 ancestor before publication", () => {
   const workflow = readFileSync(resolve(repo, ".github", "workflows", "release.yml"), "utf8");
   const lifecycleGate = workflow.match(/\r?\n  lifecycle-gate:\r?\n([\s\S]*?)\r?\n  build:/)?.[1];
   expect(lifecycleGate).toContain("fetch-depth: 0");
@@ -156,14 +158,15 @@ test("contributor guidance defines the lifecycle profiles without untracked docs
   expect(pullRequest).toContain("CONTRIBUTING.md#lifecycle-verification-gate");
 });
 
-test("release builds rerun the deterministic lifecycle gate at the tag SHA", () => {
+test("release reruns the deterministic lifecycle gate at the tag SHA before publishing parallel builds", () => {
   const workflow = readFileSync(resolve(repo, ".github", "workflows", "release.yml"), "utf8");
   const build = workflow.match(/\r?\n  build:\r?\n([\s\S]*?)\r?\n  publish:/)?.[1];
   expect(workflow).toContain("lifecycle-gate:");
   expect(workflow).toContain("bun run lifecycle:sim --lane=all");
   expect(workflow).not.toContain("Install pinned native lifecycle clients");
   expect(workflow).not.toContain("@openai/codex@0.155.1");
-  expect(workflow).toMatch(/build:\s+needs: lifecycle-gate/);
+  expect(build).not.toMatch(/^\s*needs:/m);
+  expect(workflow).toMatch(/publish:\s+needs: \[lifecycle-gate, build\]/);
   expect(build).toContain("fetch-depth: 0");
 });
 

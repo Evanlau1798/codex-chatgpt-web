@@ -44,6 +44,7 @@ interface TunnelOptions {
   deadline?: number;
   attempt: number;
   pollMs?: number;
+  waitForPoll?(): Promise<void>;
   fallbackGraceMs?: number;
   missingResponseGraceMs?: number;
   terminalEvidenceGraceMs?: number;
@@ -61,6 +62,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
   const controller = new AbortController();
   const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
   const pollMs = options.pollMs ?? 250;
+  const poll = () => options.waitForPoll ? options.waitForPoll().then(() => ({ kind: "poll" as const })) : delay(pollMs);
   const fallbackGraceMs = options.fallbackGraceMs ?? 2_000;
   const missingResponseGraceMs = options.missingResponseGraceMs ?? 60_000;
   const terminalEvidenceGraceMs = options.terminalEvidenceGraceMs ?? 60_000;
@@ -116,7 +118,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
       if (options.deadline !== undefined && Date.now() >= options.deadline) throw new Error("ChatGPT web turn timed out");
       if (Date.now() - lastHeartbeat >= 10_000) { options.onHeartbeat?.(); lastHeartbeat = Date.now(); }
       if (!observeImmediately) {
-        const raced = await Promise.race([pending, delay(pollMs)]);
+        const raced = await Promise.race([pending, poll()]);
         if (raced.kind === "output") {
           acceptOutput(raced.event);
           continue;
@@ -133,7 +135,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
       }
       if (preemptiveRetry && !observed.running) {
         if (observed.toolCallsInFlight) continue;
-        const settled = await Promise.race([pending, delay(pollMs)]);
+        const settled = await Promise.race([pending, poll()]);
         if (settled.kind === "output") { acceptOutput(settled.event); continue; }
         if (final) await options.output.reset(final.sequence);
         options.completionAdmission?.reopen();
@@ -160,7 +162,7 @@ export async function runChatGptTunneledOutputTurn(options: TunnelOptions): Prom
           stoppedWithoutFinalSince ??= Date.now();
         }
         if (stoppedWithoutFinalSince !== undefined && Date.now() - stoppedWithoutFinalSince >= fallbackGraceMs) {
-          const settled = await Promise.race([pending, delay(pollMs)]);
+          const settled = await Promise.race([pending, poll()]);
           if (settled.kind === "output") { acceptOutput(settled.event); continue; }
           // Fence the whole confirmation, including a tool that starts and settles
           // before the DOM candidate is read. The broker checks this revision at seal.
