@@ -23,6 +23,7 @@ export const ko = {
   devKeepRunningBody: "창을 닫아도 격리된 브라우저 세션과 DEV MCP 터널을 계속 사용할 수 있도록 유지합니다.",
   biggerContext: "Bigger Context (실험적)",
   biggerContextBody: "Enhanced Web 세션 모드가 꺼져 있을 때만 사용할 수 있습니다. 작은 턴은 1개, 큰 턴은 총 2개 또는 6개의 메시지로 보내며 마지막 메시지만 작업을 실행합니다. 각 메시지는 실제 ChatGPT 요청으로 사용량을 소모할 수 있습니다. Codex에 표시되는 컨텍스트와 컴팩션 임계값은 3배지만 ChatGPT의 메시지, 모델, 작성기 및 서비스 제한은 그대로 적용됩니다. 무제한이 아닙니다. 변경 후 Codex를 다시 시작하세요.",
+  lunaBiggerContextUnavailable: "Sol과 Pro에서만 사용할 수 있습니다. Luna 또는 Think를 사용할 때는 꺼 주세요.",
   skillAttachments: "스킬을 파일로 전송 (실험적)",
   skillAttachmentsBody: "명시적으로 선택한 Codex 스킬을 인라인 지침 대신 이름이 있는 텍스트 파일로 업로드합니다. 다른 스킬은 도구로 읽습니다. 기본값은 꺼짐이며 이미지와 첨부 파일 수 제한을 공유합니다.",
   manualSkillAttachmentsUnavailable: "스킬 업로드에는 자동 브라우저 조작이 필요합니다.",

@@ -213,7 +213,16 @@ export async function activateChatGptEffortMenu(
 
   const settleMs = options.settleMs ?? 3_000;
   await clearGhostEffortState(page, control);
-  await control.click({ force: true, timeout: Math.max(1, settleMs) });
+  try {
+    await control.click({ force: true, timeout: Math.max(1, settleMs) });
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== "TimeoutError") throw error;
+    // The click can commit before Playwright acknowledges it. Prove the owned
+    // open surface before accepting that receipt; never click again blindly.
+    const committed = await visibleEffortSurface(page, control);
+    if (committed) return { method: "click", ...committed };
+    throw error;
+  }
   const clickedSurface = await waitForEffortSurface(page, control, settleMs);
   if (clickedSurface) return { method: "click", ...clickedSurface };
 

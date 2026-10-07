@@ -161,6 +161,10 @@ for (const profile of ["Pro", "Plus", "Luna"] as const) test(`${profile} uses on
       { role: "assistant", content: [{ type: "toolCall", id: call!.id, name: "exec_command", arguments: { cmd: "inspect" } }], timestamp: 3 },
       { role: "toolResult", toolCallId: call!.id, toolName: "exec_command", content: "canonical tool result", isError: false, timestamp: 4 },
     );
+    (continuation._rawBody as { input: unknown[] }).input.push(
+      { type: "function_call", call_id: call!.id, name: "exec_command", arguments: JSON.stringify({ cmd: "inspect" }) },
+      { type: "function_call_output", call_id: call!.id, output: "canonical tool result" },
+    );
     const finalEvents: AdapterEvent[] = [];
     await adapter.runTurn!(continuation, { headers: new Headers() }, event => finalEvents.push(event));
     expect(store.saved).toBe(luna ? undefined : "Checkpoint: inspection complete; continue task.");

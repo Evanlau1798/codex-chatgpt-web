@@ -2,6 +2,22 @@ import { expect, test } from "bun:test";
 import { ChatGptMarkdownBuffer, chatGptHtmlToMarkdown } from "../src/adapters/chatgpt-web/markdown";
 import { decodeChatCompletion, parseChatCompletion } from "../src/chat-completions/contract";
 
+test("atomic summaries accept a revised draft while ordinary streamed answers still reject changes", () => {
+  const first = { key: "a", tag: "p", html: "<p>Earlier summary.</p>", text: "Earlier summary.", streamable: true };
+  const second = { key: "b", tag: "p", html: "<p>Final detail.</p>", text: "Final detail.", streamable: true };
+  const revised = { ...first, html: "<p>Corrected summary.</p>", text: "Corrected summary." };
+  const summary = new ChatGptMarkdownBuffer(undefined, 0, "markdown", false);
+  const answer = new ChatGptMarkdownBuffer(undefined, 0);
+  for (const draft of [[first, second], [first, second], [second, revised]]) {
+    expect(summary.observe(draft)).toBe("");
+    answer.observe(draft);
+  }
+  expect(summary.finish()).toEqual({
+    markdown: "Final detail.\n\nCorrected summary.", delta: "Final detail.\n\nCorrected summary.",
+  });
+  expect(() => answer.finish()).toThrow("completed text block");
+});
+
 function katex(source: string, display = false): string {
   const escaped = source.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   const math = '<span class="katex"><span class="katex-mathml"><math><semantics>'

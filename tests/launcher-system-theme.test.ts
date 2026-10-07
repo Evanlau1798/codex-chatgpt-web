@@ -12,11 +12,13 @@ import {
 
 // A disposable, unauthenticated browser proves that attaching a second worker
 // does not turn either the owned page or another existing page back to light.
-test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("launcher CDP attachments preserve native dark appearance across pages", async () => {
+// Headless shell cannot supply the native appearance this CDP boundary requires.
+const nativeBrowser = process.env.CHATGPT_DOM_NATIVE_TEST_BROWSER ?? process.env.CHATGPT_DOM_TEST_BROWSER;
+test.skipIf(!nativeBrowser)("launcher CDP attachments preserve native dark appearance across pages", async () => {
   const root = mkdtempSync(join(tmpdir(), "bridge-theme-test-"));
   // Start outside Playwright so neither media nor focus is already emulated.
   const child = Bun.spawn([
-    process.env.CHATGPT_DOM_TEST_BROWSER!,
+    nativeBrowser!,
     "--headless=new",
     "--remote-debugging-address=127.0.0.1",
     "--remote-debugging-port=0",
@@ -81,9 +83,13 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("launcher CDP attachments pre
     }
   } finally {
     for (const connection of connections) await connection.browser.close();
+    if (browser?.isConnected()) {
+      await (await browser.newBrowserCDPSession()).send("Browser.close");
+      await child.exited;
+    }
     await browser?.close();
-    child.kill("SIGTERM");
+    if (child.exitCode === null) child.kill("SIGTERM");
     await child.exited;
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }, 90_000);

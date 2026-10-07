@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildResponseJSON } from "../src/bridge";
 import { ChatGptWebAdapterError, chatGptWebSurfaceError } from "../src/adapters/chatgpt-web/adapter-error";
+import { chatGptStoppedThinkingError, chatGptResponseIncompleteError } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptAccountSafety } from "../src/adapters/chatgpt-web/account-safety";
 import { ChatGptCompletionTracker, chatGptImageFilePayloads, chatGptPromptFilePayloads, chatGptTurnIsComplete } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
@@ -2405,7 +2406,7 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
-  test.each([false, true])("Pro keeps one MCP tool loop and replays results with fresh mode=%s", async freshConversation => {
+  test.each([false, true])("Pro keeps one MCP tool loop across writer failures with fresh mode=%s", async freshConversation => {
     const socketPath = brokerTestEndpoint(`cgw-h3-pro-${process.pid}-${Date.now()}`);
     const provider: CodexProviderConfig = {
       adapter: "chatgpt-web",
@@ -2417,6 +2418,7 @@ describe("ChatGPT outer-native harness v4", () => {
     const worker = ChatGptBrowserWorker.forProvider(provider);
     const originalRun = worker.run.bind(worker);
     let browserStarts = 0;
+    let nativeResults = 0;
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
       browserStarts += 1;
       expect(turn.modelId).toBe(CHATGPT_WEB_MODEL_ID);
@@ -2441,6 +2443,7 @@ describe("ChatGPT outer-native harness v4", () => {
         ));
         const nativeResult = await invocation.result;
         const output = (nativeResult.structuredContent as { output: string }).output;
+        nativeResults += 1;
         turn.onReasoningSummary?.("Pro received the native tool result");
         turn.onTextDelta("## Pro result");
         turn.onTextDelta(`\n\nWorkspace: ${output}`);
@@ -2454,6 +2457,9 @@ describe("ChatGPT outer-native harness v4", () => {
     const adapter = createChatGptWebAdapter(provider);
     const firstEvents: AdapterEvent[] = [];
     try {
+      await expect(adapter.runTurn!(request, { headers: new Headers() }, event => {
+        if (event.type === "tool_call_delta") throw new TypeError("tool response writer closed");
+      })).rejects.toMatchObject({ name: "AbortError" });
       await adapter.runTurn!(request, { headers: new Headers() }, event => firstEvents.push(event));
       expect(browserStarts).toBe(1);
       const call = firstEvents.find(
@@ -2499,8 +2505,12 @@ describe("ChatGPT outer-native harness v4", () => {
       );
 
       const finalEvents: AdapterEvent[] = [];
+      await expect(adapter.runTurn!(continuation, { headers: new Headers() }, event => {
+        if (event.type === "text_delta" && event.phase === "final_answer") throw new TypeError("final response writer closed");
+      })).rejects.toMatchObject({ name: "AbortError" });
       await adapter.runTurn!(continuation, { headers: new Headers() }, event => finalEvents.push(event));
       expect(browserStarts).toBe(1);
+      expect(nativeResults).toBe(1);
       expect(finalEvents.find(event => event.type === "thinking_delta")).toEqual({
         type: "thinking_delta",
         thinking: "Pro received the native tool result",
@@ -3729,6 +3739,47 @@ test("caps automatic transient-server-error pre-send failures at three retries f
       expect(browserStarts).toBe(MAX_CHATGPT_WEB_TURN_RETRIES + 1);
     } finally {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      await TurnBroker.forSocket(socketPath).close();
+    }
+  });
+
+
+test.each([
+    [chatGptStoppedThinkingError, "chatgpt_stopped_thinking", "usage limit may have been reached"],
+    [() => chatGptResponseIncompleteError("ChatGPT stopped showing generation or tool activity without a final answer."),
+      "chatgpt_response_incomplete", "without a final answer"],
+    [() => new ChatGptWebAdapterError("The submitted message exceeds the input-size limit; compact before retrying.",
+      { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false }),
+      "context_length_exceeded", "compact before retrying"],
+  ] as const)("browser failure preserves its exact explanation without an automatic retry (%s, %s)", async (failure, code, explanation) => {
+    const socketPath = brokerTestEndpoint(`cgw-${code}-${process.pid}-${Date.now()}`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web", baseUrl: `browser://${code}-${Date.now()}`,
+      chatgptWeb: { brokerSocketPath: socketPath, localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run;
+    let browserStarts = 0;
+    worker.run = async turn => {
+      browserStarts += 1;
+      turn.onSendActivated?.();
+      throw failure();
+    };
+    try {
+      const events: AdapterEvent[] = [];
+      await createChatGptWebAdapter(provider).runTurn!(rawWireRequest(environmentXml),
+        { headers: new Headers() }, event => events.push(event));
+      const status = code === "context_length_exceeded" ? 400 : 502;
+      const errorType = code === "context_length_exceeded" ? "invalid_request_error" : "server_error";
+      expect(events.at(-1)).toMatchObject({ type: "error", code, status, retryable: false });
+      const response = buildResponseJSON(events, CHATGPT_WEB_MODEL_ID);
+      expect(response).toMatchObject({ status: "failed", retryable: false,
+        error: { type: errorType, code } });
+      expect(JSON.stringify(response)).toContain(explanation);
+      expect(browserStarts).toBe(1);
+      expect(events.some(event => event.type === "done")).toBeFalse();
+    } finally {
+      worker.run = originalRun;
       await TurnBroker.forSocket(socketPath).close();
     }
   });

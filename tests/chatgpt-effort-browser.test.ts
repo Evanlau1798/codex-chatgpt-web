@@ -1,13 +1,18 @@
-import { expect, test } from "bun:test";
-import { chromium } from "playwright-core";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { chromium, type Browser } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { detectChatGptAccountCapabilities } from "../src/chatgpt-session";
 
+let browser: Browser;
+beforeAll(async () => {
+  if (process.env.CHATGPT_DOM_TEST_BROWSER) browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+}, 30_000);
+afterAll(async () => { await browser?.close(); });
+
 for (const modern of [false, true])
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`model selection reuses the ${modern ? "power" : "classic"} picker without racing Escape cleanup`, async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const page = await browser.newPage();
   try {
-    const page = await browser.newPage();
     page.setDefaultTimeout(2_000);
     await page.setContent(`<form><div id="prompt-textarea" contenteditable="true">Draft</div>
       <button type="button" data-tone="neutral" aria-haspopup="menu" aria-controls="picker" aria-expanded="false">Extra High</button></form>
@@ -43,14 +48,13 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`model selection reuses the $
     expect(result.selection.label).toBe("5.6 Sol Extra High");
     expect(await page.evaluate(() => (window as any).pickerOpens)).toBe(2);
     expect(await page.locator('#prompt-textarea').innerText()).toBe("Draft");
-  } finally { await browser.close(); }
+  } finally { await page.close(); }
 }, 30_000);
 
 for (const scenario of ["hydrate", "shrink", "locked", "pro-disappears"])
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`real slider ${scenario} keeps the requested available effort`, async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const page = await browser.newPage();
   try {
-    const page = await browser.newPage();
     await page.setContent(`<form><div id="prompt-textarea" contenteditable="true">Draft</div>
       <button type="button" data-tone="neutral" aria-haspopup="menu" aria-controls="picker" aria-expanded="false">Instant</button></form>
       <div id="picker" role="menu" hidden><div role="menuitem" tabindex="0"><div data-model-picker-power-slider style="height:30px;width:250px"></div></div></div>
@@ -87,5 +91,5 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`real slider ${scenario} keep
     }
     expect(await page.locator('#prompt-textarea').innerText()).toBe("Draft");
     await page.close();
-  } finally { await browser.close(); }
+  } finally { await page.close(); }
 }, 120_000);

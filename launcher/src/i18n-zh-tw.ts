@@ -23,6 +23,7 @@ export const zhTW = {
   devKeepRunningBody: "視窗關閉後仍保持隔離的瀏覽器工作階段與 DEV MCP Tunnel 可用。",
   biggerContext: "更大上下文（實驗性）",
   biggerContextBody: "僅能在 Enhanced Web 工作階段模式關閉時使用。小型回合傳送一則訊息，大型回合共傳送兩則或六則訊息，只有最後一則執行任務。每則都是真實的 ChatGPT 請求，可能消耗帳戶額度。向 Codex 公布的上下文與壓縮門檻提高至三倍，但 ChatGPT 的訊息、模型、編輯器和服務限制仍然有效。這不是無限上下文。變更後請重新啟動 Codex。",
+  lunaBiggerContextUnavailable: "僅適用於 Sol 和 Pro。使用 Luna 或 Think 時，請關閉此設定。",
   skillAttachments: "技能作為檔案（實驗性）",
   skillAttachmentsBody: "將明確選取的 Codex 技能作為具名文字檔上傳，而不是內嵌指令。其他技能仍透過工具讀取。預設關閉；與圖片共用附件數量限制。",
   savedChats: "在 ChatGPT 中儲存聊天",

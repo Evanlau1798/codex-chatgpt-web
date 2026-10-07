@@ -8,6 +8,7 @@ export { chatGptConversationKey, chatGptTurnTraceId } from "./conversation-key";
 export {
   chatGptCompactionSourceExecutionKey,
   chatGptTurnExecutionKey,
+  chatGptTurnRoundKey,
   chatGptTurnSteeringId,
 } from "./turn-execution-key";
 export { ChatGptSteeringFeed } from "./steering-feed";
@@ -68,6 +69,12 @@ export class ChatGptTurnSession {
   private settledBrowserOutcome?: ChatGptBrowserOutcome;
   private physicalBrowserSettled = false;
   private tail: Promise<void> = Promise.resolve();
+  private readonly rounds = new Map<string, {
+    events: AdapterEvent[];
+    reasoning: string[];
+    completed: boolean;
+    failure?: Error;
+  }>();
 
   constructor(
     readonly runtime: ChatGptTurnRuntime,
@@ -100,6 +107,61 @@ export class ChatGptTurnSession {
         this.physicalBrowserSettled = true;
         throw error;
       });
+  }
+
+  roundEvents(key: string): AdapterEvent[] {
+    return [...this.round(key).events];
+  }
+
+  roundReasoning(key: string): string[] {
+    return [...this.round(key).reasoning];
+  }
+
+  appendRoundEvents(key: string, events: readonly AdapterEvent[]): void {
+    if (events.length === 0) return;
+    const round = this.round(key);
+    if (round.completed) throw new Error("cannot append to a completed ChatGPT native round");
+    round.events.push(...events);
+  }
+
+  appendRoundReasoning(key: string, values: readonly string[]): void {
+    if (values.length === 0) return;
+    const round = this.round(key);
+    if (round.completed) throw new Error("cannot append reasoning to a completed ChatGPT native round");
+    round.reasoning.push(...values);
+  }
+
+  completeRound(key: string): void {
+    this.round(key).completed = true;
+  }
+
+  failRound(key: string, error: Error): void {
+    const round = this.round(key);
+    round.failure = error;
+    round.completed = true;
+  }
+
+  roundCompleted(key: string): boolean {
+    return this.rounds.get(key)?.completed === true;
+  }
+
+  roundFailure(key: string): Error | undefined {
+    return this.rounds.get(key)?.failure;
+  }
+
+  private round(key: string) {
+    let round = this.rounds.get(key);
+    if (round) return round;
+    round = { events: [], reasoning: [], completed: false };
+    this.rounds.set(key, round);
+    while (this.rounds.size > 512) {
+      const oldestCompleted = [...this.rounds].find(([, candidate]) => candidate.completed);
+      if (!oldestCompleted) {
+        throw new Error("ChatGPT native round journal is full (512 unfinished rounds)");
+      }
+      this.rounds.delete(oldestCompleted[0]);
+    }
+    return round;
   }
 
   runExclusive<T>(task: () => Promise<T>): Promise<T> {
@@ -196,7 +258,7 @@ export class ChatGptTurnSession {
   }
 
   setFinalEvents(events: AdapterEvent[]): void {
-    this.finalPrelude = [...events];
+    this.finalPrelude = events.filter(event => event.type !== "done" && event.type !== "error");
   }
 
   eventsForFinalReplay(): AdapterEvent[] {

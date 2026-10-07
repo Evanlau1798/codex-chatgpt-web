@@ -148,9 +148,11 @@ const externalProfileXml = `<permission_profile type="external"><file_system typ
       const state = JSON.parse(saved);
       const row = state.threads[rolloutThreadId];
       (field === "writableRoots" ? row.writableRoots : row.sandboxPolicy.writableRoots).push(resolve(root, "..", "unapproved"));
-      writeFileSync(cache, JSON.stringify(state));
+      const invalid = JSON.stringify(state);
+      writeFileSync(cache, invalid);
       expect(() => new ChatGptThreadEnvironmentStore(cache, Date.now, fixture.codexHome).resolve(environmentlessChild(rolloutTurnId, "workspace-write")))
-        .toThrow("Invalid persisted ChatGPT workspace-write policy");
+        .toThrow("contains invalid workspace or permission records");
+      expect(readFileSync(cache, "utf8")).toBe(invalid);
     }
     entries.splice(4, 2);
     writeFileSync(fixture.rolloutPath, [childSessionMeta(), context].map(value => JSON.stringify(value)).join("\n") + "\n");

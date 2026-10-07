@@ -249,8 +249,14 @@ export async function readChatGptTurnIdentities(
         || (!element.closest("[data-turn-key]") && element.parentElement?.closest("[data-turn-id-container]")
           ?.getAttribute("data-turn-id-container") !== element.getAttribute("data-turn-id-container")))
       : elements;
+    const groupKeys = candidates.map(element => element.getAttribute("data-turn-key"))
+      .filter((key): key is string => key !== null);
+    if (groupKeys.some(key => key.trim().length === 0)) throw new Error("ChatGPT conversation group has no stable identity");
+    if (new Set(groupKeys).size !== groupKeys.length) return groupKeys.map(key => `group:user:${key}`);
     const identities = candidates.flatMap(element => {
       const key = element.getAttribute("data-turn-key");
+      // The baseline keeps both roles; only a mounted bubble proves a current user turn.
+      if (key !== null && name === "data-turn-id" && !element.querySelector("[data-user-message-bubble]")) return [];
       return key === null ? [element.getAttribute(name)] : name === "data-turn-id-container"
         ? [`group:user:${key}`, `group:assistant:${key}`]
         : [`group:user:${key}`];

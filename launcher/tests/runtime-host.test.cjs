@@ -77,7 +77,7 @@ test("DEV core setup configures only the isolated harness contract", async () =>
 });
 
 test("Bigger Context uses the setup transaction and refreshes the production Codex catalog", async () => {
-  const fixture = hostFor({ mode: "full", appName: "Codex Native2" });
+  const fixture = hostFor({ mode: "full", appName: "Codex Native2", solAvailable: true });
   const result = await fixture.host.setBiggerContext(true);
   assert.equal(result.enabled, true);
   assert.deepEqual(fixture.invocation(), {
@@ -94,6 +94,17 @@ test("Bigger Context uses the setup transaction and refreshes the production Cod
       "--bigger-context",
     ],
   });
+});
+
+test("Luna cannot enable Bigger Context, but can turn off an existing unsupported setting", async () => {
+  for (const createHost of [hostFor, devHostFor]) {
+    const fixture = createHost({ mode: "browser-only", solAvailable: false, experimentalBiggerContext: true });
+    await assert.rejects(fixture.host.setBiggerContext(true), /unavailable for Luna and Think/);
+    assert.equal(fixture.invocation(), undefined);
+    const result = await fixture.host.setBiggerContext(false);
+    assert.equal(result.enabled, false);
+    assert.ok(fixture.invocation().args.includes("--standard-context"));
+  }
 });
 
 test("Bigger Context updates the isolated DEV config without installing a Codex route", async () => {

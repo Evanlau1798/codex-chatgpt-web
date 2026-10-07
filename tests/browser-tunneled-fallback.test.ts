@@ -178,9 +178,10 @@ async function runFixture(options: {
   };
   const page: any = Object.assign(new EventEmitter(), {
     isClosed: () => false, url: () => submitted && options.conversationRoute || options.initialRoute || CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
+    getByText: () => hidden,
     keyboard: { press: async () => { actions.push("composer-end"); } },
     locator: (selector: string) => {
-      if (options.manualApproval && selector === '[role="dialog"], [data-testid="tool-approval-card"]') return approvalDialog;
+      if (options.manualApproval && selector === '[role="dialog"], [data-testid="tool-approval-card"], [data-codex-approval-surface="true"]') return approvalDialog;
       if (selector === CHATGPT_ASSISTANT_TURN_SELECTOR) return turns;
       if (selector === CHATGPT_STOP_BUTTON_SELECTOR && options.progressScenario) return {
         ...hidden, isVisible: async () => submitted > 0 && progressObservations < 9,
@@ -239,7 +240,7 @@ async function runFixture(options: {
   });
   let approvalShown = options.manualApproval === true;
   let approvalReads = 0;
-  const approvalDialog: any = { ...hidden, waitFor: async () => {}, isVisible: async () => {
+  const approvalDialog: any = { ...hidden, count: async () => approvalShown ? 1 : 0, waitFor: async () => {}, isVisible: async () => {
     if (++approvalReads > 1 && approvalShown) {
       if (options.approvalOutcome === "aborted") controller.abort();
       else if (approvalVisibility.at(-1) === false && !options.approvalOutcome) approvalShown = false; // User can only approve through the unlocked UI.
@@ -247,7 +248,7 @@ async function runFixture(options: {
     }
     return approvalShown;
   }, getByRole: (_role: string, query: { name: string | RegExp }) => ({ ...hidden,
-    waitFor: async () => {}, press: async () => {
+    count: async () => 1, waitFor: async () => {}, click: async () => {
       const label = ["Allow once", "Deny"].find(label => typeof query.name === "string"
         ? label === query.name : query.name.test(label));
       if (!label) throw Error("No matching approval button in fixture");
@@ -620,6 +621,7 @@ async function runLateCompletionActionFixture() {
   };
   const page: any = Object.assign(new EventEmitter(), {
     isClosed: () => false,
+    getByText: () => hidden,
     url: () => submitted ? "https://chatgpt.com/c/current?temporary-chat=true" : CHATGPT_TEMPORARY_CHAT_URL,
     evaluate: async () => ({}),
     locator: (selector: string) => {

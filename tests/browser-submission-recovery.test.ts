@@ -674,6 +674,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
       let initialUserTurnCount = 1;
       let submissionBaseline = first.baseline;
       const reuseConversation = false;
+      const acknowledgedStages = [];
       const responseAttempt = 1;
       let initialToolBatchRevision = 0;
       let beforeRecoveryInsertion;

@@ -46,6 +46,7 @@ import {
   launcherCapabilityProbeRequired,
   type SetupOptions,
 } from "./setup-config";
+import { CHATGPT_WEB_LUNA_BIGGER_CONTEXT_ERROR } from "./chatgpt-web-models";
 
 export { existingFullSetupCredentials, launcherCapabilityProbeRequired } from "./setup-config";
 export type { SetupOptions } from "./setup-config";
@@ -321,6 +322,9 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
   config.proAvailable = config.solAvailable && proAvailable === true;
   config.modelCapabilities = modelCapabilities;
+  if (config.experimentalBiggerContext && !config.solAvailable) {
+    throw new Error(CHATGPT_WEB_LUNA_BIGGER_CONTEXT_ERROR);
+  }
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
   const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config) || explicitTunnelChange || options.forceLogin));
   if (beforeService.loaded && preliminaryChange && !options.restartService) {
@@ -442,6 +446,10 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     config.extraHighAvailable = capabilities.solAvailable && capabilities.extraHighAvailable;
     config.proAvailable = capabilities.solAvailable && capabilities.proAvailable;
     config.modelCapabilities = capabilities.modelCapabilities;
+  }
+
+  if (config.experimentalBiggerContext && !config.solAvailable) {
+    throw new Error(CHATGPT_WEB_LUNA_BIGGER_CONTEXT_ERROR);
   }
 
   await configureSetupTunnel(config, existing, options);

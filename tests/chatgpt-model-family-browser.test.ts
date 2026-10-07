@@ -1,9 +1,15 @@
 // Reproduction contributed by @alexalok in PR #730.
-import { expect, test } from "bun:test";
-import { chromium } from "playwright-core";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { chromium, type Browser } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { readChatGptUsageModel } from "../src/adapters/chatgpt-web/limits";
+
+let browser: Browser;
+beforeAll(async () => {
+  if (process.env.CHATGPT_DOM_TEST_BROWSER) browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+}, 30_000);
+afterAll(async () => { await browser?.close(); });
 
 // Mirrors ChatGPT's power picker as captured live on 2026-09-29 (English, Pro account): the slider
 // announcement reads only "Pro, 5 of 5." and the model version appears in the "Select model"
@@ -76,9 +82,8 @@ const FIXTURE = `<form><div id="prompt-textarea" contenteditable="true">Draft</d
   </script>`;
 
 async function selectGpt6Pro(picker: Picker) {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const page = await browser.newPage();
   try {
-    const page = await browser.newPage();
     page.setDefaultTimeout(5_000);
     const config = "<script>window.pickerHeader = " + (picker.header ? picker.header.toString() : "null")
       + "; window.pickerStatus = " + picker.status.toString() + ";</script>";
@@ -93,7 +98,7 @@ async function selectGpt6Pro(picker: Picker) {
       return { ok: false, message: error instanceof Error ? error.message : String(error), draft: await page.locator("#prompt-textarea").innerText() };
     }
   } finally {
-    await browser.close();
+    await page.close();
   }
 }
 
@@ -114,9 +119,8 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-6 Pro fails closed when 
 }, 60_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("model evidence excludes inactive and foreign picker headers and rejects multiple active headers", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const page = await browser.newPage();
   try {
-    const page = await browser.newPage();
     await page.setContent(`<div role="menu" id="owned">
       <div data-model-picker-view-toggle="true" id="active"><div data-menu-row-content>
         <span>6</span><span>Pro</span><span hidden>5.6</span>
@@ -139,6 +143,6 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("model evidence excludes inac
     });
     await expect(readChatGptUsageModel(slider, true)).rejects.toThrow("multiple active model headers");
   } finally {
-    await browser.close();
+    await page.close();
   }
 }, 60_000);

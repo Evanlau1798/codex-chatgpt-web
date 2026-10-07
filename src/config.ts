@@ -1,6 +1,6 @@
 import { parseChatGptWebModelCapabilities } from "./chatgpt-web-models";
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, openSync, closeSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { chmodSync, mkdirSync, openSync, closeSync, fsyncSync, renameSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep, win32 } from "node:path";
 import { VERSION } from "./version";
@@ -57,7 +57,7 @@ function renameAtomicFile(source: string, destination: string): void {
 export function atomicWriteFile(
   path: string,
   data: string | Uint8Array,
-  { mode = 0o600, protectDirectory = true }: { mode?: number; protectDirectory?: boolean } = {},
+  { mode = 0o600, protectDirectory = true, durable = false }: { mode?: number; protectDirectory?: boolean; durable?: boolean } = {},
 ): void {
   const directory = dirname(path);
   mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -68,6 +68,7 @@ export function atomicWriteFile(
   const fd = openSync(temp, "wx", mode);
   try {
     writeFileSync(fd, data);
+    if (durable) fsyncSync(fd);
     closeSync(fd);
     renameAtomicFile(temp, path);
   } catch (error) {
@@ -83,7 +84,6 @@ export function stripUtf8Bom(text: string): string {
 export function preserveUtf8Bom(text: string, original: string): string {
   return original.startsWith("\uFEFF") ? `\uFEFF${stripUtf8Bom(text)}` : stripUtf8Bom(text);
 }
-
 export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
   const home = getConfigDir();
   return {

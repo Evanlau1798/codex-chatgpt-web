@@ -45,26 +45,31 @@ export async function setChatGptThinkMode(
     }, undefined, actionOptions);
     const before = await composerState();
     if (before.text) throw new Error("ChatGPT Think selection requires an empty prompt draft");
-    await composer.focus(actionOptions);
-    await composer.press(DOCUMENT_END_KEY, actionOptions);
-    await composer.pressSequentially("/think", { ...actionOptions, delay: 25 });
-    await captureDiagnostic?.("think-slash-triggered");
-    const popup = composerForm.page().locator('.popover[aria-busy="false"]').filter({ visible: true });
-    const rows = popup.locator('.__menu-item[tabindex="0"]').filter({ visible: true });
-    await rows.first().waitFor({ state: "visible", timeout: 5_000, signal: abortSignal });
-    if (await popup.count() !== 1 || await rows.count() !== 1) {
-      throw new Error("ChatGPT Think slash menu must expose exactly one command option");
+    if (count === 1) {
+      await control.click(actionOptions);
+    } else {
+      await composer.focus(actionOptions);
+      await composer.press(DOCUMENT_END_KEY, actionOptions);
+      await composer.pressSequentially("/think", { ...actionOptions, delay: 25 });
+      await captureDiagnostic?.("think-slash-triggered");
+      // The command popup shares menu-item classes with sidebar history. Count only this popup.
+      const popup = composerForm.page().locator('.popover[aria-busy="false"]').filter({ visible: true });
+      const rows = popup.locator('.__menu-item[tabindex="0"]').filter({ visible: true });
+      await rows.first().waitFor({ state: "visible", timeout: 5_000, signal: abortSignal });
+      if (await popup.count() !== 1 || await rows.count() !== 1) {
+        throw new Error("ChatGPT Think slash menu must expose exactly one command option");
+      }
+      const row = rows.first();
+      if (await row.getAttribute("data-highlighted", actionOptions) === null) {
+        await composer.press("ArrowDown", actionOptions);
+      }
+      if (await row.getAttribute("data-highlighted", actionOptions) === null) {
+        throw new Error("ChatGPT Think slash option is not highlighted");
+      }
+      await captureDiagnostic?.("think-slash-menu-ready");
+      throwIfAborted(abortSignal);
+      await composer.press("Enter", actionOptions);
     }
-    const row = rows.first();
-    if (await row.getAttribute("data-highlighted", actionOptions) === null) {
-      await composer.press("ArrowDown", actionOptions);
-    }
-    if (await row.getAttribute("data-highlighted", actionOptions) === null) {
-      throw new Error("ChatGPT Think slash option is not highlighted");
-    }
-    await captureDiagnostic?.("think-slash-menu-ready");
-    throwIfAborted(abortSignal);
-    await composer.press("Enter", actionOptions);
     const deadline = Date.now() + 5_000;
     while (Date.now() < deadline) {
       throwIfAborted(abortSignal);
@@ -75,12 +80,14 @@ export async function setChatGptThinkMode(
       if (currentCount === 1 && pressed !== "true" && pressed !== "false") {
         throw new Error("ChatGPT Think control lost its semantic pressed state");
       }
-      await withAbort(new Promise<void>(resolve => setTimeout(resolve, 100)), abortSignal);
+      await withAbort(new Promise(resolveSleep => setTimeout(resolveSleep, 100)), abortSignal);
     }
-    if (pressed !== target) throw new Error(`ChatGPT did not ${enabled ? "enable" : "disable"} Think mode`);
+    if (pressed !== target) {
+      throw new Error(`ChatGPT did not ${enabled ? "enable" : "disable"} Think mode`);
+    }
     const after = await composerState();
     if (after.text || JSON.stringify(after.connectors) !== JSON.stringify(before.connectors)) {
-      throw new Error("ChatGPT Think slash selection did not preserve the empty draft and selected connectors");
+      throw new Error("ChatGPT Think selection did not preserve the empty draft and selected connectors");
     }
   }
   await captureDiagnostic?.(enabled ? "think-enabled" : "think-disabled");

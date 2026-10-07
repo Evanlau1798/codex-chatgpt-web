@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { atomicWriteFile, stripUtf8Bom } from "../../config";
 import { getCodexHome } from "../../codex-integration-shared";
@@ -34,6 +34,7 @@ import {
   priorAbortedTurnIds,
   turnUserRevisionHistory,
 } from "./turn-user-revision";
+import { ChatGptWebAdapterError } from "./adapter-error";
 
 interface StoredThreadEnvironment {
   cwd: string;
@@ -579,7 +580,7 @@ export class ChatGptThreadEnvironmentStore {
   }
 
   private setStored(threadId: string, environment: StoredThreadEnvironment): void {
-    this.load(true);
+    this.load(true, true);
     this.threads.delete(threadId);
     this.threads.set(threadId, environment);
     while (this.threads.size > MAX_THREAD_ENVIRONMENTS) {
@@ -590,25 +591,52 @@ export class ChatGptThreadEnvironmentStore {
     this.persist();
   }
 
-  private load(refresh = false): void {
+  private load(refresh = false, verifiedEnvironment = false): void {
     if (this.loaded && !refresh) return;
-    this.loaded = true;
-    if (!this.path || !existsSync(this.path)) return;
-    const parsed = JSON.parse(stripUtf8Bom(readFileSync(this.path, "utf8"))) as Partial<StoredThreadEnvironmentFile>;
-    const rawThreads = record(parsed.threads);
-    if (parsed.version !== 1 || !rawThreads) {
-      throw new Error(`Invalid ChatGPT thread environment store: ${this.path}`);
+    if (!this.path || !existsSync(this.path)) {
+      this.loaded = true;
+      return;
     }
-    const cutoff = this.now() - THREAD_ENVIRONMENT_TTL_MS;
-    const entries = Object.entries(rawThreads)
-      .map(([threadId, value]) => [threadId, validateStoredEnvironment(value)] as const)
-      .filter(([, environment]) => environment.updatedAt >= cutoff)
-      .sort((left, right) => left[1].updatedAt - right[1].updatedAt)
-      .slice(-MAX_THREAD_ENVIRONMENTS);
+    const invalidState = (reason: string) => new ChatGptWebAdapterError(
+      `The saved Codex task environment file (thread-environments.json) ${reason}. `
+      + "Its contents have not been overwritten. Start a fresh Codex task to supply its current workspace and permissions. "
+      + "If that also fails, export Activity > Export safe log; do not delete your launcher settings.",
+      { status: 409, errorType: "invalid_request_error", code: "thread_environment_state_invalid", retryable: false },
+    );
+    const source = readFileSync(this.path, "utf8");
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(stripUtf8Bom(source));
+    } catch {
+      if (!verifiedEnvironment) throw invalidState("contains invalid JSON");
+      // Preserve the original for diagnosis. Never infer permissions from a damaged cache,
+      // discard an unfamiliar schema, or turn a read/rename permission error into recovery.
+      if (readFileSync(this.path, "utf8") !== source) throw invalidState("changed during recovery");
+      const backup = `${this.path}.corrupt-${crypto.randomUUID()}`;
+      renameSync(this.path, backup);
+      console.warn("[chatgpt-web] preserved corrupt thread-environments.json beside the original; rebuilding from a verified current Codex environment");
+      this.loaded = true;
+      return;
+    }
+    const parsed = record(decoded);
+    const rawThreads = record(parsed?.threads);
+    if (parsed?.version !== 1 || !rawThreads) throw invalidState("has an unsupported or invalid format");
+    let entries: Array<readonly [string, StoredThreadEnvironment]>;
+    try {
+      const cutoff = this.now() - THREAD_ENVIRONMENT_TTL_MS;
+      entries = Object.entries(rawThreads)
+        .map(([threadId, value]) => [threadId, validateStoredEnvironment(value)] as const)
+        .filter(([, environment]) => environment.updatedAt >= cutoff)
+        .sort((left, right) => left[1].updatedAt - right[1].updatedAt)
+        .slice(-MAX_THREAD_ENVIRONMENTS);
+    } catch {
+      throw invalidState("contains invalid workspace or permission records");
+    }
     for (const [threadId, environment] of entries) {
       const current = this.threads.get(threadId);
       if (!current || current.updatedAt < environment.updatedAt) this.threads.set(threadId, environment);
     }
+    this.loaded = true;
   }
 
   private persist(): void {
@@ -617,6 +645,6 @@ export class ChatGptThreadEnvironmentStore {
       version: 1,
       threads: Object.fromEntries(this.threads),
     };
-    atomicWriteFile(this.path, `${JSON.stringify(payload, null, 2)}\n`);
+    atomicWriteFile(this.path, `${JSON.stringify(payload, null, 2)}\n`, { durable: true });
   }
 }

@@ -107,6 +107,28 @@ test("a ghost click is reset before a single primary pointerdown fallback", asyn
   expect(f.events).toEqual(["click", "Escape", "pointerdown"]);
 });
 
+test("a committed owned menu survives a delayed click acknowledgement", async () => {
+  const f = fixture("click");
+  const click = f.control.click;
+  f.control.click = async options => {
+    await click(options);
+    throw Object.assign(new Error("click acknowledgement timed out"), { name: "TimeoutError" });
+  };
+  const result = await activateChatGptEffortMenu(f.page as never, f.control as never);
+  expect(result.method).toBe("click");
+  expect(result.menu).toBe(f.owned as never);
+  expect(f.events).toEqual(["click"]);
+});
+
+test.each(["TimeoutError", "AbortError"])("an unproven click or cancellation preserves its original %s", async name => {
+  const f = fixture(name === "TimeoutError" ? "none" : "click");
+  const click = f.control.click;
+  const error = Object.assign(new Error("click failed"), { name });
+  f.control.click = async options => { await click(options); throw error; };
+  await expect(activateChatGptEffortMenu(f.page as never, f.control as never)).rejects.toBe(error);
+  expect(f.events).toEqual(["click"]);
+});
+
 test("activation fails closed when no owned menu or slider surface appears", async () => {
   const f = fixture("none");
   await expect(activateChatGptEffortMenu(f.page as never, f.control as never, { settleMs: 0 }))

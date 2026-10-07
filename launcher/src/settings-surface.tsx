@@ -313,6 +313,7 @@ export function SettingsSurface({
   };
   const biggerContextState = biggerContextSwitchState({
     browserInteractionMode: snapshot.state.browserInteractionMode,
+    biggerContextAvailable: snapshot.state.biggerContextAvailable,
     busy,
     coreSetupComplete: snapshot.state.coreSetupComplete === true,
     useEnhancedWebSessionMode: snapshot.state.useEnhancedWebSessionMode,
@@ -672,7 +673,8 @@ export function SettingsSurface({
               .catch((cause) => setError(messageOf(cause)))}
           />
         </SettingRow>
-        <SettingRow body={snapshot.state.browserInteractionMode === "manual" ? copy.manualBiggerContextBody : copy.biggerContextBody} label={copy.biggerContext}>
+        <SettingRow body={snapshot.state.browserInteractionMode === "manual" ? copy.manualBiggerContextBody
+          : snapshot.state.biggerContextAvailable === true ? copy.biggerContextBody : copy.lunaBiggerContextUnavailable} label={copy.biggerContext}>
           <Switch
             checked={biggerContextState.checked}
             disabled={biggerContextState.disabled}

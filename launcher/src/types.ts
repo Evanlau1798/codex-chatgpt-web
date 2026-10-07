@@ -22,6 +22,7 @@ export interface LauncherState {
   automaticWebSessionLimitCount: number;
   automaticWebSessionLimitMinutes: number;
   experimentalBiggerContext: boolean;
+  biggerContextAvailable?: boolean;
   experimentalSkillAttachments: boolean;
   experimentalNoAutoCompact: boolean;
   experimentalPreparedWebSession: boolean;

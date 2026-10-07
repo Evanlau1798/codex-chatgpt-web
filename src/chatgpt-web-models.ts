@@ -1,6 +1,9 @@
 export const CHATGPT_WEB_MODEL_PREFIX = "chatgpt-web/";
 export const CHATGPT_WEB_BACKEND_MODEL = "gpt-5.6-sol";
 export const CHATGPT_WEB_LUNA_BACKEND_MODEL = "gpt-5.6-luna";
+export const CHATGPT_WEB_LUNA_BIGGER_CONTEXT_ERROR =
+  "Bigger Context is unavailable for Luna and Think. Turn it off in launcher Settings "
+  + "(or run setup with --standard-context), then restart Codex.";
 /** Internal adapter identity for a turn whose ChatGPT model is selected by the user in the launcher. */
 export const CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL = "chatgpt-web-zero-risk";
 /** Internal adapter identity for the explicitly enabled, Pro-sized Zero Risk context profile. */
@@ -232,6 +235,23 @@ export function resolveChatGptWebMessageTokenBudget(
     contextWindow - CHATGPT_WEB_PLATFORM_RESERVE_TOKENS - imageTokens - 1,
     browserMessageTokenLimit ?? Infinity,
   ));
+}
+
+/** Keep repeated Plus Instant uploads within the ordinary pre-compaction input target. */
+export function resolveChatGptWebStagingTokenBudget(
+  backendModel: typeof CHATGPT_WEB_BACKEND_MODEL,
+  effort: ChatGptWebAdapterEffort,
+  capabilities: ChatGptWebAccountCapabilities,
+): number {
+  const messageBudget = resolveChatGptWebMessageTokenBudget(backendModel, effort, capabilities);
+  if (effort !== "low" || capabilities.proAvailable) return messageBudget;
+  // A first near-maximum Instant message can succeed while the next is rejected (#777).
+  // Reuse normal Instant's input headroom, including the existing platform reserve;
+  // this changes staging allocation, not the selected model's advertised context window.
+  const { autoCompactTokenLimit } = resolveChatGptWebContextLimits(backendModel, effort, {
+    ...capabilities, experimentalBiggerContext: false,
+  });
+  return Math.min(messageBudget, Math.max(0, autoCompactTokenLimit - CHATGPT_WEB_PLATFORM_RESERVE_TOKENS - 1));
 }
 
 interface ChatGptWebModelRouteBase {

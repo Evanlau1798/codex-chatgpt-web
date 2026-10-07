@@ -28,6 +28,9 @@ function submittedFailure(
     && (session.runtime.manualControl
       || error.retireSession
       || error.code === "chatgpt_submission_ambiguous"
+      || error.code === "chatgpt_response_incomplete"
+      || error.code === "chatgpt_stopped_thinking"
+      || error.code === "context_length_exceeded"
       || error.code === "codex_tool_timeout"
       || error.code === "chatgpt_submitted_turn_failed")
     ? error

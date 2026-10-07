@@ -14,7 +14,7 @@ export function effortReadinessHtml(language = "fr", scenario = "delayed-close",
         document.querySelector('[data-model-picker-power-slider]').innerHTML='<span data-orientation="horizontal" aria-disabled="false">'
           +Array.from({length:5},(_,i)=>'<span data-selected="'+(i<=value)+'" data-locked="false"></span>').join('')
           +'<span role="slider" aria-hidden="true" aria-valuemin="0" aria-valuemax="4" aria-valuenow="'+value+'"></span></span>';
-        document.querySelector('#status').textContent=labels[value]+', '+(value+1)+(language==='fr'?' sur ':' of ')+'5.';
+        document.querySelector('#status').textContent=(value===4?'6 ':'5.6 ')+labels[value]+', '+(value+1)+(language==='fr'?' sur ':' of ')+'5.';
       }
       control.onclick=()=>{menu.hidden=false;control.setAttribute('aria-expanded','true');control.textContent=language==='fr'?'Effort de réflexion':'Thinking effort';render()};
       document.addEventListener('keydown',event=>{

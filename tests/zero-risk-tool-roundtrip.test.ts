@@ -86,6 +86,10 @@ test("Zero Risk emits a real broker tool call and consumes its result without a 
       { role: "assistant", content: [{ type: "toolCall", id: call.id, name: call.name, arguments: args }], timestamp: 3 },
       { role: "toolResult", toolCallId: call.id, toolName: call.name, content: "manual-ok", isError: false, timestamp: 4 },
     );
+    (input._rawBody as { input: unknown[] }).input.push(
+      { type: "function_call", call_id: call.id, name: call.name, arguments: JSON.stringify(args) },
+      { type: "function_call_output", call_id: call.id, output: "manual-ok" },
+    );
     const final: AdapterEvent[] = [];
     await adapter.runTurn!(input, { headers: new Headers() }, event => final.push(event));
     await actor;

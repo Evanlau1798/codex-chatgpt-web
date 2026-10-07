@@ -39,3 +39,11 @@ test("manual mode keeps Bigger Context off regardless of Enhanced or stale prefe
     })).toEqual({ checked: false, disabled: true });
   }
 });
+
+test("Luna-only capability locks Bigger Context while allowing an existing preference to be disabled", () => {
+  const input = { busy: false, coreSetupComplete: true, useEnhancedWebSessionMode: false,
+    experimentalBiggerContext: false, biggerContextAvailable: false };
+  expect(biggerContextSwitchState(input)).toEqual({ checked: false, disabled: true });
+  expect(biggerContextSwitchState({ ...input, biggerContextAvailable: true })).toEqual({ checked: false, disabled: false });
+  expect(biggerContextSwitchState({ ...input, experimentalBiggerContext: true })).toEqual({ checked: true, disabled: false });
+});

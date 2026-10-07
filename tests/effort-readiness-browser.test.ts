@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { chromium } from "playwright-core";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { chromium, type Browser } from "playwright-core";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve, sep } from "node:path";
@@ -10,11 +10,17 @@ import { effortReadinessHtml } from "./fixtures/effort-readiness";
 const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true };
 const efforts = ["low", "medium", "high", "xhigh", "max"];
 
+let browser: Browser;
+beforeAll(async () => {
+  if (process.env.CHATGPT_DOM_TEST_BROWSER) browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+}, 30_000);
+afterAll(async () => { await browser?.close(); });
+
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("readiness diagnostics distinguish open and editable states without content", async () => {
   const root = mkdtempSync(join(tmpdir(), "effort-readiness-"));
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const context = await browser.newContext();
   try {
-    const page = await browser.newPage();
+    const page = await context.newPage();
     await page.setContent(effortReadinessHtml());
     const diagnostics = new ChatGptBrowserDiagnostics("effort_readiness_test", root, true);
     await diagnostics.capture(page, "ready");
@@ -28,7 +34,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("readiness diagnostics distin
     expect(open).toMatchObject({ composerEditable: false, effortControlUnique: true, effortControlExpanded: true, effortControlClosed: false });
     expect(text.join("")).not.toMatch(/Draft to preserve|Effort de réflexion|about:blank/);
   } finally {
-    await browser.close();
+    await context.close();
     if (!resolve(root).startsWith(resolve(tmpdir()) + sep) || !basename(root).startsWith("effort-readiness-")) throw Error("Unexpected test directory");
     rmSync(root, { recursive: true, force: true });
   }
@@ -39,9 +45,9 @@ const positive = [
 ];
 for (const { language, effort, scenario } of positive) {
   test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`effort readiness: ${language} ${effort} ${scenario}`, async () => {
-    const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+    const context = await browser.newContext();
     try {
-      const page = await browser.newPage();
+      const page = await context.newPage();
       await page.setContent(effortReadinessHtml(language, scenario));
       const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
       const mode = await worker.selectModelAndEffort(page, "gpt-5.6-sol", effort, capabilities, undefined, false, "6");
@@ -51,15 +57,15 @@ for (const { language, effort, scenario } of positive) {
       expect(await page.locator('[role="slider"]').getAttribute("aria-valuenow")).toBe(String(efforts.indexOf(effort)));
       expect(mode.selection.label).not.toMatch(/effort|réflexion/i);
       expect(await page.locator('#prompt-textarea').innerText()).toBe("Draft to preserve");
-    } finally { await browser.close(); }
+    } finally { await context.close(); }
   }, 20_000);
 }
 
 for (const scenario of ["persistent-open", "wrong-effort", "wrong-family", "navigate", "ambiguous"]) {
   test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`effort readiness rejects ${scenario}`, async () => {
-    const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+    const context = await browser.newContext();
     try {
-      const page = await browser.newPage();
+      const page = await context.newPage();
       await page.setContent(effortReadinessHtml("fr", scenario));
       const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
       const start = Date.now();
@@ -68,6 +74,6 @@ for (const scenario of ["persistent-open", "wrong-effort", "wrong-family", "navi
       expect(error).toMatchObject({ retryable: false });
       expect(Date.now() - start).toBeLessThan(7_000);
       expect(await page.locator('#prompt-textarea').innerText()).toBe("Draft to preserve");
-    } finally { await browser.close(); }
+    } finally { await context.close(); }
   }, 15_000);
 }

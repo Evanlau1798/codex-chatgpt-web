@@ -4,7 +4,27 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import * as z from "zod/v4";
-import { observeMcpToolCalls } from "../src/adapters/chatgpt-web/mcp-observation";
+import { observeMcpToolCalls, subagentModelObservation } from "../src/adapters/chatgpt-web/mcp-observation";
+
+test("subagent diagnostics distinguish an explicit model without exposing task arguments", () => {
+  const privateText = "private task /Users/example/work sk-not-a-model";
+  const args = { model: "chatgpt-web/gpt-5.6-sol", message: privateText, items: [{ text: privateText }] };
+  const before = structuredClone(args);
+  expect(subagentModelObservation("multi_agent_v1__spawn_agent", args)).toEqual({
+    modelOverride: "explicit", requestedModel: "chatgpt-web/gpt-5.6-sol",
+  });
+  expect(args).toEqual(before);
+  expect(subagentModelObservation("multi_agent_v1__spawn_agent", { message: privateText })).toEqual({ modelOverride: "omitted" });
+  expect(subagentModelObservation("multi_agent_v2__spawn_agent", { model: "gpt-6-luna" })).toEqual({
+    modelOverride: "explicit", requestedModel: "gpt-6-luna",
+  });
+  for (const model of [privateText, "https://private.test/key", "sk-private-key", null, {}, "gpt-" + "a".repeat(100)]) {
+    expect(subagentModelObservation("multi_agent_v1__spawn_agent", { model })).toEqual({ modelOverride: "unrecognized" });
+  }
+  expect(subagentModelObservation("other__spawn_agent", args)).toBeUndefined();
+  expect(subagentModelObservation("exec_command", args)).toBeUndefined();
+  expect(JSON.stringify(subagentModelObservation("multi_agent_v1__spawn_agent", args))).not.toContain(privateText);
+});
 
 test("Native final observations separate handler time from transport write without exposing payload", async () => {
   const events: Array<Record<string, unknown>> = [];

@@ -142,7 +142,9 @@ stage must still fit the selected ChatGPT mode's measured one-message boundary.
 Small turns use one request. Two-part turns use one inert staging request and one final request;
 six-part turns use five staging requests and one final request. Browser-only compaction also uses
 six parts. Inert stages use the fastest available mode that fits their complete messages; the final
-part uses the selected execution effort. Large turns may increase the probability of
+part uses the selected execution effort. Plus Instant uploads keep the same input headroom as
+ordinary Instant turns; the selected final mode can receive a larger share of the context.
+Large turns may increase the probability of
 rate limits or a temporary account cooldown. The experiment is intentionally unavailable for Luna:
 Luna's later requests still include the accumulated transcript inside the same measured
 28,000-token browser transport budget.

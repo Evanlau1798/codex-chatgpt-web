@@ -380,7 +380,7 @@ test("Bigger Context compaction preserves history above the retired inline byte 
   }
 }, 30_000);
 
-test("Bigger Context minimizes the largest ordered stage instead of overfilling a middle part", () => {
+test("Bigger Context keeps preliminary parts small and preserves all records in order", () => {
   const compact = request("high");
   compact._compactionRequest = true;
   compact.context.systemPrompt = ["system".repeat(1_000)];
@@ -403,7 +403,9 @@ test("Bigger Context minimizes the largest ordered stage instead of overfilling 
 
   expect(parts).toHaveLength(6);
   expect(parts.flatMap(part => part.records)).toHaveLength(8);
-  expect(Math.max(...multipart.multipart!.parts.map(part => part.length))).toBeLessThan(120_000);
+  expect(Math.max(...multipart.multipart!.parts.slice(0, -1).map(part => part.length))).toBeLessThan(120_000);
+  // The selected High mode can carry a larger final part than an Instant upload.
+  expect(multipart.multipart!.parts.at(-1)!.length).toBeLessThan(1_048_572);
 });
 
 test("Web compaction rebuilds attachments after trimming an oversized oldest image message", () => {

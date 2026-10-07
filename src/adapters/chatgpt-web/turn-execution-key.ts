@@ -54,3 +54,19 @@ export function chatGptCompactionSourceExecutionKey(parsed: CodexParsedRequest):
     purpose: "response",
   });
 }
+
+export function chatGptTurnRoundKey(parsed: CodexParsedRequest): string {
+  const identity = extractChatGptTurnIdentity(parsed);
+  if (!identity.turnId) throw new Error("ChatGPT web requires native Codex turn_id metadata for round replay");
+  const body = parsed._rawBody;
+  if (!body || typeof body !== "object" || Array.isArray(body)
+    || !Array.isArray((body as { input?: unknown }).input)) {
+    throw new Error("ChatGPT web requires the complete native Codex input for round replay");
+  }
+  return executionKey(parsed, {
+    threadId: identity.threadId,
+    turnId: identity.turnId,
+    purpose: parsed._compactionRequest ? "compaction" : "response",
+    input: (body as { input: unknown[] }).input,
+  });
+}

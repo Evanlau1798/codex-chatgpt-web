@@ -21,6 +21,8 @@
 
 > **リリース：`6.1.4-Enhanced.1`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。[紹介動画を見る（英語 MP4）](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4)。
 
+ソース候補：`6.1.5-Enhanced.1`（上流 v6.1.5 を統合）。未公開の候補です。ダウンロードボタンは上記の公開済みリリースを開きます。
+
 <p align="center">
   <a href="TROUBLESHOOTING.md">トラブルシューティング</a> · <a href="SECURITY.md">セキュリティ</a> · <a href="CONTRIBUTING.md">コントリビューション</a>
 </p>

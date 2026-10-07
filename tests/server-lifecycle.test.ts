@@ -1202,3 +1202,27 @@ test("authenticated shutdown requires a verified idle drain", async () => {
     await server.stop(true);
   }
 });
+
+test("saved Luna Bigger Context configuration returns an actionable error before a turn starts", async () => {
+  for (const mode of ["browser-only", "full"] as const) for (const stream of [false, true]) {
+    for (const model of ["chatgpt-web/gpt-5.6-luna", "chatgpt-web/luna", "chatgpt-web/think"]) {
+      const config = { ...defaultConfig(mode), solAvailable: false, experimentalBiggerContext: true };
+      let adapterStarted = false;
+      const response = await responseRequest(new Request("http://127.0.0.1/v1/responses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model, input: "hello", stream }),
+      }), config, () => {
+        adapterStarted = true;
+        throw new Error("Unsupported configuration must not start an adapter");
+      });
+      expect(response.status).toBe(400);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      const body = await response.json() as { error: { type: string; message: string } };
+      expect(body.error.type).toBe("invalid_request_error");
+      expect(body.error.message).toContain("unavailable for Luna and Think");
+      expect(body.error.message).toContain("Turn it off in launcher Settings");
+      expect(adapterStarted).toBeFalse();
+    }
+  }
+});

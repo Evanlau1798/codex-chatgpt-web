@@ -21,6 +21,8 @@
 
 > **发布版本：`6.1.4-Enhanced.1`。** 下载按钮会始终打开最新发布的 Enhanced 版本。[观看介绍影片（英文 MP4）](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4)。
 
+源码候选版本：`6.1.5-Enhanced.1`，已整合上游 v6.1.5。此候选尚未发布；下载按钮仍打开上方的已发布版本。
+
 <p align="center">
   <a href="TROUBLESHOOTING.md">故障排除</a> · <a href="SECURITY.md">安全</a> · <a href="CONTRIBUTING.md">贡献</a>
 </p>

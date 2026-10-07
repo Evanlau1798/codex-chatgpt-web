@@ -1,5 +1,16 @@
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
+/** The model override only; prompts, names, items and other tool arguments stay private. */
+export function subagentModelObservation(wireName: string, args?: Record<string, unknown>) {
+  if (!/^(multi_agent_v[12]|collaboration)__spawn_agent$/.test(wireName)) return undefined;
+  if (!args || !Object.hasOwn(args, "model")) return { modelOverride: "omitted" as const };
+  const model = args.model;
+  // Unknown model values remain visible as an explicit override without logging arbitrary input.
+  return typeof model === "string" && /^(?:chatgpt-web\/)?gpt-[a-z0-9][a-z0-9._-]{0,79}$/.test(model)
+    ? { modelOverride: "explicit" as const, requestedModel: model }
+    : { modelOverride: "unrecognized" as const };
+}
+
 /** Content-free receipt/reply observations. A sent MCP result is not proof of tool execution. */
 export function observeMcpToolCalls(
   transport: Transport,

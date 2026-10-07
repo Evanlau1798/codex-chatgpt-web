@@ -23,6 +23,7 @@ export const fr = {
   devKeepRunningBody: "Maintenir la session du navigateur isolé et le tunnel MCP DEV disponibles après la fermeture de la fenêtre.",
   biggerContext: "Contexte élargi (expérimental)",
   biggerContextBody: "Disponible uniquement lorsque le mode de session Web amélioré est désactivé. Les petits tours utilisent un message ; les plus grands en utilisent deux ou six, seul le dernier exécutant la tâche. Chaque message est une requête ChatGPT réelle et peut consommer votre quota. Les seuils de contexte et de compactage annoncés à Codex sont triplés ; les limites de ChatGPT restent applicables. Le contexte n’est pas illimité. Redémarrez Codex après toute modification.",
+  lunaBiggerContextUnavailable: "Disponible uniquement pour Sol et Pro. Désactivez ce réglage lorsque vous utilisez Luna ou Think.",
   skillAttachments: "Compétences en pièces jointes (expérimental)",
   skillAttachmentsBody: "Envoyer les compétences Codex explicitement sélectionnées sous forme de fichiers texte nommés. Les autres restent accessibles via les outils. Désactivé par défaut ; partage la limite de pièces jointes avec les images.",
   manualSkillAttachmentsUnavailable: "L’envoi de compétences nécessite l’interaction automatique avec le navigateur.",

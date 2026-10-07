@@ -155,24 +155,29 @@ function toolConfirmationPage(options: {
       typeof name === "string" ? candidate === name : name.test(candidate)
     ));
     return {
+      filter: () => button(name),
+      count: async () => actualName ? 1 : 0,
       last: () => button(name),
       waitFor: async () => {
         if (!actualName) throw new Error(`Approval button not found: ${String(name)}`);
       },
-      press: async (key: string) => {
+      click: async () => {
         if (!actualName) throw new Error(`Approval button not found: ${String(name)}`);
-        pressed.push(`${actualName}:${key}`);
+        pressed.push(`${actualName}:click`);
         visible = false;
       },
     };
   };
   const dialog = {
-    filter: ({ hasText }: { hasText: string | RegExp }) => {
+    filter: ({ hasText, has }: { hasText?: string | RegExp; has?: { name: string | RegExp } }) => {
       const title = options.title ?? "Allow ChatGPT to use Codex Native?";
-      titleMatches = typeof hasText === "string" ? title.includes(hasText) : hasText.test(title);
+      const name = has?.name ?? hasText;
+      if (name !== undefined) titleMatches &&= typeof name === "string" ? title.includes(name) : name.test(title);
       return dialog;
     },
     last: () => dialog,
+    first: () => dialog,
+    count: async () => await dialog.isVisible() ? 1 : 0,
     isVisible: async () => {
       reads += 1;
       if (options.disappearAfterReads !== undefined && reads >= options.disappearAfterReads) visible = false;
@@ -194,6 +199,7 @@ function toolConfirmationPage(options: {
   };
   return {
     page: {
+      getByText: (name: string | RegExp) => ({ name }),
       locator: (selector: string) => selector.includes(surfaceSelector)
         ? dialog
         : hiddenDialog,
@@ -205,7 +211,7 @@ function toolConfirmationPage(options: {
 test.each(["Autoriser", "Autoriser une fois"])("French one-shot tool approval accepts only %s", async allowLabel => {
   const fixture = toolConfirmationPage({ surface: "card", title: "Autoriser ChatGPT à utiliser Codex Native\u00a0?", allowLabel, denyLabel: "Refuser" });
   expect(await resolveChatGptToolConfirmation(fixture.page, "Codex Native", true)).toBeTrue();
-  expect(fixture.pressed).toEqual([`${allowLabel}:Enter`]);
+  expect(fixture.pressed).toEqual([`${allowLabel}:click`]);
 });
 
 test("French tool approval preserves manual handling, refusal and the exact connector identity", async () => {
@@ -215,7 +221,7 @@ test("French tool approval preserves manual handling, refusal and the exact conn
   expect(manual.pressed).toEqual([]);
   const expired = toolConfirmationPage(options);
   expect(await resolveChatGptToolConfirmation(expired.page, "Codex Native", false, undefined, 1)).toBeTrue();
-  expect(expired.pressed).toEqual(["Refuser:Enter"]);
+  expect(expired.pressed).toEqual(["Refuser:click"]);
   for (const appName of ["Codex Other", "Codex Native.*", "Codex (Native)"]) {
     const unrelated = toolConfirmationPage(options);
     expect(await resolveChatGptToolConfirmation(unrelated.page, appName, true)).toBeFalse();
@@ -244,14 +250,14 @@ test("French status controls do not leak into the answer or swallow ordinary pro
 function fixture(label = "Think") {
   const state = { pressed: false, controlPresent: true, highlighted: true, popupCount: 1,
     optionCount: 1, draft: "", connectors: [] as string[], loseConnector: false,
-    commands: [] as string[], enters: 0, pollsBeforeToggle: 0, pendingToggle: false };
+    commands: [] as string[], enters: 0, clicks: 0, pollsBeforeToggle: 0, pendingToggle: false };
   const control = { getAttribute: async () => {
     if (state.pendingToggle && state.pollsBeforeToggle-- <= 0) {
       state.pressed = !state.pressed;
       state.pendingToggle = false;
     }
     return state.pressed ? "true" : "false";
-  } };
+  }, click: async () => { state.pressed = !state.pressed; state.clicks += 1; } };
   const controls = { count: async () => state.controlPresent ? 1 : 0, first: () => control };
   const row = { getAttribute: async () => state.highlighted ? "" : null,
     waitFor: async () => { if (!state.optionCount) throw new Error("Think command is unavailable"); } };
@@ -287,6 +293,7 @@ function fixture(label = "Think") {
 
 test.each(["Think", "Analyser"])("%s slash toggles only when needed and preserves selected connectors", async label => {
   const ui = fixture(label);
+  ui.state.controlPresent = false;
   ui.state.connectors = ["Codex Native2"];
   await setChatGptThinkMode(ui.composerForm as never, true);
   expect(ui.state.pressed).toBeTrue();
@@ -295,5 +302,21 @@ test.each(["Think", "Analyser"])("%s slash toggles only when needed and preserve
   await setChatGptThinkMode(ui.composerForm as never, true);
   await setChatGptThinkMode(ui.composerForm as never, false);
   expect(ui.state.pressed).toBeFalse();
-  expect(ui.state.commands).toEqual(["/think", "/think"]);
+  expect(ui.state.commands).toEqual(["/think"]);
+  expect(ui.state.enters).toBe(1);
+  expect(ui.state.clicks).toBe(1);
+});
+
+test.each(["Think", "Analyser"])("%s uses its visible semantic control without inserting a slash command", async label => {
+  const ui = fixture(label);
+  ui.state.connectors = ["Codex Native2"];
+  await setChatGptThinkMode(ui.composerForm as never, true);
+  expect(ui.state.pressed).toBeTrue();
+  await setChatGptThinkMode(ui.composerForm as never, true);
+  await setChatGptThinkMode(ui.composerForm as never, false);
+  expect(ui.state.pressed).toBeFalse();
+  expect(ui.state.commands).toEqual([]);
+  expect(ui.state.enters).toBe(0);
+  expect(ui.state.clicks).toBe(2);
+  expect(ui.state.connectors).toEqual(["Codex Native2"]);
 });

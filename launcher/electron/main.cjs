@@ -526,6 +526,7 @@ function smokePassedForCurrentVersion(state) {
 }
 
 function syncBrowserPreferences(stateStore, config) {
+  const biggerContextAvailable = config?.solAvailable === true;
   const useSavedChats = config?.useSavedChats === true;
   const autoApproveToolCalls = config?.autoApproveToolCalls === true;
   const enabled = config?.experimentalFreshConversationPerTurn === true
@@ -534,7 +535,8 @@ function syncBrowserPreferences(stateStore, config) {
   const current = stateStore.read();
   if (runtimeHost?.currentOperation()) return current;
   const retentionChanged = current.experimentalFreshConversationPerTurn !== enabled || current.useSavedChats !== useSavedChats;
-  if (!retentionChanged && current.autoApproveToolCalls === autoApproveToolCalls) return current;
+  if (!retentionChanged && current.autoApproveToolCalls === autoApproveToolCalls
+    && current.biggerContextAvailable === biggerContextAvailable) return current;
   // Runtime restarts leave browser views alive. Retire completed chats when their
   // persistence policy changes, including changes made by the CLI.
   const retainedKeys = new Set((retentionChanged ? [...(browserHost?.turnTabs.values() ?? [])] : [])
@@ -542,7 +544,7 @@ function syncBrowserPreferences(stateStore, config) {
       && (current.useSavedChats !== useSavedChats || tab.interactionMode === "automatic"))
     .map(tab => tab.conversationKey));
   for (const key of retainedKeys) releaseRetainedConversation(browserHost, key);
-  const state = stateStore.update({ experimentalFreshConversationPerTurn: enabled, useSavedChats, autoApproveToolCalls });
+  const state = stateStore.update({ experimentalFreshConversationPerTurn: enabled, useSavedChats, autoApproveToolCalls, biggerContextAvailable });
   send("launcher:state-changed", state);
   return state;
 }
@@ -990,6 +992,7 @@ function registerIpc({ logger, stateStore }) {
         ? true
         : setupState.codexSetupComplete && setupState.bridgeEnabled,
       coreSetupComplete: true,
+      biggerContextAvailable: runtimeHost.runtimeConfigSnapshot().config?.solAvailable === true,
       ...(installsCodex ? {
         codexSetupComplete: true,
         codexCatalogVerified: IS_DEV_PROFILE,
@@ -1056,6 +1059,7 @@ function registerIpc({ logger, stateStore }) {
       codexRestartRequired: IS_DEV_PROFILE ? false : true,
       browserInteractionMode: interactionMode,
       ...(interactionMode === "manual" ? { experimentalBiggerContext: false, experimentalSkillAttachments: false } : {}),
+      biggerContextAvailable: runtimeHost.runtimeConfigSnapshot().config?.solAvailable === true,
       ...result.setupState,
     });
     if (interactionModeChange) send("launcher:browser-state", browserHost.snapshot());

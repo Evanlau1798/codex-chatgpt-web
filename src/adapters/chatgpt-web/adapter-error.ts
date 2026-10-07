@@ -67,6 +67,12 @@ export function chatGptToolTimeoutError(tool: string, timeoutMs: number): ChatGp
   );
 }
 
+export function chatGptResponseIncompleteError(message: string): ChatGptWebAdapterError {
+  return new ChatGptWebAdapterError(message, {
+    status: 502, errorType: "server_error", code: "chatgpt_response_incomplete", retryable: false,
+  });
+}
+
 // Only the compaction owner may signal this after the broker accepts its one-shot handoff.
 // It cancels browser observation while preserving the accepted summary as the native result.
 export class ChatGptCompactionHandoffAccepted extends DOMException {

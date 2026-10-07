@@ -4,8 +4,12 @@ import { ChatGptBrowserWorker, setChatGptThinkMode } from "../src/adapters/chatg
 function fixture() {
   const state = { pressed: false, controlPresent: true, highlighted: true, popupCount: 1,
     optionCount: 1, draft: "", connectors: [] as string[], loseConnector: false,
-    commands: [] as string[], enters: 0, pollsBeforeToggle: 0, pendingToggle: false };
-  const control = { getAttribute: async () => {
+    commands: [] as string[], clicks: 0, enters: 0, pollsBeforeToggle: 0, pendingToggle: false };
+  const control = { click: async () => {
+    state.clicks += 1;
+    if (state.pollsBeforeToggle > 0) state.pendingToggle = true;
+    else state.pressed = !state.pressed;
+  }, getAttribute: async () => {
     if (state.pendingToggle && state.pollsBeforeToggle-- <= 0) {
       state.pressed = !state.pressed;
       state.pendingToggle = false;
@@ -43,17 +47,19 @@ function fixture() {
   return { state, composer, composerForm, page };
 }
 
-test("Think slash toggles only when needed and preserves selected connectors", async () => {
+test("Think toggle changes only when needed and preserves selected connectors", async () => {
   const ui = fixture();
   ui.state.connectors = ["Codex Native2"];
   await setChatGptThinkMode(ui.composerForm as never, true);
   expect(ui.state.pressed).toBeTrue();
-  expect(ui.state.commands).toEqual(["/think"]);
+  expect(ui.state.clicks).toBe(1);
+  expect(ui.state.commands).toEqual([]);
   expect(ui.state.connectors).toEqual(["Codex Native2"]);
   await setChatGptThinkMode(ui.composerForm as never, true);
   await setChatGptThinkMode(ui.composerForm as never, false);
   expect(ui.state.pressed).toBeFalse();
-  expect(ui.state.commands).toEqual(["/think", "/think"]);
+  expect(ui.state.clicks).toBe(2);
+    expect(ui.state.commands).toEqual([]);
 });
 
 test("Think slash verifies one command and a newly exposed pressed state", async () => {
@@ -62,6 +68,7 @@ test("Think slash verifies one command and a newly exposed pressed state", async
   await setChatGptThinkMode(ui.composerForm as never, true);
   expect(ui.state.pressed).toBeTrue();
   const ambiguous = fixture();
+  ambiguous.state.controlPresent = false;
   ambiguous.state.optionCount = 2;
   await expect(setChatGptThinkMode(ambiguous.composerForm as never, true)).rejects.toThrow("exactly one command option");
   expect(ambiguous.state.enters).toBe(0);
@@ -81,7 +88,7 @@ test("Think polling removes each abort listener after its timer settles", async 
   expect(listeners.removed).toBe(listeners.added);
 });
 
-test("Think attachment rolls back a lost connector and never inserts the prompt", async () => {
+test("Think attachment rolls back when connector selection disables Think and never inserts the prompt", async () => {
   const attach = (ChatGptBrowserWorker.prototype as unknown as { attachPrompt: (...args: unknown[]) => Promise<void> }).attachPrompt;
   const ui = fixture();
   const submitted: boolean[] = [];
@@ -100,11 +107,12 @@ test("Think attachment rolls back a lost connector and never inserts the prompt"
   lost.state.loseConnector = true;
   const failingWorker = { ...worker, selectConnector: async () => {
     lost.state.connectors = ["Codex Native2"];
+    lost.state.pressed = false;
     return lost.composer;
   }, insertPromptText: async () => { throw new Error("prompt must not be inserted"); } };
   await expect(attach.call(
     failingWorker, lost.page, "must not be inserted", true, undefined, undefined, false, undefined, true,
-  )).rejects.toThrow("selected connectors");
+  )).rejects.toThrow("did not preserve Think mode");
   expect(cleanup).toBe(1);
 });
 
@@ -128,7 +136,8 @@ test("Think attachment preserves the plugin on first and follow-up messages and 
     ui.state.connectors = [];
     await attach.call(worker, ui.page, "follow-up task", localTools, undefined, undefined, false, undefined, true);
     expect(submitted).toEqual([true, true]);
-    expect(ui.state.commands).toEqual(["/think", "/think"]);
+    expect(ui.state.clicks).toBe(2);
+    expect(ui.state.commands).toEqual([]);
     expect(selections).toBe(localTools ? 2 : 0);
   }
 });

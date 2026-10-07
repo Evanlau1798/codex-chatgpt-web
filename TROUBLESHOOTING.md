@@ -89,6 +89,25 @@ Do not hand-edit the launcher's route journal. It exists so setup and removal ca
 of silently destroying another provider's configuration. First-class external-router composition is
 tracked in [#205](https://github.com/miuuyy/codex-chatgpt-web/issues/205), but is not supported today.
 
+## `Codex interrupt lifecycle hook changed after setup`
+
+The launcher found that its entries in Codex's `config.toml` are missing or different from those
+installed during setup. This can happen when another tool edits the file. Setup stops to avoid
+overwriting those changes. A TOML parsing error instead means the file cannot be read; an invalid
+integration journal means the launcher's saved setup record needs investigation.
+
+Close Codex and any tool editing its settings, then make a copy of `config.toml`. It is normally in
+`~/.codex` (Windows: `%USERPROFILE%\.codex`), or the folder selected by `CODEX_HOME`.
+Compare it with a known-good backup made **after successful launcher setup**. Restore only the
+launcher's affected `hooks.Interrupt` and matching `hooks.state` entries, preserving their order and
+all unrelated settings and hooks. For a syntax error, repair the TOML or restore a known-good file,
+keeping a copy of the current version so newer settings are not lost.
+
+Then run **Setup → Install into Codex → Reinstall**. Do not delete all hooks or edit the launcher's
+integration journal to bypass the check. If you have no suitable backup, or the error mentions the
+journal, use **Activity → Export safe log** and open an issue with the exact error. Do not upload your
+whole config file; it may contain credentials.
+
 ## Native models stop after closing the launcher
 
 While the integration is installed, native Codex models also use the local bridge. Keep the launcher
@@ -151,6 +170,8 @@ mean that the ChatGPT UI did not expose a structure the bridge can safely prove.
 
 Free and Go accounts normally expose Luna and Think without the paid-account effort selector. A
 missing paid selector on those accounts is not itself a sign-in failure.
+Keep **Settings → Bigger Context** off when using Luna or Think. If you enabled it on an older
+version and tasks fail before anything is sent to ChatGPT, turn it off and restart Codex.
 
 ## Personalization or connector controls are not found
 
@@ -180,6 +201,13 @@ Browser-only mode needs no connector. Full harness mode requires all of the foll
 - the connector and Tunnel on the same OpenAI account as the ChatGPT workspace;
 - **Allow all actions** under the connector's permissions; and
 - **Connect harness** completed before **Verify runtime**.
+
+If ChatGPT says **MCP endpoint not found**, keep the launcher running and complete
+**Connect harness** before creating the plugin. Use the same Tunnel ID in both places and
+copy the plugin name from the launcher's MCP page. Do not enter both mode names as one name.
+If ChatGPT then reports a request limit, wait for its cooldown before retrying once. If the
+launcher shows the harness connected but creation still fails, export a safe log and include
+the exact error and time of the attempt.
 
 Do not rename or refresh an old **Codex Native** connector. ChatGPT caches the public MCP contract by
 connector identity, so create **Codex Native2** as a new connector.
@@ -285,6 +313,18 @@ its bounded MCP deadline.
 Do not assume that a generic 502 means the Tunnel is broken. Since v4.0.7, a native tool that
 outlives its turn binding is reported explicitly as `codex_tool_timeout` and retired rather than
 being presented as an ambiguous proxy success.
+
+## Saved task environment cannot be read
+
+If an interrupted shutdown damages `runtime/thread-environments.json`, start a fresh Codex task.
+When Codex supplies a verified workspace and permissions, the launcher preserves the damaged JSON
+beside the original as `thread-environments.json.corrupt-…` and rebuilds the file from that current
+task. It does not recover permissions from damaged data. Existing tasks without a current verified
+environment may still need to be restarted.
+
+If the error remains or reports invalid workspace/permission records, export **Activity → Export
+safe log** and include the exact error. Keep the preserved file private; do not delete your launcher
+settings or upload the saved task environments.
 
 ## Native compaction returns `404 Not Found`
 

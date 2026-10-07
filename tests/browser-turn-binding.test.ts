@@ -1,12 +1,18 @@
-import { expect, test } from "bun:test";
-import { chromium, type Locator, type Page } from "playwright-core";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { chromium, type Browser, type Locator, type Page } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { readFileSync } from "node:fs";
 
+let browser: Browser;
+beforeAll(async () => {
+  if (process.env.CHATGPT_DOM_TEST_BROWSER) browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+}, 30_000);
+afterAll(async () => { await browser?.close(); });
+
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("activity tone and collapsed content update the response snapshot", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const context = await browser.newContext();
   try {
-    const page = await browser.newPage();
+    const page = await context.newPage();
     await page.setContent(readFileSync(new URL("./fixtures/chatgpt-activity-summaries.html", import.meta.url), "utf8"));
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     const turn = page.locator("#turn");
@@ -26,11 +32,11 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("activity tone and collapsed 
     expect(collapsed.visibleText).toBe("answer 1");
     await summary.evaluate(node => { node.parentElement!.hidden = false; });
     expect((await observe()).traceBlocks).toEqual(first.traceBlocks);
-  } finally { await browser.close(); }
+  } finally { await context.close(); }
 }, 15_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("preserves the accepted user identity across Activity's temporary fallback group", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const context = await browser.newContext();
   try {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     const prompt = "Read first.txt.\n\nReturn its contents.";
@@ -39,7 +45,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("preserves the accepted user 
     const user = '<div data-user-message-bubble><div data-search-result-target><p><span data-prompt-link-href="app://test">Codex Native</span> Read first.txt.<br>Return its contents.</p></div></div>';
     const answer = '<div data-content-search-unit-key="fallback-turn-0:2:assistant"><div data-conversation-role="assistant"></div><div data-markdown-text-style="assistant-message"><p>FIRST fixture-marker</p></div></div><div class="turn-action-controls"><button>Copy</button></div>';
     for (const scenario of ["same-user", "different-user", "competing-turn", "old-group-remains", "unfinished", "streaming"] as const) {
-      const page = await browser.newPage();
+      const page = await context.newPage();
       await page.setContent('<main></main>');
       const baseline = await worker.captureSubmissionBaseline(page, prompt);
       await page.locator("main").evaluate((node, html) => { node.innerHTML = html; }, `<div data-turn-key="submitted">${user}</div>`);
@@ -65,13 +71,13 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("preserves the accepted user 
       }
       await page.close();
     }
-  } finally { await browser.close(); }
+  } finally { await context.close(); }
 }, 15_000);
 
 // Execute the real observation/rebinding code against the reported renderer transition.
 // No account, network requests, or model submissions are used.
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("an exchange rekeys only with the exact submitted prompt and no competing turn", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const context = await browser.newContext();
   try {
     const worker = Object.create(ChatGptBrowserWorker.prototype) as {
       captureSubmissionBaseline(page: Page, submittedText?: string): Promise<unknown>;
@@ -86,7 +92,7 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("an exchange rekeys only with
       <div data-markdown-text-style="assistant-message"><p>Answer.</p></div></div>
       ${complete ? '<div class="turn-action-controls"><button>Copy</button></div>' : ""}</div>`;
     for (const scenario of ["matching", "history", "foreign", "prefix-only", "changed-spaces", "changed-edges", "two-turns", "old-group-remains", "unfinished", "no-prompt", "same-key"] as const) {
-      const page = await browser.newPage();
+      const page = await context.newPage();
       const history = scenario === "history" ? group("earlier", prompt, true) : "";
       await page.setContent(`<main>${history}</main>`);
       const baseline = await worker.captureSubmissionBaseline(page, scenario === "no-prompt" ? undefined : prompt);
@@ -111,13 +117,13 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("an exchange rekeys only with
       }
       await page.close();
     }
-  } finally { await browser.close(); }
+  } finally { await context.close(); }
 }, 30_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("binds captured Activity before an answer exists and recognizes uploaded native-button tiles", async () => {
-  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const context = await browser.newContext();
   try {
-    const page = await browser.newPage();
+    const page = await context.newPage();
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     await page.setContent('<main></main>');
     const baseline = await worker.captureSubmissionBaseline(page, "Prompt");
@@ -133,5 +139,5 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("binds captured Activity befo
       await worker.attachFiles(page, { images: [{ ref: "codex-input-image-1", imageUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" }] });
       expect(await page.locator('input[type="file"]').evaluate(input => (input as HTMLInputElement).files?.[0]?.name)).toBe("codex-input-image-1.png");
     }
-  } finally { await browser.close(); }
+  } finally { await context.close(); }
 }, 15_000);

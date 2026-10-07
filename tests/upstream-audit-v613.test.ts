@@ -188,8 +188,13 @@ test("v6.1.3 evidence is content-addressed, references v6.1.2, and reconstructs 
   }
 }, 30_000);
 
-test("continuing v6.1.4 evidence closes source anchors and reconstructs the original merge from retained prerequisites", () => {
-  const next = JSON.parse(readFileSync(resolve(root, ".github/upstream-audit/v6.1.4.json"), "utf8"));
+test.each(["v6.1.4", "v6.1.5"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
+  const next = JSON.parse(readFileSync(resolve(root, `.github/upstream-audit/${release}.json`), "utf8"));
+  if (release === "v6.1.5") {
+    expect(next.coverage).toEqual({paths: 54, hunks: 202, testPaths: 21, testCaseDeltas: 61, pending: 0, missing: 0});
+    expect(next.upstream).toBe("92a356fac2292e3af5a97ab7ba634edd8d38621e");
+    expect(next.tag.object).toBe("38311dfe5c8914b397b6f890e2b21c990dd4a84c");
+  }
   const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
   const blob = (oid: string) => {
     const result = spawnSync("git", ["cat-file", "blob", oid], { cwd: root });
@@ -217,7 +222,7 @@ test("continuing v6.1.4 evidence closes source anchors and reconstructs the orig
     const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
     const found: Array<{name: string; sha256: string}> = [];
     function visit(node: ts.Node) {
-      if (ts.isCallExpression(node) && /^(test|it)(\.|\(|$)/.test(node.expression.getText(source))
+      if (ts.isCallExpression(node) && (release === "v6.1.5" ? /^(test|it|domTest)(\.|\(|$)/ : /^(test|it)(\.|\(|$)/).test(node.expression.getText(source))
         && node.arguments.length >= 2 && (ts.isArrowFunction(node.arguments[1]!) || ts.isFunctionExpression(node.arguments[1]!))) {
         const name = node.arguments[0]!;
         if (ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) {
@@ -250,6 +255,9 @@ test("continuing v6.1.4 evidence closes source anchors and reconstructs the orig
     for (const target of item.targets) {
       const text = blob(target.blob).toString("utf8").replaceAll("\r\n", "\n");
       expect(textDigest(text.split("\n").slice(target.start - 1, target.end).join("\n")), target.path).toBe(target.lineSha256);
+      if (release === "v6.1.5" && JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version.startsWith("6.1.5-")) {
+        expect(textDigest(readFileSync(resolve(root, target.path), "utf8")), target.path).toBe(textDigest(text));
+      }
       if (JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version.startsWith("6.1.4-")) {
         // Historical source anchors stay immutable; follow-ups attest exact bytes.
         const followups: Array<{path: string; baselineSha256: string; currentSha256: string; reason: string}> =
@@ -291,7 +299,7 @@ test("continuing v6.1.4 evidence closes source anchors and reconstructs the orig
     git(["--git-dir", scratch, "index-pack", packPath]);
     expect(git(["--git-dir", scratch, "cat-file", "-t", next.automaticMergeTree])).toBe("tree");
     expect(git(["--git-dir", scratch, "rev-parse", `${next.tag.object}^{commit}`])).toBe(next.upstream);
-    expect(git(["--git-dir", scratch, "rev-parse", `${ledger.tag.object}^{commit}`])).toBe(next.semanticBaseline);
+    expect(git(["--git-dir", scratch, "rev-parse", `${next.semanticTag.object}^{commit}`])).toBe(next.semanticBaseline);
     const trees = git(["--git-dir", scratch, "rev-list", "--objects", next.automaticMergeTree]).split(/\r?\n/);
     const check = spawnSync("git", ["--git-dir", scratch, "cat-file", "--batch-check"], {
       input: trees.map(line => line.split(" ")[0]).join("\n") + "\n", encoding: "utf8",

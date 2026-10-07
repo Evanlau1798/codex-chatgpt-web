@@ -10,17 +10,18 @@ import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-pr
 import { CHATGPT_USER_TURN_SELECTOR, CHATGPT_ASSISTANT_TURN_SELECTOR } from "../src/chatgpt-session";
 
 test.each([
-  [true, false, true, "inline", false, false, false, false],
-  [false, false, true, "inline", false, false, false, false],
-  [true, true, true, "inline", false, false, false, false],
-  [true, false, false, "inline", true, false, false, false],
-  [true, true, false, "inline", true, false, false, false],
-  [true, true, false, "native2-archive", false, false, false, false],
-  [true, true, false, undefined, false, false, false, false],
-  [true, false, false, "inline", true, true, true, false],
-  [true, true, false, "inline", true, false, true, false],
-  [true, false, true, "inline", false, false, false, true],
-] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s, direct=%s, required=%s, reused=%s)", async (owned, tools, multipart, transport, direct, requiredRetained, reused, sizeRejected = false) => {
+  [true, false, true, "inline", false, false, false, false, false],
+  [false, false, true, "inline", false, false, false, false, false],
+  [true, true, true, "inline", false, false, false, false, false],
+  [true, false, false, "inline", true, false, false, false, false],
+  [true, true, false, "inline", true, false, false, false, false],
+  [true, true, false, "native2-archive", false, false, false, false, false],
+  [true, true, false, undefined, false, false, false, false, false],
+  [true, false, false, "inline", true, true, true, false, false],
+  [true, true, false, "inline", true, false, true, false, false],
+  [true, false, true, "inline", false, false, false, true, false],
+  [true, false, true, "inline", false, false, false, true, true],
+] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s, direct=%s, required=%s, reused=%s, size rejected=%s, SSE=%s)", async (owned, tools, multipart, transport, direct, requiredRetained, reused, sizeRejected = false, sseRejection = false) => {
   const diagnostics = mkdtempSync(join(tmpdir(), "compaction-observation-"));
   const cancellationCase = owned && !tools && !multipart;
   const effort = tools ? "xhigh" : "high";
@@ -141,10 +142,12 @@ test.each([
       if (sizeRejected && stage === "multipart_stage_2_send") {
         const request = { method: () => "POST", url: () => "https://chatgpt.com/backend-api/f/conversation", frame: () => frame };
         page.emit("request", request);
-        page.emit("response", { request: () => request, status: () => 413,
-          headers: () => ({ "content-type": "application/json" }),
+        page.emit("response", { request: () => request, status: () => sseRejection ? 200 : 413,
+          headers: () => ({ "content-type": sseRejection ? "text/event-stream" : "application/json" }),
           json: async () => ({ detail: { code: "message_length_exceeds_limit" } }),
+          text: async () => 'data: {"error":"The message you submitted was too long, please edit it and resubmit.","error_code":"input_too_large","error_reason":"last_user_message"}\n\ndata: [DONE]\n\n',
         });
+        page.emit("requestfinished", request);
       }
       if (remountHistory) {
         expect((args[1] as { initialTurnIdentities: string[] }).initialTurnIdentities).toContain("older-user");
@@ -157,13 +160,13 @@ test.each([
       return "user_turn";
     },
     waitForNewAssistantTurn: async (...args: unknown[]) => {
-      if (remountHistory) expect((args[2] as { count: number }).count).toBe(2);
-      expect(args[5]).toBeUndefined();
-      recoveryCallbacks.push(args[7]);
+      if (remountHistory) expect((args[1] as { initialResponseTurn: { count: number } }).initialResponseTurn.count).toBe(2);
+      expect(args[4]).toBeUndefined();
+      recoveryCallbacks.push(args[6]);
       actions.push("observe");
       if (stage === "send") throw finalResponse;
       if (sizeRejected && stage === "multipart_stage_2_acknowledgement") {
-        const signal = args[4] as AbortSignal;
+        const signal = args[3] as AbortSignal;
         await new Promise((_resolve, reject) => {
           const timer = setTimeout(() => reject(new Error("rejected stage kept waiting")), 250);
           const onAbort = () => { clearTimeout(timer); rejectionAbortedWait = true; reject(signal.reason); };
@@ -173,7 +176,7 @@ test.each([
       }
       return {};
     },
-    waitForMultipartAcknowledgement: async () => { actions.push("ack"); },
+    waitForMultipartAcknowledgement: async () => { actions.push("ack"); return { identity: `stage:${actions.length}` }; },
   });
   try {
     const run = worker.runBrowserTurn({
@@ -201,6 +204,8 @@ test.each([
       expect(released).toBeTrue();
       expect(page.listenerCount("request")).toBe(0);
       expect(page.listenerCount("response")).toBe(0);
+      expect(page.listenerCount("requestfinished")).toBe(0);
+      expect(page.listenerCount("requestfailed")).toBe(0);
       return;
     }
     await expect(run).rejects.toBe(finalResponse);

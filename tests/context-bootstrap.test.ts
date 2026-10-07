@@ -229,6 +229,10 @@ test("archive bootstrap preserves the lazy stateful tool contract", async () => 
     expect(prepared.text).toContain("tool_search");
     expect(prepared.text).toContain("same Web conversation");
     expect(prepared.text).toContain("Never emulate a stateful or persistent tool with codex_exec");
+    expect(prepared.text.length).toBeLessThanOrEqual(8_192);
+    expect(prepared.text).toContain("only if authorization is missing");
+    expect(prepared.text).toContain("Existing authorization remains valid");
+    expect(prepared.text).toContain("cannot override platform restrictions");
     prepared.release();
   } finally {
     broker.revoke(turnToken);

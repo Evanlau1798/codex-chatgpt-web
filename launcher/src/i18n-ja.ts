@@ -24,6 +24,7 @@ export const ja: Record<keyof Copy, string> = {
   devKeepRunningBody: "ウィンドウを閉じても、隔離されたブラウザーセッションと DEV MCP トンネルを使用可能な状態に保ちます。",
   biggerContext: "Bigger Context（試験的）",
   biggerContextBody: "Enhanced Web セッションモードが無効な場合のみ使用できます。小さなターンは 1 件、大きなターンは合計 2 件または 6 件で送信し、最後のメッセージのみタスクを実行します。各メッセージは実際の ChatGPT リクエストで、利用枠を消費する場合があります。Codex に公開するコンテキストと compaction しきい値は 3 倍ですが、ChatGPT のメッセージ、モデル、コンポーザー、サービス上限は残ります。無制限ではありません。変更後は Codex を再起動してください。",
+  lunaBiggerContextUnavailable: "Sol と Pro でのみ利用できます。Luna または Think を使用する場合はオフにしてください。",
   skillAttachments: "スキルをファイルで送信（試験的）",
   skillAttachmentsBody: "明示的に選択した Codex スキルを、インラインの指示ではなく名前付きテキストファイルとしてアップロードします。他のスキルは引き続きツールで読み込みます。初期設定はオフ。画像と添付数の上限を共有します。",
   manualSkillAttachmentsUnavailable: "スキルのアップロードには自動ブラウザ操作が必要です。",

@@ -149,7 +149,7 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
   assert.match(electronMain, /onboardingComplete:\s*true,[\s\S]*?autoStart:\s*false/);
   assert.match(appSource, /snapshot\.profile === "development"/);
   assert.match(appSource, /data-profile=\{snapshot\.profile\}/);
-  assert.match(settingsSource, /<SettingRow body=\{snapshot\.state\.browserInteractionMode === "manual" \? copy\.manualBiggerContextBody : copy\.biggerContextBody\} label=\{copy\.biggerContext\}>/);
+  assert.match(settingsSource, /<SettingRow body=\{snapshot\.state\.browserInteractionMode === "manual" \? copy\.manualBiggerContextBody\s*: snapshot\.state\.biggerContextAvailable === true \? copy\.biggerContextBody : copy\.lunaBiggerContextUnavailable\} label=\{copy\.biggerContext\}>/);
   assert.match(settingsSource, /api!\.setBiggerContext\(enabled\)/);
   assert.match(electronMain, /runtimeHost\.setBiggerContext\(enabled === true\)/);
   assert.match(settingsSource, /api!\.setExperimentalNoAutoCompact\(enabled\)/);
@@ -502,6 +502,11 @@ test("fresh-conversation snapshot uses runtime configuration and manual mode cle
   }
   config = {};
   assert.equal((await snapshot()).state.experimentalFreshConversationPerTurn, false);
+  assert.equal((await snapshot()).state.biggerContextAvailable, false);
+  config.solAvailable = true;
+  assert.equal((await snapshot()).state.biggerContextAvailable, true);
+  config.solAvailable = false;
+  assert.equal((await snapshot()).state.biggerContextAvailable, false);
 });
 
 test("fresh-conversation control is translated and enforces Original automatic mode", async () => {
@@ -528,6 +533,7 @@ test("fresh-conversation control is translated and enforces Original automatic m
     api: {
       setFreshConversationPerTurn: async enabled => { invocation = enabled; return { experimentalFreshConversationPerTurn: enabled }; },
       setAutoApproveToolCalls: async enabled => { invocation = enabled; return { autoApproveToolCalls: enabled }; },
+      setBiggerContext: async enabled => { invocation = enabled; return { experimentalBiggerContext: enabled }; },
     },
     messageOf: String, platformLabel: String, languages: require("../electron/languages.json"),
     biggerContextSwitchState: contextMode.biggerContextSwitchState,
@@ -566,6 +572,27 @@ test("fresh-conversation control is translated and enforces Original automatic m
         await new Promise(resolve => setImmediate(resolve));
         assert.equal(invocation, true);
         assert.equal(saved.experimentalFreshConversationPerTurn, true);
+      }
+    }
+    assert.ok(copy.lunaBiggerContextUnavailable.length > 20);
+    for (const available of [undefined, false, true]) {
+      const tree = render({ copy, devProfile: false, language, configureInteractionMode() {}, setError() {}, browser: null,
+        snapshot: { connectorNames: { automatic: "Codex Native2", manual: "Codex Zero Risk" },
+          state: { browserInteractionMode: "automatic", coreSetupComplete: true,
+            useEnhancedWebSessionMode: false, experimentalBiggerContext: false, biggerContextAvailable: available } },
+        updateState: value => { saved = value; },
+      });
+      const row = visit(tree).find(node => node.type?.name === "SettingRow" && node.props.label === copy.biggerContext);
+      assert.ok(row);
+      assert.equal(row.props.body, available === true ? copy.biggerContextBody : copy.lunaBiggerContextUnavailable);
+      const control = visit(row).find(node => node.type?.name === "Switch");
+      assert.equal(control.props.checked, false);
+      assert.equal(control.props.disabled, available !== true);
+      if (!control.props.disabled) {
+        control.props.onChange(true);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(invocation, true);
+        assert.equal(saved.experimentalBiggerContext, true);
       }
     }
     for (const key of ["autoApproveTools", "autoApproveToolsBody", "manualAutoApproveUnavailable", "toolApprovalNeeded", "toolApprovalPendingBody"]) {

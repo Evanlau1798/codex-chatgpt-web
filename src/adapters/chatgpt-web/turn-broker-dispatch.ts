@@ -7,6 +7,7 @@ import {
 } from "./turn-broker-completion";
 import { dispatchExternalOwnerRequest, type TurnBrokerOwner } from "./turn-broker-owner";
 import { scheduleToolWaiters } from "./turn-broker-queue";
+import { subagentModelObservation } from "./mcp-observation";
 import {
   assertSafeHarnessRunning,
   waitForSafeSent,
@@ -270,6 +271,10 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
     binding.channel.invocations.set(callId, { request: toolRequest, resolve, reject });
     binding.channel.queuedCallIds.push(callId);
     console.info(`[chatgpt-web] broker trace=${binding.channel.traceId} queued call=${callId.slice(0, 17)} tool=${wireName} waiters=${binding.channel.waiters.size}`);
+    const modelObservation = !toolRequest.freeform && subagentModelObservation(wireName, toolRequest.arguments);
+    if (modelObservation) console.info(`[chatgpt-web] subagent_model_requested ${JSON.stringify({
+      traceId: binding.channel.traceId, callId: callId.slice(0, 17), tool: wireName, ...modelObservation,
+    })}`);
     scheduleToolWaiters(binding.channel);
   });
 }

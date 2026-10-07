@@ -84,12 +84,34 @@ test("continues queued prompts in the active Web conversation without replaying 
     finishFirst?.("updated answer");
     await Promise.all(runs);
     expect(browserStarts).toBe(1);
-    expect(events.every(stream => stream.at(-1)?.type === "done")).toBeTrue();
+    for (const stream of events) {
+      expect(stream.at(-1)?.type).toBe("done");
+      expect(stream.filter(event => event.type === "done")).toHaveLength(1);
+      expect(stream.filter((event): event is Extract<AdapterEvent, { type: "text_delta" }> =>
+        event.type === "text_delta" && event.phase === "final_answer").map(event => event.text).join(""))
+        .toBe("updated answer");
+    }
   } finally {
     finishFirst?.("updated answer");
     await Promise.allSettled(runs);
     worker.run = originalRun;
   }
+});
+
+test("final prelude omits completion without changing the exact round receipt", () => {
+  const sessions = new ChatGptTurnSessions();
+  const session = sessions.getOrCreate("final-replay", () => ({
+    mode: "read-only", browser: Promise.resolve("answer"), trace: new ChatGptTraceFeed(),
+    text: new ChatGptTextFeed(), cancel: () => {},
+  }));
+  const text: AdapterEvent = { type: "text_delta", text: "answer", phase: "final_answer" };
+  const done: AdapterEvent = { type: "done", stopReason: "stop", endTurn: true };
+  session.appendRoundEvents("round", [text, done]);
+  session.completeRound("round");
+  session.setFinalEvents(session.roundEvents("round"));
+  expect(session.eventsForFinalReplay()).toEqual([text]);
+  expect(session.roundEvents("round")).toEqual([text, done]);
+  expect(session.roundCompleted("round")).toBeTrue();
 });
 
 test("routes a Claude UserPromptSubmit hook into the active root Web turn", async () => {

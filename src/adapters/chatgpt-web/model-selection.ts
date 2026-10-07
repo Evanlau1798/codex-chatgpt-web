@@ -100,7 +100,7 @@ export async function assertChatGptModelFamily(
     );
     const descriptions = await readChatGptModelAnnouncements(menu.slider);
     if (checked && state && state.value === state.min + effortIndex && (chatGptModelFamilyMatches(descriptions, family, effort)
-      || chatGptUnversionedEffortMatches(descriptions, effort))) return;
+      || (family === "5.6" && chatGptUnversionedEffortMatches(descriptions, effort)))) return;
     if (Date.now() >= deadline) break;
     await new Promise(resolve => setTimeout(resolve, 50));
   } while (true);
