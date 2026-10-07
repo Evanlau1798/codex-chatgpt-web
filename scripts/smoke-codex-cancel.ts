@@ -29,6 +29,7 @@ mkdirSync(codexHome, { recursive: true });
 writeFileSync(join(root, "models.json"), `${JSON.stringify(catalog)}\n`);
 
 let responseRequests = 0;
+let beginCancellationDeadline = () => {};
 async function* cancelledStream(): AsyncGenerator<AdapterEvent> {
   yield {
     type: "error",
@@ -52,6 +53,7 @@ const server = Bun.serve({
     await request.json();
     responseRequests += 1;
     if (responseRequests === 1) {
+      beginCancellationDeadline();
       return new Response(bridgeToResponsesSSE(cancelledStream(), "chatgpt-web/high"), {
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
       });
@@ -81,7 +83,7 @@ writeFileSync(join(codexHome, "config.toml"), [
 ].join("\n"));
 
 try {
-  const startedAt = Date.now();
+  let cancellationStartedAt: number | undefined;
   const child = Bun.spawn([
     codex,
     "exec",
@@ -98,7 +100,13 @@ try {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const timeout = setTimeout(() => child.kill(), 15_000);
+  // CLI cold startup is bounded separately; cancellation begins with its provider error.
+  let timeout = setTimeout(() => child.kill(), 30_000);
+  beginCancellationDeadline = () => {
+    cancellationStartedAt = Date.now();
+    clearTimeout(timeout);
+    timeout = setTimeout(() => child.kill(), 15_000);
+  };
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
@@ -110,7 +118,9 @@ try {
   if (responseRequests !== 2) {
     throw new Error(`Codex made ${responseRequests} Responses requests; expected one streamed failure and one terminal replay`);
   }
-  if (Date.now() - startedAt >= 15_000) throw new Error("Codex cancellation did not terminate within the smoke deadline");
+  if (cancellationStartedAt === undefined || Date.now() - cancellationStartedAt >= 15_000) {
+    throw new Error("Codex cancellation did not terminate within the smoke deadline");
+  }
   if (!`${stdout}\n${stderr}`.includes("client_cancelled")) {
     throw new Error(`Codex did not surface the terminal cancellation body:\n${stdout}\n${stderr}`);
   }
