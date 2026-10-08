@@ -3198,14 +3198,12 @@ export class ChatGptBrowserWorker {
         tools: [],
       };
       const surfaceNonce = `verify_${randomUUID().replaceAll("-", "")}`;
-      const reference = contract === "safe"
-        ? await broker.registerSafe(environment, surfaceNonce, 60_000, `${traceId}_contract`)
-        : await broker.register(environment, 60_000, `${traceId}_contract`);
+      let reference: string | undefined;
       try {
-        if (contract === "safe") await broker.confirmSafeTurnSent(reference, surfaceNonce);
         await verifyCurrentConnectorContract(this.config.appName, contract, async probe => {
+          if (probe.attempt > 1) await captureDiagnostic("connector-contract-retry");
           await this.runBrowserTurn({
-            traceId: `${traceId}_contract`,
+            traceId: probe.attempt === 1 ? `${traceId}_contract` : `${traceId}_contract_retry`,
             modelId,
             reasoning,
             capabilities,
@@ -3213,9 +3211,19 @@ export class ChatGptBrowserWorker {
             prepare: async () => ({ text: probe.prompt, images: [], release: () => {} }),
             onTextDelta: () => {},
           }, undefined, page);
-        }, reference);
+        }, async attempt => {
+          // A retry gets a fresh broker lease; the previous turn's token can
+          // already have expired or been retired by its completed response.
+          if (reference) await broker.revoke(reference);
+          const probeTraceId = attempt === 1 ? `${traceId}_contract` : `${traceId}_contract_retry`;
+          reference = contract === "safe"
+            ? await broker.registerSafe(environment, surfaceNonce, 60_000, probeTraceId)
+            : await broker.register(environment, 60_000, probeTraceId);
+          if (contract === "safe") await broker.confirmSafeTurnSent(reference, surfaceNonce);
+          return reference;
+        }, { retryMissingEvidence: true });
       } finally {
-        await broker.revoke(reference);
+        if (reference) await broker.revoke(reference);
       }
       await captureDiagnostic("connector-contract-verified");
       await this.clearChatGptComposerState(page);

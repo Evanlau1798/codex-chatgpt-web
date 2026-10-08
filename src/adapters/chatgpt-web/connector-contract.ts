@@ -79,24 +79,24 @@ export interface ConnectorContractVerificationOptions {
    * still fail immediately. Zero Risk stays single-shot because its startup
    * call owns the request lifecycle.
    */
-  maxAttempts?: number;
+  retryMissingEvidence?: boolean;
 }
 
 export async function verifyCurrentConnectorContract(
   appName: string,
   contract: ChatGptMcpContract,
   runProbe: (probe: ConnectorContractProbe) => Promise<void>,
-  reference?: string,
+  reference?: string | ((attempt: number) => Promise<string>),
   options?: ConnectorContractVerificationOptions,
 ): Promise<void> {
   const contractRevision = connectorContractRevision(contract);
   if (contract === "safe" && !reference) {
     throw new Error("Zero Risk connector contract verification requires a live request id");
   }
-  const requestedAttempts = options?.maxAttempts ?? (contract === "native" ? 2 : 1);
-  const maxAttempts = Math.max(1, Math.floor(requestedAttempts));
+  const maxAttempts = contract === "native" && options?.retryMissingEvidence === true ? 2 : 1;
   let lastMissingEvidenceError: Error | undefined;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const currentReference = typeof reference === "function" ? await reference(attempt) : reference;
     const nonce = randomUUID().replaceAll("-", "");
     const query = connectorContractProbeQuery(contractRevision, nonce);
     const retryInstruction = attempt > 1
@@ -105,17 +105,17 @@ export async function verifyCurrentConnectorContract(
     const prompt = contract === "safe"
       ? [
           "Call codex_turn_start exactly once with",
-          JSON.stringify({ request_id: reference }),
+          JSON.stringify({ request_id: currentReference }),
           "Then call codex_tool_inventory exactly once with",
-          JSON.stringify({ request_id: reference, query, include_schema: false }),
+          JSON.stringify({ request_id: currentReference, query, include_schema: false }),
           "Do not call any other tool. After the inventory call succeeds, reply briefly.",
         ].join(" ")
-      : reference
+      : currentReference
         ? [
             "Do not send progress updates for this connector verification.",
             retryInstruction,
             "Call codex_tool_inventory exactly once with",
-            JSON.stringify({ turn_token: reference, query, include_schema: false }),
+            JSON.stringify({ turn_token: currentReference, query, include_schema: false }),
             "Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
           ].filter(Boolean).join(" ")
         : [
