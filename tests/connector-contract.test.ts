@@ -10,8 +10,11 @@ import {
 } from "../src/adapters/chatgpt-web/connector-contract";
 
 test("current connector verification uses reserved inventory semantics without a public tool", async () => {
-  await expect(verifyCurrentConnectorContract("Codex Native2", "native", async () => {}))
-    .rejects.toThrow("did not execute the current runtime contract probe");
+  let missingEvidenceAttempts = 0;
+  await expect(verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
+    missingEvidenceAttempts = probe.attempt;
+  })).rejects.toThrow("did not execute the current runtime contract probe after attempt 2/2");
+  expect(missingEvidenceAttempts).toBe(2);
 
   let observedRevision = "";
   await expect(verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
@@ -27,6 +30,18 @@ test("current connector verification uses reserved inventory semantics without a
     expect(recordConnectorContractProbeQuery(probe.query, "native")).toBeTrue();
   })).resolves.toBeUndefined();
   expect(observedRevision).toBe(NATIVE2_CONTRACT_REVISION);
+});
+
+test("Native2 retries only when ChatGPT completed without dispatching the inventory call", async () => {
+  const attempts: number[] = [];
+  const queries: string[] = [];
+  await expect(verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
+    attempts.push(probe.attempt);
+    queries.push(probe.query);
+    if (probe.attempt === 2) expect(recordConnectorContractProbeQuery(probe.query, "native")).toBeTrue();
+  })).resolves.toBeUndefined();
+  expect(attempts).toEqual([1, 2]);
+  expect(new Set(queries).size).toBe(2);
 });
 
 test("reserved inventory probe records only the current contract revision and a valid nonce", () => {
