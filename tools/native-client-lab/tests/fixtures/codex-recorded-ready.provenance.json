@@ -1,0 +1,5 @@
+{
+  "source": "Owned native Codex 0.159.2 headless capture on local bridge 9003, 2026-10-01, artifacts/codex-1790833277105-0a21ab59-7802-4135-8d71-ddf76064a379/0002.response.txt",
+  "sanitization": "Response/message IDs replaced and created_at zeroed. Recorded frame order, types, delta shape, heartbeat count, READY text and terminal outcome retained.",
+  "boundary": "Native client-facing Responses stream; NOT provider wire or served-model evidence. No prompts, credentials, account IDs, or raw ChatGPT response bodies included."
+}
