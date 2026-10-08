@@ -9,6 +9,15 @@ function replaceOnce(text, anchor, replacement, label) {
   return text.replace(anchor, replacement);
 }
 
+function patchRendererCacheKey(indexFile) {
+  let index = fs.readFileSync(indexFile, 'utf8');
+  const match = index.match(/(\.\/assets\/index-[^"]+\.js)"/);
+  if (!match) throw new Error('Official renderer index changed; bundle cache key was not applied');
+  const marker = `${match[1]}?opencodex=${encodeURIComponent(path.basename(match[1]))}"`;
+  if (!index.includes(marker)) index = index.replace(`${match[1]}"`, marker);
+  fs.writeFileSync(indexFile, index);
+}
+
 function patchSources(launcher, addonRoot) {
   const appFile = path.join(launcher, 'src/App.tsx');
   let app = fs.readFileSync(appFile, 'utf8');
@@ -106,6 +115,7 @@ async function prepareRenderer({ root, extracted, job, settings }) {
   fs.symlinkSync(path.join(cachedLauncher, 'node_modules'), path.join(build, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   patchSources(build, root);
   await run(settings.bun, ['run', 'build'], build, settings);
+  patchRendererCacheKey(path.join(build, 'dist/index.html'));
   // Hash names may change. Retain the official files and replace only index.html
   // plus the freshly built assets, avoiding recursive deletion of app contents.
   fs.cpSync(path.join(build, 'dist'), path.join(extracted, 'dist'), { recursive: true });
@@ -113,4 +123,4 @@ async function prepareRenderer({ root, extracted, job, settings }) {
   return { version, rendererSource: cache, rendererBuild: build, revision: REVISION };
 }
 
-module.exports = { REVISION, SOURCE, replaceOnce, patchSources, patchElectron, prepareRenderer };
+module.exports = { REVISION, SOURCE, replaceOnce, patchRendererCacheKey, patchSources, patchElectron, prepareRenderer };
