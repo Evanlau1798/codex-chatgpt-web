@@ -104,26 +104,28 @@ export async function verifyCurrentConnectorContract(
       : "";
     const prompt = contract === "safe"
       ? [
-          "Call codex_turn_start exactly once with",
+          "Protocol verification: make a real function call to the connected MCP tool codex_turn_start exactly once with",
           JSON.stringify({ request_id: currentReference }),
-          "Then call codex_tool_inventory exactly once with",
-          JSON.stringify({ request_id: currentReference, query, include_schema: false }),
-          "Do not call any other tool. After the inventory call succeeds, reply briefly.",
+          "Then make a real function call to codex_tool_inventory exactly once with",
+          JSON.stringify({ request_id: currentReference, query }),
+          "Do not claim either call in prose and do not answer before the inventory tool result is returned. Do not call any other tool. After the inventory call succeeds, reply briefly.",
         ].join(" ")
       : currentReference
         ? [
             "Do not send progress updates for this connector verification.",
+            "Protocol verification: you must make a real function call to the connected MCP tool codex_tool_inventory now. Do not write a prose claim that you called it.",
             retryInstruction,
-            "Call codex_tool_inventory exactly once with",
-            JSON.stringify({ turn_token: currentReference, query, include_schema: false }),
-            "Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
+            "Use exactly these arguments:",
+            JSON.stringify({ turn_token: currentReference, query }),
+            "Wait for the tool result before answering. Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
           ].filter(Boolean).join(" ")
         : [
             "Do not send progress updates for this connector verification.",
+            "Protocol verification: you must make a real function call to the connected MCP tool codex_tool_inventory now. Do not write a prose claim that you called it.",
             retryInstruction,
-            "Call codex_tool_inventory exactly once using the current turn_token from codex_native_turn_binding, with",
-            JSON.stringify({ query, include_schema: false }),
-            "Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
+            "Use the current turn_token from codex_native_turn_binding and exactly these arguments:",
+            JSON.stringify({ query }),
+            "Wait for the tool result before answering. Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
           ].filter(Boolean).join(" ");
     discardConnectorContractProbeEvidence(nonce);
     try {

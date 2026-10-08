@@ -3183,7 +3183,10 @@ export class ChatGptBrowserWorker {
       const account = await detectChatGptAccountCapabilities(page);
       const capabilities: ChatGptWebCapabilities = { ...account, localToolsEnabled: false };
       const modelId = account.solAvailable ? CHATGPT_WEB_MODEL_ID : CHATGPT_WEB_LUNA_MODEL_ID;
-      const reasoning = account.solAvailable ? "high" : "low";
+      // The verification turn must prioritize deterministic tool dispatch over a
+      // deeper answer. User task effort selection remains unchanged elsewhere.
+      const reasoning = "low";
+      const modelFamily = account.solAvailable ? "5.6" as const : undefined;
       const contract = this.config.appName === ZERO_RISK_CHATGPT_CONNECTOR_NAME ? "safe" as const : "native" as const;
       if (!this.config.brokerSocketPath) {
         throw new Error("Connector verification requires the active runtime broker socket");
@@ -3206,6 +3209,7 @@ export class ChatGptBrowserWorker {
             traceId: probe.attempt === 1 ? `${traceId}_contract` : `${traceId}_contract_retry`,
             modelId,
             reasoning,
+            modelFamily,
             capabilities,
             nativeConnector: true,
             prepare: async () => ({ text: probe.prompt, images: [], release: () => {} }),

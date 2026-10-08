@@ -353,6 +353,26 @@ export async function runChatGptMcpServer(options: {
             ? { parameters: z.toJSONSchema(connector.inputSchema as z.ZodType, { io: "input" }) } : {}),
         }], total: 1, next_offset: null });
       }
+      // Contract probes are reserved protocol evidence. Resolve them before the
+      // finalization-only output-control shortcut so a completed Native2 turn
+      // cannot return an empty inventory without recording the probe.
+      if (query && isConnectorContractProbeQuery(query, contract)) {
+        const recordProbe = () => {
+          if (!recordConnectorContractProbeQuery(query, contract)) {
+            throw new Error("Connector contract probe changed during validation");
+          }
+          return result({ tools: [], total: 0, next_offset: null });
+        };
+        if (contract === "native") {
+          try {
+            const control = await readNativeOutputControlInventory(options.brokerSocketPath, requestId, extra.signal);
+            if (control.work_tools_closed) return recordProbe();
+          } catch (error) {
+            if (!(error instanceof Error) || error.message !== "output control is unavailable for this turn") throw error;
+          }
+        }
+        return withTurn("codex_tool_inventory", requestId, extra, recordProbe);
+      }
       const recoverClosedInventory = async (error: unknown) => {
         if (contract !== "native" || diagnosticErrorCode(error) !== "work_tools_closed") throw error;
         return result(await readNativeOutputControlInventory(options.brokerSocketPath, requestId, extra.signal));
@@ -367,14 +387,6 @@ export async function runChatGptMcpServer(options: {
         } catch (error) {
           if (!(error instanceof Error) || error.message !== "output control is unavailable for this turn") throw error;
         }
-      }
-      if (query && isConnectorContractProbeQuery(query, contract)) {
-        return withTurn("codex_tool_inventory", requestId, extra, () => {
-          if (!recordConnectorContractProbeQuery(query, contract)) {
-            throw new Error("Connector contract probe changed during validation");
-          }
-          return result({ tools: [], total: 0, next_offset: null });
-        });
       }
       if (contract === "native" && query?.startsWith("__codex_wait_result__:")) {
         return readNativeAgentWait(options.brokerSocketPath, requestId, query, extra.signal);

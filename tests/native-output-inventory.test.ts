@@ -4,6 +4,11 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { TurnBroker, callTurnBroker } from '../src/adapters/chatgpt-web/turn-broker';
+import {
+  consumeConnectorContractProbeEvidence,
+  discardConnectorContractProbeEvidence,
+  NATIVE2_CONTRACT_REVISION,
+} from '../src/adapters/chatgpt-web/connector-contract';
 import { readNativeOutputControlInventory } from '../src/adapters/chatgpt-web/native-output-control';
 
 test('real MCP recovery inventory describes final output without reopening work or mutating its fence', async () => {
@@ -42,6 +47,15 @@ test('real MCP recovery inventory describes final output without reopening work 
     const before = await broker.beginCompletionFence(token);
     expect(await broker.beginFinalizationOnly(token, before!)).toBe(true);
     const revision = await broker.beginCompletionFence(token);
+    const probeNonce = '44444444444444444444444444444444';
+    discardConnectorContractProbeEvidence(probeNonce);
+    const probe = await client.callTool({ name: 'codex_tool_inventory', arguments: {
+      turn_token: token,
+      query: `__codex_contract_probe__:${NATIVE2_CONTRACT_REVISION}:${probeNonce}`,
+      include_schema: false,
+    } });
+    expect(probe.structuredContent).toEqual({ tools: [], total: 0, next_offset: null });
+    expect(consumeConnectorContractProbeEvidence(probeNonce, NATIVE2_CONTRACT_REVISION)).toBeTrue();
     const lookup = await client.callTool({ name: 'codex_tool_inventory', arguments: { turn_token: token, query: 'output' } });
     expect(lookup.isError).not.toBe(true);
     expect(lookup.structuredContent).toMatchObject({ total: 1, work_tools_closed: true,
