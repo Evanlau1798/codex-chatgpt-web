@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const REVISION = 'opencodex-launcher-surface-v1';
+const REVISION = 'opencodex-launcher-surface-v4-sidebar-order';
 const SOURCE = 'https://github.com/Evanlau1798/codex-chatgpt-web.git';
 
 function replaceOnce(text, anchor, replacement, label) {

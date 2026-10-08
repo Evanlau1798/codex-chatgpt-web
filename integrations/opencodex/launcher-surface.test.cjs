@@ -25,14 +25,16 @@ function fixture() {
     }
     setBounds(bounds) { this.bounds = bounds; }
   }
+  const electron = { WebContentsView: View, ipcMain: { handle: (key, fn) => handlers.set(key, fn), removeHandler: key => handlers.delete(key), on() {}, removeListener() {} },
+      shell: { openExternal: async url => { external.push(url); } } };
   const surface = createLauncherSurface({ window, settings: { dashboardPort: 10100 }, waitForReady: async () => {},
     getBrowserHost: () => ({ setSurfaceActive: value => browserVisibility.push(value) }),
-      electron: { WebContentsView: View, ipcMain: { handle: (key, fn) => handlers.set(key, fn), removeHandler: key => handlers.delete(key), on() {}, removeListener() {} },
-      shell: { openExternal: async url => { external.push(url); } } },
+      electron,
   });
+
   const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
   const show = () => handlers.get(CHANNEL)(event, { active: true, bounds: { x: 200, y: 50, width: 600, height: 500 } });
-  return { surface, handlers, event, show, window, external, children, browserVisibility, constructed };
+  return { surface, handlers, event, show, window, external, children, browserVisibility, constructed, electron };
 }
 
 test('same-window dashboard uses a sandboxed session without launcher preload or Node access', async () => {
@@ -54,6 +56,13 @@ test('switching surfaces retains dashboard navigation, session and form state', 
   await f.show(); assert.equal(f.surface.view, view); assert.equal(view.webContents.loads.length, 1);
   await f.handlers.get(RELOAD)(f.event); assert.equal(view.webContents.loads.length, 2);
   f.window.emit('closed'); assert.equal(view.webContents.closed, true); assert.equal(f.handlers.size, 0);
+});
+
+test('recreating the launcher window replaces its IPC surface without a duplicate-handler error', () => {
+  const f = fixture();
+  assert.doesNotThrow(() => createLauncherSurface({ window: f.window, settings: { dashboardPort: 10100 }, waitForReady: async () => {},
+    getBrowserHost: () => ({ setSurfaceActive() {} }), electron: f.electron }));
+  assert.equal(f.surface.active, false);
 });
 
 test('dashboard and subframes cannot invoke privileged launcher controls', async () => {

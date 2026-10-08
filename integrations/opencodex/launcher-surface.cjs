@@ -4,6 +4,7 @@ const path = require('node:path');
 const CHANNEL = 'launcher:opencodex-surface';
 const RELOAD = 'launcher:opencodex-reload';
 const OPEN = 'launcher:opencodex-open-on-launch';
+const SURFACE_INSTANCES = new WeakMap();
 
 function dashboardOrigin(settings) {
   if (!Number.isInteger(settings.dashboardPort) || settings.dashboardPort < 1 || settings.dashboardPort > 65535) {
@@ -31,6 +32,7 @@ function externalUrl(url) {
 
 function createLauncherSurface({ window, getBrowserHost, logger, electron = require('electron'), settings, waitForReady }) {
   const { WebContentsView, ipcMain, shell } = electron;
+  SURFACE_INSTANCES.get(ipcMain)?.dispose();
   const origin = dashboardOrigin(settings || JSON.parse(fs.readFileSync(path.join(__dirname, 'settings.json'), 'utf8')));
   let view = null, active = false, loading = null, loadingPending = false, destroyed = false, attached = false, validationStarted = false;
   const log = (event, error) => logger?.warn(event, { message: error instanceof Error ? error.message : String(error) });
@@ -139,15 +141,19 @@ function createLauncherSurface({ window, getBrowserHost, logger, electron = requ
     await load();
     return true;
   });
+  let surface;
   const dispose = () => {
     if (destroyed) return;
     hide(); destroyed = true;
     ipcMain.removeHandler(CHANNEL); ipcMain.removeHandler(RELOAD);
     ipcMain.removeListener(OPEN, openOnLaunch);
     if (view && !view.webContents.isDestroyed()) view.webContents.close();
+    if (SURFACE_INSTANCES.get(ipcMain) === surface) SURFACE_INSTANCES.delete(ipcMain);
   };
   window.once('closed', dispose);
-  return { dispose, get active() { return active; }, get view() { return view; } };
+  surface = { dispose, get active() { return active; }, get view() { return view; } };
+  SURFACE_INSTANCES.set(ipcMain, surface);
+  return surface;
 }
 
 module.exports = { createLauncherSurface, dashboardOrigin, viewBounds, externalUrl, CHANNEL, RELOAD, OPEN };
