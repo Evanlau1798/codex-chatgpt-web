@@ -37,6 +37,12 @@ function launch() {
       OPENCODEX_CODEX_SHIM_AUTO_RESTORE: '0', OCX_DESKTOP_SUPERVISED: '1' },
     stdio: ['ignore', log, log], windowsHide: true,
   });
+  // The official daemon owns the shutdown lifecycle. Keeping this supervised
+  // child referenced would keep Bun's parent process alive after
+  // /admin/shutdown closes the Responses server, so the launcher could not
+  // complete a runtime replacement. The backend already watches the gateway
+  // owner PID and exits when that owner disappears.
+  child.unref();
   child.on('error', () => console.error('[opencodex] Internal service could not start; see backend.log'));
   child.on('exit', () => { if (!stopping) setTimeout(launch, 3000).unref(); });
 }
