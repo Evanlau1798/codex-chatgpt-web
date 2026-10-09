@@ -60,7 +60,7 @@ test("Bigger Context expands only the total ceiling and preserves per-message bo
     { localToolsEnabled: false, solAvailable: false, proAvailable: false },
     40_000,
     2,
-  )).toThrow("unavailable for Luna");
+  )).not.toThrow();
 });
 
 test("Bigger Context selects the cheapest account mode that can carry every stage", () => {

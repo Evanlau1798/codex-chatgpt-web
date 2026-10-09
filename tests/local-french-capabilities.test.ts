@@ -15,7 +15,7 @@ const evidence = { observedAt: Date.now(), families: {
 const capabilities = { solAvailable: true, extraHighAvailable: true, proAvailable: true, modelCapabilities: evidence };
 
 test.each(["5.6", "6"] as const)("independently locked efforts retain only the available %s routes and catalog defaults", family => {
-  const slug = family === "5.6" ? "chatgpt-web/gpt-5.6-sol" : "chatgpt-web/latest";
+  const slug = family === "5.6" ? "chatgpt-web/gpt-5.6-sol" : "chatgpt-web/gpt-6-sol";
   const all = ["low", "medium", "high", "xhigh", "max"] as const;
   for (let mask = 0; mask < 32; mask++) {
     const observed = all.filter((_effort, index) => mask & (1 << index));

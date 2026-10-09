@@ -257,7 +257,7 @@ export class TurnBroker implements TurnBrokerOwner {
     if (!invocation) throw new Error(`tool call is not pending: ${callId}`);
     if (!channel.deliveredCallIds.delete(callId)) throw new Error(`tool call was completed before it was delivered: ${callId}`);
     channel.invocations.delete(callId);
-    console.info(`[chatgpt-web] broker trace=${channel.traceId} completed call=${callId.slice(0, 17)} pending=${channel.invocations.size}`);
+    console.info(`[chatgpt-web] broker trace=${channel.traceId} completed call=${callId.slice(0, 17)} pending=${channel.invocations.size} isError=${result.isError === true}`);
     invocation.resolve(result);
   }
 
@@ -533,7 +533,7 @@ export class TurnBroker implements TurnBrokerOwner {
 
   private start(): Promise<void> {
     if (this.startPromise) return this.startPromise;
-    this.startPromise = startTurnBrokerServer(this.socketPath, (request, signal) => {
+    const attempt = startTurnBrokerServer(this.socketPath, (request, signal) => {
       this.prune();
       return dispatchTurnBrokerRequest(request, signal, {
         acceptingExternalOwners: () => this.acceptingExternalOwners,
@@ -560,7 +560,12 @@ export class TurnBroker implements TurnBrokerOwner {
           this.socketIdentity = { dev, ino };
         }
       });
-    return this.startPromise;
+    this.startPromise = attempt;
+    // A previous owner can release the endpoint after startup failed; allow the next turn to retry.
+    void attempt.catch(() => {
+      if (this.startPromise === attempt) this.startPromise = undefined;
+    });
+    return attempt;
   }
 
   private prune(): void {

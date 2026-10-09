@@ -29,10 +29,11 @@ async function execute(program: string, names: string[], calls: Array<{ name: st
 }
 
 test("nested gateway inventory is paginated and rejects hidden outer tools", async () => {
+  const marker = "codex-tool-catalog:test:";
   const emitted = await execute(gatewayToolCatalogProgram({
-    query: "agent", offset: 0, limit: 20, excludedNames: ["exec"],
+    query: "agent", offset: 0, limit: 20, excludedNames: ["exec"], marker,
   }), ["exec", "multi_agent_v2__wait_agent", "vendor__agent_status"], []);
-  const catalog = gatewayToolCatalogPage({ content: emitted }, new Set(["exec"]));
+  const catalog = gatewayToolCatalogPage({ content: emitted }, new Set(["exec"]), marker);
   expect(catalog.total).toBe(2);
   expect(catalog.tools.map(tool => tool.name)).toEqual([
     "multi_agent_v2__wait_agent", "vendor__agent_status",

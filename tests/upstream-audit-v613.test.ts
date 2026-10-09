@@ -188,22 +188,46 @@ test("v6.1.3 evidence is content-addressed, references v6.1.2, and reconstructs 
   }
 }, 30_000);
 
-test.each(["v6.1.4", "v6.1.5"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
+test.each(["v6.1.4", "v6.1.5", "v6.1.7"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
   const next = JSON.parse(readFileSync(resolve(root, `.github/upstream-audit/${release}.json`), "utf8"));
   if (release === "v6.1.5") {
     expect(next.coverage).toEqual({paths: 54, hunks: 202, testPaths: 21, testCaseDeltas: 61, pending: 0, missing: 0});
     expect(next.upstream).toBe("92a356fac2292e3af5a97ab7ba634edd8d38621e");
     expect(next.tag.object).toBe("38311dfe5c8914b397b6f890e2b21c990dd4a84c");
   }
+  if (release === "v6.1.7") {
+    expect(next.coverage).toEqual({paths: 75, hunks: 377, testPaths: 31, testCaseDeltas: 127, pending: 0, missing: 0});
+    expect(next.upstream).toBe("f9ad4ae83a579287105ad822dd0c3e0029b04ef6");
+    expect(next.tag.object).toBe("bd6a3021d911cfd6e7dbe2b45b117b5cb365c5c7");
+  }
   const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const publishedObjects = release === "v6.1.7"
+    ? new Set(git(["rev-list", "--objects", "HEAD"]).split(/\r?\n/).map(line => line.split(" ")[0])) : undefined;
+  const retainedTargets = new Map<string, Buffer>();
+  if (next.evidence.targetBlobs) {
+    const retained = next.evidence.targetBlobs;
+    expect(retained.path).toBe(`.github/upstream-audit/evidence/${retained.sha256}.tar.gz`);
+    const bytes = readFileSync(resolve(root, retained.path));
+    expect(digest(bytes)).toBe(retained.sha256);
+    expect(bytes.length).toBe(retained.bytes);
+    for (const [oid, data] of tarEntries(bytes)) {
+      expect(oid).toMatch(/^[a-f0-9]{40}$/);
+      expect(createHash("sha1").update(`blob ${data.length}\0`).update(data).digest("hex")).toBe(oid);
+      retainedTargets.set(oid, data);
+    }
+    expect([...retainedTargets.keys()].sort()).toEqual([...retained.objects].sort());
+  }
   const blob = (oid: string) => {
+    const retained = retainedTargets.get(oid);
+    if (retained) return retained;
     const result = spawnSync("git", ["cat-file", "blob", oid], { cwd: root });
-    expect(result.status).toBe(0);
+    expect(result.status, result.stderr.toString("utf8")).toBe(0);
     return result.stdout;
   };
   const textDigest = (text: string) => digest(Buffer.from(text.replaceAll("\r\n", "\n")));
   expect(next.tag.signed).toBeFalse();
-  expect(git(["rev-parse", `${next.upstream}^`])).toBe(next.semanticBaseline);
+  expect(git(["merge-base", next.semanticBaseline, next.upstream])).toBe(next.semanticBaseline);
+  expect(git(["rev-list", "--count", `${next.semanticBaseline}..${next.upstream}`])).toBe(release === "v6.1.7" ? "4" : "1");
   const expectedPaths = git(["diff", "--name-only", next.semanticBaseline, next.upstream]).split(/\r?\n/).sort();
   expect(next.paths.map((item: any) => item.path).sort()).toEqual(expectedPaths);
   expect(new Set(next.paths.map((item: any) => item.path)).size).toBe(expectedPaths.length);
@@ -222,7 +246,7 @@ test.each(["v6.1.4", "v6.1.5"])("continuing %s evidence closes source anchors an
     const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
     const found: Array<{name: string; sha256: string}> = [];
     function visit(node: ts.Node) {
-      if (ts.isCallExpression(node) && (release === "v6.1.5" ? /^(test|it|domTest)(\.|\(|$)/ : /^(test|it)(\.|\(|$)/).test(node.expression.getText(source))
+      if (ts.isCallExpression(node) && (release !== "v6.1.4" ? /^(test|it|domTest)(\.|\(|$)/ : /^(test|it)(\.|\(|$)/).test(node.expression.getText(source))
         && node.arguments.length >= 2 && (ts.isArrowFunction(node.arguments[1]!) || ts.isFunctionExpression(node.arguments[1]!))) {
         const name = node.arguments[0]!;
         if (ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) {
@@ -253,6 +277,7 @@ test.each(["v6.1.4", "v6.1.5"])("continuing %s evidence closes source anchors an
     expect(textDigest(source.split("\n").slice(item.source.start - 1, item.source.end).join("\n")), item.id).toBe(item.source.lineSha256);
     expect(item.targets.length, item.id).toBeGreaterThan(0);
     for (const target of item.targets) {
+      if (publishedObjects) expect(publishedObjects.has(target.blob) || retainedTargets.has(target.blob), target.path).toBeTrue();
       const text = blob(target.blob).toString("utf8").replaceAll("\r\n", "\n");
       expect(textDigest(text.split("\n").slice(target.start - 1, target.end).join("\n")), target.path).toBe(target.lineSha256);
       if (JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version.startsWith(`${release.slice(1)}-`)) {

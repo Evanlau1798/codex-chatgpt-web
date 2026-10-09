@@ -1,0 +1,44 @@
+[
+  {
+    "path": "tests/chatgpt-web-models.test.ts",
+    "baselineSha256": "d1e092a0132ca679a83d737ff72c18d4034214ce18382e0bf683be9e27a280b1",
+    "currentSha256": "4d810ef50eac12d8325019cbcc3f1d1fb5e1602a785a589fb26b976736fa57f4",
+    "reason": "Preserve saved Latest route IDs as hidden legacy aliases while exposing one canonical GPT-6 Sol/Instant pair."
+  },
+  {
+    "path": "tests/model-catalog.test.ts",
+    "baselineSha256": "744f1aa55269fdb4761f2d6269a9ea7816487f02eae977fa636ce7e38e0614af",
+    "currentSha256": "c63c37dda4d0d8bc09345d31740fc1ac6f355be481b5f57237ec2b7a227ecd50",
+    "reason": "Explicitly exercise Original context limits; Enhanced retains its existing full context window."
+  },
+  {
+    "path": "tests/server-compaction.test.ts",
+    "baselineSha256": "10390040fe26321b1709050ef202ffbcf255a8f16377058fea76dd344acd49e7",
+    "currentSha256": "ea4714d3b54ca5a99aba6eff21ea056af85465870012f5fc2bc6170ef1e2426d",
+    "reason": "Exercise newly authorized Luna Bigger Context compaction in Original mode while ordinary Luna continues rejecting separate compaction."
+  },
+  {
+    "path": "tests/setup-lifecycle.test.ts",
+    "baselineSha256": "7ea3774046ed6f3b682f24c466a92309101eac06f2b86185f6804dc83d555e97",
+    "currentSha256": "335ea2c645d9a7e0193ae3f7852df9ae3629c280b7da4af65fed68dc2c41e7ad",
+    "reason": "Extend production and DEV offline-upgrade assertions to preserve the complete saved modelCapabilities object; explicit refresh still requires live account evidence."
+  },
+  {
+    "path": "tests/dev-chat.test.ts",
+    "baselineSha256": "a809d1640526a0a2ee3063c130797a06242245da8a7bc3f272d39c64ce50b456",
+    "currentSha256": "eee01db522d1a488fefdb2a9cab40c6188cbe3680c1602268319928a5c28e9c1",
+    "reason": "Reviewer P2 follow-up verifies an explicitly changed existing DEV model survives store reload/reopen with history intact, and rejected route changes leave persisted state untouched. Restores upstream persistence at the fork shared open() owner."
+  },
+  {
+    "path": "tests/launcher-viewport-browser.test.ts",
+    "baselineSha256": "83d09148680cb3d2e16bf5a22e6ea213c97957573df7f083d5a96256f50f4211",
+    "currentSha256": "da331f318a897a8064b56d1a8de60dcf0dc8ad4aa7056a7c6a5d0d24dc69a472",
+    "reason": "Hydrate the ordinary picker-preservation fixture before subsequent transitions. The real Electron never-presented preparing standby case waits for the initial native emulation resize receipt and quiet viewport before opening its picker, then closing selected work must keep it offscreen with unchanged viewport/resize count and open picker. Shared removeTurnTab excludes unfinished standby from automatic selection; ready standby remains selectable. All transition assertions remain unchanged. Pass the actual Bun test owner PID to the Electron fixture so its ownership watchdog can exit after timeout or interruption, including Windows shell launches. Existing viewport and picker assertions are unchanged."
+  },
+  {
+    "path": "tests/turn-broker-lifecycle.test.ts",
+    "baselineSha256": "814d7b9c1db217e041573fba2de9a1b789fbfd9a2bbe00678664146eb760ebb0",
+    "currentSha256": "d2e167dd8ad60ddba36648ba11d1a870c2fe14e22c471d268ce7528c7da3a989",
+    "reason": "Hosted Linux x64/ARM64 and macOS RED showed the busy-startup fixture listening before its Unix socket parent existed. Create the endpoint parent with mode0700 before occupying it; Windows named pipes and all listen-failure/recovery assertions remain unchanged."
+  }
+]

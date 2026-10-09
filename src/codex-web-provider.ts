@@ -116,7 +116,8 @@ export function persistProviderRoute(
         model_reasoning_effort:model.supported_reasoning_levels.some((l:any)=>l.effort===selected.model_reasoning_effort)
           ? selected.model_reasoning_effort : model.default_reasoning_level },
     };
-    text = applyWebProvider(text,state);
+    const installed = applyWebProvider(text,state);
+    if (journal.active !== false) text = installed;
     journal.webProvider = state;
     writes = [{path,data}];
     const index = removals.indexOf(path); if (index >= 0) removals.splice(index,1);

@@ -16,6 +16,7 @@ export interface ResponseRequestOptions {
 export interface ServerDependencies {
   /** Testable general-client wire boundary; production uses the existing restricted Web worker. */
   chatCompletionExecutor?: import("./chat-completions/runtime").ChatCompletionExecutor;
+  modelCatalogFetches?: import("./native-routes").ModelCatalogFetches;
   fetchUpstream?: NativeFetch;
   adapterFactory?: ChatGptWebAdapterFactory;
 }

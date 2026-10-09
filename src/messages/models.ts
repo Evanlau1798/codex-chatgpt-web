@@ -30,6 +30,7 @@ export function claudeGatewayModels(config: AppConfig): ClaudeGatewayModel[] {
       route.adapterEffort,
       config,
       config.useEnhancedWebSessionMode,
+      route.interactionMode === "automatic" ? route.modelFamily : undefined,
     ).contextWindow,
   }));
 }

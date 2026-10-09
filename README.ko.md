@@ -16,9 +16,9 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **릴리스: `6.1.5-Enhanced.2`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다. [소개 영상 보기 (영어 MP4)](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4).
+> **버전: `6.1.7-Enhanced.1`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다.
 
-upstream v6.1.5를 통합하면서 Enhanced 세션, Native2 도구 및 Fast startup을 유지합니다.
+upstream v6.1.7을 통합하면서 Enhanced 세션, Native2 도구 및 Fast startup을 유지합니다.
 
 이름이 변경된 ChatGPT GPT-6 선택 메뉴와 다섯 가지 추론 단계를 지원합니다. Codex에는 GPT-6와 GPT-6 Instant가 표시되며, 기존 `chatgpt-web/latest`와 `chatgpt-web/latest-instant` 작업 ID는 계속 호환됩니다.
 
@@ -136,9 +136,13 @@ inbound 포트를 열거나 라우터 포트 포워딩을 설정할 필요가 �
 >
 > GPT-5.6 Sol Pro 및 GPT-6 Astra의 현재 ChatGPT 메시지 허용량은
 > [Limits](https://github.com/miuuyy/codex-chatgpt-web/discussions/309)를 참고하세요.
-> 컨텍스트 한도는 계정 유형과 선택한 effort에 따라 달라집니다. Plus의 Medium/High는 실측
+> 컨텍스트 한도는 계정 유형과 선택한 effort에 따라 달라집니다. GPT-5.6 Plus의 Medium/High는 실측
 > 90,000-token 창을 사용하며, 실험적 3× context를 활성화하면 최대 270,000 tokens까지 확장됩니다.
 > 모든 경우에 네이티브 Codex compaction이 지원됩니다.
+> GPT-6 Sol은 Pro 계정의 Medium, High, Extra High에서 240,000-token Bigger Context를 사용하며
+> 220,000 tokens에서 compaction합니다. Instant와 다른 플랜은 표준 창을 사용합니다.
+> GPT-5.6 및 GPT-6 Pro의 기존 한도는 유지됩니다. Bigger Context는 Original Automatic 전용이며
+> Enhanced와 동시에 사용할 수 없습니다. 실험적 Luna/Think는 작업 대화를 유지하고 rolling checkpoint를 끕니다.
 
 1. 필수 설정을 완료하고 **MCP**를 연 다음 Tunnel과 일반 API 키를 생성하고
    **하네스 연결**을 누릅니다.

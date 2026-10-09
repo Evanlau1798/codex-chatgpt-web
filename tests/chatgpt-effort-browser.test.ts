@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chromium, type Browser } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
-import { detectChatGptAccountCapabilities } from "../src/chatgpt-session";
+import { setChatGptThinkMode } from "../src/adapters/chatgpt-web/think-mode";
+import { CHATGPT_COMPOSER_SELECTOR, detectChatGptAccountCapabilities } from "../src/chatgpt-session";
 
 let browser: Browser;
 beforeAll(async () => {
@@ -10,6 +11,7 @@ beforeAll(async () => {
 afterAll(async () => { await browser?.close(); });
 
 for (const modern of [false, true])
+for (const picker of ["latest", "gpt6"])
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`model selection reuses the ${modern ? "power" : "classic"} picker without racing Escape cleanup`, async () => {
   const page = await browser.newPage();
   try {
@@ -17,8 +19,8 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`model selection reuses the $
     await page.setContent(`<form><div id="prompt-textarea" contenteditable="true">Draft</div>
       <button type="button" data-tone="neutral" aria-haspopup="menu" aria-controls="picker" aria-expanded="false">Extra High</button></form>
       <div id="picker" role="menu" hidden><div ${modern ? 'data-model-picker-view="simple"' : ''}>
-        <div id="toggle" role="menuitem" aria-hidden="false" aria-expanded="false" data-model-picker-view-toggle="true">Select model</div>
-        <div id="models" hidden><div role="menuitemradio" aria-checked="true">Latest</div>
+        <div id="toggle" role="menuitem" ${picker === "gpt6" ? '' : 'aria-hidden="false"'} aria-expanded="false" data-model-picker-view-toggle="true">Select model</div>
+        <div id="models" hidden><div role="menuitemradio" aria-checked="true">${picker === "gpt6" ? '6' : 'Latest'}</div>
           <div role="menuitemradio" aria-checked="false">GPT-5.6 Sol</div></div>
         <span id="announcement">5.6 Extra High, 4 of 4.</span>
         <div role="menuitem" tabindex="0" aria-describedby="announcement">
@@ -49,6 +51,57 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`model selection reuses the $
     expect(await page.evaluate(() => (window as any).pickerOpens)).toBe(2);
     expect(await page.locator('#prompt-textarea').innerText()).toBe("Draft");
   } finally { await page.close(); }
+}, 30_000);
+
+// Captured in the Plus DEV launcher on Oct 8: the new default row is just "6",
+// the model toggle omits aria-hidden, and GPT-6's header shows only the effort.
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("GPT-6 and GPT-5.6 remain distinct across effort changes and pre-send verification", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`<form data-chatgpt-composer>
+      <div contenteditable="true" data-composer-markdown role="textbox">Draft</div>
+      <button type="button" data-codex-intelligence-trigger="true" data-composer-navigation-target="reasoning"
+        aria-haspopup="menu" aria-controls="picker" aria-expanded="false">Medium</button></form>
+      <div id="picker" role="menu" hidden><div data-model-picker-view="simple">
+        <div role="menuitem" data-model-picker-view-toggle="true" tabindex="0"><div data-menu-row-content>Medium</div></div>
+        <span id="status" role="status">6 Medium, 2 of 3.</span>
+        <div role="menuitem" tabindex="-1" aria-describedby="status"><div data-model-picker-power-slider style="height:30px;width:250px"></div></div>
+        <div id="models" hidden><div role="menuitemradio" aria-checked="true">6</div>
+          <div role="menuitemradio" aria-checked="false">GPT-5.6 Sol</div></div>
+      </div></div><script>
+        const control=document.querySelector('button'),menu=document.querySelector('#picker'),view=document.querySelector('[data-model-picker-view]');
+        const toggle=document.querySelector('[data-model-picker-view-toggle]'), models=document.querySelector('#models');
+        const labels=['Instant','Medium','High']; let family='6',value=1;
+        function render(){
+          document.querySelector('#status').textContent=family+' '+labels[value]+', '+(value+1)+' of 3.';
+          toggle.firstElementChild.textContent=(family==='6'?'':'5.6 Sol ')+labels[value];
+          document.querySelector('[data-model-picker-power-slider]').innerHTML='<span data-orientation="horizontal" aria-disabled="false">'
+            +labels.map((_,i)=>'<span data-selected="'+(i<=value)+'"></span>').join('')
+            +'<span role="slider" aria-hidden="true" aria-valuemin="0" aria-valuemax="2" aria-valuenow="'+value+'"></span></span>';
+        }
+        control.onclick=()=>{menu.hidden=false;control.setAttribute('aria-expanded','true');render();};
+        toggle.onclick=()=>{view.setAttribute('data-model-picker-view','advanced');models.hidden=false;};
+        document.querySelectorAll('[role=menuitemradio]').forEach((radio,index)=>{radio.onclick=()=>{
+          family=index===0?'6':'5.6';
+          document.querySelectorAll('[role=menuitemradio]').forEach((el,i)=>el.setAttribute('aria-checked',String(i===index)));
+          models.hidden=true;view.setAttribute('data-model-picker-view','simple');render();
+        };});
+        document.addEventListener('keydown',e=>{
+          if(e.key==='Escape'){menu.hidden=true;control.setAttribute('aria-expanded','false');control.textContent=(family==='6'?'':'5.6 Sol ')+labels[value];}
+          if(e.key==='ArrowRight'||e.key==='ArrowLeft'){value+=e.key==='ArrowRight'?1:-1;render();e.preventDefault();}
+        });render();
+      </script>`);
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    const caps = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false };
+    for (const [family, effort] of [["5.6", "low"], ["6", "high"], ["5.6", "medium"], ["6", "medium"]] as const) {
+      const selected = await worker.selectModelAndEffort(page, "gpt-5.6-sol", effort, caps, undefined, false, family);
+      expect(selected.modelFamily).toBe(family);
+      await worker.assertSelectedEffort(page, selected);
+      expect(await page.locator('[role=menuitemradio][aria-checked=true]').textContent()).toBe(family === "6" ? "6" : "GPT-5.6 Sol");
+      expect(await page.locator('[contenteditable]').innerText()).toBe("Draft");
+    }
+  } finally { await browser.close(); }
 }, 30_000);
 
 for (const scenario of ["hydrate", "shrink", "locked", "pro-disappears"])
@@ -93,3 +146,32 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`real slider ${scenario} keep
     await page.close();
   } finally { await page.close(); }
 }, 120_000);
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("Think uses the active editor in both composer layouts and survives its replacement", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const page = await browser.newPage();
+    for (const modern of [false, true]) {
+      await page.setContent(`<div contenteditable="true" data-composer-markdown role="textbox">Unrelated editor</div>
+        <form data-chatgpt-composer>
+          <div ${modern ? 'data-composer-markdown role="textbox"' : 'id="prompt-textarea"'} contenteditable="true"><span data-id="plugin:fixture" data-keyword="Codex Native2" contenteditable="false">Codex Native2</span></div>
+          <button type="button" aria-pressed="false">Think</button>
+        </form><script>(()=>{
+          const button=document.querySelector('button');
+          button.onclick=()=>{
+            button.setAttribute('aria-pressed',String(button.getAttribute('aria-pressed')!=='true'));
+            const editor=document.querySelector('form [contenteditable="true"]');
+            editor.replaceWith(editor.cloneNode(true));
+          };
+        })();</script>`);
+      const composer = page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true });
+      expect(await composer.count()).toBe(1);
+      await setChatGptThinkMode(composer, true);
+      expect(await page.getByRole("button", { name: "Think" }).getAttribute("aria-pressed")).toBe("true");
+      await setChatGptThinkMode(composer, false);
+      expect(await page.getByRole("button", { name: "Think" }).getAttribute("aria-pressed")).toBe("false");
+      expect(await composer.locator('[data-id="plugin:fixture"]').getAttribute("data-keyword")).toBe("Codex Native2");
+      expect(await page.locator('body > [contenteditable]').innerText()).toBe("Unrelated editor");
+    }
+  } finally { await browser.close(); }
+}, 30_000);

@@ -42,7 +42,9 @@ test.each(["5.6", "6"] as const)("HTTP Medium succeeds with High locked for fami
     const catalog = await (await fetch(`http://127.0.0.1:${server.port}/v1/models`, {
       headers: { authorization: `Bearer ${key}` },
     })).json() as any;
-    expect(catalog.data.some((row: any) => row.id === model)).toBe(true);
+    const visibleModel = family === "6" ? "chatgpt-web/gpt-6-sol" : model;
+    expect(catalog.data.some((row: any) => row.id === visibleModel)).toBe(true);
+    if (family === "6") expect(catalog.data.some((row: any) => row.id === model)).toBe(false);
     const response = await send(server, body({ model, reasoning_effort: "medium" }));
     expect(response.status).toBe(200);
     expect((await response.json() as any).choices[0].message.content).toBe("medium-result");

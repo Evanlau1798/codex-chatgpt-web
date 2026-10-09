@@ -10,7 +10,7 @@ test("same-turn native steering keeps proven authority but cannot hide a newer i
     type: "message", role: "user", content: [{ type: "input_text", text }],
     internal_chat_message_metadata_passthrough: { turn_id: turn },
   });
-  const environment = `<environment_context><cwd>${root}</cwd><sandbox_mode>read-only</sandbox_mode></environment_context>`;
+  const environment = `<environment_context><cwd>${root}</cwd><sandbox_mode>read-only</sandbox_mode><network_access>restricted</network_access></environment_context>`;
   const body = {
     model: "chatgpt-web/medium",
     client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: "thread_test", turn_id: "turn_original" }) },

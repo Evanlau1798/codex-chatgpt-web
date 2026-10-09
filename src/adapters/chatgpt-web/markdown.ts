@@ -216,6 +216,8 @@ export interface ChatGptMarkdownSegment {
   sourceStart?: number;
   sourceEnd?: number;
   streamable: boolean;
+  /** File-reference controls can replace their label, spinner and download link until completion. */
+  mutableReference?: boolean;
 }
 
 interface ChatGptMarkdownCandidate extends ChatGptMarkdownSegment {
@@ -234,7 +236,7 @@ interface CommittedChatGptMarkdownSegment {
 
 export class ChatGptMarkdownConsistencyError extends Error {
   constructor(message: string, readonly diagnostic?: {
-    reason: "text_changed" | "link_target_changed" | "block_order_changed" | "source_range_overlap";
+    reason: "text_changed" | "link_target_changed" | "block_order_changed" | "source_range_overlap" | "source_range_changed" | "unanchored_block";
     observedStart?: number;
     observedEnd?: number;
     committedStart?: number;
@@ -245,6 +247,8 @@ export class ChatGptMarkdownConsistencyError extends Error {
     committedTag?: string;
     observedIndex: number;
     committedIndex: number;
+    observedKeyMode?: "source-range" | "dom-node";
+    committedKeyMode?: "source-range" | "dom-node";
   }) {
     super(message);
     this.name = "ChatGptMarkdownConsistencyError";
@@ -268,6 +272,7 @@ export class ChatGptMarkdownBuffer {
   private markdown = "";
   private lastGroup: string | undefined;
   private consistencyError: ChatGptMarkdownConsistencyError | undefined;
+  private referencePrefix: Set<string> | undefined;
 
   constructor(
     private readonly transform: (markdown: string) => string = markdown => markdown,
@@ -289,6 +294,13 @@ export class ChatGptMarkdownBuffer {
     this.consistencyError = undefined;
     this.latest = reconciled.map(segment => ({ ...segment }));
     if (!this.streamDuringObservation) return "";
+
+    const referenceIndex = reconciled.findIndex(segment => segment.mutableReference);
+    if (referenceIndex >= 0) {
+      const prefix = new Set(reconciled.slice(0, referenceIndex).map(segment => this.candidateId(segment)));
+      this.referencePrefix = this.referencePrefix
+        ? new Set([...this.referencePrefix].filter(id => prefix.has(id))) : prefix;
+    }
 
     const visibleCandidates = new Set<string>();
     for (const segment of reconciled) {
@@ -323,6 +335,9 @@ export class ChatGptMarkdownBuffer {
       const segment = reconciled[committedCount]!;
       const candidateId = this.candidateId(segment);
       const candidate = this.candidates.get(candidateId);
+      // A disappearing or remounted preview must not release text after it. Only
+      // blocks already known to precede it may stream; finish() delivers the rest.
+      if (this.referencePrefix && !this.referencePrefix.has(candidateId)) break;
       if (!candidate?.streamable || candidate.streamableAt === undefined) break;
       if (now - Math.max(candidate.changedAt, candidate.streamableAt) < this.stabilityMs) break;
       delta += this.commit(candidate);
@@ -372,10 +387,10 @@ export class ChatGptMarkdownBuffer {
     if (this.committed.length === 0 || segments.length === 0) return segments;
 
     const pending: ChatGptMarkdownSegment[] = [];
-    const lastRangedCommitted = this.committed
-      .filter(segment => segment.sourceEnd !== undefined)
-      .at(-1);
-    const lastCommittedEnd = lastRangedCommitted?.sourceEnd;
+    let lastRangedIndex = this.committed.findLastIndex(segment => segment.sourceEnd !== undefined);
+    let lastRangedCommitted = this.committed[lastRangedIndex];
+    let lastCommittedEnd = lastRangedCommitted?.sourceEnd;
+    const hydratedRanges: Array<{ index: number; segment: CommittedChatGptMarkdownSegment }> = [];
     let highestCommittedIndex = -1;
     const matchedCommitted = new Set<number>();
     let sawPending = false;
@@ -410,6 +425,21 @@ export class ChatGptMarkdownBuffer {
         if (JSON.stringify(committed.linkTargets ?? []) !== JSON.stringify(segment.linkTargets ?? [])) {
           return this.changedCommittedBlockError("link_target_changed", segment, committed, observedIndex, committedIndex);
         }
+        if (committed.sourceStart !== undefined && segment.sourceStart !== undefined
+          && committed.sourceStart !== segment.sourceStart) {
+          return this.changedCommittedBlockError("source_range_changed", segment, committed, observedIndex, committedIndex);
+        }
+        // A matching DOM node can acquire its first source range after delivery. Preserve
+        // that proven association for later remounts, only after this whole snapshot passes.
+        if (committed.sourceStart === undefined && segment.sourceStart !== undefined) {
+          const hydrated = { ...committed, sourceStart: segment.sourceStart, sourceEnd: segment.sourceEnd };
+          hydratedRanges.push({ index: committedIndex, segment: hydrated });
+          if (committedIndex > lastRangedIndex) {
+            lastRangedIndex = committedIndex;
+            lastRangedCommitted = hydrated;
+            lastCommittedEnd = hydrated.sourceEnd;
+          }
+        }
         continue;
       }
 
@@ -417,7 +447,7 @@ export class ChatGptMarkdownBuffer {
         if (segment.sourceStart <= lastCommittedEnd) {
           return this.changedCommittedBlockError(
             "source_range_overlap", segment, lastRangedCommitted!, observedIndex,
-            this.committed.indexOf(lastRangedCommitted!),
+            lastRangedIndex,
           );
         }
         sawPending = true;
@@ -426,15 +456,29 @@ export class ChatGptMarkdownBuffer {
       }
 
       const followsVisibleCommittedTail = highestCommittedIndex === this.committed.length - 1;
-      if (!followsVisibleCommittedTail && !this.matchesLatestPending(segment)) {
+      // A known, undelivered paragraph also anchors new content after a virtualized
+      // committed tail. Earlier committed blocks are still checked above for edits/reordering.
+      if (!followsVisibleCommittedTail && !sawPending && !this.matchesLatestPending(segment)) {
+        const tail = this.committed.at(-1)!;
         return new ChatGptMarkdownConsistencyError(
           "ChatGPT final DOM could not be aligned with text already streamed to Codex",
+          {
+            reason: "unanchored_block",
+            observedStart: segment.sourceStart, observedEnd: segment.sourceEnd,
+            committedStart: tail.sourceStart, committedEnd: tail.sourceEnd,
+            observedTextChars: segment.text.length, committedTextChars: tail.text.length,
+            observedTag: segment.tag, committedTag: tail.tag,
+            observedIndex, committedIndex: this.committed.length - 1,
+            observedKeyMode: segment.sourceStart === undefined ? "dom-node" : "source-range",
+            committedKeyMode: tail.sourceStart === undefined ? "dom-node" : "source-range",
+          },
         );
       }
       sawPending = true;
       pending.push(segment);
     }
 
+    for (const hydrated of hydratedRanges) this.committed[hydrated.index] = hydrated.segment;
     return pending;
   }
 
@@ -443,10 +487,11 @@ export class ChatGptMarkdownBuffer {
     afterIndex: number,
     matched: ReadonlySet<number>,
   ): number | ChatGptMarkdownConsistencyError | undefined {
+    const sameNode = this.committed.findIndex(committed => segment.key === committed.key);
+    if (sameNode >= 0) return sameNode;
     const exact = this.committed.findIndex(committed => (
       segment.sourceStart !== undefined && committed.sourceStart !== undefined
-        ? segment.sourceStart === committed.sourceStart && segment.tag === committed.tag
-        : segment.key === committed.key
+        && segment.sourceStart === committed.sourceStart && segment.tag === committed.tag
     ));
     if (exact >= 0) return exact;
 

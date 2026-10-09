@@ -267,7 +267,7 @@ function fixture(label = "Think") {
   const page = { locator: (selector: string) => selector === '[role="dialog"]' ? absentDialog : popup,
     keyboard: { press: async () => {} } };
   const composer = {
-    filter: () => composer, first: () => composer, locator: () => composerForm,
+    filter: () => composer, first: () => composer, locator: () => composerForm, page: () => page,
     evaluate: async () => ({ text: state.draft.trim(), connectors: [...state.connectors] }),
     focus: async () => {},
     fill: async (text: string) => { state.draft = text; state.connectors = []; },
@@ -295,12 +295,12 @@ test.each(["Think", "Analyser"])("%s slash toggles only when needed and preserve
   const ui = fixture(label);
   ui.state.controlPresent = false;
   ui.state.connectors = ["Codex Native2"];
-  await setChatGptThinkMode(ui.composerForm as never, true);
+  await setChatGptThinkMode(ui.composer as never, true);
   expect(ui.state.pressed).toBeTrue();
   expect(ui.state.commands).toEqual(["/think"]);
   expect(ui.state.connectors).toEqual(["Codex Native2"]);
-  await setChatGptThinkMode(ui.composerForm as never, true);
-  await setChatGptThinkMode(ui.composerForm as never, false);
+  await setChatGptThinkMode(ui.composer as never, true);
+  await setChatGptThinkMode(ui.composer as never, false);
   expect(ui.state.pressed).toBeFalse();
   expect(ui.state.commands).toEqual(["/think"]);
   expect(ui.state.enters).toBe(1);
@@ -310,10 +310,10 @@ test.each(["Think", "Analyser"])("%s slash toggles only when needed and preserve
 test.each(["Think", "Analyser"])("%s uses its visible semantic control without inserting a slash command", async label => {
   const ui = fixture(label);
   ui.state.connectors = ["Codex Native2"];
-  await setChatGptThinkMode(ui.composerForm as never, true);
+  await setChatGptThinkMode(ui.composer as never, true);
   expect(ui.state.pressed).toBeTrue();
-  await setChatGptThinkMode(ui.composerForm as never, true);
-  await setChatGptThinkMode(ui.composerForm as never, false);
+  await setChatGptThinkMode(ui.composer as never, true);
+  await setChatGptThinkMode(ui.composer as never, false);
   expect(ui.state.pressed).toBeFalse();
   expect(ui.state.commands).toEqual([]);
   expect(ui.state.enters).toBe(0);

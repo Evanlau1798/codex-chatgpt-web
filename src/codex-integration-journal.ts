@@ -45,6 +45,9 @@ function isInstalledInterruptHook(value: unknown): boolean {
 
 function parseJournal(path: string): AnyCodexIntegrationJournal {
   const value = JSON.parse(stripUtf8Bom(readFileSync(path, "utf8"))) as Record<string, unknown>;
+  if (value.reconnectOnStartup !== undefined && (value.reconnectOnStartup !== true || value.active !== false)) {
+    throw new Error(`Invalid Codex route recovery intent: ${path}`);
+  }
   const installed = value.installed as Record<string, unknown> | undefined;
   if (value.version === 10
     && (value.webProvider === undefined || isWebProviderState(value.webProvider))

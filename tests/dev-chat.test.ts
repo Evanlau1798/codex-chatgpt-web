@@ -108,14 +108,17 @@ test("an existing DEV chat changes route only when the user explicitly requests 
   expect(() => manual.open("switchable")).toThrow(
     "not available while Zero Risk is enabled",
   );
+  expect(store.load("switchable")).toMatchObject(original);
   const migrated = manual.open("switchable", "chatgpt-web/zero-risk").state;
   expect(migrated).toMatchObject({
     model: "chatgpt-web/zero-risk",
     input: [{ type: "message", role: "user", content: "preserve me" }],
   });
+  expect(store.load("switchable")).toMatchObject(migrated);
+  expect(manual.open("switchable").state).toMatchObject(migrated);
 });
 
-test("Bigger Context triples the DEV compaction window and fails closed for Luna", async () => {
+test("Bigger Context exposes bounded full-history windows for Sol and Luna", async () => {
   const root = scratch("cgw-dev-bigger-context");
   const config = {
     ...defaultConfig("browser-only"),
@@ -148,13 +151,24 @@ test("Bigger Context triples the DEV compaction window and fails closed for Luna
     contextWindow: 333_579,
   });
   expect(biggerStatus.percent).toBe(Math.round((biggerStatus.inputTokens / 285_000) * 1_000) / 10);
+  for (const [model, contextWindow, autoCompactTokenLimit] of [
+    ["chatgpt-web/gpt-6-sol", 240_000, 220_000],
+    ["chatgpt-web/gpt-6-sol-instant", 111_193, 95_000],
+  ] as const) {
+    const state = bigger.open(model.split("/")[1]!, model).state;
+    expect(bigger.status(state)).toMatchObject({ contextWindow, autoCompactTokenLimit });
+  }
+  const proState = bigger.open("six-pro", "chatgpt-web/gpt-6-pro").state;
+  expect(bigger.status(proState)).toMatchObject({ contextWindow: 336_579, autoCompactTokenLimit: 285_000 });
   const luna = new DevChatDriver({
     ...biggerConfig,
     solAvailable: false,
     extraHighAvailable: false, proAvailable: false,
   }, store, factory, root, { biggerContext: true });
-  expect(() => luna.open("luna-window", "chatgpt-web/luna")).toThrow("unavailable for Luna");
-  expect(() => luna.open("think-window", "chatgpt-web/think")).toThrow("unavailable for Luna");
+  for (const model of ["chatgpt-web/luna", "chatgpt-web/think"] as const) {
+    const state = luna.open(model.split("/")[1]!, model).state;
+    expect(luna.status(state)).toMatchObject({ contextWindow: 84_000, autoCompactTokenLimit: 59_424 });
+  }
   await Promise.all([normal.close(), bigger.close(), luna.close()]);
 });
 

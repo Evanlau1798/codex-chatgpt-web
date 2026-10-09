@@ -19,9 +19,6 @@ function assertBiggerContextChangeAllowed(config, enabled) {
   if (enabled === true && config?.useEnhancedWebSessionMode === true) {
     throw new Error("Bigger Context is unavailable while Enhanced Web session mode is enabled");
   }
-  if (enabled === true && config?.solAvailable !== true) {
-    throw new Error("Bigger Context is unavailable for Luna and Think. Turn it off in launcher Settings (or run setup with --standard-context), then restart Codex.");
-  }
 }
 
 module.exports = { assertBiggerContextChangeAllowed, normalizeContextModes };

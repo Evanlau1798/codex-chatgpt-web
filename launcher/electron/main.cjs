@@ -192,6 +192,9 @@ function startCatalogVerificationMonitor({ logger, stateStore }) {
         at: health.last_successful_model_catalog_request_at,
       });
       send("launcher:state-changed", state);
+      if (lastOperation?.name === "catalog-verification" && lastOperation.status === "failed") {
+        publishOperation({ name: "catalog-verification", status: "completed", message: nativeCopyFor(current.language).catalogReady });
+      }
       stopCatalogVerificationMonitor();
     } catch (error) {
       logger.debug("codex.model_catalog_verification_pending", {
@@ -268,6 +271,7 @@ const NATIVE_COPY = Object.freeze({
     startupDetail: "Retry starts the launcher again without changing your saved settings or ChatGPT profile.",
     startupCleanupFailed: "Startup cleanup failed",
     catalogFailure: "Codex reached the launcher, but loading its model catalog failed (HTTP {status}; {reason}). Check Activity for details and export a safe log if it persists.",
+    catalogReady: "Codex model list loaded.",
   }),
   "zh-CN": Object.freeze({
     openLauncher: "打开 Codex Web GPT",
@@ -283,6 +287,7 @@ const NATIVE_COPY = Object.freeze({
     startupDetail: "重试会重新启动应用，不会更改已保存的设置或 ChatGPT 登录配置。",
     startupCleanupFailed: "启动清理失败",
     catalogFailure: "Codex 已连接到启动器，但模型列表加载失败（HTTP {status}；{reason}）。请查看“活动”了解详情；若问题持续，请导出安全日志。",
+    catalogReady: "Codex 模型列表已加载。",
   }),
   "zh-TW": Object.freeze({
     openLauncher: "開啟 Codex Web GPT",
@@ -298,6 +303,7 @@ const NATIVE_COPY = Object.freeze({
     startupDetail: "重試會重新啟動應用程式，不會變更已儲存的設定或 ChatGPT 登入設定檔。",
     startupCleanupFailed: "啟動清理失敗",
     catalogFailure: "Codex 已連線到啟動器，但模型清單載入失敗（HTTP {status}；{reason}）。請查看「活動」了解詳情；若問題持續，請匯出安全日誌。",
+    catalogReady: "Codex 模型清單已載入。",
   }),
   ja: Object.freeze({
     openLauncher: "Codex Web GPT を開く",
@@ -313,6 +319,7 @@ const NATIVE_COPY = Object.freeze({
     startupDetail: "保存済みの設定と ChatGPT プロファイルを変更せずに、ランチャーを再起動します。",
     startupCleanupFailed: "起動後のクリーンアップに失敗しました",
     catalogFailure: "Codex はランチャーに接続しましたが、モデル一覧を読み込めませんでした（HTTP {status}、{reason}）。「アクティビティ」で詳細を確認し、問題が続く場合は安全なログをエクスポートしてください。",
+    catalogReady: "Codex のモデル一覧を読み込みました。",
   }),
   ko: Object.freeze({
     openLauncher: "Codex Web GPT 열기",
@@ -328,6 +335,7 @@ const NATIVE_COPY = Object.freeze({
     startupDetail: "저장된 설정이나 ChatGPT 프로필을 변경하지 않고 런처를 다시 시작합니다.",
     startupCleanupFailed: "시작 정리에 실패했습니다",
     catalogFailure: "Codex가 런처에 연결했지만 모델 목록을 불러오지 못했습니다(HTTP {status}; {reason}). 활동에서 세부 정보를 확인하고 문제가 계속되면 안전한 로그를 내보내 주세요.",
+    catalogReady: "Codex 모델 목록을 불러왔습니다.",
   }),
 });
 
@@ -526,7 +534,8 @@ function smokePassedForCurrentVersion(state) {
 }
 
 function syncBrowserPreferences(stateStore, config) {
-  const biggerContextAvailable = config?.solAvailable === true;
+  const biggerContextAvailable = typeof config?.solAvailable === "boolean";
+  const biggerContextEnabled = config?.experimentalBiggerContext === true;
   const useSavedChats = config?.useSavedChats === true;
   const autoApproveToolCalls = config?.autoApproveToolCalls === true;
   const enabled = config?.experimentalFreshConversationPerTurn === true
@@ -534,7 +543,8 @@ function syncBrowserPreferences(stateStore, config) {
     && (config?.browserInteractionMode ?? "automatic") === "automatic";
   const current = stateStore.read();
   if (runtimeHost?.currentOperation()) return current;
-  const retentionChanged = current.experimentalFreshConversationPerTurn !== enabled || current.useSavedChats !== useSavedChats;
+  const retentionChanged = current.experimentalFreshConversationPerTurn !== enabled || current.useSavedChats !== useSavedChats
+    || current.experimentalBiggerContext !== biggerContextEnabled;
   if (!retentionChanged && current.autoApproveToolCalls === autoApproveToolCalls
     && current.biggerContextAvailable === biggerContextAvailable) return current;
   // Runtime restarts leave browser views alive. Retire completed chats when their
@@ -544,7 +554,8 @@ function syncBrowserPreferences(stateStore, config) {
       && (current.useSavedChats !== useSavedChats || tab.interactionMode === "automatic"))
     .map(tab => tab.conversationKey));
   for (const key of retainedKeys) releaseRetainedConversation(browserHost, key);
-  const state = stateStore.update({ experimentalFreshConversationPerTurn: enabled, useSavedChats, autoApproveToolCalls, biggerContextAvailable });
+  const state = stateStore.update({ experimentalFreshConversationPerTurn: enabled, useSavedChats, autoApproveToolCalls, biggerContextAvailable,
+    experimentalBiggerContext: biggerContextEnabled });
   send("launcher:state-changed", state);
   return state;
 }
@@ -992,7 +1003,7 @@ function registerIpc({ logger, stateStore }) {
         ? true
         : setupState.codexSetupComplete && setupState.bridgeEnabled,
       coreSetupComplete: true,
-      biggerContextAvailable: runtimeHost.runtimeConfigSnapshot().config?.solAvailable === true,
+      biggerContextAvailable: typeof runtimeHost.runtimeConfigSnapshot().config?.solAvailable === "boolean",
       ...(installsCodex ? {
         codexSetupComplete: true,
         codexCatalogVerified: IS_DEV_PROFILE,
@@ -1059,7 +1070,7 @@ function registerIpc({ logger, stateStore }) {
       codexRestartRequired: IS_DEV_PROFILE ? false : true,
       browserInteractionMode: interactionMode,
       ...(interactionMode === "manual" ? { experimentalBiggerContext: false, experimentalSkillAttachments: false } : {}),
-      biggerContextAvailable: runtimeHost.runtimeConfigSnapshot().config?.solAvailable === true,
+      biggerContextAvailable: typeof runtimeHost.runtimeConfigSnapshot().config?.solAvailable === "boolean",
       ...result.setupState,
     });
     if (interactionModeChange) send("launcher:browser-state", browserHost.snapshot());
@@ -1321,7 +1332,7 @@ async function start() {
     },
     helper: { executable: process.execPath, script: BROWSER_HELPER_PATH },
     logger,
-    loginWithPasskey: () => runtimeHost.capturePasskeyLogin(),
+    loginWithPasskey: onProgress => runtimeHost.capturePasskeyLogin(onProgress),
     partition: LAUNCHER_PROFILE.browserPartition,
     profile: LAUNCHER_PROFILE.kind,
     publishState: (state) => send("launcher:browser-state", state),
@@ -1345,9 +1356,8 @@ async function start() {
   const trayAvailable = createTray(logger, stateStore.read().language);
   if (startHidden && !trayAvailable) mainWindow.once("ready-to-show", () => showMainWindow());
   const launcherSmokeTest = process.argv.includes("--launcher-smoke-test");
-  let startupAuthenticationRefresh = Promise.resolve();
   if (!launcherSmokeTest && stateStore.read().browserInteractionMode === "automatic") {
-    startupAuthenticationRefresh = browserHost.refreshAuthentication().catch((error) => {
+    void browserHost.refreshAuthentication().catch((error) => {
       logger.warn("browser.session_refresh_failed", {
         message: error instanceof Error ? error.message : String(error),
       });
@@ -1426,7 +1436,7 @@ async function start() {
       userData: launcherUserData,
     });
     if (config?.mode === "full") {
-      void startupAuthenticationRefresh.then(() => runtimeSupervisor.startIfConfigured()).catch((error) => {
+      void runtimeSupervisor.startIfConfigured().catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         logger.error("dev_profile.runtime_start_failed", { message });
         const failed = stateStore.update({ mcpSetupComplete: false });
@@ -1434,11 +1444,9 @@ async function start() {
       }).finally(finishRuntimeStartup);
     } else finishRuntimeStartup();
   } else void (async () => {
-    await startupAuthenticationRefresh;
     const upgrade = await runtimeHost.upgradeManagedRuntime();
     if (upgrade.updated) {
       const state = stateStore.update({
-        bridgeEnabled: upgrade.bridgeEnabled,
         coreSetupComplete: true,
         codexCatalogVerified: false,
         codexRestartRequired: true,
@@ -1464,7 +1472,6 @@ async function start() {
         fromVersion: upgrade.fromVersion,
         toVersion: upgrade.toVersion,
         mode: upgrade.mode,
-        bridgeEnabled: upgrade.bridgeEnabled,
         connectorMigrated: upgrade.connectorMigrated,
       });
     }
@@ -1489,7 +1496,10 @@ async function start() {
         message: error instanceof Error ? error.message : String(error),
       });
     }
-    return runtimeSupervisor.startIfConfigured();
+    const runtime = await runtimeSupervisor.startIfConfigured();
+    if (runtime.status !== "ready") return runtime;
+    const route = await runtimeHost.connectBridgeRoute({ recoveryOnly: true });
+    return { ...runtime, bridgeRouteChanged: route.changed === true };
   })().then(async (runtime) => {
     if (runtime.status === "bridge-disabled") {
       stopCatalogVerificationMonitor();

@@ -15,8 +15,11 @@ const preloadSource = fs.readFileSync(path.join(launcherRoot, "electron", "prelo
 test("Bigger Context waits for startup and route recovery without invalidating healthy setup", async () => {
   const vm = require("node:vm");
   for (const fails of [false, true]) {
-    let completeAuthentication;
-    const startupAuthenticationRefresh = new Promise(resolve => { completeAuthentication = resolve; });
+    const startupAuthenticationRefresh = new Promise(() => {});
+    let completeRuntime;
+    const runtimeReady = new Promise(resolve => { completeRuntime = resolve; });
+    let reachedStartup;
+    const startupReached = new Promise(resolve => { reachedStartup = resolve; });
     let finishRuntimeStartup;
     const runtimeStartup = new Promise(resolve => { finishRuntimeStartup = resolve; });
     let startupSettled = false;
@@ -25,10 +28,10 @@ test("Bigger Context waits for startup and route recovery without invalidating h
     const config = { mode: "full", experimentalBiggerContext: false };
     const state = { coreSetupComplete: true, codexCatalogVerified: true };
     const stateStore = { read: () => state, update: patch => Object.assign(state, patch) };
-    const logger = { info() {}, error() {} };
+    const logger = { info() {}, error() {}, warn() {} };
     const context = vm.createContext({
       runtimeStartup, finishRuntimeStartup: () => { startupSettled = true; finishRuntimeStartup(); },
-      startupAuthenticationRefresh, logger, stateStore, IS_DEV_PROFILE: false,
+      startupAuthenticationRefresh, logger, stateStore, IS_DEV_PROFILE: false, browserHost: null,
       ipcMain: { on() {} }, registerLoggedIpc: (_ipc, _logger, channel, handler) => handlers.set(channel, handler),
       send() {}, publishOperation() {}, startCatalogVerificationMonitor() {}, stopCatalogVerificationMonitor() {},
       syncBrowserPreferences() {},
@@ -38,14 +41,18 @@ test("Bigger Context waits for startup and route recovery without invalidating h
         readConfig: () => config,
         startIfConfigured: async () => {
           calls.push("startup");
+          reachedStartup();
+          await runtimeReady;
           if (fails) throw new Error("actual startup failure");
           return { status: "ready" };
         },
       },
       runtimeHost: {
+        currentOperation: () => null,
         upgradeManagedRuntime: async () => ({ updated: false }),
         runtimeConfigSnapshot: () => ({ configured: true, config }),
         bridgeStatus: async () => ({ installed: false }),
+        connectBridgeRoute: async () => ({ changed: false }),
         setBiggerContext: async enabled => {
           assert.equal(startupSettled, true, "settings must wait through startup recovery too");
           calls.push("setting");
@@ -54,15 +61,17 @@ test("Bigger Context waits for startup and route recovery without invalidating h
         },
       },
     });
-    vm.runInContext(electronMain.slice(electronMain.indexOf("function registerIpc("), electronMain.indexOf("async function requestQuit("))
+    vm.runInContext(electronMain.slice(electronMain.indexOf("function syncBrowserPreferences("), electronMain.indexOf("async function requestQuit("))
       + "\nregisterIpc({ logger, stateStore });", context);
     const start = electronMain.indexOf("} else void (async () => {");
     vm.runInContext(electronMain.slice(start + "} else ".length, electronMain.indexOf('  app.on("before-quit"', start)), context);
     const setting = handlers.get("launcher:bigger-context")({}, true);
-    // Read-only UI remains usable while authentication/startup is pending.
+    // Runtime startup proceeds even if the browser session check never completes.
+    // Settings still wait for runtime readiness, and read-only UI stays usable.
     assert.equal((await handlers.get("launcher:limits")()).enabled, false);
-    assert.deepEqual(calls, []);
-    completeAuthentication();
+    await startupReached;
+    assert.deepEqual(calls, ["startup"]);
+    completeRuntime();
     await setting;
     assert.deepEqual(calls, fails ? ["startup", "recovery", "setting"] : ["startup", "setting"]);
     assert.equal(state.experimentalBiggerContext, true);
@@ -149,7 +158,7 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
   assert.match(electronMain, /onboardingComplete:\s*true,[\s\S]*?autoStart:\s*false/);
   assert.match(appSource, /snapshot\.profile === "development"/);
   assert.match(appSource, /data-profile=\{snapshot\.profile\}/);
-  assert.match(settingsSource, /<SettingRow body=\{snapshot\.state\.browserInteractionMode === "manual" \? copy\.manualBiggerContextBody\s*: snapshot\.state\.biggerContextAvailable === true \? copy\.biggerContextBody : copy\.lunaBiggerContextUnavailable\} label=\{copy\.biggerContext\}>/);
+  assert.match(settingsSource, /<SettingRow body=\{snapshot\.state\.browserInteractionMode === "manual" \? copy\.manualBiggerContextBody\s*: copy\.biggerContextBody\} label=\{copy\.biggerContext\}>/);
   assert.match(settingsSource, /api!\.setBiggerContext\(enabled\)/);
   assert.match(electronMain, /runtimeHost\.setBiggerContext\(enabled === true\)/);
   assert.match(settingsSource, /api!\.setExperimentalNoAutoCompact\(enabled\)/);
@@ -173,7 +182,7 @@ test("macOS passkey sign-in is additive to the unchanged embedded login action",
   assert.match(preloadSource, /openPasskeyLogin:[\s\S]*?launcher:browser-passkey-login/);
   assert.match(preloadSource, /continuePasskeyLogin:[\s\S]*?launcher:browser-passkey-login-continue/);
   assert.match(electronMain, /launcher:browser-passkey-login[\s\S]*?browserHost\.openPasskeyLogin\(\)/);
-  assert.match(electronMain, /loginWithPasskey: \(\) => runtimeHost\.capturePasskeyLogin\(\)/);
+  assert.match(electronMain, /loginWithPasskey: onProgress => runtimeHost\.capturePasskeyLogin\(onProgress\)/);
   assert.match(browserHostSource, /await this\.waitForAuthenticated\(60_000\)[\s\S]*?runSessionInspection\(false\)/);
 });
 
@@ -242,11 +251,17 @@ test("MCP verification proves runtime health before checking the connector", () 
   assert.match(appSource, /index < step \|\| \(index === 2 && verified\) \? " is-complete"/);
 });
 
-test("saved ChatGPT authentication is refreshed before setup is presented", () => {
-  const refresh = electronMain.indexOf("browserHost.refreshAuthentication()");
-  const upgrade = electronMain.indexOf("runtimeHost.upgradeManagedRuntime()");
-  assert.ok(refresh >= 0 && upgrade > refresh, "runtime upgrade must follow saved-session refresh");
-  assert.match(electronMain.slice(refresh, upgrade), /await startupAuthenticationRefresh;/);
+test("saved ChatGPT authentication refresh does not gate local runtime startup", () => {
+  assert.match(electronMain, /browserHost\.refreshAuthentication\(\)/);
+  const productionStartup = electronMain.indexOf("} else void (async () => {");
+  const refreshBarrier = electronMain.indexOf("await startupAuthenticationRefresh", productionStartup);
+  const upgrade = electronMain.indexOf("runtimeHost.upgradeManagedRuntime()", productionStartup);
+  const runtimeStart = electronMain.indexOf("runtimeSupervisor.startIfConfigured()", upgrade);
+  const routeConnect = electronMain.indexOf("runtimeHost.connectBridgeRoute({ recoveryOnly: true })", runtimeStart);
+  assert.equal(refreshBarrier, -1, "the bridge must start while ChatGPT is signed out or unavailable");
+  assert.ok(upgrade > productionStartup);
+  assert.ok(runtimeStart > upgrade, "configured runtime must start after any upgrade");
+  assert.ok(routeConnect > runtimeStart, "Codex route must connect only after the runtime is healthy");
   assert.match(appSource, /browser\?\.status === "loading" \? copy\.checkingSignIn/);
 });
 
@@ -369,15 +384,15 @@ test("catalog verification reports a failed request instead of requesting anothe
   const events = [];
   let tick;
   let payload = { pid: 10, successful_model_catalog_requests: 0, model_catalog_requests: 0, last_model_catalog_result: null };
-  vm.runInNewContext(source + "\nstartCatalogVerificationMonitor({ logger, stateStore });", {
+  vm.runInNewContext(source + "\nconst publishOperation = op => { lastOperation = op; recordOperation(op); };\nstartCatalogVerificationMonitor({ logger, stateStore });", {
     catalogVerificationInFlight: false, catalogVerificationTimer: null, lastOperation: null,
     stopCatalogVerificationMonitor() {},
     runtimeSupervisor: { readConfig: () => ({}), proxyHealthPayload: async () => payload },
     stateStore: { read: () => state, update: patch => Object.assign(state, patch) },
     setInterval: callback => { tick = callback; return { unref() {} }; },
     logger: { info: (...args) => events.push(args), warn: (...args) => events.push(args), debug() {} },
-    send() {}, publishOperation: op => operations.push(op),
-    nativeCopyFor: () => ({ catalogFailure: "Catalog failed (HTTP {status}; {reason})." }),
+    send() {}, recordOperation: op => operations.push(op),
+    nativeCopyFor: () => ({ catalogFailure: "Catalog failed (HTTP {status}; {reason}).", catalogReady: "Loaded." }),
   });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(operations.length, 0);
@@ -400,6 +415,7 @@ test("catalog verification reports a failed request instead of requesting anothe
   assert.equal(state.codexCatalogVerified, true);
   assert.equal(state.codexRestartRequired, false);
   assert.ok(events.some(([event]) => event === "codex.model_catalog_verified"));
+  assert.equal(operations.at(-1)?.status, "completed");
 });
 
 test("browser preference IPC commits only after setup succeeds and refuses active browser work", async () => {
@@ -506,7 +522,32 @@ test("fresh-conversation snapshot uses runtime configuration and manual mode cle
   config.solAvailable = true;
   assert.equal((await snapshot()).state.biggerContextAvailable, true);
   config.solAvailable = false;
-  assert.equal((await snapshot()).state.biggerContextAvailable, false);
+  assert.equal((await snapshot()).state.biggerContextAvailable, true);
+});
+
+test("changing Bigger Context retires ready automatic chats before a previous mode can reuse them", () => {
+  const vm = require("node:vm");
+  const state = { experimentalBiggerContext: false, experimentalFreshConversationPerTurn: false,
+    useSavedChats: false, autoApproveToolCalls: false, biggerContextAvailable: true };
+  const tabs = new Map([
+    ["old", { status: "ready", conversationKey: "old-luna", interactionMode: "automatic" }],
+    ["active", { status: "running", conversationKey: "running", interactionMode: "automatic" }],
+    ["manual", { status: "ready", conversationKey: "manual", interactionMode: "manual" }],
+  ]);
+  const released = [];
+  const context = vm.createContext({
+    runtimeHost: { currentOperation: () => null }, browserHost: { turnTabs: tabs },
+    releaseRetainedConversation: (_host, key) => { released.push(key); tabs.delete("old"); }, send() {},
+  });
+  vm.runInContext(electronMain.slice(electronMain.indexOf("function syncBrowserPreferences("), electronMain.indexOf("function registerIpc(")), context);
+  const store = { read: () => state, update: patch => Object.assign(state, patch) };
+  context.syncBrowserPreferences(store, { solAvailable: false, experimentalBiggerContext: true });
+  assert.deepEqual(released, ["old-luna"]);
+  assert.equal(state.experimentalBiggerContext, true);
+  assert.equal(tabs.has("active"), true);
+  assert.equal(tabs.has("manual"), true);
+  context.syncBrowserPreferences(store, { solAvailable: false, experimentalBiggerContext: true });
+  assert.deepEqual(released, ["old-luna"]);
 });
 
 test("fresh-conversation control is translated and enforces Original automatic mode", async () => {
@@ -574,7 +615,7 @@ test("fresh-conversation control is translated and enforces Original automatic m
         assert.equal(saved.experimentalFreshConversationPerTurn, true);
       }
     }
-    assert.ok(copy.lunaBiggerContextUnavailable.length > 20);
+    assert.ok(copy.biggerContextBody.length > 20);
     for (const available of [undefined, false, true]) {
       const tree = render({ copy, devProfile: false, language, configureInteractionMode() {}, setError() {}, browser: null,
         snapshot: { connectorNames: { automatic: "Codex Native2", manual: "Codex Zero Risk" },
@@ -584,7 +625,7 @@ test("fresh-conversation control is translated and enforces Original automatic m
       });
       const row = visit(tree).find(node => node.type?.name === "SettingRow" && node.props.label === copy.biggerContext);
       assert.ok(row);
-      assert.equal(row.props.body, available === true ? copy.biggerContextBody : copy.lunaBiggerContextUnavailable);
+      assert.equal(row.props.body, copy.biggerContextBody);
       const control = visit(row).find(node => node.type?.name === "Switch");
       assert.equal(control.props.checked, false);
       assert.equal(control.props.disabled, available !== true);
@@ -719,4 +760,24 @@ test("plugin name editor keeps the Codex prefix and submits only the editable su
   assert.match(settings, /maxLength=\{74\}/);
   assert.match(settings, /setConnectorNameSuffix\(nameSuffix\.trim\(\)\)/);
   assert.match(settings, /setConfirmNameChange\(true\)/);
+});
+
+
+test("catalog recovery clears its error banner but preserves a newer unrelated failure", () => {
+  const vm = require("node:vm");
+  const source = appSource.slice(appSource.indexOf("const unsubscribeOperation = api.onOperation"), appSource.indexOf("const unsubscribeLog ="));
+  let callback, error = null;
+  vm.runInNewContext(source, {
+    api: { onOperation: fn => { callback = fn; } },
+    setOperation() {}, catalogError: { current: null },
+    setError: value => { error = typeof value === "function" ? value(error) : value; },
+  });
+  callback({ name: "catalog-verification", status: "failed", message: "Catalog error" });
+  assert.equal(error, "Catalog error");
+  callback({ name: "catalog-verification", status: "completed", message: "Loaded" });
+  assert.equal(error, null);
+  callback({ name: "catalog-verification", status: "failed", message: "Catalog error" });
+  callback({ name: "setup", status: "failed", message: "Setup error" });
+  callback({ name: "catalog-verification", status: "completed", message: "Loaded" });
+  assert.equal(error, "Setup error");
 });

@@ -39,6 +39,8 @@ test("serves the account-scoped Claude gateway model catalog without proxying up
       { id: "claude-chatgpt-web-light", display_name: "ChatGPT Web — Instant", max_input_tokens: 41_000 },
       { id: "claude-chatgpt-web-medium", display_name: "ChatGPT Web — Medium", max_input_tokens: 90_000 },
       { id: "claude-chatgpt-web-high", display_name: "ChatGPT Web — High", max_input_tokens: 90_000 },
+      { id: "claude-chatgpt-web-gpt-6-sol-instant", display_name: "GPT-6 Sol Instant (Web)", max_input_tokens: 41_000 },
+      { id: "claude-chatgpt-web-gpt-6-sol", display_name: "GPT-6 Sol (Web)", max_input_tokens: 90_000 },
       { id: "claude-chatgpt-web-gpt-5.6-sol-instant", display_name: "GPT-5.6 Sol Instant (Web)", max_input_tokens: 41_000 },
       { id: "claude-chatgpt-web-gpt-5.6-sol", display_name: "GPT-5.6 Sol (Web)", max_input_tokens: 90_000 },
     ],
@@ -103,6 +105,8 @@ test("proxies official /models auth and query, then appends the fixed ChatGPT We
   };
   expect(body.models.map(model => model.slug)).toEqual([
     "gpt-5.6-sol",
+    "chatgpt-web/gpt-6-sol-instant",
+    "chatgpt-web/gpt-6-sol",
     "chatgpt-web/gpt-5.6-sol-instant",
     "chatgpt-web/gpt-5.6-sol",
     "chatgpt-web/gpt-5.6-pro",
@@ -182,7 +186,41 @@ test("ChatGPT-only native catalog rows do not turn model discovery into a 502", 
   const body = await response.json() as { models: Array<{ slug: string; supported_in_api?: boolean }> };
   expect(body.models[0]).toMatchObject({ slug: "gpt-chatgpt-only", supported_in_api: false });
   expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/")))
-    .toHaveLength(5);
+    .toHaveLength(7);
   expect(body.models.filter(model => model.slug.startsWith("chatgpt-web/"))
     .every(model => model.supported_in_api === true)).toBe(true);
+});
+
+
+test("client cancellation is not a catalog failure, including during response body reading", async () => {
+  for (const phase of ["before", "transport", "body"] as const) {
+    const controller = new AbortController();
+    let failures = 0, calls = 0;
+    if (phase === "before") controller.abort();
+    const response = await modelsRequest(new Request("http://127.0.0.1/v1/models", {
+      signal: controller.signal, headers: { authorization: "Bearer fixture" },
+    }), defaultConfig("browser-only"), async () => {
+      calls++;
+      if (phase === "transport") { controller.abort(); throw new DOMException("cancel", "AbortError"); }
+      return new Response(new ReadableStream({ pull(stream) {
+        controller.abort(); stream.error(new DOMException("cancel", "AbortError"));
+      } }));
+    }, undefined, () => { failures++; });
+    expect(response.status).toBe(499);
+    expect(failures).toBe(0);
+    expect(calls).toBe(phase === "before" ? 0 : 1);
+  }
+});
+
+test("a server cancellation remains a failure when the client is still connected", async () => {
+  const server = new AbortController();
+  const client = new AbortController();
+  let failure: unknown;
+  const response = await modelsRequest(new Request("http://127.0.0.1/v1/models", {
+    signal: server.signal, headers: { authorization: "Bearer fixture" },
+  }), defaultConfig("browser-only"), async () => {
+    server.abort(); throw new DOMException("server cancellation", "AbortError");
+  }, undefined, value => { failure = value; }, client.signal);
+  expect(response.status).toBe(502);
+  expect(failure).toEqual({ stage: "transport", code: "ABORT_ERR" });
 });

@@ -22,7 +22,7 @@ export function readChatGptPromptText(
   element: HTMLElement | SVGElement,
   options?: { preserveLeading?: boolean },
 ): string {
-  const ignored = '[data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]';
+  const ignored = 'svg, script, style, [data-id^="plugin:"][data-keyword], [data-inline-selection-pill-cursor-target], [app-mention-path^="app://"][app-mention-display-name][contenteditable="false"]';
   const blocks: string[] = [];
   for (const child of Array.from(element.childNodes)) {
     if (child.nodeType !== 1) { blocks.push(child.textContent ?? ""); continue; }

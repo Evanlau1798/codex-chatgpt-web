@@ -39,7 +39,7 @@ function bridgeFixture({ active }) {
       routeActive = true;
       return { stdout: JSON.stringify({ changed: true, active: true }) };
     }
-    if (action === "route disconnect") {
+    if (action === "route disconnect" || action === "route disconnect --for-runtime-recovery") {
       routeActive = false;
       return { stdout: JSON.stringify({ changed: true, active: false }) };
     }
@@ -121,7 +121,7 @@ test("startup recovery can restore the Codex route without requiring a healthy l
   const fixture = bridgeFixture({ active: true });
   const result = await fixture.host.restoreBridgeRoute("runtime-start-fail-safe");
   assert.equal(result.active, false);
-  assert.deepEqual(fixture.calls, ["route status", "route disconnect", "route status"]);
+  assert.deepEqual(fixture.calls, ["route status", "route disconnect --for-runtime-recovery", "route status"]);
 });
 
 test("failed runtime cleanup during removal still restores the previous Codex route", async () => {
@@ -335,6 +335,7 @@ test("passkey Continue is delivered only to the active owned login child", async
   const fixture = hostFor(null).host;
   let written = "";
   fixture.active = "passkey-login";
+  fixture.passkeyPhase = "waiting";
   fixture.activeChild = {
     exitCode: null,
     signalCode: null,

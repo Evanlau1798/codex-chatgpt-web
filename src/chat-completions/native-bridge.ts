@@ -36,7 +36,7 @@ const xml = (value: string) => value.replaceAll("&", "&amp;").replaceAll("<", "&
   .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 const environment = () => {
   const cwd = xml(CLIENT_VIRTUAL_CWD);
-  return `<environment_context><cwd>${cwd}</cwd><sandbox_mode>read-only</sandbox_mode>`
+  return `<environment_context><cwd>${cwd}</cwd><sandbox_mode>read-only</sandbox_mode><network_access>restricted</network_access>`
     + `<filesystem><workspace_roots><root>${cwd}</root></workspace_roots></filesystem></environment_context>`;
 };
 const outputText = (output: Item[]): string => output.flatMap(value => {

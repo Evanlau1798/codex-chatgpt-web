@@ -96,11 +96,11 @@ test("Bigger Context uses the setup transaction and refreshes the production Cod
   });
 });
 
-test("Luna cannot enable Bigger Context, but can turn off an existing unsupported setting", async () => {
+test("Luna can enable and disable Bigger Context in production and DEV", async () => {
   for (const createHost of [hostFor, devHostFor]) {
     const fixture = createHost({ mode: "browser-only", solAvailable: false, experimentalBiggerContext: true });
-    await assert.rejects(fixture.host.setBiggerContext(true), /unavailable for Luna and Think/);
-    assert.equal(fixture.invocation(), undefined);
+    assert.equal((await fixture.host.setBiggerContext(true)).enabled, true);
+    assert.ok(fixture.invocation().args.includes("--bigger-context"));
     const result = await fixture.host.setBiggerContext(false);
     assert.equal(result.enabled, false);
     assert.ok(fixture.invocation().args.includes("--standard-context"));
@@ -296,19 +296,60 @@ test("launcher update transaction upgrades its owned full runtime with saved con
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
     "--automatic-browser-interaction",
-    "--refresh-account-capabilities",
     "--acknowledge-unofficial",
     "--restart-service",
+    "--preserve-disconnected-route",
   ]);
   assert.deepEqual(result, {
     updated: true,
     mode: "full",
-    bridgeEnabled: true,
     fromVersion: "1.1.1",
     toVersion: "1.1.3",
     connectorMigrated: false,
     stdout: "",
   });
+});
+
+test("a failed version upgrade preserves setup inputs without starting an incompatible old runtime", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-upgrade-failure-"));
+  const configPath = path.join(root, "config.json");
+  const config = { mode: "browser-only", browserHost: "launcher", releaseVersion: "6.1.4" };
+  fs.writeFileSync(configPath, `${JSON.stringify(config)}\n`);
+  let stops = 0;
+  let starts = 0;
+  const host = new RuntimeHost({
+    app: { getPath: () => root, getVersion: () => "6.1.6" },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: "/source",
+    browserDescriptorPath: path.join(root, "launcher-browser.json"),
+    codexHome: path.join(root, "codex"),
+    supervisor: {
+      configPath,
+      readSetupConfig: () => JSON.parse(fs.readFileSync(configPath)),
+      readConfig: () => JSON.parse(fs.readFileSync(configPath)),
+      stopForSetup: async () => { stops += 1; },
+      startIfConfigured: async () => { starts += 1; return { status: "needs-setup" }; },
+    },
+  });
+  host.run = async (_name, args) => {
+    assert.equal(args.includes("--refresh-account-capabilities"), false);
+    if (args.includes("--preflight-only")) return { code: 0, stdout: "", stderr: "" };
+    fs.writeFileSync(configPath, `${JSON.stringify({ ...config, releaseVersion: "6.1.6" })}\n`);
+    throw new Error("configuration write failed");
+  };
+  try {
+    await assert.rejects(host.upgradeManagedRuntime(), error => {
+      assert.match(error.message, /configuration write failed/);
+      assert.match(error.message, /Restart the launcher to retry the update/);
+      assert.doesNotMatch(error.message, /Previous runtime recovery|expected ready/);
+      return true;
+    });
+    assert.deepEqual(JSON.parse(fs.readFileSync(configPath)), config);
+    assert.equal(stops, 1);
+    assert.equal(starts, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("launcher migrates the legacy connector identity even when the release version is unchanged", async () => {
@@ -328,33 +369,29 @@ test("launcher migrates the legacy connector identity even when the release vers
     "--browser-host-descriptor",
     "/runtime/launcher-browser.json",
     "--automatic-browser-interaction",
-    "--refresh-account-capabilities",
     "--acknowledge-unofficial",
     "--restart-service",
+    "--preserve-disconnected-route",
   ]);
   assert.equal(result.updated, true);
   assert.equal(result.connectorMigrated, true);
   assert.equal(result.fromVersion, result.toVersion);
 });
 
-test("launcher update transaction preserves a deliberately disconnected Codex route", async () => {
+test("launcher update delegates disconnected route preservation to the setup transaction", async () => {
   const fixture = hostFor({
     mode: "browser-only",
     browserHost: "launcher",
     releaseVersion: "1.1.1",
   });
-  let disabled = 0;
-  fixture.host.bridgeStatus = async () => ({ installed: true, active: false, errors: [] });
-  fixture.host.setBridgeEnabled = async (enabled) => {
-    assert.equal(enabled, false);
-    disabled += 1;
-  };
+  fixture.host.bridgeStatus = async () => { throw new Error("stale route preread"); };
+  fixture.host.setBridgeEnabled = async () => { throw new Error("post-upgrade disconnect"); };
 
   const result = await fixture.host.upgradeManagedRuntime();
 
-  assert.equal(result.bridgeEnabled, false);
-  assert.equal(disabled, 1);
-  assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), true);
+  assert.equal(result.updated, true);
+  assert.equal(fixture.invocation().args.includes("--preserve-disconnected-route"), true);
+  assert.equal(fixture.invocation().args.includes("--refresh-account-capabilities"), false);
 });
 
 test("launcher update preserves Zero Risk and never probes its account capabilities", async () => {
@@ -587,4 +624,66 @@ test("renaming rolls back the saved name if the new runtime fails", async () => 
   await assert.rejects(host.setConnectorNameSuffix("New"), /fixture failure/);
   assert.equal(config.automaticAppName, "Codex Old");
   assert.equal(config.appName, "Codex Old");
+});
+
+
+function bridgeFixture({ active, recovery = false }) {
+  const calls = [];
+  let routeActive = active;
+  const supervisor = {
+    readConfig: () => ({ mode: "browser-only" }),
+    readSetupConfig: () => ({ mode: "browser-only" }),
+    startIfConfigured: async () => {
+      calls.push("runtime:start");
+      return { status: "ready" };
+    },
+    stopForSetup: async () => {
+      calls.push("runtime:stop");
+      return { status: "stopped" };
+    },
+  };
+  const host = new RuntimeHost({
+    app: { getPath: () => path.join(os.tmpdir(), "codex-web-gpt-bridge-test") },
+    logger: { info() {}, warn() {}, error() {} },
+    sourceRoot: "/source",
+    browserDescriptorPath: "/runtime/launcher-browser.json",
+    supervisor,
+  });
+  host.run = async (_name, args) => {
+    const action = args.join(" ");
+    calls.push(action);
+    if (action === "route status") {
+      return { stdout: JSON.stringify({ installed: true, active: routeActive, reconnectOnStartup: recovery, errors: [] }) };
+    }
+    if (action === "route connect" || action === "route recover") {
+      routeActive = true;
+      recovery = false;
+      return { stdout: JSON.stringify({ changed: true, active: true }) };
+    }
+    if (action === "route disconnect" || action === "route disconnect --for-runtime-recovery") {
+      routeActive = false;
+      recovery = action.endsWith("--for-runtime-recovery");
+      return { stdout: JSON.stringify({ changed: true, active: false }) };
+    }
+    throw new Error(`Unexpected command: ${action}`);
+  };
+  return { calls, host, supervisor };
+}
+
+test("automatic startup reconnects only a route disconnected for runtime recovery", async () => {
+  for (const recovery of [false, true]) {
+    const fixture = bridgeFixture({ active: false, recovery });
+    const result = await fixture.host.connectBridgeRoute({ recoveryOnly: true });
+    assert.equal(result.active, recovery);
+    assert.deepEqual(fixture.calls, recovery ? ["route status", "route recover", "route status"] : ["route status"]);
+  }
+});
+
+test("explicit removal cancels pending recovery even when the route is already inactive", async () => {
+  const fixture = bridgeFixture({ active: false, recovery: true });
+  await fixture.host.restoreBridgeRoute("uninstall-integration");
+  assert.deepEqual(fixture.calls, ["route status", "route disconnect", "route status"]);
+  const result = await fixture.host.connectBridgeRoute({ recoveryOnly: true });
+  assert.equal(result.active, false);
+  assert.equal(fixture.calls.at(-1), "route status");
 });

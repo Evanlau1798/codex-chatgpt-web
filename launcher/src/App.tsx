@@ -56,6 +56,7 @@ export function App() {
   const [operation, setOperation] = useState<OperationState | null>(null);
   const [logs, setLogs] = useState<LogRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const catalogError = useRef<string | null>(null);
   const documentLanguage = snapshot?.state.language ?? "en";
 
   useEffect(() => {
@@ -72,6 +73,7 @@ export function App() {
       setLogs(next.logs);
       setOperation(next.operation);
       if (next.operation?.status === "failed" && next.operation.name !== "mcp-verification") {
+        if (next.operation.name === "catalog-verification") catalogError.current = next.operation.message;
         setError(next.operation.message);
       }
     }).catch((cause) => setError(messageOf(cause)));
@@ -91,6 +93,14 @@ export function App() {
     const unsubscribeBrowser = api.onBrowserState(setBrowser);
     const unsubscribeOperation = api.onOperation((next) => {
       setOperation(next);
+      if (next.name === "catalog-verification") {
+        if (next.status === "failed") catalogError.current = next.message;
+        if (next.status === "completed") {
+          const resolved = catalogError.current;
+          setError(current => current === resolved ? null : current);
+          catalogError.current = null;
+        }
+      }
       if (next.status === "failed" && next.name !== "mcp-verification") setError(next.message);
     });
     const unsubscribeLog = api.onLog((record) => setLogs((current) => [...current.slice(-299), record]));
@@ -840,14 +850,27 @@ function BrowserSurface({
   platform: string;
   setError: (error: string | null) => void;
 }) {
+  const [passkeyStarting, setPasskeyStarting] = useState(false);
   const [passkeyContinuationRequested, setPasskeyContinuationRequested] = useState(false);
+  const passkeyPhase = browser?.passkeyPhase;
+  const passkeyActive = passkeyStarting || Boolean(passkeyPhase);
   const visible = browser?.visible === true;
   const manualInteraction = interactionMode === "manual";
-  const navigationLocked = browser?.status === "running" || browser?.status === "testing";
-  const passkeyWaiting = !manualInteraction && operation?.name === "passkey-login"
-    && operation.status === "running"
-    && browser?.authenticated !== true;
-  const manualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
+  const passkeyAvailable = !manualInteraction
+    && platform === "darwin"
+    && (browser?.authenticated !== true || passkeyActive);
+  const selectedManualTab = browser?.tabs.find(tab => tab.active && tab.interactionMode === "manual");
+  const navigationLocked = passkeyActive || browser?.status === "running" || browser?.status === "testing";
+  const passkeyWaiting = passkeyAvailable && passkeyPhase === "waiting";
+  const passkeyImporting = passkeyPhase === "importing" || passkeyContinuationRequested;
+  const passkeyBlocked = !passkeyActive && operation?.status === "running";
+  const passkeyDisabled = passkeyBlocked || (passkeyActive && (!passkeyWaiting || passkeyImporting));
+  const passkeyLabel = passkeyImporting ? copy.passkeyImporting
+    : passkeyWaiting ? copy.passkeyContinue : passkeyActive ? copy.passkeyOpening : copy.passkeySignIn;
+  const passkeyTitle = passkeyImporting ? copy.passkeyImporting
+    : passkeyWaiting ? copy.passkeyWaitingTitle : copy.passkeyOpening;
+  const passkeyBody = passkeyImporting ? copy.passkeyImportingBody
+    : passkeyWaiting ? copy.passkeyContinueBody : copy.passkeyOpeningBody;
   useEffect(() => {
     if (!passkeyWaiting) setPasskeyContinuationRequested(false);
   }, [passkeyWaiting]);
@@ -887,10 +910,17 @@ function BrowserSurface({
       setError(messageOf(cause));
     }
   };
-  const openPasskeyLogin = () => {
-    if (operation?.status === "running") return;
+  const openPasskeyLogin = async () => {
+    if (passkeyActive || passkeyBlocked) return;
+    setPasskeyStarting(true);
     setError(null);
-    void api!.openPasskeyLogin().catch(cause => setError(messageOf(cause)));
+    try {
+      await api!.openPasskeyLogin();
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setPasskeyStarting(false);
+    }
   };
   const continuePasskeyLogin = async () => {
     if (!passkeyWaiting || passkeyContinuationRequested) return;
@@ -974,27 +1004,33 @@ function BrowserSurface({
         {!manualInteraction && platform === "darwin" && browser?.authenticated !== true ? (
           <button
             className="toolbar-text-button"
-            disabled={passkeyWaiting && passkeyContinuationRequested}
+            disabled={passkeyDisabled}
+            title={passkeyBlocked ? operation?.message : copy.passkeyOpeningBody}
             onClick={() => void (passkeyWaiting ? continuePasskeyLogin() : openPasskeyLogin())}
             type="button"
           >
-            {passkeyWaiting
-              ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
-              : copy.passkeySignIn}
+            {passkeyLabel}
           </button>
         ) : null}
-        <button className="toolbar-text-button" onClick={() => void toggle()} type="button">
+        <button className="toolbar-text-button" disabled={passkeyActive} onClick={() => void toggle()} type="button">
           {visible ? copy.hideBrowser : copy.openChatgpt}
         </button>
         {browser?.loading ? <i className="browser-loading-line" /> : null}
       </div>
-      {manualTab && ["awaiting-user", "sent"].includes(manualTab.manualState ?? "") ? (
+      {passkeyActive && visible ? (
+        <div className="passkey-login-guide" role="status">
+          <strong>{passkeyTitle}</strong>
+          <p>{passkeyBody}</p>
+        </div>
+      ) : null}
+      {selectedManualTab
+        && ["awaiting-user", "sent"].includes(selectedManualTab.manualState ?? "") ? (
         <ManualTurnGuide
-          key={manualTab.id}
+          key={selectedManualTab.id}
           copy={copy}
-          tab={manualTab}
-          onCopy={() => void api!.copyManualPrompt(manualTab.id).catch(cause => setError(messageOf(cause)))}
-          onSent={() => void api!.confirmManualSent(manualTab.id).catch(cause => setError(messageOf(cause)))}
+          tab={selectedManualTab}
+          onCopy={() => void api!.copyManualPrompt(selectedManualTab.id).catch(cause => setError(messageOf(cause)))}
+          onSent={() => void api!.confirmManualSent(selectedManualTab.id).catch(cause => setError(messageOf(cause)))}
         />
       ) : null}
       <div className="browser-viewport" ref={browserSlotRef}>
@@ -1011,12 +1047,10 @@ function BrowserSurface({
               </PrimaryButton>
               {platform === "darwin" && browser?.authenticated !== true ? (
                 <SecondaryButton
-                  disabled={passkeyWaiting && passkeyContinuationRequested}
+                  disabled={passkeyDisabled}
                   onClick={passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin}
                 >
-                  {passkeyWaiting
-                    ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
-                    : copy.passkeySignIn}
+                  {passkeyLabel}
                 </SecondaryButton>
               ) : null}
             </div> : null}
@@ -1056,9 +1090,11 @@ function SetupSurface({
   const clientIntegrationInstalled = hasClientIntegration(snapshot.state);
   const manualInteraction = snapshot.state.browserInteractionMode === "manual";
   const [passkeyContinuationRequested, setPasskeyContinuationRequested] = useState(false);
-  const passkeyWaiting = operation?.name === "passkey-login"
-    && operation.status === "running"
-    && browser?.authenticated !== true;
+  const passkeyPhase = browser?.passkeyPhase;
+  const passkeyActive = Boolean(passkeyPhase);
+  const passkeyAvailable = snapshot.platform === "darwin" && (browser?.authenticated !== true || passkeyActive);
+  const passkeyWaiting = passkeyPhase === "waiting";
+  const passkeyImporting = passkeyPhase === "importing" || passkeyContinuationRequested;
   const busy = localBusy
     || operation?.status === "running"
     || (!manualInteraction && (
@@ -1066,6 +1102,11 @@ function SetupSurface({
       || browser?.status === "testing"
       || browser?.status === "running"
     ));
+  const passkeyDisabled = passkeyActive ? !passkeyWaiting || passkeyImporting : busy;
+  const passkeyLabel = passkeyImporting ? copy.passkeyImporting
+    : passkeyWaiting ? copy.passkeyContinue : passkeyActive ? copy.passkeyOpening : copy.passkeySignIn;
+  const passkeyBody = passkeyImporting ? copy.passkeyImportingBody
+    : passkeyWaiting ? copy.passkeyContinueBody : passkeyActive ? copy.passkeyOpeningBody : copy.stepAccountBody;
   useEffect(() => {
     if (!passkeyWaiting) setPasskeyContinuationRequested(false);
   }, [passkeyWaiting]);
@@ -1136,19 +1177,15 @@ function SetupSurface({
             ? copy.signedIn
             : browser?.status === "loading" ? copy.checkingSignIn : copy.signIn}
           complete={browser?.authenticated === true}
-          description={passkeyWaiting ? copy.passkeyContinueBody : copy.stepAccountBody}
+          description={passkeyBody}
           disabled={busy}
           index={1}
           onAction={openLogin}
-          onSecondaryAction={snapshot.platform === "darwin" && browser?.authenticated !== true
+          onSecondaryAction={passkeyAvailable
             ? passkeyWaiting ? continuePasskeyLogin : openPasskeyLogin
             : undefined}
-          secondaryAction={snapshot.platform === "darwin" && browser?.authenticated !== true
-            ? passkeyWaiting
-              ? passkeyContinuationRequested ? copy.passkeyImporting : copy.passkeyContinue
-              : copy.passkeySignIn
-            : undefined}
-          secondaryDisabled={passkeyWaiting ? passkeyContinuationRequested : busy}
+          secondaryAction={passkeyAvailable ? passkeyLabel : undefined}
+          secondaryDisabled={passkeyDisabled}
           title={copy.stepAccount}
           />
           <SetupRow
