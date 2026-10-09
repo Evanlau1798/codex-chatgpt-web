@@ -21,13 +21,13 @@ function patchRendererCacheKey(indexFile) {
 function patchSources(launcher, addonRoot) {
   const appFile = path.join(launcher, 'src/App.tsx');
   let app = fs.readFileSync(appFile, 'utf8');
+  const appEol = app.includes('\r\n') ? '\r\n' : '\n';
   app = replaceOnce(app, '    firstRunZeroRiskSetup ? "mcp"', '    window.openCodexLauncher?.openOnLaunch ? "opencodex" : firstRunZeroRiskSetup ? "mcp"', 'initial surface');
   app = replaceOnce(app, 'import { SettingsSurface }', 'import { OpenCodexSurface } from "./OpenCodexSurface";\nimport { SettingsSurface }', 'surface imports');
   app = replaceOnce(app, 'const browserSurfaceActive = surface === "browser"', 'const openCodexActive = surface === "opencodex" && !(compactSidebar && sidebarOpen);\n  const browserSurfaceActive = surface === "browser"', 'surface visibility');
-  app = replaceOnce(app, '              <SidebarGroup label={copy.configuration}>', `              {window.openCodexLauncher ? <SidebarGroup label="OpenCodex">
-                <SidebarItem active={surface === "opencodex"} icon="globe" label="OpenCodex" onClick={() => navigateSurface("opencodex")} />
-              </SidebarGroup> : null}
-              <SidebarGroup label={copy.configuration}>`, 'sidebar navigation');
+  app = replaceOnce(app, `              </SidebarGroup>${appEol}              <SidebarGroup label={copy.runtime}>`, `              </SidebarGroup>${appEol}              {window.openCodexLauncher ? <SidebarGroup label="OpenCodex">${appEol}
+                <SidebarItem active={surface === "opencodex"} icon="globe" label="OpenCodex" onClick={() => navigateSurface("opencodex")} />${appEol}
+              </SidebarGroup> : null}${appEol}              <SidebarGroup label={copy.runtime}>`, 'sidebar navigation');
   app = replaceOnce(app, '            {surface === "setup" ? (', `            {surface === "opencodex" ? (
               <OpenCodexSurface active={openCodexActive} language={language} setError={setError} />
             ) : null}

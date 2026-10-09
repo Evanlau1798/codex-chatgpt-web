@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { createLauncherSurface, viewBounds, dashboardOrigin, CHANNEL, RELOAD } = require('./launcher-surface.cjs');
-const { patchSources } = require('./launcher-ui-patch.cjs');
+const { patchRendererCacheKey, patchSources } = require('./launcher-ui-patch.cjs');
 
 function fixture() {
   const handlers = new Map(), external = [], children = [], browserVisibility = [], constructed = [];
@@ -110,4 +110,28 @@ test('a future incompatible official renderer is rejected before files are chang
   assert.throws(() => patchSources(dir, __dirname), /changed/);
   assert.equal(fs.readFileSync(file, 'utf8'), before);
   fs.unlinkSync(file); fs.rmdirSync(path.join(dir, 'src')); fs.rmdirSync(dir);
+});
+
+test('renderer patch keeps the existing generic icons and places OpenCodex below Configuration', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencodex-sidebar-order-'));
+  const source = path.resolve(__dirname, '../../launcher/src');
+  fs.mkdirSync(path.join(dir, 'src'));
+  for (const file of ['App.tsx', 'types.ts', 'styles.css', 'icons.tsx']) fs.copyFileSync(path.join(source, file), path.join(dir, 'src', file));
+  patchSources(dir, __dirname);
+  const app = fs.readFileSync(path.join(dir, 'src/App.tsx'), 'utf8');
+  assert.match(app, /icon="globe" label="OpenCodex"/);
+  assert.ok(app.indexOf('label={copy.configuration}') < app.indexOf('label="OpenCodex"'), 'OpenCodex should follow Configuration');
+  assert.ok(app.indexOf('label="OpenCodex"') < app.indexOf('label={copy.runtime}'), 'OpenCodex should precede the runtime section');
+  const icons = fs.readFileSync(path.join(dir, 'src/icons.tsx'), 'utf8');
+  assert.doesNotMatch(icons, /opencodex-icon|mcp-icon/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('renderer index changes its bundle URL when the official bundle hash changes', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencodex-renderer-cache-'));
+  const file = path.join(dir, 'index.html');
+  fs.writeFileSync(file, '<script type="module" src="./assets/index-CFSeUqol.js"></script>');
+  patchRendererCacheKey(file);
+  assert.match(fs.readFileSync(file, 'utf8'), /index-CFSeUqol\.js\?opencodex=index-CFSeUqol\.js/);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
