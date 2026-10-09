@@ -3192,7 +3192,10 @@ export class ChatGptBrowserWorker {
       const account = await detectChatGptAccountCapabilities(page);
       const capabilities: ChatGptWebCapabilities = { ...account, localToolsEnabled: false };
       const modelId = account.solAvailable ? CHATGPT_WEB_MODEL_ID : CHATGPT_WEB_LUNA_MODEL_ID;
-      const reasoning = account.solAvailable ? "high" : "low";
+      // The verification turn must prioritize deterministic tool dispatch over a
+      // deeper answer. User task effort selection remains unchanged elsewhere.
+      const reasoning = "low";
+      const modelFamily = account.solAvailable ? "5.6" as const : undefined;
       const contract = this.config.appName === ZERO_RISK_CHATGPT_CONNECTOR_NAME ? "safe" as const : "native" as const;
       if (!this.config.brokerSocketPath) {
         throw new Error("Connector verification requires the active runtime broker socket");
@@ -3207,24 +3210,33 @@ export class ChatGptBrowserWorker {
         tools: [],
       };
       const surfaceNonce = `verify_${randomUUID().replaceAll("-", "")}`;
-      const reference = contract === "safe"
-        ? await broker.registerSafe(environment, surfaceNonce, 60_000, `${traceId}_contract`)
-        : await broker.register(environment, 60_000, `${traceId}_contract`);
+      let reference: string | undefined;
       try {
-        if (contract === "safe") await broker.confirmSafeTurnSent(reference, surfaceNonce);
         await verifyCurrentConnectorContract(this.config.appName, contract, async probe => {
+          if (probe.attempt > 1) await captureDiagnostic("connector-contract-retry");
           await this.runBrowserTurn({
-            traceId: `${traceId}_contract`,
+            traceId: probe.attempt === 1 ? `${traceId}_contract` : `${traceId}_contract_retry`,
             modelId,
             reasoning,
+            modelFamily,
             capabilities,
             nativeConnector: true,
             prepare: async () => ({ text: probe.prompt, images: [], release: () => {} }),
             onTextDelta: () => {},
           }, undefined, page);
-        }, reference);
+        }, async attempt => {
+          // A retry gets a fresh broker lease; the previous turn's token can
+          // already have expired or been retired by its completed response.
+          if (reference) await broker.revoke(reference);
+          const probeTraceId = attempt === 1 ? `${traceId}_contract` : `${traceId}_contract_retry`;
+          reference = contract === "safe"
+            ? await broker.registerSafe(environment, surfaceNonce, 60_000, probeTraceId)
+            : await broker.register(environment, 60_000, probeTraceId);
+          if (contract === "safe") await broker.confirmSafeTurnSent(reference, surfaceNonce);
+          return reference;
+        }, { retryMissingEvidence: true });
       } finally {
-        await broker.revoke(reference);
+        if (reference) await broker.revoke(reference);
       }
       await captureDiagnostic("connector-contract-verified");
       await this.clearChatGptComposerState(page);
