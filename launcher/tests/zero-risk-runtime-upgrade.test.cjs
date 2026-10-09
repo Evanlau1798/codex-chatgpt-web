@@ -45,10 +45,10 @@ for (const mode of ["automatic", "manual"]) {
       const { host, calls } = fixture(mode, mutation);
       const result = await host.upgradeManagedRuntime();
       assert.equal(result.updated, true);
-      assert.equal(result.bridgeEnabled, false);
       assert.equal(calls[0].args.includes(mode === "manual" ? "--zero-risk-browser-interaction" : "--automatic-browser-interaction"), true);
       assert.equal(calls[0].args.includes("--app-name"), false);
-      assert.deepEqual(calls[1], { disabled: true });
+      assert.equal(calls[0].args.includes("--preserve-disconnected-route"), true);
+      assert.equal(calls.length, 1);
     });
   }
   test(`same-version ${mode} aligned profile needs no runtime upgrade`, async () => {

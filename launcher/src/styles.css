@@ -876,6 +876,20 @@ code {
   background: #ffffff;
 }
 
+.passkey-login-guide {
+  flex: none;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: rgb(29 31 35 / 96%);
+  font-size: var(--text-sm);
+}
+
+.passkey-login-guide p {
+  margin: 4px 0 0;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
 .browser-underlay {
   position: absolute;
   inset: 0;

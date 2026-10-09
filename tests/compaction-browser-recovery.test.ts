@@ -10,21 +10,22 @@ import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-pr
 import { CHATGPT_USER_TURN_SELECTOR, CHATGPT_ASSISTANT_TURN_SELECTOR } from "../src/chatgpt-session";
 
 test.each([
-  [true, false, true, "inline", false, false, false, false, false],
-  [false, false, true, "inline", false, false, false, false, false],
-  [true, true, true, "inline", false, false, false, false, false],
-  [true, false, false, "inline", true, false, false, false, false],
-  [true, true, false, "inline", true, false, false, false, false],
-  [true, true, false, "native2-archive", false, false, false, false, false],
-  [true, true, false, undefined, false, false, false, false, false],
-  [true, false, false, "inline", true, true, true, false, false],
-  [true, true, false, "inline", true, false, true, false, false],
-  [true, false, true, "inline", false, false, false, true, false],
-  [true, false, true, "inline", false, false, false, true, true],
-] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s, direct=%s, required=%s, reused=%s, size rejected=%s, SSE=%s)", async (owned, tools, multipart, transport, direct, requiredRetained, reused, sizeRejected = false, sseRejection = false) => {
+  [true, false, true, "inline", false, false, false, false, false, false],
+  [false, false, true, "inline", false, false, false, false, false, false],
+  [true, true, true, "inline", false, false, false, false, false, false],
+  [true, false, false, "inline", true, false, false, false, false, false],
+  [true, true, false, "inline", true, false, false, false, false, false],
+  [true, true, false, "native2-archive", false, false, false, false, false, false],
+  [true, true, false, undefined, false, false, false, false, false, false],
+  [true, false, false, "inline", true, true, true, false, false, false],
+  [true, true, false, "inline", true, false, true, false, false, false],
+  [true, false, true, "inline", false, false, false, true, false, false],
+  [true, false, true, "inline", false, false, false, true, true, false],
+  [true, false, true, "inline", false, false, false, false, false, true],
+] as const)("browser turns preserve recovery, ordering and final-only tools (owned=%s, tools=%s, multipart=%s, transport=%s, direct=%s, required=%s, reused=%s, size rejected=%s, SSE=%s, GPT6 Pro=%s)", async (owned, tools, multipart, transport, direct, requiredRetained, reused, sizeRejected = false, sseRejection = false, gpt6Pro = false) => {
   const diagnostics = mkdtempSync(join(tmpdir(), "compaction-observation-"));
   const cancellationCase = owned && !tools && !multipart;
-  const effort = tools ? "xhigh" : "high";
+  const effort = gpt6Pro ? "max" : tools ? "xhigh" : "high";
   const finalResponse = cancellationCase ? chatGptBrowserTabClosedError() : new Error("fixture reached final response observation");
   const capabilities = { localToolsEnabled: tools, solAvailable: true, extraHighAvailable: true, proAvailable: true };
   const progress = tools ? new ChatGptExternalTurnProgress() : undefined;
@@ -78,7 +79,7 @@ test.each([
     selectModelAndEffort: async (_page: unknown, model: string, effort: string, _capabilities: unknown,
       _diagnostic: unknown, trackUsage: boolean, family: string) => {
       expect(trackUsage).toBe(false);
-      expect(family).toBe("5.6");
+      expect(family).toBe(gpt6Pro && effort === "max" ? "6" : "5.6");
       actions.push(`effort:${effort}`);
       return resolveChatGptWebModelMode(model, effort, capabilities);
     },
@@ -182,7 +183,7 @@ test.each([
     const run = worker.runBrowserTurn({
       traceId: "compaction_recovery_fixture",
       modelId: "gpt-5.6-sol",
-      modelFamily: "5.6",
+      modelFamily: gpt6Pro ? "6" : "5.6",
       reasoning: effort,
       onSendActivated: () => { activated += 1; },
       capabilities,

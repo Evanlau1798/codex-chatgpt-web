@@ -44,12 +44,10 @@ import {
 } from "./native-tool-activity";
 import { ChatGptResponseProgressTracker } from "./response-progress";
 import {
-  CHATGPT_LUNA_BROWSER_INPUT_TOKEN_BUDGET,
   compiledChatGptWebMaxMessageChars,
   estimateChatGptWebImageTokens,
   estimateCompiledChatGptWebMessageTokens,
 } from "./input-tokens";
-import { CHATGPT_WEB_PLATFORM_RESERVE_TOKENS } from "../../chatgpt-web-models";
 import { CHATGPT_MAX_INPUT_IMAGES, type CompiledChatGptWebPrompt, type ChatGptWebPromptImage } from "./prompt";
 import { estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import { ChatGptVisibleTraceTracker, type ChatGptVisibleTraceBlock } from "./visible-trace-tracker";
@@ -149,9 +147,13 @@ import {
   type LauncherBrowserConnection,
 } from "../../launcher-browser-host";
 import {
-  CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER,
+  CHATGPT_LUNA_BROWSER_INPUT_TOKEN_BUDGET,
+  CHATGPT_WEB_PLATFORM_RESERVE_TOKENS,
+  CHATGPT_WEB_GPT6_SOL_BIGGER_CONTEXT_ERROR,
   resolveChatGptWebContextLimits,
   resolveChatGptWebTransportLimits,
+  supportsChatGptWebBiggerContext,
+  type ChatGptWebModelFamily,
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
@@ -699,6 +701,7 @@ export function assertChatGptWebInputWithinLimits(
   capabilities: ChatGptWebCapabilities,
   promptChars?: number,
   useEnhancedWebSessionMode = false,
+  modelFamily?: ChatGptWebModelFamily,
 ): void {
   if (modelId !== CHATGPT_WEB_MODEL_ID && modelId !== CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error(`ChatGPT web context limit is not defined for model: ${modelId}`);
@@ -717,6 +720,7 @@ export function assertChatGptWebInputWithinLimits(
     effort,
     capabilities,
     useEnhancedWebSessionMode,
+    modelFamily,
   );
   const { browserMessageTokenLimit, browserComposerCharLimit } = resolveChatGptWebTransportLimits(
     modelId,
@@ -880,6 +884,7 @@ export interface ResolvedBrowserConfig {
   headed: boolean;
   autoApproveToolCalls: boolean;
   experimentalNoAutoCompact?: boolean;
+  useEnhancedWebSessionMode?: boolean;
   /** Candidate only: replace large guarded insertions; preserve existing direct inline routes. */
   experimentalComposerPlainText?: boolean;
   maxBrowserTabs?: number;
@@ -1107,6 +1112,7 @@ export function resolveBrowserConfig(provider: CodexProviderConfig): ResolvedBro
     headed: configured.headed !== false,
     autoApproveToolCalls: configured.autoApproveToolCalls === true,
     experimentalNoAutoCompact: configured.experimentalNoAutoCompact === true,
+    ...(configured.useEnhancedWebSessionMode ? { useEnhancedWebSessionMode: true } : {}),
     ...(configured.experimentalComposerPlainText ? { experimentalComposerPlainText: true } : {}),
     maxBrowserTabs: configured.automaticWebSessionLimitMinutes !== undefined
       ? configured.maxBrowserTabs ?? MAX_CHATGPT_BROWSER_TABS : MAX_CHATGPT_BROWSER_TABS,
@@ -1616,7 +1622,7 @@ export class ChatGptBrowserWorker {
       }
       // Enable Think during prompt attachment, before fresh connector selection. Ordinary Luna
       // still clears a previous Think selection here; retained Think is checked on every attach.
-      if (!mode.thinkEnabled) await setChatGptThinkMode(composerForm, false, captureDiagnostic);
+      if (!mode.thinkEnabled) await setChatGptThinkMode(composer, false, captureDiagnostic);
       return mode;
     }
     const currentEffort = composerForm.locator(CHATGPT_EFFORT_CONTROL_SELECTOR).filter({ visible: true });
@@ -1837,22 +1843,25 @@ export class ChatGptBrowserWorker {
     page: Page,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
     useSavedChats = false,
+    abortSignal?: AbortSignal,
   ): Promise<Locator> {
+    throwIfPromptAttachmentAborted(abortSignal);
     // Launcher verification refreshes its owned page before attaching Playwright so a newly added
     // connector is present in the catalog. Navigating again here destroys that freshly hydrated
     // document and made the first verification race a second SPA bootstrap. A leased turn starts on
     // about:blank and therefore still performs exactly one navigation through this same method.
     const targetUrl = chatGptNewChatUrl(useSavedChats);
     if (page.url() !== targetUrl) {
-      await page.goto(targetUrl, {
+      await withBrowserTurnAbort(page.goto(targetUrl, {
         waitUntil: "domcontentloaded",
         timeout: 60_000,
-      });
+      }), abortSignal);
       await captureDiagnostic?.(useSavedChats ? "saved-chat-navigation-complete" : "temporary-chat-navigation-complete");
     }
     // A page-read failure is not proof that authentication expired. Preserve the actual
     // observation error; the authenticated-session check below owns login failures.
-    const composer = await this.activeComposer(page);
+    const composer = await this.activeComposer(page, 30_000, abortSignal);
+    throwIfPromptAttachmentAborted(abortSignal);
     if (!useSavedChats && await dismissChatGptTemporaryChatOnboarding(page)) {
       await captureDiagnostic?.("temporary-chat-onboarding-dismissed");
     }
@@ -2903,7 +2912,7 @@ export class ChatGptBrowserWorker {
           await op.mutate(options => composer.fill("", options), 10_000);
         }
         if (requireThink) {
-          await setChatGptThinkMode(composer.locator("xpath=ancestor::form[1]"), true, captureDiagnostic, abortSignal);
+          await setChatGptThinkMode(composer, true, captureDiagnostic, abortSignal);
         }
         await op.mutate(options => composer.focus(options));
         op.check();
@@ -2926,7 +2935,7 @@ export class ChatGptBrowserWorker {
         const composer = await this.activeComposer(page, 30_000, abortSignal);
         mutationStarted = true;
         await composer.fill("", { signal: abortSignal, timeout: 10_000 });
-        await setChatGptThinkMode(composer.locator("xpath=ancestor::form[1]"), true, captureDiagnostic, abortSignal);
+        await setChatGptThinkMode(composer, true, captureDiagnostic, abortSignal);
       }
       // A retained tab preserves history, but ChatGPT can require the plugin on each new
       // message. Reuse an existing selected pill only when selectConnector verifies it here.
@@ -3259,7 +3268,7 @@ export class ChatGptBrowserWorker {
 
   private async smokeTestExclusive(abortSignal?: AbortSignal): Promise<{ effort: string; response: string }> {
     const page = await this.ensurePage();
-    await this.prepareChatSurface(page);
+    await this.prepareChatSurface(page, undefined, false, abortSignal);
     const account = await detectChatGptAccountCapabilities(page);
     // Core smoke runs before the optional MCP connector is configured, so it must remain a
     // browser-only transport check. Connector setup has its own explicit verification operation.
@@ -3420,6 +3429,7 @@ export class ChatGptBrowserWorker {
       const runtimeWindow = globalThis as typeof globalThis & {
         __codexMarkdownRootIds?: WeakMap<HTMLElement, string>;
         __codexMarkdownRootSequence?: number;
+        __codexMarkdownNodeRegistry?: { documentId: string; nextNodeId: number; nodeIds: WeakMap<Node, number> };
         __codexFinalProjectionStates?: WeakMap<HTMLElement, {
           lastMutationAt: number;
           observer: MutationObserver;
@@ -3428,6 +3438,11 @@ export class ChatGptBrowserWorker {
       };
       runtimeWindow.__codexMarkdownRootIds ??= new WeakMap<HTMLElement, string>();
       runtimeWindow.__codexMarkdownRootSequence ??= 0;
+      const registry = runtimeWindow.__codexMarkdownNodeRegistry ??= {
+        documentId: `${performance.timeOrigin}:${Math.random().toString(36).slice(2)}`,
+        nextNodeId: 0,
+        nodeIds: new WeakMap(),
+      };
       runtimeWindow.__codexFinalProjectionStates ??= new WeakMap();
       runtimeWindow.__codexFinalProjectionRootSets ??= new WeakMap();
       const nodeId = (markdownRoot: HTMLElement): string => {
@@ -3446,8 +3461,9 @@ export class ChatGptBrowserWorker {
         "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr",
         "li", "main", "nav", "ol", "p", "pre", "section", "table", "ul",
       ]);
-      const chatGptMarkdownContent = (markdownRoot: HTMLElement): HTMLElement => {
+      const chatGptMarkdownContent = (markdownRoot: HTMLElement, onClone?: (original: HTMLElement, clone: HTMLElement) => void): HTMLElement => {
         const content = markdownRoot.cloneNode(true) as HTMLElement;
+        onClone?.(markdownRoot, content);
         // A formula's visual and accessibility layers hydrate independently. Compare
         // its TeX source, just as Markdown conversion does, so cosmetic changes cannot
         // look like an edit to text already delivered to Codex.
@@ -3477,11 +3493,13 @@ export class ChatGptBrowserWorker {
         // #769 captured a resource preview changing its title to filename/type after
         // surrounding prose was already delivered. This is a presentation control,
         // not answer text. Preserve cards that expose an actual link destination.
-        for (const card of Array.from(content.querySelectorAll(
-          '[data-chatgpt-copy-reference][data-markdown-copy="contents"]',
-        ))) {
+        const referenceSelector = '[data-chatgpt-copy-reference][data-markdown-copy="contents"]';
+        for (const card of [content, ...Array.from(content.querySelectorAll(referenceSelector))]
+          .filter(node => node.matches(referenceSelector) && !node.closest("pre, code"))) {
           if (card.querySelector('[class~="group/resource-row"]') && !card.querySelector("a[href]")) {
-            card.remove();
+            // Keep the reference boundary even when its current view has no answer
+            // content: a download link may replace this preview on a later frame.
+            card.textContent = "";
           }
         }
         // These are embedded renderers, not Markdown answer text. Their loading labels, controls
@@ -3538,6 +3556,24 @@ export class ChatGptBrowserWorker {
         return parts.join("").trim();
       };
       // CHATGPT_MARKDOWN_CONTENT_END
+      // A DOM position is not a block identity: a file preview leaving the answer
+      // must not give the following paragraph the preview's already committed key.
+      const nodeKey = (node: Node): string => {
+        let id = registry.nodeIds.get(node);
+        if (id === undefined) {
+          id = registry.nextNodeId++;
+          registry.nodeIds.set(node, id);
+        }
+        return `dom:${registry.documentId}:${id}`;
+      };
+      const rememberClone = (original: HTMLElement, clone: HTMLElement): void => {
+        const source = document.createTreeWalker(original, NodeFilter.SHOW_ALL);
+        const copied = document.createTreeWalker(clone, NodeFilter.SHOW_ALL);
+        do {
+          nodeKey(source.currentNode);
+          registry.nodeIds.set(copied.currentNode, registry.nodeIds.get(source.currentNode)!);
+        } while (source.nextNode() && copied.nextNode());
+      };
       let listGroupIndex = 0;
       const sourceRange = (candidate: Element): { sourceStart: number; sourceEnd: number } | undefined => {
         const startAttribute = candidate.getAttribute("data-start");
@@ -3550,12 +3586,14 @@ export class ChatGptBrowserWorker {
           ? { sourceStart, sourceEnd }
           : undefined;
       };
-      const linkState = (element: HTMLElement): { pendingLinks: boolean; linkTargets: string[] } => {
+      const linkState = (element: HTMLElement): { pendingLinks: boolean; linkTargets: string[]; mutableReference: boolean } => {
         // ChatGPT may paint a link label before supplying its destination. An append-only
         // response cannot add that destination back after committing the label as plain text.
         const anchors = [element, ...element.querySelectorAll<HTMLElement>("a")]
           .filter(candidate => candidate.tagName === "A" && Boolean(candidate.textContent?.trim()));
         return {
+          mutableReference: [element, ...element.querySelectorAll('[data-chatgpt-copy-reference][data-markdown-copy="contents"]')]
+            .some(node => node.matches('[data-chatgpt-copy-reference][data-markdown-copy="contents"]') && !node.closest("pre, code")),
           pendingLinks: anchors.some(candidate => !candidate.getAttribute("href")?.trim()),
           linkTargets: anchors.flatMap(candidate => {
             const href = candidate.getAttribute("href");
@@ -3565,11 +3603,13 @@ export class ChatGptBrowserWorker {
       };
       const segmentsFor = (markdownRoot: HTMLElement, rootIsComplete: boolean) => {
         const flattened: Array<{
+          nodeKey: string;
           tag: string;
           html: string;
           text: string;
           pendingLinks: boolean;
           linkTargets: string[];
+          mutableReference: boolean;
           group?: string;
           sourceStart?: number;
           sourceEnd?: number;
@@ -3581,7 +3621,7 @@ export class ChatGptBrowserWorker {
             ? [...child.children].filter(candidate => candidate.tagName === "LI") as HTMLElement[]
             : [];
           if (listItems.length === 0) {
-            flattened.push({ tag, html: child.outerHTML, text: markdownText(child), ...linkState(child), ...childRange });
+            flattened.push({ nodeKey: nodeKey(child), tag, html: child.outerHTML, text: markdownText(child), ...linkState(child), ...childRange });
             return;
           }
 
@@ -3597,6 +3637,7 @@ export class ChatGptBrowserWorker {
             }
             shell.append(item.cloneNode(true));
             flattened.push({
+              nodeKey: nodeKey(item),
               tag: `${tag}:item`,
               html: shell.outerHTML,
               text: markdownText(item),
@@ -3609,7 +3650,8 @@ export class ChatGptBrowserWorker {
         const children = [...markdownRoot.children] as HTMLElement[];
         const hasBlockChildren = children.some(child => blockMarkdownTags.has(child.tagName.toLowerCase()));
         if (!hasBlockChildren) {
-          if (markdownRoot.innerHTML.trim()) flattened.push({
+          if (markdownRoot.innerHTML.trim() || linkState(markdownRoot).mutableReference) flattened.push({
+            nodeKey: nodeKey(markdownRoot),
             tag: "root",
             html: markdownRoot.innerHTML,
             text: markdownText(markdownRoot),
@@ -3625,13 +3667,14 @@ export class ChatGptBrowserWorker {
             const shell = document.createElement("span");
             nodes.forEach(node => shell.append(node.cloneNode(true)));
             const text = markdownText(shell);
-            if (!text) return;
+            if (!text && !nodes.some(node => node instanceof HTMLElement && linkState(node).mutableReference)) return;
             const ranges = nodes.flatMap(node => node instanceof Element
               ? [node, ...node.querySelectorAll<HTMLElement>("[data-start][data-end]")]
               : [])
               .map(sourceRange)
               .filter((range): range is { sourceStart: number; sourceEnd: number } => range !== undefined);
             flattened.push({
+              nodeKey: nodeKey(nodes[0]!),
               tag: "inline",
               html: shell.outerHTML,
               text,
@@ -3653,9 +3696,7 @@ export class ChatGptBrowserWorker {
           flushInlineRun();
         }
         return flattened.map((segment, index, segments) => ({
-          key: segment.sourceStart !== undefined
-            ? `${segment.sourceStart}:${segment.tag}`
-            : `${index}:${segment.tag}`,
+          key: `${segment.nodeKey}:${segment.tag}`,
           tag: segment.tag,
           html: segment.html,
           text: segment.text,
@@ -3664,12 +3705,13 @@ export class ChatGptBrowserWorker {
           ...(segment.sourceEnd !== undefined ? { sourceEnd: segment.sourceEnd } : {}),
           streamable: (rootIsComplete || index < segments.length - 1) && !segment.pendingLinks,
           linkTargets: segment.linkTargets,
+          mutableReference: segment.mutableReference,
         }));
       };
-      const markdownRoots = allMarkdownRoots.map(markdownRoot => {
+      const markdownRoots = allMarkdownRoots.filter(markdownRoot => !activitySummaryRoots.has(markdownRoot)).map(markdownRoot => {
         const renderedIndex = renderedRoots.indexOf(markdownRoot);
         const rootIsComplete = renderedIndex >= 0 && renderedIndex < renderedRoots.length - 1;
-        const content = chatGptMarkdownContent(markdownRoot);
+        const content = chatGptMarkdownContent(markdownRoot, rememberClone);
         return {
           nodeId: nodeId(markdownRoot),
           ownership: commentaryRoots.includes(markdownRoot) ? "commentary" as const : "final" as const,
@@ -3932,8 +3974,8 @@ export class ChatGptBrowserWorker {
       });
       return {
         responsePresent: true,
-        visibleText: renderedRoots.map(candidate => candidate.innerText.trim()).filter(Boolean).join("\n\n") || plainTextFallback,
-        fullHtml: renderedRoots.map(candidate => candidate.innerHTML).join("") || plainTextFallback,
+        visibleText: markdownRoots.filter(candidate => candidate.ownership === "final").map(candidate => candidate.text).filter(Boolean).join("\n\n") || plainTextFallback,
+        fullHtml: markdownRoots.filter(candidate => candidate.ownership === "final").map(candidate => candidate.html).join("") || plainTextFallback,
         plainTextFallback,
         markdownSegments,
         markdownRoots,
@@ -4245,6 +4287,8 @@ export class ChatGptBrowserWorker {
         turn.modelId,
         turn.capabilities,
         requestedMode.effort,
+        turn.modelFamily,
+        this.config.useEnhancedWebSessionMode === true,
       );
       const estimatedMessageTokens = estimateCompiledChatGptWebMessageTokens(prepared, turn.modelId);
       // Only an identical single message can share its exact count. Archive canonical
@@ -4265,6 +4309,7 @@ export class ChatGptBrowserWorker {
           turn.capabilities,
           prepared.text.length,
           turn.retainConversation === true,
+          turn.modelFamily,
         );
       }
       const deadline = this.config.turnTimeoutMs === undefined
@@ -4393,6 +4438,7 @@ export class ChatGptBrowserWorker {
             page,
             checkpoint => diagnostics.capture(page, checkpoint),
             this.config.useSavedChats,
+            turn.abortSignal,
           ),
         );
       }
@@ -4407,6 +4453,9 @@ export class ChatGptBrowserWorker {
           await this.clearChatGptComposerState(page);
         }
       }
+      const stagingFamily = multipartTransport && turn.modelFamily === "6"
+        && requestedMode.effort === "max" && multipartTransport.stagingMode.effort !== "max"
+          ? "5.6" : turn.modelFamily;
       const selectStagingMode = () => (
         this.selectModelAndEffort(
           page,
@@ -4415,7 +4464,7 @@ export class ChatGptBrowserWorker {
           turn.capabilities,
           checkpoint => diagnostics.capture(page, checkpoint),
           trackUsage,
-          turn.modelFamily,
+          stagingFamily,
         )
       );
       let mode = await this.runStage(turn.traceId, "effort_selection", browserStageTimeouts.effortSelection, async () => {

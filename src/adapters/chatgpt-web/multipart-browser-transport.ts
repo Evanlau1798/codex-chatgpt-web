@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import {
-  CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER,
+  CHATGPT_WEB_PLATFORM_RESERVE_TOKENS,
+  CHATGPT_WEB_GPT6_SOL_BIGGER_CONTEXT_ERROR,
+  supportsChatGptWebBiggerContext,
+  type ChatGptWebModelFamily,
   resolveChatGptWebContextLimits,
   resolveChatGptWebMessageTokenBudget,
   resolveChatGptWebStagingTokenBudget,
@@ -55,23 +58,28 @@ export function assertChatGptWebMultipartInputWithinLimits(
   capabilities: ChatGptWebCapabilities,
   maxMessageChars: number,
   partCount: number,
-  transport?: MultipartBoundaryEvidence,
+  transport?: {
+    stagingEffort: ChatGptWebModelMode["effort"];
+    maxStageMessageTokens: number;
+    maxStageChars: number;
+    finalMessageTokens: number;
+    finalMessageChars: number;
+    finalImageTokens?: number;
+  },
+  modelFamily?: ChatGptWebModelFamily,
+  useEnhancedWebSessionMode = false,
 ): void {
-  if (!isChatGptWebMultipartPartCount(partCount)) throw new Error("Bigger Context requires two or six context parts");
-  if (modelId === CHATGPT_WEB_LUNA_MODEL_ID) {
-    throw new ChatGptWebAdapterError(
-      "Bigger Context is unavailable for Luna because every later browser request includes the accumulated transcript inside the same 28,000-token transport budget.",
-      { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
-    );
+  if (!isChatGptWebMultipartPartCount(partCount)) {
+    throw new Error("Bigger Context requires two or six context parts");
   }
-  if (modelId !== CHATGPT_WEB_MODEL_ID) {
+  if (modelId !== CHATGPT_WEB_MODEL_ID && modelId !== CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error(`ChatGPT Bigger Context limit is not defined for model: ${modelId}`);
   }
-  const { contextWindow: baseContextWindow } = resolveChatGptWebContextLimits(
-    modelId,
-    effort,
-    { ...capabilities, experimentalBiggerContext: false },
-  );
+  if (!supportsChatGptWebBiggerContext(modelId, effort, capabilities, modelFamily)) {
+    throw new Error(CHATGPT_WEB_GPT6_SOL_BIGGER_CONTEXT_ERROR);
+  }
+  const baseContextWindow = resolveChatGptWebMessageTokenBudget(modelId, effort, capabilities)
+    + CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + 1;
   const assertMessageBoundary = (
     label: "stage" | "final part",
     messageTokens: number,
@@ -79,18 +87,20 @@ export function assertChatGptWebMultipartInputWithinLimits(
     messageEffort: ChatGptWebModelMode["effort"],
     imageTokens = 0,
   ): void => {
-    const limits = resolveChatGptWebTransportLimits(modelId, messageEffort, capabilities);
-    if (limits.browserComposerCharLimit !== undefined
-      && messageChars > limits.browserComposerCharLimit) {
+    const { browserMessageTokenLimit, browserComposerCharLimit } = resolveChatGptWebTransportLimits(
+      modelId,
+      messageEffort,
+      capabilities,
+    );
+    if (browserComposerCharLimit !== undefined && messageChars > browserComposerCharLimit) {
       throw new ChatGptWebAdapterError(
-        `A Bigger Context ${label} contains ${messageChars.toLocaleString("en-US")} characters, which exceeds the measured ${limits.browserComposerCharLimit.toLocaleString("en-US")}-character ChatGPT composer boundary. The bridge will not split an individual Codex message or JSON record; compact the task before retrying.`,
+        `A Bigger Context ${label} contains ${messageChars.toLocaleString("en-US")} characters, which exceeds the measured ${browserComposerCharLimit.toLocaleString("en-US")}-character ChatGPT composer boundary. The bridge will not split an individual Codex message or JSON record; compact the task before retrying.`,
         { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
       );
     }
-    if (limits.browserMessageTokenLimit !== undefined
-      && messageTokens > limits.browserMessageTokenLimit) {
+    if (browserMessageTokenLimit !== undefined && messageTokens > browserMessageTokenLimit) {
       throw new ChatGptWebAdapterError(
-        `A Bigger Context ${label} requires ${messageTokens.toLocaleString("en-US")} visible message tokens, which exceeds the measured ${limits.browserMessageTokenLimit.toLocaleString("en-US")}-token ChatGPT message boundary. The bridge will not split an individual Codex message or JSON record; compact the task before retrying.`,
+        `A Bigger Context ${label} requires ${messageTokens.toLocaleString("en-US")} visible message tokens, which exceeds the measured ${browserMessageTokenLimit.toLocaleString("en-US")}-token ChatGPT message boundary. The bridge will not split an individual Codex message or JSON record; compact the task before retrying.`,
         { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
       );
     }
@@ -121,7 +131,11 @@ export function assertChatGptWebMultipartInputWithinLimits(
   } else {
     assertMessageBoundary("stage", estimatedMessageTokens, maxMessageChars, effort);
   }
-  const experimentalContextWindow = baseContextWindow * Math.min(partCount, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER);
+  // More transport messages do not enlarge the model's advertised context window.
+  const { contextWindow } = resolveChatGptWebContextLimits(
+    modelId, effort, { ...capabilities, experimentalBiggerContext: !useEnhancedWebSessionMode }, useEnhancedWebSessionMode, modelFamily,
+  );
+  const experimentalContextWindow = Math.min(contextWindow, baseContextWindow * partCount);
   if (estimatedInputTokens < experimentalContextWindow) return;
   const partLabel = partCount === 2 ? "two-part" : "six-part";
   throw new ChatGptWebAdapterError(
@@ -136,16 +150,10 @@ export function resolveChatGptWebMultipartStagingMode(
   maxStageMessageTokens: number,
   maxStageChars: number,
 ): ChatGptWebModelMode {
-  if (modelId === CHATGPT_WEB_LUNA_MODEL_ID || !capabilities.solAvailable) {
-    throw new ChatGptWebAdapterError(
-      "Bigger Context staging is unavailable for a Luna-only account.",
-      { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
-    );
-  }
-  if (modelId !== CHATGPT_WEB_MODEL_ID) {
+  if (modelId !== CHATGPT_WEB_MODEL_ID && modelId !== CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error(`ChatGPT Bigger Context staging mode is not defined for model: ${modelId}`);
   }
-  const efforts: readonly ChatGptWebModelMode["effort"][] = capabilities.proAvailable
+  const efforts: readonly ChatGptWebModelMode["effort"][] = modelId === CHATGPT_WEB_LUNA_MODEL_ID ? ["low"] : capabilities.proAvailable
     ? ["low", "medium", "max"]
     : ["low", "medium"];
   for (const effort of efforts) {
@@ -168,6 +176,8 @@ export function prepareChatGptWebMultipartTransport(
   modelId: string,
   capabilities: ChatGptWebCapabilities,
   requestedEffort: ChatGptWebModelMode["effort"],
+  modelFamily?: ChatGptWebModelFamily,
+  useEnhancedWebSessionMode = false,
 ): PreparedChatGptWebMultipartTransport | undefined {
   if (!prepared.multipart) return undefined;
   const transactionId = `ctx_${randomUUID().replaceAll("-", "")}`;
@@ -205,6 +215,8 @@ export function prepareChatGptWebMultipartTransport(
       finalMessageChars: finalPrompt.length,
       finalImageTokens: estimateChatGptWebImageTokens(prepared),
     },
+    modelFamily,
+    useEnhancedWebSessionMode,
   );
   return { transactionId, stages, stageMessageTokens, finalPrompt, stagingMode };
 }

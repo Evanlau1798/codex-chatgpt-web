@@ -19,9 +19,9 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **发布版本：`6.1.5-Enhanced.2`。** 下载按钮会始终打开最新发布的 Enhanced 版本。[观看介绍影片（英文 MP4）](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4)。
+> **版本：`6.1.7-Enhanced.1`。** 下载按钮会始终打开最新发布的 Enhanced 版本。
 
-已整合上游 v6.1.5，保留 Enhanced 会话、Native2 工具与快速启动。
+已整合上游 v6.1.7，保留 Enhanced 会话、Native2 工具与快速启动。
 
 支持 ChatGPT 更名后的 GPT-6 模型选择器及五种推理档位。Codex 显示 GPT-6 和 GPT-6 Instant；已有 `chatgpt-web/latest` 与 `chatgpt-web/latest-instant` 任务 ID 保持兼容。
 
@@ -243,8 +243,12 @@ recap、resume 与 subagent 生命周期仍由客户端管理；Enhanced 模式�
 >
 > 有关 **GPT-5.6 Sol Pro** 和 **GPT-6 Astra** 当前的 ChatGPT 消息额度，请参阅
 > [Limits](https://github.com/miuuyy/codex-chatgpt-web/discussions/309)。Token 上下文上限取决于
-> 账户类型和所选 effort。Plus 的 Medium/High 使用实测的 90,000-token 窗口；启用实验性的
+> 账户类型和所选 effort。GPT-5.6 Plus 的 Medium/High 使用实测的 90,000-token 窗口；启用实验性的
 > **3× context** 后最高为 270,000 tokens，并且全程支持原生 Codex compaction。
+> GPT-6 Sol 在 Pro 账户的 Medium、High、Extra High 下支持 240,000-token Bigger Context，
+> 于 220,000 tokens 压缩；Instant 和其他方案使用标准窗口。GPT-5.6 与 GPT-6 Pro 保留既有上限。
+> Bigger Context 仅供 Original Automatic 使用，与 Enhanced 互斥。Luna/Think 为实验性选项，
+> 启用时保留任务对话，并停用 rolling checkpoint。
 
 1. 完成启动器中的必需设置。
 2. 在启动器中打开 **MCP**。请在将使用 ChatGPT 连接器的同一个 OpenAI 账户中创建 Tunnel

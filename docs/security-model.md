@@ -57,6 +57,12 @@ preserving the native provider/task identity. Another process under the same OS 
 port. Run on a trusted single-user account and treat local code execution as inside the trust
 boundary.
 
+A web page is not a local process. Browsers can reach a loopback port with a cross-site request,
+or with a same-origin one after DNS rebinding, and they attach `Origin` to every non-GET request.
+The daemon rejects non-GET requests carrying `Origin` before native or control routes run; Codex and
+the launcher never send that header. The separate authenticated general API validates its bearer
+credential before routing. The native browser-path check is not authentication.
+
 The lifecycle endpoints are separate from the Responses surface. `/admin/drain`, `/admin/resume`,
 `/admin/cancel-browser-turns`, and `/admin/shutdown` require a random bearer token stored in the
 user-only application config. The launcher uses them to reject new work, prove that both the HTTP

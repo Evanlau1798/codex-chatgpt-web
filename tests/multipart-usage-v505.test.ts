@@ -26,11 +26,21 @@ test("multipart selection accounts for whole-record and composer fit", () => {
   for (const [contents, expected] of [
     [["small task"], undefined],
     [[50_000, 40_000, 50_000, 5_000].map(n => "word ".repeat(n)), 6],
-    [Array.from({ length: 3 }, () => " ".repeat(450_000)), 2],
+    [Array.from({ length: 3 }, () => " ".repeat(450_000)), 6],
   ] as const) {
     const parsed = request([...contents]);
     const parts = resolveBiggerContextMultipartParts(parsed, plus);
     expect(parts).toBe(expected);
+    if (contents.every(content => content.length === 450_000)) {
+      const twoParts = compiledChatGptWebMessages(compileChatGptWebPrompt(parsed, plus, undefined,
+        { experimentalMultipartParts: 2 }));
+      // Two whole records exceed the newly measured 500K composer limit despite few tokens.
+      expect(() => assertChatGptWebMultipartInputWithinLimits(
+        twoParts.reduce((sum, text) => sum + estimateTokens(text), 0),
+        Math.max(...twoParts.map(text => estimateTokens(text))), parsed.modelId, "high", plus,
+        Math.max(...twoParts.map(text => text.length)), 2,
+      )).toThrow("500,000-character ChatGPT composer boundary");
+    }
     const compiled = compileChatGptWebPrompt(parsed, plus, undefined, { experimentalMultipartParts: parts });
     if (parts) {
       expect(compiled.multipart!.parts.flatMap(part => JSON.parse(part).records)

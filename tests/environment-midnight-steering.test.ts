@@ -5,6 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { extractChatGptTurnEnvironment, extractChatGptTurnUserRevision } from "../src/adapters/chatgpt-web/environment";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import { parseRequest } from "../src/responses/parser";
+import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { defaultBrokerEndpoint } from "../src/config";
 import type { CodexParsedRequest } from "../src/types";
 import { root, currentWire, environmentXml, dangerFullAccessProfileXml } from "./environment-fixture";
 const temporaryRoots: string[] = [];
@@ -432,4 +434,82 @@ const workspaceWriteProfileXml = `<permission_profile type="managed"><file_syste
     );
     expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request))
       .toThrow("Steering environment conflicts");
+  });
+
+for (const mode of ["workspace-write", "read-only"] as const) test(`${mode} uses one native network policy before and after steering`, async () => {
+    const { codexHome, request, body, rolloutPath, environment, auxiliary } = steeredRolloutFixture(false, []);
+    environment.content[1]!.text = environment.content[1]!.text.replace(
+      dangerFullAccessProfileXml, mode === "workspace-write" ? workspaceWriteProfileXml : readOnlyProfileXml,
+    );
+    const metadata = JSON.parse(body.client_metadata["x-codex-turn-metadata"]!);
+    metadata.sandbox_mode = mode;
+    body.client_metadata["x-codex-turn-metadata"] = JSON.stringify(metadata);
+    const entries = [
+      { path: { type: "special", value: { kind: "root" } }, access: "read" },
+      ...(mode === "workspace-write" ? [
+        ...[root, auxiliary].map(path => ({ path: { type: "path", path }, access: "write" })),
+        { path: { type: "special", value: { kind: "slash_tmp" } }, access: "write" },
+        { path: { type: "special", value: { kind: "tmpdir" } }, access: "write" },
+      ] : []),
+    ];
+    const writeRollout = (networkAccess: boolean) => writeFileSync(rolloutPath, [
+      { type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } },
+      childTurnContext(rolloutTurnId, {
+        workspace_roots: [root, auxiliary],
+        sandbox_policy: { type: mode, ...(mode === "workspace-write" ? { writable_roots: [auxiliary] } : {}), network_access: networkAccess },
+        permission_profile: {
+          type: "managed", file_system: { type: "restricted", entries }, network: networkAccess ? "enabled" : "restricted",
+        },
+        file_system_sandbox_policy: { kind: "restricted", entries },
+      }),
+    ].map(value => JSON.stringify(value)).join("\n") + "\n");
+    const statePath = join(codexHome, "environment-cache.json");
+    const store = new ChatGptThreadEnvironmentStore(statePath, Date.now, codexHome);
+    const resolved = () => store.resolve(request);
+    const beforeSteering = { ...request, _rawBody: { ...body, input: body.input.slice(0, -1) } };
+    const withoutEnvelope = { ...request, _rawBody: { ...body, input: body.input.slice(-1) } };
+    const cachedFollowup = { ...request, _rawBody: {
+      client_metadata: { "x-codex-turn-metadata": JSON.stringify({ thread_id: rolloutThreadId, turn_id: rolloutTurnId }) },
+      input: body.input.slice(-1),
+    } };
+    const broker = TurnBroker.forSocket(process.platform === "win32"
+      ? defaultBrokerEndpoint(codexHome)
+      : join(codexHome, "review.sock"));
+    try {
+      for (const enabled of [true, false]) {
+        writeRollout(enabled);
+        const initial = store.resolve(beforeSteering);
+        expect(initial.sandboxPolicy).toEqual(mode === "workspace-write"
+          ? { type: "workspaceWrite", writableRoots: [root, auxiliary], networkAccess: enabled }
+          : { type: "readOnly", networkAccess: enabled });
+        const token = await broker.register(initial, 10_000);
+        for (const input of [request, withoutEnvelope, beforeSteering]) {
+          const next = store.resolve(input);
+          expect(next.sandboxPolicy).toEqual(initial.sandboxPolicy);
+          expect(() => broker.updateEnvironment(token, next)).not.toThrow();
+        }
+        expect(new ChatGptThreadEnvironmentStore(statePath, Date.now, codexHome).resolve(cachedFollowup).sandboxPolicy)
+          .toEqual(initial.sandboxPolicy);
+        writeRollout(!enabled);
+        expect(() => broker.updateEnvironment(token, store.resolve(withoutEnvelope)))
+          .toThrow("environment changed");
+        broker.revoke(token);
+      }
+    } finally { await broker.close(); }
+
+    // An envelope that does state its network policy is still held to the rollout.
+    writeRollout(true);
+    const unstated = environment.content[1]!.text;
+    environment.content[1]!.text = unstated.replace("<filesystem>", "<network_access>restricted</network_access><filesystem>");
+    expect(resolved).toThrow("Steering environment conflicts");
+    environment.content[1]!.text = unstated.replace("<filesystem>", "<network_access>enabled</network_access><filesystem>");
+    expect(resolved().sandboxPolicy).toMatchObject({ networkAccess: true });
+    writeRollout(false);
+    expect(resolved).toThrow("Steering environment conflicts");
+    environment.content[1]!.text = unstated;
+    expect(resolved().sandboxPolicy).toMatchObject({ networkAccess: false });
+    // Unstated permissions require current evidence, even when a cache already exists.
+    rmSync(rolloutPath);
+    expect(() => store.resolve(beforeSteering)).toThrow("no canonical rollout");
+    expect(resolved).toThrow("no canonical rollout");
   });

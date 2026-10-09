@@ -9,6 +9,8 @@ import { encodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compac
 import { parseRequest } from "../src/responses/parser";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import { environmentFromTurnContext } from "../src/adapters/chatgpt-web/codex-rollout-permissions";
+import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
+import { defaultBrokerEndpoint } from "../src/config";
 import type { CodexParsedRequest, CodexTool } from "../src/types";
 
 import { root, environmentXml, currentWire, dangerFullAccessProfileXml } from "./environment-fixture";

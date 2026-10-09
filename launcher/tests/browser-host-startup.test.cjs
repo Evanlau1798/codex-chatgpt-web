@@ -78,6 +78,22 @@ test("preparing a standby during work adds a tab without stealing its visible se
   assert.equal(f.host.selectedTabId, running.id);
 });
 
+test("closing the selected work page never reveals an unfinished standby picker", () => {
+  for (const startupReady of [false, true]) {
+    const warm = ready({ startupReady, status: startupReady ? "ready" : "running" });
+    const running = ready({ id: "running", startupPreparation: false, status: "running" });
+    const f = fixture([warm, running]);
+    f.host.selectedTabId = running.id;
+    f.host.syncPowerSaveBlocker = () => {};
+    f.host.window = { contentView: { removeChildView() {} } };
+    running.view.webContents.close = () => {};
+    f.host.removeTurnTab(running, false);
+    assert.equal(f.host.selectedTabId, startupReady ? warm.id : "home");
+    assert.equal(f.host.turnTabs.get(warm.id), warm);
+    assert.equal(warm.startupReady, startupReady);
+  }
+});
+
 for (const extra of [{ helperPid: process.pid + 1000 }, { startupReady: false }, { authenticationRequired: true },
   { connectorIdentity: "Other connector" }]) {
   test(`prepared claim fails closed for ${Object.keys(extra)[0]}`, async () => {

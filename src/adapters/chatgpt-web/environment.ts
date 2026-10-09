@@ -49,6 +49,19 @@ export interface ChatGptTurnEnvironment {
   sandboxPolicy: ChatGptSandboxPolicy;
   tools: CodexTool[];
 }
+
+export interface ChatGptEnvironmentClaim {
+  environment: ChatGptTurnEnvironment;
+  /** Filesystem permission envelopes omit the native turn's network policy. */
+  statesNetworkAccess: boolean;
+}
+
+function environmentClaim(parsed: CodexParsedRequest, text: string): ChatGptEnvironmentClaim {
+  return {
+    environment: parseChatGptEnvironmentText(parsed, text),
+    statesNetworkAccess: /<network_access\b/i.test(text) || /network access is /i.test(text),
+  };
+}
 export interface ChatGptTurnUserRevision {
   content: unknown;
   turnId?: string;
@@ -212,7 +225,7 @@ const CALENDAR_ENVIRONMENT_DELTA = /^<environment_context>\s*<current_date>\d{4}
 /** Parse a claim only: the caller must compare it with this turn's native rollout authority. */
 export function extractChatGptContinuationEnvironmentClaims(
   parsed: CodexParsedRequest, provenCalendarDelta = false,
-): ChatGptTurnEnvironment[] {
+): ChatGptEnvironmentClaim[] {
   const turnId = extractChatGptTurnIdentity(parsed).turnId;
   const body = record(parsed._rawBody);
   const input = Array.isArray(body?.input) ? body.input : [];
@@ -265,7 +278,7 @@ export function extractChatGptContinuationEnvironmentClaims(
     if (!/^<environment_context>[\s\S]*<\/environment_context>$/.test(update)) {
       throw new Error("Compaction continuation contains a malformed current native environment claim");
     }
-    return parseChatGptEnvironmentText(parsed, update);
+    return environmentClaim(parsed, update);
   });
 }
 
@@ -274,7 +287,7 @@ export function extractChatGptContinuationEnvironmentClaims(
  * Git workspace metadata need not list every native filesystem root. Return that earlier claim
  * only for a same-turn pair; the store must compare it with the current canonical rollout.
  */
-export function extractChatGptSteeringEnvironmentClaim(parsed: CodexParsedRequest): ChatGptTurnEnvironment | undefined {
+export function extractChatGptSteeringEnvironmentClaim(parsed: CodexParsedRequest): ChatGptEnvironmentClaim | undefined {
   const turnId = extractChatGptTurnIdentity(parsed).turnId;
   if (!turnId) return undefined;
   const body = record(parsed._rawBody);
@@ -303,7 +316,7 @@ export function extractChatGptSteeringEnvironmentClaim(parsed: CodexParsedReques
     const instruction = record(input[index]);
     if (typeof instruction?.id !== "string" || !instruction.id) continue;
     const text = environmentBeforeUser(input, index, turnId, metadata);
-    if (text) return parseChatGptEnvironmentText(parsed, text);
+    if (text) return environmentClaim(parsed, text);
   }
   return undefined;
 }
@@ -650,6 +663,10 @@ function trustedEnvironmentText(parsed: CodexParsedRequest): string {
 
 export function extractChatGptTurnEnvironment(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
   return parseChatGptEnvironmentText(parsed, trustedEnvironmentText(parsed));
+}
+
+export function extractChatGptTurnEnvironmentClaim(parsed: CodexParsedRequest): ChatGptEnvironmentClaim {
+  return environmentClaim(parsed, trustedEnvironmentText(parsed));
 }
 
 function parseChatGptEnvironmentText(parsed: CodexParsedRequest, text: string): ChatGptTurnEnvironment {

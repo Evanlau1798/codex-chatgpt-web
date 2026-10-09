@@ -629,6 +629,53 @@ test("active composer resolution waits for exactly one visible editor", async ()
   expect(await activeComposer.call({}, page, 500)).toBe(composer);
 });
 
+test("composer verification ignores icon markup while preserving the exact prompt and live editor", async () => {
+  const { createWindow } = require("@mixmark-io/domino");
+  const links = Array.from({ length: 6 }, (_, index) => `https://drive.google.com/file/d/example-${index}`);
+  const icon = '<svg><title>Drive</title><desc>File icon</desc><style>@supports (color:color(display-p3 1 1 1)){}</style>  <g><path d="M0 0"/></g></svg>';
+  const literal = '<svg><text>Keep this code</text></svg> <style>body { color: red }</style> <script>example()</script>';
+  const window = createWindow('<div id="composer"><p></p><p></p><p></p><p></p></div>');
+  const composer = window.document.getElementById("composer");
+  const paragraphs = composer.children;
+  paragraphs[0].innerHTML = '<span data-id="plugin:example" data-keyword="Codex Native2">Codex Native2</span>'
+    + '<span data-inline-selection-pill-cursor-target>\u200b</span>'
+    + links.map(url => `<a href="${url}"><span contenteditable="false">${icon}</span>${url}</a>`).join(" ");
+  paragraphs[1].textContent = literal;
+  paragraphs[3].innerHTML = '  Keep  two spaces, 日本語 and <span contenteditable="false">ordinary rich text</span>.';
+  // Non-rendering style/script nodes can also occur outside the icon itself.
+  for (const tag of ["style", "script"]) {
+    const decoration = window.document.createElement(tag);
+    decoration.textContent = "not prompt text";
+    composer.appendChild(decoration);
+  }
+  const expected = `${links.join(" ")}\n${literal}\n\n  Keep  two spaces, 日本語 and ordinary rich text.`;
+  const original = composer.innerHTML;
+  const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
+    activeComposer: async () => ({ evaluate: async (callback: Function) => callback(composer) }),
+  }) as {
+    attachedPromptText(page: unknown): Promise<string>;
+    assertPromptAttached(page: unknown, prompt: string): Promise<void>;
+    promptTextEquivalent(expected: string, observed: string): boolean;
+  };
+  expect(await worker.attachedPromptText({})).toBe(expected);
+  await expect(worker.assertPromptAttached({}, expected)).resolves.toBeUndefined();
+  expect(composer.innerHTML).toBe(original);
+  expect(composer.querySelectorAll("svg").length).toBe(6);
+
+  // Decorations are ignored; a changed URL, missing text or extra ordinary
+  // non-editable content must still fail the existing integrity comparison.
+  for (const [variant, mutate] of [
+    () => { composer.querySelector("a").lastChild.textContent += "/changed"; },
+    () => { composer.querySelectorAll("p")[1].textContent = literal.slice(0, -1); },
+    () => { composer.querySelectorAll("p")[3].querySelector("span").textContent += " unexpected"; },
+  ].entries()) {
+    composer.innerHTML = original;
+    mutate();
+    expect({ variant, equivalent: worker.promptTextEquivalent(expected, await worker.attachedPromptText({})) })
+      .toEqual({ variant, equivalent: false });
+  }
+});
+
 test("prompt verification accepts Lexical NBSP preservation without weakening other mismatches", async () => {
   // This reproduces a live macOS compaction failure where a 16k prompt prefix retained the same
   // UTF-16 length but Lexical exposed alternating NBSP/ASCII spaces inside a long indentation run.
@@ -1878,6 +1925,7 @@ test("retained response ignores older completion actions but detects a later con
     const context = createContext({
       document: window.document, HTMLElement: window.HTMLElement, Element: window.Element,
       Node: window.Node, NodeFilter: window.NodeFilter,
+      performance: { timeOrigin: 1 },
       getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
     });
     const responseTurn = {
@@ -2445,7 +2493,7 @@ test("browser preflight separates model context from one-message transport limit
       "gpt-5.6-sol",
       effort,
       plus,
-      1_048_572,
+      500_000,
     )).not.toThrow();
     expect(() => assertChatGptWebInputWithinLimits(
       1,
@@ -2453,8 +2501,8 @@ test("browser preflight separates model context from one-message transport limit
       "gpt-5.6-sol",
       effort,
       plus,
-      1_048_573,
-    )).toThrow("1,048,572-character ChatGPT composer boundary");
+      500_001,
+    )).toThrow("500,000-character ChatGPT composer boundary");
   }
 
   expect(() => assertChatGptWebInputWithinLimits(
@@ -2498,6 +2546,33 @@ test("browser preflight separates model context from one-message transport limit
       75_000 + 8_192, 75_000, "gpt-5.6-sol", effort, pro, 520_000,
     )).toThrow("500,000-character ChatGPT composer boundary");
   }
+});
+
+test("GPT-6 staged input enforces its measured account and effort ceiling before submission", () => {
+  const pro = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true };
+  for (const effort of ["medium", "high", "xhigh"] as const) {
+    expect(() => assertChatGptWebMultipartInputWithinLimits(
+      239_999, 40_000, "gpt-5.6-sol", effort, pro, 200_000, 6, undefined, "6",
+    )).not.toThrow();
+    expect(() => assertChatGptWebMultipartInputWithinLimits(
+      240_000, 40_000, "gpt-5.6-sol", effort, pro, 200_000, 6, undefined, "6",
+    )).toThrow("240,000-token six-part ceiling");
+    expect(() => assertChatGptWebMultipartInputWithinLimits(
+      222_386, 40_000, "gpt-5.6-sol", effort, pro, 200_000, 2, undefined, "6",
+    )).toThrow("222,386-token two-part ceiling");
+    expect(() => assertChatGptWebMultipartInputWithinLimits(
+      100_000, 40_000, "gpt-5.6-sol", effort, { ...pro, proAvailable: false }, 200_000, 6, undefined, "6",
+    )).toThrow("GPT-6 Sol uses standard context");
+  }
+  expect(() => assertChatGptWebMultipartInputWithinLimits(
+    100_000, 40_000, "gpt-5.6-sol", "low", pro, 200_000, 6, undefined, "6",
+  )).toThrow("GPT-6 Sol uses standard context");
+  expect(() => assertChatGptWebMultipartInputWithinLimits(
+    333_578, 60_000, "gpt-5.6-sol", "high", pro, 250_000, 6, undefined, "5.6",
+  )).not.toThrow();
+  expect(() => assertChatGptWebMultipartInputWithinLimits(
+    336_578, 60_000, "gpt-5.6-sol", "max", pro, 250_000, 6, undefined, "6",
+  )).not.toThrow();
 });
 
 test("Bigger Context fits mixed-density whole records within both token and composer limits", () => {
@@ -2604,7 +2679,7 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "gpt-5.6-sol",
     "high",
     plus,
-    900_000,
+    500_000,
     6,
   )).not.toThrow();
   expect(() => assertChatGptWebMultipartInputWithinLimits(
@@ -2613,7 +2688,7 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "gpt-5.6-sol",
     "high",
     plus,
-    900_000,
+    500_000,
     6,
   )).toThrow("270,000-token six-part ceiling");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
@@ -2622,7 +2697,7 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     "gpt-5.6-sol",
     "high",
     plus,
-    900_000,
+    500_000,
     2,
   )).toThrow("180,000-token two-part ceiling");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
@@ -2642,7 +2717,7 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
     { localToolsEnabled: false, solAvailable: false, extraHighAvailable: false, proAvailable: false },
     40_000,
     2,
-  )).toThrow("unavailable for Luna");
+  )).not.toThrow();
 });
 
 test("Bigger Context stages use the lowest account mode that can carry the stage", () => {
@@ -2678,12 +2753,12 @@ test("Bigger Context stages use the lowest account mode that can carry the stage
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 100_000, 500_000).effort).toBe("low");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 100_000, 600_000).effort).toBe("max");
   expect(resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", pro, 104_000, 1_200_000).effort).toBe("max");
-  expect(() => resolveChatGptWebMultipartStagingMode(
+  expect(resolveChatGptWebMultipartStagingMode(
     "gpt-5.6-luna",
     { localToolsEnabled: false, solAvailable: false, extraHighAvailable: false, proAvailable: false },
     10_000,
     20_000,
-  )).toThrow("Luna-only");
+  ).effort).toBe("low");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
     100_000,
     30_000,
@@ -2905,7 +2980,7 @@ test("response DOM separates streaming commentary from the final Markdown answer
   expect(workerSource).toContain("markdownRoots.filter(candidate => !commentary.includes(candidate))");
   expect(workerSource).toContain("const markdownSegments = markdownRoots");
   expect(workerSource).toContain("ownership.observe(snapshot.markdownRoots)");
-  expect(workerSource).toContain('fullHtml: renderedRoots.map(candidate => candidate.innerHTML).join("")');
+  expect(workerSource).toContain('fullHtml: markdownRoots.filter(candidate => candidate.ownership === "final").map(candidate => candidate.html).join("")');
   expect(workerSource).toContain("const flattened: Array<{");
   expect(workerSource).toContain("const blockMarkdownTags = new Set([");
   expect(workerSource).toContain("markdownRoot.childNodes.forEach((node) => {");
@@ -2915,8 +2990,8 @@ test("response DOM separates streaming commentary from the final Markdown answer
   expect(workerSource).toContain("const sourceRange = (candidate: Element)");
   expect(workerSource).toContain('candidate.getAttribute("data-start")');
   expect(workerSource).toContain('candidate.getAttribute("data-end")');
-  expect(workerSource).toContain('key: segment.sourceStart !== undefined');
-  expect(workerSource).toContain('`${segment.sourceStart}:${segment.tag}`');
+  expect(workerSource).toContain('key: `${segment.nodeKey}:${segment.tag}`');
+  expect(workerSource).toContain('nodeKey: nodeKey(child)');
   expect(workerSource).toContain("sourceStart: Math.min(...ranges.map");
   expect(workerSource).toContain("sourceEnd: Math.max(...ranges.map");
   expect(workerSource).toContain("streamable: (rootIsComplete || index < segments.length - 1) && !segment.pendingLinks");
@@ -3816,17 +3891,17 @@ function thinkSlashFixture() {
 }
 
 test("Think toggle preserves connectors and normal Luna clears it", async () => {
-  const { state, composerForm } = thinkSlashFixture();
+  const { state, composer } = thinkSlashFixture();
   state.connectors = ["Codex Native2"];
   const checkpoints: string[] = [];
 
-  await setChatGptThinkMode(composerForm as never, true, async checkpoint => { checkpoints.push(checkpoint); });
+  await setChatGptThinkMode(composer as never, true, async checkpoint => { checkpoints.push(checkpoint); });
   expect(state.pressed).toBeTrue();
   expect(state.commands).toEqual([]);
   expect(state.connectors).toEqual(["Codex Native2"]);
-  await setChatGptThinkMode(composerForm as never, true);
+  await setChatGptThinkMode(composer as never, true);
   expect(state.commands).toEqual([]);
-  await setChatGptThinkMode(composerForm as never, false, async checkpoint => { checkpoints.push(checkpoint); });
+  await setChatGptThinkMode(composer as never, false, async checkpoint => { checkpoints.push(checkpoint); });
   expect(state.pressed).toBeFalse();
   expect(state.commands).toEqual([]);
   expect(state.draft).toBe("");
@@ -3836,17 +3911,17 @@ test("Think toggle preserves connectors and normal Luna clears it", async () => 
 test("Think slash requires one command and verifies a newly exposed control", async () => {
   const ui = thinkSlashFixture();
   ui.state.controlPresent = false;
-  await setChatGptThinkMode(ui.composerForm as never, true);
+  await setChatGptThinkMode(ui.composer as never, true);
   expect(ui.state.pressed).toBeTrue();
   const ambiguous = thinkSlashFixture();
   ambiguous.state.controlPresent = false;
   ambiguous.state.optionCount = 2;
-  await expect(setChatGptThinkMode(ambiguous.composerForm as never, true)).rejects.toThrow("exactly one command option");
+  await expect(setChatGptThinkMode(ambiguous.composer as never, true)).rejects.toThrow("exactly one command option");
   expect(ambiguous.state.enters).toBe(0);
   const unavailable = thinkSlashFixture();
   unavailable.state.controlPresent = false;
   unavailable.state.optionCount = 0;
-  await expect(setChatGptThinkMode(unavailable.composerForm as never, true)).rejects.toThrow("Think command is unavailable");
+  await expect(setChatGptThinkMode(unavailable.composer as never, true)).rejects.toThrow("Think command is unavailable");
   expect(unavailable.state.enters).toBe(0);
 });
 
@@ -3854,7 +3929,7 @@ test("a failed Think toggle does not attempt a second action or alter the draft"
   const ui = thinkSlashFixture();
   ui.state.connectors = ["Codex Native2"];
   ui.control.click = async () => { throw new Error("Toggle failed"); };
-  await expect(setChatGptThinkMode(ui.composerForm as never, true)).rejects.toThrow("Toggle failed");
+  await expect(setChatGptThinkMode(ui.composer as never, true)).rejects.toThrow("Toggle failed");
   expect(ui.state.commands).toEqual([]);
   expect(ui.state.connectors).toEqual(["Codex Native2"]);
   expect(ui.state.draft).toBe("");
@@ -3956,4 +4031,49 @@ test("completed SSE size errors reject only their current submission, not model 
   for (const event of ["request", "response", "requestfinished", "requestfailed"]) {
     expect(page.listenerCount(event)).toBe(0);
   }
+});
+
+test("cancelled chat preparation stops navigation and composer polling", async () => {
+  const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+  for (const stage of ["before-navigation", "navigation", "composer"]) {
+    const controller = new AbortController();
+    let navigations = 0;
+    let polls = 0;
+    const composers = {
+      filter() { return this; },
+      async count() { polls += 1; controller.abort(); return 0; },
+    };
+    const page = {
+      url: () => stage === "composer" ? "https://chatgpt.com/?temporary-chat=true" : "about:blank",
+      goto: () => { navigations += 1; controller.abort(); return new Promise(() => {}); },
+      locator: () => composers,
+    };
+    if (stage === "before-navigation") controller.abort();
+    await expect(worker.prepareChatSurface(page, undefined, false, controller.signal)).rejects.toThrow("aborted");
+    expect(navigations).toBe(stage === "navigation" ? 1 : 0);
+    expect(polls).toBe(stage === "composer" ? 1 : 0);
+  }
+});
+
+test("GPT-6 Sol rejects a staged prompt before opening a browser and releases its preparation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gpt6-standard-context-"));
+  const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false };
+  let released = false;
+  let browserStages = 0;
+  const prepared = { ...compileChatGptWebPrompt({
+    modelId: CHATGPT_WEB_MODEL_ID, stream: true, options: { reasoning: "high" },
+    context: { messages: [{ role: "user", content: "Keep the entire task.", timestamp: 1 }] },
+  }, capabilities, undefined, { experimentalMultipartParts: 2 }), release() { released = true; } };
+  const worker: any = ChatGptBrowserWorker.forProvider({
+    adapter: "chatgpt-web", baseUrl: `browser://${root}`, chatgptWeb: { browserDiagnosticsPath: root },
+  });
+  worker.runStage = async () => { browserStages++; throw new Error("Browser must not be opened"); };
+  try {
+    await expect(worker.runBrowserTurn({
+      traceId: "six_standard", modelId: CHATGPT_WEB_MODEL_ID, modelFamily: "6", reasoning: "high", capabilities,
+      prepare: async () => prepared, onTextDelta() {}, onReasoningSummary() {},
+    })).rejects.toThrow("GPT-6 Sol uses standard context");
+    expect(browserStages).toBe(0);
+    expect(released).toBeTrue();
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

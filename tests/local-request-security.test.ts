@@ -60,7 +60,7 @@ test("requires a JSON media type on public data routes", async () => {
   });
 });
 
-test("preserves CLI compatibility without browser metadata and accepts loopback origins", async () => {
+test("preserves CLI compatibility but rejects loopback browser origins too", async () => {
   await withServer(async endpoint => {
     const port = new URL(endpoint).port;
     const requests = [
@@ -68,13 +68,13 @@ test("preserves CLI compatibility without browser metadata and accepts loopback 
       new Headers({ "content-type": "application/json", origin: `http://localhost:${port}` }),
       new Headers({ "content-type": "application/json", origin: `http://[::1]:${port}` }),
     ];
-    for (const headers of requests) {
+    for (const [index, headers] of requests.entries()) {
       const response = await fetch(`${endpoint}/v1/responses`, {
         method: "POST",
         headers,
         body: "not-json",
       });
-      expect(response.status).toBe(400);
+      expect(response.status).toBe(index === 0 ? 400 : 403);
     }
   });
 });

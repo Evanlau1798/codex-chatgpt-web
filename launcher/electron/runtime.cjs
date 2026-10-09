@@ -103,6 +103,8 @@ class RuntimeHost {
     this.lifecycleOperation = null;
     this.cleanupEphemeralSecrets();
     this.passkeyContinuationRequested = false;
+    this.passkeyPhase = null;
+    this.passkeyProgress = null;
     try {
       this.cleanupPasskeyTransfers();
     } catch (error) {
@@ -295,7 +297,9 @@ class RuntimeHost {
         };
         collect(child.stdout, stdout, (line) => {
           this.logger.info("runtime.stdout", { operation: name, line });
-          this.publishOperation?.({ name, status: "running", message: redactText(line) });
+          if (options.onStdoutLine?.(line) !== true) {
+            this.publishOperation?.({ name, status: "running", message: redactText(line) });
+          }
         }, recordPipeError("stdout"));
         collect(child.stderr, stderr, (line) => {
           this.logger.warn("runtime.stderr", { operation: name, line });
@@ -412,6 +416,10 @@ class RuntimeHost {
   restoreBridgeRouteWithinOperation(...args) { return integrationOperations.restoreBridgeRouteWithinOperation.apply(this, args); }
 
   restoreBridgeRoute(...args) { return integrationOperations.restoreBridgeRoute.apply(this, args); }
+
+  connectBridgeRoute(...args) {
+    return this.serializeRuntimeLifecycle(() => integrationOperations.connectBridgeRoute.apply(this, args));
+  }
 
   setBridgeEnabled(...args) {
     return this.serializeRuntimeLifecycle(() => integrationOperations.setBridgeEnabled.apply(this, args));

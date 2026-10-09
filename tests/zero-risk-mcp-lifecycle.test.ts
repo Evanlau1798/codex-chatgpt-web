@@ -339,9 +339,12 @@ describe("Zero Risk public MCP ABI", () => {
       expect(inventoryRequest).toMatchObject({ wireName: "exec", freeform: true });
       expect(inventoryRequest?.input).toContain("ALL_TOOLS");
       expect(inventoryRequest?.input).toContain("codex_turn_complete");
-      broker.completeTool(requestId, inventoryRequest!.callId, {
-        content: [{ type: "text", text: JSON.stringify({ tools: [], total: 0 }) }],
+      const content: Array<{ type: "text"; text: string }> = [];
+      const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+      await new AsyncFunction("ALL_TOOLS", "text", inventoryRequest!.input!)([], (value: string) => {
+        content.push({ type: "text", text: `Script completed\nOutput:\n${value}` });
       });
+      broker.completeTool(requestId, inventoryRequest!.callId, { content });
       const inventory = await inventoryAfterStart;
       expect(inventory.structuredContent).toMatchObject({
         total: 2,

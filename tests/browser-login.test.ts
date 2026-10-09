@@ -74,11 +74,14 @@ test("passkey login authenticates in normal Chrome before isolated offline pipe 
     config.storageStatePath = join(root, "transfer", "storage-state.json");
     let continueLogin!: () => void;
     const continuation = new Promise<void>(resolve => { continueLogin = resolve; });
-    const capture = captureSystemBrowserLogin(config, { continuation, timeoutMs: 5_000 });
+    let browserReady = false;
+    const capture = captureSystemBrowserLogin(config, { continuation, timeoutMs: 5_000,
+      onBrowserReady: () => { browserReady = true; } });
     for (let attempt = 0; attempt < 100 && !existsSync(pidLog); attempt += 1) {
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     expect(existsSync(pidLog)).toBe(true);
+    expect(browserReady).toBe(true);
     continueLogin();
     const error = await capture.then(() => undefined, caught => caught as Error);
     expect(error).toBeInstanceOf(Error);

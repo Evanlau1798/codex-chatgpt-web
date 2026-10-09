@@ -2219,7 +2219,8 @@ test("observed CLI fresh-conversation changes retire completed tabs once and def
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-fresh-config-"));
   const descriptorPath = path.join(root, "launcher.json");
   const configPath = path.join(root, "config.json");
-  const state = { experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false, biggerContextAvailable: true };
+  const state = { experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false,
+    biggerContextAvailable: true, experimentalBiggerContext: false };
   const key = "a".repeat(64);
   const old = { id: "old", traceId: "old-trace", status: "ready", interactionMode: "automatic", conversationKey: key,
     connectorIdentity: "Codex Native2", connectorBound: true };

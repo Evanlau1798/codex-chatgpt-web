@@ -144,6 +144,37 @@ describe("native /models augmentation", () => {
     }
   });
 
+  test("publishes measured GPT-6 context by account and effort while preserving GPT-5.6 and Pro budgets", () => {
+    for (const proAvailable of [false, true]) {
+      const config = {
+        ...defaultConfig("full"), proAvailable, extraHighAvailable: proAvailable,
+        experimentalBiggerContext: true,
+        useEnhancedWebSessionMode: false,
+      };
+      const models = augmentNativeModelCatalog(source(), config).models as Array<Record<string, unknown>>;
+      for (const [suffix, window, compact] of [
+        ["sol-instant", proAvailable ? 111_193 : 41_000, proAvailable ? 95_000 : 32_000],
+        ["sol", proAvailable ? 111_193 : 90_000, proAvailable ? 95_000 : 80_000],
+      ] as const) {
+        const six = models.find(model => model.slug === `chatgpt-web/gpt-6-${suffix}`)!;
+        const expanded = proAvailable && suffix === "sol";
+        expect(six).toMatchObject({ context_window: expanded ? 240_000 : window,
+          max_context_window: expanded ? 240_000 : window, auto_compact_token_limit: expanded ? 220_000 : compact });
+        expect(six.description).toContain("standard context");
+        expect(models.find(model => model.slug === `chatgpt-web/gpt-5.6-${suffix}`)).toMatchObject({
+          context_window: window * 3, auto_compact_token_limit: compact * 3,
+        });
+      }
+      if (proAvailable) {
+        for (const family of ["5.6", "6"]) {
+          expect(models.find(model => model.slug === `chatgpt-web/gpt-${family}-pro`)).toMatchObject({
+            context_window: 336_579, auto_compact_token_limit: 285_000,
+          });
+        }
+      }
+    }
+  });
+
   test("keeps native Sol selectable in the bounded Compatibility V1 registry", () => {
     const config = defaultConfig("full");
     config.subagentProtocol = "compatibility-v1";
@@ -160,8 +191,10 @@ describe("native /models augmentation", () => {
       .map(model => model.slug);
     expect(spawnOverrides).toEqual([
       "gpt-5.6-sol",
-      ...CHATGPT_WEB_MODEL_ROUTES.slice(1).map(route => route.slug),
-      "chatgpt-web/gpt-5.6-sol-instant",
+      "chatgpt-web/gpt-6-sol",
+      "chatgpt-web/gpt-5.6-sol",
+      "chatgpt-web/gpt-5.6-pro",
+      "chatgpt-web/gpt-6-pro",
     ]);
     expect(models.find(model => model.slug === "chatgpt-web/light")?.priority).toBe(3);
   });
@@ -236,6 +269,7 @@ describe("native /models augmentation", () => {
     const models = second.models as Array<Record<string, unknown>>;
     const web = models.filter(model => String(model.slug).startsWith("chatgpt-web/"));
     expect(web.map(model => model.slug)).toEqual([
+      "chatgpt-web/gpt-6-sol-instant", "chatgpt-web/gpt-6-sol",
       "chatgpt-web/gpt-5.6-sol-instant", "chatgpt-web/gpt-5.6-sol",
       "chatgpt-web/light", "chatgpt-web/medium", "chatgpt-web/high", "chatgpt-web/extra-high",
     ]);
@@ -247,6 +281,8 @@ describe("native /models augmentation", () => {
       effectiveContextWindowPercent: model.effective_context_window_percent,
       autoCompactTokenLimit: model.auto_compact_token_limit,
     }))).toEqual([
+      { contextWindow: 41_000, effectiveContextWindowPercent: 78, autoCompactTokenLimit: 32_000 },
+      { contextWindow: 90_000, effectiveContextWindowPercent: 89, autoCompactTokenLimit: 80_000 },
       { contextWindow: 41_000, effectiveContextWindowPercent: 78, autoCompactTokenLimit: 32_000 },
       { contextWindow: 90_000, effectiveContextWindowPercent: 89, autoCompactTokenLimit: 80_000 },
       { contextWindow: 41_000, effectiveContextWindowPercent: 78, autoCompactTokenLimit: 32_000 },
@@ -374,7 +410,7 @@ describe("native /models augmentation", () => {
     const result = augmentNativeModelCatalog(native, config);
     const web = (result.models as Array<Record<string, unknown>>)
       .filter(model => String(model.slug).startsWith("chatgpt-web/"));
-    expect(web.length).toBe(5);
+    expect(web.length).toBe(7);
     expect(web.every(model => model.shell_type === "shell_command")).toBe(true);
     expect(web.every(model => model.tool_mode === null)).toBe(true);
     expect(web.every(model => model.use_responses_lite === false)).toBe(true);
@@ -393,7 +429,7 @@ describe("native /models augmentation", () => {
     const web = (result.models as Array<Record<string, unknown>>)
       .filter(model => String(model.slug).startsWith("chatgpt-web/"));
 
-    expect(web).toHaveLength(5);
+    expect(web).toHaveLength(7);
     expect(web.every(model => model.supported_in_api === true)).toBe(true);
     expect((result.models as Array<Record<string, unknown>>).slice(0, models.length))
       .toEqual(models);

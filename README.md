@@ -19,9 +19,9 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **Release: `6.1.5-Enhanced.2`.** Download buttons always open the latest published Enhanced release. [Watch the introduction (MP4)](https://github.com/Evanlau1798/codex-chatgpt-web/releases/download/v6.1.4-Enhanced.1/Codex-Web-GPT-6.1.4-Enhanced.1-en.mp4).
+> **Version: `6.1.7-Enhanced.1`.** Download buttons always open the latest published Enhanced release.
 
-Integrates upstream v6.1.5 while preserving Enhanced sessions, Native2 tools, and Fast startup.
+Integrates upstream v6.1.7 while preserving Enhanced sessions, Native2 tools, and Fast startup.
 
 Supports ChatGPT's renamed GPT-6 picker and all five effort levels. Codex displays GPT-6 and GPT-6 Instant; existing `chatgpt-web/latest` and `chatgpt-web/latest-instant` task IDs remain compatible.
 
@@ -223,8 +223,9 @@ bounded to three complete `@codex` attempts, and a missing connector fails expli
 opening replacement sessions indefinitely.
 
 Bigger Context does not replace compaction and does not change native OpenAI/Codex routing. Disable
-it if you prefer the normal single-message transport; Enhanced session retention, steering, and
-handoff compact remain independent.
+it if you prefer the normal single-message transport. It is available only in Original Automatic
+mode and cannot be enabled together with Enhanced mode. Luna/Think Bigger Context is opt-in and
+experimental: it retains the task conversation and disables rolling checkpoints while enabled.
 
 ### Context controls: what each switch actually changes
 
@@ -273,9 +274,13 @@ The launcher's **MCP** page guides the complete setup. For the exact clicks, see
 >
 > See [Limits](https://github.com/miuuyy/codex-chatgpt-web/discussions/309) for the current
 > ChatGPT message allowances for **GPT-5.6 Sol Pro** and **GPT-6 Astra**. Context limits depend on
-> the account type and selected effort. Plus Medium/High uses a measured 90,000-token window, or
-> up to 270,000 tokens with experimental **3× context** enabled, with native Codex compaction
-> supported throughout.
+> the account type and selected effort. GPT-5.6 Plus Medium/High uses a measured 90,000-token window.
+> GPT-5.6 supports up to 270,000 tokens with experimental **3× context** enabled, with native
+> Codex compaction supported throughout.
+>
+> GPT-6 Sol supports **240,000 tokens** with Bigger Context on Pro at Medium, High and Extra High,
+> with compaction at **220,000**. Instant and other account plans use standard context.
+> GPT-5.6 and GPT-6 Pro keep their existing Bigger Context limits.
 
 1. Finish the required setup, open **MCP**, create the Tunnel and regular API key, then press
    **Connect harness**.

@@ -48,6 +48,7 @@ test("native Chat Completions hands one browser turn's tool result back without 
     const environment = extractChatGptTurnEnvironment(parsed);
     expect(environment.sandboxPolicy.type).toBe("readOnly");
     expect(environment.cwd).toContain("api-client");
+    expect(parsed.context.messages[0]?.content).toContain("<network_access>restricted</network_access>");
     expect(extractChatGptTurnUserRevision(parsed)).toBeDefined();
   }
 });

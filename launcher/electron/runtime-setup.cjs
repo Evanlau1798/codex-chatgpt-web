@@ -19,6 +19,7 @@ async function runSetup(name, args, options) {
   this.lifecycleOperation = name;
   let setupCommandStarted = false;
   let runtimeTransitionStarted = false;
+  let runtimeStartAttempted = false;
   try {
     if (this.launcherProfile === "production") {
       await this.run(name, [...args, "--preflight-only"], {
@@ -33,6 +34,7 @@ async function runSetup(name, args, options) {
     else await this.supervisor.stopForSetup(name === "browser-interaction-mode" ? { browserOnly: true } : undefined);
     setupCommandStarted = true;
     const result = await this.run(name, args, options);
+    runtimeStartAttempted = true;
     const runtime = await this.supervisor.startIfConfigured();
     if (runtime.status !== "ready") {
       throw new Error(`Setup completed, but the launcher-owned runtime is ${runtime.status}: ${runtime.detail || "not ready"}`);
@@ -44,6 +46,7 @@ async function runSetup(name, args, options) {
     const failures = [];
     let rolledBack = false;
     let checkpointChanged = false;
+    let checkpointRestored = false;
     if (!previousRuntime.configured && setupCommandStarted) {
       try {
         rolledBack = await this.rollbackFirstSetup(checkpoint);
@@ -63,14 +66,20 @@ async function runSetup(name, args, options) {
         );
       }
       try {
+        if (options.previousRuntimeCompatible === false && runtimeStartAttempted) {
+          await this.supervisor.stopForSetup();
+        }
         this.restoreSetupCheckpoint(checkpoint);
+        checkpointRestored = true;
       } catch (caught) {
         failures.push(caught instanceof Error ? caught.message : String(caught));
       }
     }
     let recoveryError;
     try {
-      if (runtimeTransitionStarted) {
+      if (runtimeTransitionStarted && options.previousRuntimeCompatible === false) {
+        if (checkpointRestored) failures.push("The saved configuration was preserved. Restart the launcher to retry the update.");
+      } else if (runtimeTransitionStarted) {
         await this.restorePreviousRuntime(previousRuntime, name, {
           repairExternal: previousRuntime.owner === "external" && checkpointChanged,
         });
@@ -381,18 +390,17 @@ module.exports = {
       || (existing.config?.releaseVersion === currentVersion && !connectorMigrationRequired && !tunnelProfileMigrationRequired)) {
       return { updated: false };
     }
-    const route = await this.bridgeStatus("runtime-upgrade-route");
     const args = [
       "setup",
       existing.mode === "full" ? "--full" : "--browser-only",
       "--browser-host-descriptor",
       this.browserDescriptorPath,
-      // A release may repair capability detection. Reusing the previous result can
-      // keep eligible models disabled even after the corrected probe is installed.
-      ...this.browserInteractionArgs({ mode: interactionMode, refreshCapabilities: true }),
+      // Account refresh is a separate action; an update preserves the installed model.
+      ...this.browserInteractionArgs({ mode: interactionMode }),
       "--acknowledge-unofficial",
       "--restart-service",
     ];
+    args.push("--preserve-disconnected-route");
     const result = await this.runSetup("runtime-upgrade", args, {
       message: tunnelProfileMigrationRequired
         ? `Separating ${interactionMode === "manual" ? "Zero Risk" : "Automatic"} MCP credentials`
@@ -401,12 +409,11 @@ module.exports = {
         ? `${interactionMode === "manual" ? "Zero Risk" : "Automatic"} MCP profile migrated`
         : `Launcher runtime upgraded to ${currentVersion}`,
       timeoutMs: existing.mode === "full" ? MCP_SETUP_TIMEOUT_MS : CORE_SETUP_TIMEOUT_MS,
+      previousRuntimeCompatible: existing.config.releaseVersion === currentVersion,
     });
-    if (!route.active) await this.setBridgeEnabled(false);
     return {
       updated: true,
       mode: existing.mode,
-      bridgeEnabled: route.active,
       fromVersion: existing.config.releaseVersion,
       toVersion: currentVersion,
       connectorMigrated: connectorMigrationRequired,

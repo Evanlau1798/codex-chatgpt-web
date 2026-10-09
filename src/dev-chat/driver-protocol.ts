@@ -7,7 +7,7 @@ import { estimateChatGptWebInputTokens } from "../adapters/chatgpt-web/usage";
 import { RemoteTurnBroker, type TurnBrokerOwner } from "../adapters/chatgpt-web/turn-broker";
 import {
   CHATGPT_LUNA_BROWSER_INPUT_TOKEN_BUDGET,
-} from "../adapters/chatgpt-web/input-tokens";
+} from "../chatgpt-web-models";
 import {
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
   requireChatGptWebModelRoute,

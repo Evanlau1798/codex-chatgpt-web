@@ -40,6 +40,7 @@ export interface SystemBrowserLoginCapture {
 interface SystemBrowserLoginOptions {
   continuation: Promise<void>;
   timeoutMs?: number;
+  onBrowserReady?: () => void;
 }
 
 interface LoginVerificationMarker {
@@ -280,6 +281,9 @@ export async function captureSystemBrowserLogin(
     try {
       await new Promise<void>((resolve, reject) => {
         timeout = setTimeout(() => reject(new Error("Timed out waiting for passkey sign-in")), remainingTime());
+        loginBrowser.once("spawn", () => {
+          try { options.onBrowserReady?.(); } catch (error) { reject(error); }
+        });
         void options.continuation.then(() => {
           continuationRequested = true;
           if (!loginBrowser.kill() && !browserProcessExited(loginBrowser)) {

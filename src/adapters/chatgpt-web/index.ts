@@ -354,6 +354,10 @@ export function createChatGptWebAdapter(
             // Fresh compaction rebuilds from native history; a committed answer remains replayable.
             await withAbort(previous.physicalSettlement, incoming.abortSignal);
           } else {
+            const sourceConversationKey = chatGptConversationKey(parsed, executionNamespace);
+            if (sourceConversationKey) {
+              await withAbort(chatGptTurnSessions.retireConversationAndWait(sourceConversationKey), incoming.abortSignal);
+            }
             await chatGptTurnSessions.retireAndWait(responseExecutionKey, incoming.abortSignal);
           }
         }
@@ -490,7 +494,7 @@ export function createChatGptWebAdapter(
                   ? resolveChatGptWebContextLimits(
                       CHATGPT_WEB_BACKEND_MODEL,
                       resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, turnCapabilities).effort,
-                      { ...turnCapabilities, experimentalBiggerContext: false }, true,
+                      { ...turnCapabilities, experimentalBiggerContext: false }, true, parsed._chatgptModelFamily,
                     )
                   : undefined;
                 const recoveryInput = recoveryLimits ? enhancedRecoveryCheckpointStore.apply(parsed) : undefined;
@@ -691,6 +695,14 @@ export function createChatGptWebAdapter(
         const failure = awaitingRuntime ? session.settledOutcome() : undefined;
         if (failure?.type === "error") error = failure.error;
         error = submittedStallFailure(session, incoming.abortSignal?.aborted === true, error) ?? error;
+        if (parsed._compactionRequest && !incoming.abortSignal?.aborted) {
+          error = new ChatGptWebAdapterError(error instanceof Error ? error.message : String(error), {
+            status: error instanceof ChatGptWebAdapterError ? error.status : 409,
+            errorType: error instanceof ChatGptWebAdapterError ? error.errorType : "invalid_request_error",
+            code: error instanceof ChatGptWebAdapterError ? error.code : "compaction_handoff_failed",
+            retryable: false, cause: error,
+          });
+        }
         const handledError = error instanceof ChatGptWebAdapterError && error.retryable
           ? chatGptWebTurnRetryPolicy.recordRetryableFailure(retryKey, error)
           : error;

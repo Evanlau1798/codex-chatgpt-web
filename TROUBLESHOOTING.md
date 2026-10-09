@@ -69,6 +69,26 @@ If the models still do not appear:
 A green step 3 followed by a browser-turn error means installation succeeded. Repeating step 3 will
 not repair an unrelated ChatGPT browser or model-turn failure.
 
+### Windows: Cannot bind the local port (EACCES)
+
+`Cannot bind 127.0.0.1:17841: listen EACCES: permission denied` means Windows refused access to
+the port. Possible causes include a reserved port range, another service holding the address
+exclusively, or security software. The error alone does not identify the cause.
+
+Check reserved ranges and listeners in PowerShell:
+
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp
+Get-NetTCPConnection -LocalPort 17841 -ErrorAction SilentlyContinue | Select-Object LocalAddress, State, OwningProcess
+```
+
+If 17841 falls inside a listed range, include that range in your report. Hyper-V, WSL, Docker and
+Windows Sandbox can manage such reservations. If a listener appears, its OwningProcess identifies
+the process to investigate. If neither check explains it, include both outputs and an
+**Activity → Export safe log**. Reinstalling the launcher does not resolve an operating-system
+reservation or another service's exclusive binding. Do not stop networking services or change
+port reservations based only on the EACCES message.
+
 ## `openai_base_url changed after setup` or a model is "not supported"
 
 The launcher deliberately refuses to overwrite a route changed by another tool. Only one program
@@ -150,6 +170,12 @@ window does not automatically transfer that session.
 - Chrome must be installed at the configured path for the passkey option to appear. If Chrome is
   unavailable, the launcher intentionally stays with embedded sign-in rather than pretending that
   an external login was imported.
+- If the account offers **Try another way**, an alternate authentication method can avoid a
+  platform-passkey limitation.
+- On macOS, choose **Use passkey** to open a separate Chrome window. Sign in to ChatGPT there
+  using your passkey. Once ChatGPT opens, return to the launcher and choose **I’m signed in — continue**.
+  Keep that Chrome window open until you continue; the launcher closes it and verifies the imported
+  session. Your usual Chrome profile is not used. Google Chrome must be installed.
 
 If an ordinary login still fails, export a safe log immediately after one attempt. Include the OS,
 launcher version, account tier, sign-in provider, and whether the Temporary Chat composer ever
@@ -170,8 +196,9 @@ mean that the ChatGPT UI did not expose a structure the bridge can safely prove.
 
 Free and Go accounts normally expose Luna and Think without the paid-account effort selector. A
 missing paid selector on those accounts is not itself a sign-in failure.
-Keep **Settings → Bigger Context** off when using Luna or Think. If you enabled it on an older
-version and tasks fail before anything is sent to ChatGPT, turn it off and restart Codex.
+Luna and Think use rolling summaries with **Settings → Bigger Context** off. Experimental Bigger
+Context keeps the temporary conversation and sends large histories in parts. If earlier details
+are lost in long Free-account chats, turn Bigger Context off and restart Codex.
 
 ## Personalization or connector controls are not found
 

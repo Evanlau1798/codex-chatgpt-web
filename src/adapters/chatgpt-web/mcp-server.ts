@@ -1,4 +1,5 @@
 import { McpServer, type RegisteredTool } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { randomBytes } from "node:crypto";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import * as z from "zod/v4";
 import { namespacedToolName, type CodexTool } from "../../types";
@@ -461,12 +462,13 @@ export async function runChatGptMcpServer(options: {
           ...(discoveryTools.length > 0 ? { discovery_tools: discoveryTools } : {}),
         });
         const excludedNames = bound.tools.map(wireName);
+        const marker = `codex-tool-catalog:${randomBytes(16).toString("hex")}:`;
         const nestedOffset = Math.max(0, offset - matches.length);
         const nestedLimit = Math.max(0, limit - directPage.length);
         return invoke(claimed.bindingId, bound, gateway, {
-          input: gatewayToolCatalogProgram({ query, offset: nestedOffset, limit: nestedLimit, excludedNames }),
+          input: gatewayToolCatalogProgram({ query, offset: nestedOffset, limit: nestedLimit, excludedNames, marker }),
         }, extra.signal).then(response => {
-          const catalog = gatewayToolCatalogPage(response, new Set(excludedNames));
+          const catalog = gatewayToolCatalogPage(response, new Set(excludedNames), marker);
           const nestedPage = catalog.tools.map(tool => ({
             wire_name: tool.name, name: tool.name, namespace: null,
             description: gatewayToolDescription(tool, contract === "native"), kind: "gateway",

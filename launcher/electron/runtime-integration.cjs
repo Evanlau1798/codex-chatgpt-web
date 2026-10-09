@@ -30,6 +30,42 @@ function parseBridgeRouteResult(stdout, { expectedActive, requireInstalled = fal
 }
 
 module.exports = {
+  async connectBridgeRoute({ recoveryOnly = false } = {}) {
+    this.assertProductionProfile("Codex bridge routing");
+    const name = "bridge-connect";
+    if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);
+    this.lifecycleOperation = name;
+    try {
+      const current = await this.bridgeStatus(name);
+      if (!current.installed) throw new Error("Install the Codex integration before connecting the bridge route");
+      if (current.active || (recoveryOnly && current.reconnectOnStartup !== true)) return current;
+      try {
+        const connected = await this.run(name, ["route", recoveryOnly ? "recover" : "connect"], {
+          embedded: true,
+          message: "Connecting Codex to the launcher",
+          successMessage: "Codex bridge connected",
+          timeoutMs: 15_000,
+        });
+        const result = parseBridgeRouteResult(connected.stdout, recoveryOnly ? {} : { expectedActive: true });
+        const verified = await this.bridgeStatus(name);
+        if (!verified.installed || verified.active !== result.active) {
+          throw new Error("Codex bridge route connection did not persist in the active config");
+        }
+        return result;
+      } catch (error) {
+        let cleanupError;
+        try { await this.supervisor.stopForSetup(); } catch (caught) { cleanupError = caught; }
+        if (!cleanupError) throw error;
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)}; stopping the unrouted runtime also failed:`
+          + ` ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        );
+      }
+    } finally {
+      this.lifecycleOperation = null;
+    }
+  },
+
   async doctor() {
     this.assertProductionProfile("Runtime doctor");
     try {
@@ -122,8 +158,10 @@ module.exports = {
 
   async restoreBridgeRouteWithinOperation(operationName) {
     const current = await this.bridgeStatus(operationName);
-    if (!current.installed || !current.active) return current;
-    const disconnected = await this.run(operationName, ["route", "disconnect"], {
+    const forRuntimeRecovery = operationName === "runtime-start-fail-safe";
+    if (!current.installed || (!current.active && (forRuntimeRecovery || !current.reconnectOnStartup))) return current;
+    const disconnected = await this.run(operationName, ["route", "disconnect",
+      ...(forRuntimeRecovery ? ["--for-runtime-recovery"] : [])], {
       embedded: true,
       message: "Restoring the previous Codex route",
       successMessage: "Previous Codex route restored",
@@ -131,7 +169,7 @@ module.exports = {
     });
     const result = parseBridgeRouteResult(disconnected.stdout, { expectedActive: false });
     const verified = await this.bridgeStatus(operationName);
-    if (!verified.installed || verified.active) {
+    if (!verified.installed || verified.active || (!forRuntimeRecovery && verified.reconnectOnStartup)) {
       throw new Error("Codex bridge route restore did not persist in the active config");
     }
     return {
