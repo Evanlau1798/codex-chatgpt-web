@@ -26,11 +26,21 @@ test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("finishing another Electron tab
       await app.evaluate((_, zoom) => {
         const host = (globalThis as any).viewportFixture;
         host.turnTabs.get("first").view.webContents.setZoomFactor(zoom);
-        host.selectedTabId = "home";
+        host.selectedTabId = "first";
         host.syncViewVisibility();
       }, zoom);
-      await page.waitForFunction(() => performance.now() - (window as any).lastResizeAt >= 200,
-        undefined, { polling: 50, timeout: 5_000 });
+      // Hydrate the fixture's first visible frame before testing a subsequent tab transition.
+      await page.evaluate(() => new Promise<void>(resolve =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+      await app.evaluate(() => {
+        const host = (globalThis as any).viewportFixture;
+        host.selectedTabId = "home";
+        host.syncViewVisibility();
+      });
+      await page.waitForFunction(zoom => {
+        return innerWidth === Math.round(840 / zoom) && innerHeight === Math.round(656 / zoom)
+          && performance.now() - (window as any).lastResizeAt >= 200;
+      }, zoom, { polling: 50, timeout: 5_000 });
       const before = await dimensions();
       const resizeCount = await page.evaluate(() => (window as any).resizes.length);
       // Open the synthetic menu without relying on Windows hit-testing outside the native window.
@@ -62,6 +72,42 @@ test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("finishing another Electron tab
         expect(await page.getByRole("menu").isVisible()).toBe(true);
       }
     }
+  } finally {
+    await app.close();
+    rmSync(userData, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("finishing work leaves a fresh preparing standby picker offscreen", async () => {
+  const userData = mkdtempSync(join(tmpdir(), "launcher-standby-viewport-"));
+  const env = Object.fromEntries(Object.entries(process.env)
+    .filter(([key, value]) => key !== "ELECTRON_RUN_AS_NODE" && value !== undefined)) as Record<string, string>;
+  const app = await _electron.launch({
+    executablePath: process.env.LAUNCHER_TEST_ELECTRON,
+    args: [resolve("launcher/tests/fixtures/viewport.cjs"), `--user-data-dir=${userData}`], env,
+  });
+  try {
+    const deadline = Date.now() + 5_000;
+    while (!await app.evaluate(() => Boolean((globalThis as any).viewportFixture)) && Date.now() < deadline) {
+      await Bun.sleep(20);
+    }
+    expect(await app.evaluate(() => Boolean((globalThis as any).viewportFixture))).toBe(true);
+    const page = app.context().pages().find(page => page.url().endsWith("#first"))!;
+    await app.evaluate(() => {
+      const tab = (globalThis as any).viewportFixture.turnTabs.get("first");
+      tab.startupPreparation = true;
+      tab.startupReady = false;
+    });
+    await page.getByRole("button", { name: "Models", exact: true }).dispatchEvent("click");
+    const before = await page.evaluate(() => ({ dimensions: [innerWidth, innerHeight], resizes: (window as any).resizes.length }));
+    await app.evaluate(() => {
+      const host = (globalThis as any).viewportFixture;
+      host.removeTurnTab(host.turnTabs.get("second"), false);
+    });
+    expect(await app.evaluate(() => (globalThis as any).viewportFixture.selectedTabId)).toBe("home");
+    await page.waitForTimeout(200);
+    expect(await page.evaluate(() => ({ dimensions: [innerWidth, innerHeight], resizes: (window as any).resizes.length }))).toEqual(before);
+    expect(await page.getByRole("menu").isVisible()).toBe(true);
   } finally {
     await app.close();
     rmSync(userData, { recursive: true, force: true });

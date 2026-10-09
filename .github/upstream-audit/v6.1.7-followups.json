@@ -28,5 +28,11 @@
     "baselineSha256": "a809d1640526a0a2ee3063c130797a06242245da8a7bc3f272d39c64ce50b456",
     "currentSha256": "eee01db522d1a488fefdb2a9cab40c6188cbe3680c1602268319928a5c28e9c1",
     "reason": "Reviewer P2 follow-up verifies an explicitly changed existing DEV model survives store reload/reopen with history intact, and rejected route changes leave persisted state untouched. Restores upstream persistence at the fork shared open() owner."
+  },
+  {
+    "path": "tests/launcher-viewport-browser.test.ts",
+    "baselineSha256": "83d09148680cb3d2e16bf5a22e6ea213c97957573df7f083d5a96256f50f4211",
+    "currentSha256": "0120fa143a2e4a62d81aeee1cc9cd576169c2f8f0ac129d437ce6743587a5954",
+    "reason": "Hydrate the ordinary picker-preservation fixture before subsequent transitions, and add a real Electron fresh preparing-standby regression: closing selected work keeps the standby offscreen with unchanged viewport/resize count and an open picker. Shared removeTurnTab excludes unfinished standby from automatic selection; ready standby remains selectable."
   }
 ]

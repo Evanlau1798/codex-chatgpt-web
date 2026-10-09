@@ -1622,7 +1622,10 @@ class BrowserHost {
     try { this.window.contentView.removeChildView(tab.view); } catch {}
     if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     if (this.selectedTabId === tab.id) {
-      this.selectedTabId = [...this.turnTabs.keys()].at(-1) || "home";
+      // A preparing standby may have an open picker on its never-presented renderer.
+      this.selectedTabId = [...this.turnTabs.values()]
+        .filter(candidate => candidate.startupPreparation !== true || candidate.startupReady === true)
+        .at(-1)?.id || "home";
       const homeContents = this.view?.webContents;
       if (this.selectedTabId === "home"
         && !this.activeTraceId
