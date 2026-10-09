@@ -1,0 +1,6 @@
+.opencodex-surface { display:flex; flex-direction:column; height:100%; min-height:0; padding-top:var(--height-titlebar); }
+.opencodex-toolbar { display:flex; align-items:center; justify-content:space-between; min-height:58px; padding:8px 18px; border-bottom:1px solid var(--color-border-light); }
+.opencodex-toolbar > div { display:flex; align-items:baseline; flex-wrap:wrap; gap:12px; }
+.opencodex-toolbar span, .opencodex-slot p { color:var(--color-text-secondary); font-size:var(--text-sm); }
+.opencodex-slot { flex:1; min-height:0; }
+.opencodex-slot p { padding:20px; }
