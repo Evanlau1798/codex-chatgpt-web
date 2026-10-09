@@ -1,6 +1,17 @@
 const { app, BrowserWindow, WebContentsView } = require("electron");
 const { BrowserHost } = require("../../electron/browser-host.cjs");
 
+// Playwright's Windows shell may survive its test owner, so watch the owner itself.
+const ownerPid = Number(process.env.VIEWPORT_TEST_OWNER_PID || process.ppid);
+if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0) throw new Error("Invalid viewport test owner");
+setInterval(() => {
+  try { process.kill(ownerPid, 0); }
+  catch (error) {
+    if (error.code === "ESRCH") app.exit(0);
+    else if (error.code !== "EPERM") throw error;
+  }
+}, 250).unref();
+
 app.whenReady().then(async () => {
   const window = new BrowserWindow({ width: 1120, height: 760, show: false });
   await window.loadURL("about:blank");

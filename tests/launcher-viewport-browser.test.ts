@@ -8,6 +8,7 @@ test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("finishing another Electron tab
   const userData = mkdtempSync(join(tmpdir(), "launcher-viewport-"));
   const env = Object.fromEntries(Object.entries(process.env)
     .filter(([key, value]) => key !== "ELECTRON_RUN_AS_NODE" && value !== undefined)) as Record<string, string>;
+  env.VIEWPORT_TEST_OWNER_PID = String(process.pid);
   const app = await _electron.launch({
     executablePath: process.env.LAUNCHER_TEST_ELECTRON,
     args: [resolve("launcher/tests/fixtures/viewport.cjs"), `--user-data-dir=${userData}`], env,
@@ -82,6 +83,7 @@ test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("finishing work leaves a fresh 
   const userData = mkdtempSync(join(tmpdir(), "launcher-standby-viewport-"));
   const env = Object.fromEntries(Object.entries(process.env)
     .filter(([key, value]) => key !== "ELECTRON_RUN_AS_NODE" && value !== undefined)) as Record<string, string>;
+  env.VIEWPORT_TEST_OWNER_PID = String(process.pid);
   const app = await _electron.launch({
     executablePath: process.env.LAUNCHER_TEST_ELECTRON,
     args: [resolve("launcher/tests/fixtures/viewport.cjs"), `--user-data-dir=${userData}`], env,
