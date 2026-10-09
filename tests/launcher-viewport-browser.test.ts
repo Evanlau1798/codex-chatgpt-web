@@ -98,6 +98,11 @@ test.skipIf(!process.env.LAUNCHER_TEST_ELECTRON)("finishing work leaves a fresh 
       tab.startupPreparation = true;
       tab.startupReady = false;
     });
+    // Settle initial emulation without ever presenting the fresh standby.
+    await page.waitForFunction(() => (window as any).resizes.length > 0
+      && innerWidth === 840 && innerHeight === 656
+      && performance.now() - (window as any).lastResizeAt >= 200,
+    undefined, { polling: 50, timeout: 5_000 });
     await page.getByRole("button", { name: "Models", exact: true }).dispatchEvent("click");
     const before = await page.evaluate(() => ({ dimensions: [innerWidth, innerHeight], resizes: (window as any).resizes.length }));
     await app.evaluate(() => {

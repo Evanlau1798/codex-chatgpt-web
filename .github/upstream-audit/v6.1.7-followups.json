@@ -32,8 +32,8 @@
   {
     "path": "tests/launcher-viewport-browser.test.ts",
     "baselineSha256": "83d09148680cb3d2e16bf5a22e6ea213c97957573df7f083d5a96256f50f4211",
-    "currentSha256": "0120fa143a2e4a62d81aeee1cc9cd576169c2f8f0ac129d437ce6743587a5954",
-    "reason": "Hydrate the ordinary picker-preservation fixture before subsequent transitions, and add a real Electron fresh preparing-standby regression: closing selected work keeps the standby offscreen with unchanged viewport/resize count and an open picker. Shared removeTurnTab excludes unfinished standby from automatic selection; ready standby remains selectable."
+    "currentSha256": "e1db0813770a4a7927e1d606d0f0dbcd3b88be043b3f27a1ea3e060c36bd2f85",
+    "reason": "Hydrate the ordinary picker-preservation fixture before subsequent transitions. The real Electron never-presented preparing standby case waits for the initial native emulation resize receipt and quiet viewport before opening its picker, then closing selected work must keep it offscreen with unchanged viewport/resize count and open picker. Shared removeTurnTab excludes unfinished standby from automatic selection; ready standby remains selectable. All transition assertions remain unchanged."
   },
   {
     "path": "tests/turn-broker-lifecycle.test.ts",
