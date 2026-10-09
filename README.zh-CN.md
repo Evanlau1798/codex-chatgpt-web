@@ -19,7 +19,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **源码候选版本：`6.1.7-Enhanced.1`；已发布版本：`6.1.5-Enhanced.2`。** 下载按钮会始终打开最新发布的 Enhanced 版本。
+> **版本：`6.1.7-Enhanced.1`。** 下载按钮会始终打开最新发布的 Enhanced 版本。
 
 已整合上游 v6.1.7，保留 Enhanced 会话、Native2 工具与快速启动。
 

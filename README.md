@@ -19,7 +19,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **Source candidate: `6.1.7-Enhanced.1`; published release: `6.1.5-Enhanced.2`.** Download buttons always open the latest published Enhanced release.
+> **Version: `6.1.7-Enhanced.1`.** Download buttons always open the latest published Enhanced release.
 
 Integrates upstream v6.1.7 while preserving Enhanced sessions, Native2 tools, and Fast startup.
 

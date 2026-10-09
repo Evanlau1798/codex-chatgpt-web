@@ -16,7 +16,7 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **소스 후보: `6.1.7-Enhanced.1`; 공개 릴리스: `6.1.5-Enhanced.2`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다.
+> **버전: `6.1.7-Enhanced.1`.** 다운로드 버튼은 항상 최신 공개 Enhanced 릴리스를 엽니다.
 
 upstream v6.1.7을 통합하면서 Enhanced 세션, Native2 도구 및 Fast startup을 유지합니다.
 
