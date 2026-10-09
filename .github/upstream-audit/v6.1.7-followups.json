@@ -34,5 +34,11 @@
     "baselineSha256": "83d09148680cb3d2e16bf5a22e6ea213c97957573df7f083d5a96256f50f4211",
     "currentSha256": "0120fa143a2e4a62d81aeee1cc9cd576169c2f8f0ac129d437ce6743587a5954",
     "reason": "Hydrate the ordinary picker-preservation fixture before subsequent transitions, and add a real Electron fresh preparing-standby regression: closing selected work keeps the standby offscreen with unchanged viewport/resize count and an open picker. Shared removeTurnTab excludes unfinished standby from automatic selection; ready standby remains selectable."
+  },
+  {
+    "path": "tests/turn-broker-lifecycle.test.ts",
+    "baselineSha256": "814d7b9c1db217e041573fba2de9a1b789fbfd9a2bbe00678664146eb760ebb0",
+    "currentSha256": "d2e167dd8ad60ddba36648ba11d1a870c2fe14e22c471d268ce7528c7da3a989",
+    "reason": "Hosted Linux x64/ARM64 and macOS RED showed the busy-startup fixture listening before its Unix socket parent existed. Create the endpoint parent with mode0700 before occupying it; Windows named pipes and all listen-failure/recovery assertions remain unchanged."
   }
 ]

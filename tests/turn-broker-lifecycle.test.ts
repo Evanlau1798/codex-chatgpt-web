@@ -39,6 +39,7 @@ test("a broker whose endpoint was busy at startup recovers once it is released",
   const previousOwner = createServer(socket => socket.destroy());
   const broker = TurnBroker.forSocket(endpoint);
   try {
+    if (!isWindowsPipeEndpoint(endpoint)) mkdirSync(dirname(endpoint), { recursive: true, mode: 0o700 });
     await new Promise<void>(resolve => previousOwner.listen(endpoint, resolve));
     if (process.platform !== "win32") chmodSync(endpoint, 0o600);
     // The daemon only logs this startup failure and keeps serving; later turns must not inherit it.

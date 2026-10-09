@@ -201,9 +201,27 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7"])("continuing %s evidence closes source 
     expect(next.tag.object).toBe("bd6a3021d911cfd6e7dbe2b45b117b5cb365c5c7");
   }
   const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
+  const publishedObjects = release === "v6.1.7"
+    ? new Set(git(["rev-list", "--objects", "HEAD"]).split(/\r?\n/).map(line => line.split(" ")[0])) : undefined;
+  const retainedTargets = new Map<string, Buffer>();
+  if (next.evidence.targetBlobs) {
+    const retained = next.evidence.targetBlobs;
+    expect(retained.path).toBe(`.github/upstream-audit/evidence/${retained.sha256}.tar.gz`);
+    const bytes = readFileSync(resolve(root, retained.path));
+    expect(digest(bytes)).toBe(retained.sha256);
+    expect(bytes.length).toBe(retained.bytes);
+    for (const [oid, data] of tarEntries(bytes)) {
+      expect(oid).toMatch(/^[a-f0-9]{40}$/);
+      expect(createHash("sha1").update(`blob ${data.length}\0`).update(data).digest("hex")).toBe(oid);
+      retainedTargets.set(oid, data);
+    }
+    expect([...retainedTargets.keys()].sort()).toEqual([...retained.objects].sort());
+  }
   const blob = (oid: string) => {
+    const retained = retainedTargets.get(oid);
+    if (retained) return retained;
     const result = spawnSync("git", ["cat-file", "blob", oid], { cwd: root });
-    expect(result.status).toBe(0);
+    expect(result.status, result.stderr.toString("utf8")).toBe(0);
     return result.stdout;
   };
   const textDigest = (text: string) => digest(Buffer.from(text.replaceAll("\r\n", "\n")));
@@ -259,6 +277,7 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7"])("continuing %s evidence closes source 
     expect(textDigest(source.split("\n").slice(item.source.start - 1, item.source.end).join("\n")), item.id).toBe(item.source.lineSha256);
     expect(item.targets.length, item.id).toBeGreaterThan(0);
     for (const target of item.targets) {
+      if (publishedObjects) expect(publishedObjects.has(target.blob) || retainedTargets.has(target.blob), target.path).toBeTrue();
       const text = blob(target.blob).toString("utf8").replaceAll("\r\n", "\n");
       expect(textDigest(text.split("\n").slice(target.start - 1, target.end).join("\n")), target.path).toBe(target.lineSha256);
       if (JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version.startsWith(`${release.slice(1)}-`)) {
