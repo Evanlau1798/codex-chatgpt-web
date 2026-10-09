@@ -108,11 +108,14 @@ test("an existing DEV chat changes route only when the user explicitly requests 
   expect(() => manual.open("switchable")).toThrow(
     "not available while Zero Risk is enabled",
   );
+  expect(store.load("switchable")).toMatchObject(original);
   const migrated = manual.open("switchable", "chatgpt-web/zero-risk").state;
   expect(migrated).toMatchObject({
     model: "chatgpt-web/zero-risk",
     input: [{ type: "message", role: "user", content: "preserve me" }],
   });
+  expect(store.load("switchable")).toMatchObject(migrated);
+  expect(manual.open("switchable").state).toMatchObject(migrated);
 });
 
 test("Bigger Context exposes bounded full-history windows for Sol and Luna", async () => {

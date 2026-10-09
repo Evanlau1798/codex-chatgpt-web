@@ -77,7 +77,7 @@ export class DevChatDriver {
       throw new Error(`DEV chat ${JSON.stringify(name)} belongs to ${opened.state.cwd}; use another name for ${this.cwd}`);
     }
     requireChatGptWebModelRoute(opened.state.model, this.config);
-    if (opened.created) this.store.save(opened.state);
+    if (opened.created || modelChanged) this.store.save(opened.state);
     return opened;
   }
 

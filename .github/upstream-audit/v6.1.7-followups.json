@@ -22,5 +22,11 @@
     "baselineSha256": "7ea3774046ed6f3b682f24c466a92309101eac06f2b86185f6804dc83d555e97",
     "currentSha256": "335ea2c645d9a7e0193ae3f7852df9ae3629c280b7da4af65fed68dc2c41e7ad",
     "reason": "Extend production and DEV offline-upgrade assertions to preserve the complete saved modelCapabilities object; explicit refresh still requires live account evidence."
+  },
+  {
+    "path": "tests/dev-chat.test.ts",
+    "baselineSha256": "a809d1640526a0a2ee3063c130797a06242245da8a7bc3f272d39c64ce50b456",
+    "currentSha256": "eee01db522d1a488fefdb2a9cab40c6188cbe3680c1602268319928a5c28e9c1",
+    "reason": "Reviewer P2 follow-up verifies an explicitly changed existing DEV model survives store reload/reopen with history intact, and rejected route changes leave persisted state untouched. Restores upstream persistence at the fork shared open() owner."
   }
 ]
