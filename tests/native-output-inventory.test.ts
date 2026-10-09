@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { TurnBroker, callTurnBroker } from '../src/adapters/chatgpt-web/turn-broker';
 import {
+  armConnectorContractProbeFallback,
+  discardConnectorContractProbeFallback,
   consumeConnectorContractProbeEvidence,
   discardConnectorContractProbeEvidence,
   NATIVE2_CONTRACT_REVISION,
@@ -78,5 +80,49 @@ test('real MCP recovery inventory describes final output without reopening work 
     await expect(callTurnBroker(socket, { method: 'read_output_control', token })).rejects.toThrow('unavailable');
   } finally {
     await client.close().catch(() => {}); broker.revoke(token); broker.revoke(disabled); await broker.close();
+  }
+}, 10_000);
+
+test('Native2 inventory fallback records evidence only for an armed turn token', async () => {
+  const socket = join(tmpdir(), `cgw-contract-fallback-${process.pid}-${Date.now()}.sock`);
+  const broker = TurnBroker.forSocket(socket);
+  const environment = { cwd: process.cwd(), roots: [process.cwd()], writableRoots: [],
+    sandboxPolicy: { type: 'readOnly' as const, networkAccess: false }, tools: [] };
+  const token = await broker.register(environment);
+  const unarmed = await broker.register(environment);
+  const nonce = '66666666666666666666666666666666';
+  const client = new Client({ name: 'contract-fallback-integration', version: '1' });
+  try {
+    discardConnectorContractProbeEvidence(nonce);
+    armConnectorContractProbeFallback(token, nonce, NATIVE2_CONTRACT_REVISION);
+    await client.connect(new StdioClientTransport({ command: process.execPath,
+      args: ['src/cli.ts', 'mcp', '--broker-socket', socket], cwd: process.cwd(), stderr: 'pipe' }));
+    await client.callTool({ name: 'codex_tool_inventory', arguments: { turn_token: unarmed } });
+    expect(consumeConnectorContractProbeEvidence(nonce, NATIVE2_CONTRACT_REVISION)).toBeFalse();
+    await client.callTool({ name: 'codex_tool_inventory', arguments: { turn_token: token, query: 'ordinary search' } });
+    expect(consumeConnectorContractProbeEvidence(nonce, NATIVE2_CONTRACT_REVISION)).toBeFalse();
+    const fallback = await client.callTool({ name: 'codex_tool_inventory', arguments: {
+      turn_token: token, include_schema: false,
+    } });
+    expect(fallback.structuredContent).toEqual({ tools: [], total: 0, next_offset: null });
+    expect(consumeConnectorContractProbeEvidence(nonce, NATIVE2_CONTRACT_REVISION)).toBeTrue();
+    const escaped = await client.callTool({ name: 'codex_tool_inventory', arguments: {
+      turn_token: token,
+      query: `\\_\\_codex_contract_probe\\_\\_:${NATIVE2_CONTRACT_REVISION}:${nonce}`,
+    } });
+    expect(escaped.isError).not.toBe(true);
+    expect(consumeConnectorContractProbeEvidence(nonce, NATIVE2_CONTRACT_REVISION)).toBeTrue();
+    armConnectorContractProbeFallback(token, nonce, NATIVE2_CONTRACT_REVISION);
+    broker.revoke(token);
+    const retired = await client.callTool({ name: 'codex_tool_inventory', arguments: { turn_token: token } });
+    expect(retired.isError).toBeTrue();
+    expect(consumeConnectorContractProbeEvidence(nonce, NATIVE2_CONTRACT_REVISION)).toBeFalse();
+  } finally {
+    discardConnectorContractProbeFallback(token);
+    discardConnectorContractProbeEvidence(nonce);
+    await client.close().catch(() => {});
+    broker.revoke(token);
+    broker.revoke(unarmed);
+    await broker.close();
   }
 }, 10_000);

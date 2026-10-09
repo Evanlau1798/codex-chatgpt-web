@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,8 +10,13 @@ export const NATIVE2_PUBLIC_CONTRACT_HASH = "28b2ed2e0333df5e23918b820f164dd6001
 export const ZERO_RISK_PUBLIC_CONTRACT_HASH = "0c21b46d44ec5ade78a4059d2ecdb6686fafadafc454d39ec5d595687cf05bd6";
 
 const NONCE_PATTERN = /^[a-f0-9]{32}$/;
-const PROBE_QUERY_PATTERN = /^__codex_contract_probe__:([^:]+):([a-f0-9]{32})$/;
+// The ChatGPT rich-text composer serializes literal underscores as Markdown
+// escapes, which can survive in the tool argument. Accept that exact spelling
+// variation only in the reserved prefix; revision and nonce stay strict.
+const PROBE_QUERY_PATTERN = /^(?:\\?_){2}codex\\?_contract\\?_probe(?:\\?_){2}:([^:]+):([a-f0-9]{32})$/;
 const PROBE_DIR = join(tmpdir(), "codex-chatgpt-web-contract-probes");
+const PROBE_FALLBACK_DIR = join(PROBE_DIR, "fallback");
+const PROBE_FALLBACK_TTL_MS = 120_000;
 
 function assertNonce(nonce: string): void {
   if (!NONCE_PATTERN.test(nonce)) throw new Error("Connector contract probe nonce is invalid");
@@ -20,6 +25,12 @@ function assertNonce(nonce: string): void {
 function evidencePath(nonce: string): string {
   assertNonce(nonce);
   return join(PROBE_DIR, `${nonce}.json`);
+}
+
+function fallbackPath(turnToken: string): string {
+  if (!turnToken.trim()) throw new Error("Connector contract probe turn token is empty");
+  const digest = createHash("sha256").update(turnToken).digest("hex");
+  return join(PROBE_FALLBACK_DIR, `${digest}.json`);
 }
 
 export function connectorContractRevision(contract: ChatGptMcpContract): string {
@@ -62,6 +73,61 @@ export function recordConnectorContractProbeQuery(query: string, contract: ChatG
 export function isConnectorContractProbeQuery(query: string, contract: ChatGptMcpContract): boolean {
   const match = PROBE_QUERY_PATTERN.exec(query.trim());
   return !!match && match[1] === connectorContractRevision(contract);
+}
+
+/**
+ * ChatGPT occasionally dispatches Native2 inventory without the optional
+ * reserved query even though the verification prompt requested it. Arm a
+ * one-turn fallback bound to the broker token so that only that active
+ * verification can produce the same local evidence. The raw token is never
+ * written to disk.
+ */
+export function armConnectorContractProbeFallback(
+  turnToken: string,
+  nonce: string,
+  contractRevision: string,
+): void {
+  assertNonce(nonce);
+  mkdirSync(PROBE_FALLBACK_DIR, { recursive: true });
+  writeFileSync(
+    fallbackPath(turnToken),
+    `${JSON.stringify({ nonce, contractRevision, expiresAt: Date.now() + PROBE_FALLBACK_TTL_MS })}\n`,
+    { encoding: "utf8", flag: "w" },
+  );
+}
+
+export function discardConnectorContractProbeFallback(turnToken: string): void {
+  rmSync(fallbackPath(turnToken), { force: true });
+}
+
+export function recordConnectorContractProbeFallback(
+  turnToken: string,
+  contract: ChatGptMcpContract,
+): boolean {
+  const path = fallbackPath(turnToken);
+  let removeMarker = false;
+  try {
+    const marker = JSON.parse(readFileSync(path, "utf8")) as {
+      nonce?: unknown;
+      contractRevision?: unknown;
+      expiresAt?: unknown;
+    };
+    const expectedRevision = connectorContractRevision(contract);
+    if (marker.contractRevision !== expectedRevision || typeof marker.nonce !== "string"
+      || typeof marker.expiresAt !== "number") return false;
+    if (marker.expiresAt < Date.now()) {
+      removeMarker = true;
+      return false;
+    }
+    recordConnectorContractProbeEvidence(marker.nonce, expectedRevision);
+    removeMarker = true;
+    return true;
+  } catch {
+    removeMarker = true;
+    return false;
+  } finally {
+    if (removeMarker) rmSync(path, { force: true });
+  }
 }
 
 export interface ConnectorContractProbe {
@@ -128,6 +194,8 @@ export async function verifyCurrentConnectorContract(
             "Wait for the tool result before answering. Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
           ].filter(Boolean).join(" ");
     discardConnectorContractProbeEvidence(nonce);
+    const fallbackArmed = contract === "native" && !!currentReference;
+    if (fallbackArmed) armConnectorContractProbeFallback(currentReference!, nonce, contractRevision);
     try {
       await runProbe({ contractRevision, nonce, query, prompt, attempt });
       if (consumeConnectorContractProbeEvidence(nonce, contractRevision)) return;
@@ -136,6 +204,7 @@ export async function verifyCurrentConnectorContract(
       );
     } finally {
       discardConnectorContractProbeEvidence(nonce);
+      if (fallbackArmed) discardConnectorContractProbeFallback(currentReference!);
     }
   }
   throw lastMissingEvidenceError ?? new Error(`${appName} did not execute the current runtime contract probe.`);

@@ -37,7 +37,11 @@ import { readNativeAgentWait, startNativeAgentWait } from "./mcp-agent-wait";
 import { brokerMcpResult as asMcpResult, mcpJsonResult as result } from "./mcp-results";
 import { withClaimedTurn, type ClaimedTurn } from "./mcp-turn-activity";
 import { observeMcpToolCalls } from "./mcp-observation";
-import { isConnectorContractProbeQuery, recordConnectorContractProbeQuery } from "./connector-contract";
+import {
+  isConnectorContractProbeQuery,
+  recordConnectorContractProbeFallback,
+  recordConnectorContractProbeQuery,
+} from "./connector-contract";
 import {
   afterSafeStart,
   registerZeroRiskLifecycleTools,
@@ -437,6 +441,12 @@ export async function runChatGptMcpServer(options: {
         }] };
       }
       return withTurn("codex_tool_inventory", requestId, extra, claimed => {
+        // A missing optional query can still be a real verification call.
+        // Record it only after the broker validates this exact armed live turn.
+        if (contract === "native" && !query?.trim()
+          && recordConnectorContractProbeFallback(requestId, contract)) {
+          return result({ tools: [], total: 0, next_offset: null });
+        }
         const bound = claimed.environment;
         const visibleTools = safeVisibleTools(bound, contract);
         const matches = matchingToolInventory(visibleTools, query);
