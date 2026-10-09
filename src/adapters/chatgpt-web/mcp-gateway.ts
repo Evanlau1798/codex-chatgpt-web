@@ -65,6 +65,7 @@ export function gatewayToolCatalogProgram(options: {
   offset: number;
   limit: number;
   excludedNames: string[];
+  marker: string;
 }): string {
   const needle = options.query?.trim().toLowerCase() ?? "";
   return [
@@ -75,13 +76,14 @@ export function gatewayToolCatalogProgram(options: {
     "const matches = ALL_TOOLS.filter(tool => visible(tool?.name))",
     "  .map(tool => ({ name: tool.name, description: typeof tool.description === \"string\" ? tool.description : \"\" }))",
     "  .filter(tool => !needle || (tool.name + \"\\n\" + tool.description).toLowerCase().includes(needle));",
-    `text(JSON.stringify({ tools: matches.slice(${options.offset}, ${options.offset + options.limit}), total: matches.length }));`,
+    `text(${JSON.stringify(options.marker)} + JSON.stringify({ tools: matches.slice(${options.offset}, ${options.offset + options.limit}), total: matches.length }));`,
   ].join("\n");
 }
 
 export function gatewayToolCatalogPage(
   response: { content: unknown[]; isError?: boolean },
   excludedNames: ReadonlySet<string>,
+  marker: string,
 ): GatewayToolCatalogPage {
   const text = response.content.flatMap(item => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [];
@@ -89,9 +91,10 @@ export function gatewayToolCatalogPage(
     return block.type === "text" && typeof block.text === "string" ? [block.text] : [];
   });
   if (response.isError) throw new Error(`Native nested tool inventory failed: ${text.join("\n") || "unknown error"}`);
-  if (text.length !== 1) throw new Error("Native nested tool inventory returned an invalid text response");
+  const records = text.flatMap(block => block.split(/\r?\n/)).filter(line => line.startsWith(marker));
+  if (records.length !== 1) throw new Error("Native nested tool inventory did not return one matching catalog record");
   let parsed: unknown;
-  try { parsed = JSON.parse(text[0]!); }
+  try { parsed = JSON.parse(records[0]!.slice(marker.length)); }
   catch { throw new Error("Native nested tool inventory returned invalid JSON"); }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("Native nested tool inventory returned an invalid catalog");

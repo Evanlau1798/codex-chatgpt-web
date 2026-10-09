@@ -1,0 +1,26 @@
+[
+  {
+    "path": "tests/chatgpt-web-models.test.ts",
+    "baselineSha256": "d1e092a0132ca679a83d737ff72c18d4034214ce18382e0bf683be9e27a280b1",
+    "currentSha256": "4d810ef50eac12d8325019cbcc3f1d1fb5e1602a785a589fb26b976736fa57f4",
+    "reason": "Preserve saved Latest route IDs as hidden legacy aliases while exposing one canonical GPT-6 Sol/Instant pair."
+  },
+  {
+    "path": "tests/model-catalog.test.ts",
+    "baselineSha256": "744f1aa55269fdb4761f2d6269a9ea7816487f02eae977fa636ce7e38e0614af",
+    "currentSha256": "c63c37dda4d0d8bc09345d31740fc1ac6f355be481b5f57237ec2b7a227ecd50",
+    "reason": "Explicitly exercise Original context limits; Enhanced retains its existing full context window."
+  },
+  {
+    "path": "tests/server-compaction.test.ts",
+    "baselineSha256": "10390040fe26321b1709050ef202ffbcf255a8f16377058fea76dd344acd49e7",
+    "currentSha256": "ea4714d3b54ca5a99aba6eff21ea056af85465870012f5fc2bc6170ef1e2426d",
+    "reason": "Exercise newly authorized Luna Bigger Context compaction in Original mode while ordinary Luna continues rejecting separate compaction."
+  },
+  {
+    "path": "tests/setup-lifecycle.test.ts",
+    "baselineSha256": "7ea3774046ed6f3b682f24c466a92309101eac06f2b86185f6804dc83d555e97",
+    "currentSha256": "335ea2c645d9a7e0193ae3f7852df9ae3629c280b7da4af65fed68dc2c41e7ad",
+    "reason": "Extend production and DEV offline-upgrade assertions to preserve the complete saved modelCapabilities object; explicit refresh still requires live account evidence."
+  }
+]

@@ -51,6 +51,8 @@ describe("reversible Claude Code integration", () => {
       "claude-chatgpt-web-high",
       "claude-chatgpt-web-light",
       "claude-chatgpt-web-medium",
+      "claude-chatgpt-web-gpt-6-sol-instant",
+      "claude-chatgpt-web-gpt-6-sol",
       "claude-chatgpt-web-gpt-5.6-sol-instant",
       "claude-chatgpt-web-gpt-5.6-sol",
     ]);

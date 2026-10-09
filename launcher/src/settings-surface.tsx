@@ -674,7 +674,7 @@ export function SettingsSurface({
           />
         </SettingRow>
         <SettingRow body={snapshot.state.browserInteractionMode === "manual" ? copy.manualBiggerContextBody
-          : snapshot.state.biggerContextAvailable === true ? copy.biggerContextBody : copy.lunaBiggerContextUnavailable} label={copy.biggerContext}>
+          : copy.biggerContextBody} label={copy.biggerContext}>
           <Switch
             checked={biggerContextState.checked}
             disabled={biggerContextState.disabled}

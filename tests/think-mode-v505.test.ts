@@ -25,7 +25,7 @@ function fixture() {
   const page = { locator: (selector: string) => selector === '[role="dialog"]' ? absentDialog : popup,
     keyboard: { press: async () => {} } };
   const composer = {
-    filter: () => composer, first: () => composer, locator: () => composerForm,
+    filter: () => composer, first: () => composer, locator: () => composerForm, page: () => page,
     evaluate: async () => ({ text: state.draft.trim(), connectors: [...state.connectors] }),
     focus: async () => {},
     fill: async (text: string) => { state.draft = text; state.connectors = []; },
@@ -50,13 +50,13 @@ function fixture() {
 test("Think toggle changes only when needed and preserves selected connectors", async () => {
   const ui = fixture();
   ui.state.connectors = ["Codex Native2"];
-  await setChatGptThinkMode(ui.composerForm as never, true);
+  await setChatGptThinkMode(ui.composer as never, true);
   expect(ui.state.pressed).toBeTrue();
   expect(ui.state.clicks).toBe(1);
   expect(ui.state.commands).toEqual([]);
   expect(ui.state.connectors).toEqual(["Codex Native2"]);
-  await setChatGptThinkMode(ui.composerForm as never, true);
-  await setChatGptThinkMode(ui.composerForm as never, false);
+  await setChatGptThinkMode(ui.composer as never, true);
+  await setChatGptThinkMode(ui.composer as never, false);
   expect(ui.state.pressed).toBeFalse();
   expect(ui.state.clicks).toBe(2);
     expect(ui.state.commands).toEqual([]);
@@ -65,12 +65,12 @@ test("Think toggle changes only when needed and preserves selected connectors", 
 test("Think slash verifies one command and a newly exposed pressed state", async () => {
   const ui = fixture();
   ui.state.controlPresent = false;
-  await setChatGptThinkMode(ui.composerForm as never, true);
+  await setChatGptThinkMode(ui.composer as never, true);
   expect(ui.state.pressed).toBeTrue();
   const ambiguous = fixture();
   ambiguous.state.controlPresent = false;
   ambiguous.state.optionCount = 2;
-  await expect(setChatGptThinkMode(ambiguous.composerForm as never, true)).rejects.toThrow("exactly one command option");
+  await expect(setChatGptThinkMode(ambiguous.composer as never, true)).rejects.toThrow("exactly one command option");
   expect(ambiguous.state.enters).toBe(0);
 });
 
@@ -83,7 +83,7 @@ test("Think polling removes each abort listener after its timer settles", async 
     addEventListener: () => { listeners.added += 1; },
     removeEventListener: () => { listeners.removed += 1; },
   } as unknown as AbortSignal;
-  await setChatGptThinkMode(ui.composerForm as never, true, undefined, signal);
+  await setChatGptThinkMode(ui.composer as never, true, undefined, signal);
   expect(listeners.added).toBeGreaterThan(0);
   expect(listeners.removed).toBe(listeners.added);
 });

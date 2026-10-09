@@ -68,6 +68,7 @@ module.exports = {
   continuePasskeyLogin() {
     const child = this.activeChild;
     if (this.active !== "passkey-login"
+      || this.passkeyPhase !== "waiting"
       || this.passkeyContinuationRequested
       || !child
       || child.exitCode !== null
@@ -76,6 +77,8 @@ module.exports = {
       throw new Error("No passkey sign-in is waiting for Continue");
     }
     this.passkeyContinuationRequested = true;
+    this.passkeyPhase = "importing";
+    this.passkeyProgress?.("importing");
     this.publishOperation?.({
       name: "passkey-login",
       status: "running",
@@ -87,6 +90,8 @@ module.exports = {
         error => {
           if (error) {
             this.passkeyContinuationRequested = false;
+            this.passkeyPhase = "waiting";
+            this.passkeyProgress?.("waiting");
             reject(error);
           } else {
             resolve(true);
@@ -96,7 +101,7 @@ module.exports = {
     });
   },
 
-  async capturePasskeyLogin() {
+  async capturePasskeyLogin(onProgress = () => {}) {
     this.cleanupPasskeyTransfers();
     const chrome = this.passkeyChromeExecutable();
     const parent = path.join(this.app.getPath("userData"), "passkey-login");
@@ -108,7 +113,10 @@ module.exports = {
     const markerPath = `${storageStatePath}.verified.json`;
     const cleanup = async () => fs.rmSync(transferRoot, { recursive: true, force: true });
     this.passkeyContinuationRequested = false;
+    this.passkeyPhase = "opening";
+    this.passkeyProgress = onProgress;
     try {
+      onProgress("opening");
       await this.run("passkey-login", [
         "login",
         "--launcher-control",
@@ -120,6 +128,15 @@ module.exports = {
         embedded: true,
         controlStdin: true,
         env: this.launcherControlEnvironment(),
+        onStdoutLine: line => {
+          let event;
+          try { event = JSON.parse(line); } catch { return; }
+          if (event?.version === 1 && event.type === "passkey-login-ready" && this.passkeyPhase === "opening") {
+            this.passkeyPhase = "waiting";
+            onProgress("waiting");
+            return true;
+          }
+        },
         message: "Sign in with your passkey in Chrome, then return here and choose Continue",
         successMessage: "Passkey session captured for private Launcher verification",
         timeoutMs: PASSKEY_LOGIN_TIMEOUT_MS,
@@ -148,6 +165,8 @@ module.exports = {
       throw error;
     } finally {
       this.passkeyContinuationRequested = false;
+      this.passkeyPhase = null;
+      this.passkeyProgress = null;
     }
   },
 };

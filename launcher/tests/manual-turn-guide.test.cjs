@@ -8,8 +8,8 @@ const read = file => fs.readFileSync(path.join(__dirname, "../src", file), "utf8
 
 test("manual instructions are limited to awaiting-user and sent states", () => {
   const app = read("App.tsx");
-  const expression = app.match(/\{(manualTab[^\n]*?) \? \(/)[1];
-  const visible = new Function("manualTab", `return Boolean(${expression});`);
+  const expression = app.match(/\{(selectedManualTab\s*&& \["awaiting-user", "sent"\]\.includes\(selectedManualTab\.manualState \?\? ""\)) \? \(/)[1];
+  const visible = new Function("selectedManualTab", `return Boolean(${expression});`);
   for (const state of ["awaiting-user", "sent", "running", "completed", "timed-out", "cancelled", "failed"]) {
     assert.equal(visible({ manualState: state }), ["awaiting-user", "sent"].includes(state), state);
   }
@@ -73,6 +73,6 @@ test("manual guide follows server deadlines, Sent state and timer cleanup", () =
   tree = render();
   assert.equal(tree.props.children[1].props.children, "");
   assert.equal(timerStarts, timerStops);
-  assert.match(read("App.tsx"), /onCopy=\{\(\) => void api!\.copyManualPrompt\(manualTab\.id\)/);
-  assert.match(read("App.tsx"), /onSent=\{\(\) => void api!\.confirmManualSent\(manualTab\.id\)/);
+  assert.match(read("App.tsx"), /onCopy=\{\(\) => void api!\.copyManualPrompt\(selectedManualTab\.id\)/);
+  assert.match(read("App.tsx"), /onSent=\{\(\) => void api!\.confirmManualSent\(selectedManualTab\.id\)/);
 });

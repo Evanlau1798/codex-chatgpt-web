@@ -1,5 +1,4 @@
 import type { Locator } from "playwright-core";
-import { CHATGPT_COMPOSER_SELECTOR } from "../../chatgpt-session";
 import { withAbort } from "./runtime-lifecycle";
 
 const ACTION_TIMEOUT_MS = 10_000;
@@ -10,12 +9,13 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 export async function setChatGptThinkMode(
-  composerForm: Locator,
+  composer: Locator,
   enabled: boolean,
   captureDiagnostic?: (checkpoint: string) => Promise<void>,
   abortSignal?: AbortSignal,
 ): Promise<void> {
   throwIfAborted(abortSignal);
+  const composerForm = composer.locator("xpath=ancestor::form[1]");
   const controls = composerForm
     .getByRole("button", { name: /^(?:Think|Analyser)$/, exact: true })
     .filter({ visible: true });
@@ -33,7 +33,6 @@ export async function setChatGptThinkMode(
   }
   const target = enabled ? "true" : "false";
   if (pressed !== target) {
-    const composer = composerForm.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true }).first();
     const composerState = () => composer.evaluate(element => {
       const copy = element.cloneNode(true) as HTMLElement;
       const pills = [...copy.querySelectorAll('[data-id^="plugin:"][data-keyword]')];

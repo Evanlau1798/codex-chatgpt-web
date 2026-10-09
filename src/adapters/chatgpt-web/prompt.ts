@@ -2,18 +2,19 @@ import type { CodexMessage, CodexParsedRequest } from "../../types";
 import {
   CHATGPT_WEB_BACKEND_MODEL,
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
-  CHATGPT_WEB_LUNA_BIGGER_CONTEXT_ERROR,
+  CHATGPT_WEB_GPT6_SOL_BIGGER_CONTEXT_ERROR,
   chatGptWebImageTokenReserve,
   isChatGptWebZeroRiskBackendModel,
   resolveChatGptWebMessageTokenBudget,
   resolveChatGptWebStagingTokenBudget,
   resolveChatGptWebTransportLimits,
+  supportsChatGptWebBiggerContext,
 } from "../../chatgpt-web-models";
 import { estimateTokens } from "../../lib/token-estimate";
 import { selectedSkillFile, skillFileTokens, type ChatGptSkillFile } from "./skill-attachments";
 import { ChatGptWebAdapterError } from "./adapter-error";
 import { isReadableCompactionSummaryText } from "../../responses/compaction";
-import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
+import { CHATGPT_WEB_MODEL_ID, CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import {
   CHATGPT_LUNA_CHECKPOINT_MARKER,
   CHATGPT_LUNA_CHECKPOINT_MAX_TOKENS,
@@ -191,10 +192,13 @@ export function compileChatGptWebPrompt(
   if (multipartParts !== undefined && !isChatGptWebMultipartPartCount(multipartParts)) {
     throw new Error("Bigger Context requires two or six context parts");
   }
-  if (multipartEnabled && parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID) {
-    throw new Error(CHATGPT_WEB_LUNA_BIGGER_CONTEXT_ERROR);
+  if (multipartEnabled && captureLunaCheckpoint) {
+    throw new Error("Bigger Context uses native compaction, not Luna rolling checkpoints");
   }
-  if (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && parsed._compactionRequest) {
+  if (multipartEnabled && !supportsChatGptWebBiggerContext(parsed.modelId, mode.effort, capabilities, parsed._chatgptModelFamily)) {
+    throw new Error(CHATGPT_WEB_GPT6_SOL_BIGGER_CONTEXT_ERROR);
+  }
+  if (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && parsed._compactionRequest && !multipartEnabled) {
     throw new Error("ChatGPT Luna uses rolling checkpoints and does not accept a separate compaction turn");
   }
   if (compactionControlInstruction && (!parsed._compactionRequest || !nativeControlConnector)) {
@@ -293,7 +297,8 @@ export function compileChatGptWebPrompt(
       "Historical failure or termination text is not evidence that this turn's attached tools are unavailable.",
       "Only a tool result returned in this turn can establish a current tool failure.",
       "Describe failed local actions using only observable tool evidence. If no native result was returned, state only that the action did not execute; never infer or name an unreported cause.",
-    "Report exact tool errors. Do not claim a safety or permission block without an explicit tool result or platform error supporting it. After an explicit refusal, explain the action and request confirmation only if authorization is missing. Use the declared approval flow and wait for required answers. Existing authorization remains valid; confirmation cannot override platform restrictions or authorize bypassing a refusal through another tool.",
+    "Do not claim a safety or permission block without an explicit tool result or platform error supporting it. After a refusal, explain the action and request confirmation only if authorization is missing; use the declared approval flow and wait. Existing authorization remains valid; confirmation cannot override platform restrictions or authorize bypassing a refusal through another tool.",
+      "Errors in read files or history describe earlier events. A successful read is not a current failure; report current errors from the actual action and tool result.",
       "A Codex Native MCP tool result may require context compaction. If it does, follow the compaction instructions in that result exactly.",
       "After a deterministic tool failure, update the working hypothesis from that result and inspect the relevant repository or environment before choosing a different next action; do not repeat the same call unless its inputs or observable state changed.",
       ...(toolPolicy.requireTool ? ["You must execute at least one of the request-authorized local tools before returning a final answer."] : []),
@@ -452,18 +457,20 @@ export function compileChatGptWebPrompt(
       // Equal parts near Instant's maximum can be accepted once and rejected on the next Send.
       // If complete records cannot fit that allocation, plan with the wider available stage mode
       // before submitting anything; no context is truncated and no failed upload is replayed.
-      const stagingEfforts = capabilities.proAvailable ? ["max"] as const : ["low", "medium"] as const;
+      const backendModel = parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID ? CHATGPT_WEB_LUNA_MODEL_ID : CHATGPT_WEB_MODEL_ID;
+      const stagingEfforts = backendModel === CHATGPT_WEB_LUNA_MODEL_ID ? ["low"] as const
+        : capabilities.proAvailable ? ["max"] as const : ["low", "medium"] as const;
       const emptyParts = multipart.parts;
       for (const stagingEffort of stagingEfforts) {
         multipart.parts = emptyParts;
         const budgets = multipart.parts.map((payload, index) => {
           const final = index === multipart.parts.length - 1;
           const effort = final ? mode.effort : stagingEffort;
-          const limits = resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, effort, capabilities);
+          const limits = resolveChatGptWebTransportLimits(backendModel, effort, capabilities);
           const tokenLimit = final
-            ? resolveChatGptWebMessageTokenBudget(CHATGPT_WEB_BACKEND_MODEL, effort, capabilities,
+            ? resolveChatGptWebMessageTokenBudget(backendModel, effort, capabilities,
               imageTokens + skillFileTokens(skillFiles, parsed.modelId))
-            : resolveChatGptWebStagingTokenBudget(CHATGPT_WEB_BACKEND_MODEL, effort, capabilities);
+            : resolveChatGptWebStagingTokenBudget(backendModel, effort, capabilities);
           const fixedMessage = final
             ? formatChatGptWebMultipartCommit(multipart, transactionId)
             : formatChatGptWebMultipartStage(payload, transactionId, index + 1, multipartParts!).text;
@@ -478,7 +485,7 @@ export function compileChatGptWebPrompt(
           return { tokens, chars, tokenLimit, charLimit: limits.browserComposerCharLimit ?? Infinity };
         });
         multipart.parts = partitionMultipartContext(records, multipartParts!, budgets);
-        if (stagingEffort === "low" && multipart.parts.some((payload, index) => {
+        if (stagingEfforts.length > 1 && stagingEffort === "low" && multipart.parts.some((payload, index) => {
           const final = index === multipart.parts.length - 1;
           const text = final ? formatChatGptWebMultipartCommit(multipart, transactionId)
             : formatChatGptWebMultipartStage(payload, transactionId, index + 1, multipartParts!).text;

@@ -1519,3 +1519,35 @@ describe("reversible native Codex route integration", () => {
     expect(readFileSync(configPath, "utf8")).toBe(original);
   });
 });
+
+
+test("startup recovery and upgrades respect explicit route disconnects", () => {
+  const { codexHome } = fixture();
+  const configPath = join(codexHome, "config.toml");
+  const original = 'model = "gpt-6-sol"\n';
+  writeFileSync(configPath, original);
+  installCodexIntegration(nativeConfig("browser-only"));
+  deactivateCodexIntegration();
+  expect(activateCodexIntegration({ recoveryOnly: true })).toEqual({ changed: false, active: false });
+  const upgraded = { ...nativeConfig("browser-only"), port: 17855 };
+  installCodexIntegration(upgraded, { preserveDisconnectedRoute: true });
+  expect(inspectCodexIntegration().active).toBeFalse();
+  expect(readFileSync(configPath, "utf8")).toBe(original);
+  expect(activateCodexIntegration({ recoveryOnly: true }).active).toBeFalse();
+  expect(activateCodexIntegration().active).toBeTrue();
+  expect(readFileSync(configPath, "utf8")).toContain("17855");
+
+  deactivateCodexIntegration({ forRuntimeRecovery: true });
+  installCodexIntegration(upgraded, { preserveDisconnectedRoute: true });
+  expect(inspectCodexIntegration().active).toBeFalse();
+  expect(activateCodexIntegration({ recoveryOnly: true })).toEqual({ changed: true, active: true });
+
+  deactivateCodexIntegration({ forRuntimeRecovery: true });
+  expect(deactivateCodexIntegration()).toEqual({ changed: false, active: false });
+  expect(activateCodexIntegration({ recoveryOnly: true }).active).toBeFalse();
+  expect(readFileSync(configPath, "utf8")).toBe(original);
+  // A failed start cannot turn an already deliberately disconnected route into recovery.
+  deactivateCodexIntegration({ forRuntimeRecovery: true });
+  expect(activateCodexIntegration({ recoveryOnly: true }).active).toBeFalse();
+  expect(activateCodexIntegration().active).toBeTrue();
+});

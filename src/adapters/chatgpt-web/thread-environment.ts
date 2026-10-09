@@ -5,7 +5,7 @@ import { getCodexHome } from "../../codex-integration-shared";
 import { isReadableCompactionSummaryText } from "../../responses/compaction";
 import type { CodexParsedRequest } from "../../types";
 import {
-  extractChatGptTurnEnvironment,
+  extractChatGptTurnEnvironmentClaim,
   extractChatGptCompactionSourceRevision,
   extractChatGptContinuationEnvironmentClaims,
   extractChatGptSteeringEnvironmentClaim,
@@ -17,6 +17,7 @@ import {
   hasRawChatGptEnvironmentContext,
   isChatGptCompactionContinuation,
   MissingTrustedCodexEnvironmentError,
+  type ChatGptEnvironmentClaim,
   type ChatGptSandboxPolicy,
   type ChatGptTurnEnvironment,
 } from "./environment";
@@ -382,21 +383,24 @@ function authority(environment: ChatGptTurnEnvironment, updatedAt: number): Stor
   };
 }
 
-function sameAuthority(left: ChatGptTurnEnvironment, right: ChatGptTurnEnvironment, steering = false): boolean {
+function sameAuthority(claim: ChatGptEnvironmentClaim, right: ChatGptTurnEnvironment, allowAdditionalWritableRoots = false): boolean {
+  const left = claim.environment;
   const samePaths = (a: string[], b: string[]): boolean => {
     const expected = new Set(b.map(pathIdentity));
     return a.length === expected.size && a.every(path => expected.has(pathIdentity(path)));
   };
   return pathIdentity(left.cwd) === pathIdentity(right.cwd)
     && samePaths(left.roots, right.roots)
-    // Steering envelopes can omit Codex's extra output directories. The current
+    // Filesystem envelopes can omit Codex's extra output directories. The current
     // native rollout remains the authority returned to the caller, never the claim.
-    && (steering
+    && (allowAdditionalWritableRoots
       ? left.writableRoots.every(path => right.writableRoots.some(root => pathIdentity(root) === pathIdentity(path)))
       : samePaths(left.writableRoots, right.writableRoots))
     && left.sandboxPolicy.type === right.sandboxPolicy.type
-    && (left.sandboxPolicy.type === "dangerFullAccess" || (right.sandboxPolicy.type !== "dangerFullAccess"
-      && left.sandboxPolicy.networkAccess === right.sandboxPolicy.networkAccess));
+    // An envelope that does not state its network policy cannot contradict the rollout on it.
+    && (left.sandboxPolicy.type === "dangerFullAccess" || !claim.statesNetworkAccess
+      || (right.sandboxPolicy.type !== "dangerFullAccess"
+        && left.sandboxPolicy.networkAccess === right.sandboxPolicy.networkAccess));
 }
 
 /**
@@ -417,10 +421,16 @@ export class ChatGptThreadEnvironmentStore {
 
   resolve(parsed: CodexParsedRequest): ChatGptTurnEnvironment {
     const identity = extractChatGptTurnIdentity(parsed);
+    let initialClaim: ChatGptEnvironmentClaim | undefined;
     let directEnvironment: ChatGptTurnEnvironment | undefined;
     let directError: unknown;
     try {
-      directEnvironment = extractChatGptTurnEnvironment(parsed);
+      initialClaim = extractChatGptTurnEnvironmentClaim(parsed);
+      directEnvironment = initialClaim.environment;
+      if (directEnvironment.sandboxPolicy.type !== "dangerFullAccess" && !initialClaim.statesNetworkAccess) {
+        directEnvironment = undefined;
+        throw new MissingTrustedCodexEnvironmentError("network access");
+      }
     } catch (error) {
       directError = error;
     }
@@ -474,7 +484,7 @@ export class ChatGptThreadEnvironmentStore {
         if (calendarDelta && rolloutEnvironment.sandboxPolicy.type !== "dangerFullAccess") {
           throw new Error("Calendar environment delta conflicts with its current Codex rollout");
         }
-        if (hasCurrentContext && !directEnvironment && !currentCompaction && !postCompactionContext
+        if (hasCurrentContext && !directEnvironment && !initialClaim && !currentCompaction && !postCompactionContext
           && ordinaryContinuation && !calendarDelta) {
           const firstInstruction = input.findIndex(value => isCurrentTurnInstruction(record(value), metadata, identity.turnId!));
           const hasLaterRefresh = input.slice(firstInstruction + 1).some(value => hasEnvironmentContextFragment(record(value)));
@@ -487,7 +497,8 @@ export class ChatGptThreadEnvironmentStore {
         const currentClaims = hasCurrentContext ? extractChatGptContinuationEnvironmentClaims(parsed, calendarDelta) : [];
         const steering = !currentCompaction && !postCompactionContext && ordinaryContinuation
           && !!extractChatGptSteeringEnvironmentClaim(parsed);
-        if (currentClaims.some(claim => !sameAuthority(claim, rolloutEnvironment, steering))) {
+        if (currentClaims.some(claim => !sameAuthority(claim, rolloutEnvironment,
+          steering || (initialClaim !== undefined && !initialClaim.statesNetworkAccess)))) {
           throw new Error(`${steering ? "Steering" : "Compaction continuation"} environment conflicts with its current Codex rollout`);
         }
         if ((hasCurrentContext || crossesForeignCompaction)

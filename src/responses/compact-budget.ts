@@ -18,7 +18,7 @@ export function boundedCompactV1Output(
 ): Record<string, unknown>[] {
   const users = extractCompactUserMessages(raw.input);
   const limit = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config,
-    config.useEnhancedWebSessionMode).autoCompactTokenLimit;
+    config.useEnhancedWebSessionMode, route.interactionMode === "automatic" ? route.modelFamily : undefined).autoCompactTokenLimit;
   const measure = (output: Record<string, unknown>[]) => {
     const parsed = parseRequest({ ...raw, previous_response_id: undefined, input: output });
     parsed.modelId = route.backendModel;

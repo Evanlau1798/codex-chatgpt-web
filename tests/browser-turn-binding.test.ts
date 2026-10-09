@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chromium, type Browser, type Locator, type Page } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
+import { ChatGptMarkdownBuffer } from "../src/adapters/chatgpt-web/markdown";
+import { ChatGptMarkdownOwnershipTracker } from "../src/adapters/chatgpt-web/markdown-ownership";
 import { readFileSync } from "node:fs";
 
 let browser: Browser;
@@ -140,4 +142,34 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("binds captured Activity befo
       expect(await page.locator('input[type="file"]').evaluate(input => (input as HTMLInputElement).files?.[0]?.name)).toBe("codex-input-image-1.png");
     }
   } finally { await context.close(); }
+}, 15_000);
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("paragraph identity survives file preview movement in both response layouts", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    for (const root of ['class="markdown"', 'data-markdown-text-style="assistant-message"']) {
+      const page = await browser.newPage();
+      await page.setContent(`<section id="turn"><div data-content-search-unit-key="answer">
+        <h4 data-conversation-role="assistant"></h4><div id="answer" ${root}>
+        <p>Report saved:</p><p id="file">report.md</p><p id="tail">Done.</p>
+      </div></div><button aria-label="Copy"></button></section>`);
+      const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+      const cache = new ChatGptMarkdownOwnershipTracker();
+      const observe = () => worker.responseDomSnapshot(page.locator("#turn"), cache);
+      const before = await observe();
+      const buffer = new ChatGptMarkdownBuffer(undefined, 0);
+      expect(buffer.observe(before.markdownSegments, 0)).toBe("Report saved:\n\nreport.md");
+      await page.locator("#file").evaluate(file => { file.parentElement!.parentElement!.appendChild(file); });
+      const moved = await observe();
+      expect(moved.markdownSegments.at(-1).key).toBe(before.markdownSegments.at(-1).key);
+      expect(buffer.observe(moved.markdownSegments, 1)).toBe("");
+      await page.locator("#answer").evaluate(answer => { answer.innerHTML = answer.innerHTML; });
+      buffer.observe((await observe()).markdownSegments, 2);
+      expect(buffer.finish().markdown).toBe("Report saved:\n\nreport.md\n\nDone.");
+      await page.locator("#tail").evaluate(tail => { tail.textContent = "A changed answer."; });
+      buffer.observe((await observe()).markdownSegments, 3);
+      expect(() => buffer.finish()).toThrow();
+      await page.close();
+    }
+  } finally { await browser.close(); }
 }, 15_000);

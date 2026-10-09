@@ -29,13 +29,12 @@ import {
 } from "./codex-integration";
 import {
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
-  CHATGPT_WEB_LUNA_BIGGER_CONTEXT_ERROR,
   isChatGptWebModelSlug,
   requireChatGptWebModelRoute,
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
 import { forwardNativeCodexRequest } from "./native-passthrough";
-import { modelCatalogFailure, modelsRequest, nativeAuxiliaryEndpoint, nativeAuxiliaryRequest, nativeSearchRequest, type ModelCatalogFailure } from "./native-routes";
+import { ModelCatalogFetches, modelCatalogFailure, modelsRequest, nativeAuxiliaryEndpoint, nativeAuxiliaryRequest, nativeSearchRequest, type ModelCatalogFailure } from "./native-routes";
 import { COMPACT_PROMPT } from "./responses/compaction";
 import { handleCompactRequest } from "./responses/compact-handler";
 import { parseRequest } from "./responses/parser";
@@ -49,7 +48,7 @@ import { enforceLocalDataRequestSecurity } from "./local-request-security";
 import { lifecycleControlAuthorized } from "./lifecycle-control";
 import type { ChatGptWebAdapterFactory, ResponseRequestOptions, ServerDependencies } from "./server-dependencies";
 
-export { HttpTurnCounter, modelsRequest, nativeSearchRequest };
+export { ModelCatalogFetches, HttpTurnCounter, modelsRequest, nativeSearchRequest };
 export type { ResponseRequestOptions } from "./server-dependencies";
 
 export function nativeChatToolCallsLive(session: {
@@ -156,9 +155,6 @@ export async function responseRequest(
       || expanded !== raw
       || parsed._contextCompactionBoundary === true;
     route = routeChatGptWebRequest(parsed, config);
-    if (config.experimentalBiggerContext && route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
-      throw new Error(CHATGPT_WEB_LUNA_BIGGER_CONTEXT_ERROR);
-    }
     const identity = extractChatGptTurnIdentity(parsed);
     if (identity.threadId && identity.turnId) {
       options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
@@ -203,7 +199,7 @@ export async function responseRequest(
       "Compaction is disabled for routed ChatGPT Web models by the experimental no-auto-compact setting.",
     );
   }
-  if (compaction && route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
+  if (compaction && route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL && !config.experimentalBiggerContext) {
     return formatErrorResponse(
       409,
       "invalid_request_error",
@@ -374,6 +370,7 @@ export function startServer(
   } | null = null;
   const httpTurns = new HttpTurnCounter();
   const accountSafety = chatGptAccountSafety();
+  const modelCatalogFetches = dependencies.modelCatalogFetches ?? new ModelCatalogFetches();
   const activity = () => ({
     active_http_turns: httpTurns.count(),
     active_browser_turns: chatGptTurnSessions.activeCount() + (turnBroker?.externalOwnerActiveCount() ?? 0) + activeChatCompletionTurns(),
@@ -392,7 +389,7 @@ export function startServer(
         return httpTurns.track(signal => chatCompletionRequest(req, config, signal, dependencies.chatCompletionExecutor,
           nativeChatBridge), req.signal, process.platform, "/v1/chat/completions");
       }
-      const securityRejection = enforceLocalDataRequestSecurity(req, url.pathname, server.port!); if (securityRejection) return securityRejection;
+      const securityRejection = enforceLocalDataRequestSecurity(req, url.pathname); if (securityRejection) return securityRejection;
       if (req.method === "GET" && url.pathname === "/healthz") {
         return Response.json({
           status: "ok",
@@ -511,6 +508,9 @@ export function startServer(
           const request = ++modelCatalogRequests;
           const started = Date.now();
           const recordResult = (response: Response, failure?: ModelCatalogFailure): Response => {
+            // A disconnected Codex client did not test the catalog. Preserve the
+            // last completed result; only actual failures belong in launcher health.
+            if (req.signal.aborted) return response;
             const result = { request, at: new Date().toISOString(), status: response.status, ...(failure ? { failure } : {}) };
             if (!lastModelCatalogResult || request > lastModelCatalogResult.request) lastModelCatalogResult = result;
             if (!response.ok) console.warn(`[codex-chatgpt-web] model_catalog_failed ${JSON.stringify({ ...result, elapsedMs: Date.now() - started })}`);
@@ -536,8 +536,10 @@ export function startServer(
             dependencies.fetchUpstream,
             readCodexModelContextOverride,
             value => { failure = value; },
+            req.signal,
+            modelCatalogFetches,
           );
-          if (response.ok) {
+          if (response.ok && !req.signal.aborted) {
             successfulModelCatalogRequests += 1;
             lastSuccessfulModelCatalogRequestAt = new Date().toISOString();
           }
@@ -608,6 +610,7 @@ export function startServer(
     if (shutdownPromise) return;
     draining = true;
     chatGptTurnSessions.clear();
+    modelCatalogFetches.close();
     flushResponseState();
     shutdownPromise = (async () => {
       const results = await Promise.allSettled([

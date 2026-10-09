@@ -85,7 +85,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
     }
     if (toolPolicy.requireTool && !localTools) throw new Error("ChatGPT tool_choice requires local tools that this Web mode cannot expose");
     const identity = extractChatGptTurnIdentity(parsed);
-    const captureLunaCheckpoint = !finalizationOnly && parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !browserCompaction && Boolean(identity.threadId && identity.turnId);
+    const captureLunaCheckpoint = !experimentalBiggerContext && !finalizationOnly && parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !browserCompaction && Boolean(identity.threadId && identity.turnId);
     const captureEnhancedCheckpoint = useEnhancedWebSessionMode
       && provider.chatgptWeb?.experimentalNoAutoCompact === true
       && parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID && !browserCompaction && !finalizationOnly;

@@ -384,6 +384,26 @@ test("Luna rejects a remote-v2 compaction trigger before opening another browser
   expect(body.error.message).toContain("rolling checkpoint");
 });
 
+test("Luna Bigger Context accepts native v1 and v2 compaction", async () => {
+  const config = { ...defaultConfig("browser-only"), solAvailable: false, experimentalBiggerContext: true, useEnhancedWebSessionMode: false };
+  for (const v2 of [false, true]) {
+    const input = [{ type: "message", role: "user", content: [{ type: "input_text", text: "Keep the project requirements." }] }];
+    const response = await (v2 ? responseRequest : compactRequest)(new Request("http://127.0.0.1/v1/responses", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "chatgpt-web/luna", stream: false,
+        input: v2 ? [...input, { type: "compaction_trigger" }] : input }),
+    }), config, compactionAdapterFactory());
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    if (v2) {
+      const checkpoint = body.output.find((item: { type: string }) => item.type === "compaction");
+      expect(decodeCompactionSummary(checkpoint.encrypted_content)).toBe(summary);
+    } else {
+      expect(body.output.at(-1).content[0].text).toBe(`${SUMMARY_PREFIX}\n${summary}`);
+    }
+  }
+});
+
 test("rejects Pro-only routed models before opening a browser when the account has no Pro access", async () => {
   for (const [routedModel, label] of [
     ["chatgpt-web/extra-high", "Extra High"],

@@ -46,7 +46,6 @@ import {
   launcherCapabilityProbeRequired,
   type SetupOptions,
 } from "./setup-config";
-import { CHATGPT_WEB_LUNA_BIGGER_CONTEXT_ERROR } from "./chatgpt-web-models";
 
 export { existingFullSetupCredentials, launcherCapabilityProbeRequired } from "./setup-config";
 export type { SetupOptions } from "./setup-config";
@@ -147,11 +146,27 @@ export function tunnelWorkerRuntimeChanged(before: AppConfig | undefined, after:
     || JSON.stringify(before.tunnel) !== JSON.stringify(after.tunnel);
 }
 
+/**
+ * On Windows, EACCES can indicate a reserved port, an exclusive binding, or a security policy.
+ * The error alone does not identify which one prevented the listener from starting.
+ */
+export function portBindFailureMessage(
+  host: string,
+  port: number,
+  error: NodeJS.ErrnoException,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const message = `Cannot bind ${host}:${port}: ${error.message}`;
+  if (platform !== "win32" || error.code !== "EACCES") return message;
+  return `${message}. Windows may have reserved this port, another service may hold it exclusively, or security software may be blocking it. `
+    + "See \"Windows: Cannot bind the local port (EACCES)\" in TROUBLESHOOTING.md";
+}
+
 async function assertPortAvailable(host: string, port: number): Promise<void> {
   await new Promise<void>((resolveAvailable, rejectAvailable) => {
     const server = createServer();
     server.unref();
-    server.once("error", error => rejectAvailable(new Error(`Cannot bind ${host}:${port}: ${error.message}`)));
+    server.once("error", error => rejectAvailable(new Error(portBindFailureMessage(host, port, error))));
     server.listen(port, host, () => server.close(error => error ? rejectAvailable(error) : resolveAvailable()));
   });
 }
@@ -200,13 +215,27 @@ async function inspectLauncherCapabilities(
   refreshAccountCapabilities: boolean,
   expectedProfile: "production" | "development",
 ): Promise<{ solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean; modelCapabilities?: ChatGptWebModelCapabilities }> {
-  const detectCapabilities = launcherCapabilityProbeRequired(
+  const savedUpgrade = existing && existing.releaseVersion !== config.releaseVersion
+    && existing.browserHost === "launcher" && existing.browserInteractionMode !== "manual"
+    && typeof existing.solAvailable === "boolean" && typeof existing.extraHighAvailable === "boolean"
+    && typeof existing.proAvailable === "boolean";
+  const detectCapabilities = !(savedUpgrade && !refreshAccountCapabilities) && launcherCapabilityProbeRequired(
     existing,
     refreshAccountCapabilities,
     config.browserInteractionMode,
   );
+  if (!detectCapabilities) {
+    // Updating the local runtime or its settings does not require a live web session.
+    // Only initial setup and an explicit model refresh inspect the account.
+    return {
+      solAvailable: existing!.solAvailable,
+      extraHighAvailable: existing!.extraHighAvailable === true,
+      proAvailable: existing!.proAvailable,
+      modelCapabilities: existing!.modelCapabilities,
+    };
+  }
   const inspected = await inspectLauncherBrowserHost(config.browserHostDescriptorPath!, {
-    detectCapabilities,
+    detectCapabilities: true,
     expectedProfile,
   });
   return {
@@ -322,9 +351,6 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
   config.proAvailable = config.solAvailable && proAvailable === true;
   config.modelCapabilities = modelCapabilities;
-  if (config.experimentalBiggerContext && !config.solAvailable) {
-    throw new Error(CHATGPT_WEB_LUNA_BIGGER_CONTEXT_ERROR);
-  }
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
   const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config) || explicitTunnelChange || options.forceLogin));
   if (beforeService.loaded && preliminaryChange && !options.restartService) {
@@ -396,6 +422,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
   if (integrations.codex) {
     installCodexIntegration(config, {
       replaceExistingRoute: options.replaceCodexRoute,
+      preserveDisconnectedRoute: options.preserveDisconnectedRoute,
     });
   }
   if (integrations.claude) {
@@ -448,9 +475,6 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
     config.modelCapabilities = capabilities.modelCapabilities;
   }
 
-  if (config.experimentalBiggerContext && !config.solAvailable) {
-    throw new Error(CHATGPT_WEB_LUNA_BIGGER_CONTEXT_ERROR);
-  }
 
   await configureSetupTunnel(config, existing, options);
   // The launcher supervisor acquires the DEV runtime only after this config is committed.

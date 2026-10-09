@@ -88,7 +88,7 @@ export async function handleCompactRequest(
       "Compaction is disabled for routed ChatGPT Web models by the experimental no-auto-compact setting.",
     );
   }
-  if (route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
+  if (route.backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL && !config.experimentalBiggerContext) {
     return formatErrorResponse(
       409,
       "invalid_request_error",
