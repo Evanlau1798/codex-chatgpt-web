@@ -67,6 +67,21 @@ async function validatePackage(packageRoot){
  }finally{child.kill();await Promise.race([new Promise(r=>child.once('exit',r)),delay(5000)]);fs.closeSync(log);}
 }
 async function control(action){const settings=json(SETTINGS),config=json(path.join(settings.coreHome,'config.json'));const response=await fetch(`http://${config.host}:${config.port}/admin/${action}`,{method:'POST',headers:{authorization:'Bearer '+config.controlToken},signal:AbortSignal.timeout(10000)});if(!response.ok)throw Error('Codex Web GPT maintenance refused: '+response.status);return response.json();}
+async function waitForIdleDrain({request=control,pause=delay,now=Date.now,timeoutMs=30*60*1000,intervalMs=5000,onWaiting=()=>{}}={}){
+ const deadline=now()+timeoutMs;let waiting=false;
+ for(;;){
+  // Only the server's atomic idle check may acquire maintenance. Never force a
+  // drain while a task is active, or resume a drain held by another operation.
+  const drain=await request('drain-if-idle');
+  if(drain?.acquired===true&&drain.accepting_turns===false)return drain;
+  if(!drain||drain.acquired!==false||!((drain.status==='busy'&&drain.accepting_turns===true)||(drain.status==='draining'&&drain.accepting_turns===false)))throw Error('Unexpected Codex Web GPT maintenance response');
+  if(!waiting){onWaiting();waiting=true;}
+  const remaining=deadline-now();
+  if(remaining<=0)throw Error('Codex Web GPT remained busy; the verified candidate is staged. Retry the update after active tasks finish');
+  await pause(Math.min(intervalMs,remaining));
+  if(now()>=deadline)throw Error('Codex Web GPT remained busy; the verified candidate is staged. Retry the update after active tasks finish');
+ }
+}
 async function restartBackend(settings,oldPid){
  const token=fs.readFileSync(path.join(settings.home,'admin-api-token'),'utf8').trim();
  const response=await fetch(`http://127.0.0.1:${settings.port}/api/system/restart`,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json','x-opencodex-restart-expected-pid':String(oldPid)},body:'{}',signal:AbortSignal.timeout(10000)});
@@ -87,17 +102,21 @@ async function update(channel='latest',restart=true,jobId=crypto.randomUUID()){
   const packageRoot=await installPackage(metadata);
   const validation=await validatePackage(packageRoot);job.validation=validation;
   if(metadata.version===before.version&&packageRoot===before.packageRoot){publish('succeeded','The current version passed the compatibility checks');return job;}
-  if(!restart){atomic(path.join(ROOT,'pending-update.json'),{...before,version:metadata.version,packageRoot,integrity:metadata.dist.integrity});publish('succeeded','Candidate validated and staged; use the update command to apply it when idle');return job;}
-  const drain=await control('drain-if-idle');
-  if(drain.accepting_turns!==false||drain.acquired!==true)throw Error('Codex Web GPT is busy; the verified candidate is retained for a later update');
+  const next={...before,version:metadata.version,packageRoot,integrity:metadata.dist.integrity};
+  atomic(path.join(ROOT,'pending-update.json'),next);
+  if(!restart){publish('succeeded','Candidate validated and staged; use the update command to apply it when idle');return job;}
+  await waitForIdleDrain({onWaiting:()=>{job.waitingForIdle=true;publish('running','Codex Web GPT is busy; waiting up to 30 minutes for active tasks to finish before updating OpenCodex');}});
   drained=true;
+  job.waitingForIdle=false;
+  if(JSON.stringify(json(SETTINGS))!==JSON.stringify(before))throw Error('Integration settings changed while the update was waiting; retry with the current settings');
   const config=json(path.join(before.home,'config.json'));assertOwnership(config);
   backup=owned(path.join(ROOT,'backups','update-'+Date.now()));fs.mkdirSync(backup,{recursive:true});
   fs.cpSync(before.home,path.join(backup,'home'),{recursive:true});atomic(path.join(backup,'settings.json'),before);
   const health=await waitHealth('http://127.0.0.1:'+before.port,h=>h.version===before.version);
-  const next={...before,version:metadata.version,packageRoot,integrity:metadata.dist.integrity};atomic(SETTINGS,next);committed=true;
+  atomic(SETTINGS,next);committed=true;
   publish('restarting','Restarting only the drained internal OpenCodex service');
   await restartBackend(next,health.pid);
+  fs.unlinkSync(path.join(ROOT,'pending-update.json'));
   publish('succeeded','New version healthy; existing provider configuration retained');job.restarted=true;atomic(jobFile,job);
   return job;
  }catch(error){
@@ -108,7 +127,7 @@ async function update(channel='latest',restart=true,jobId=crypto.randomUUID()){
    if(backup)fs.copyFileSync(path.join(backup,'home/config.json'),path.join(before.home,'config.json'));
    try{const h=await waitHealth('http://127.0.0.1:'+before.port,()=>true,5000);await restartBackend(before,h.pid);}catch{ /* supervisor reads the restored pointer on its next retry */ }
   }
-  job.error=error.message;publish('failed','Update refused or rolled back; see the error above');throw error;
+  job.waitingForIdle=false;job.error=error.message;publish('failed','Update refused or rolled back; see the error above');throw error;
  }finally{try{if(drained)await control('resume');}finally{fs.closeSync(lock);fs.unlinkSync(lockFile);}}
 }
 async function prepareLauncher(executable,activate=false){
@@ -138,5 +157,5 @@ async function prepareLauncher(executable,activate=false){
  return plan;
 }
 function activateLauncher(plan){if(digest(plan.installed)!==plan.originalHash||digest(plan.candidate)!==plan.candidateHash)throw Error('Launcher changed since preparation');fs.copyFileSync(plan.candidate,plan.installed+'.gateway-next');rename(plan.installed+'.gateway-next',plan.installed);atomic(path.join(ROOT,'launcher-state.json'),plan);}
-module.exports={check,update,validatePackage,prepareLauncher,activateLauncher,assertOwnership,installPackage,registry,acquireUpdateLock};
+module.exports={check,update,validatePackage,prepareLauncher,activateLauncher,assertOwnership,installPackage,registry,acquireUpdateLock,waitForIdleDrain};
 if(require.main===module){(async()=>{const command=process.argv[2];let result;if(command==='check')result=await check(process.argv[3]);else if(command==='update')result=await update(process.argv[3]||'latest',!process.argv.includes('--stage-only'),process.argv[4]&&!process.argv[4].startsWith('--')?process.argv[4]:undefined);else if(command==='validate')result=await validatePackage(json(SETTINGS).packageRoot);else if(command==='prepare-launcher')result=await prepareLauncher(json(SETTINGS).launcher);else if(command==='apply-launcher')result=await prepareLauncher(process.argv[3]||json(SETTINGS).launcher,true);else throw Error('Expected check, update, validate, prepare-launcher or apply-launcher');console.log(JSON.stringify(result,null,2));})().catch(error=>{console.error(error.message);process.exitCode=1;});}

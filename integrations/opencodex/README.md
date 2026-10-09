@@ -29,7 +29,7 @@ After installation, the launcher sidebar exposes an **OpenCodex** surface. ChatG
 
 ## Update behavior
 
-OpenCodex updates are versioned and verified separately from the launcher. The manager keeps the active package, candidate package, provider state and rollback snapshot in different paths. An active Codex turn prevents a restart; the candidate remains staged for the next idle window. A failed health, catalog or dashboard check leaves the previous package active.
+OpenCodex updates are versioned and verified separately from the launcher. The manager keeps the active package, candidate package, provider state and rollback snapshot in different paths. An active Codex turn prevents a restart; the validated candidate is staged and the update stays running while polling the atomic idle check for up to 30 minutes. It activates automatically when the check acquires maintenance. If the wait expires, retry after active tasks finish; the staged package is retained. A failed health, catalog or dashboard check leaves the previous package active.
 
 The launcher integration is reapplied only when its source anchors and package identity match the installed official release. If they do not, the manager refuses the update and reports that an explicit adaptation is required. This protects both official launcher updates and the local integration from silent drift.
 
