@@ -49,7 +49,7 @@ test('malformed maintenance responses cannot authorize a backend restart',async(
  }
 });
 
-function updateFixture(t,{stageOnly=false,failRestart=false}={}){
+function updateFixture(t,{stageOnly=false,failRestart=false,nativeConfig=true,touchConfig}={}){
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'opencodex-idle-update-'));
  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
  const write=(file,value)=>{fs.mkdirSync(path.dirname(file),{recursive:true});fs.writeFileSync(file,JSON.stringify(value));};
@@ -65,7 +65,7 @@ function updateFixture(t,{stageOnly=false,failRestart=false}={}){
  const providerConfig={runtimeRole:'hub',hostname:'127.0.0.1',clientIntegrations:{codex:false},providers:{preserved:{adapter:'test-provider'}}};
  write(path.join(before.home,'config.json'),providerConfig);
  fs.writeFileSync(path.join(before.home,'admin-api-token'),'test-admin-token');
- fs.mkdirSync(before.codexHome);fs.writeFileSync(path.join(before.codexHome,'config.toml'),'model="unchanged"');
+ fs.mkdirSync(before.codexHome);if(nativeConfig)fs.writeFileSync(path.join(before.codexHome,'config.toml'),'model="unchanged"');
  write(path.join(packageRoot,'package.json'),{name:'@bitkyc08/opencodex',version:'2.81.0'});
  write(path.join(root,'packages','2.81.0','package-lock.json'),{packages:{'node_modules/@bitkyc08/opencodex':{integrity}}});
  for(const file of ['src/index.ts','src/lib/system-restart-contract.ts','gui/dist/index.html']){const target=path.join(packageRoot,file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,'fixture');}
@@ -75,7 +75,13 @@ function updateFixture(t,{stageOnly=false,failRestart=false}={}){
   if(url.hostname==='registry.npmjs.org')return Response.json({name:'@bitkyc08/opencodex',version:'2.81.0',dist:{integrity,tarball:'https://registry.npmjs.org/package.tgz'}});
   if(url.port==='10121'){
    if(url.pathname==='/healthz')return Response.json({service:'opencodex',pid:501,version:'2.81.0'});
-   if(url.pathname==='/v1/models')return Response.json({models:[{slug:'model',supported_reasoning_levels:[],tool_mode:'native'}]});
+   if(url.pathname==='/v1/models'){
+    if(touchConfig){
+     const target=touchConfig==='native'?before.codexHome:spawnCalls[0].codexHome;
+     fs.writeFileSync(path.join(target,'config.toml'),'model="unexpected"');
+    }
+    return Response.json({models:[{slug:'model',supported_reasoning_levels:[],tool_mode:'native'}]});
+   }
    if(url.pathname==='/')return new Response('<html>Official dashboard fixture</html>');
   }
   if(url.pathname==='/admin/drain-if-idle'){
@@ -97,8 +103,8 @@ function updateFixture(t,{stageOnly=false,failRestart=false}={}){
   if(url.pathname==='/admin/resume'){resumeCalls++;return Response.json({accepting_turns:true});}
   throw Error('Unexpected request '+url.pathname);
  };
- const mockSpawn=(command,args)=>{
-  spawnCalls.push(args);assert.equal(path.basename(args[0]),'backend.ts');assert.equal(args[1],packageRoot);
+ const mockSpawn=(command,args,options)=>{
+  spawnCalls.push({args,codexHome:options.env.CODEX_HOME});assert.equal(path.basename(args[0]),'backend.ts');assert.equal(args[1],packageRoot);
   const child=new EventEmitter();child.pid=501;child.kill=()=>queueMicrotask(()=>child.emit('exit',0));return child;
  };
  const exports={};
@@ -126,6 +132,25 @@ test('stage-only validates and persists a candidate without acquiring maintenanc
  assert.equal(f.read(f.pendingFile).version,'2.81.0');
  assert.deepEqual(f.counts(),{probeCalls:0,restartCalls:0,resumeCalls:0,spawns:1});
 });
+
+test('candidate validation accepts a fresh native profile without creating its config',async t=>{
+ const f=updateFixture(t,{stageOnly:true,nativeConfig:false});const job=await f.run();
+ assert.equal(job.status,'succeeded');
+ assert.equal(fs.existsSync(path.join(f.before.codexHome,'config.toml')),false);
+ assert.deepEqual(f.read(f.settingsFile),f.before);
+ assert.equal(f.read(f.pendingFile).version,'2.81.0');
+ assert.deepEqual(f.counts(),{probeCalls:0,restartCalls:0,resumeCalls:0,spawns:1});
+});
+
+for(const [name,nativeConfig,touchConfig] of [['creates a missing native config',false,'native'],['changes an existing native config',true,'native'],['creates an isolated native config',false,'isolated']]){
+ test('candidate is rejected before maintenance when it '+name,async t=>{
+  const f=updateFixture(t,{stageOnly:true,nativeConfig,touchConfig});
+  await assert.rejects(f.run(),/Candidate touched native Codex configuration/);
+  assert.deepEqual(f.read(f.settingsFile),f.before);
+  assert.equal(fs.existsSync(f.pendingFile),false);
+  assert.deepEqual(f.counts(),{probeCalls:0,restartCalls:0,resumeCalls:0,spawns:1});
+ });
+}
 
 test('a rejected restart restores the old version and providers, retains the candidate, and resumes',async t=>{
  const f=updateFixture(t,{failRestart:true});await assert.rejects(f.run(),/restart refused: 503/);

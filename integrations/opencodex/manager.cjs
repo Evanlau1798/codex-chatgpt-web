@@ -50,7 +50,9 @@ async function validatePackage(packageRoot){
  // No live credential or account is used by the candidate acceptance run.
  const port=10121;
  atomic(path.join(home,'config.json'),{...current,port,providers:{openai:{adapter:'openai-responses',baseUrl:'https://chatgpt.com/backend-api/codex',authMode:'forward',codexAccountMode:'pool'}},defaultProvider:'openai',combos:{},subagentModels:[],claudeCode:{enabled:false},clientIntegrations:{codex:false,claudeCode:false,claudeDesktop:false,grok:false},hub:undefined,apiKeys:undefined});
- const cfgHash=digest(path.join(settings.codexHome,'config.toml'));
+ const nativeConfig=path.join(settings.codexHome,'config.toml');
+ const nativeHash=()=>fs.existsSync(nativeConfig)?digest(nativeConfig):null;
+ const cfgHash=nativeHash();
  const log=fs.openSync(path.join(job,'backend.log'),'a');
  const child=spawn(settings.bun,[path.join(ROOT,'backend.ts'),packageRoot],{env:{...process.env,OPENCODEX_HOME:home,CODEX_HOME:codex,OPENCODEX_API_AUTH_TOKEN:'isolated-acceptance-key',OCX_DESKTOP_SUPERVISED:'1',OPENCODEX_GATEWAY_OWNER_PID:String(process.pid),OPENCODEX_GATEWAY_PORT:String(port)},windowsHide:true,stdio:['ignore',log,log]});
  try{
@@ -62,7 +64,7 @@ async function validatePackage(packageRoot){
   if(!r.ok||!Array.isArray(catalog.models)||!catalog.models.some(m=>typeof m.slug==='string'&&Array.isArray(m.supported_reasoning_levels)&&m.tool_mode))throw Error('Codex catalog/effort/tool metadata contract failed');
   const gui=await fetch('http://127.0.0.1:'+port+'/',{signal:AbortSignal.timeout(10000)});
   if(!gui.ok||!(await gui.text()).includes('<html'))throw Error('Official dashboard contract failed');
-  if(digest(path.join(settings.codexHome,'config.toml'))!==cfgHash||fs.existsSync(path.join(codex,'config.toml')))throw Error('Candidate touched native Codex configuration');
+  if(nativeHash()!==cfgHash||fs.existsSync(path.join(codex,'config.toml')))throw Error('Candidate touched native Codex configuration');
   return {version,models:catalog.models.length,dashboard:true,nativeConfigUnchanged:true,health:true,checkDirectory:job};
  }finally{child.kill();await Promise.race([new Promise(r=>child.once('exit',r)),delay(5000)]);fs.closeSync(log);}
 }
