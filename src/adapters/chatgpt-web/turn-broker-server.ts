@@ -44,7 +44,7 @@ function validateRequest(request: BrokerRequest): void {
     && request.method !== "owner_request_compaction" && request.method !== "owner_compaction_delivery_count"
     && request.method !== "safe_start" && request.method !== "safe_complete"
     && request.method !== "activity_complete" && request.method !== "start_agent_wait" && request.method !== "read_agent_wait"
-    && request.method !== "read_output_control") {
+    && request.method !== "read_output_control" && request.method !== "start_operation" && request.method !== "read_operation") {
     throw new Error("turn broker method is invalid");
   }
 }

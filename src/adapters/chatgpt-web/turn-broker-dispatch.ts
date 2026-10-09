@@ -26,6 +26,7 @@ import {
 } from "./turn-broker-protocol";
 import { submitTurnOutput } from "./turn-broker-output";
 import { readAgentWait, startAgentWait } from "./turn-broker-agent-wait";
+import { readNativeOperation, startNativeOperation } from "./turn-broker-operations";
 import { assertRetirementFailure } from "./turn-broker-protocol";
 import { chatGptToolTimeoutError } from "./adapter-error";
 
@@ -137,6 +138,14 @@ export async function dispatchTurnBrokerRequest(
     if (!channel || channel.completionCommitted) throw new Error("turn token is invalid, expired, or revoked");
     return readAgentWait(channel, request.waitId);
   }
+  if (request.method === "read_operation") {
+    const channel = request.token ? state.channels.get(request.token) : undefined;
+    if (!channel || channel.safe || channel.completionCommitted
+      || (channel.environment.expiresAt !== undefined && channel.environment.expiresAt <= Date.now())) {
+      throw new Error("Native operation owner is invalid, expired or revoked");
+    }
+    return readNativeOperation(channel, request.operationId, request.waitMs ?? 0, signal);
+  }
   if (request.method === "claim") return claim(request, signal, state);
   if (request.method === "activity_complete") {
     if (typeof request.token !== "string" || request.token.length === 0) throw new Error("turn token is required");
@@ -243,6 +252,14 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
     return startAgentWait(binding.channel, request.wireName, request.arguments,
       tool => invoke({ id: request.id, method: "invoke", bindingId, ...tool }, state) as Promise<BrokerToolResult> | BrokerToolResult,
       error => state.owner.revoke(binding.token, error));
+  }
+  if (request.method === "start_operation") {
+    if (!request.wireName) throw new Error("Native operation tool is required");
+    return startNativeOperation(binding.channel, request.operationKey, {
+      wireName: request.wireName, freeform: request.freeform === true,
+      ...(request.arguments !== undefined ? { arguments: request.arguments } : {}),
+      ...(request.input !== undefined ? { input: request.input } : {}),
+    }, tool => invoke({ id: request.id, method: "invoke", bindingId, ...tool }, state) as Promise<BrokerToolResult>);
   }
   if (binding.channel.compactionRequested) {
     const result = binding.channel.compactionResult;
