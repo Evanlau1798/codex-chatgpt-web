@@ -780,6 +780,8 @@ test("navigation restores the task viewport at DOM readiness without completing 
   const contents = Object.assign(new EventEmitter(), {
     setWindowOpenHandler() {}, getURL: () => "https://chatgpt.com/?temporary-chat=true",
     enableDeviceEmulation: options => emulations.push(options.viewSize),
+    isDestroyed: () => false, insertCSS: async () => {},
+    executeJavaScript: async script => { if (script.includes("__CODEX_WEB_GPT_SURFACE_ID__")) ownershipMarks++; },
   });
   const tab = {
     id: "navigating", status: "running", rendererReady: false,
@@ -791,7 +793,7 @@ test("navigation restores the task viewport at DOM readiness without completing 
     boundsReady: true, bounds: { x: 280, y: 64, width: 840, height: 656 },
     window: { getContentSize: () => [1120, 760], isVisible: () => false, isMinimized: () => false },
     view: { setBounds() {}, setVisible() {} },
-    snapshot() { return {}; }, markTurnTabSurface: async () => { ownershipMarks++; },
+    snapshot() { return {}; },
   });
   host.bindTurnContents(tab);
   contents.emit("did-start-navigation", {}, contents.getURL(), false, true);
@@ -806,7 +808,7 @@ test("navigation restores the task viewport at DOM readiness without completing 
   contents.emit("did-start-navigation", {}, "https://example.com/iframe", false, false);
   assert.equal(tab.rendererReady, true, "hash and iframe navigation must not invalidate the viewport");
   contents.emit("did-finish-load");
-  await Promise.resolve();
+  await new Promise(setImmediate);
   assert.equal(tab.loading, false);
   assert.equal(tab.bootstrapReady, true);
   assert.equal(ownershipMarks, 1);

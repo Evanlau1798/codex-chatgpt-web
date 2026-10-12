@@ -206,5 +206,16 @@
       "Linux-only builder dependency is imported only in Linux ARM64 validator branch. All existing runtime/overlap/copy assertions retained."
     ],
     "evidence": "Two original failed wrapper runs and a cold import timeout are retained; meaningful new RED then GREEN and remaining root checks are retained."
+  },
+  "launcherFixtureFollowups": {
+    "archive": {
+      "path": ".github/upstream-audit/evidence/828474d74d60cea27e63508a6390c78a1b6fa2d8eca3d4b218705aedff457ecc.tar.gz",
+      "sha256": "828474d74d60cea27e63508a6390c78a1b6fa2d8eca3d4b218705aedff457ecc",
+      "bytes": 111552
+    },
+    "reviewer": "01a131fe-bd89-7613-8693-ad9f701781e9",
+    "scope": "Test-only Electron external boundary and complete normalized state snapshots; all original ownership, viewport, rollback and permission assertions remain.",
+    "actualCompleteLauncherSuite": "687 pass / 7 platform skips / 0 fail",
+    "originalGate": "All345 root test files passed, launcher four failures retained; no canary performed in that failed wrapper."
   }
 }
