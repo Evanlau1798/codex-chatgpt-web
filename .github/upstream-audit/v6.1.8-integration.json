@@ -160,5 +160,16 @@
     "Plus 256K real long-history retention is unverified; default-off experimental option.",
     "Popup regression tests and authenticated launcher state do not establish every OAuth provider callback is fixed.",
     "An earlier reviewer resumed after accepted compact via DOM fallback; no broker work-tool error was observed and the next readonly probe succeeded."
-  ]
+  ],
+  "additionalValidation": {
+    "archive": {
+      "path": ".github/upstream-audit/evidence/26806516d369e3ee784df4d77308b69a5768ebdf0ee9bae85f63e63aba13b28b.tar.gz",
+      "sha256": "26806516d369e3ee784df4d77308b69a5768ebdf0ee9bae85f63e63aba13b28b",
+      "bytes": 7086
+    },
+    "reason": "Full gate exposed stale static send-owner anchor. One test locator changed; all six ordering assertions unchanged.",
+    "reviewer": "01a131e2-883c-7dd3-8270-a31a8acb1942",
+    "reviewScope": "Supplied complete test, exact diff, connected production send source; no independent test execution claimed.",
+    "actualChromiumFocused": "40 pass / 0 fail"
+  }
 }
