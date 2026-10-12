@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { expandUserPath } from "../../config";
 import { releaseLauncherRetainedConversation } from "../../launcher-browser-host";
 import type { CodexProviderConfig } from "../../types";
-import { effectiveExperimentalBiggerContext } from "../../context-mode";
+import { effectiveExperimentalBiggerContext, effectiveExperimentalPlusNativeContext } from "../../context-mode";
 import type { ChatGptWebCapabilities } from "./model";
 import type { CompileChatGptWebPromptOptions } from "./prompt";
 
@@ -18,7 +18,7 @@ export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
   executionNamespace: string;
 } {
   const useEnhancedWebSessionMode = provider.chatgptWeb?.useEnhancedWebSessionMode === true;
-  for (const field of ["experimentalFreshConversationPerTurn", "useSavedChats"] as const) {
+  for (const field of ["experimentalFreshConversationPerTurn", "useSavedChats", "experimentalPlusNativeContext"] as const) {
     const value = provider.chatgptWeb?.[field];
     if (value !== undefined && typeof value !== "boolean") throw new Error(`ChatGPT ${field} preference must be a boolean`);
   }
@@ -46,6 +46,7 @@ export function chatGptAdapterRuntimeConfig(provider: CodexProviderConfig): {
       solAvailable: provider.chatgptWeb?.solAvailable !== false,
       extraHighAvailable: provider.chatgptWeb?.extraHighAvailable === true,
       proAvailable: provider.chatgptWeb?.proAvailable === true,
+      experimentalPlusNativeContext: effectiveExperimentalPlusNativeContext(provider.chatgptWeb ?? {}),
     },
     executionNamespace: createHash("sha256").update(JSON.stringify({
       baseUrl: provider.baseUrl,

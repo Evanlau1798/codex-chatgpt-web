@@ -6,7 +6,7 @@ import {
 export type LauncherHelperMessage =
   | { type: "event"; id: string; event: "multipart_stage_acknowledged"; stageIndex: number }
   | { type: "ready"; features?: string[] }
-  | { type: "event"; id: string; event: "heartbeat" | "send_activated" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
+  | { type: "event"; id: string; event: "heartbeat" | "generation_progress" | "send_activated" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text"; text?: string; continuation?: boolean }
   | { type: "event"; id: string; event: "tool_batch_observed"; revision: number }
   | { type: "event"; id: string; event: "completion_fence_begin"; requestId: number }
   | { type: "event"; id: string; event: "completion_fence_commit"; requestId: number; revision: number }
@@ -185,7 +185,7 @@ function parseEvent(message: Record<string, unknown> & { id: string }): Launcher
     }
     return { type: "event", id: message.id, event, armed: message.armed };
   }
-  if (!["heartbeat", "send_activated", "submitted", "retry_submitted", "reasoning", "commentary", "text"].includes(String(event))) {
+  if (!["heartbeat", "generation_progress", "send_activated", "submitted", "retry_submitted", "reasoning", "commentary", "text"].includes(String(event))) {
     throw new Error("Launcher browser helper emitted an unknown event");
   }
   if (message.text !== undefined && typeof message.text !== "string") {
@@ -197,7 +197,7 @@ function parseEvent(message: Record<string, unknown> & { id: string }): Launcher
   return {
     type: "event",
     id: message.id,
-    event: event as "heartbeat" | "send_activated" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text",
+    event: event as "heartbeat" | "generation_progress" | "send_activated" | "submitted" | "retry_submitted" | "reasoning" | "commentary" | "text",
     ...(message.text !== undefined ? { text: message.text as string } : {}),
     ...(message.continuation !== undefined ? { continuation: message.continuation as boolean } : {}),
   };

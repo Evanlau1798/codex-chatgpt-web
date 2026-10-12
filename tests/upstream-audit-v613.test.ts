@@ -188,7 +188,7 @@ test("v6.1.3 evidence is content-addressed, references v6.1.2, and reconstructs 
   }
 }, 30_000);
 
-test.each(["v6.1.4", "v6.1.5", "v6.1.7"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
+test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8"])("continuing %s evidence closes source anchors and reconstructs the original merge from retained prerequisites", release => {
   const next = JSON.parse(readFileSync(resolve(root, `.github/upstream-audit/${release}.json`), "utf8"));
   if (release === "v6.1.5") {
     expect(next.coverage).toEqual({paths: 54, hunks: 202, testPaths: 21, testCaseDeltas: 61, pending: 0, missing: 0});
@@ -200,8 +200,15 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7"])("continuing %s evidence closes source 
     expect(next.upstream).toBe("f9ad4ae83a579287105ad822dd0c3e0029b04ef6");
     expect(next.tag.object).toBe("bd6a3021d911cfd6e7dbe2b45b117b5cb365c5c7");
   }
+  if (release === "v6.1.8") {
+    expect(next.coverage).toEqual({paths: 55, hunks: 155, testPaths: 29, testCaseDeltas: 52, pending: 0, missing: 0});
+    expect(next.baseline).toBe("199e6f63b9e2f69a89b4364b7384a35de4a249e2");
+    expect(next.upstream).toBe("7cc8b8d8aadbbf729bd2bd43ca47fa15ea9965c0");
+    expect(next.tag.object).toBe("09af1a06b2bde862ec41d3ca01b0a7577a14fa56");
+    expect(next.evidence.path).toBe(`.github/upstream-audit/evidence/${next.evidence.sha256}.tar.gz`);
+  }
   const digest = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
-  const publishedObjects = release === "v6.1.7"
+  const publishedObjects = release === "v6.1.7" || release === "v6.1.8"
     ? new Set(git(["rev-list", "--objects", "HEAD"]).split(/\r?\n/).map(line => line.split(" ")[0])) : undefined;
   const retainedTargets = new Map<string, Buffer>();
   if (next.evidence.targetBlobs) {
@@ -227,7 +234,7 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7"])("continuing %s evidence closes source 
   const textDigest = (text: string) => digest(Buffer.from(text.replaceAll("\r\n", "\n")));
   expect(next.tag.signed).toBeFalse();
   expect(git(["merge-base", next.semanticBaseline, next.upstream])).toBe(next.semanticBaseline);
-  expect(git(["rev-list", "--count", `${next.semanticBaseline}..${next.upstream}`])).toBe(release === "v6.1.7" ? "4" : "1");
+  expect(git(["rev-list", "--count", `${next.semanticBaseline}..${next.upstream}`])).toBe(release === "v6.1.7" ? "4" : release === "v6.1.8" ? "3" : "1");
   const expectedPaths = git(["diff", "--name-only", next.semanticBaseline, next.upstream]).split(/\r?\n/).sort();
   expect(next.paths.map((item: any) => item.path).sort()).toEqual(expectedPaths);
   expect(new Set(next.paths.map((item: any) => item.path)).size).toBe(expectedPaths.length);

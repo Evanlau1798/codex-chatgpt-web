@@ -301,6 +301,9 @@ export class LauncherBrowserHelperClient {
             }
           });
       }
+      else if (message.event === "generation_progress") {
+        this.invokeEventCallback(message.id, pending, () => pending.turn.onGenerationProgress?.());
+      }
       else if (message.event === "heartbeat") {
         this.invokeEventCallback(message.id, pending, () => pending.turn.onHeartbeat?.());
       }

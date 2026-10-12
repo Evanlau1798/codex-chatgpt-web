@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { ChatGptThreadEnvironmentStore } from "../src/adapters/chatgpt-web/thread-environment";
 import type { CodexParsedRequest, CodexTool } from "../src/types";
-import { root, currentWire, dangerFullAccessProfileXml } from "./environment-fixture";
+import { root, currentWire, environmentXml, dangerFullAccessProfileXml } from "./environment-fixture";
 const temporaryRoots: string[] = [];
 afterEach(() => { for (const path of temporaryRoots.splice(0)) rmSync(path, { recursive: true, force: true }); });
 
@@ -438,3 +438,48 @@ test("rollout recovery rejects outside paths and never repairs malformed raw aut
   expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(malformed))
     .toThrow("missing cwd");
 });
+
+  for (const child of [true, false]) test(`a ${child ? "child" : "root"} thread's untagged environment must match native history before its current task boundary`, () => {
+    const codexHome = mkdtempSync(join(tmpdir(), "codex-child-history-"));
+    temporaryRoots.push(codexHome);
+    const rolloutPath = join(codexHome, "sessions", "2026", "09", "06",
+      `rollout-2026-09-06T13-55-13-${rolloutThreadId}.jsonl`);
+    mkdirSync(dirname(rolloutPath), { recursive: true });
+    const inherited = {
+      type: "message", role: "user", id: "msg_inherited_environment",
+      content: [{ type: "input_text", text: environmentXml.replaceAll(root, resolve(root, "old-parent")) }],
+    };
+    const boundary = { type: "event_msg", payload: { type: "task_started", turn_id: rolloutTurnId } };
+    const history = { type: "response_item", payload: inherited };
+    const writeRollout = (records: unknown[]) => writeFileSync(rolloutPath,
+      records.map(record => JSON.stringify(record)).join("\n") + "\n");
+    const session = child ? childSessionMeta()
+      : { type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } };
+    writeRollout([session, history, boundary, childTurnContext()]);
+    if (child) createRolloutState(join(codexHome, "state_5.sqlite"), rolloutPath);
+    const request = environmentlessChild(rolloutTurnId, "danger-full-access", []);
+    const body = request._rawBody as { input: Array<Record<string, unknown>>; client_metadata: Record<string, string> };
+    if (!child) body.client_metadata["x-codex-turn-metadata"] = JSON.stringify({
+      request_kind: "turn", thread_id: rolloutThreadId, turn_id: rolloutTurnId,
+      agent_name: "/root", sandbox_mode: "danger-full-access", workspaces: {},
+    });
+    body.input.unshift(structuredClone(inherited), {
+      type: "message", role: "user", id: "msg_parent_prompt",
+      content: [{ type: "input_text", text: "Original parent instruction" }],
+    });
+    const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+    // Historical XML never supplies authority. Both root and child threads must use
+    // their current native cwd even when a retained historical envelope differs (#812).
+    expect(store.resolve(request).cwd).toBe(root);
+    body.input[0] = { ...inherited, content: [{ type: "input_text", text: "<environment_context>changed</environment_context>" }] };
+    expect(() => store.resolve(request)).toThrow("differs from its native Codex record");
+    body.input[0] = { ...inherited, id: "msg_unrecorded_environment" };
+    expect(() => store.resolve(request)).toThrow("does not authenticate");
+    body.input[0] = { ...inherited, internal_chat_message_metadata_passthrough: { turn_id: rolloutTurnId } };
+    expect(() => store.resolve(request)).toThrow("missing cwd");
+    body.input[0] = structuredClone(inherited);
+    writeRollout([session, boundary, history, childTurnContext()]);
+    expect(() => store.resolve(request)).toThrow("does not authenticate");
+    writeRollout([session, history, childTurnContext()]);
+    expect(() => store.resolve(request)).toThrow("no current task boundary");
+  });

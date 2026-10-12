@@ -109,6 +109,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     extraHighAvailable: false,
     proAvailable: false,
     experimentalBiggerContext: false,
+    experimentalPlusNativeContext: false,
     experimentalSkillAttachments: false,
     experimentalNoAutoCompact: false,
     experimentalFreshConversationPerTurn: false,
@@ -405,7 +406,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (parsed.extraHighAvailable !== undefined && typeof parsed.extraHighAvailable !== "boolean") {
     throw new Error(`Invalid extraHighAvailable in ${path}`);
   }
-  for (const feature of ["experimentalBiggerContext", "experimentalSkillAttachments",
+  for (const feature of ["experimentalBiggerContext", "experimentalPlusNativeContext", "experimentalSkillAttachments",
     "experimentalComposerPlainText", "experimentalNoAutoCompact"] as const) {
     if (parsed[feature] !== undefined && typeof parsed[feature] !== "boolean") {
       throw new Error(`Invalid ${feature} in ${path}`);
@@ -479,6 +480,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     modelCapabilities: parseChatGptWebModelCapabilities(parsed.modelCapabilities),
     experimentalBiggerContext,
     experimentalSkillAttachments,
+    experimentalPlusNativeContext: parsed.experimentalPlusNativeContext === true,
     experimentalNoAutoCompact: parsed.experimentalNoAutoCompact === true,
     ...(parsed.experimentalComposerPlainText === true ? { experimentalComposerPlainText: true } : {}),
     experimentalFreshConversationPerTurn,

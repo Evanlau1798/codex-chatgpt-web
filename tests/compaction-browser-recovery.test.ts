@@ -67,10 +67,10 @@ test.each([
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics, ...(owned ? { browserHostDescriptorPath: "owned-descriptor" } : {}) },
     finalizingRuns: new Set<string>(),
-    runStage: async (_trace: string, name: string, timeout: number, action: (signal: AbortSignal) => Promise<unknown>) => {
+    runStage: async (_trace: string, name: string, timeout: number, action: (signal: AbortSignal) => Promise<unknown>, owner?: AbortSignal) => {
       stage = name;
       if (name === "send" || name.endsWith("_send")) sendBudgets.push(timeout);
-      const result = await action(new AbortController().signal);
+      const result = await action(owner ?? new AbortController().signal);
       if (remountHistory && name === "multipart_stage_1_attachment") historyRemounted = true;
       return result;
     },
@@ -102,6 +102,8 @@ test.each([
       },
     }) }) }),
     waitForSubmissionAccepted: async (...args: unknown[]) => {
+      // A physically closed tab cannot simultaneously prove successful acceptance.
+      if (cancellationCase) throw finalResponse;
       expect(args[8]).toBe(progress);
       recoveryCallbacks.push(args[11]);
       return "user_turn";
@@ -236,7 +238,7 @@ test.each([
       ...((requiredRetained || tools || reused) ? ["connector-check"] : []),
       "send", "observe",
     ]);
-    expect(sendBudgets).toEqual(multipart ? Array(6).fill(180_000) : [60_000]);
+    expect(sendBudgets).toEqual(Array(multipart ? 6 : 1).fill(180_000));
     expect(released).toBe(true);
     expect(activated).toBe(1);
     expect(page.listenerCount("request")).toBe(0);

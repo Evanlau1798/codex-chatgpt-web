@@ -40,7 +40,8 @@ function isInstalledInterruptHook(value: unknown): boolean {
     && Number.isSafeInteger(hook.groupIndex) && (hook.groupIndex as number) >= 0
     && typeof hook.stateKey === "string" && hook.stateKey.length > 0
     && typeof hook.trustedHash === "string" && /^sha256:[a-f0-9]{64}$/.test(hook.trustedHash)
-    && typeof hook.fragment === "string" && hook.fragment.length > 0;
+    && typeof hook.fragment === "string" && hook.fragment.length > 0
+    && (hook.enabled === undefined || typeof hook.enabled === "boolean");
 }
 
 function parseJournal(path: string): AnyCodexIntegrationJournal {

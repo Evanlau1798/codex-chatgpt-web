@@ -26,6 +26,8 @@ export const fr = {
   skillAttachments: "Compétences en pièces jointes (expérimental)",
   skillAttachmentsBody: "Envoyer les compétences Codex explicitement sélectionnées sous forme de fichiers texte nommés. Les autres restent accessibles via les outils. Désactivé par défaut ; partage la limite de pièces jointes avec les images.",
   manualSkillAttachmentsUnavailable: "L’envoi de compétences nécessite l’interaction automatique avec le navigateur.",
+  plusNativeContext: "Contexte natif Plus (expérimental)",
+  plusNativeContextBody: "Le raisonnement Enhanced + Plus utilise une fenêtre de 256K et une compression à 230,4K. La conservation des longs historiques reste non vérifiée. Aucune hausse de la limite par message ni activation d’Extra High. Désactivé par défaut ; redémarrez Codex après modification.",
   noAutoCompact: "Sans fenêtre de contexte (expérimental)",
   noAutoCompactBody: "Retire uniquement les seuils de contexte et de compactage automatique ChatGPT Web annoncés à Codex. Le mode amélioré conserve un point de reprise privé entre les résultats d’outils (environ tous les 100 000 tokens avec Pro, plus tôt avec Plus). La page continue ; en cas d’échec, elle est reconstruite depuis ce point et les travaux suivants. Les limites de ChatGPT restent applicables et les prompts trop volumineux sont refusés. Redémarrez Codex après modification. Désactivé par défaut.",
   savedChats: "Enregistrer les chats dans ChatGPT",

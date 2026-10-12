@@ -251,6 +251,24 @@ describe("fixed ChatGPT Web model routes", () => {
     expect(displayedThousands("xhigh", pro)).toBe(95);
     expect(displayedThousands("max", pro)).toBe(95);
   });
+  test("GPT-6 Plus expands retained context without enlarging one message or unlocking unavailable efforts", () => {
+    const enabled = { ...plus, experimentalBiggerContext: true };
+    for (const effort of ["medium", "high"] as const) {
+      expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, effort, plus, false, "6"))
+        .toMatchObject({ contextWindow: 90_000, autoCompactTokenLimit: 80_000 });
+      expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, effort, enabled, false, "6"))
+        .toMatchObject({ contextWindow: 120_000, autoCompactTokenLimit: 110_000 });
+      expect(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, effort, enabled))
+        .toEqual(resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, effort, plus));
+    }
+    expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "low", enabled, false, "6"))
+      .toEqual(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "low", plus, false, "6"));
+    expect(() => resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", enabled, false, "6"))
+      .toThrow("unavailable effort");
+    expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "xhigh", {
+      ...enabled, extraHighAvailable: true,
+    }, false, "6")).toMatchObject({ contextWindow: 120_000, autoCompactTokenLimit: 110_000 });
+  });
 
   test("publishes Luna's real model window without early native compaction", () => {
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_LUNA_BACKEND_MODEL, "low", {

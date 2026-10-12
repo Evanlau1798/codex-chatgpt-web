@@ -535,6 +535,9 @@ function smokePassedForCurrentVersion(state) {
 
 function syncBrowserPreferences(stateStore, config) {
   const biggerContextAvailable = typeof config?.solAvailable === "boolean";
+  const plusNativeContextAvailable = config?.useEnhancedWebSessionMode === true
+    && config?.browserInteractionMode !== "manual" && config?.solAvailable === true && config?.proAvailable === false;
+  const experimentalPlusNativeContext = config?.experimentalPlusNativeContext === true;
   const biggerContextEnabled = config?.experimentalBiggerContext === true;
   const useSavedChats = config?.useSavedChats === true;
   const autoApproveToolCalls = config?.autoApproveToolCalls === true;
@@ -546,7 +549,9 @@ function syncBrowserPreferences(stateStore, config) {
   const retentionChanged = current.experimentalFreshConversationPerTurn !== enabled || current.useSavedChats !== useSavedChats
     || current.experimentalBiggerContext !== biggerContextEnabled;
   if (!retentionChanged && current.autoApproveToolCalls === autoApproveToolCalls
-    && current.biggerContextAvailable === biggerContextAvailable) return current;
+    && current.biggerContextAvailable === biggerContextAvailable
+    && current.plusNativeContextAvailable === plusNativeContextAvailable
+    && current.experimentalPlusNativeContext === experimentalPlusNativeContext) return current;
   // Runtime restarts leave browser views alive. Retire completed chats when their
   // persistence policy changes, including changes made by the CLI.
   const retainedKeys = new Set((retentionChanged ? [...(browserHost?.turnTabs.values() ?? [])] : [])
@@ -555,7 +560,7 @@ function syncBrowserPreferences(stateStore, config) {
     .map(tab => tab.conversationKey));
   for (const key of retainedKeys) releaseRetainedConversation(browserHost, key);
   const state = stateStore.update({ experimentalFreshConversationPerTurn: enabled, useSavedChats, autoApproveToolCalls, biggerContextAvailable,
-    experimentalBiggerContext: biggerContextEnabled });
+    experimentalBiggerContext: biggerContextEnabled, plusNativeContextAvailable, experimentalPlusNativeContext });
   send("launcher:state-changed", state);
   return state;
 }
@@ -858,10 +863,21 @@ function registerIpc({ logger, stateStore }) {
     send("launcher:browser-state", browserHost.snapshot());
     return state;
   });
-  handle("launcher:no-auto-compact", async (_event, enabled) => {
+  handle("launcher:no-auto-compact", "launcher:plus-native-context", async (_event, enabled) => {
     const result = await runtimeHost.setExperimentalNoAutoCompact(enabled === true);
     const state = stateStore.update({
       experimentalNoAutoCompact: result.enabled,
+      codexCatalogVerified: IS_DEV_PROFILE ? true : false,
+      codexRestartRequired: IS_DEV_PROFILE ? false : true,
+    });
+    send("launcher:state-changed", state);
+    if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
+    return state;
+  });
+  handle("launcher:plus-native-context", async (_event, enabled) => {
+    const result = await runtimeHost.setExperimentalPlusNativeContext(enabled === true);
+    const state = stateStore.update({
+      experimentalPlusNativeContext: result.enabled,
       codexCatalogVerified: IS_DEV_PROFILE ? true : false,
       codexRestartRequired: IS_DEV_PROFILE ? false : true,
     });
@@ -1422,6 +1438,7 @@ async function start() {
       autoStart: false,
       experimentalBiggerContext: config?.experimentalBiggerContext === true,
       experimentalSkillAttachments: config?.experimentalSkillAttachments === true,
+      experimentalPlusNativeContext: config?.experimentalPlusNativeContext === true,
       experimentalNoAutoCompact: config?.experimentalNoAutoCompact === true,
       experimentalFreshConversationPerTurn: config?.experimentalFreshConversationPerTurn === true,
       useSavedChats: config?.useSavedChats === true,
@@ -1452,6 +1469,7 @@ async function start() {
         codexRestartRequired: true,
         experimentalBiggerContext: runtimeHost.runtimeConfigSnapshot().config?.experimentalBiggerContext === true,
         experimentalSkillAttachments: runtimeHost.runtimeConfigSnapshot().config?.experimentalSkillAttachments === true,
+        experimentalPlusNativeContext: runtimeHost.runtimeConfigSnapshot().config?.experimentalPlusNativeContext === true,
         experimentalNoAutoCompact: runtimeHost.runtimeConfigSnapshot().config?.experimentalNoAutoCompact === true,
         experimentalFreshConversationPerTurn: runtimeHost.runtimeConfigSnapshot().config?.experimentalFreshConversationPerTurn === true,
         useSavedChats: runtimeHost.runtimeConfigSnapshot().config?.useSavedChats === true,
@@ -1512,6 +1530,7 @@ async function start() {
         mcpRuntimeInstalled: config.mode === "full",
         experimentalBiggerContext: config.experimentalBiggerContext === true,
         experimentalSkillAttachments: config.experimentalSkillAttachments === true,
+        experimentalPlusNativeContext: config.experimentalPlusNativeContext === true,
         experimentalNoAutoCompact: config.experimentalNoAutoCompact === true,
         experimentalFreshConversationPerTurn: config.experimentalFreshConversationPerTurn === true,
         useSavedChats: config.useSavedChats === true,

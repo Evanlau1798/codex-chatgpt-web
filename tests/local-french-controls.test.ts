@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Page } from "playwright-core";
+import { CHATGPT_THINK_BUTTON_SELECTOR } from "../src/chatgpt-session";
 import { setChatGptThinkMode, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert, resolveChatGptToolConfirmation, isChatGptTraceControl, stripChatGptTraceControlSuffix } from "../src/adapters/chatgpt-web/browser-worker";
 
 // Keep upstream test bodies unchanged; localized extensions live here.
@@ -287,7 +288,7 @@ function fixture(label = "Think") {
   };
   const composerForm = { getByRole: (_role: string, options: { name: string | RegExp }) => ({ filter: () => ({ ...controls,
     count: async () => (typeof options.name === "string" ? options.name === label : options.name.test(label)) ? controls.count() : 0,
-  }) }), locator: () => composer, page: () => page };
+  }) }), locator: (selector: string) => selector === CHATGPT_THINK_BUTTON_SELECTOR ? { filter: () => controls } : composer, page: () => page };
   return { state, composer, composerForm, page };
 }
 

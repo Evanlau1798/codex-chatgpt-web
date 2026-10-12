@@ -137,13 +137,13 @@ test("browser turn orchestration retains owned prompt insertion and semantic sub
   expect(runBrowserTurn).toContain('.locator("xpath=ancestor::form[1]")');
   expect(runBrowserTurn).toContain('.locator(CHATGPT_SEND_BUTTON_SELECTOR)');
   expect(runBrowserTurn).toContain(
-    "await activateChatGptSendControl(sendButton, stageSignal, () => submissionRejection.activate())",
+    "await submitChatGptSendControl(",
   );
   expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
     .toBeGreaterThanOrEqual(0);
   expect(runBrowserTurn.indexOf("turn.onSendActivated?.()"))
-    .toBeLessThan(runBrowserTurn.indexOf("await activateChatGptSendControl(sendButton, stageSignal"));
-  expect(runBrowserTurn).toContain("await this.waitForSubmissionAccepted(");
+    .toBeLessThan(runBrowserTurn.indexOf("await submitChatGptSendControl("));
+  expect(runBrowserTurn).toContain("this.waitForSubmissionAccepted(");
   expect(workerSource).not.toMatch(/\bclipboard\b|pbcopy|pbpaste/i);
 });
 
@@ -361,7 +361,7 @@ test("prompt attachment timeout retires the unsubmitted surface for canonical re
 
 test("browser send stage allows slow retained composers to settle", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
-  expect(workerSource).toContain("send: 60_000");
+  expect(workerSource).toContain("send: 180_000");
 });
 
 test("Luna turns without a retained conversation never send connector identity alone", () => {
@@ -1626,6 +1626,7 @@ test("image attachment readiness uses exact file tiles and not localized remove-
       return composerForm;
     },
   };
+  let uploadEvent: (event: { method: string; params: unknown }) => void = () => {};
   const input = {
     waitFor: async (state: { state: string; timeout: number }) => {
       expect(state).toEqual({ state: "attached", timeout: 20_000 });
@@ -1633,9 +1634,18 @@ test("image attachment readiness uses exact file tiles and not localized remove-
     },
     setInputFiles: async (files: Array<{ name: string }>) => {
       calls.push(["setFiles", files.map(file => file.name).join(",")]);
+      uploadEvent({ method: "Network.requestWillBeSent", params: { frameId: "owned", requestId: "upload", request: { method: "POST", url: "https://chatgpt.com/backend-api/files/process_upload_stream", postData: JSON.stringify({ file_name: files[0]!.name }) } } });
+      uploadEvent({ method: "Network.responseReceived", params: { requestId: "upload", response: { status: 200 } } });
     },
   };
   const page = {
+    url: () => "https://chatgpt.com/",
+    context: () => ({ newCDPSession: async () => ({
+      on: (_name: string, listener: typeof uploadEvent) => { uploadEvent = listener; },
+      off: () => {}, detach: async () => {},
+      send: async (method: string) => method === "Page.getFrameTree" ? { frameTree: { frame: { id: "owned" } } }
+        : method === "Network.streamResourceContent" ? { bufferedData: Buffer.from(JSON.stringify({ event: "file.processing.completed" }) + "\n").toString("base64") } : {},
+    }) }),
     locator: (selector: string) => {
       if (selector === 'input[data-testid="upload-photos-input"], form[data-chatgpt-composer] input[type="file"][multiple]:not([accept])') return input;
       if (selector === '[role="alert"]') {
@@ -2561,12 +2571,18 @@ test("GPT-6 staged input enforces its measured account and effort ceiling before
       222_386, 40_000, "gpt-5.6-sol", effort, pro, 200_000, 2, undefined, "6",
     )).toThrow("222,386-token two-part ceiling");
     expect(() => assertChatGptWebMultipartInputWithinLimits(
-      100_000, 40_000, "gpt-5.6-sol", effort, { ...pro, proAvailable: false }, 200_000, 6, undefined, "6",
-    )).toThrow("GPT-6 Sol uses standard context");
+      119_999, 40_000, "gpt-5.6-sol", effort, { ...pro, proAvailable: false }, 200_000, 6, undefined, "6",
+    )).not.toThrow();
+    expect(() => assertChatGptWebMultipartInputWithinLimits(
+      120_000, 40_000, "gpt-5.6-sol", effort, { ...pro, proAvailable: false }, 200_000, 6, undefined, "6",
+    )).toThrow("120,000-token six-part ceiling");
+    expect(() => assertChatGptWebMultipartInputWithinLimits(
+      120_000, 40_000, "gpt-5.6-sol", effort, { ...pro, proAvailable: false }, 200_000, 2, undefined, "6",
+    )).toThrow("120,000-token two-part ceiling");
   }
   expect(() => assertChatGptWebMultipartInputWithinLimits(
     100_000, 40_000, "gpt-5.6-sol", "low", pro, 200_000, 6, undefined, "6",
-  )).toThrow("GPT-6 Sol uses standard context");
+  )).toThrow("GPT-6 Instant uses standard context");
   expect(() => assertChatGptWebMultipartInputWithinLimits(
     333_578, 60_000, "gpt-5.6-sol", "high", pro, 250_000, 6, undefined, "5.6",
   )).not.toThrow();
@@ -3571,14 +3587,14 @@ test("Bigger Context stage sends get a budget sized for their payload", () => {
   // The send stage covers ChatGPT accepting the submission, not just the click. A stage posts a
   // payload orders of magnitude larger than an ordinary prompt onto a conversation that already
   // holds the earlier parts, and the ordinary budget expired mid-acceptance and killed the turn.
-  expect(worker).toContain("multipartStageSend: 180_000");
-  expect(worker).toContain("browserStageTimeouts.multipartStageSend,");
+  expect(worker).toContain("send: 180_000");
+  expect(worker).toContain("browserStageTimeouts.send,");
 
   // The multipart commit lands on a conversation already carrying every staged part.
-  expect(worker).toContain("prepared.multipart ? browserStageTimeouts.multipartStageSend : browserStageTimeouts.send,");
+  expect(worker).toContain("browserStageTimeouts.send,");
 
-  // The ordinary send budget is unchanged for ordinary prompts.
-  expect(worker).toContain("send: 60_000,");
+  // Ordinary prompts share the acceptance budget; staging never reduces it.
+  expect(worker).toContain("send: 180_000,");
 });
 
 test("a staged Bigger Context part gets an acknowledgement window sized to its payload", () => {
@@ -3595,7 +3611,7 @@ test("a staged Bigger Context part gets an acknowledgement window sized to its p
   expect(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS).toBeGreaterThan(slowestObservedAcknowledgementMs * 2);
 
   // It is the same budget the staged send already gets; the two bound the same oversized exchange.
-  expect(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS).toBe(browserStageTimeouts.multipartStageSend);
+  expect(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS).toBe(browserStageTimeouts.send);
 });
 
 test("visible Stop keeps assistant DOM grace alive while reasoning has no mounted turn", async () => {
@@ -3886,7 +3902,8 @@ function thinkSlashFixture() {
       }
     },
   };
-  const composerForm = { getByRole: () => ({ filter: () => controls }), locator: () => composer, page: () => page };
+  const composerForm = { getByRole: () => ({ filter: () => controls }), locator: (selector: string) =>
+    selector === accountSession.CHATGPT_THINK_BUTTON_SELECTOR ? { filter: () => controls } : composer, page: () => page };
   return { state, composer, composerForm, page, control };
 }
 
@@ -4055,13 +4072,13 @@ test("cancelled chat preparation stops navigation and composer polling", async (
   }
 });
 
-test("GPT-6 Sol rejects a staged prompt before opening a browser and releases its preparation", async () => {
+test.each(["low", "high"] as const)("GPT-6 Plus stages High but keeps the Instant exclusion (%s)", async reasoning => {
   const root = mkdtempSync(join(tmpdir(), "gpt6-standard-context-"));
   const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false };
   let released = false;
   let browserStages = 0;
   const prepared = { ...compileChatGptWebPrompt({
-    modelId: CHATGPT_WEB_MODEL_ID, stream: true, options: { reasoning: "high" },
+    modelId: CHATGPT_WEB_MODEL_ID, stream: true, options: { reasoning },
     context: { messages: [{ role: "user", content: "Keep the entire task.", timestamp: 1 }] },
   }, capabilities, undefined, { experimentalMultipartParts: 2 }), release() { released = true; } };
   const worker: any = ChatGptBrowserWorker.forProvider({
@@ -4070,10 +4087,10 @@ test("GPT-6 Sol rejects a staged prompt before opening a browser and releases it
   worker.runStage = async () => { browserStages++; throw new Error("Browser must not be opened"); };
   try {
     await expect(worker.runBrowserTurn({
-      traceId: "six_standard", modelId: CHATGPT_WEB_MODEL_ID, modelFamily: "6", reasoning: "high", capabilities,
+      traceId: "six_standard", modelId: CHATGPT_WEB_MODEL_ID, modelFamily: "6", reasoning, capabilities,
       prepare: async () => prepared, onTextDelta() {}, onReasoningSummary() {},
-    })).rejects.toThrow("GPT-6 Sol uses standard context");
-    expect(browserStages).toBe(0);
+    })).rejects.toThrow(reasoning === "low" ? "GPT-6 Instant uses standard context" : "Browser must not be opened");
+    expect(browserStages).toBe(reasoning === "low" ? 0 : 1);
     expect(released).toBeTrue();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

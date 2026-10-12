@@ -287,6 +287,10 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
     && typeof config.experimentalSkillAttachments !== "boolean") {
     throw new Error("Runtime configuration has an invalid experimentalSkillAttachments");
   }
+  if (config.experimentalPlusNativeContext !== undefined
+    && typeof config.experimentalPlusNativeContext !== "boolean") {
+    throw new Error("Runtime configuration has an invalid experimentalPlusNativeContext");
+  }
   if (config.experimentalNoAutoCompact !== undefined
     && typeof config.experimentalNoAutoCompact !== "boolean") {
     throw new Error("Runtime configuration has an invalid experimentalNoAutoCompact");

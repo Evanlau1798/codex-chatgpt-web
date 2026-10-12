@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { ChatGptBrowserWorker, setChatGptThinkMode } from "../src/adapters/chatgpt-web/browser-worker";
+import { CHATGPT_THINK_BUTTON_SELECTOR } from "../src/chatgpt-session";
 
 function fixture() {
   const state = { pressed: false, controlPresent: true, highlighted: true, popupCount: 1,
@@ -43,7 +44,8 @@ function fixture() {
       }
     },
   };
-  const composerForm = { getByRole: () => ({ filter: () => controls }), locator: () => composer, page: () => page };
+  const composerForm = { getByRole: () => ({ filter: () => controls }), locator: (selector: string) =>
+    selector === CHATGPT_THINK_BUTTON_SELECTOR ? { filter: () => controls } : composer, page: () => page };
   return { state, composer, composerForm, page };
 }
 

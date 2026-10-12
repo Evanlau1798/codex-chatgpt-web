@@ -32,6 +32,7 @@ export interface SetupOptions {
   useEnhancedWebSessionMode?: boolean;
   experimentalBiggerContext?: boolean;
   experimentalSkillAttachments?: boolean;
+  experimentalPlusNativeContext?: boolean;
   experimentalNoAutoCompact?: boolean;
   experimentalFreshConversationPerTurn?: boolean;
   useSavedChats?: boolean;
@@ -128,6 +129,9 @@ export function buildSetupConfig(
       throw new Error("Bigger Context is unavailable while Enhanced Web session mode is enabled");
     }
     config.experimentalBiggerContext = options.experimentalBiggerContext;
+  }
+  if (options.experimentalPlusNativeContext !== undefined) {
+    config.experimentalPlusNativeContext = options.experimentalPlusNativeContext;
   }
   if (options.experimentalNoAutoCompact !== undefined) {
     config.experimentalNoAutoCompact = options.experimentalNoAutoCompact;

@@ -372,6 +372,11 @@ export async function runDevCommand(args: string[]): Promise<void> {
     if (biggerContext && standardContext) {
       throw new Error("Choose at most one context mode: --bigger-context or --standard-context");
     }
+    const plusNativeContext = takeFlag(args, "--plus-native-context");
+    const standardPlusContext = takeFlag(args, "--standard-plus-context");
+    if (plusNativeContext && standardPlusContext) {
+      throw new Error("Choose at most one Plus context mode: --plus-native-context or --standard-plus-context");
+    }
     const noAutoCompact = takeFlag(args, "--no-auto-compact");
     const autoCompact = takeFlag(args, "--auto-compact");
     if (noAutoCompact && autoCompact) {
@@ -398,6 +403,7 @@ export async function runDevCommand(args: string[]): Promise<void> {
       ...(enhancedSession || standardSession ? { useEnhancedWebSessionMode: enhancedSession } : {}),
       ...(biggerContext || standardContext ? { experimentalBiggerContext: biggerContext } : {}),
       ...(skillAttachments || inlineSkills ? { experimentalSkillAttachments: skillAttachments } : {}),
+      ...(plusNativeContext || standardPlusContext ? { experimentalPlusNativeContext: plusNativeContext } : {}),
       ...(noAutoCompact || autoCompact ? { experimentalNoAutoCompact: noAutoCompact } : {}),
       ...(freshConversation || retainedConversation ? { experimentalFreshConversationPerTurn: freshConversation } : {}),
       ...(savedChats || temporaryChats ? { useSavedChats: savedChats } : {}),

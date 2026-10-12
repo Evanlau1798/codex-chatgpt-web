@@ -104,6 +104,8 @@ test("Bun daemon prepares only the resume prompt selected by the persistent Node
   const checkpoints: unknown[] = [];
   let sendActivated = false;
   let submitted = false;
+  let heartbeats = 0;
+  let generationProgress = 0;
   let released = false;
   let resumeReleased = false;
   let fullPrepareCount = 0;

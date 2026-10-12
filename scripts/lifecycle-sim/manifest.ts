@@ -25,6 +25,8 @@ export const claudeLifecycleTests = [
 ] as const;
 
 export const sharedLifecycleTests = [
+  "tests/upstream-v618-adaptations.test.ts",
+  "tests/plus-native-context.test.ts",
   "tests/lifecycle-smoke-claude-config.test.ts",
   "tests/lifecycle-smoke-codex-lane.test.ts",
   "tests/lifecycle-smoke-common.test.ts",

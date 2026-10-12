@@ -55,7 +55,7 @@ test("invalid saved setup records are not diagnosed as a broken Codex config", (
   }
 });
 
-test("native explicit hook defaults preserve ownership without accepting changed behavior", () => {
+test("native synchronous defaults and enable preferences preserve hook ownership", () => {
   const original = '[mcp_servers.notes]\ncommand = "user-server"\n';
   const { text, installed } = installCodexInterruptHookCommand(original, "/fixture/config.toml", "bridge-hook");
   for (const explicitAsync of [false, true]) for (const explicitEnabled of [false, true]) {
@@ -70,7 +70,6 @@ test("native explicit hook defaults preserve ownership without accepting changed
   }
   for (const changed of [
     text.replace("timeout = 3", "timeout = 3\nasync = true"),
-    text.replace("trusted_hash =", "enabled = false\ntrusted_hash ="),
     text.replace("timeout = 3", 'timeout = 3\nasync = "false"'),
     text.replace("trusted_hash =", 'enabled = "true"\ntrusted_hash ='),
     text.replace("timeout = 3", "timeout = 3\nasync = false\nextra = true"),
