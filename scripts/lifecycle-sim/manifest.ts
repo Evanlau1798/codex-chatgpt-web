@@ -39,6 +39,7 @@ export const sharedLifecycleTests = [
   "tests/browser-alert-readiness.test.ts",
   "tests/native-agent-wait-mcp.test.ts",
   "tests/context-bootstrap.test.ts",
+  "tests/context-archive-budget.test.ts",
   "tests/prompt-preflight-reuse.test.ts",
   "tests/prompt-readback-latency.test.ts",
   "tests/mcp-observation.test.ts",
