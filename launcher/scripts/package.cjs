@@ -3,7 +3,6 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { validateRuntimeBundle } = require("../electron/runtime-install.cjs");
-const { requireLibnotifySymbol } = require("./prepare-linux-appimage-tools.cjs");
 
 const root = path.resolve(__dirname, "..");
 const launcherManifest = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -78,7 +77,7 @@ if (target === "--linux") {
       throw new Error("Linux arm64 packaging requires APPIMAGE_TOOLS_PATH from prepare-linux-appimage-tools.cjs");
     }
     const library = path.join(toolsRoot, "lib", "arm64", "libnotify.so.4");
-    requireLibnotifySymbol(library);
+    require("./prepare-linux-appimage-tools.cjs").requireLibnotifySymbol(library);
     builderArgs.push(
       `--config.linux.extraFiles.from=${library}`,
       "--config.linux.extraFiles.to=usr/lib/libnotify.so.4",

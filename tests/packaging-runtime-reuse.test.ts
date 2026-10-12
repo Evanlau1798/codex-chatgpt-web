@@ -42,12 +42,23 @@ function packageFixture(args: string[], invalid = false, code = source, aliases:
           events.push({ kind: "validate", path, identity });
           if (invalid) throw new Error("tampered bundle");
         } };
+        if (name === "./prepare-linux-appimage-tools.cjs") {
+          events.push({ kind: "load-linux-toolset" });
+          return { requireLibnotifySymbol: () => { throw new Error("Unexpected Linux validation on Windows"); } };
+        }
         return require(name);
       }, { resolve: (name: string) => require.resolve(name) }),
     });
   } catch (cause) { error = cause; }
   return { events, error };
 }
+
+test("Windows packaging does not load unused Linux builder dependencies", () => {
+  const { events, error } = packageFixture([`--runtime=${verified}`]);
+  expect(error).toBeUndefined();
+  expect(events.some(event => event.kind === "load-linux-toolset")).toBe(false);
+  expect(events.some(event => event.kind === "builder")).toBe(true);
+});
 
 test("packaging reuses only an identity-validated bundle and validates the copied payload before builder", () => {
   const { events, error } = packageFixture([`--runtime=${verified}`]);

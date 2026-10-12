@@ -171,5 +171,40 @@
     "reviewer": "01a131e2-883c-7dd3-8270-a31a8acb1942",
     "reviewScope": "Supplied complete test, exact diff, connected production send source; no independent test execution claimed.",
     "actualChromiumFocused": "40 pass / 0 fail"
+  },
+  "gateFollowups": {
+    "archive": {
+      "path": ".github/upstream-audit/evidence/c6493302bb50f56f96e30e4686065598a55a39b23f2894ce936958d852393b62.tar.gz",
+      "sha256": "c6493302bb50f56f96e30e4686065598a55a39b23f2894ce936958d852393b62",
+      "bytes": 91464
+    },
+    "source": {
+      "launcher/scripts/package.cjs": {
+        "bytes": 6992,
+        "sha256": "b86ad8399f1069726571c330bca31b72b30e6f3f0d5db3a337201dc7778b944f"
+      },
+      "tests/packaging-runtime-reuse.test.ts": {
+        "bytes": 9449,
+        "sha256": "25e3dea09e40761c884fd8b99989255dd6ec71297cb5ada8770d22e7e9bebeeb"
+      },
+      "tests/effort-menu-activation.test.ts": {
+        "bytes": 10713,
+        "sha256": "49515bfff5aed1dff3ebd10321a01a209b7839e86fd06a139ab0feb3d6e0f880"
+      },
+      "src/config.ts": {
+        "bytes": 24030,
+        "sha256": "4515461299f2dfc954f8475969edc816013d624cfab928c7db046208309fe439"
+      },
+      ".github/upstream-audit/v6.1.8-followups.json": {
+        "bytes": 386,
+        "sha256": "97aa030b93c6db9c10be6e29085bc57c07a45f1a2af55e68fb42b0f02bb2ed40"
+      }
+    },
+    "reviewer": "01a131eb-4e38-76f2-ab7a-9eacbdd2a8f4",
+    "changes": [
+      "Exact effort click options now assert normal actionable click without force.",
+      "Linux-only builder dependency is imported only in Linux ARM64 validator branch. All existing runtime/overlap/copy assertions retained."
+    ],
+    "evidence": "Two original failed wrapper runs and a cold import timeout are retained; meaningful new RED then GREEN and remaining root checks are retained."
   }
 }

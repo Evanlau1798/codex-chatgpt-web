@@ -1,1 +1,8 @@
-[]
+[
+  {
+    "path": "src/config.ts",
+    "baselineSha256": "63c8b5e62c97b10e89d0a552cbfbcbed82f377f04eefcd35819f6c97deabc9c5",
+    "currentSha256": "9b5e02118585939858301c965945a07a647ed9c2d85ab3dcf25dde9d3a893f66",
+    "reason": "Remove two blank lines to preserve the existing 500-line config boundary after Plus setting integration. Bun-transpiled executable code is identical."
+  }
+]

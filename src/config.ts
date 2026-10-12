@@ -202,14 +202,12 @@ export function runtimeCommandForProcess({
   assertDurableRuntimeCommand(command);
   return command;
 }
-
 function inside(path: string, root: string): boolean {
   const normalize = (value: string) => process.platform === "win32" ? resolve(value).toLowerCase() : resolve(value);
   const normalizedPath = normalize(path);
   const normalizedRoot = normalize(root);
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}${sep}`);
 }
-
 export function assertDurableRuntimeCommand(command: string[]): void {
   if (command.length === 0) throw new Error("Runtime command is empty");
   const executable = command[0]!;
