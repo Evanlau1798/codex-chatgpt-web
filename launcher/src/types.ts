@@ -23,7 +23,9 @@ export interface LauncherState {
   automaticWebSessionLimitMinutes: number;
   experimentalBiggerContext: boolean;
   biggerContextAvailable?: boolean;
+  plusNativeContextAvailable?: boolean;
   experimentalSkillAttachments: boolean;
+  experimentalPlusNativeContext: boolean;
   experimentalNoAutoCompact: boolean;
   experimentalPreparedWebSession: boolean;
   keepRunningOnClose: boolean;
@@ -216,6 +218,7 @@ export interface LauncherApi {
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
   setAutoApproveToolCalls(enabled: boolean): Promise<LauncherState>;
+  setExperimentalPlusNativeContext(enabled: boolean): Promise<LauncherState>;
   setExperimentalNoAutoCompact(enabled: boolean): Promise<LauncherState>;
   uninstallIntegration(): Promise<{ cancelled: true } | { cancelled: false; state: LauncherState }>;
   setupCodex(): Promise<{ ok: boolean; stdout: string; restartRequired: boolean }>;

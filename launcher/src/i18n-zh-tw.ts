@@ -31,6 +31,8 @@ export const zhTW = {
   freshConversationBody: "每輪在新的瀏覽器聊天中重建同一個 Codex 任務的上下文。這可能有助於解決 ChatGPT 失去工具存取權的問題，但可能傳送更多上下文，速度也可能更慢。預設關閉。",
   manualFreshConversationUnavailable: "僅支援自動化與 Original 工作階段模式。Enhanced 與零風險模式會強制關閉此設定。",
   manualSkillAttachmentsUnavailable: "上傳技能需要自動瀏覽器互動模式。",
+  plusNativeContext: "Plus 原生上下文（實驗性）",
+  plusNativeContextBody: "Enhanced + Plus 推理使用 256K 視窗，230.4K 自動壓縮。完整長上下文保留能力尚未驗證；不提高單則訊息上限或解鎖 Extra High。預設關閉；變更後重啟 Codex。",
   noAutoCompact: "No Context Window（實驗性）",
   preparedWebSession: "快速啟動（實驗性）",
   preparedWebSessionBody: "有空位時保留一個尚未送出的頁面，準備上次驗證的模型與固定指令。工作優先；包括保留對話在內的所有頁面共用帳戶安全保護的最大並行數，關閉工作階段限制時上限為六。關閉僅清理待命頁。預設關閉。",

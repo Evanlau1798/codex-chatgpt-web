@@ -57,6 +57,41 @@ function submitCompaction(store: CompactionTransactionStore, instruction: string
   store.submit(token, handoffId, summary);
 }
 
+test.each([false, true])("source compaction renews only positive activity, hidden=%s", async hidden => {
+  const f = fixture(true);
+  f.release.resolve();
+  const store = new CompactionTransactionStore();
+  const broker = {
+    beginCompactionTransaction: async (trace: string, ttl: number) => store.begin(trace, ttl),
+    waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
+    abortCompactionTransaction: (token: string) => store.abort(token),
+  } as unknown as TurnBroker;
+  mock.timers.enable({ apis: ["setTimeout"] });
+  const run = runEnhancedCompaction({ ...f.options, broker, timeoutMs: 40,
+    worker: { run: async turn => {
+      const prepared = await turn.prepare();
+      submitCompaction(store, prepared.text, "Complete activity-aware summary.");
+      prepared.release();
+      return "turn complete";
+    } },
+  });
+  void run.catch(() => {});
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve));
+    mock.timers.tick(25);
+    if (hidden) f.source.runtime.trace.signalProgress();
+    else f.source.runtime.trace.recordProgress();
+    mock.timers.tick(25);
+    f.browser.resolve("Source completed");
+    if (hidden) await expect(run).rejects.toThrow("compaction did not fully settle");
+    else expect(await run).toBe("completed");
+  } finally {
+    mock.timers.reset();
+    await f.cleanup();
+    await run.catch(() => {});
+  }
+});
+
 test("source settlement reserves a full separate deadline for retained compaction", async () => {
   const f = fixture(true);
   f.release.resolve();

@@ -15,10 +15,22 @@ export class ChatGptTraceFeed {
   private readonly queued: ChatGptTraceEvent[] = [];
   private readonly waiters = new Set<FeedWaiter>();
   private progressPending = false;
+  private readonly progressObservers = new Set<() => void>();
+
+  observeProgress(observer: () => void): () => void {
+    this.progressObservers.add(observer);
+    return () => { this.progressObservers.delete(observer); };
+  }
+
+  recordProgress(): void {
+    for (const observer of this.progressObservers) observer();
+    this.signalProgress();
+  }
 
   push(event: ChatGptTraceEvent): void {
     const normalized = event.continuation ? event.text : event.text.trim();
     if (!normalized) return;
+    this.recordProgress();
     this.queued.push({ ...event, text: normalized });
     this.wakeOne();
   }

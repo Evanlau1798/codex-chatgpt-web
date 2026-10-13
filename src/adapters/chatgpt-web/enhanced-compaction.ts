@@ -93,6 +93,7 @@ export async function runEnhancedCompaction(
     const operationSignal = AbortSignal.any([deadline.signal, operatorSignal]);
     let source: ChatGptTurnSession | undefined;
     let preserveFinal = false;
+    let stopSourceProgress: (() => void) | undefined;
     const sourceConversationKey = chatGptConversationKey(parsed, executionNamespace);
     const fallback = async (reason: string): Promise<string> => {
       operationSignal.throwIfAborted();
@@ -140,6 +141,7 @@ export async function runEnhancedCompaction(
       await chatGptTurnSessions.waitForRetirement(responseExecutionKey, operationSignal);
       if (sourceConversationKey) await chatGptTurnSessions.waitForConversationRetirement(sourceConversationKey, operationSignal);
       source = chatGptTurnSessions.find(responseExecutionKey);
+      stopSourceProgress = source?.runtime.trace.observeProgress(armDeadline);
       preserveFinal = !source?.isActive() && source?.settledOutcome()?.type === "final";
       const conversationKey = source?.conversationKey();
       if (!source || !conversationKey) {
@@ -171,11 +173,13 @@ export async function runEnhancedCompaction(
         preserveFinal = true;
       }
       if (raw === undefined) {
+        stopSourceProgress?.();
+        stopSourceProgress = undefined;
         phase = "retained_checkpoint";
         armDeadline();
         raw = await requestRetainedCompactionHandoff(
           worker, parsed, source, broker, capabilities, traceId, operationSignal, handoffTimeoutMs,
-          requireAutomaticAdmission, retainOwnershipUntil,
+          requireAutomaticAdmission, retainOwnershipUntil, armDeadline,
         );
       }
       const canonical = canonicalizeCompactionHandoff(parsed, raw);
@@ -211,6 +215,7 @@ export async function runEnhancedCompaction(
       }
       throw error;
     } finally {
+      stopSourceProgress?.();
       clearTimeout(timer);
     }
   });

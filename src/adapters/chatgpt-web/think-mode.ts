@@ -1,4 +1,5 @@
 import type { Locator } from "playwright-core";
+import { CHATGPT_THINK_BUTTON_SELECTOR } from "../../chatgpt-session";
 import { withAbort } from "./runtime-lifecycle";
 
 const ACTION_TIMEOUT_MS = 10_000;
@@ -17,7 +18,7 @@ export async function setChatGptThinkMode(
   throwIfAborted(abortSignal);
   const composerForm = composer.locator("xpath=ancestor::form[1]");
   const controls = composerForm
-    .getByRole("button", { name: /^(?:Think|Analyser)$/, exact: true })
+    .locator(CHATGPT_THINK_BUTTON_SELECTOR)
     .filter({ visible: true });
   const count = await controls.count();
   if (count === 0 && !enabled) {

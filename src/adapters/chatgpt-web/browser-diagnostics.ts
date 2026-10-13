@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
+import { chatGptResponseStructures } from "./browser-response-structure";
 import { atomicWriteFile, getConfigDir } from "../../config";
 import {
   CHATGPT_ASSISTANT_TURN_SELECTOR,
@@ -155,17 +156,35 @@ export class ChatGptBrowserDiagnostics {
         stateError = this.contentFree ? verificationFailure(captureError) : diagnosticError(captureError);
       }
 
+      const responseStructure = await withChatGptBrowserObservationTimeout(
+        Promise.resolve().then(() => page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR).evaluateAll(chatGptResponseStructures)),
+      ).catch(() => undefined);
       const envelope: Record<string, unknown> = {
         version: 2,
         capturedAt,
         traceId: this.traceId,
         checkpoint,
+        ...(responseStructure ? { responseStructure } : {}),
         ...(error !== undefined ? { error: this.contentFree ? verificationFailure(error) : diagnosticError(error) } : {}),
         state: sanitizeChatGptBrowserDiagnosticState(state),
         ...(stateError ? { stateError } : {}),
       };
       const jsonPath = join(this.directory, `${stem}.json`);
       this.writeEnvelope(jsonPath, envelope);
+
+      if (responseStructure && /turn-failed|response-stalled/.test(checkpoint)) {
+        // Preserve the bounded, content-free tree when the failing renderer is replaced.
+        console.info(`[chatgpt-web] response_structure ${JSON.stringify({
+          traceId: this.traceId, checkpoint: stem,
+          columns: ["parent", "tag", "rendered", "assistant", "user", "searchUnit", "markdown", "streamingStatus", "activityStart", "completionControl"],
+          turns: responseStructure.map(turn => ({ truncated: turn.truncated,
+            nodes: turn.nodes.map(node => [node.parent, node.tag, ...[
+              node.rendered, node.assistant, node.user, node.searchUnit, node.markdown,
+              node.streamingStatus, node.activityStart, node.completionControl,
+            ].map(Number)]),
+          })),
+        })}`);
+      }
 
       if (!this.contentFree && browserDiagnosticIncludesScreenshot(checkpoint)) {
         try {

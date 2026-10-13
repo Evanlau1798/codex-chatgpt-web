@@ -65,6 +65,7 @@ export function installConfiguredRoute(
   ),
   replaceExistingRoute: boolean,
   replaceExistingRealtimeRoute: boolean,
+  interruptHookEnabled?: boolean,
 ): {
   text: string;
   previous: CodexIntegrationJournal["previous"];
@@ -96,7 +97,7 @@ export function installConfiguredRoute(
       })()
     : route;
   const hook = "interruptHookCommand" in config
-    ? installCodexInterruptHookCommand(configured.text, getCodexConfigPath(), config.interruptHookCommand)
-    : installCodexInterruptHook(configured.text, getCodexConfigPath(), config);
+    ? installCodexInterruptHookCommand(configured.text, getCodexConfigPath(), config.interruptHookCommand, interruptHookEnabled)
+    : installCodexInterruptHook(configured.text, getCodexConfigPath(), config, interruptHookEnabled);
   return { ...configured, text: hook.text, interruptHook: hook.installed };
 }

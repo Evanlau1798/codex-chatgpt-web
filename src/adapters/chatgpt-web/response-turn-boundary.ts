@@ -42,6 +42,25 @@ export async function activateChatGptSendControl(
   await sendButton.press("Enter", { noWaitAfter: true, timeout: 0, signal });
 }
 
+export async function submitChatGptSendControl<T>(
+  sendButton: Pick<Locator, "press">,
+  observe: (signal: AbortSignal) => Promise<T>,
+  signal?: AbortSignal,
+  onActivate?: () => void,
+): Promise<T> {
+  const pending = new AbortController();
+  const ownedSignal = signal ? AbortSignal.any([signal, pending.signal]) : pending.signal;
+  ownedSignal.throwIfAborted();
+  // Renderer key handling may remain blocked after MCP has already accepted this exact Send.
+  const activation = activateChatGptSendControl(sendButton, ownedSignal, onActivate);
+  const accepted = observe(ownedSignal);
+  try {
+    return await Promise.race([accepted, activation.then(() => accepted)]);
+  } finally {
+    pending.abort();
+  }
+}
+
 export class ChatGptOwnedSendStateUnknownError extends Error {
   constructor(cause: unknown) {
     super("ChatGPT recovery Send may have been submitted before its receipt became unavailable", { cause });

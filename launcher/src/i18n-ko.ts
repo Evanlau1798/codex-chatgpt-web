@@ -31,6 +31,8 @@ export const ko = {
   freshConversation: "매 턴 새 브라우저 채팅 사용",
   freshConversationBody: "매 턴 새 브라우저 채팅에서 동일한 Codex 작업의 컨텍스트를 다시 구성합니다. ChatGPT가 도구에 접근하지 못할 때 도움이 될 수 있지만, 더 많은 컨텍스트를 전송하고 속도가 느려질 수 있습니다. 기본값은 꺼짐입니다.",
   manualFreshConversationUnavailable: "자동화와 Original 세션 모드에서만 사용할 수 있습니다. Enhanced와 Zero Risk에서는 강제로 꺼집니다.",
+  plusNativeContext: "Plus 기본 컨텍스트 (실험적)",
+  plusNativeContextBody: "Enhanced + Plus 추론에 256K 창과 230.4K 자동 압축을 사용합니다. 긴 기록의 보존은 검증되지 않았습니다. 메시지 제한이나 Extra High 권한은 변경하지 않습니다. 기본값은 꺼짐이며 변경 후 Codex를 다시 시작하세요.",
   noAutoCompact: "No Context Window(실험적)",
   preparedWebSession: "빠른 시작(실험적)",
   preparedWebSessionBody: "여유가 있으면 마지막으로 확인한 모델과 고정 지침을 입력한 미전송 페이지 하나를 준비합니다. 작업이 우선이며 보관된 대화도 Account Safety 최대 동시 수에 포함됩니다. 제한을 끄면 최대 여섯 페이지입니다. 끄면 대기 페이지만 닫습니다. 기본은 꺼짐입니다.",

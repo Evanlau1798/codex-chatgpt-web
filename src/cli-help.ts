@@ -53,6 +53,8 @@ Setup options:
   --enhanced-session           Enable Enhanced Web session mode
   --standard-session           Disable Enhanced Web session mode
   --bigger-context             Enable adaptive 1/2/6-message context (Enhanced mode must be off)
+  --plus-native-context        Opt in to experimental Enhanced Plus 256K context
+  --standard-plus-context      Disable the Plus native context experiment (default)
   --standard-context           Disable experimental multi-message context
   --fresh-conversation         Fresh chat per turn (automatic Original mode only)
   --retained-conversation      Disable fresh chat per turn (default)

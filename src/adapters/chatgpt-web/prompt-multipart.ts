@@ -31,7 +31,7 @@ const RETIRED_TURN_HANDLE = /(?<![A-Za-z0-9_-])(turn|request|binding)_[A-Za-z0-9
 export function withoutRetiredTurnHandles(contextJson: string): string {
   return JSON.stringify(JSON.parse(contextJson, (_key, value: unknown) => typeof value === "string"
     ? value.replace(RETIRED_TURN_HANDLE, (_handle, kind: string) => `[retired ${kind} handle]`)
-    : value));
+    : value)).replaceAll("`", "\\u0060");
 }
 
 function assertTransactionId(transactionId: string): void {

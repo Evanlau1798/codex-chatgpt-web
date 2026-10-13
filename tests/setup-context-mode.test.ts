@@ -38,3 +38,21 @@ test("setup rejects contradictory automatic compaction flags", () => {
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("setup rejects contradictory Plus native context flags", () => {
+  const home = mkdtempSync(join(tmpdir(), "codex-web-gpt-compaction-mode-"));
+  try {
+    const result = Bun.spawnSync([
+      process.execPath,
+      join(import.meta.dir, "..", "src", "cli.ts"),
+      "--home", home,
+      "setup", "--browser-only", "--plus-native-context", "--standard-plus-context", "--acknowledge-unofficial",
+    ], { stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr.toString()).toContain(
+      "Choose at most one Plus context mode: --plus-native-context or --standard-plus-context",
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

@@ -206,11 +206,17 @@ async function setupCommand(args: string[]): Promise<void> {
   }
   if (biggerContext || standardContext) options.experimentalBiggerContext = biggerContext;
   if (skillAttachments || inlineSkills) options.experimentalSkillAttachments = skillAttachments;
+  const plusNativeContext = takeFlag(args, "--plus-native-context");
+  const standardPlusContext = takeFlag(args, "--standard-plus-context");
+  if (plusNativeContext && standardPlusContext) {
+    throw new Error("Choose at most one Plus context mode: --plus-native-context or --standard-plus-context");
+  }
   const noAutoCompact = takeFlag(args, "--no-auto-compact");
   const autoCompact = takeFlag(args, "--auto-compact");
   if (noAutoCompact && autoCompact) {
     throw new Error("Choose at most one compaction mode: --no-auto-compact or --auto-compact");
   }
+  if (plusNativeContext || standardPlusContext) options.experimentalPlusNativeContext = plusNativeContext;
   if (noAutoCompact || autoCompact) options.experimentalNoAutoCompact = noAutoCompact;
   const zeroRiskPro = takeFlag(args, "--zero-risk-pro");
   const zeroRiskDefault = takeFlag(args, "--zero-risk-default");

@@ -57,6 +57,7 @@ export interface InstalledCodexInterruptHook {
   stateKey: string;
   trustedHash: string;
   fragment: string;
+  enabled?: boolean;
 }
 
 interface RouteRecoveryState {

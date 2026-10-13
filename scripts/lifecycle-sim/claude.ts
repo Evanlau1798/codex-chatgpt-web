@@ -251,7 +251,9 @@ writeFileSync(join(configDir, ".claude.json"), '{"autoCompactEnabled":true}\n', 
 
 try {
   const initial = await runClaude("Use Bash once, then finish the CLAUDE_LIFECYCLE_INITIAL request.");
-  if (!initial.includes("CLAUDE_LIFECYCLE_TOOL_DONE")) throw new Error("Claude did not complete its deterministic tool loop");
+  if (!initial.includes("CLAUDE_LIFECYCLE_TOOL_DONE")) {
+    throw new Error(`Claude did not complete its deterministic tool loop: evidence=${JSON.stringify(evidence)} result=${initial.slice(-2_000)}`);
+  }
   await runCompactRequest();
   await runInterruptRequest();
   await runSteeringTurn();

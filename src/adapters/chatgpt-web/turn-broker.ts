@@ -352,6 +352,7 @@ export class TurnBroker implements TurnBrokerOwner {
       if (!invocation) continue;
       channel.invocations.delete(callId);
       channel.compactionDeliveryCount += 1;
+      channel.onProgress?.();
       invocation.resolve(structuredClone(queuedResult));
     }
     if (queued.length > 0) notifyCompactionDelivery(channel);

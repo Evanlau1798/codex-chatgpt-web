@@ -69,7 +69,7 @@ test("submission evidence is logged before waiting for projected response conten
   expect(multipartSend).toBeGreaterThan(-1);
   expect(multipartAccepted).toBeGreaterThan(multipartSend);
   expect(multipartResponse).toBeGreaterThan(multipartAccepted);
-  const finalSend = run.indexOf("await activateChatGptSendControl(");
+  const finalSend = run.indexOf("await submitChatGptSendControl(sendButton, observeSubmission");
   const finalAccepted = run.indexOf("submission accepted evidence=${evidence}", finalSend);
   const finalResponse = run.indexOf("let lastHeartbeat", finalSend);
   expect(finalSend).toBeGreaterThan(-1);

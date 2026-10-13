@@ -687,3 +687,38 @@ test("explicit removal cancels pending recovery even when the route is already i
   assert.equal(result.active, false);
   assert.equal(fixture.calls.at(-1), "route status");
 });
+
+test("experimental Plus native context uses setup and requires a Codex restart", async () => {
+  const fixture = hostFor({ mode: "full", appName: "Codex Native2" });
+  fixture.host.bridgeStatus = async () => ({ installed: true, active: true, errors: [] });
+  const result = await fixture.host.setExperimentalPlusNativeContext(true);
+  assert.equal(result.enabled, true);
+  assert.deepEqual(fixture.invocation(), {
+    name: "plus-native-context",
+    args: [
+      "setup",
+      "--full",
+      "--browser-host-descriptor",
+      "/runtime/launcher-browser.json",
+      "--automatic-browser-interaction",
+      "--replace-codex-route",
+      "--acknowledge-unofficial",
+      "--restart-service",
+      "--plus-native-context",
+    ],
+  });
+});
+
+test("experimental Plus native context preserves a deliberately disconnected Codex route", async () => {
+  const fixture = hostFor({ mode: "browser-only" });
+  let disabled = 0;
+  fixture.host.bridgeStatus = async () => ({ installed: true, active: false, errors: [] });
+  fixture.host.setBridgeEnabled = async (enabled) => {
+    assert.equal(enabled, false);
+    disabled += 1;
+  };
+
+  await fixture.host.setExperimentalPlusNativeContext(true);
+
+  assert.equal(disabled, 1);
+});

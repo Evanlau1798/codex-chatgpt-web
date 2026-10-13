@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   CHATGPT_WEB_PLATFORM_RESERVE_TOKENS,
-  CHATGPT_WEB_GPT6_SOL_BIGGER_CONTEXT_ERROR,
+  CHATGPT_WEB_GPT6_INSTANT_BIGGER_CONTEXT_ERROR,
   supportsChatGptWebBiggerContext,
   type ChatGptWebModelFamily,
   resolveChatGptWebContextLimits,
@@ -75,8 +75,8 @@ export function assertChatGptWebMultipartInputWithinLimits(
   if (modelId !== CHATGPT_WEB_MODEL_ID && modelId !== CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error(`ChatGPT Bigger Context limit is not defined for model: ${modelId}`);
   }
-  if (!supportsChatGptWebBiggerContext(modelId, effort, capabilities, modelFamily)) {
-    throw new Error(CHATGPT_WEB_GPT6_SOL_BIGGER_CONTEXT_ERROR);
+  if (!supportsChatGptWebBiggerContext(modelId, effort, modelFamily)) {
+    throw new Error(CHATGPT_WEB_GPT6_INSTANT_BIGGER_CONTEXT_ERROR);
   }
   const baseContextWindow = resolveChatGptWebMessageTokenBudget(modelId, effort, capabilities)
     + CHATGPT_WEB_PLATFORM_RESERVE_TOKENS + 1;

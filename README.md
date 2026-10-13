@@ -19,9 +19,16 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **Version: `6.1.7-Enhanced.1`.** Download buttons always open the latest published Enhanced release.
+> **Version: `6.1.8-Enhanced.1`.** Download buttons always open the latest published Enhanced release.
 
-Integrates upstream v6.1.7 while preserving Enhanced sessions, Native2 tools, and Fast startup.
+Integrates upstream v6.1.8 while preserving Enhanced sessions, Native2 tools, and Fast startup.
+
+**Plus native context (experimental)** is an opt-in Settings switch for Enhanced Automatic sessions
+on a verified Plus account. GPT-6 and GPT-5.6 Sol reasoning routes advertise a 256,000-token window
+with auto compact at 230,400 tokens. It defaults off, preserves account effort restrictions, and
+does not enlarge an individual message or composer limit. Actual 256K recall is not yet established.
+Other accounts, Instant, Original and Zero Risk keep their existing budgets. No Context Window keeps
+its separate checkpoint policy. CLI setup supports `--plus-native-context` / `--standard-plus-context`.
 
 Supports ChatGPT's renamed GPT-6 picker and all five effort levels. Codex displays GPT-6 and GPT-6 Instant; existing `chatgpt-web/latest` and `chatgpt-web/latest-instant` task IDs remain compatible.
 
@@ -231,7 +238,8 @@ experimental: it retains the task conversation and disables rolling checkpoints 
 
 **Enhanced Web session mode** keeps one task-bound ChatGPT conversation across tool rounds,
 steering, and compaction. It changes conversation continuity only: it neither enlarges the context
-window nor disables compaction. **Bigger Context** is mutually exclusive with Enhanced mode. It
+window by itself nor disables compaction; the separate Plus native context experiment is described above.
+**Bigger Context** is mutually exclusive with Enhanced mode. It
 uses one, two, or six total browser messages. A six-message transaction contains five inert
 stages followed by one final execution message;
 each message is a real ChatGPT request that can consume account allowance. It triples the context
@@ -243,7 +251,7 @@ from the model catalog that Codex reads. It does not create unlimited context, b
 limits, stop token accounting, or turn an oversized browser prompt into a valid request. Such a
 prompt still fails closed. Use it only when another workflow deliberately owns compaction or the
 task can tolerate unbounded canonical history.
-With Enhanced Web Session, the bridge keeps a private recovery checkpoint at safe completed-tool
+Only when No Context Window and Enhanced Web Session are both enabled, the bridge keeps a private recovery checkpoint at safe completed-tool
 boundaries (about 100K tokens on Pro; earlier on Plus to fit a fresh page). The retained page keeps
 running. If it fails, a fresh page receives the latest durable checkpoint plus the canonical work
 that followed it. Pending tool effects are never replayed just to recover a page.
@@ -278,8 +286,9 @@ The launcher's **MCP** page guides the complete setup. For the exact clicks, see
 > GPT-5.6 supports up to 270,000 tokens with experimental **3× context** enabled, with native
 > Codex compaction supported throughout.
 >
-> GPT-6 Sol supports **240,000 tokens** with Bigger Context on Pro at Medium, High and Extra High,
-> with compaction at **220,000**. Instant and other account plans use standard context.
+> GPT-6 Sol supports Bigger Context at Medium, High and available Extra High: **120,000 tokens
+> on Plus**, with compaction at **110,000**, and **240,000 on Pro**, with compaction at **220,000**.
+> GPT-6 Instant uses standard context.
 > GPT-5.6 and GPT-6 Pro keep their existing Bigger Context limits.
 
 1. Finish the required setup, open **MCP**, create the Tunnel and regular API key, then press
