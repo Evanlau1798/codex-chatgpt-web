@@ -115,6 +115,7 @@ export interface AppConfig {
   proAvailable: boolean;
   modelCapabilities?: ChatGptWebModelCapabilities;
   experimentalBiggerContext: boolean;
+  experimentalPlusNativeContext: boolean;
   experimentalSkillAttachments: boolean;
   /** Rebuild Original-mode turns; Enhanced always disables this preference. */
   experimentalFreshConversationPerTurn: boolean;

@@ -20,7 +20,7 @@ import {
   CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_USER_TURN_SELECTOR,
 } from "../src/chatgpt-session";
-import { activateChatGptSendControl, activateOwnedChatGptSendControl, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
+import { activateChatGptSendControl, submitChatGptSendControl, activateOwnedChatGptSendControl, readChatGptAssistantTurnState } from "../src/adapters/chatgpt-web/response-turn-boundary";
 import { ChatGptViewportReadinessError, chatGptSuspensionClock } from "../src/adapters/chatgpt-web/browser-stage-lifecycle";
 
 type Recovery = (attempt: number, cause: Error, signal?: AbortSignal) => Promise<Page>;
@@ -638,6 +638,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
   const progress = new ChatGptExternalTurnProgress();
   const dependencies = {
     usageSubmission: async () => undefined, recordFinalUsage: undefined,
+    generation: { active: () => false, progress() {} },
     submissionRejection: {
       begin() {},
       activate() {},
@@ -662,7 +663,7 @@ test.each(["final", "multipart", "final-prewrap", "final-multipart-prewrap", "fi
     CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, chatGptSuspensionClock,
     chatGptPromptAttachmentTimeoutMs, chatGptPromptPreservesLeading, planChatGptPromptInsertion,
     throwIfChatGptSessionFailureAlert, throwIfChatGptRateLimitDialog,
-    activateChatGptSendControl, activateOwnedChatGptSendControl, readChatGptAssistantTurnState,
+    activateChatGptSendControl, submitChatGptSendControl, activateOwnedChatGptSendControl, readChatGptAssistantTurnState,
   };
   const compiled = new Bun.Transpiler({ loader: "ts" }).transformSync(`
     async function run() {
@@ -741,4 +742,41 @@ test("a failed first rebind shares the two-attempt budget and never reactivates 
   expect(attempts).toEqual([1, 2]);
   expect([presses, activated]).toEqual([1, 1]);
   expect(progress.snapshot().lastToolBatchRevision).toBe(revision);
+});
+
+
+test.each(["accepted", "late-accepted", "cancelled", "press-failed"] as const)(
+  "blocked Enter races submission evidence exactly once: %s", async outcome => {
+  const fixture = surface(() => new Promise<State>(() => {}));
+  const instance = worker();
+  const progress = new ChatGptExternalTurnProgress();
+  const controller = new AbortController();
+  let presses = 0;
+  let activationCancelled = false;
+  instance.activeComposer = async () => ({ locator: () => ({ locator: () => ({
+    waitFor: async () => {}, isEnabled: async () => true,
+    press: async (_key: string, options: { signal: AbortSignal }) => {
+      presses++;
+      if (outcome === "press-failed") throw new Error("keypress rejected");
+      if (outcome === "accepted") progress.recordToolBatch(1);
+      else if (outcome === "late-accepted") setTimeout(() => progress.recordToolBatch(1), 10);
+      else setTimeout(() => controller.abort(), 10);
+      await new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => {
+        activationCancelled = true;
+        reject(new DOMException("aborted", "AbortError"));
+      }, { once: true }));
+    },
+  }) }) });
+  const send = instance.sendAttachedPrompt(fixture.page, fixture.baseline, initial, undefined,
+    controller.signal, undefined, progress);
+  try {
+    if (outcome === "accepted" || outcome === "late-accepted") expect(await bounded(send, 300)).toBe("mcp_tool_call");
+    else if (outcome === "cancelled") await expect(bounded(send, 300)).rejects.toMatchObject({ name: "AbortError" });
+    else await expect(bounded(send, 300)).rejects.toThrow("keypress rejected");
+    expect(presses).toBe(1);
+    if (outcome !== "press-failed") expect(activationCancelled).toBeTrue();
+  } finally {
+    controller.abort();
+    await send.catch(() => {});
+  }
 });

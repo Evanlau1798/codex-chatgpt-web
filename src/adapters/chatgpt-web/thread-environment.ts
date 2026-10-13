@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
+import { pathIdentity as environmentPathIdentity } from "./environment-paths";
 import { atomicWriteFile, stripUtf8Bom } from "../../config";
 import { getCodexHome } from "../../codex-integration-shared";
 import { isReadableCompactionSummaryText } from "../../responses/compaction";
@@ -13,7 +14,7 @@ import {
   extractChatGptThreadSpawnLineage,
   extractChatGptRootThreadMetadata,
   hasCurrentChatGptEnvironmentContext,
-  hasChatGptCalendarEnvironmentDelta,
+  extractChatGptCalendarEnvironmentDelta,
   hasRawChatGptEnvironmentContext,
   isChatGptCompactionContinuation,
   MissingTrustedCodexEnvironmentError,
@@ -461,7 +462,7 @@ export class ChatGptThreadEnvironmentStore {
     const currentTurnAnchor = crossesForeignCompaction && !!identity.turnId && !currentCompaction && !postCompactionContext
       ? currentTurnRolloutAnchor(input, checkpointIndex, metadata, identity.turnId, !lineage && !!rootMetadata)
       : undefined;
-    const historicalMessages = !hasCurrentContext && lineage
+    const historicalMessages = !hasCurrentContext && (lineage || rootMetadata)
       ? unattributedChatGptEnvironmentMessages(parsed) : undefined;
     const rolloutIdentity = lineage ?? rootMetadata;
     // Automatic compaction has a current turn_context; standalone compaction has only its
@@ -480,8 +481,13 @@ export class ChatGptThreadEnvironmentStore {
         tools: effectiveChatGptToolPolicy(parsed).tools,
       });
       if (rolloutEnvironment) {
-        const calendarDelta = hasCurrentContext && !currentCompaction && hasChatGptCalendarEnvironmentDelta(parsed);
-        if (calendarDelta && rolloutEnvironment.sandboxPolicy.type !== "dangerFullAccess") {
+        const calendarDelta = hasCurrentContext && !currentCompaction
+          ? extractChatGptCalendarEnvironmentDelta(parsed) : undefined;
+        if (calendarDelta && (rolloutEnvironment.sandboxPolicy.type !== "dangerFullAccess"
+          || calendarDelta.workspaceRoots.some(roots => {
+            const authoritative = new Set(rolloutEnvironment.roots.map(environmentPathIdentity));
+            return roots.length !== authoritative.size || roots.some(root => !authoritative.has(root));
+          }))) {
           throw new Error("Calendar environment delta conflicts with its current Codex rollout");
         }
         if (hasCurrentContext && !directEnvironment && !initialClaim && !currentCompaction && !postCompactionContext
@@ -494,7 +500,7 @@ export class ChatGptThreadEnvironmentStore {
             throw new MissingTrustedCodexEnvironmentError("cwd");
           }
         }
-        const currentClaims = hasCurrentContext ? extractChatGptContinuationEnvironmentClaims(parsed, calendarDelta) : [];
+        const currentClaims = hasCurrentContext ? extractChatGptContinuationEnvironmentClaims(parsed, !!calendarDelta) : [];
         const steering = !currentCompaction && !postCompactionContext && ordinaryContinuation
           && !!extractChatGptSteeringEnvironmentClaim(parsed);
         if (currentClaims.some(claim => !sameAuthority(claim, rolloutEnvironment,

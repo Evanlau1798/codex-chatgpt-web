@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { chromium, type Browser } from "playwright-core";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
 import { setChatGptThinkMode } from "../src/adapters/chatgpt-web/think-mode";
@@ -140,7 +141,11 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`real slider ${scenario} keep
         localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true,
       });
       if (scenario === "shrink") expect((await result).selection.label).toBe("Extra High");
-      else await expect(result).rejects.toMatchObject({ retryable: false });
+      else {
+        // Await Playwright before asserting: Bun's async rejection matcher can stall its I/O.
+        const failure = await result.then(() => undefined, (error: unknown) => error);
+        expect(failure).toMatchObject({ retryable: false });
+      }
     }
     expect(await page.locator('#prompt-textarea').innerText()).toBe("Draft");
     await page.close();
@@ -149,13 +154,14 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)(`real slider ${scenario} keep
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("Think uses the active editor in both composer layouts and survives its replacement", async () => {
   const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  const think = readFileSync(new URL("./fixtures/chatgpt-composer-think.html", import.meta.url), "utf8");
   try {
     const page = await browser.newPage();
     for (const modern of [false, true]) {
       await page.setContent(`<div contenteditable="true" data-composer-markdown role="textbox">Unrelated editor</div>
         <form data-chatgpt-composer>
           <div ${modern ? 'data-composer-markdown role="textbox"' : 'id="prompt-textarea"'} contenteditable="true"><span data-id="plugin:fixture" data-keyword="Codex Native2" contenteditable="false">Codex Native2</span></div>
-          <button type="button" aria-pressed="false">Think</button>
+          ${think}
         </form><script>(()=>{
           const button=document.querySelector('button');
           button.onclick=()=>{

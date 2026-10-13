@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { AppConfig } from "./config";
 import { getConfigPath, loadConfig, saveConfig } from "./config";
 import { installConfiguredRoute } from "./codex-integration-install-route";
+import { readCodexInterruptHookEnabled } from "./codex-interrupt-hook";
 import { applyWebProvider, ownedWebProviderCatalog, persistProviderRoute, restoreWebProvider, verifyWebProviderCatalog } from "./codex-web-provider";
 import {
   CODEX_REALTIME_WEBRTC_CALL_BASE_URL,
@@ -221,6 +222,9 @@ export function installCodexIntegration(
       config,
       true,
       !preservePrevious || existing.version === 9 || existing.version === 10 || options.replaceExistingRoute === true,
+      preservePrevious && existing.version === 10
+        ? existing.active ? readCodexInterruptHookEnabled(currentText, existing.interruptHook) : existing.interruptHook.enabled
+        : undefined,
     );
     if (preservePrevious) {
       assertPreservedPreviousAssignments(patched.previous, existing.previous);
@@ -338,6 +342,9 @@ export function deactivateCodexIntegration(options: { forRuntimeRecovery?: boole
       : { ...existing, version: 4, active: false };
   if (options.forRuntimeRecovery) disconnected.reconnectOnStartup = true;
   else delete disconnected.reconnectOnStartup;
+  if (existing.version === 10 && disconnected.version === 10) {
+    disconnected.interruptHook = { ...existing.interruptHook, enabled: readCodexInterruptHookEnabled(current, existing.interruptHook) };
+  }
   writeIntegrationState(disconnected, { path: existing.configPath, data: restored }, [getCodexModelsCachePath()]);
   return { changed: true, active: false };
 }
@@ -374,6 +381,7 @@ export function activateCodexIntegration(options: { recoveryOnly?: boolean } = {
     { subagentProtocol: protocol, ...hookConfig },
     true,
     existing.version === 9 || existing.version === 10,
+    existing.version === 10 ? existing.interruptHook.enabled : undefined,
   );
   assertPreservedPreviousAssignments(route.previous, existing.previous);
   if (existing.version === 9 || existing.version === 10) {

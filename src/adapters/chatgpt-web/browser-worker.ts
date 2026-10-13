@@ -5,9 +5,10 @@ import { chatGptPromptCodeUnitEquivalent, chatGptPromptTextEquivalent, chatGptPr
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { observeChatGptAttachmentUploads } from "./attachment-upload";
 import { validateSkillFiles } from "./skill-attachments";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page, type Request, type Response } from "playwright-core";
-import { detectChatGptLimitsPlan, prepareChatGptLimitsSubmission, readChatGptUsageAccount, readChatGptUsageModel, type ChatGptUsageModel } from "./limits";
+import { detectChatGptLimitsPlan, prepareChatGptLimitsSubmission, supportsChatGptUsageTracking, readChatGptUsageAccount, readChatGptUsageModel, type ChatGptUsageModel } from "./limits";
 import {
   atomicWriteFile,
   CHATGPT_CONNECTOR_NAME,
@@ -78,6 +79,7 @@ import {
 } from "./preemptive-retry-stop";
 import {
   activateChatGptSendControl,
+  submitChatGptSendControl,
   activateOwnedChatGptSendControl,
   assertChatGptPreSendHistory,
   bindChatGptAssistantTurn,
@@ -129,6 +131,7 @@ import {
   activateChatGptEffortMenu,
   CHATGPT_EFFORT_SLIDER_SELECTOR,
   CHATGPT_STOP_BUTTON_SELECTOR,
+  CHATGPT_THINK_BUTTON_SELECTOR,
   CHATGPT_SEND_BUTTON_SELECTOR,
   CHATGPT_USER_TURN_SELECTOR,
   chatGptEffortSliderAdvancedTowardTarget,
@@ -149,7 +152,7 @@ import {
 import {
   CHATGPT_LUNA_BROWSER_INPUT_TOKEN_BUDGET,
   CHATGPT_WEB_PLATFORM_RESERVE_TOKENS,
-  CHATGPT_WEB_GPT6_SOL_BIGGER_CONTEXT_ERROR,
+  CHATGPT_WEB_GPT6_INSTANT_BIGGER_CONTEXT_ERROR,
   resolveChatGptWebContextLimits,
   resolveChatGptWebTransportLimits,
   supportsChatGptWebBiggerContext,
@@ -513,6 +516,15 @@ export class ChatGptSubmissionRejectionObserver {
     this.statuses.push(response.status());
     if (this.statuses.length > 8) this.statuses.shift();
     const contentType = response.headers()["content-type"];
+    if (response.status() === 403 && response.headers()["cf-mitigated"]?.toLowerCase() === "challenge") {
+      const error = new ChatGptWebAdapterError(
+        "ChatGPT blocked this request with a browser security check. Open ChatGPT in the launcher, complete any check shown there, then retry.",
+        { status: 403, errorType: "permission_error", code: "chatgpt_security_check", retryable: false },
+      );
+      this.checks.push(Promise.resolve(error));
+      this.onRejected?.(error);
+      return;
+    }
     if (response.status() === 200 && contentType?.includes("text/event-stream")) {
       this.streams.set(response.request(), response);
       return;
@@ -599,6 +611,11 @@ export class ChatGptSubmissionRejectionObserver {
 
   async failure(): Promise<ChatGptWebAdapterError | undefined> {
     return (await Promise.all(this.checks)).find(error => error !== undefined);
+  }
+
+  /** An owned successful conversation stream is still open, even if Stop is absent. */
+  hasActiveResponse(): boolean {
+    return this.streams.size > 0 && this.page !== undefined && !this.page.isClosed();
   }
 
   dispose(): void {
@@ -756,8 +773,10 @@ export const browserStageTimeouts = {
   effortSelection: 120_000,
   promptAttachment: CHATGPT_PROMPT_ATTACHMENT_TIMEOUT_MS,
   fileAttachment: 120_000,
-  send: 60_000,
-  multipartStageSend: 180_000,
+  // Inline prompts can be as large as Bigger Context stages. Both need the same bounded
+  // acceptance budget; transport selection must not cut off an already submitted large prompt.
+  send: 180_000,
+  // Staging asks for one transaction-bound acknowledgement, not an open-ended model answer.
   multipartStageAcknowledgement: CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS,
 } as const;
 
@@ -796,6 +815,9 @@ export interface BrowserTurn {
   /** Semantic DOM progress used only to reset the upstream silence timer. */
   onProgress?: () => void;
   /** Send activation is an irreversible ambiguity boundary: never replay on a fresh surface. */
+  /** Positive generation evidence, distinct from an idle helper heartbeat. */
+  onGenerationProgress?: () => void;
+  /** Send activation is the ambiguity boundary after which a fresh surface must not replay this prompt. */
   onSendActivated?: () => void | Promise<void>;
   /** The current prompt is visible to ChatGPT and must never be replayed on another surface. */
   onSubmitted?: () => void | Promise<void>;
@@ -850,7 +872,13 @@ interface ChatGptAcknowledgedMultipartStage {
   identities: string[];
 }
 
+interface ChatGptGenerationActivity {
+  active(): boolean;
+  progress(): void;
+}
+
 interface ChatGptSubmissionBaseline {
+  generation?: ChatGptGenerationActivity;
   userTurns: Locator;
   responseTurns: Locator;
   initialUserTurnCount: number;
@@ -926,11 +954,12 @@ export class ChatGptTurnDomHealthTracker {
     currentText: string;
     completionActionVisible: boolean;
     externalProgressLive?: boolean;
+    responseStreamActive?: boolean;
     activityText?: string;
   }, now = Date.now()): string | undefined {
     this.lastFailureKind = undefined;
     if (state.responsePresent) this.sawResponse = true;
-    if (state.externalProgressLive || state.running) {
+    if (state.externalProgressLive || state.running || state.responseStreamActive) {
       // Every conclusion below asserts that ChatGPT stopped producing this turn. A tool call that
       // is still completing or a visible Stop control disproves that, whatever response content
       // the renderer currently exposes. Start a fresh grace period once generation stops.
@@ -2136,7 +2165,9 @@ export class ChatGptBrowserWorker {
           };
         }
         const latestProgress = externalProgress?.snapshot();
-        if (visibleStopButtonCount > 0 || chatGptExternalProgressSuppressesDomHealth(latestProgress, Date.now())) {
+        if (visibleStopButtonCount > 0 || baseline?.generation?.active()
+          || chatGptExternalProgressSuppressesDomHealth(latestProgress, Date.now())) {
+          baseline?.generation?.progress();
           responseDeadline = Math.min(
             deadline ?? Number.POSITIVE_INFINITY,
             Date.now() + responseDomGraceMs,
@@ -2197,12 +2228,7 @@ export class ChatGptBrowserWorker {
     const initialProgress = externalProgress?.snapshot();
     const initialToolBatchRevision = initialProgress?.lastToolBatchRevision ?? 0;
     const initialBrokerActivityRevision = initialProgress?.lastBrokerActivityRevision ?? 0;
-    await activateChatGptSendControl(
-      sendButton,
-      abortSignal,
-      baseline.activateSubmissionRequestObservation,
-    );
-    return this.waitForSubmissionAccepted(
+    return submitChatGptSendControl(sendButton, observationSignal => this.waitForSubmissionAccepted(
       page,
       baseline.userTurns,
       baseline.responseTurns,
@@ -2210,13 +2236,13 @@ export class ChatGptBrowserWorker {
       baseline.initialUserTurnCount,
       initialResponseTurn,
       baseline.initialTurnIdentities,
-      abortSignal,
+      observationSignal,
       externalProgress,
       initialToolBatchRevision,
       initialBrokerActivityRevision,
       recoverObservation,
       baseline,
-    );
+    ), abortSignal, baseline.activateSubmissionRequestObservation);
   }
 
   private async waitForMultipartAcknowledgement(
@@ -2226,6 +2252,7 @@ export class ChatGptBrowserWorker {
     deadline: number | undefined,
     abortSignal?: AbortSignal,
     externalProgress?: ChatGptTurnProgressReader,
+    generation?: ChatGptGenerationActivity,
   ): Promise<void> {
     const completionTracker = new ChatGptCompletionTracker();
     const domHealthTracker = new ChatGptTurnDomHealthTracker(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS);
@@ -2241,6 +2268,8 @@ export class ChatGptBrowserWorker {
       }
       await throwIfChatGptSessionFailureAlert(page);
       const running = await chatGptStopButton(page).isVisible().catch(() => false);
+      const responseStreamActive = generation?.active() === true;
+      if (running || responseStreamActive) generation?.progress();
       const snapshot = await this.responseDomSnapshot(responseTurn, undefined, running);
       const progress = externalProgress?.snapshot();
       if (externalProgress
@@ -2261,6 +2290,7 @@ export class ChatGptBrowserWorker {
         currentText: snapshot.visibleText,
         completionActionVisible: snapshot.completionActionVisible,
         externalProgressLive,
+        responseStreamActive,
       });
       if (domError) throw chatGptResponseIncompleteError(domError);
       const completion = completionTracker.update({
@@ -2950,7 +2980,7 @@ export class ChatGptBrowserWorker {
       mutationStarted = true;
       if (requireThink) {
         const controls = selectedComposer.locator("xpath=ancestor::form[1]")
-          .getByRole("button", { name: /^(?:Think|Analyser)$/, exact: true }).filter({ visible: true });
+          .locator(CHATGPT_THINK_BUTTON_SELECTOR).filter({ visible: true });
         if (await controls.count() !== 1 || await controls.first().getAttribute("aria-pressed", {
           signal: abortSignal, timeout: 10_000,
         }) !== "true") {
@@ -3294,36 +3324,45 @@ export class ChatGptBrowserWorker {
     return { effort: mode.displayLabel, response: CHATGPT_SMOKE_EXPECTED };
   }
 
-  private async attachFiles(page: Page, prompt: CompiledChatGptWebPrompt): Promise<void> {
+  private async attachFiles(page: Page, prompt: CompiledChatGptWebPrompt, abortSignal?: AbortSignal): Promise<void> {
     const files = chatGptPromptFilePayloads(prompt);
     if (files.length === 0) return;
     const composer = await this.activeComposer(page);
     const composerForm = composer.locator("xpath=ancestor::form[1]");
     const input = page.locator('input[data-testid="upload-photos-input"], form[data-chatgpt-composer] input[type="file"][multiple]:not([accept])');
     await input.waitFor({ state: "attached", timeout: 20_000 });
-    await input.setInputFiles(files);
+    const uploads = await observeChatGptAttachmentUploads(page, files.map(file => file.name));
     try {
-      await Promise.all(files.map(file => (
-        composerForm.getByRole("group", { name: file.name, exact: true })
-          .or(composerForm.locator(`.composer-attachment-surface:is(button, [role="button"])[aria-label=${JSON.stringify(file.name)}]`))
-          .waitFor({ state: "visible", timeout: 60_000 })
-      )));
-    } catch {
-      const alerts = (await page.locator('[role="alert"]').allInnerTexts().catch(() => []))
-        .map(text => text.replace(/\s+/g, " ").trim())
-        .filter(Boolean);
-      throw new Error(
-        `ChatGPT did not accept all prompt attachments`
-        + (alerts.length > 0 ? `: ${alerts.join(" | ")}` : ""),
-      );
+      await withBrowserTurnAbort(input.setInputFiles(files), abortSignal);
+      try {
+        await withBrowserTurnAbort(Promise.all([uploads.wait(abortSignal), ...files.map(file => (
+          composerForm.getByRole("group", { name: file.name, exact: true })
+            .or(composerForm.locator(`.composer-attachment-surface:is(button, [role="button"])[aria-label=${JSON.stringify(file.name)}]`))
+            .waitFor({ state: "visible", timeout: 60_000 })
+        ))]), abortSignal);
+      } catch (error) {
+        uploads.throwIfFailed();
+        if (abortSignal?.aborted) throw error;
+        const alerts = (await page.locator('[role="alert"]').allInnerTexts().catch(() => []))
+          .map(text => text.replace(/\s+/g, " ").trim())
+          .filter(Boolean);
+        throw new Error(
+          `ChatGPT did not accept all prompt attachments`
+          + (alerts.length > 0 ? `: ${alerts.join(" | ")}` : ""),
+        );
+      }
+      uploads.throwIfFailed();
+      const send = composerForm.locator(CHATGPT_SEND_BUTTON_SELECTOR);
+      const deadline = Date.now() + 60_000;
+      while (Date.now() < deadline) {
+        abortSignal?.throwIfAborted();
+        if (await send.isEnabled().catch(() => false)) return;
+        await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
+      }
+      throw new Error("ChatGPT accepted the prompt attachments but did not make the message ready to send");
+    } finally {
+      await uploads.dispose();
     }
-    const send = composerForm.locator(CHATGPT_SEND_BUTTON_SELECTOR);
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline) {
-      if (await send.isEnabled().catch(() => false)) return;
-      await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
-    }
-    throw new Error("ChatGPT accepted the prompt attachments but did not make the message ready to send");
   }
 
   private async responseDomSnapshot(
@@ -4276,6 +4315,16 @@ export class ChatGptBrowserWorker {
     const originalAbortSignal = turn.abortSignal;
     const rejectionAbort = new AbortController();
     const submissionRejection = new ChatGptSubmissionRejectionObserver(error => rejectionAbort.abort(error));
+    let lastGenerationProgress = 0;
+    const generation = {
+      active: () => submissionRejection.hasActiveResponse(),
+      progress: () => {
+        const now = Date.now();
+        if (now - lastGenerationProgress < 10_000) return;
+        lastGenerationProgress = now;
+        turn.onGenerationProgress?.();
+      },
+    };
     turn = { ...turn, abortSignal: originalAbortSignal
       ? AbortSignal.any([originalAbortSignal, rejectionAbort.signal])
       : rejectionAbort.signal };
@@ -4524,6 +4573,7 @@ export class ChatGptBrowserWorker {
           const initialTurnIdentities = initialResponseTurn.knownTurnIdentities ?? [];
           const userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
           const baseline: ChatGptSubmissionBaseline = {
+            generation,
             userTurns,
             responseTurns,
             initialUserTurnCount: await userTurns.count(),
@@ -4559,8 +4609,8 @@ export class ChatGptBrowserWorker {
           const evidence = await this.runStage(
             turn.traceId,
             `multipart_stage_${index + 1}_send`,
-            browserStageTimeouts.multipartStageSend,
-            stageSignal => this.sendAttachedPrompt(
+            browserStageTimeouts.send,
+            (stageSignal) => this.sendAttachedPrompt(
               page,
               baseline,
               initialResponseTurn,
@@ -4604,6 +4654,7 @@ export class ChatGptBrowserWorker {
             deadline,
             acknowledgementSignal,
             undefined,
+            generation,
           );
           return responseTurn;
             },
@@ -4846,7 +4897,7 @@ export class ChatGptBrowserWorker {
         await this.runStage(
           turn.traceId,
           "send",
-          prepared.multipart ? browserStageTimeouts.multipartStageSend : browserStageTimeouts.send,
+          browserStageTimeouts.send,
           async (stageSignal, remainingMs) => {
         const composer = await this.activeComposer(page);
         const sendButton = composer
@@ -4883,6 +4934,7 @@ export class ChatGptBrowserWorker {
         }
         await diagnostics.capture(page, "send-ready");
         await this.assertSelectedEffort(page, mode, true, turn.traceId);
+        const recoverySend = recoveryExpectedActivityRevision !== undefined;
         if (recoveryExpectedActivityRevision !== undefined) {
           if ((await this.attachedPromptText(page, stageSignal)) !== responsePrompt) {
             throw chatGptWebSurfaceError("ChatGPT recovery composer changed before submission", false);
@@ -4977,10 +5029,9 @@ export class ChatGptBrowserWorker {
           recoveryExpectedActivityRevision = undefined;
         } else {
           console.info(`[chatgpt-web] browser turn ${turn.traceId} send_control phase=activating`);
-          await activateChatGptSendControl(sendButton, stageSignal, () => submissionRejection.activate());
-          console.info(`[chatgpt-web] browser turn ${turn.traceId} send_control phase=settled`);
+          // Send activation runs concurrently with its acceptance observation below.
         }
-        const evidence = await this.waitForSubmissionAccepted(
+        const observeSubmission = (observationSignal: AbortSignal) => this.waitForSubmissionAccepted(
           page,
           userTurns,
           responseTurns,
@@ -4988,13 +5039,16 @@ export class ChatGptBrowserWorker {
           initialUserTurnCount,
           initialResponseTurn,
           submissionBaseline.initialTurnIdentities,
-          stageSignal,
+          observationSignal,
           turn.externalProgress,
           initialToolBatchRevision,
           initialBrokerActivityRevision,
           toolTurnObservationRecovery,
           submissionBaseline,
         );
+        const evidence = !recoverySend
+          ? await submitChatGptSendControl(sendButton, observeSubmission, stageSignal, () => submissionRejection.activate())
+          : await observeSubmission(stageSignal);
         responseTurns = page.locator(CHATGPT_ASSISTANT_TURN_SELECTOR);
         responseTurn = responseTurns.nth(initialResponseTurn.count);
         console.info(`[chatgpt-web] browser turn ${turn.traceId} submission accepted evidence=${evidence}`);
@@ -5215,7 +5269,9 @@ export class ChatGptBrowserWorker {
               const snapshot = binding
                 ? await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running)
                 : absentResponseDomSnapshot();
-              observeResponseProgress(snapshot, running);
+              const responseStreamActive = generation.active();
+        if (running || responseStreamActive) generation.progress();
+        observeResponseProgress(snapshot, running);
               if (turn.externalProgress && progress && needsToolBoundary) {
                 if (!responsePresent || binding) {
                   // A tool may arrive before the new assistant turn is projected. An incomplete
@@ -5490,6 +5546,8 @@ export class ChatGptBrowserWorker {
           );
           continue;
         }
+        const responseStreamActive = generation.active();
+        if (running || responseStreamActive) generation.progress();
         observeResponseProgress(snapshot, running);
         await throwIfChatGptTerminalErrorAlert(
           responseTurn,
@@ -5521,6 +5579,7 @@ export class ChatGptBrowserWorker {
             currentText: snapshot.visibleText,
             completionActionVisible: snapshot.completionActionVisible,
             externalProgressLive,
+            responseStreamActive,
             activityText: JSON.stringify(snapshot.traceBlocks),
           });
           if (domError) {
@@ -5677,6 +5736,7 @@ export class ChatGptBrowserWorker {
             currentText: "",
             completionActionVisible: false,
             externalProgressLive,
+            responseStreamActive,
           });
           if (domError) throw chatGptResponseIncompleteError(domError);
         }

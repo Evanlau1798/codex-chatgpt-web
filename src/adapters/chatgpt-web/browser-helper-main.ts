@@ -166,6 +166,7 @@ async function run(message: RunMessage): Promise<void> {
     ...fenced,
     ...tunneled,
     onHeartbeat: () => writeProtocol({ type: "event", id: message.id, event: "heartbeat" }),
+    onGenerationProgress: () => writeProtocol({ type: "event", id: message.id, event: "generation_progress" }),
     onSendActivated: () => new Promise<void>((resolve, reject) => {
       if (sendActivationWaiters.has(message.id)) {
         reject(new Error("Browser helper Send activation is already awaiting acknowledgement"));

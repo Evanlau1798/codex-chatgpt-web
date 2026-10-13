@@ -364,6 +364,43 @@ module.exports = {
     return { ...result, mode, enabled: enabled === true };
   },
 
+  async setExperimentalPlusNativeContext(enabled) {
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) {
+      throw new Error("Initialize the runtime before changing Plus native context");
+    }
+    const route = this.launcherProfile === "development"
+      ? null
+      : await this.bridgeStatus("plus-native-context-route");
+    const mode = current.mode;
+    const compactFlag = enabled === true ? "--plus-native-context" : "--standard-plus-context";
+    const args = [
+      ...(this.launcherProfile === "development" ? ["dev"] : []),
+      "setup",
+      mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor",
+      this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      ...(this.launcherProfile === "development" ? [] : ["--replace-codex-route"]),
+      "--acknowledge-unofficial",
+      ...(this.launcherProfile === "development" ? [] : ["--restart-service"]),
+      compactFlag,
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const run = this.launcherProfile === "development"
+      ? this.runDevSetup.bind(this)
+      : this.runSetup.bind(this);
+    const result = await run("plus-native-context", args, {
+      message: enabled ? "Enabling experimental Plus native context" : "Disabling experimental Plus native context",
+      successMessage: enabled
+        ? "Plus native context enabled; restart Codex"
+        : "Standard Plus context restored; restart Codex",
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    });
+    if (route && !route.active) await this.setBridgeEnabled(false);
+    return { ...result, mode, enabled: enabled === true };
+  },
+
   async upgradeManagedRuntime() {
     this.assertProductionProfile("Managed Codex runtime upgrade");
     if (this.currentOperation()) throw new Error(`Another launcher operation is active: ${this.currentOperation()}`);

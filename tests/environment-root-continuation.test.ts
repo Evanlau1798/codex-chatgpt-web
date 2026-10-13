@@ -329,7 +329,7 @@ for (const format of ["v1", "v2"]) test(`${format} context-only continuation req
 });
 
 test("old untagged transcript context cannot block or replace current rollout authority after restart", () => {
-  const { codexHome, request } = resumedRootFixture();
+  const { codexHome, request, rolloutPath } = resumedRootFixture();
   const oldRoot = resolve(root, "previous-workspace");
   const body = request._rawBody as { input: Array<Record<string, unknown>> };
   body.input.unshift(
@@ -338,7 +338,15 @@ test("old untagged transcript context cannot block or replace current rollout au
     { type: "message", role: "user", id: "old_user", content: [{ type: "input_text", text: "Previous request" }] },
     { type: "message", role: "assistant", id: "old_reply", content: [{ type: "output_text", text: "Completed" }] },
   );
-  expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
+  const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+  expect(() => store.resolve(request)).toThrow("no current task boundary");
+  writeFileSync(rolloutPath, [
+    { type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } },
+    { type: "response_item", payload: body.input[0] },
+    { type: "event_msg", payload: { type: "task_started", turn_id: rolloutTurnId } },
+    childTurnContext(),
+  ].map(record => JSON.stringify(record)).join("\n") + "\n");
+  expect(store.resolve(request).cwd).toBe(root);
 });
 
 test("a resumed root cannot borrow a child rollout or an earlier turn's authority", () => {
@@ -355,7 +363,7 @@ test("a resumed root cannot borrow a child rollout or an earlier turn's authorit
 });
 
 test("a malformed current update is not replaced by a valid older transcript envelope", () => {
-  const { codexHome, request } = resumedRootFixture();
+  const { codexHome, request, rolloutPath } = resumedRootFixture();
   const body = request._rawBody as { input: Array<Record<string, unknown>> };
   const oldTurnId = "01a06c66-0000-75c6-a0df-318f890ef6de";
   body.input.unshift(
@@ -367,7 +375,17 @@ test("a malformed current update is not replaced by a valid older transcript env
     { type: "message", role: "user", id: "invalid_current_context",
       content: [{ type: "input_text", text: "<environment_context><cwd/></environment_context>" }] },
   );
-  expect(() => new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request)).toThrow("missing cwd");
+  const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+  expect(() => store.resolve(request)).toThrow();
+  // A recorded malformed current envelope is still not historical authority.
+  writeFileSync(rolloutPath, [
+    { type: "session_meta", payload: { id: rolloutThreadId, source: "vscode" } },
+    { type: "response_item", payload: body.input[0] },
+    { type: "event_msg", payload: { type: "task_started", turn_id: rolloutTurnId } },
+    { type: "response_item", payload: body.input[3] },
+    childTurnContext(),
+  ].map(record => JSON.stringify(record)).join("\n") + "\n");
+  expect(() => store.resolve(request)).toThrow("missing cwd");
 });
 
 test("root rollout lookup authenticates the indexed owner and current sandbox", () => {

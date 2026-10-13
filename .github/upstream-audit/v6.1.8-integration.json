@@ -1,0 +1,221 @@
+{
+  "schemaVersion": 1,
+  "release": "v6.1.8-Enhanced.1",
+  "repository": "https://github.com/Evanlau1798/codex-chatgpt-web",
+  "recordedAt": "2026-10-12T20:46:16.592Z",
+  "upstream": {
+    "commit": "7cc8b8d8aadbbf729bd2bd43ca47fa15ea9965c0",
+    "tagObject": "09af1a06b2bde862ec41d3ca01b0a7577a14fa56",
+    "signature": "unsigned"
+  },
+  "integration": {
+    "method": "continuing ort merge, then ordinary followup",
+    "B_pub": "199e6f63b9e2f69a89b4364b7384a35de4a249e2",
+    "merge": "872af17f35534851ed76d828289edc5a165e56f8",
+    "parents": [
+      "199e6f63b9e2f69a89b4364b7384a35de4a249e2",
+      "7cc8b8d8aadbbf729bd2bd43ca47fa15ea9965c0"
+    ],
+    "mergeTree": "c85b6525190d33a07a3521a821a84c1b4be2c74b",
+    "originalAutoMerge": "b008c2d1f49dd7b121c07e2d4b9fd555418faa4d",
+    "followupSource": [
+      {
+        "path": "src/adapters/chatgpt-web/turn-context-store.ts",
+        "sha256": "ed3101c9754c707785df3d2247ed65bfa72d4dafdc0757df3fda45a669e30efb"
+      },
+      {
+        "path": "scripts/lifecycle-sim/manifest.ts",
+        "sha256": "68719db3082ce8a744a473a4a57a19187ffacfa37c82f38db234f5ff10b9edbf"
+      },
+      {
+        "path": "scripts/lifecycle-sim/claude.ts",
+        "sha256": "a8807dd5f3167c914549aa58cd75116eb3e2000e79b954109e75dd3ae3128ec4"
+      },
+      {
+        "path": "tests/context-archive-budget.test.ts",
+        "sha256": "fd078ee510da450294b82af6e0c5c80e6725ebebcac4c683821798be265d4163"
+      },
+      {
+        "path": "tests/chatgpt-adapter-worker-injection.test.ts",
+        "sha256": "f4712c195fbcb9deef2488600dc0532b52207425f0a3e66630217c335b394013"
+      }
+    ]
+  },
+  "ledger": {
+    "path": ".github/upstream-audit/v6.1.8.json",
+    "sha256": "40b9742ff3d7e611cd62ec6608a88218dff08ba5f0f1fb7ed0511cdf7de16a17",
+    "changedPaths": 55,
+    "hunks": 155,
+    "testSourceFiles": 22,
+    "testCaseDeltas": 52
+  },
+  "originalArchive": {
+    "path": ".github/upstream-audit/evidence/bf94ac9c385cd3d4a8843af497e966ecde23f5244a17e318fe0de52ca984f714.tar.gz",
+    "sha256": "bf94ac9c385cd3d4a8843af497e966ecde23f5244a17e318fe0de52ca984f714"
+  },
+  "followupArchive": {
+    "path": ".github/upstream-audit/evidence/2229ecf38ebe2c69581f67fdc8c4f60c195ddb041f76238b1dd0ffafc8cc21d9.tar.gz",
+    "sha256": "2229ecf38ebe2c69581f67fdc8c4f60c195ddb041f76238b1dd0ffafc8cc21d9",
+    "bytes": 110502,
+    "members": 25
+  },
+  "review": {
+    "model": "chatgpt-web/gpt-6-sol",
+    "effort": "xhigh",
+    "rawDiffReviewer": "01a131c2-aa61-7302-9ddf-16826e1d3972",
+    "callerReviewer": "01a131da-c2ca-77d1-8a7f-172efaa47417",
+    "semanticPhases": "review/semantic-phases.md",
+    "callerReport": "review/caller-closure.md",
+    "acceptance": "Full bounded raw diff and 52 case mappings plus separately completed production caller closure; incomplete earlier claims are retained separately."
+  },
+  "restart": {
+    "settingsPreserved": true,
+    "sourceRoot": "G:/codex-chatgpt-web",
+    "checkedAt": "2026-10-12T20:11:59.5707037Z",
+    "browserTurns": 0,
+    "version": "6.1.8-Enhanced.1",
+    "pid": 254080,
+    "accepting": true
+  },
+  "localEvidence": {
+    "pinnedBun": "1.4.0+34cbb9a40",
+    "inputs": [
+      {
+        "bytes": 144063,
+        "sha256": "1ad2ba5fa441a1e649227d1e88dba41bfe086ff981d2be2a07f29f5a71b5473e",
+        "name": "archive-budget-red.log"
+      },
+      {
+        "bytes": 18491,
+        "sha256": "367214b116fa13ec4145d4fe0b15b358d818ec6c1da7b0397d6e47c7fe5f95dd",
+        "name": "archive-budget-green.log"
+      },
+      {
+        "bytes": 7594,
+        "sha256": "3a5d6d2692c607d434d32f7964b80fa4b9dc670daccdbc4214806b4fc0c3688c",
+        "name": "archive-progress-green.log"
+      },
+      {
+        "bytes": 720,
+        "sha256": "0a221fe5b8c090aabe76fb0bc851855e14a71c468265e2a5f45f02e6d53b6289",
+        "name": "archive-public-abi.log"
+      },
+      {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "name": "archive-typecheck.log"
+      },
+      {
+        "bytes": 92,
+        "sha256": "036ec7630fe1451694619e3ee45bcaac9efbe05a3262adce51ceb9e069c1d1b9",
+        "name": "archive-build.log"
+      },
+      {
+        "bytes": 23801,
+        "sha256": "3059a986438fa76085785957c98b0540a51bb9e0af1365729033df686ba13a64",
+        "name": "archive-lifecycle.log"
+      },
+      {
+        "bytes": 279728,
+        "sha256": "31805eb00c94c5040ee1585ce6e5dd4b1a26ee82541c9128a07f2786d26e9f60",
+        "name": "archive-lifecycle-final.log"
+      },
+      {
+        "bytes": 275632,
+        "sha256": "5d1d6b2bb83272d205f193ea6644d215196c446b817b5b116f282480c69ec052",
+        "name": "archive-lifecycle-corrected.log"
+      },
+      {
+        "bytes": 1576,
+        "sha256": "91db4da9e5805c63b6a503505e1551610c4b18c77a2546d62c96dbc3129ff0bb",
+        "name": "claude-lifecycle-diagnostic.log"
+      },
+      {
+        "bytes": 220,
+        "sha256": "380f9d67ab9b8a42c03aa3a2e8924e22171a7362ad6a3911faebcf756f1f05c2",
+        "name": "archive-restart-verified.json"
+      },
+      {
+        "bytes": 747,
+        "sha256": "36c53b20b5e5457ba4ca9d0df8df4b576e8d6c2028b54c5230eea79cef7dc71b",
+        "name": "archive-candidate-files.json"
+      },
+      {
+        "bytes": 4623,
+        "sha256": "d262b4a720010616d69b8a3c059a4f6ec9553a914e98398b593ae20f8c256381",
+        "name": "REVIEW_SCOPE.md"
+      }
+    ],
+    "lifecycle": "Corrected all-lane passed; prior failed runs retained without weakening assertions.",
+    "ABI": "Native2 public hash unchanged"
+  },
+  "publication": {
+    "route": "owner-authorized guarded non-force fast-forward to fork/main",
+    "expectedBase": "199e6f63b9e2f69a89b4364b7384a35de4a249e2",
+    "finalCandidate": "The commit containing this receipt; exact head/tree and actual ref update are recorded in the final release publication asset.",
+    "gate": "Required verify:release and exact-head main CI remain pending at this receipt commit.",
+    "finalRecord": "upstream-v6.1.8-publication.json release asset after workflow/checksum verification"
+  },
+  "limitations": [
+    "Plus 256K real long-history retention is unverified; default-off experimental option.",
+    "Popup regression tests and authenticated launcher state do not establish every OAuth provider callback is fixed.",
+    "An earlier reviewer resumed after accepted compact via DOM fallback; no broker work-tool error was observed and the next readonly probe succeeded."
+  ],
+  "additionalValidation": {
+    "archive": {
+      "path": ".github/upstream-audit/evidence/26806516d369e3ee784df4d77308b69a5768ebdf0ee9bae85f63e63aba13b28b.tar.gz",
+      "sha256": "26806516d369e3ee784df4d77308b69a5768ebdf0ee9bae85f63e63aba13b28b",
+      "bytes": 7086
+    },
+    "reason": "Full gate exposed stale static send-owner anchor. One test locator changed; all six ordering assertions unchanged.",
+    "reviewer": "01a131e2-883c-7dd3-8270-a31a8acb1942",
+    "reviewScope": "Supplied complete test, exact diff, connected production send source; no independent test execution claimed.",
+    "actualChromiumFocused": "40 pass / 0 fail"
+  },
+  "gateFollowups": {
+    "archive": {
+      "path": ".github/upstream-audit/evidence/c6493302bb50f56f96e30e4686065598a55a39b23f2894ce936958d852393b62.tar.gz",
+      "sha256": "c6493302bb50f56f96e30e4686065598a55a39b23f2894ce936958d852393b62",
+      "bytes": 91464
+    },
+    "source": {
+      "launcher/scripts/package.cjs": {
+        "bytes": 6992,
+        "sha256": "b86ad8399f1069726571c330bca31b72b30e6f3f0d5db3a337201dc7778b944f"
+      },
+      "tests/packaging-runtime-reuse.test.ts": {
+        "bytes": 9449,
+        "sha256": "25e3dea09e40761c884fd8b99989255dd6ec71297cb5ada8770d22e7e9bebeeb"
+      },
+      "tests/effort-menu-activation.test.ts": {
+        "bytes": 10713,
+        "sha256": "49515bfff5aed1dff3ebd10321a01a209b7839e86fd06a139ab0feb3d6e0f880"
+      },
+      "src/config.ts": {
+        "bytes": 24030,
+        "sha256": "4515461299f2dfc954f8475969edc816013d624cfab928c7db046208309fe439"
+      },
+      ".github/upstream-audit/v6.1.8-followups.json": {
+        "bytes": 386,
+        "sha256": "97aa030b93c6db9c10be6e29085bc57c07a45f1a2af55e68fb42b0f02bb2ed40"
+      }
+    },
+    "reviewer": "01a131eb-4e38-76f2-ab7a-9eacbdd2a8f4",
+    "changes": [
+      "Exact effort click options now assert normal actionable click without force.",
+      "Linux-only builder dependency is imported only in Linux ARM64 validator branch. All existing runtime/overlap/copy assertions retained."
+    ],
+    "evidence": "Two original failed wrapper runs and a cold import timeout are retained; meaningful new RED then GREEN and remaining root checks are retained."
+  },
+  "launcherFixtureFollowups": {
+    "archive": {
+      "path": ".github/upstream-audit/evidence/828474d74d60cea27e63508a6390c78a1b6fa2d8eca3d4b218705aedff457ecc.tar.gz",
+      "sha256": "828474d74d60cea27e63508a6390c78a1b6fa2d8eca3d4b218705aedff457ecc",
+      "bytes": 111552
+    },
+    "reviewer": "01a131fe-bd89-7613-8693-ad9f701781e9",
+    "scope": "Test-only Electron external boundary and complete normalized state snapshots; all original ownership, viewport, rollback and permission assertions remain.",
+    "actualCompleteLauncherSuite": "687 pass / 7 platform skips / 0 fail",
+    "originalGate": "All345 root test files passed, launcher four failures retained; no canary performed in that failed wrapper."
+  }
+}

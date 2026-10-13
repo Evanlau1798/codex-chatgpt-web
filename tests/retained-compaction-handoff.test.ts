@@ -6,6 +6,48 @@ import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSession } from "../src/ad
 import type { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import type { CodexParsedRequest } from "../src/types";
 import { deferred } from "../src/adapters/chatgpt-web/runtime-lifecycle";
+import { mock } from "node:test";
+import { CompactionTransactionStore } from "../src/adapters/chatgpt-web/compaction-transaction";
+
+test.each([false, true])("retained handoff refreshes generation, never hidden heartbeat: hidden=%s", async hidden => {
+  const store = new CompactionTransactionStore();
+  const broker = {
+    beginCompactionTransaction: async (trace: string, ttl: number) => store.begin(trace, ttl),
+    waitForCompactionHandoff: (token: string, signal?: AbortSignal) => store.wait(token, signal),
+    abortCompactionTransaction: (token: string) => store.abort(token),
+    refreshCompactionTransaction: (token: string, ttl: number) => store.refresh(token, ttl),
+  } as unknown as TurnBroker;
+  const browser = deferred<string>();
+  let running: BrowserTurn | undefined;
+  mock.timers.enable({ apis: ["setTimeout"] });
+  const run = requestRetainedCompactionHandoff({ run: turn => {
+    running = turn;
+    turn.abortSignal!.addEventListener("abort", () => browser.resolve("settled"), { once: true });
+    return browser.promise;
+  } }, parsed, source(), broker, { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+  "retained_progress", undefined, 40);
+  void run.catch(() => {});
+  try {
+    await new Promise<void>(resolve => setImmediate(resolve));
+    mock.timers.tick(25);
+    if (hidden) running!.onHeartbeat?.();
+    else running!.onGenerationProgress?.();
+    mock.timers.tick(25);
+    if (hidden) await expect(run).rejects.toThrow("timed out after 40ms");
+    else {
+      const prompt = await running!.prepare();
+      const token = /turn_token (control_\w+)/.exec(prompt.text)![1]!;
+      const id = /handoff_id (handoff_\w+)/.exec(prompt.text)![1]!;
+      store.submit(token, id, "Complete generation-aware handoff.");
+      prompt.release();
+      expect(await run).toBe("Complete generation-aware handoff.");
+    }
+  } finally {
+    browser.resolve("cleanup");
+    mock.timers.reset();
+    await run.catch(() => {});
+  }
+});
 
 const parsed: CodexParsedRequest = {
   modelId: "chatgpt-web", stream: true,

@@ -513,3 +513,34 @@ for (const mode of ["workspace-write", "read-only"] as const) test(`${mode} uses
     expect(() => store.resolve(beforeSteering)).toThrow("no canonical rollout");
     expect(resolved).toThrow("no canonical rollout");
   });
+
+  for (const afterAssistant of [false, true]) for (const repeatRoots of [false, true]) {
+    test(`calendar update ${afterAssistant ? "after a tool" : "immediately after the instruction"} with ${repeatRoots ? "repeated" : "omitted"} roots uses the current native environment (#812)`, () => {
+      const { codexHome, request, body, delta } = midnightRolloutFixture();
+      if (!afterAssistant) body.input.splice(1, body.input.length - 2);
+      if (repeatRoots) delta.content[0]!.text = delta.content[0]!.text.replace("<filesystem>",
+        `<filesystem><workspace_roots><root>${root}</root></workspace_roots>`);
+      expect(new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome).resolve(request).cwd).toBe(root);
+    });
+  }
+
+  test("calendar updates cannot introduce roots or malformed permission fields", () => {
+    const { codexHome, request, body, delta, rolloutPath } = midnightRolloutFixture();
+    body.input.splice(1, body.input.length - 2);
+    const original = delta.content[0]!.text;
+    const store = new ChatGptThreadEnvironmentStore(undefined, Date.now, codexHome);
+    for (const roots of [
+      `<workspace_roots><root>${resolve(root, "other")}</root></workspace_roots>`,
+      `<workspace_roots><root>${root}</root><root>${resolve(root, "other")}</root></workspace_roots>`,
+      "<workspace_roots><root>relative</root></workspace_roots>",
+      "<workspace_roots/>", "<cwd/>", "<workspace_roots><root/></workspace_roots>",
+    ]) {
+      delta.content[0]!.text = original.replace("<filesystem>", `<filesystem>${roots}`);
+      expect(() => store.resolve(request)).toThrow();
+    }
+    delta.content[0]!.text = original.replace("<filesystem>",
+      `<filesystem><workspace_roots><root>${root}</root></workspace_roots>`);
+    expect(store.resolve(request).cwd).toBe(root);
+    rmSync(rolloutPath);
+    expect(() => store.resolve(request)).toThrow("no canonical rollout");
+  });

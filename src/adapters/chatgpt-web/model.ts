@@ -12,6 +12,7 @@ export interface ChatGptWebCapabilities {
   /** Missing in legacy fixtures and saved observations; absent fails closed. */
   extraHighAvailable?: boolean;
   proAvailable: boolean;
+  experimentalPlusNativeContext?: boolean;
 }
 
 export interface ChatGptWebModelMode {

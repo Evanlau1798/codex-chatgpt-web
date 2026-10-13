@@ -317,6 +317,7 @@ export interface CodexProviderConfig {
     automaticWebSessionLimitMinutes?: number;
     /** Experimental no-context mode disables compaction and scales browser waits for its full prompt. */
     experimentalNoAutoCompact?: boolean;
+    experimentalPlusNativeContext?: boolean;
     /** Legacy compatibility setting; all composer insertion now uses literal plain paste. */
     experimentalComposerPlainText?: boolean;
     /** Keep the single controlled browser visible. */

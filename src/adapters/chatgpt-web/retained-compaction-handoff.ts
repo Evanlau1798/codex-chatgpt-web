@@ -29,16 +29,25 @@ export async function requestRetainedCompactionHandoff(
   timeoutMs = MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
   requireAutomaticAdmission?: (traceId: string) => void,
   retainOwnershipUntil?: (settlement: Promise<void>) => void,
+  onProgress?: () => void,
 ): Promise<string> {
   const conversationKey = source.conversationKey();
   if (!conversationKey) throw new RetainedCompactionSourceUnavailableError();
   const operationTimeoutMs = Math.min(timeoutMs, MAX_COMPACTION_HANDOFF_TIMEOUT_MS);
   const deadline = new AbortController();
-  const timer = setTimeout(
-    () => deadline.abort(new Error(`ChatGPT compaction handoff timed out after ${operationTimeoutMs}ms`)),
-    operationTimeoutMs,
-  );
-  timer.unref?.();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let handoffAccepted = false;
+  const armDeadline = (): void => {
+    if (deadline.signal.aborted || handoffAccepted) return;
+    clearTimeout(timer);
+    timer = setTimeout(
+      () => deadline.abort(new Error(`ChatGPT compaction handoff timed out after ${operationTimeoutMs}ms`)),
+      operationTimeoutMs,
+    );
+    timer.unref?.();
+    if (transaction) broker.refreshCompactionTransaction(transaction.token, operationTimeoutMs);
+    onProgress?.();
+  };
   const operationSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
   const browserAbort = new AbortController();
   const abortBrowser = () => browserAbort.abort(operationSignal.reason);
@@ -46,6 +55,7 @@ export async function requestRetainedCompactionHandoff(
   let browser: Promise<string> | undefined;
   let settlement: Promise<void> | undefined;
   let completed = false;
+  armDeadline();
   if (operationSignal.aborted) abortBrowser();
   else operationSignal.addEventListener("abort", abortBrowser, { once: true });
   try {
@@ -75,7 +85,12 @@ export async function requestRetainedCompactionHandoff(
       requireRetainedConversation: true,
       compaction: true,
       abortSignal: browserAbort.signal,
-      onTextDelta: () => {},
+      onSubmitted: armDeadline,
+      onGenerationProgress: armDeadline,
+      onProgress: armDeadline,
+      onReasoningSummary: armDeadline,
+      onCommentary: armDeadline,
+      onTextDelta: delta => { if (delta) armDeadline(); },
     });
     settlement = browser.then(() => undefined, () => undefined);
     retainOwnershipUntil?.(settlement);
@@ -87,6 +102,7 @@ export async function requestRetainedCompactionHandoff(
       );
     });
     const handoff = await withCompactionAbort(Promise.race([accepted, browserWithoutHandoff]), operationSignal);
+    handoffAccepted = true;
     browserAbort.abort(new ChatGptCompactionHandoffAccepted());
     await withCompactionAbort(settlement, operationSignal);
     completed = true;

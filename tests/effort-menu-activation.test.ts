@@ -96,7 +96,7 @@ test("effort activation returns the menu owned by the clicked control", async ()
   expect(result.method).toBe("click");
   expect(result.menu).toBe(f.owned as never);
   expect(f.events).toEqual(["click"]);
-  expect(f.clickOptions).toEqual([{ force: true, timeout: 1 }]);
+  expect(f.clickOptions).toEqual([{ timeout: 1 }]);
 });
 
 test("a ghost click is reset before a single primary pointerdown fallback", async () => {

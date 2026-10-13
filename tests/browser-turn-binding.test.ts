@@ -123,9 +123,13 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("an exchange rekeys only with
 }, 30_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("binds captured Activity before an answer exists and recognizes uploaded native-button tiles", async () => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request =>
+    request.method === "POST" ? new Response('{"event":"file.processing.completed","file_id":"fixture-file"}\n',
+      { headers: { "content-type": "application/x-ndjson" } }) : new Response("", { headers: { "content-type": "text/html" } }) });
   const context = await browser.newContext();
   try {
     const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${server.port}`);
     const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
     await page.setContent('<main></main>');
     const baseline = await worker.captureSubmissionBaseline(page, "Prompt");
@@ -138,10 +142,15 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("binds captured Activity befo
       await page.setContent(`<form data-chatgpt-composer><div data-composer-markdown contenteditable="true" role="textbox" style="height:40px">Prompt</div>
         <input type="file" multiple><${tile} class="composer-attachment-surface" aria-label="codex-input-image-1.png">File</${tile.split(' ')[0]}>
         <button type="submit">Send</button></form>`);
+      await page.locator('input[type="file"]').evaluate(input => {
+        input.addEventListener("change", () => void fetch("/backend-api/files/process_upload_stream", {
+          method: "POST", body: JSON.stringify({ file_name: "codex-input-image-1.png", file_id: "fixture-file" }),
+        }));
+      });
       await worker.attachFiles(page, { images: [{ ref: "codex-input-image-1", imageUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" }] });
       expect(await page.locator('input[type="file"]').evaluate(input => (input as HTMLInputElement).files?.[0]?.name)).toBe("codex-input-image-1.png");
     }
-  } finally { await context.close(); }
+  } finally { await context.close(); server.stop(true); }
 }, 15_000);
 
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("paragraph identity survives file preview movement in both response layouts", async () => {

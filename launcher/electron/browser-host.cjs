@@ -788,6 +788,13 @@ class BrowserHost {
       tab.url = contents.getURL();
       this.publishState?.(this.snapshot());
     });
+    contents.on("dom-ready", () => {
+      // Automation starts at DOMContentLoaded. A pending image can delay did-finish-load
+      // while this new document already exposes controls in a collapsed offscreen viewport.
+      // Restore only rendering here; load completion still owns bootstrap and surface marking.
+      tab.rendererReady = true;
+      this.syncViewVisibility();
+    });
     contents.on("did-finish-load", () => {
       tab.url = contents.getURL();
       tab.loading = false;
@@ -1466,9 +1473,11 @@ class BrowserHost {
     this.authView?.setBounds(this.bounds);
     this.syncViewVisibility();
     if (browserInteractionModeFor(this) === "automatic") {
-      void this.view.webContents.executeJavaScript("window.dispatchEvent(new Event('resize'))", true).catch(() => {});
-      if (this.authView && !this.authView.webContents.isDestroyed()) {
-        void this.authView.webContents.executeJavaScript("window.dispatchEvent(new Event('resize'))", true).catch(() => {});
+      // Electron queues a did-stop-loading listener for each script sent during navigation.
+      for (const contents of [this.view.webContents, this.authView?.webContents]) {
+        if (contents && !contents.isDestroyed() && !contents.isLoadingMainFrame()) {
+          void contents.executeJavaScript("window.dispatchEvent(new Event('resize'))", true).catch(() => {});
+        }
       }
     }
   }
@@ -1680,8 +1689,12 @@ class BrowserHost {
   }
 
   createAuthView(options = {}, requestedUrl = "") {
-    this.closeAuthView(this.authView, true);
-    const authView = new WebContentsView({ webContents: options.webContents });
+    if (!options.webContents && !allowedAuthUrl(requestedUrl)) throw new Error("Authentication popup URL is not allowed");
+    // Reloading the opener here can destroy the newly supplied Electron guest.
+    this.closeAuthView(this.authView, true, false);
+    const authView = new WebContentsView(options.webContents
+      ? { webContents: options.webContents }
+      : { webPreferences: { partition: this.partition, contextIsolation: true, nodeIntegration: false, sandbox: true } });
     this.authView = authView;
     this.authNavigationError = null;
     this.window.contentView.addChildView(authView);
@@ -1752,19 +1765,22 @@ class BrowserHost {
       this.closeAuthView(authView, false);
       this.setState({ status: "error", message, loading: false });
     });
+    const openAuthUrl = (url) => {
+      armNavigationTimeout(url);
+      void contents.loadURL(url).catch((error) => {
+        if (error && typeof error === "object" && error.code === "ERR_ABORTED") return;
+        if (this.authView !== authView || contents.isDestroyed()) return;
+        clearNavigationTimeout();
+        const message = `ChatGPT sign-in page failed to open: ${error instanceof Error ? error.message : String(error)}`;
+        this.authNavigationError = new Error(message);
+        this.logger.error("browser.auth_window_open_failed", { url, message });
+        this.closeAuthView(authView, true, false);
+        this.setState({ status: "error", message, url, loading: false });
+      });
+    };
     contents.setWindowOpenHandler(({ url }) => {
       if (allowedAuthUrl(url)) {
-        armNavigationTimeout(url);
-        void contents.loadURL(url).catch((error) => {
-          if (error && typeof error === "object" && error.code === "ERR_ABORTED") return;
-          if (this.authView !== authView || contents.isDestroyed()) return;
-          clearNavigationTimeout();
-          const message = `ChatGPT sign-in page failed to open: ${error instanceof Error ? error.message : String(error)}`;
-          this.authNavigationError = new Error(message);
-          this.logger.error("browser.auth_window_open_failed", { url, message });
-          this.closeAuthView(authView, true, false);
-          this.setState({ status: "error", message, url, loading: false });
-        });
+        openAuthUrl(url);
       } else {
         let parsed;
         try { parsed = new URL(url); } catch { return { action: "deny" }; }
@@ -1780,6 +1796,7 @@ class BrowserHost {
     });
     this.syncViewVisibility();
     this.logger.info("browser.auth_surface_opened");
+    if (!options.webContents) openAuthUrl(requestedUrl);
     return contents;
   }
 

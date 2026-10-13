@@ -23,6 +23,9 @@ function runtimePreferenceState(config) {
       && config.experimentalBiggerContext === true,
     experimentalSkillAttachments: config.browserInteractionMode !== "manual"
       && config.experimentalSkillAttachments === true,
+    experimentalPlusNativeContext: config.experimentalPlusNativeContext === true,
+    plusNativeContextAvailable: config.useEnhancedWebSessionMode === true
+      && config.browserInteractionMode !== "manual" && config.solAvailable === true && config.proAvailable === false,
     experimentalNoAutoCompact: config.experimentalNoAutoCompact === true,
   };
 }

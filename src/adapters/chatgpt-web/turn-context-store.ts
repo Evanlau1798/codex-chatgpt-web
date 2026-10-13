@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { completeArchiveChunks, type PendingContext, type TurnChannel } from "./turn-broker-state";
 import { MAX_BROKER_LINE_CHARS, opaqueId } from "./turn-broker-protocol";
-import { CODEX_CONTEXT_ARCHIVE_CHUNK_TOKENS } from "./context-bootstrap";
+import { CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS, CODEX_CONTEXT_ARCHIVE_CHUNK_TOKENS } from "./context-bootstrap";
+import { estimateTokens } from "../../lib/token-estimate";
 
 export class TurnContextStore {
   private readonly contexts = new Map<string, PendingContext>();
@@ -46,6 +47,10 @@ export class TurnContextStore {
     if (!context) throw new Error("context token is invalid, expired, or revoked");
     if (context.turnToken) channels.get(context.turnToken)?.onProgress?.();
     if (index === undefined && chunkChars === undefined) {
+      if (context.text.length > CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS
+        || estimateTokens(context.text) > CODEX_CONTEXT_ARCHIVE_CHUNK_TOKENS) {
+        throw new Error("context archive requires bounded pages; call codex_tool_inventory with query __codex_context__:0");
+      }
       context.complete = true;
       console.info(`[chatgpt-web] broker trace=${context.traceId} served context chars=${context.text.length} chunks=1`);
       return { context: context.text };

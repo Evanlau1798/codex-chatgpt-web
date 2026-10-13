@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
+import { CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS } from "../src/adapters/chatgpt-web/context-bootstrap";
 import { createChatGptWebAdapter, chatGptWebExecutionNamespace, chatGptWebTraceId } from "../src/adapters/chatgpt-web/index";
 import { CHATGPT_ACCOUNT_SAFETY_DRAIN_PROMPT, ChatGptAccountSafety } from "../src/adapters/chatgpt-web/account-safety";
 import { ChatGptWebAdapterError } from "../src/adapters/chatgpt-web/adapter-error";
@@ -133,7 +134,8 @@ test("archive reads advance production browser progress without fabricating a to
         expect(contextToken).toBeString();
         const before = turn.externalProgress!.snapshot();
         expect(before.lastBrokerActivityRevision).toBeUndefined();
-        await callTurnBroker(socket, { method: "read_context", token: contextToken! });
+        await callTurnBroker(socket, { method: "read_context", token: contextToken!,
+          index: 0, chunkChars: CODEX_CONTEXT_ARCHIVE_CHUNK_CHARS });
         const after = turn.externalProgress!.snapshot();
         expect(after.lastBrokerActivityRevision).toBeGreaterThan(before.revision);
         expect(after.lastToolBatchRevision).toBe(0);

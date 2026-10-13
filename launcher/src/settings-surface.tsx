@@ -271,6 +271,17 @@ export function SettingsSurface({
       setBusy(false);
     }
   };
+  const setExperimentalPlusNativeContext = async (enabled: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      updateState(await api!.setExperimentalPlusNativeContext(enabled));
+    } catch (cause) {
+      setError(messageOf(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
   const setManualInteraction = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
@@ -435,6 +446,13 @@ export function SettingsSurface({
             checked={snapshot.state.experimentalNoAutoCompact}
             disabled={busy || snapshot.state.coreSetupComplete !== true}
             onChange={(enabled) => void setExperimentalNoAutoCompact(enabled)}
+          />
+        </SettingRow>
+        <SettingRow body={copy.plusNativeContextBody} label={copy.plusNativeContext}>
+          <Switch
+            checked={snapshot.state.plusNativeContextAvailable === true && snapshot.state.experimentalPlusNativeContext}
+            disabled={busy || snapshot.state.coreSetupComplete !== true || snapshot.state.plusNativeContextAvailable !== true}
+            onChange={(enabled) => void setExperimentalPlusNativeContext(enabled)}
           />
         </SettingRow>
         <SettingRow body={copy.preparedWebSessionBody} label={copy.preparedWebSession}>

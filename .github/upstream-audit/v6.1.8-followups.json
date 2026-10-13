@@ -1,0 +1,26 @@
+[
+  {
+    "path": "src/config.ts",
+    "baselineSha256": "63c8b5e62c97b10e89d0a552cbfbcbed82f377f04eefcd35819f6c97deabc9c5",
+    "currentSha256": "9b5e02118585939858301c965945a07a647ed9c2d85ab3dcf25dde9d3a893f66",
+    "reason": "Remove two blank lines to preserve the existing 500-line config boundary after Plus setting integration. Bun-transpiled executable code is identical."
+  },
+  {
+    "path": "launcher/tests/browser-host.test.cjs",
+    "baselineSha256": "955672f12c4b2f798a1f7a9e4f09a593d074586b88512718b556cd0d957acefa",
+    "currentSha256": "1c1e84eaa1c3089aff33684b1d02e4a23700f5d3abcb500f30534af074521d3b",
+    "reason": "Drive the real imported ownership helper using external WebContents boundaries instead of a removed host method; preserve DOM readiness/bootstrap/resource finish and resize assertions."
+  },
+  {
+    "path": "launcher/tests/state.test.cjs",
+    "baselineSha256": "d4a17320d445bfd3165c7728c121309424c13464d6058ce408276354c2ae82f4",
+    "currentSha256": "88158b9cdd6fd93670955da3a8c871d05dc9bab1df1154df2873693c5a691b3c",
+    "reason": "Keep exact state snapshot equality and explicitly assert the new persisted Plus native context setting defaults false."
+  },
+  {
+    "path": "launcher/tests/runtime-supervisor.test.cjs",
+    "baselineSha256": "7f87278e90a4fbad98df201e006abb1961f41a7168480fa1ce19869fa03b3fad",
+    "currentSha256": "79cc9dfdf07b97eeb8368dd0039986007fed2e9d75fc239e9630df5a371a89af",
+    "reason": "Supply normalized default Plus availability/preference in the state fixture; preserve exact rollback update counts and retained-history/permission assertions."
+  }
+]

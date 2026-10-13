@@ -209,6 +209,7 @@ export class ChatGptTurnSession {
     }
     this.outstandingBatchPublished = false;
     this.setOutstandingEvents(reasoning, prelude);
+    if (requests.length > 0) this.runtime.trace.recordProgress();
     return this.runtime.externalProgress?.recordToolBatch(requests.length);
   }
 
@@ -233,6 +234,7 @@ export class ChatGptTurnSession {
     this.outstandingGenerationById.delete(callId);
     this.deliveredResultIds.add(callId);
     this.runtime.externalProgress?.recordToolResult();
+    this.runtime.trace.recordProgress();
     this.runtime.onToolResultDelivered?.(result);
     if (this.outstandingById.size === 0) {
       this.outstandingBatchPublished = false;

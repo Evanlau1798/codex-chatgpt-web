@@ -112,14 +112,16 @@ export function installCodexInterruptHook(
   text: string,
   configPath: string,
   config: Pick<AppConfig, "runtimeCommand">,
+  enabled?: boolean,
 ): { text: string; installed: InstalledCodexInterruptHook } {
-  return installCodexInterruptHookCommand(text, configPath, codexInterruptHookCommand(config));
+  return installCodexInterruptHookCommand(text, configPath, codexInterruptHookCommand(config), enabled);
 }
 
 export function installCodexInterruptHookCommand(
   text: string,
   configPath: string,
   command: string,
+  enabled?: boolean,
 ): { text: string; installed: InstalledCodexInterruptHook } {
   if (managedMarkerCount(text) !== 0 || text.includes(MANAGED_INTERRUPT_HOOK_END)) {
     throw new Error("Codex config already contains a codex-chatgpt-web interrupt hook marker");
@@ -133,6 +135,7 @@ export function installCodexInterruptHookCommand(
   const trustSection = [
     `[hooks.state.${JSON.stringify(stateKey)}]`,
     `trusted_hash = ${JSON.stringify(trustedHash)}`,
+    ...(enabled === undefined ? [] : [`enabled = ${enabled}`]),
     MANAGED_INTERRUPT_HOOK_END,
   ].join(ending);
   const core = [
@@ -168,7 +171,7 @@ export function installCodexInterruptHookCommand(
   }
   return {
     text: installedText,
-    installed: { command, groupIndex, stateKey, trustedHash, fragment },
+    installed: { command, groupIndex, stateKey, trustedHash, fragment, ...(enabled === undefined ? {} : { enabled }) },
   };
 }
 
@@ -258,17 +261,17 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
   const expectedGroup = { hooks: [{ type: "command", command: installed.command, timeout: 3 }] };
   const expectedState = { trusted_hash: installed.trustedHash };
   const equal = (left: unknown, right: unknown) => JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
-  // Codex defaults command hooks to synchronous and trusted hook state to enabled.
-  // Its settings UI may persist those defaults explicitly. They do not change
-  // ownership; different values and every other added field still fail closed.
+  // Native enable/disable is a user preference, not a change to command ownership.
   const sameGroup = (value: unknown) => equal(value, expectedGroup)
     || equal(value, { hooks: [{ ...expectedGroup.hooks[0], async: false }] });
   const sameState = (value: unknown) => equal(value, expectedState)
-    || equal(value, { ...expectedState, enabled: true });
+    || equal(value, { ...expectedState, enabled: true })
+    || equal(value, { ...expectedState, enabled: false });
   try {
     const journal = parseHookDocument(installed.fragment);
     if (!equal(journal.hooks?.Interrupt, [expectedGroup])
-      || !equal(journal.hooks?.state, { [installed.stateKey]: expectedState })) throw invalidJournal();
+      || Object.keys(journal.hooks?.state ?? {}).length !== 1
+      || !sameState(journal.hooks?.state?.[installed.stateKey])) throw invalidJournal();
     journalAst = parseHookAst(installed.fragment);
   } catch {
     throw invalidJournal();
@@ -430,6 +433,11 @@ function locateCodexInterruptHook(text: string, installed: InstalledCodexInterru
 
 export function verifyCodexInterruptHook(text: string, installed: InstalledCodexInterruptHook): void {
   locateCodexInterruptHook(text, installed);
+}
+
+export function readCodexInterruptHookEnabled(text: string, installed: InstalledCodexInterruptHook): boolean | undefined {
+  verifyCodexInterruptHook(text, installed);
+  return (parseHookDocument(text).hooks?.state?.[installed.stateKey] as { enabled?: boolean }).enabled;
 }
 
 export function restoreCodexInterruptHook(

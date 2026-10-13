@@ -32,6 +32,8 @@ export const ja: Record<keyof Copy, string> = {
   freshConversation: "ターンごとに新しいブラウザチャットを使用",
   freshConversationBody: "ターンごとに新しいブラウザチャットで、同じ Codex タスクのコンテキストを再構築します。ChatGPT がツールにアクセスできなくなった場合に役立つことがありますが、送信するコンテキストが増え、遅くなる可能性があります。初期設定はオフです。",
   manualFreshConversationUnavailable: "自動操作と Original セッションモードでのみ利用できます。Enhanced とゼロリスクでは強制的に無効になります。",
+  plusNativeContext: "Plus ネイティブコンテキスト（実験的）",
+  plusNativeContextBody: "Enhanced + Plus の推論で 256K ウィンドウ、230.4K 自動圧縮を使用します。長い履歴の保持は未検証です。メッセージ上限や Extra High は変更しません。既定はオフ。変更後に Codex を再起動してください。",
   noAutoCompact: "No Context Window（試験的）",
   preparedWebSession: "高速起動（試験的）",
   preparedWebSessionBody: "空きがあれば、最後に確認したモデルと固定指示を入力した未送信ページを一つ用意します。作業を優先し、保持中の会話も Account Safety の最大同時数に含めます。制限オフ時は最大六ページ。オフにすると待機ページだけ閉じます。既定はオフです。",

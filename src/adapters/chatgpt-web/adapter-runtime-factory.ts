@@ -239,7 +239,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
         onCommentary: emitCommentary,
         onHeartbeat: () => trace.signalProgress(),
-        onProgress: () => trace.signalProgress(),
+        onProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.(); },
+        onGenerationProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.(); },
         beginFinalizationOnly: async expectedActivityRevision => {
           const started = activeToken
             ? await brokerOwner.beginFinalizationOnly(activeToken, expectedActivityRevision)
@@ -260,7 +261,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         onSendActivated: () => { submission.phase = "send_activated"; },
         onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
         ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),
-        onTextDelta: delta => text.push(delta),
+        onTextDelta: delta => { text.push(delta); if (delta) { trace.recordProgress(); hooks.onCompactionProgress?.(); } },
         ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
         ...(retryPromptForError ? { retryPromptForError } : {}),
         ...(finalAnswerAdmission ? { finalAnswerAdmission } : {}),
@@ -288,7 +289,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         timeoutMs === undefined ? undefined : timeoutMs + 60_000,
         traceId,
         () => {
-          trace.signalProgress();
+          trace.recordProgress();
           externalProgress.recordBrokerActivity();
         },
         tunneledOutput,
@@ -350,7 +351,8 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       onReasoningSummary: (value, continuation) => trace.push({ kind: "reasoning", text: value, ...(continuation ? { continuation: true } : {}) }),
       onCommentary: emitCommentary,
       onHeartbeat: () => trace.signalProgress(),
-      onProgress: () => trace.signalProgress(),
+      onProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.(); },
+        onGenerationProgress: () => { trace.recordProgress(); hooks.onCompactionProgress?.(); },
       beginFinalizationOnly: async expectedActivityRevision => {
         const started = activeToken
           ? await brokerOwner.beginFinalizationOnly(activeToken, expectedActivityRevision)
@@ -371,7 +373,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       onSendActivated: () => { submission.phase = "send_activated"; },
       onSubmitted: () => { submission.phase = "accepted"; hooks.onCompactionProgress?.(); },
         ...(hooks.onCompactionProgress ? { onMultipartStageAcknowledged: hooks.onCompactionProgress } : {}),
-      onTextDelta: delta => text.push(delta),
+      onTextDelta: delta => { text.push(delta); if (delta) { trace.recordProgress(); hooks.onCompactionProgress?.(); } },
       ...(retryPromptForAnswer ? { retryPromptForAnswer } : {}),
       ...(retryPromptForError ? { retryPromptForError } : {}),
       ...(captureLunaCheckpoint ? { captureLunaCheckpoint: true, onLunaCheckpoint: captureCheckpoint } : {}),
