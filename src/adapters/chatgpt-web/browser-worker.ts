@@ -1,7 +1,7 @@
 import type { ChatGptWebModelCapabilities } from "../../chatgpt-web-models";
 import { ChatGptPromptIntegrityMismatchError, isChatGptPromptIntegrityMismatch } from "./adapter-error";
 import { ChatGptPromptOperation } from "./prompt-operation";
-import { chatGptPromptCodeUnitEquivalent, chatGptPromptTextEquivalent, chatGptPromptEquivalentPrefixLength, readChatGptPromptText } from "./prompt-text";
+import { chatGptPromptCodeUnitEquivalent, chatGptPromptTextEquivalent, chatGptPromptEquivalentPrefixLength, readChatGptPromptText, readChatGptUserMessageText } from "./prompt-text";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -160,7 +160,7 @@ import {
 } from "../../chatgpt-web-models";
 import { LauncherBrowserHelperClient } from "./launcher-helper-client";
 import { MAX_CHATGPT_BROWSER_TABS, ORIGINAL_CHATGPT_BROWSER_TABS, runWithChatGptBrowserSlot } from "./concurrency";
-import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptRetainedSurfaceUnavailableError, chatGptSessionExpiredError, chatGptStoppedThinkingError, chatGptResponseIncompleteError, chatGptWebSurfaceError } from "./adapter-error";
+import { ChatGptCompactionHandoffAccepted, ChatGptWebAdapterError, chatGptBrowserTabClosedError, chatGptModelUnavailableError, chatGptRetainedSurfaceUnavailableError, chatGptSessionExpiredError, chatGptStoppedThinkingError, chatGptResponseIncompleteError, chatGptWebSurfaceError } from "./adapter-error";
 import { ChatGptAnswerBuffer } from "./browser-answer-buffer";
 import { ChatGptBrowserDiagnostics, readChatGptUpstreamFailureUiState, redactChatGptUiDiagnostic } from "./browser-diagnostics";
 import { CHATGPT_CONNECTOR_MENTION_ROW_SELECTOR, chatGptConnectorMentionRowHighlighted, openChatGptConnectorPlusMenu } from "./connector-plus-menu";
@@ -379,7 +379,7 @@ export async function throwIfChatGptRateLimitDialog(page: Page): Promise<void> {
   );
 }
 
-type ChatGptTextScope = Pick<Locator, "getByText" | "getByTestId">;
+type ChatGptTextScope = Pick<Locator, "getByText" | "getByTestId" | "locator">;
 
 const chatGptSubscriptionFailureAlert = (page: Page): Locator => page
   .locator('[role="alert"]')
@@ -415,6 +415,9 @@ export async function throwIfChatGptTerminalErrorAlert(
   if (completedAnswerVisible) return;
   const regenerateError = scope.getByTestId("regenerate-thread-error-button").last().isVisible().catch(() => false);
   const terminalError = chatGptTerminalErrorAlert(scope).isVisible().catch(() => false);
+  const modelUnavailable = scope.locator('[role="alert"]')
+    .filter({ hasText: /^Model not found/i }).last().isVisible().catch(() => false);
+  if (await modelUnavailable) throw chatGptModelUnavailableError();
   if (await regenerateError) {
     throw new ChatGptWebAdapterError(
       "ChatGPT displayed an error for this response. Check the ChatGPT tab for the exact error, then retry the turn.",
@@ -499,6 +502,7 @@ export class ChatGptSubmissionRejectionObserver {
   private requestFailures = 0;
   private failureCodes: string[] = [];
   private rebinds = 0;
+  private models: Array<{ model: string; thinkingEffort?: string }> = [];
   private activated = false;
 
   constructor(private readonly onRejected?: (error: ChatGptWebAdapterError) => void) {}
@@ -509,6 +513,15 @@ export class ChatGptSubmissionRejectionObserver {
       || request.frame() !== this.page.mainFrame()) return;
     this.requests.add(request);
     this.ownedRequests++;
+    try {
+      const body = request.postDataJSON?.();
+      if (typeof body?.model === "string" && /^(?:gpt-[a-z0-9][a-z0-9._-]{0,75}|auto|research)$/i.test(body.model)) {
+        const thinkingEffort = /^(?:none|min|low|medium|high|standard|extended|xhigh|max)$/.test(body.thinking_effort)
+          ? body.thinking_effort as string : undefined;
+        this.models.push({ model: body.model, ...(thinkingEffort ? { thinkingEffort } : {}) });
+        if (this.models.length > 8) this.models.shift();
+      }
+    } catch { /* Diagnostics never change request handling. */ }
   };
 
   private readonly onResponse = (response: Response): void => {
@@ -529,24 +542,29 @@ export class ChatGptSubmissionRejectionObserver {
       this.streams.set(response.request(), response);
       return;
     }
+    if (response.status() === 404 && contentType?.includes("application/json")) {
+      this.observeRejection(response.json().then(body => body?.detail === "Model not found"
+        || body?.detail?.code === "model_not_found" || body?.error?.code === "model_not_found"),
+      chatGptModelUnavailableError());
+      return;
+    }
     if (response.status() !== 413
       || !contentType?.includes("application/json")) return;
     this.observeRejection(response.json().then(body => body?.detail?.code === "message_length_exceeds_limit"));
   };
 
-  private observeRejection(check: Promise<boolean>): void {
+  private observeRejection(check: Promise<boolean>, error = new ChatGptWebAdapterError(
+    "ChatGPT rejected this message because it exceeds the selected mode's input-size limit. Compact the task before retrying.",
+    { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+  )): void {
     const generation = this.generation;
     this.checks.push(withChatGptBrowserObservationTimeout(check, 3_000)
       .then(rejected => {
         if (generation !== this.generation || !rejected) return undefined;
-        const error = new ChatGptWebAdapterError(
-          "ChatGPT rejected this message because it exceeds the selected mode's input-size limit. Compact the task before retrying.",
-          { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
-        );
         this.onRejected?.(error);
         return error;
       })
-      // Unreadable or unfamiliar responses do not establish a size rejection. The normal
+      // Unreadable or unfamiliar responses do not establish a rejection. The normal
       // bound-response DOM error remains authoritative in that case.
       .catch(() => undefined));
   }
@@ -592,6 +610,7 @@ export class ChatGptSubmissionRejectionObserver {
     this.requestFailures = 0;
     this.failureCodes = [];
     this.rebinds = 0;
+    this.models = [];
     this.activated = false;
     this.page = page;
     page.on("request", this.onRequest);
@@ -603,10 +622,11 @@ export class ChatGptSubmissionRejectionObserver {
   noteRebind(): void { if (this.page) this.rebinds++; }
 
   diagnosticSummary(): { ownedRequests: number; statuses: number[]; requestFailures: number; failureCodes: string[];
-    pendingRequests: number; networkObservationContinuous: boolean; rebinds: number } {
+    pendingRequests: number; networkObservationContinuous: boolean; rebinds: number;
+    models: Array<{ model: string; thinkingEffort?: string }> } {
     return { ownedRequests: this.ownedRequests, statuses: [...this.statuses],
       requestFailures: this.requestFailures, failureCodes: [...this.failureCodes], pendingRequests: this.requests.size,
-      networkObservationContinuous: this.rebinds === 0, rebinds: this.rebinds };
+      networkObservationContinuous: this.rebinds === 0, rebinds: this.rebinds, models: this.models.map(model => ({ ...model })) };
   }
 
   async failure(): Promise<ChatGptWebAdapterError | undefined> {
@@ -889,6 +909,8 @@ interface ChatGptSubmissionBaseline {
   activateSubmissionRequestObservation?: () => void;
   initialResponseTurn?: ChatGptAssistantTurnState;
   submittedText?: string;
+  connectorName?: string;
+  connectorMention?: { name: string; href: string };
   acceptedUserIdentity?: string;
   acknowledgedStages?: readonly ChatGptAcknowledgedMultipartStage[];
 }
@@ -2367,12 +2389,8 @@ export class ChatGptBrowserWorker {
       // not exist yet. Inspect the existing group; waiting for an assistant here turns
       // normal response startup into repeated DOM observation timeouts.
       const locator = page.locator(`[data-turn-key=${JSON.stringify(identity.slice("group:assistant:".length))}]`);
-      const text = await withChatGptBrowserObservationTimeout(withBrowserTurnAbort(locator.evaluate(group => {
-        const bubbles = group.querySelectorAll<HTMLElement>("[data-user-message-bubble]");
-        const contents = bubbles.length === 1
-          ? bubbles[0]!.querySelectorAll<HTMLElement>("[data-search-result-target]") : [];
-        return contents.length === 1 ? contents[0]!.innerText.replace(/\r\n?/g, "\n") : undefined;
-      }), signal));
+      const text = await withChatGptBrowserObservationTimeout(withBrowserTurnAbort(
+        locator.evaluate(readChatGptUserMessageText), signal));
       // Only this transaction's already completed stages may acquire a new identity. A
       // matching acknowledgement alone cannot prove that the uploaded context survived.
       const snapshot = await this.responseDomSnapshot(locator);
@@ -2419,6 +2437,19 @@ export class ChatGptBrowserWorker {
     if (previous) {
       assertChatGptPreSendHistory(previous.initialTurnIdentities, initialTurnIdentities);
     }
+    let connectorMention = previous?.connectorMention;
+    if (previous?.connectorName) {
+      const selected = page.locator(`[app-mention-path^="app://"][app-mention-display-name=${JSON.stringify(previous.connectorName)}][contenteditable="false"]`)
+        .filter({ visible: true });
+      const count = await withChatGptBrowserObservationTimeout(selected.count());
+      const href = count === 1 ? await withChatGptBrowserObservationTimeout(selected.getAttribute("app-mention-path")) : undefined;
+      if (initialPageUrl !== page.url() || count > 1 || (connectorMention && connectorMention.href !== href)) {
+        throw new ChatGptWebAdapterError("ChatGPT connector identity changed before Send", {
+          status: 409, errorType: "invalid_request_error", code: "chatgpt_submission_ambiguous", retryable: false, retireSession: true,
+        });
+      }
+      if (href) connectorMention = { name: previous.connectorName, href };
+    }
     return {
       userTurns,
       responseTurns,
@@ -2429,6 +2460,8 @@ export class ChatGptBrowserWorker {
       initialPageUrl,
       initialResponseTurn,
       submittedText,
+      connectorName: previous?.connectorName,
+      connectorMention,
     };
   }
 
@@ -2475,16 +2508,8 @@ export class ChatGptBrowserWorker {
         matches = baseline.acceptedUserIdentity
           ? user === baseline.acceptedUserIdentity
           : Boolean(baseline.submittedText) && await withChatGptBrowserObservationTimeout(
-            withBrowserTurnAbort(locator.evaluate((group, submitted) => {
-              const bubbles = group.querySelectorAll<HTMLElement>("[data-user-message-bubble]");
-              const contents = bubbles.length === 1
-                ? bubbles[0]!.querySelectorAll<HTMLElement>("[data-search-result-target]")
-                : [];
-              const normalize = (text: string) => text.replace(/\r\n?/g, "\n");
-              return contents.length === 1
-                && normalize(contents[0]!.innerText) === normalize(submitted);
-            }, baseline.submittedText!), signal),
-          );
+            withBrowserTurnAbort(locator.evaluate(readChatGptUserMessageText, baseline.connectorMention), signal),
+          ) === baseline.submittedText!.replace(/\r\n?/g, "\n");
         // The accepted user identity (or exact submitted text) establishes ownership.
         // Activity can replace its temporary group while still generating; requiring
         // a completed answer here mistakes that same unfinished turn for a foreign one.
@@ -4732,6 +4757,7 @@ export class ChatGptBrowserWorker {
           activateSubmissionRequestObservation: () => submissionRejection.activate(),
           initialResponseTurn,
           submittedText: responsePrompt,
+          connectorName: turn.nativeConnector === true || mode.localTools ? this.config.appName : undefined,
           acknowledgedStages,
         };
         let tunneledDomFallback = false;
@@ -4819,16 +4845,8 @@ export class ChatGptBrowserWorker {
                   responseTurn = responseTurns.nth(initialResponseTurn.count);
                   userTurns = page.locator(CHATGPT_USER_TURN_SELECTOR);
                   submissionBaseline = {
-                    userTurns,
-                    responseTurns,
-                    initialUserTurnCount,
-                    initialResponseTurnCount: initialResponseTurn.count,
-                    initialTurnIdentities,
-                    initialPageUrl: page.url(),
-                    submissionRequestObserved: () => submissionRejection.ownedSubmissionRequestObserved(),
-                    activateSubmissionRequestObservation: () => submissionRejection.activate(),
-                    initialResponseTurn,
-                    submittedText: responsePrompt,
+                    ...submissionBaseline,
+                    ...await this.captureSubmissionBaseline(page, responsePrompt, submissionBaseline),
                   };
                   connectorAttemptBudget.triggerAttempts = 0;
                   await diagnostics.capture(page, "prompt-attachment-page-rebound");
@@ -5828,7 +5846,7 @@ export class ChatGptBrowserWorker {
         && !(error instanceof ChatGptWebAdapterError && error.code === "client_cancelled")) {
         error = await submissionRejection.failure() ?? error;
       }
-      if (error instanceof ChatGptWebAdapterError && error.code === "upstream_server_error") {
+      if (error instanceof ChatGptWebAdapterError && ["upstream_server_error", "model_not_found"].includes(error.code)) {
         const ui = diagnosticPage && !diagnosticPage.isClosed()
           ? await readChatGptUpstreamFailureUiState(diagnosticPage).catch(() => null) : null;
         console.warn(`[chatgpt-web] browser turn ${turn.traceId} upstream_failure ${JSON.stringify({

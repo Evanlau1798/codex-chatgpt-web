@@ -2028,7 +2028,7 @@ test("browser failure path logs bounded upstream evidence and preserves the orig
     expect(line).not.toContain("private prompt");
     expect(JSON.parse(line!.split(" upstream_failure ")[1]!)).toEqual({
       submission: { ownedRequests: 0, statuses: [], requestFailures: 0, failureCodes: [], pendingRequests: 0,
-        networkObservationContinuous: true, rebinds: 0 },
+        networkObservationContinuous: true, rebinds: 0, models: [] },
       ui: { globalErrorActions: 1, assistantTurns: 0, stopButtons: 0, globalAlerts: 0 },
     });
     (page as any).locator = () => ({ filter: () => ({ count: () => new Promise(() => {}) }) });

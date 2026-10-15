@@ -11,6 +11,38 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => { await browser?.close(); });
 
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("a transport connector prefix survives an optimistic response remount without relaxing prompt identity", async () => {
+  const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+  const prompt = "This is a diagnostic. Keep  two spaces.";
+  for (const scenario of ["matching", "foreign-connector", "same-name-other-app", "changed-text", "changed-leading-space", "unbound-connector"] as const) {
+    const page = await browser.newPage();
+    try {
+      await page.setContent('<main></main><form><div id="prompt-textarea" contenteditable="true"></div>'
+        + '<span app-mention-path="app://test" app-mention-display-name="Codex Native2" contenteditable="false">Codex Native2</span></form>');
+      let baseline = await worker.captureSubmissionBaseline(page, prompt);
+      if (scenario !== "unbound-connector") baseline.connectorName = "Codex Native2";
+      baseline = { ...baseline, ...await worker.captureSubmissionBaseline(page, prompt, baseline) };
+      if (scenario !== "unbound-connector") expect(baseline.connectorMention).toEqual({ name: "Codex Native2", href: "app://test" });
+      // Same-document attachment recovery must rebuild locators without losing the bound app ID.
+      baseline = { ...baseline, ...await worker.captureSubmissionBaseline(page, prompt, baseline) };
+      await page.locator("main").evaluate(e => e.innerHTML = '<div data-turn-key="optimistic"><span hidden data-chatgpt-agent-turn-start></span></div>');
+      const binding = await worker.waitForNewAssistantTurn(page, baseline, Date.now() + 2000);
+      const label = scenario === "foreign-connector" ? "Other connector" : "Codex Native2";
+      const text = scenario === "changed-text" ? prompt.replace("  ", " ") : scenario === "changed-leading-space" ? " " + prompt : prompt;
+      const href = scenario === "same-name-other-app" ? "app://foreign" : "app://test";
+      await page.locator("main").evaluate((e, { label, text, href }) => {
+        e.innerHTML = '<div data-turn-key="persisted"><div data-user-message-bubble><div data-search-result-target style="white-space:pre-wrap">'
+          + '<p><a href="/plugins/test"><span data-prompt-link-href="' + href + '" data-prompt-link-label="$codex-native2">'
+          + label + '</span></a><span> ' + text + '</span></p></div></div>'
+          + '<div data-conversation-role="assistant"></div></div>';
+      }, { label, text, href });
+      const result = worker.reconcileAssistantTurnBinding(page, baseline, binding);
+      if (scenario === "matching") expect((await result).identity).toBe("group:assistant:persisted");
+      else await expect(result).rejects.toThrow("another user turn");
+    } finally { await page.close(); }
+  }
+}, 30_000);
+
 test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("activity tone and collapsed content update the response snapshot", async () => {
   const context = await browser.newContext();
   try {

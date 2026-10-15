@@ -58,6 +58,7 @@ function surface(
   options: { url?: () => string; composerText?: () => string } = {},
 ) {
   const hidden = {
+    locator() { return this; },
     filter() { return this; }, last() { return this; }, getByText() { return this; }, getByTestId() { return this; },
     isVisible: async () => false, count: async () => 0,
   };

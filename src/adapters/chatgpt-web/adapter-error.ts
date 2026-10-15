@@ -48,6 +48,13 @@ export function chatGptSessionExpiredError(): ChatGptWebAdapterError {
   });
 }
 
+export function chatGptModelUnavailableError(): ChatGptWebAdapterError {
+  return new ChatGptWebAdapterError(
+    "ChatGPT rejected the selected Web model: Model not found. Reload ChatGPT and verify that model is available before retrying. The message was not resent and the model was not changed.",
+    { status: 404, errorType: "invalid_request_error", code: "model_not_found", retryable: false, retireSession: true },
+  );
+}
+
 export function chatGptRetainedSurfaceUnavailableError(cause: unknown): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(CHATGPT_RETAINED_SURFACE_UNAVAILABLE, {
     status: 502,

@@ -143,6 +143,7 @@ async function runFixture(options: {
     else if (!options.stale) text = options.emptyStopped ? "" : FINAL;
   };
   const hidden: any = {
+    locator() { return this; },
     count: async () => 0, isVisible: async () => false,
     filter() { return this; }, first() { return this; }, last() { return this; }, nth() { return this; },
     getByText() { return this; }, getByRole() { return this; }, getByTestId() { return this; },
@@ -615,6 +616,7 @@ async function runLateCompletionActionFixture() {
   let now = 100_000;
   const clock = spyOn(Date, "now").mockImplementation(() => now);
   const hidden: any = {
+    locator() { return this; },
     count: async () => 0, isVisible: async () => false,
     filter() { return this; }, first() { return this; }, last() { return this; }, nth() { return this; },
     getByText() { return this; }, getByRole() { return this; }, getByTestId() { return this; },

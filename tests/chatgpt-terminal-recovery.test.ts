@@ -31,6 +31,7 @@ function terminalErrorScope() {
   };
   return {
     scope: {
+      locator: () => ({ filter: () => ({ last: () => ({ isVisible: async () => false }) }) }),
       getByText: () => alert,
       getByTestId: () => ({ last: () => ({ isVisible: async () => false }) }),
       getByRole: () => retry,
@@ -103,6 +104,7 @@ test("a localized short current-response error button fails the turn", async () 
   const hidden = { last: () => ({ isVisible: async () => false }) };
   const visible = { last: () => ({ isVisible: async () => true }) };
   const scope = {
+    locator: () => ({ filter: () => hidden }),
     getByText: () => hidden,
     getByTestId: (id: string) => id === "regenerate-thread-error-button" ? visible : hidden,
   } as unknown as Locator;
