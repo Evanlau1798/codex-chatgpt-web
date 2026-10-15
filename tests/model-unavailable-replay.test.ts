@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { defaultBrokerEndpoint, defaultConfig } from "../src/config";
 import { join } from "node:path";
 import { startServer } from "../src/server";
@@ -7,6 +9,7 @@ import { createChatGptWebAdapter } from "../src/adapters/chatgpt-web/index";
 import { chatGptModelUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
 import { ChatGptWebTurnRetryPolicy } from "../src/adapters/chatgpt-web/retry-policy";
 import { chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
+import { TurnBroker } from "../src/adapters/chatgpt-web/turn-broker";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 
 function request(thread: string, turn = "turn-1", revision = "user-1", model = "chatgpt-web/gpt-6-sol") {
@@ -80,8 +83,9 @@ test("a streamed model rejection makes outer reconnect terminal without another 
 });
 
 test("Enhanced compact model rejection blocks refreshed-harness reconnects but allows changed history", async () => {
+  const root = mkdtempSync(join(process.platform === "win32" ? tmpdir() : "/tmp", "cgw-model-"));
   const config = defaultConfig("full"); config.port = 0;
-  config.brokerSocketPath = defaultBrokerEndpoint(join(import.meta.dir, "../tmp", randomUUID()));
+  config.brokerSocketPath = defaultBrokerEndpoint(root);
   config.useEnhancedWebSessionMode = true;
   let starts = 0, sends = 0;
   const worker = { requestPreemptiveRetry: () => false, async run(turn: BrowserTurn): Promise<string> {
@@ -115,5 +119,9 @@ test("Enhanced compact model rejection blocks refreshed-harness reconnects but a
     ] });
     expect(changed.body.error.message).toContain("Model not found");
     expect(starts).toBe(2); expect(sends).toBe(2);
-  } finally { await server.stop(true); chatGptTurnSessions.clear(); }
+  } finally {
+    await server.stop(true); chatGptTurnSessions.clear();
+    await TurnBroker.forSocket(config.brokerSocketPath).close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
