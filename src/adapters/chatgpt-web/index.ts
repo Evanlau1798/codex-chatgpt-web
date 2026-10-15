@@ -20,7 +20,7 @@ import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { brokerSocketPath, ChatGptSurfaceRecoveryTracker, withAbort } from "./runtime-lifecycle";
 import { TurnBroker, type TurnBrokerOwner } from "./turn-broker";
 import { chatGptCompactionSourceExecutionKey, chatGptConversationKey, chatGptTurnExecutionKey, chatGptTurnRoundKey, chatGptTurnSessions, chatGptTurnTraceId, type ChatGptTraceEvent } from "./turn-execution";
-import { chatGptTurnRetryKey, chatGptPromptFailureKey } from "./turn-retry-identity";
+import { chatGptTurnRetryKey, chatGptPromptFailureKey, chatGptModelFailureKey } from "./turn-retry-identity";
 import { appendCompactionUserPrompt, emitBrowserCompletion, emitProContextWarning, emitTextDeltas, emitToolBatch, emitTraceEvents, replayEvents, runtimeUsageInput } from "./turn-events";
 import { estimateChatGptWebInputTokens, estimateChatGptWebUsage } from "./usage";
 import { ChatGptThreadEnvironmentStore } from "./thread-environment";
@@ -243,6 +243,7 @@ export function createChatGptWebAdapter(
       emit({ type: "heartbeat" });
       let retainedSafetyTraceId: string | undefined;
       let promptFailureKey: string | undefined;
+      let modelFailureKey: string | undefined;
       try {
       const manualRequest = isChatGptWebZeroRiskBackendModel(parsed.modelId);
       if (manualRequest !== manualInteraction) {
@@ -290,7 +291,9 @@ export function createChatGptWebAdapter(
       } catch (error) {
         throw reportChatGptPreparationFailure(traceId, "full", parsed, error);
       }
-      const exhaustedRetry = chatGptWebTurnRetryPolicy.promptIntegrityFailure(promptFailureKey)
+      modelFailureKey = `${executionNamespace}:model:${chatGptModelFailureKey(parsed)}`;
+      const exhaustedRetry = chatGptWebTurnRetryPolicy.terminalFailure(modelFailureKey)
+        ?? chatGptWebTurnRetryPolicy.terminalFailure(promptFailureKey)
         ?? chatGptWebTurnRetryPolicy.exhaustedError(retryKey);
       if (exhaustedRetry) {
         emit({
@@ -708,7 +711,10 @@ export function createChatGptWebAdapter(
           : error;
         if (handledError instanceof ChatGptWebAdapterError) {
           applyAutomaticSafetyFailure(handledError);
-          if (promptFailureKey) chatGptWebTurnRetryPolicy.recordPromptIntegrityFailure(promptFailureKey, handledError);
+          if (promptFailureKey && isChatGptPromptIntegrityMismatch(handledError)) {
+            chatGptWebTurnRetryPolicy.recordTerminalFailure(promptFailureKey, handledError);
+          }
+          if (modelFailureKey && handledError.code === "model_not_found") chatGptWebTurnRetryPolicy.recordTerminalFailure(modelFailureKey, handledError);
         }
         if (!(error instanceof ChatGptWebAdapterError && error.retryable)) {
           chatGptWebTurnRetryPolicy.clear(retryKey);
@@ -742,8 +748,11 @@ export function createChatGptWebAdapter(
       }
       } catch (error) {
         if (error instanceof ChatGptWebAdapterError) applyAutomaticSafetyFailure(error);
+        if (modelFailureKey && error instanceof ChatGptWebAdapterError && error.code === "model_not_found") {
+          chatGptWebTurnRetryPolicy.recordTerminalFailure(modelFailureKey, error);
+        }
         if (promptFailureKey && isChatGptPromptIntegrityMismatch(error)) {
-          chatGptWebTurnRetryPolicy.recordPromptIntegrityFailure(promptFailureKey, error);
+          chatGptWebTurnRetryPolicy.recordTerminalFailure(promptFailureKey, error);
         }
         if (isChatGptPromptIntegrityMismatch(error) || error instanceof ChatGptAccountSafetyAdmissionError
           || (error instanceof ChatGptWebAdapterError

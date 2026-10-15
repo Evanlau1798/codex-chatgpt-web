@@ -7,6 +7,8 @@ import { DEFAULT_CHATGPT_AUTOMATIC_WEB_SESSION_LIMIT, chatGptAccountSafety } fro
 import { closeChatGptBrowserWorkers, discardChatGptStartupPages } from "./adapters/chatgpt-web/browser-worker";
 import { closeTurnBrokers, TurnBroker } from "./adapters/chatgpt-web/turn-broker";
 import { chatGptTurnExecutionKey, chatGptTurnSessions } from "./adapters/chatgpt-web/turn-execution";
+import { chatGptModelFailureKey } from "./adapters/chatgpt-web/turn-retry-identity";
+import { chatGptWebTurnRetryPolicy } from "./adapters/chatgpt-web/retry-policy";
 import { ChatGptThreadEnvironmentStore } from "./adapters/chatgpt-web/thread-environment";
 import { handleClaudeSteeringHook } from "./messages/steering-hook";
 import { handleTurnCancellation } from "./server-turn-cancellation";
@@ -218,9 +220,11 @@ export async function responseRequest(
 
   const provider = providerConfig(config);
   let traceId: string | undefined;
+  let modelRejectionKey: string | undefined;
   try {
     traceId = chatGptWebTraceId(provider, parsed);
     if (!compaction) extractChatGptTurnUserRevision(parsed);
+    modelRejectionKey = `${chatGptWebExecutionNamespace(provider)}:model:${chatGptModelFailureKey(parsed)}`;
   } catch (error) {
     // A cancelled browser session can only exist after the adapter accepted canonical native
     // turn identity and user-revision metadata. Requests without that identity have no matching
@@ -252,6 +256,13 @@ export async function responseRequest(
       status: 400,
       headers: { "content-type": "application/json" },
     });
+  }
+  if (modelRejectionKey) {
+    const rejected = chatGptWebTurnRetryPolicy.terminalFailure(modelRejectionKey);
+    // Codex ignores retryable=false on unknown SSE errors; HTTP 400 stops the reconnect loop.
+    if (rejected) return Response.json({ error: {
+      type: rejected.errorType, code: rejected.code, message: rejected.message,
+    }, retryable: false }, { status: 400 });
   }
   const adapter = adapterFactory(provider);
   const queue = new AsyncEventQueue<AdapterEvent>();

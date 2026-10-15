@@ -38,6 +38,7 @@ export const sharedLifecycleTests = [
   "tests/browser-authentication-failure.test.ts",
   "tests/browser-alert-readiness.test.ts",
   "tests/browser-model-unavailable.test.ts",
+  "tests/model-unavailable-replay.test.ts",
   "tests/native-agent-wait-mcp.test.ts",
   "tests/context-bootstrap.test.ts",
   "tests/context-archive-budget.test.ts",

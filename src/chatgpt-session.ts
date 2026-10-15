@@ -39,11 +39,15 @@ export const CHATGPT_TEMPORARY_CHAT_MODE_BUTTON_SELECTOR = [
   'div:has(> [data-testid="temporary-chat-label"]) + div button[aria-expanded]',
 ].join(", ");
 
+export function normalizeChatGptModelAnnouncement(text: string): string {
+  return text.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/\s+/g, " ").trim();
+}
+
 /** Model identity precedes the localized slider position; punctuation is not language-specific. */
 export function parseChatGptModelAnnouncement(text: string): {
   version: string; name?: string; mode: string;
 } | undefined {
-  const normalized = text.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/\s+/g, " ").trim();
+  const normalized = normalizeChatGptModelAnnouncement(text);
   const match = /^(?:GPT[-\s]?)?(\d+(?:\.\d+)?)(?:\s+(Sol|Astra))?\s+([^\p{P}]+)(?:\p{P}|$)/iu.exec(normalized);
   if (!match) return undefined;
   return { version: match[1]!, ...(match[2] ? { name: match[2].toLowerCase() } : {}), mode: match[3]!.trim() };

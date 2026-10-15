@@ -224,11 +224,15 @@ test.each(["v6.1.4", "v6.1.5", "v6.1.7", "v6.1.8"])("continuing %s evidence clos
     }
     expect([...retainedTargets.keys()].sort()).toEqual([...retained.objects].sort());
   }
+  const verifiedBlobs = new Map<string, Buffer>();
   const blob = (oid: string) => {
     const retained = retainedTargets.get(oid);
     if (retained) return retained;
+    const cached = verifiedBlobs.get(oid);
+    if (cached) return cached;
     const result = spawnSync("git", ["cat-file", "blob", oid], { cwd: root });
     expect(result.status, result.stderr.toString("utf8")).toBe(0);
+    verifiedBlobs.set(oid, result.stdout);
     return result.stdout;
   };
   const textDigest = (text: string) => digest(Buffer.from(text.replaceAll("\r\n", "\n")));

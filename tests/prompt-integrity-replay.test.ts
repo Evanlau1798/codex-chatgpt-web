@@ -32,19 +32,19 @@ test("terminal comparison is typed, content-free and never a transient surface r
 
 test("integrity receipts are bounded, expire absolutely and survive transient retry resets", () => {
   const policy = new ChatGptWebTurnRetryPolicy(100, 2); const error = mismatch();
-  policy.recordPromptIntegrityFailure("a", error, 0);
-  policy.clear("a"); expect(policy.promptIntegrityFailure("a", 90)).toBe(error);
-  policy.recordPromptIntegrityFailure("a", error, 99);
-  expect(policy.promptIntegrityFailure("a", 100)).toBeUndefined();
-  policy.recordPromptIntegrityFailure("a", error, 101);
-  policy.recordPromptIntegrityFailure("b", error, 102);
-  policy.recordPromptIntegrityFailure("c", error, 103);
-  expect(policy.promptIntegrityFailure("a", 104)).toBeUndefined(); // documented FIFO capacity bound
-  expect(policy.promptIntegrityFailure("b", 104)).toBe(error);
-  policy.recordPromptIntegrityFailure("timeout", new ChatGptWebAdapterError("timeout", {
+  policy.recordTerminalFailure("a", error, 0);
+  policy.clear("a"); expect(policy.terminalFailure("a", 90)).toBe(error);
+  policy.recordTerminalFailure("a", error, 99);
+  expect(policy.terminalFailure("a", 100)).toBeUndefined();
+  policy.recordTerminalFailure("a", error, 101);
+  policy.recordTerminalFailure("b", error, 102);
+  policy.recordTerminalFailure("c", error, 103);
+  expect(policy.terminalFailure("a", 104)).toBeUndefined(); // documented FIFO capacity bound
+  expect(policy.terminalFailure("b", 104)).toBe(error);
+  policy.recordTerminalFailure("timeout", new ChatGptWebAdapterError("timeout", {
     status: 502, errorType: "server_error", code: "chatgpt_surface_changed", retryable: true,
   }), 104);
-  expect(policy.promptIntegrityFailure("timeout", 104)).toBeUndefined();
+  expect(policy.terminalFailure("timeout", 104)).toBeUndefined();
 });
 
 test("failure identity distinguishes owners/revisions/results, not transport flags or timestamps", () => {
