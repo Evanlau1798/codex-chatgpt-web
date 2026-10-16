@@ -1,0 +1,19 @@
+{
+  "models": [
+    {
+      "slug": "fixture-native",
+      "display_name": "Fixture native model",
+      "description": "Offline catalog fixture",
+      "visibility": "list",
+      "supported_in_api": true,
+      "tool_mode": "default",
+      "supported_reasoning_levels": [
+        { "effort": "low", "description": "Low" },
+        { "effort": "max", "description": "Max" }
+      ],
+      "context_window": 272000,
+      "max_context_window": 272000,
+      "auto_compact_token_limit": 244800
+    }
+  ]
+}
