@@ -84,15 +84,17 @@ export function uniqueAbsolutePaths(values: string[], field: string): string[] {
   return [...unique.values()];
 }
 
-export function isCurrentOrParentThreadVisualizationRoot(path: string, metadata: Record<string, unknown>): boolean {
+export function isCurrentOrParentThreadVisualizationRoot(
+  path: string, metadata: Record<string, unknown>,
+  codexHome = process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"),
+): boolean {
   const threadIds = [metadata.thread_id, metadata.parent_thread_id]
     .filter((value): value is string => typeof value === "string")
     .map(value => process.platform === "win32" ? value.trim().toLowerCase() : value.trim())
     .filter(Boolean);
   if (threadIds.length === 0) return false;
 
-  const configuredCodexHome = process.env.CODEX_HOME?.trim();
-  const base = pathIdentity(join(resolve(configuredCodexHome || join(homedir(), ".codex")), "visualizations"));
+  const base = pathIdentity(join(resolve(codexHome), "visualizations"));
   const rel = relative(base, pathIdentity(path));
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return false;
 
