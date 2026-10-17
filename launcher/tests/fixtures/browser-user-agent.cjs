@@ -33,6 +33,7 @@ app.whenReady().then(async () => {
       const defaultUA = session.defaultSession.getUserAgent();
       const partition = profile === "production" ? "persist:codex-web-gpt-chatgpt" : "persist:codex-web-gpt-dev-chatgpt";
       const browserSession = session.fromPartition(partition);
+      const nativeUA = browserSession.getUserAgent();
       await browserSession.cookies.set({ url: origin, name: "preserved", value: "yes" });
       const window = new BrowserWindow({ show: false });
       const baseline = new WebContentsView({ webPreferences: { partition, sandbox: true } });
@@ -62,7 +63,7 @@ app.whenReady().then(async () => {
             ua:navigator.userAgent,
             hints:await navigator.userAgentData.getHighEntropyValues(['fullVersionList']),
           }))()`);
-          assert.doesNotMatch(observed.ua, /Electron\/|CodexWebGPT/i);
+          assert.equal(observed.ua, nativeUA);
           assert.ok(observed.ua.includes(`Chrome/${expectedVersion}`));
           assert.ok(observed.hints.fullVersionList.some(b => b.brand === "Chromium" && b.version === expectedVersion));
           assert.equal(requests.at(-1).ua, observed.ua);
@@ -74,7 +75,7 @@ app.whenReady().then(async () => {
         assert.equal(session.defaultSession.getUserAgent(), defaultUA);
       } finally { host?.destroy(); window.destroy(); }
     }
-    console.log("BROWSER_CHROMIUM_UA_OK native engine / client hints / all surfaces / cookie and default session preserved");
+    console.log("BROWSER_DEFAULT_UA_OK native UA / engine / client hints / all surfaces / cookie and default session preserved");
     exitCode = 0;
   } catch (error) { console.error(error.stack); }
   finally { server.closeAllConnections(); server.close(); }

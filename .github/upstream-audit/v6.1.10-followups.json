@@ -92,10 +92,10 @@
   },
   {
     "path": "launcher/electron/browser-host.cjs",
-    "baseCommit": "c80838a67b06bcbdac1d13ba25f37231c36a8bc4", "baselineSha256": "bacc6bef32110356a55aea7aa9e3355d246e94971c8c1910d68d95997d59c60c",
-    "currentSha256": "9b42cd827b21d898d55bcde539cb31c5057938164e1a990cabbf1fa4aaed7209",
-    "reason": "Retire a failed same-trace owner before Fast startup ownership transfer so heartbeat and terminal lookup cannot bind the old failed document. Normalize ChatGPT partition UA before surface creation; retain native engine and browser state, and update renderer fixture to the bounded-script interface.",
-    "evidence": {"path":".github/upstream-audit/evidence/cb75dc2ce4236cdf76ef1efe488cd33b378c71669c899ff14b9738678a1f5216.tar.gz","sha256":"cb75dc2ce4236cdf76ef1efe488cd33b378c71669c899ff14b9738678a1f5216","bytes":26492}
+    "baseCommit": "7d9a170950d2ffc85387f7129cb62fa694fc9884", "baselineSha256": "9b42cd827b21d898d55bcde539cb31c5057938164e1a990cabbf1fa4aaed7209",
+    "currentSha256": "3eef75cd26067d4b1e184437a7fc13cd8a62ddf10f476f214710b17cb5443229",
+    "reason": "Restore default/upstream-native UA without changing the profile, native Chromium Client Hints or browser ownership; real Electron fixtures cover all surfaces.",
+    "evidence": {"path":".github/upstream-audit/evidence/823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674.tar.gz","sha256":"823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674","bytes":61455}
   },
   {
     "path": "launcher/tests/browser-host-startup.test.cjs",
@@ -432,5 +432,19 @@
     "currentSha256": "b79cb5ab670ede78923335fd1a2fa9e18785d661f4864f34f54b0409d956b839",
     "reason": "Apply the existing child trust/key/descriptor policy after merging resolved tunnel environment, preventing inherited daemon API-key leakage without losing proxy, handshake or TTL.",
     "evidence": {"path":".github/upstream-audit/evidence/9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3.tar.gz","sha256":"9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3","bytes":84093}
+  },
+  {
+    "path": "launcher/tests/browser-user-agent.test.cjs",
+    "baseCommit": "7d9a170950d2ffc85387f7129cb62fa694fc9884", "baselineSha256": "bccf97a6b2387ece2b2d8b70938a9aa55e4d8df76d81ffcc1f93fb89cda281cd",
+    "currentSha256": "e313e9b14cb1f30e0e8157eb162fde209f5bbdc540c83ac012f0663176094af1",
+    "reason": "Restore default/upstream-native UA without changing the profile, native Chromium Client Hints or browser ownership; real Electron fixtures cover all surfaces.",
+    "evidence": {"path":".github/upstream-audit/evidence/823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674.tar.gz","sha256":"823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674","bytes":61455}
+  },
+  {
+    "path": "launcher/tests/fixtures/browser-user-agent.cjs",
+    "baseCommit": "7d9a170950d2ffc85387f7129cb62fa694fc9884", "baselineSha256": "7f85bd609787e443a61b5145840baf6328252cf88530de9cea794f2b724e543b",
+    "currentSha256": "e3bc4687c781fd78c52df1b1588c75c4e3f455ec808f898bf40b58f3c4dea502",
+    "reason": "Restore default/upstream-native UA without changing the profile, native Chromium Client Hints or browser ownership; real Electron fixtures cover all surfaces.",
+    "evidence": {"path":".github/upstream-audit/evidence/823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674.tar.gz","sha256":"823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674","bytes":61455}
   }
 ]

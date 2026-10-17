@@ -360,9 +360,6 @@ class BrowserHost {
       : "persist:codex-web-gpt-chatgpt";
     if (partition !== expectedPartition) throw new Error("Browser host partition does not match its profile");
     this.partition = partition;
-    // Set the partition default before creating any page; retain the real Chromium version and hints.
-    const browserSession = session.fromPartition(partition);
-    browserSession.setUserAgent(browserSession.getUserAgent().replace(/\s(?:CodexWebGPT(?:DEV)?|Electron)\/\S+/g, ""));
     this.profile = profile;
     this.publishState = publishState;
     this.getUseSavedChats = getUseSavedChats;

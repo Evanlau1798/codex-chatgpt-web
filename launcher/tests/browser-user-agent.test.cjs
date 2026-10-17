@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { spawnSync } = require("node:child_process");
 const { resolve } = require("node:path");
 
-test("real browser host uses its Chromium UA for home, turns, standby and authentication", {
+test("real browser host preserves the default Electron UA for home, turns, standby and authentication", {
   skip: !process.env.LAUNCHER_TEST_ELECTRON,
 }, () => {
   const env = { ...process.env, BROWSER_UA_OWNER_PID: String(process.pid) };
@@ -14,5 +14,5 @@ test("real browser host uses its Chromium UA for home, turns, standby and authen
     });
   assert.equal(result.error, undefined);
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stdout, /BROWSER_CHROMIUM_UA_OK/);
+  assert.match(result.stdout, /BROWSER_DEFAULT_UA_OK/);
 });
