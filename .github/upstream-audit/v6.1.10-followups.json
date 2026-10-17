@@ -404,5 +404,12 @@
     "currentSha256": "7db5f4137fdf918e8bae9c63bbad80441559ee87391428debc0daffad9f8603e",
     "reason": "Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior.",
     "evidence": {"path":".github/upstream-audit/evidence/bb8dd4e45e144b76a530469e1c73c18cc1b39559f23777ef1df9c12ec62986f2.tar.gz","sha256":"bb8dd4e45e144b76a530469e1c73c18cc1b39559f23777ef1df9c12ec62986f2","bytes":127125}
+  },
+  {
+    "path": "tests/compact-mode-routing.test.ts",
+    "baseCommit": "6c4d085a7128ecebaf489d810ec404c36a196e93", "baselineSha256": "90b83963e9124686cf68e7284e609881cf07e5aef8b5dae8ae9b95fbdaac0078",
+    "currentSha256": "5bc2eba59c81d0fe649fd01019c9ef5f1e2c7ddd818d32748a9878ed6569e46c",
+    "reason": "Await the declared asynchronous answer-retry contract in existing compact/Claude routing assertions without changing expected values or production behavior.",
+    "evidence": {"path":".github/upstream-audit/evidence/d9ac543142b866d9e659baa08aa3bd4604bdb93bceea7982f399916f38360b17.tar.gz","sha256":"d9ac543142b866d9e659baa08aa3bd4604bdb93bceea7982f399916f38360b17","bytes":15419}
   }
 ]
