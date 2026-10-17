@@ -34,5 +34,125 @@
       "sha256": "593166b24cba2455543dda4bc0574c9afaf6313acb2cdd04d5698251af971ebb",
       "bytes": 56653
     }
+  },
+  {
+    "path": "src/adapters/chatgpt-web/compaction-continuation.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1",
+    "baselineSha256": "d942619470eba221f893e66591a60da90f33c415e8f500d5118fc2715a434e67",
+    "currentSha256": "708a9ae2a36715144f9f0b09849caf2d656539f734d711472c633a46000d6f59",
+    "reason": "Invalidate primary-aborted checkpoints across every retained representation, including restart, while retaining hash-only persistence and provable legacy-source compatibility; unknown ownership with abort history fails closed.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz",
+      "sha256": "45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501",
+      "bytes": 83233
+    }
+  },
+  {
+    "path": "src/config.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1",
+    "baselineSha256": "471c6af5356e1fdf97ae0b3802680e5f6607c261450a483dc3600164b821e7f3",
+    "currentSha256": "4d68655b759c631be8e780b361a8f0429ffb24eb06a6d06f7bd17edd5af96b46",
+    "reason": "Deduplicate optional Boolean checks into the existing feature validator; defaults and type errors preserved, without new modules or weakening the original 500-line contract.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz",
+      "sha256": "45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501",
+      "bytes": 83233
+    }
+  },
+  {
+    "path": "scripts/lifecycle-sim/manifest.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1",
+    "baselineSha256": "ebe6d90161e5bfad2afc0520ffe31a659eb179008d2996527579853094c72923",
+    "currentSha256": "782a1291472c1d6e372ef68df6d2260219b46b0eab7f4e18b14b3002499f7494",
+    "reason": "Register real Responses HTTP compaction-continuation regressions in the canonical offline lifecycle gate.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz",
+      "sha256": "45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501",
+      "bytes": 83233
+    }
+  },
+  {
+    "path": "tests/compaction-continuation-registry.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1",
+    "baselineSha256": "49353930c55aa3d2a3039da9bea23fcdab7f8d42f20157083744275c17baf504",
+    "currentSha256": "4996d2ca50838867cb18bc6bcde76552faeb9d369798364c21aac780743e06ab",
+    "reason": "Regression coverage for current delegated instruction, primary abort/restart/legacy safety, or semantic Think controls; preserve negative scope/model/context, no-send, connector rollback and privacy assertions.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz",
+      "sha256": "45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501",
+      "bytes": 83233
+    }
+  },
+  {
+    "path": "tests/local-french-controls.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1",
+    "baselineSha256": "f8e7b7ba3a91bee8ef97fc8d381af794f80e8c64b4aed84a38b0ca17b64fb118",
+    "currentSha256": "381ce90ed4faf1f29d65991f8789f204b986ab7adb530e2869deb5137f7b88d8",
+    "reason": "Regression coverage for current delegated instruction, primary abort/restart/legacy safety, or semantic Think controls; preserve negative scope/model/context, no-send, connector rollback and privacy assertions.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz",
+      "sha256": "45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501",
+      "bytes": 83233
+    }
+  },
+  {
+    "path": "tests/server-compaction-continuation.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1",
+    "baselineSha256": "4c7072521d23c171b5467fa76beb5a42c0b25e36f4f7a5982dd3373890200177",
+    "currentSha256": "a0e26a01ef9075648fd84b4291c0381ca2cbe2f97afbbdfe7078dac1f5d45a71",
+    "reason": "Regression coverage for current delegated instruction, primary abort/restart/legacy safety, or semantic Think controls; preserve negative scope/model/context, no-send, connector rollback and privacy assertions.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz",
+      "sha256": "45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501",
+      "bytes": 83233
+    }
+  },
+  {
+    "path": "tests/think-mode-v505.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1",
+    "baselineSha256": "9506aaf6f71645c55a7337be4cd259c7dffee70b5cf609242b0e3e1ce5e6773a",
+    "currentSha256": "b64e0dba6e03e574d9bfad6599cd8c9e99c8452c2487e4140d473c07e390d3e8",
+    "reason": "Regression coverage for current delegated instruction, primary abort/restart/legacy safety, or semantic Think controls; preserve negative scope/model/context, no-send, connector rollback and privacy assertions.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz",
+      "sha256": "45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501",
+      "bytes": 83233
+    }
+  },
+  {
+    "path": "tests/upstream-audit-v5-ledger.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1",
+    "baselineSha256": "9e2aa0be9ce75aed7ef0a8447fb1e14af4f0f348136a1e51a5058bc1fa555342",
+    "currentSha256": "ac63684724fa9397cfb779ef461dbb921987a1affa1fe880b144efd85d34826b",
+    "reason": "Batch historical Git object reads with strict byte framing and unchanged source/assertion checks, avoiding 98 process launches and the existing 30-second deadline without increasing it.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz",
+      "sha256": "45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501",
+      "bytes": 83233
+    }
+  },
+  {
+    "path": "tests/zero-risk-launcher-mcp-contract.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1",
+    "baselineSha256": "dc0bc54386bfa7dd7c0ac1ad2eca3a9a61759a05e5c68495411a765d9b61e5b8",
+    "currentSha256": "705ce7e774ed894828cadc82a7f1f56d7be909ed480fbe0b022d4c0eec4ce324",
+    "reason": "Supply DIRECT through the platform proxy boundary fixture while retaining real shared-stdio invocation and frozen Native2/ZeroRisk public ABI assertions.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz",
+      "sha256": "45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501",
+      "bytes": 83233
+    }
+  },
+  {
+    "path": "tests/lifecycle-profiles.test.ts",
+    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1",
+    "baselineSha256": "03983d5c46164055942045a206cfd2439e370b01021f9d0db7b012820ad7aa55",
+    "currentSha256": "8c952ed5e1d341bf525ce8cc873f8bec6247ca100de20b15a85c7b9977d26640",
+    "reason": "Regression coverage for current delegated instruction, primary abort/restart/legacy safety, or semantic Think controls; preserve negative scope/model/context, no-send, connector rollback and privacy assertions.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz",
+      "sha256": "45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501",
+      "bytes": 83233
+    }
   }
 ]

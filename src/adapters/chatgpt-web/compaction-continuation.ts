@@ -4,10 +4,12 @@ import { atomicWriteFile } from "../../config";
 import { decodeCompactionSummary, isReadableCompactionSummaryText, SUMMARY_PREFIX } from "../../responses/compaction";
 import type { CodexParsedRequest } from "../../types";
 import type { ChatGptTurnIdentity, ChatGptTurnUserRevision } from "./environment";
+import { priorAbortedTurnIds, turnUserRevisionHistory } from "./turn-user-revision";
 
 interface CompletedCheckpoint {
   summaryHash: string;
   sourceHashes: ReadonlySet<string>;
+  sourceTurnHash?: string;
   source?: ChatGptTurnUserRevision;
   sourceWasDelegation?: boolean;
 }
@@ -33,8 +35,9 @@ export function loadCompactionContinuationState(path: string): void {
       const [key, value] = entry;
       if (!hash(key) || restored.has(key) || !hash(value?.summaryHash)
         || !Array.isArray(value.sourceHashes) || value.sourceHashes.length < 1 || value.sourceHashes.length > 2
-        || !value.sourceHashes.every(hash)) return;
-      restored.set(key, { summaryHash: value.summaryHash, sourceHashes: new Set(value.sourceHashes) });
+        || !value.sourceHashes.every(hash)
+        || (value.sourceTurnHash !== undefined && !hash(value.sourceTurnHash))) return;
+      restored.set(key, { summaryHash: value.summaryHash, sourceHashes: new Set(value.sourceHashes), sourceTurnHash: value.sourceTurnHash });
     }
     for (const [key, value] of restored) checkpoints.set(key, value);
   } catch { /* Missing/corrupt proof remains fail-closed. */ }
@@ -44,7 +47,7 @@ function persistCheckpoints(next: ReadonlyMap<string, CompletedCheckpoint>): voi
   if (!checkpointPath) return;
   try {
     atomicWriteFile(checkpointPath, JSON.stringify({ version: 1, checkpoints: [...next].map(([key, value]) => [
-      key, { summaryHash: value.summaryHash, sourceHashes: [...value.sourceHashes] },
+      key, { summaryHash: value.summaryHash, sourceHashes: [...value.sourceHashes], sourceTurnHash: value.sourceTurnHash },
     ]) }));
   } catch {
     throw new Error("Cannot acknowledge compaction checkpoint: continuation proof persistence failed");
@@ -90,6 +93,7 @@ export function rememberCompactionContinuation(
   next.delete(key);
   next.set(key, {
     summaryHash: digest(summary), sourceHashes: new Set(sources.map(sourceDigest)),
+    sourceTurnHash: sources[0]!.turnId ? digest(sources[0]!.turnId) : undefined,
     source: structuredClone(sources[0]!),
     sourceWasDelegation,
   });
@@ -104,7 +108,7 @@ export function isAcceptedCompactionContinuation(
   identity: ChatGptTurnIdentity,
   source: ChatGptTurnUserRevision,
 ): boolean {
-  return acceptedCheckpoint(parsed, identity)?.checkpoint.sourceHashes.has(sourceDigest(source)) === true;
+  return acceptedCheckpoint(parsed, identity, source)?.checkpoint.sourceHashes.has(sourceDigest(source)) === true;
 }
 
 /** Native compaction may retain only its summary; recover the task solely from our completed handoff. */
@@ -120,10 +124,23 @@ export function recoverCompactionInstruction(
 function acceptedCheckpoint(
   parsed: CodexParsedRequest,
   identity: ChatGptTurnIdentity,
+  source?: ChatGptTurnUserRevision,
 ): { checkpoint: CompletedCheckpoint; summaryIndex: number } | undefined {
   const key = scope(parsed, identity);
   const checkpoint = key ? checkpoints.get(key) : undefined;
   if (!key || !checkpoint) return undefined;
+  const aborted = priorAbortedTurnIds(parsed._rawBody, identity.turnId ?? "");
+  if (aborted.length) {
+    let ownerHash = checkpoint.sourceTurnHash;
+    if (!ownerHash) {
+      // The first recorded digest is the primary instruction, not a retained representation.
+      const primaryHash = checkpoint.sourceHashes.values().next().value;
+      const primary = [...(source ? [source] : []), ...turnUserRevisionHistory(parsed._rawBody)]
+        .find(candidate => sourceDigest(candidate) === primaryHash);
+      if (primary?.turnId) ownerHash = digest(primary.turnId);
+    }
+    if (!ownerHash || aborted.some(owner => digest(owner) === ownerHash)) return undefined;
+  }
   const input = (parsed._rawBody as { input?: unknown[] } | undefined)?.input;
   if (!Array.isArray(input)) return undefined;
   for (let index = input.length - 1; index >= 0; index -= 1) {

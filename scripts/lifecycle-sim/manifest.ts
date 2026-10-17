@@ -90,6 +90,7 @@ export const sharedLifecycleTests = [
   "tests/turn-broker-retirement-failure.test.ts",
   "tests/server-adapter-injection.test.ts",
   "tests/server-compaction.test.ts",
+  "tests/server-compaction-continuation.test.ts",
   "tests/compaction-budget.test.ts",
   "tests/compact-replacement-budget.test.ts",
   "tests/retained-compaction-handoff.test.ts",

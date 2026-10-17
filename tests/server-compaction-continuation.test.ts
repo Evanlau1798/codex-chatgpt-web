@@ -9,7 +9,7 @@ import { extractChatGptTurnIdentity, extractChatGptTurnUserRevision } from "../s
 const model = "chatgpt-web/high";
 const summary = "The repository was inspected. Continue by implementing the bounded Web context contract.";
 
-test("v2 compaction authorizes the retained human instruction when native Codex drops a delegated tool output", async () => {
+test("v2 compaction recovers the delegated instruction when native Codex drops its tool output", async () => {
   const config = defaultConfig("full");
   const metadata = { thread_id: "thread_delegated_v2_checkpoint", turn_id: "turn_delegated_v2_checkpoint" };
   const human = { type: "message", role: "user", id: "msg_original_human",
@@ -17,7 +17,7 @@ test("v2 compaction authorizes the retained human instruction when native Codex 
     internal_chat_message_metadata_passthrough: { turn_id: "turn_original_human" } };
   const delegation = { type: "function_call_output", id: "fco_delegated_resume", name: "send_message_to_thread", namespace: "codex_app",
     output: "<codex_delegation><source_thread_id>coordinator</source_thread_id><input>Resume using the saved evidence.</input></codex_delegation>",
-    internal_chat_message_metadata_passthrough: { turn_id: metadata.turn_id } };
+    internal_chat_message_metadata_passthrough: { turn_id: "turn_delegated_source" } };
   const original = { model, stream: false, input: [human, delegation], client_metadata: {
     "x-codex-turn-metadata": JSON.stringify(metadata),
   } };
@@ -29,10 +29,10 @@ test("v2 compaction authorizes the retained human instruction when native Codex 
   // The native v2 replacement retains real user messages, but removes synthetic tool outputs.
   const continuation = { ...original, input: [human, ...checkpoint.output] };
   let starts = 0;
-  const send = (body: unknown) => responseRequest(request(body), config, () => ({
+  const send = (body: unknown, expectedRevision: unknown = delegation.output) => responseRequest(request(body), config, () => ({
     name: "delegated-v2-continuation", async runTurn(parsed, _incoming, emit) {
       starts++;
-      expect(extractChatGptTurnUserRevision(parsed)).toEqual(human.content);
+      expect(extractChatGptTurnUserRevision(parsed)).toEqual(expectedRevision);
       emit({ type: "text_delta", text: "Continued from the accepted checkpoint", phase: "final_answer" });
       emit({ type: "done", stopReason: "stop", endTurn: true });
     },
@@ -40,6 +40,9 @@ test("v2 compaction authorizes the retained human instruction when native Codex 
   const resumed = await send(continuation);
   expect(resumed.status).toBe(200);
   expect(await resumed.json()).toMatchObject({ status: "completed" });
+  const aborted = { ...human, id: "msg_abort",
+    internal_chat_message_metadata_passthrough: delegation.internal_chat_message_metadata_passthrough,
+    content: "<turn_aborted>The user interrupted this turn.</turn_aborted>" };
   for (const changed of [
     { ...continuation, input: [{ ...human, content: "Different task" }, ...checkpoint.output] },
     { ...continuation, input: [{ ...human, internal_chat_message_metadata_passthrough: { turn_id: "another_source" } }, ...checkpoint.output] },
@@ -47,9 +50,18 @@ test("v2 compaction authorizes the retained human instruction when native Codex 
     { ...continuation, client_metadata: { "x-codex-turn-metadata": JSON.stringify({ ...metadata, thread_id: "another_thread" }) } },
     { ...continuation, client_metadata: { "x-codex-turn-metadata": JSON.stringify({ ...metadata, turn_id: "another_turn" }) } },
     { ...continuation, model: "chatgpt-web/medium" },
-    { ...continuation, input: [...continuation.input, { ...human, id: "msg_abort", content: "<turn_aborted>The user interrupted this turn.</turn_aborted>" }] },
-  ]) expect((await send(changed)).status).toBe(400);
+    { ...continuation, input: [...continuation.input, aborted] },
+  ]) {
+    const rejected = await send(changed);
+    expect(rejected.status, await rejected.text()).toBe(400);
+  }
   expect(starts).toBe(1);
+  const newInstruction = { ...human, id: "msg_new_task", content: "Start the newly authorized task.",
+    internal_chat_message_metadata_passthrough: { turn_id: metadata.turn_id } };
+  const next = await send({ ...continuation, input: [...continuation.input, aborted, newInstruction] }, newInstruction.content);
+  expect(next.status).toBe(200);
+  expect(await next.json()).toMatchObject({ status: "completed" });
+  expect(starts).toBe(2);
 });
 
 function compactionAdapterFactory(

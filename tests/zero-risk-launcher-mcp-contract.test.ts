@@ -38,6 +38,7 @@ for (const mode of ["manual", "automatic"] as const) {
       let serialized = "";
       const supervisor = new RuntimeSupervisor({
         app: { isPackaged: false }, sourceRoot: root, coreHome: root,
+        resolveProxy: async () => "DIRECT",
         browserDescriptorPath: resolve(root, "test-descriptor.json"), logger: {},
       });
       supervisor.runTunnelCommand = async (_config: unknown, args: string[]) => {

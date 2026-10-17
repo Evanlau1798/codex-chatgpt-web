@@ -46,12 +46,34 @@ const ledger = JSON.parse(readFileSync(
 // v5.0.1 explicitly refreshed this inherited ledger; bind it to that published tree.
 const publication = JSON.parse(readFileSync(resolve(repositoryRoot, ".github/upstream-audit/v5.0.1-publication.json"), "utf8"));
 const publishedCommit = publication.ledger.commit as string;
+function historicalSources(commit: string, paths: string[]): Map<string, string> {
+  const unique = [...new Set(paths)];
+  const result = spawnSync("git", ["cat-file", "--batch"], {
+    cwd: repositoryRoot, input: unique.map(path => `${commit}:${path}`).join("\n") + "\n",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  expect(result.status, result.error?.message ?? result.stderr.toString()).toBe(0);
+  const sources = new Map<string, string>();
+  let offset = 0;
+  for (const path of unique) {
+    const lineEnd = result.stdout.indexOf(10, offset);
+    expect(lineEnd).toBeGreaterThanOrEqual(offset);
+    const header = /^([a-f0-9]{40}) blob (\d+)$/.exec(result.stdout.subarray(offset, lineEnd).toString("ascii"));
+    expect(header, path).not.toBeNull();
+    const end = lineEnd + 1 + Number(header![2]);
+    expect(end).toBeLessThan(result.stdout.length);
+    expect(result.stdout[end]).toBe(10);
+    sources.set(path, result.stdout.subarray(lineEnd + 1, end).toString("utf8").replace(/\r\n/g, "\n"));
+    offset = end + 1;
+  }
+  expect(offset).toBe(result.stdout.length);
+  return sources;
+}
 const publishedSources = new Map<string, string>();
 function publishedSource(path: string): string {
-  if (!publishedSources.has(path)) {
-    const result = spawnSync("git", ["show", `${publishedCommit}:${path}`], { cwd: repositoryRoot, encoding: "utf8" });
-    expect(result.status, result.stderr).toBe(0);
-    publishedSources.set(path, result.stdout.replace(/\r\n/g, "\n"));
+  if (publishedSources.size === 0) {
+    const paths = ledger.semanticReview.obligations.flatMap(item => [item.implementation, ...item.tests.map(test => test.path)]);
+    for (const [path, source] of historicalSources(publishedCommit, paths)) publishedSources.set(path, source);
   }
   return publishedSources.get(path)!;
 }
@@ -150,19 +172,12 @@ describe("upstream v5.0.0 audit ledger", () => {
       "renderer-manual-guidance", "renderer-manual-settings", "renderer-mode-provisioning", "renderer-onboarding-validation",
       "setup-managed-reentry", "setup-preflight", "setup-profile-checkpoint", "setup-profile-migration", "setup-runtime-change", "supervisor-boot-ownership", "tunnel-command-contract", "tunnel-key-isolation",
     ]);
-    const sources = new Map<string, string>();
+    const sources = historicalSources(ledger.upstream.commit, review.obligations.map(item => item.source.path));
     for (const item of review.obligations) {
       expect(item.classification).toBe("adapted");
       expect(item.behavior.length).toBeGreaterThan(0);
       expect(item.interface.length).toBeGreaterThan(0);
       expect(ledger.entries.some(entry => entry.path === item.source.path)).toBeTrue();
-      if (!sources.has(item.source.path)) {
-        const source = spawnSync("git", ["show", `${ledger.upstream.commit}:${item.source.path}`], {
-          cwd: repositoryRoot, encoding: "utf8",
-        });
-        expect(source.status).toBe(0);
-        sources.set(item.source.path, source.stdout);
-      }
       expect(item.source.anchor.length).toBeGreaterThan(0);
       expect(sources.get(item.source.path)).toContain(`${item.source.symbol}(`);
       expect(sources.get(item.source.path)).toContain(item.source.anchor);
