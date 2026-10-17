@@ -71,10 +71,10 @@
   },
   {
     "path": "tests/upstream-audit-v5-ledger.test.ts",
-    "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "9e2aa0be9ce75aed7ef0a8447fb1e14af4f0f348136a1e51a5058bc1fa555342",
-    "currentSha256": "ac63684724fa9397cfb779ef461dbb921987a1affa1fe880b144efd85d34826b",
-    "reason": "Batch historical Git object reads with strict byte framing and unchanged source/assertion checks, avoiding 98 process launches and the existing 30-second deadline without increasing it.",
-    "evidence": {"path":".github/upstream-audit/evidence/45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501.tar.gz","sha256":"45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501","bytes":83233}
+    "baseCommit": "7f8880ef72f0b8c71dc18dbdb177f8ac61919306", "baselineSha256": "ac63684724fa9397cfb779ef461dbb921987a1affa1fe880b144efd85d34826b",
+    "currentSha256": "4d83c74c3b1a52b233e2fd261d6ad3373177ee2dd63e6bcf3b636041771f6515",
+    "reason": "Reuse the existing strictly byte-framed batch Git reader for historical source assertions, retaining every obligation and deadline while avoiding per-path process startup.",
+    "evidence": {"path":".github/upstream-audit/evidence/56b0bfdb109135aa919ad8047918b24efa431f7f68278a2ed69ad995ab9017eb.tar.gz","sha256":"56b0bfdb109135aa919ad8047918b24efa431f7f68278a2ed69ad995ab9017eb","bytes":8842}
   },
   {
     "path": "tests/zero-risk-launcher-mcp-contract.test.ts",
@@ -446,5 +446,12 @@
     "currentSha256": "e3bc4687c781fd78c52df1b1588c75c4e3f455ec808f898bf40b58f3c4dea502",
     "reason": "Restore default/upstream-native UA without changing the profile, native Chromium Client Hints or browser ownership; real Electron fixtures cover all surfaces.",
     "evidence": {"path":".github/upstream-audit/evidence/823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674.tar.gz","sha256":"823b5f702b77175a77b340630ecd0ff42ce3ba6cac548accfeb55a09aa8f5674","bytes":61455}
+  },
+  {
+    "path": "tests/upstream-audit-v501-ledger.test.ts",
+    "baseCommit": "7f8880ef72f0b8c71dc18dbdb177f8ac61919306", "baselineSha256": "43ffafdce8e960a098d802ab1c473d317d4c8a090d84fb2e238da2dfb0bfc1a6",
+    "currentSha256": "e7d8b9061a7f034c689ce452ec3b2b7caa655e773df350efdc7cd3e61721ff76",
+    "reason": "Reuse the existing strictly byte-framed batch Git reader for historical source assertions, retaining every obligation and deadline while avoiding per-path process startup.",
+    "evidence": {"path":".github/upstream-audit/evidence/56b0bfdb109135aa919ad8047918b24efa431f7f68278a2ed69ad995ab9017eb.tar.gz","sha256":"56b0bfdb109135aa919ad8047918b24efa431f7f68278a2ed69ad995ab9017eb","bytes":8842}
   }
 ]
