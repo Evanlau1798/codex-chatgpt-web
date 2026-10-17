@@ -35,6 +35,33 @@ test("one prepared page transfers ownership without allocating or replaying a co
   assert.equal(warm.bootstrapReady, true);
 });
 
+test("same-trace retry transfers a prepared page without retaining a competing failed owner", async () => {
+  const key = "a".repeat(64);
+  const failed = ready({ id: "failed", traceId: "trace_retry", status: "running",
+    startupPreparation: false, startupReady: false, conversationKey: key });
+  const warm = ready(), f = fixture([failed, warm]);
+  const closed = [];
+  failed.view = { webContents: { isDestroyed: () => false, setBackgroundThrottling() {},
+    close: () => closed.push(failed.id) } };
+  f.host.window = { contentView: { removeChildView() {} } };
+  f.host.syncPowerSaveBlocker = () => {};
+  await f.host.endTurn(failed.traceId, process.pid, "failed", false);
+  assert.equal(failed.status, "error");
+  assert.notEqual(failed.failedAt, undefined);
+  const lease = await f.host.beginTurn(failed.traceId, false, process.pid, true, key, "Codex Native2",
+    false, undefined, { surfaceId: warm.surfaceId });
+  assert.equal(lease.startupPrepared, true);
+  assert.equal(lease.reused, false);
+  assert.equal(f.allocations, 0);
+  assert.deepEqual(closed, [failed.id]);
+  assert.deepEqual([...f.host.turnTabs.values()], [warm]);
+  assert.doesNotThrow(() => f.host.heartbeatTurn(failed.traceId, process.pid));
+  assert.deepEqual(await f.host.endTurn(failed.traceId, process.pid, "completed", false, undefined, true, true),
+    { cancelledByUser: false });
+  assert.equal(warm.status, "ready");
+  assert.equal(warm.connectorBound, true);
+});
+
 test("prepared transfers bound old-owner receipts and retain the exact previous helper", async () => {
   const warm = ready(), f = fixture([warm]);
   f.host.closedTurnOwners = new Map(Array.from({ length: 256 }, (_, i) => [`old-${i}`, { helperPid: process.pid, remainingAcks: 1 }]));

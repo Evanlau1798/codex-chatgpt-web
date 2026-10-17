@@ -2049,6 +2049,7 @@ class BrowserHost {
           evidence: "previous helper exited",
         });
       }
+      if (startupPrepared && sameTrace?.failedAt !== undefined) this.removeTurnTab(sameTrace, false);
       if (startupPrepared) this.rememberClosedTurnOwner(existing.traceId, existing.helperPid);
       existing.helperPid = helperPid;
       existing.traceId = traceId;

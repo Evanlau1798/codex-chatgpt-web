@@ -154,5 +154,29 @@
       "sha256": "45bc8a9db50f41daa2aedaef970b68375fe98da94d66361c96bbc5dd050a9501",
       "bytes": 83233
     }
+  },
+  {
+    "path": "launcher/electron/browser-host.cjs",
+    "baseCommit": "c80838a67b06bcbdac1d13ba25f37231c36a8bc4",
+    "baselineSha256": "bacc6bef32110356a55aea7aa9e3355d246e94971c8c1910d68d95997d59c60c",
+    "currentSha256": "3ecd6f4865de983f8cb65cbdc55cb3baa033ce0815bdc83a3fa0560868ebc70e",
+    "reason": "Retire a failed same-trace owner before Fast startup ownership transfer so heartbeat and terminal lookup cannot bind the old failed document.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/b5024753f3cb7aa6c1fb8428706b5848677b37936634984b292a42def33ac57e.tar.gz",
+      "sha256": "b5024753f3cb7aa6c1fb8428706b5848677b37936634984b292a42def33ac57e",
+      "bytes": 12115
+    }
+  },
+  {
+    "path": "launcher/tests/browser-host-startup.test.cjs",
+    "baseCommit": "c80838a67b06bcbdac1d13ba25f37231c36a8bc4",
+    "baselineSha256": "4dc23794cccf8e483ff1efcba62d509b47cc37090aec5ad2f1a291966d26da6d",
+    "currentSha256": "853af2cc2061e8de4c60ccdbd3a9040eefef0c897d271b01e579250627c0be29",
+    "reason": "Production ownership regression for failed same-trace retry through a prepared page, successful heartbeat, and terminal retention; no allocation or old-document reuse.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/b5024753f3cb7aa6c1fb8428706b5848677b37936634984b292a42def33ac57e.tar.gz",
+      "sha256": "b5024753f3cb7aa6c1fb8428706b5848677b37936634984b292a42def33ac57e",
+      "bytes": 12115
+    }
   }
 ]
