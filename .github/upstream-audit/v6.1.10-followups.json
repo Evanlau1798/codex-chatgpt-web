@@ -1,1 +1,38 @@
-[]
+[
+  {
+    "path": "src/adapters/chatgpt-web/browser-worker.ts",
+    "baseCommit": "8e2833d3b7ccbf42ba9cda6d8f71d8c173493d20",
+    "baselineSha256": "4b81813ad11f845241b51456c9bbb1583dcb341f8b947b22de7261a68d3e8a83",
+    "currentSha256": "3e3b2498b611ab6a89261283ed1b17d93aed90d56c31385474b4506b24c37fa4",
+    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/593166b24cba2455543dda4bc0574c9afaf6313acb2cdd04d5698251af971ebb.tar.gz",
+      "sha256": "593166b24cba2455543dda4bc0574c9afaf6313acb2cdd04d5698251af971ebb",
+      "bytes": 56653
+    }
+  },
+  {
+    "path": "tests/browser-diagnostics.test.ts",
+    "baseCommit": "8e2833d3b7ccbf42ba9cda6d8f71d8c173493d20",
+    "baselineSha256": "dbff7394c8d0d04026bd98f2dd0caec95e7ecd861cf5736c6ee94c54e5f270e6",
+    "currentSha256": "12e277c06d9be62c25ea1985341daa03d4899b145a31f536db9d3502dc3450fa",
+    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/593166b24cba2455543dda4bc0574c9afaf6313acb2cdd04d5698251af971ebb.tar.gz",
+      "sha256": "593166b24cba2455543dda4bc0574c9afaf6313acb2cdd04d5698251af971ebb",
+      "bytes": 56653
+    }
+  },
+  {
+    "path": "tests/browser-tunneled-fallback.test.ts",
+    "baseCommit": "8e2833d3b7ccbf42ba9cda6d8f71d8c173493d20",
+    "baselineSha256": "04a815cead07adad6b53943949e07920dc60ab7fc2e6a2b8de108984465e20da",
+    "currentSha256": "110e25e5dab9237b4cfd24d9bf7fe255e7f37637c9d7d6e9622c84a0a3fffea1",
+    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/593166b24cba2455543dda4bc0574c9afaf6313acb2cdd04d5698251af971ebb.tar.gz",
+      "sha256": "593166b24cba2455543dda4bc0574c9afaf6313acb2cdd04d5698251af971ebb",
+      "bytes": 56653
+    }
+  }
+]

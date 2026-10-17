@@ -1,12 +1,13 @@
 import { expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
+import { BrowserDiagnosticHistory } from "../src/adapters/chatgpt-web/browser-diagnostic-history";
 import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_STOP_BUTTON_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
 import type { BrokerTurnOutputEvent } from "../src/adapters/chatgpt-web/turn-broker-protocol";
@@ -29,6 +30,7 @@ const OLD = "Review in progress.";
 const FINAL = "Findings: No blocking defects. Review complete.";
 
 async function runFixture(options: {
+  diagnosticsRoot?: string;
   manualApproval?: boolean;
   approvalOutcome?: "timeout" | "aborted";
   stale?: boolean; tunneledFinal?: boolean; steering?: boolean; batches?: number;
@@ -66,7 +68,7 @@ async function runFixture(options: {
   progressScenario?: "status" | "native-tool" | "static" | "foreign";
 } = {}) {
   const recoverable = options.emptyStopped || options.postToolRecovery;
-  const diagnostics = mkdtempSync(join(tmpdir(), "boole-browser-"));
+  const diagnostics = options.diagnosticsRoot ?? mkdtempSync(join(tmpdir(), "boole-browser-"));
   const progress = new ChatGptExternalTurnProgress();
   const actions: string[] = [];
   const selections: Array<{ url: string; model: string; effort: string; family?: string }> = [];
@@ -566,7 +568,7 @@ async function runFixture(options: {
     warn.mockRestore();
     approvalControl?.mockRestore();
     progress.retire(new Error("fixture finished"));
-    rmSync(diagnostics, { recursive: true, force: true });
+    if (!options.diagnosticsRoot) rmSync(diagnostics, { recursive: true, force: true });
   }
   expect(pendingReaders).toBe(0);
   expect(channel.outputWaiters.size).toBe(0);
@@ -578,6 +580,29 @@ async function runFixture(options: {
   return { answer, error, actions, deltas, snapshotsBeforeDispatch, logs, commentary, composerText,
     fallbackAgeMs, recoveryDecisionAgeMs, selections, progressTimes, progressStartedAt, approvalVisibility, approvalTab, otherTab };
 }
+
+test("successful worker turns preserve the earlier failed diagnostic history", async () => {
+  const root = mkdtempSync(join(tmpdir(), "worker-diagnostic-retention-"));
+  const failure = join(root, "previous-failure");
+  const history = new BrowserDiagnosticHistory(root, failure);
+  try {
+    history.start();
+    writeFileSync(join(failure, "01-turn-failed.json"), "{}");
+    history.finish("failed");
+    utimesSync(failure, 100, 100);
+    for (let index = 0; index < 10; index++) {
+      const result = await runFixture({ diagnosticsRoot: root, tunneledFinal: true });
+      expect(result.error).toBeUndefined();
+      expect(result.answer).toBe(FINAL);
+    }
+    expect(existsSync(join(failure, "01-turn-failed.json"))).toBeTrue();
+    const states = readdirSync(root).map(name => JSON.parse(readFileSync(join(root, name, ".trace-state"), "utf8")));
+    expect(states.filter(state => state.status === "completed")).toHaveLength(10);
+    expect(states.filter(state => state.status === "failed")).toHaveLength(1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);
 
 test("native fallback observation uses the worker scheduler while preserving final and tool settlement", async () => {
   const result = await runFixture();
