@@ -104,7 +104,7 @@ export async function dispatchTurnBrokerRequest(
       if (request.outputKind === "final" && state.contexts.hasIncomplete(request.token)) {
         throw new Error("Read and verify the complete Codex context archive before submitting final output");
       }
-      submitted = submitTurnOutput(channel, request.outputKind!, request.outputText);
+      submitted = submitTurnOutput(channel, request.outputKind!, request.outputText, request.nextMessagePrediction);
     } catch (error) {
       const kind = ["commentary", "reasoning", "final"].includes(request.outputKind!) ? request.outputKind : "invalid";
       console.warn(`[chatgpt-web] broker trace=${channel.traceId} output rejected kind=${kind} chars=${request.outputText.length}`
@@ -130,7 +130,8 @@ export async function dispatchTurnBrokerRequest(
     }
     // Schema discovery is not work: no activity, task data, work reopening,
     // or mutation of the finalization/completion revision.
-    return { outputEnabled: true, finalizationOnly: channel.finalizationOnly };
+    return { outputEnabled: true, finalizationOnly: channel.finalizationOnly,
+      ...(channel.predictionEnabled ? { predictionEnabled: true } : {}) };
   }
   if (request.method === "read_agent_wait") {
     const channel = request.token ? state.channels.get(request.token) : undefined;

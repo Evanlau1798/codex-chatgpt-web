@@ -336,7 +336,8 @@ export function compileChatGptWebPrompt(
       ]
       : []),
   ];
-  const tunneledOutputContract = tunneledOutput ? [...CODEX_OUTPUT_CONTROL_PROMPT] : [];
+  const tunneledOutputContract = tunneledOutput ? [...CODEX_OUTPUT_CONTROL_PROMPT,
+    ...(parsed._composerPrediction?.enabled ? ["The user enabled optional next-message suggestions. In the SAME final arguments object you may add next_message_prediction: one short likely user follow-up (at most 2000 characters), or null if none is clearly useful. Keep it separate from text, never include secrets or transport details, and never use another call, tool, response or Web request to create it. Final acceptance and immediate end rules remain unchanged."] : [])] : [];
   const checkpointContract = captureLunaCheckpoint
     ? [
       "After the complete user-facing answer, append one private rolling task checkpoint for the next Luna turn.",

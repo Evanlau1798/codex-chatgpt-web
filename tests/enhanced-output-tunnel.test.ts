@@ -215,6 +215,15 @@ test("the broker rejects whitespace-only tunneled output", () => {
     .toThrow("Codex Native output text is invalid");
 });
 
+test.each([false, true])("same-final suggestions share the existing per-turn output limit (recovery=%s)", finalizationOnly => {
+  const channel = { outputEnabled: true, predictionEnabled: true, outputSealed: false, finalizationOnly,
+    finalizationOutputArmed: false, outputEvents: [], outputChars: 4_999_999, outputWaiters: new Set(),
+    activities: new Set(), invocations: new Map(), completionCommitted: false, activityRevision: 0 } as unknown as TurnChannel;
+  expect(() => submitTurnOutput(channel, "final", "x", "y")).toThrow("per-turn limit");
+  expect(channel.outputEvents).toHaveLength(0);
+  expect(channel.finalizationPendingOutput).toBeUndefined();
+});
+
 test.each(["commentary", "reasoning"] as const)("the broker preserves whitespace-only %s output", kind => {
   const channel = {
     outputEnabled: true,

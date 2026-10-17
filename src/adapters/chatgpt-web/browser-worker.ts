@@ -1,4 +1,5 @@
 import type { ChatGptWebModelCapabilities } from "../../chatgpt-web-models";
+import { ChatGptTurnLiveness } from "./turn-liveness";
 import { ChatGptPromptIntegrityMismatchError, isChatGptPromptIntegrityMismatch } from "./adapter-error";
 import { ChatGptPromptOperation } from "./prompt-operation";
 import { chatGptPromptCodeUnitEquivalent, chatGptPromptTextEquivalent, chatGptPromptEquivalentPrefixLength, readChatGptPromptText, readChatGptUserMessageText } from "./prompt-text";
@@ -2900,8 +2901,10 @@ export class ChatGptBrowserWorker {
       }
       await composer.fill("", op.options(10_000));
 
-      const activateConnectorChoice = async (control: Locator): Promise<Locator> => {
-        await control.press("Enter", op.options(10_000));
+      const activateConnectorChoice = async (control: Locator, pointer = false): Promise<Locator> => {
+        // New plugin menus dismiss on focus transfer; click their row without focusing it first.
+        if (pointer) await control.click(op.options(10_000));
+        else await control.press("Enter", op.options(10_000));
         await capture("connector-choice-activated");
         const selectedComposer = await this.activeComposer(page, 30_000, abortSignal, op);
         const selectedConnector = this.selectedConnectorControl(selectedComposer);
@@ -2969,7 +2972,7 @@ export class ChatGptBrowserWorker {
           : undefined;
         if (plusResult) {
           await capture("connector-menu-visible");
-          return await activateConnectorChoice(plusResult);
+          return await activateConnectorChoice(plusResult, true);
         }
         await capture("connector-menu-missing");
         throw chatGptConnectorUnavailableError(mentionFailure);
@@ -4437,6 +4440,18 @@ export class ChatGptBrowserWorker {
     if (turn.captureLunaCheckpoint && turn.modelId !== CHATGPT_WEB_LUNA_MODEL_ID) {
       throw new Error("Private rolling checkpoint capture is valid only for ChatGPT Luna");
     }
+    const originalTurn = turn;
+    const liveness = new ChatGptTurnLiveness();
+    turn = { ...turn,
+      onSubmitted: async () => { liveness.submitted(); await originalTurn.onSubmitted?.(); },
+      onProgress: () => { liveness.progress(); originalTurn.onProgress?.(); },
+      onGenerationProgress: () => { liveness.generation(); originalTurn.onGenerationProgress?.(); },
+      onHeartbeat: () => {
+        const sample = liveness.heartbeat(originalTurn.externalProgress?.snapshot());
+        if (sample) console[sample.level](`[chatgpt-web] browser turn ${turn.traceId} worker_liveness=${JSON.stringify(sample.timing)}`);
+        originalTurn.onHeartbeat?.();
+      },
+    };
       const requestedMode = resolveChatGptWebModelMode(turn.modelId, turn.reasoning, turn.capabilities);
     const prepared = reuseConversation && turn.prepareResume
       ? await turn.prepareResume()
@@ -5225,7 +5240,7 @@ export class ChatGptBrowserWorker {
               const current = await readChatGptAssistantTurnState(responseTurns);
               const binding = bindChatGptAssistantTurn(initialResponseTurn, current);
               if (!binding) throw chatGptWebSurfaceError("ChatGPT lost the stopped response binding", false);
-              const running = await chatGptStopButton(page).isVisible();
+              const running = await chatGptStopButton(page).isVisible() || generation.active();
               const snapshot = await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running);
               if (snapshot.stoppedThinkingVisible) {
                 throw chatGptStoppedThinkingError();
@@ -5279,7 +5294,8 @@ export class ChatGptBrowserWorker {
                 ? await withBrowserTurnAbort(Promise.resolve(turn.retryPromptForError?.(failure.error, responseAttempt)), turn.abortSignal)
                 : undefined;
               console.warn(`[chatgpt-web] browser turn ${turn.traceId} missing final recovery`
-                + ` decision=${retry ? "same_conversation" : "surface_error"} reason=${failure.readiness.reason} stoppedMs=${stoppedMs} attempt=${responseAttempt}`);
+                + ` decision=${retry ? "same_conversation" : "surface_error"} reason=${failure.readiness.reason} stoppedMs=${stoppedMs} attempt=${responseAttempt}`
+                + ` network=${JSON.stringify(submissionRejection.diagnosticSummary())}`);
               if (!retry) {
                 if (responseAttempt > 1 && failure.error instanceof ChatGptWebAdapterError) {
                   throw new ChatGptWebAdapterError(
@@ -5299,7 +5315,7 @@ export class ChatGptBrowserWorker {
               const recoveryText = snapshot.visibleText;
               beforeRecoveryInsertion = async composer => {
                 const latest = await readChatGptAssistantTurnState(responseTurns);
-                const running = await chatGptStopButton(page).isVisible();
+                const running = await chatGptStopButton(page).isVisible() || generation.active();
                 const snapshot = await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running);
                 const count = await page.locator(CHATGPT_COMPOSER_SELECTOR).filter({ visible: true }).count();
                 const check = chatGptCompletionEvidenceFailure("ChatGPT recovery surface changed before prompt insertion", false, {
@@ -5324,7 +5340,7 @@ export class ChatGptBrowserWorker {
               };
               activateRecoverySubmission = async () => {
                 const latest = await readChatGptAssistantTurnState(responseTurns);
-                const running = await chatGptStopButton(page).isVisible();
+                const running = await chatGptStopButton(page).isVisible() || generation.active();
                 const response = locateChatGptAssistantTurn(responseTurns, binding);
                 const responseHtml = await response.evaluate(element => element.innerHTML);
                 const snapshot = await this.responseDomSnapshot(response, undefined, running);
@@ -5406,8 +5422,8 @@ export class ChatGptBrowserWorker {
                 ? await this.responseDomSnapshot(locateChatGptAssistantTurn(responseTurns, binding), undefined, running)
                 : absentResponseDomSnapshot();
               const responseStreamActive = generation.active();
-        if (running || responseStreamActive) generation.progress();
-        observeResponseProgress(snapshot, running);
+              if (running || responseStreamActive) generation.progress();
+              observeResponseProgress(snapshot, running);
               if (turn.externalProgress && progress && needsToolBoundary) {
                 if (!responsePresent || binding) {
                   // A tool may arrive before the new assistant turn is projected. An incomplete
@@ -5422,6 +5438,7 @@ export class ChatGptBrowserWorker {
               return {
                 responsePresent,
                 running,
+                responseStreamActive,
                 toolCallsInFlight: chatGptExternalToolCallsAreInFlight(turn.externalProgress?.snapshot()),
               };
             },

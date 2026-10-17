@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ChatGptBrowserWorker, type BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptExternalTurnProgress } from "../src/adapters/chatgpt-web/turn-progress";
+import { ChatGptTurnLiveness } from "../src/adapters/chatgpt-web/turn-liveness";
 import { BrowserDiagnosticHistory } from "../src/adapters/chatgpt-web/browser-diagnostic-history";
 import { resolveChatGptWebModelMode } from "../src/adapters/chatgpt-web/model";
 import { CHATGPT_ASSISTANT_TURN_SELECTOR, CHATGPT_COMPOSER_SELECTOR, CHATGPT_EFFORT_CONTROL_SELECTOR, CHATGPT_STOP_BUTTON_SELECTOR, CHATGPT_TEMPORARY_CHAT_URL, CHATGPT_USER_TURN_SELECTOR } from "../src/chatgpt-session";
@@ -42,6 +43,9 @@ async function runFixture(options: {
   composerBusyAfterAdmission?: boolean;
   boundRecoveryParagraphs?: boolean;
   localizedGeneration?: boolean;
+  streamingGeneration?: boolean;
+  keepResponseStreamAfterFinal?: boolean;
+  turnTimeoutMs?: number;
   lateFinalBeforeRecoverySend?: boolean;
   lateFinalAfterFinalizationCas?: boolean;
   lateDomFinalBeforeRecoverySend?: boolean;
@@ -114,6 +118,7 @@ async function runFixture(options: {
   let snapshotsBeforeDispatch = 0;
   let domWaits = 0;
   let lastToolResultAt = now;
+  let streamRequest: any;
   let fallbackAgeMs: number | undefined;
   let recoveryDecisionAgeMs: number | undefined;
   let resumedGenerationChecks = 0;
@@ -159,6 +164,12 @@ async function runFixture(options: {
     ...hidden, nth: () => response, page: () => page,
     evaluateAll: async () => {
       now += options.recentToolProgress ? 500 : options.emptyStopped ? 15_000 : 61_000; // Advance observation time, never sleep to guess tool completion.
+      if (streamRequest && now - lastToolResultAt >= 300_000) {
+        if (!options.keepResponseStreamAfterFinal) page.emit("requestfinished", streamRequest);
+        streamRequest = undefined;
+        actions.push(options.keepResponseStreamAfterFinal ? "final-on-open-stream" : "response-stream-settled");
+        submitTurnOutput(channel, "final", FINAL);
+      }
       if (options.progressScenario && submitted && ++progressObservations === 9) submitTurnOutput(channel, "final", FINAL);
       if (pendingSecondBatch && now - lastToolResultAt >= 75_000) {
         pendingSecondBatch = false;
@@ -181,6 +192,7 @@ async function runFixture(options: {
   };
   const page: any = Object.assign(new EventEmitter(), {
     isClosed: () => false, url: () => submitted && options.conversationRoute || options.initialRoute || CHATGPT_TEMPORARY_CHAT_URL, evaluate: async () => ({}),
+    mainFrame: () => page,
     getByText: () => hidden,
     keyboard: { press: async () => { actions.push("composer-end"); } },
     locator: (selector: string) => {
@@ -269,6 +281,7 @@ async function runFixture(options: {
   if (options.manualApproval) approvalHost.syncViewVisibility();
   const worker = Object.assign(Object.create(ChatGptBrowserWorker.prototype), {
     config: { appName: "Codex Native2", browserDiagnosticsPath: diagnostics, autoApproveToolCalls: false,
+      turnTimeoutMs: options.turnTimeoutMs,
       ...(options.manualApproval ? { browserHostDescriptorPath: "fixture-control" } : {}) },
     // Date.now is already controlled by this fixture; yield I/O without a real 250ms poll.
     pauseObservation: () => { actions.push("observation-poll"); return new Promise<void>(resolve => setImmediate(resolve)); },
@@ -436,6 +449,14 @@ async function runFixture(options: {
     onSubmitted: () => {
       actions.push("submitted");
       progressStartedAt = now;
+      if (options.streamingGeneration) {
+        const request = streamRequest = { method: () => "POST", url: () => "https://chatgpt.com/backend-api/f/conversation",
+          frame: () => page.mainFrame(), postDataJSON: () => ({ model: "gpt-6" }) };
+        page.emit("request", request);
+        page.emit("response", { request: () => request, status: () => 200,
+          headers: () => ({ "content-type": "text/event-stream" }), text: async () => "data: [DONE]\n\n" });
+        actions.push("response-stream-started");
+      }
       if (options.untunneled) batch = progress.recordToolBatch(1);
     }, onTextDelta: delta => { deltas.push(delta); },
     onSendActivated: () => {
@@ -770,6 +791,69 @@ test("localized ongoing generation after settled native tools does not trigger f
   expect(result.actions).not.toContain("recovery:eligible");
   expect(result.actions.filter(action => action === "send")).toHaveLength(1);
   expect(result.actions.some(action => action.startsWith("finalization-only:"))).toBe(false);
+});
+
+test("an owned open response stream without Stop preserves tools and waits for the atomic final", async () => {
+  const result = await runFixture({ emptyStopped: true, streamingGeneration: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.actions).toContain("response-stream-settled");
+  expect(result.actions).not.toContain("recovery:eligible");
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+  expect(result.actions.some(action => action.startsWith("finalization-only:"))).toBe(false);
+});
+
+test("an owned open response stream never extends the hard turn deadline", async () => {
+  const result = await runFixture({ emptyStopped: true, streamingGeneration: true, turnTimeoutMs: 180_000 });
+  expect(String(result.error)).toContain("timed out");
+  expect(result.actions).not.toContain("response-stream-settled");
+  expect(result.actions).not.toContain("recovery:eligible");
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+});
+
+test("an accepted atomic final does not wait for an idle response stream to close", async () => {
+  const result = await runFixture({ emptyStopped: true, streamingGeneration: true,
+    keepResponseStreamAfterFinal: true, turnTimeoutMs: 600_000 });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.actions).toContain("final-on-open-stream");
+  expect(result.actions).not.toContain("recovery:eligible");
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+});
+
+test("worker heartbeat records liveness timing without adding visible output or another send", async () => {
+  const result = await runFixture({ emptyStopped: true, streamingGeneration: true });
+  expect(result.error).toBeUndefined();
+  expect(result.answer).toBe(FINAL);
+  expect(result.logs.some(line => line.includes("worker_liveness=") && line.includes('"elapsedMs":'))).toBe(true);
+  expect(result.commentary.join(" ")).not.toContain("worker_liveness");
+  expect(result.deltas.join("")).toBe(FINAL);
+  expect(result.actions.filter(action => action === "send")).toHaveLength(1);
+});
+
+test("liveness diagnostics distinguish idle heartbeats, output and native progress with bounded duration warnings", () => {
+  let now = 0;
+  const timer = new ChatGptTurnLiveness(() => now);
+  expect(timer.heartbeat()?.timing.outputProgressAgeMs).toBeNull();
+  now = 10_000;
+  timer.submitted(); timer.generation();
+  expect(timer.heartbeat()).toBeUndefined();
+  now = 60_000;
+  expect(timer.heartbeat()?.timing).toMatchObject({ elapsedMs: 60_000, submittedAgeMs: 50_000,
+    heartbeatGapMs: 50_000, outputProgressAgeMs: null, generationSignalAgeMs: 50_000 });
+  timer.progress();
+  now = 600_000;
+  expect(timer.heartbeat({ revision: 1, lastToolBatchRevision: 1, activeToolCalls: 1, lastProgressAt: 900 }, 1000))
+    .toMatchObject({ level: "warn", timing: { elapsedMs: 600_000, outputProgressAgeMs: 540_000,
+      nativeProgressAgeMs: 100, activeToolCalls: 1, longRunning: true } });
+  now = 610_000;
+  expect(timer.heartbeat()).toBeUndefined();
+  now = 660_000;
+  expect(timer.heartbeat()?.level).toBe("info");
+  now = 1_200_000;
+  expect(timer.heartbeat()?.level).toBe("warn");
+  // Browser deadlines, broker state and visible feeds are not available to this sampler.
+  expect(timer.heartbeat()).toBeUndefined();
 });
 
 test("a settled tool can be followed by another tool after a long reasoning gap", async () => {

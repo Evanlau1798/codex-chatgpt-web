@@ -189,10 +189,14 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       : steering
         ? browserSteeringRetry(steering, traceId, evidenceRetry, takeBrokerSteering, isClaudeClientSession(checkpointInput.parsed))
         : lunaSafetyRetry ?? evidenceRetry;
-    const retryPromptForAnswer = !finalizationOnly && taskAnswerRetry ? (answer: string, attempt: number) => (
-      chatGptTurnSessions.find(runtimeExecutionKey)?.runtime.compactionRequested
-        ? undefined : taskAnswerRetry(answer, attempt)
-    ) : undefined;
+    const retryPromptForAnswer = !finalizationOnly && taskAnswerRetry ? async (answer: string, attempt: number) => {
+      if (chatGptTurnSessions.find(runtimeExecutionKey)?.runtime.compactionRequested) return undefined;
+      const retry = await taskAnswerRetry(answer, attempt);
+      if (!retry || !activeToken || browserCompaction) return retry;
+      // Each replacement prompt must carry the prepared work identity, including corrections and steering.
+      const binding = `\n<codex_native_turn_binding>\nturn_token ${activeToken}\n</codex_native_turn_binding>`;
+      return typeof retry === "string" ? retry + binding : { ...retry, text: retry.text + binding };
+    } : undefined;
     const retryPromptForError = finalizationOnly ? undefined
       : createChatGptSameSurfaceRetry({
           traceId,
@@ -292,7 +296,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
           trace.recordProgress();
           externalProgress.recordBrokerActivity();
         },
-        tunneledOutput,
+        tunneledOutput && parsed._composerPrediction?.enabled ? { predictions: true } : tunneledOutput,
       );
       try {
         const prepared = await prepareChatGptWebContext(broker,
@@ -318,6 +322,7 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         throw failure;
       }
     };
+    let predictedFinal: { text: string; suggestion: string | null | undefined } | undefined;
     const browserRun = worker.run({
       traceId,
       modelId: parsed.modelId,
@@ -337,12 +342,16 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
         commit: async revision => brokerOwner.commitCompletionFence(activeToken ?? await token.promise, revision),
       },
       ...(tunneledOutput ? { tunneledOutput: {
-        next: async (afterSequence: number, signal?: AbortSignal) => brokerOwner.nextOutput(
-          activeToken ?? await token.promise, afterSequence, signal,
-        ),
-        reset: async (finalSequence: number) => brokerOwner.resetOutput(
-          activeToken ?? await token.promise, finalSequence,
-        ),
+        next: async (afterSequence: number, signal?: AbortSignal) => {
+          const event = await brokerOwner.nextOutput(activeToken ?? await token.promise, afterSequence, signal);
+          if (event.kind === "final") predictedFinal = { text: event.text, suggestion: event.nextMessagePrediction };
+          return event;
+        },
+        reset: async (finalSequence: number) => {
+          predictedFinal = undefined;
+          if (parsed._composerPrediction) delete parsed._composerPrediction.suggestion;
+          return brokerOwner.resetOutput(activeToken ?? await token.promise, finalSequence);
+        },
         seal: async (afterSequence: number, expectedRevision: number) => brokerOwner.sealOutput(
           activeToken ?? await token.promise, afterSequence, expectedRevision,
         ),
@@ -378,7 +387,13 @@ export function createChatGptRuntimeStarter(options: ChatGptRuntimeFactoryOption
       ...(retryPromptForError ? { retryPromptForError } : {}),
       ...(captureLunaCheckpoint ? { captureLunaCheckpoint: true, onLunaCheckpoint: captureCheckpoint } : {}),
     });
-    const trackedRun = browserRun.finally(() => { browserOwnerSettled = true; });
+    const trackedRun = browserRun.then(answer => {
+      if (parsed._composerPrediction && predictedFinal?.text === answer) {
+        parsed._composerPrediction.suggestion = predictedFinal.suggestion;
+        parsed._composerPrediction.completedAt ??= Date.now();
+      }
+      return answer;
+    }).finally(() => { browserOwnerSettled = true; });
     const browser = finalizeCheckpoint(toolPolicy.requireTool ? trackedRun.then(answer => {
       assertChatGptToolRequirementSatisfied(toolPolicy, toolResultDelivered); return answer;
     }) : trackedRun);

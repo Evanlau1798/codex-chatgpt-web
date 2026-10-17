@@ -16,7 +16,7 @@ import {
   type ToolWaiter,
   type TurnChannel,
 } from "./turn-broker-state";
-import { opaqueId, type BrokerToolRequest, type BrokerToolResult, type BrokerTurnOutputEvent } from "./turn-broker-protocol";
+import { opaqueId, type BrokerToolRequest, type BrokerToolResult, type BrokerTurnOutputEvent, type BrokerOutputCapability } from "./turn-broker-protocol";
 import { TurnContextStore } from "./turn-context-store";
 import { beginTurnCompletionFence, commitTurnCompletionFence } from "./turn-broker-completion";
 import { publishPendingFinalizationOutput, rejectTurnOutputWaiters, resetTurnOutput, sealTurnOutput, waitForTurnOutput } from "./turn-broker-output";
@@ -124,7 +124,7 @@ export class TurnBroker implements TurnBrokerOwner {
     ttlMs?: number,
     traceId = "unknown",
     onProgress?: () => void,
-    outputEnabled = false,
+    outputEnabled: BrokerOutputCapability = false,
     externalOwner = false,
     handlePrefix = "turn",
   ): Promise<string> {
@@ -140,7 +140,8 @@ export class TurnBroker implements TurnBrokerOwner {
     const channel: TurnChannel = {
       traceId,
       externalOwner,
-      outputEnabled,
+      outputEnabled: outputEnabled !== false,
+      predictionEnabled: typeof outputEnabled === "object" && outputEnabled.predictions === true,
       ...(onProgress ? { onProgress } : {}),
       environment: {
         ...environment,

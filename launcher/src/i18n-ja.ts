@@ -3,7 +3,7 @@ import { zeroRiskCopy } from "./zero-risk-copy";
 
 export const ja: Record<keyof Copy, string> = {
   composerPredictions: "次のメッセージ候補",
-  composerPredictionsBody: "コンテキスト全体が収まる場合、GPT-6 Sol Medium で次のメッセージを提案します。",
+  composerPredictionsBody: "既定ではオフです。Enhanced 自動モードと Native 出力が有効な場合、最終回答と同時に任意の候補を生成し、ローカルの 5 分間 TTL キャッシュを再利用します。キャッシュがなければ候補を返さず、追加の Web リクエストやページは作成しません。",
   pluginName: "プラグイン名",
   pluginNameBody: "Codex は固定です。それ以降の名前を編集できます。",
   pluginNameChange: "名前を変更",

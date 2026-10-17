@@ -23,7 +23,7 @@ const DEFAULT_STATE = Object.freeze({
   automaticWebSessionLimitCount: 15,
   automaticWebSessionLimitMinutes: 300,
   experimentalBiggerContext: false,
-  composerPredictionsEnabled: true,
+  composerPredictionsEnabled: false,
   experimentalSkillAttachments: false,
   experimentalPlusNativeContext: false,
   experimentalNoAutoCompact: false,

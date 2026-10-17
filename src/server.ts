@@ -20,7 +20,7 @@ import {
   isCodexComposerPrediction,
 } from "./adapters/chatgpt-web/environment";
 import { rememberCompletedCompaction } from "./responses/compaction-continuation";
-import { assertComposerPredictionFits, configureComposerPrediction } from "./composer-predictions";
+import { composerPredictionEnabled, composerPredictionResponse, rememberComposerPrediction } from "./composer-predictions";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
@@ -132,6 +132,10 @@ export async function responseRequest(
     const titleAuxiliary = codexTitleAuxiliaryResponse(raw);
     if (titleAuxiliary) return titleAuxiliary;
   }
+  if (typeof requestedModel === "string" && isChatGptWebModelSlug(requestedModel) && isCodexComposerPrediction(raw)) {
+    return composerPredictionResponse(expandPreviousResponseInput(raw) as Record<string, unknown>, config,
+      chatGptWebExecutionNamespace(providerConfig(config)));
+  }
   try {
     const identity = extractCodexTurnIdentityFromBody(raw);
     if (identity.threadId && identity.turnId) {
@@ -151,8 +155,7 @@ export async function responseRequest(
     ? (raw as { previous_response_id?: unknown }).previous_response_id
     : undefined;
   const expanded = expandPreviousResponseInput(raw);
-  const prediction = isCodexComposerPrediction(raw);
-  let executionConfig = config;
+  const executionConfig = config;
   let parsed: CodexParsedRequest;
   let route: ChatGptWebModelRoute;
   try {
@@ -160,7 +163,6 @@ export async function responseRequest(
     parsed._canonicalContextComplete = typeof requestedPreviousResponseId !== "string"
       || expanded !== raw
       || parsed._contextCompactionBoundary === true;
-    if (prediction) executionConfig = configureComposerPrediction(parsed, config);
     route = routeChatGptWebRequest(parsed, executionConfig);
     const identity = extractChatGptTurnIdentity(parsed);
     if (identity.threadId && identity.turnId) {
@@ -190,20 +192,12 @@ export async function responseRequest(
     );
   }
 
-  if (prediction) {
-    try {
-      assertComposerPredictionFits(parsed, executionConfig);
-    } catch (error) {
-      // An optional suggestion must not compact/retry the task merely to make itself fit.
-      return formatErrorResponse(400, "invalid_request_error", `Next-message prediction skipped: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    console.info(`[chatgpt-web] composer_prediction model=${route.slug} effort=medium`);
-  }
-
   const compaction = parsed._compactionRequest === true;
+  if (!compaction && !parsed._localCompactionRequest && composerPredictionEnabled(config)) parsed._composerPrediction = { enabled: true };
   const compactionItem = compaction && parsed._compactionResponseFormat !== "message";
   const rememberCompletedResponse = (response: Record<string, unknown>): void => {
     if (!compaction) {
+      rememberComposerPrediction(parsed, response, chatGptWebExecutionNamespace(providerConfig(config)));
       if (options.rememberState !== false) rememberResponseState(parsed._rawBody, response, { force: true });
       return;
     }
@@ -274,7 +268,8 @@ export async function responseRequest(
   }
   if (modelRejectionKey) {
     const rejected = chatGptWebTurnRetryPolicy.terminalFailure(modelRejectionKey);
-    // Codex ignores retryable=false on unknown SSE errors; HTTP 400 stops the reconnect loop.
+    // Codex ignores retryable=false on unknown SSE errors, including exhausted final recovery.
+    // The receipt makes the same rejected revision HTTP 400 without another browser send.
     if (rejected) return Response.json({ error: {
       type: rejected.errorType, code: rejected.code, message: rejected.message,
     }, retryable: false }, { status: 400 });

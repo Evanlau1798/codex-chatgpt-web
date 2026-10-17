@@ -539,7 +539,7 @@ function syncBrowserPreferences(stateStore, config) {
     && config?.browserInteractionMode !== "manual" && config?.solAvailable === true && config?.proAvailable === false;
   const experimentalPlusNativeContext = config?.experimentalPlusNativeContext === true;
   const biggerContextEnabled = config?.experimentalBiggerContext === true;
-  const composerPredictionsEnabled = config?.composerPredictionsEnabled !== false;
+  const composerPredictionsEnabled = config?.composerPredictionsEnabled === true;
   const useSavedChats = config?.useSavedChats === true;
   const autoApproveToolCalls = config?.autoApproveToolCalls === true;
   const enabled = config?.experimentalFreshConversationPerTurn === true
@@ -571,6 +571,7 @@ function registerIpc({ logger, stateStore }) {
   const runtimeChannels = new Set([
     "launcher:setup-core", "launcher:setup-mcp", "launcher:uninstall-integration",
     "launcher:composer-predictions", "launcher:bigger-context", "launcher:skill-attachments", "launcher:fresh-conversation-per-turn",
+    "launcher:no-auto-compact", "launcher:plus-native-context",
     "launcher:use-saved-chats", "launcher:zero-risk-pro", "launcher:browser-interaction-mode",
     "launcher:auto-approve-tool-calls",
     "launcher:connector-name", "launcher:mcp-verify", "launcher:doctor", "launcher:cancel-turns",
@@ -865,7 +866,7 @@ function registerIpc({ logger, stateStore }) {
     send("launcher:browser-state", browserHost.snapshot());
     return state;
   });
-  handle("launcher:no-auto-compact", "launcher:plus-native-context", async (_event, enabled) => {
+  handle("launcher:no-auto-compact", async (_event, enabled) => {
     const result = await runtimeHost.setExperimentalNoAutoCompact(enabled === true);
     const state = stateStore.update({
       experimentalNoAutoCompact: result.enabled,
@@ -1112,6 +1113,7 @@ function registerIpc({ logger, stateStore }) {
     if (browserHost.activeTraceId || browserHost.currentOperation()) {
       throw new Error("Finish or cancel active ChatGPT turns before changing next-message predictions");
     }
+    if (typeof enabled !== "boolean") throw new Error("Next-message predictions preference must be a boolean");
     await runtimeHost.setComposerPredictions(enabled);
     return syncBrowserPreferences(stateStore, runtimeHost.runtimeConfigSnapshot().config);
   });
@@ -1447,7 +1449,7 @@ async function start() {
       codexRestartRequired: false,
       autoStart: false,
       experimentalBiggerContext: config?.experimentalBiggerContext === true,
-      composerPredictionsEnabled: config?.composerPredictionsEnabled !== false,
+      composerPredictionsEnabled: config?.composerPredictionsEnabled === true,
       experimentalSkillAttachments: config?.experimentalSkillAttachments === true,
       experimentalPlusNativeContext: config?.experimentalPlusNativeContext === true,
       experimentalNoAutoCompact: config?.experimentalNoAutoCompact === true,
@@ -1540,7 +1542,7 @@ async function start() {
       const patch = {
         mcpRuntimeInstalled: config.mode === "full",
         experimentalBiggerContext: config.experimentalBiggerContext === true,
-        composerPredictionsEnabled: config.composerPredictionsEnabled !== false,
+        composerPredictionsEnabled: config.composerPredictionsEnabled === true,
         experimentalSkillAttachments: config.experimentalSkillAttachments === true,
         experimentalPlusNativeContext: config.experimentalPlusNativeContext === true,
         experimentalNoAutoCompact: config.experimentalNoAutoCompact === true,

@@ -9,8 +9,15 @@ export function submitTurnOutput(
   channel: TurnChannel,
   kind: BrokerTurnOutputKind,
   text: string,
+  nextMessagePrediction?: string | null,
 ): { event: BrokerTurnOutputEvent; duplicate: boolean } {
   assertOutputEnabled(channel);
+  if (nextMessagePrediction !== undefined) {
+    if (kind !== "final") throw new Error("Codex Native prediction is only valid on final output");
+    if (!channel.predictionEnabled) throw new Error("Codex Native prediction is not enabled for this turn");
+    if (nextMessagePrediction !== null && (typeof nextMessagePrediction !== "string"
+      || nextMessagePrediction.length > 2_000)) throw new Error("Codex Native prediction is invalid");
+  }
   if (!isOutputKind(kind)) throw new Error("Codex Native output kind is invalid");
   if (!text || (kind === "final" && !text.trim()) || text.length > MAX_OUTPUT_EVENT_CHARS) {
     throw new Error("Codex Native output text is invalid");
@@ -23,23 +30,24 @@ export function submitTurnOutput(
     }
     const pending = channel.finalizationPendingOutput;
     if (pending) {
-      if (pending.text === text) return { event: pending, duplicate: true };
+      if (pending.text === text && pending.nextMessagePrediction === nextMessagePrediction) return { event: pending, duplicate: true };
       throw new Error("Codex Native output submitted conflicting final answers");
     }
     if (channel.completionCommitted || channel.activities.size > 0 || channel.invocations.size > 0) {
       throw new Error("Codex Native final output cannot be accepted while work tools are still active");
     }
     if (channel.outputEvents.length >= MAX_OUTPUT_EVENTS
-      || channel.outputChars + text.length > MAX_OUTPUT_TOTAL_CHARS) {
+      || channel.outputChars + text.length + (nextMessagePrediction?.length ?? 0) > MAX_OUTPUT_TOTAL_CHARS) {
       throw new Error("Codex Native output exceeds the per-turn limit");
     }
-    const event = { sequence: channel.outputEvents.length + 1, kind, text } satisfies BrokerTurnOutputEvent;
+    const event = { sequence: channel.outputEvents.length + 1, kind, text,
+      ...(nextMessagePrediction === undefined ? {} : { nextMessagePrediction }) } satisfies BrokerTurnOutputEvent;
     channel.finalizationPendingOutput = event;
     return { event, duplicate: false };
   }
   if (channel.outputFinalSequence !== undefined) {
     const final = channel.outputEvents[channel.outputFinalSequence - 1];
-    if (kind === "final" && final?.text === text) return { event: final, duplicate: true };
+    if (kind === "final" && final?.text === text && final.nextMessagePrediction === nextMessagePrediction) return { event: final, duplicate: true };
     throw new Error(kind === "final"
       ? "Codex Native output submitted conflicting final answers"
       : "Codex Native output arrived after the final answer");
@@ -49,10 +57,11 @@ export function submitTurnOutput(
     throw new Error("Codex Native final output cannot be accepted while work tools are still active");
   }
   if (channel.outputEvents.length >= MAX_OUTPUT_EVENTS
-    || channel.outputChars + text.length > MAX_OUTPUT_TOTAL_CHARS) {
+    || channel.outputChars + text.length + (nextMessagePrediction?.length ?? 0) > MAX_OUTPUT_TOTAL_CHARS) {
     throw new Error("Codex Native output exceeds the per-turn limit");
   }
-  const event = { sequence: channel.outputEvents.length + 1, kind, text } satisfies BrokerTurnOutputEvent;
+  const event = { sequence: channel.outputEvents.length + 1, kind, text,
+    ...(nextMessagePrediction === undefined ? {} : { nextMessagePrediction }) } satisfies BrokerTurnOutputEvent;
   publishTurnOutput(channel, event);
   return { event, duplicate: false };
 }
@@ -67,7 +76,7 @@ export function publishPendingFinalizationOutput(channel: TurnChannel): void {
 
 function publishTurnOutput(channel: TurnChannel, event: BrokerTurnOutputEvent): void {
   channel.outputEvents.push(event);
-  channel.outputChars += event.text.length;
+  channel.outputChars += event.text.length + (event.nextMessagePrediction?.length ?? 0);
   if (event.kind === "final") channel.outputFinalSequence = event.sequence;
   channel.activityRevision += 1;
   resolveOutputWaiters(channel, event);

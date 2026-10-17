@@ -1,5 +1,5 @@
 import { StallTimeoutError } from "../../stall-timeout";
-import { ChatGptWebAdapterError } from "./adapter-error";
+import { ChatGptWebAdapterError, isChatGptTerminalCompletionFailure } from "./adapter-error";
 import type { ChatGptTurnSession } from "./turn-execution";
 
 function terminalError(error: unknown, phase: "send_activated" | "accepted"): ChatGptWebAdapterError {
@@ -29,6 +29,7 @@ function submittedFailure(
       || error.retireSession
       || error.code === "chatgpt_submission_ambiguous"
       || error.code === "chatgpt_response_incomplete"
+      || isChatGptTerminalCompletionFailure(error)
       || error.code === "chatgpt_stopped_thinking"
       || error.code === "context_length_exceeded"
       || error.code === "codex_tool_timeout"

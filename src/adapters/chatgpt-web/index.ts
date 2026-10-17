@@ -4,7 +4,7 @@ import { expandUserPath } from "../../config";
 import { withStallTimeout } from "../../stall-timeout";
 import { type AdapterEvent, type CodexParsedRequest, type CodexProviderConfig } from "../../types";
 import type { ProviderAdapter } from "../base";
-import { ChatGptWebAdapterError, chatGptSessionFailureDisposition, isChatGptPromptIntegrityMismatch } from "./adapter-error";
+import { ChatGptWebAdapterError, chatGptSessionFailureDisposition, isChatGptPromptIntegrityMismatch, isChatGptTerminalCompletionFailure } from "./adapter-error";
 import { chatGptAdapterRuntimeConfig, chatGptAutomaticUsagePromptOptions } from "./adapter-runtime-config";
 import { createChatGptRuntimeStarter, type ChatGptRuntimeWorker } from "./adapter-runtime-factory";
 import { ChatGptBrowserWorker, discardChatGptStartupPages } from "./browser-worker";
@@ -395,6 +395,10 @@ export function createChatGptWebAdapter(
         for (;;) {
           let recoveryPlan: ReturnType<ChatGptSurfaceRecoveryTracker["recoveryPlan"]>;
           await session.runExclusive(async () => {
+          const settled = session.settledOutcome();
+          if (settled?.type === "final" && parsed._composerPrediction?.enabled) {
+            Object.assign(parsed._composerPrediction, session.runtime.usageInput?._composerPrediction);
+          }
           const replayed = session.roundEvents(roundKey);
           replayEvents(replayed, emit);
           if (session.roundCompleted(roundKey)) {
@@ -403,7 +407,6 @@ export function createChatGptWebAdapter(
             if (session.outstanding().length > 0) session.markOutstandingPublished();
             return;
           }
-          const settled = session.settledOutcome();
           if (settled) {
             if (settled.type === "error") {
               recoveryPlan = surfaceRecovery.recoveryPlan(
@@ -641,6 +644,9 @@ export function createChatGptWebAdapter(
                   throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
                 }
                 structuredOutputValidator?.(next.outcome.answer);
+                if (parsed._composerPrediction?.enabled) {
+                  Object.assign(parsed._composerPrediction, session.runtime.usageInput?._composerPrediction);
+                }
                 if (bufferStructuredOutput) emitTextDeltas([next.outcome.answer], emitRound);
                 const answer = appendCompactionUserPrompt(
                   parsed,
@@ -714,7 +720,9 @@ export function createChatGptWebAdapter(
           if (promptFailureKey && isChatGptPromptIntegrityMismatch(handledError)) {
             chatGptWebTurnRetryPolicy.recordTerminalFailure(promptFailureKey, handledError);
           }
-          if (modelFailureKey && handledError.code === "model_not_found") chatGptWebTurnRetryPolicy.recordTerminalFailure(modelFailureKey, handledError);
+          if (modelFailureKey && (handledError.code === "model_not_found" || isChatGptTerminalCompletionFailure(handledError))) {
+            chatGptWebTurnRetryPolicy.recordTerminalFailure(modelFailureKey, handledError);
+          }
         }
         if (!(error instanceof ChatGptWebAdapterError && error.retryable)) {
           chatGptWebTurnRetryPolicy.clear(retryKey);
@@ -748,7 +756,8 @@ export function createChatGptWebAdapter(
       }
       } catch (error) {
         if (error instanceof ChatGptWebAdapterError) applyAutomaticSafetyFailure(error);
-        if (modelFailureKey && error instanceof ChatGptWebAdapterError && error.code === "model_not_found") {
+        if (modelFailureKey && error instanceof ChatGptWebAdapterError
+          && (error.code === "model_not_found" || isChatGptTerminalCompletionFailure(error))) {
           chatGptWebTurnRetryPolicy.recordTerminalFailure(modelFailureKey, error);
         }
         if (promptFailureKey && isChatGptPromptIntegrityMismatch(error)) {

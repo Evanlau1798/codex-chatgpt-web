@@ -12,6 +12,26 @@ const environment = (root: string) => ({
   sandboxPolicy: { type: "dangerFullAccess" as const }, tools: [],
 });
 
+test("opt-in same-final suggestions are atomic, bounded and private to the final event", async () => {
+  const root = mkdtempSync(join(tmpdir(), "cgw-output-prediction-"));
+  const socket = defaultBrokerEndpoint(root);
+  const broker = TurnBroker.forSocket(socket);
+  const owner = new RemoteTurnBroker(socket);
+  try {
+    const disabled = await broker.register(environment(root), undefined, "prediction-off", undefined, true);
+    const token = await owner.register(environment(root), undefined, "prediction-on", undefined, { predictions: true });
+    const args = { kind: "final", text: "Complete answer.", next_message_prediction: "Show the diff." };
+    await assert.rejects(submitNativeOutputControl(socket, disabled, args, undefined), /prediction.*enabled/i);
+    await assert.rejects(submitNativeOutputControl(socket, token, { ...args, kind: "commentary" }, undefined), /prediction.*final/i);
+    await assert.rejects(submitNativeOutputControl(socket, token, { ...args, next_message_prediction: "x".repeat(2_001) }, undefined), /prediction.*invalid/i);
+    const first = await submitNativeOutputControl(socket, token, args, undefined);
+    expect(first).toEqual({ accepted: true, sequence: 1, duplicate: false });
+    expect(await submitNativeOutputControl(socket, token, args, undefined)).toMatchObject({ sequence: 1, duplicate: true });
+    await assert.rejects(submitNativeOutputControl(socket, token, { ...args, next_message_prediction: "Different." }, undefined), /conflicting final/);
+    expect(await owner.nextOutput(token, 0)).toEqual({ sequence: 1, kind: "final", text: "Complete answer.", nextMessagePrediction: "Show the diff." });
+  } finally { await broker.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
 // Await pipe I/O normally: Bun's promise matchers can re-enter its Windows pipe event loop.
 test("turn output is ordered and final delivery is fail closed", async () => {
   const root = mkdtempSync(join(tmpdir(), "cgw-output-tunnel-"));

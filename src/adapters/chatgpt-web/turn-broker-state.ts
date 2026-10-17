@@ -55,6 +55,7 @@ export interface TurnChannel {
   traceId: string;
   externalOwner: boolean;
   readonly outputEnabled: boolean;
+  readonly predictionEnabled?: boolean;
   onProgress?: () => void;
   environment: PendingTurn;
   bindingId?: string;

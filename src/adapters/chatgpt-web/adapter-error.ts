@@ -40,6 +40,11 @@ export function isChatGptPromptIntegrityMismatch(error: unknown): error is ChatG
     && !error.retryable;
 }
 
+export function isChatGptTerminalCompletionFailure(error: unknown): boolean {
+  return error instanceof ChatGptWebAdapterError && error.code === "chatgpt_completion_evidence_missing"
+    && !error.retryable;
+}
+
 export const CHATGPT_RETAINED_SURFACE_UNAVAILABLE = "The retained ChatGPT conversation is no longer available";
 
 export function chatGptSessionExpiredError(): ChatGptWebAdapterError {

@@ -33,11 +33,13 @@ export interface BrokerToolResult {
 }
 
 export type BrokerTurnOutputKind = "commentary" | "reasoning" | "final";
+export type BrokerOutputCapability = boolean | { predictions: true };
 
 export interface BrokerTurnOutputEvent {
   sequence: number;
   kind: BrokerTurnOutputKind;
   text: string;
+  nextMessagePrediction?: string | null;
 }
 
 export interface BrokerRequest {
@@ -77,6 +79,8 @@ export interface BrokerRequest {
   outputKind?: BrokerTurnOutputKind;
   outputText?: string;
   outputEnabled?: boolean;
+  predictionEnabled?: boolean;
+  nextMessagePrediction?: string | null;
   afterSequence?: number;
   expectedRevision?: number;
   outputSequence?: number;

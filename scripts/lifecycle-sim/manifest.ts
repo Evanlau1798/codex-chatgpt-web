@@ -41,6 +41,8 @@ export const sharedLifecycleTests = [
   "tests/retained-conversation.test.ts",
   "tests/steering-continuation.test.ts",
   "tests/tool-evidence-retry.test.ts",
+  "tests/answer-retry-binding.test.ts",
+  "tests/connector-plus-menu.test.ts",
   "tests/browser-authentication-failure.test.ts",
   "tests/browser-alert-readiness.test.ts",
   "tests/browser-model-unavailable.test.ts",

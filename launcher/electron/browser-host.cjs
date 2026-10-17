@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomBytes } = require("node:crypto");
-const { clipboard, WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
+const { clipboard, WebContentsView, powerMonitor, powerSaveBlocker, session, shell } = require("electron");
 const { writePrivateFileAtomic } = require("./atomic-file.cjs");
 const { readJsonFile } = require("./json-file.cjs");
 const {
@@ -360,6 +360,9 @@ class BrowserHost {
       : "persist:codex-web-gpt-chatgpt";
     if (partition !== expectedPartition) throw new Error("Browser host partition does not match its profile");
     this.partition = partition;
+    // Set the partition default before creating any page; retain the real Chromium version and hints.
+    const browserSession = session.fromPartition(partition);
+    browserSession.setUserAgent(browserSession.getUserAgent().replace(/\s(?:CodexWebGPT(?:DEV)?|Electron)\/\S+/g, ""));
     this.profile = profile;
     this.publishState = publishState;
     this.getUseSavedChats = getUseSavedChats;

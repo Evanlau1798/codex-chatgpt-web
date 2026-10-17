@@ -21,7 +21,7 @@
 
 > **Version: `6.1.10-Enhanced.1`.** Download buttons always open the latest published Enhanced release.
 
-Optional next-message predictions now run in an isolated GPT-6 Sol Medium Browser-only turn, with a Settings opt-out. This update also improves collapsed-message recovery, code-block fidelity, renderer recovery and system-proxy support.
+- **Optional next-message suggestions (off by default)** live in Enhanced settings. With automatic Native output, suggestions are generated in the same final transaction and reused from a local 5-minute TTL cache. Cache misses return no suggestion, with no additional Web requests or pages.
 
 Integrates upstream v6.1.10 while preserving Enhanced sessions, Native2 tools, and Fast startup.
 

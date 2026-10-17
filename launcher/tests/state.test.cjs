@@ -10,14 +10,18 @@ const {
   validateSidebarState,
 } = require("../electron/state.cjs");
 
-test("prediction setting starts on and remains off after reopening the state store", () => {
+test("prediction setting defaults off and preserves the explicit preference", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-prediction-state-"));
   const file = path.join(root, "state.json");
   try {
     const store = createStateStore(file);
-    assert.equal(store.read().composerPredictionsEnabled, true);
-    store.update({ composerPredictionsEnabled: false });
-    assert.equal(createStateStore(file).read().composerPredictionsEnabled, false);
+    assert.equal(store.read().composerPredictionsEnabled, false);
+    assert.equal(store.update({ composerPredictionsEnabled: true }).composerPredictionsEnabled, true);
+    assert.equal(createStateStore(file).read().composerPredictionsEnabled, true);
+    fs.writeFileSync(file, JSON.stringify({ version: 1, composerPredictionsEnabled: true, language: "ja" }));
+    const restored = createStateStore(file).read();
+    assert.equal(restored.composerPredictionsEnabled, true);
+    assert.equal(restored.language, "ja");
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -42,7 +46,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       automaticWebSessionLimitMinutes: 300,
       automaticWebSessionLimitEnabled: false,
       experimentalBiggerContext: false,
-      composerPredictionsEnabled: true,
+      composerPredictionsEnabled: false,
       experimentalSkillAttachments: false,
       experimentalPlusNativeContext: false,
       experimentalNoAutoCompact: false,
@@ -88,7 +92,7 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       automaticWebSessionLimitMinutes: 300,
       automaticWebSessionLimitEnabled: false,
       experimentalBiggerContext: false,
-      composerPredictionsEnabled: true,
+      composerPredictionsEnabled: false,
       experimentalSkillAttachments: false,
       experimentalPlusNativeContext: false,
       experimentalNoAutoCompact: false,
@@ -184,7 +188,7 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       automaticWebSessionLimitMinutes: 300,
       automaticWebSessionLimitEnabled: false,
       experimentalBiggerContext: false,
-      composerPredictionsEnabled: true,
+      composerPredictionsEnabled: false,
       experimentalSkillAttachments: false,
       experimentalNoAutoCompact: false,
       experimentalPreparedWebSession: false,
