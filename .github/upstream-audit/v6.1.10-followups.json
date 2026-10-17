@@ -453,5 +453,12 @@
     "currentSha256": "e7d8b9061a7f034c689ce452ec3b2b7caa655e773df350efdc7cd3e61721ff76",
     "reason": "Reuse the existing strictly byte-framed batch Git reader for historical source assertions, retaining every obligation and deadline while avoiding per-path process startup.",
     "evidence": {"path":".github/upstream-audit/evidence/56b0bfdb109135aa919ad8047918b24efa431f7f68278a2ed69ad995ab9017eb.tar.gz","sha256":"56b0bfdb109135aa919ad8047918b24efa431f7f68278a2ed69ad995ab9017eb","bytes":8842}
+  },
+  {
+    "path": "scripts/smoke-codex-subagents.ts",
+    "baseCommit": "cd48777b9482d73e10fc1ffe88604cbb514232c6", "baselineSha256": "396997f5b0cba189478f2a92e0c50a0f045e73917af0e7234bbb08f168a684bf",
+    "currentSha256": "4baab3a177c5eccf8969d78d9c1dbe45c9bc7584a6b8ab16db34c8b7eed28ba2",
+    "reason": "Require actual grandchild completion after controlled provider latency before child finalization, preserving pending-wait and exact lifecycle evidence under the unchanged overall deadline.",
+    "evidence": {"path":".github/upstream-audit/evidence/69ee77741dfe83f9c650041d19246d2f89ba0b2c684a785b3627eb9636d63a9e.tar.gz","sha256":"69ee77741dfe83f9c650041d19246d2f89ba0b2c684a785b3627eb9636d63a9e","bytes":11889}
   }
 ]
