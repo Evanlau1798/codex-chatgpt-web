@@ -1,0 +1,10 @@
+import {test,expect} from 'bun:test';
+import {mkdtempSync,writeFileSync,closeSync,utimesSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+const {acquireUpdateLock}=require('./manager.cjs');
+const newLock=()=>join(mkdtempSync(join(tmpdir(),'ocx-update-lock-')),'update.lock');
+test('refuses a second update while its owner is alive',()=>{const file=newLock();writeFileSync(file,JSON.stringify({pid:process.pid}));expect(()=>acquireUpdateLock(file)).toThrow('in progress');});
+test('recovers an abandoned update lock after an interrupted process',()=>{const file=newLock();writeFileSync(file,JSON.stringify({pid:2147483000}));const lock=acquireUpdateLock(file);closeSync(lock);});
+test('recovers an old empty lock left by a power interruption',()=>{const file=newLock();writeFileSync(file,'');utimesSync(file,new Date(0),new Date(0));const lock=acquireUpdateLock(file);closeSync(lock);});
+test('does not race a just-created empty lock',()=>{const file=newLock();writeFileSync(file,'');expect(()=>acquireUpdateLock(file)).toThrow('settle');});
