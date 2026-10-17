@@ -411,5 +411,26 @@
     "currentSha256": "5bc2eba59c81d0fe649fd01019c9ef5f1e2c7ddd818d32748a9878ed6569e46c",
     "reason": "Await the declared asynchronous answer-retry contract in existing compact/Claude routing assertions without changing expected values or production behavior.",
     "evidence": {"path":".github/upstream-audit/evidence/d9ac543142b866d9e659baa08aa3bd4604bdb93bceea7982f399916f38360b17.tar.gz","sha256":"d9ac543142b866d9e659baa08aa3bd4604bdb93bceea7982f399916f38360b17","bytes":15419}
+  },
+  {
+    "path": "launcher/electron/runtime-supervisor.cjs",
+    "baseCommit": "2347bfc49871ad2f84c1de07d41a8a032fa6c2ce", "baselineSha256": "b7b91e4342ae15e6a4913ec7865ecf3d869cadf32afc2a53e30de137e861761d",
+    "currentSha256": "98f6664e3f54189a5d953bd1fea9fdf7d75b0aabf663cd0f08e386cce76dade0",
+    "reason": "Apply the existing child trust/key/descriptor policy after merging resolved tunnel environment, preventing inherited daemon API-key leakage without losing proxy, handshake or TTL.",
+    "evidence": {"path":".github/upstream-audit/evidence/9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3.tar.gz","sha256":"9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3","bytes":84093}
+  },
+  {
+    "path": "launcher/tests/tunnel-runtime-ttl.test.cjs",
+    "baseCommit": "2347bfc49871ad2f84c1de07d41a8a032fa6c2ce", "baselineSha256": "b3fa34d5230157fcb22ce87505dff1069a205b65a0cd822afc2737d93a6ff282",
+    "currentSha256": "fa2ff51088d0619021c64ae5a1bcc1391faa422daba3c3cd791f87a6d6460e7d",
+    "reason": "Apply the existing child trust/key/descriptor policy after merging resolved tunnel environment, preventing inherited daemon API-key leakage without losing proxy, handshake or TTL.",
+    "evidence": {"path":".github/upstream-audit/evidence/9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3.tar.gz","sha256":"9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3","bytes":84093}
+  },
+  {
+    "path": "launcher/tests/tunnel-proxy.test.cjs",
+    "baseCommit": "2347bfc49871ad2f84c1de07d41a8a032fa6c2ce", "baselineSha256": "6747b4e0acb233aac738a2c3c559b33d7d53ca493d89bf29ef0544a007130075",
+    "currentSha256": "b79cb5ab670ede78923335fd1a2fa9e18785d661f4864f34f54b0409d956b839",
+    "reason": "Apply the existing child trust/key/descriptor policy after merging resolved tunnel environment, preventing inherited daemon API-key leakage without losing proxy, handshake or TTL.",
+    "evidence": {"path":".github/upstream-audit/evidence/9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3.tar.gz","sha256":"9a3c4f700c7d61067b1463696618025ed56921628930cff895f3510c9ad79ff3","bytes":84093}
   }
 ]

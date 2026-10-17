@@ -9,7 +9,7 @@ const { RuntimeSupervisor } = require("../electron/runtime-supervisor.cjs");
 test("the actual tunnel child retains proxy, handshake, Windows trust and bounded MCP lifetime", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cgw-tunnel-env-"));
   const supervisor = Object.create(RuntimeSupervisor.prototype);
-  supervisor.childEnvironment = () => ({ ...process.env, NODE_USE_SYSTEM_CA: "1" });
+  supervisor.childEnvironment = (_name, _config, env = process.env) => ({ ...env, NODE_USE_SYSTEM_CA: "1" });
   try {
     const script = "console.log(JSON.stringify({proxy:process.env.HTTPS_PROXY,handshake:process.env.MCP_STDIO_SEND_INITIALIZED_NOTIFICATION,trust:process.env.NODE_USE_SYSTEM_CA,ttl:process.env.MCP_CONNECTION_MAX_TTL}))";
     const result = await supervisor.runTunnelCommand({ tunnel: { binaryPath: process.execPath, profileDir: root } },

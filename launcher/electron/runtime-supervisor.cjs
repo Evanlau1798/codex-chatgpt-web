@@ -549,9 +549,9 @@ class RuntimeSupervisor {
     if (!preservesLiveOwnership) this.writeState("external", detail);
   }
 
-  childEnvironment(name, config) {
+  childEnvironment(name, config, environment = process.env) {
     const env = {
-      ...process.env,
+      ...environment,
       CODEX_CHATGPT_WEB_BROWSER_HOST_DESCRIPTOR: this.browserDescriptorPath,
     };
     delete env.CODEX_CHATGPT_WEB_API_KEY;
@@ -1679,7 +1679,7 @@ class RuntimeSupervisor {
       const child = spawn(tunnel.binaryPath, args, {
         cwd: tunnel.profileDir,
         detached: DETACH_OWNED_CHILD,
-        env: { ...this.childEnvironment("tunnel", config), ...env, MCP_CONNECTION_MAX_TTL: TUNNEL_MCP_CONNECTION_MAX_TTL },
+        env: this.childEnvironment("tunnel", config, { ...process.env, ...env, MCP_CONNECTION_MAX_TTL: TUNNEL_MCP_CONNECTION_MAX_TTL }),
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
       });
