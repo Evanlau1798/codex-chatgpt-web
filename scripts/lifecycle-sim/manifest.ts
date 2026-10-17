@@ -1,4 +1,5 @@
 export const codexLifecycleTests = [
+  "tests/environment-midnight-steering.test.ts",
   "tests/native-interrupt-http.test.ts",
   "tests/native-interrupt-owner-fence.test.ts",
   "tests/server-native-interrupt.test.ts",
@@ -26,6 +27,10 @@ export const claudeLifecycleTests = [
 ] as const;
 
 export const sharedLifecycleTests = [
+  "tests/upstream-v6110-adaptations.test.ts",
+  "tests/turn-broker-diagnostics.test.ts",
+  "tests/server-predictions.test.ts",
+  "tests/browser-diagnostic-history.test.ts",
   "tests/upstream-v618-adaptations.test.ts",
   "tests/plus-native-context.test.ts",
   "tests/lifecycle-smoke-claude-config.test.ts",

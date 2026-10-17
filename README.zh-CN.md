@@ -19,9 +19,11 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **版本：`6.1.8-Enhanced.1`。** 下载按钮会始终打开最新发布的 Enhanced 版本。
+> **版本：`6.1.10-Enhanced.1`。** 下载按钮会始终打开最新发布的 Enhanced 版本。
 
-已整合上游 v6.1.8，保留 Enhanced 会话、Native2 工具与快速启动。
+可选的下一条消息预测现在通过隔离的 GPT-6 Sol Medium 仅浏览器回合运行，可在设置中关闭。本次更新也改进了折叠消息恢复、代码块保真、渲染进程恢复和系统代理支持。
+
+已整合上游 v6.1.10，保留 Enhanced 会话、Native2 工具与快速启动。
 
 **Plus 原生上下文（实验性）** 是 Settings 中默认关闭的选项，仅对经验证的 Plus 账户与 Enhanced 自动模式生效。
 GPT-6／GPT-5.6 Sol 推理路线向 Codex 宣告 256,000-token 窗口，于 230,400 tokens 自动压缩；不解锁账户没有的 effort，

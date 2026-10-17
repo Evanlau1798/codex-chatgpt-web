@@ -17,8 +17,10 @@ import {
   extractChatGptTurnUserRevision,
   extractChatGptTurnIdentity,
   extractCodexTurnIdentityFromBody,
+  isCodexComposerPrediction,
 } from "./adapters/chatgpt-web/environment";
 import { rememberCompletedCompaction } from "./responses/compaction-continuation";
+import { assertComposerPredictionFits, configureComposerPrediction } from "./composer-predictions";
 import { bridgeToResponsesSSE, buildResponseJSON, formatErrorResponse } from "./bridge";
 import type { AppConfig } from "./config";
 import { providerConfig } from "./config";
@@ -121,7 +123,7 @@ export async function responseRequest(
   // shortcut cannot make an unknown or unavailable model look enabled, then
   // handle the exact title contract before lifecycle identity registration,
   // adapter, broker, or browser work.
-  if (typeof requestedModel === "string" && isChatGptWebModelSlug(requestedModel)) {
+  if (typeof requestedModel === "string" && isChatGptWebModelSlug(requestedModel) && !isCodexComposerPrediction(raw)) {
     try {
       requireChatGptWebModelRoute(requestedModel, config);
     } catch (error) {
@@ -149,6 +151,8 @@ export async function responseRequest(
     ? (raw as { previous_response_id?: unknown }).previous_response_id
     : undefined;
   const expanded = expandPreviousResponseInput(raw);
+  const prediction = isCodexComposerPrediction(raw);
+  let executionConfig = config;
   let parsed: CodexParsedRequest;
   let route: ChatGptWebModelRoute;
   try {
@@ -156,7 +160,8 @@ export async function responseRequest(
     parsed._canonicalContextComplete = typeof requestedPreviousResponseId !== "string"
       || expanded !== raw
       || parsed._contextCompactionBoundary === true;
-    route = routeChatGptWebRequest(parsed, config);
+    if (prediction) executionConfig = configureComposerPrediction(parsed, config);
+    route = routeChatGptWebRequest(parsed, executionConfig);
     const identity = extractChatGptTurnIdentity(parsed);
     if (identity.threadId && identity.turnId) {
       options.onTurnIdentity?.({ threadId: identity.threadId, turnId: identity.turnId });
@@ -183,6 +188,16 @@ export async function responseRequest(
       "invalid_request_error",
       "Local continuation state for previous_response_id is unavailable; refusing to run ChatGPT Web with partial Codex context. Compact the Codex task or start a new task before retrying.",
     );
+  }
+
+  if (prediction) {
+    try {
+      assertComposerPredictionFits(parsed, executionConfig);
+    } catch (error) {
+      // An optional suggestion must not compact/retry the task merely to make itself fit.
+      return formatErrorResponse(400, "invalid_request_error", `Next-message prediction skipped: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    console.info(`[chatgpt-web] composer_prediction model=${route.slug} effort=medium`);
   }
 
   const compaction = parsed._compactionRequest === true;
@@ -218,7 +233,7 @@ export async function responseRequest(
     parsed.context.messages.push({ role: "user", content: COMPACT_PROMPT, timestamp: Date.now() });
   }
 
-  const provider = providerConfig(config);
+  const provider = providerConfig(executionConfig);
   let traceId: string | undefined;
   let modelRejectionKey: string | undefined;
   try {

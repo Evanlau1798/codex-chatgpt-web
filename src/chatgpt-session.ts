@@ -102,7 +102,12 @@ export const CHATGPT_STOP_BUTTON_SELECTOR = [
 // Captured Luna Think control (2026-09-08). The brain glyph's opening contour,
 // composer pill and pressed state identify this action independently of its label.
 // Other composer pills (search, tools, attachments) must not be treated as Think.
-export const CHATGPT_THINK_BUTTON_SELECTOR = 'button[type="button"].__composer-pill[aria-pressed]:has(> .__composer-pill-icon > svg[viewBox="0 0 24 24"] > path[d^="M14.8974 2.29998C15.8303 2.29013 16.802 2.58194 17.5566 3.22577"])';
+// The Free account in the DEV launcher (2026-10-11) uses an SVG sprite instead.
+// The sprite fragment stays the same with Think on/off; the asset hash does not.
+export const CHATGPT_THINK_BUTTON_SELECTOR = [
+  'button[type="button"].__composer-pill[aria-pressed]:has(> .__composer-pill-icon > svg[viewBox="0 0 24 24"] > path[d^="M14.8974 2.29998C15.8303 2.29013 16.802 2.58194 17.5566 3.22577"])',
+  'button[type="button"][aria-pressed]:has(> svg[viewBox="0 0 20 20"] > use[href$="#brain-regular-20"])',
+].join(", ");
 // The new footer is shared with user messages. Response extraction additionally requires
 // this control to FOLLOW the last assistant answer, excluding the user's earlier footer.
 export const CHATGPT_COMPLETION_ACTION_SELECTOR = 'button[data-testid="copy-turn-action-button"], [data-turn-key] .turn-action-controls button';

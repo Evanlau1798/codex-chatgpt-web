@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pro Researcher"
+  short_description: "Deep research and architecture review with ChatGPT 6 Pro"
+  default_prompt: "Use $pro-researcher to investigate this question and recommend a direction."

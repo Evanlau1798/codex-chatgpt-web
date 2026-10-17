@@ -2,6 +2,8 @@ import type { Copy } from "./i18n";
 import { zeroRiskCopy } from "./zero-risk-copy";
 
 export const ja: Record<keyof Copy, string> = {
+  composerPredictions: "次のメッセージ候補",
+  composerPredictionsBody: "コンテキスト全体が収まる場合、GPT-6 Sol Medium で次のメッセージを提案します。",
   pluginName: "プラグイン名",
   pluginNameBody: "Codex は固定です。それ以降の名前を編集できます。",
   pluginNameChange: "名前を変更",

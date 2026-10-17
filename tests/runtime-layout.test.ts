@@ -404,6 +404,26 @@ test("conversation preferences survive reload; saved chats also apply to Zero Ri
   expect(() => loadConfig()).toThrow("useSavedChats");
 });
 
+test("composer predictions default on for existing configurations and persist an explicit opt-out", () => {
+  const root = join(tmpdir(), `codex-predictions-config-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const config: Record<string, unknown> = { ...defaultConfig("browser-only") };
+  expect(config.composerPredictionsEnabled).toBe(true);
+  delete config.composerPredictionsEnabled;
+  const persist = () => writeFileSync(join(root, "config.json"), JSON.stringify(config));
+  persist();
+  expect(loadConfig().composerPredictionsEnabled).toBe(true);
+  config.composerPredictionsEnabled = false;
+  persist();
+  expect(loadConfig().composerPredictionsEnabled).toBe(false);
+  expect(loadConfigForSetup().composerPredictionsEnabled).toBe(false);
+  config.composerPredictionsEnabled = "false";
+  persist();
+  expect(() => loadConfig()).toThrow("composerPredictionsEnabled");
+});
+
 test("skill attachments config defaults off, reaches the adapter, and rejects invalid/manual settings", () => {
   const root = join(tmpdir(), `codex-skills-config-${process.pid}-${Date.now()}`);
   roots.push(root);

@@ -8,12 +8,46 @@ const executable=process.env.CHATGPT_DOM_TEST_BROWSER;
 const html=`<form><div id="prompt-textarea" contenteditable="true">original message</div><input data-testid="upload-photos-input" type="file" multiple><button data-testid="send-button" type="button" onclick="window.sends++">Send</button></form>
 <script>window.sends=0;document.querySelector('input').onchange=()=>{const card=document.createElement('div');card.role='group';card.setAttribute('aria-label','codex-input-image-1.png');card.textContent='photo';document.querySelector('form').append(card);window.job=fetch('/backend-api/files/process_upload_stream',{method:'POST',body:JSON.stringify({file_name:'codex-input-image-1.png',file_id:'owned-file'})}).then(r=>r.text()).catch(()=>{});};</script>`;
 
-async function fixture(run:(browser:Browser,base:string)=>Promise<void>,handler:(request:Request)=>Response|Promise<Response>){
- const server=Bun.serve({hostname:'127.0.0.1',port:0,fetch:r=>new URL(r.url).pathname==='/'?new Response(html,{headers:{'content-type':'text/html'}}):new URL(r.url).pathname==='/favicon.ico'?new Response(''):handler(r)});
+async function fixture(run:(browser:Browser,base:string)=>Promise<void>,handler:(request:Request)=>Response|Promise<Response>,document=html){
+ const server=Bun.serve({hostname:'127.0.0.1',port:0,fetch:r=>new URL(r.url).pathname==='/'?new Response(document,{headers:{'content-type':'text/html'}}):new URL(r.url).pathname==='/favicon.ico'?new Response(''):handler(r)});
  const browser=await chromium.launch({executablePath:executable,headless:true});
  try{await run(browser,`http://127.0.0.1:${server.port}`);}finally{await browser.close();server.stop(true);}
 }
 const prompt={text:'original message',images:[{ref:'codex-input-image-1',imageUrl:'data:image/png;base64,'+Buffer.from('test').toString('base64')}]};
+
+for (const phase of ['creation','processing']) test.skipIf(!executable)(`an owned ${phase} upload limit stops attachment preparation without sending or retrying`,async()=>{
+ let requests=0;
+ await fixture(async(browser,base)=>{
+  const page=await browser.newPage();await page.goto(base);
+  const worker=Object.create(ChatGptBrowserWorker.prototype) as any;
+  const error=await worker.attachFiles(page,prompt,AbortSignal.timeout(3000)).then(()=>undefined,(e:unknown)=>e);
+  expect(error).toBeInstanceOf(ChatGptWebAdapterError);
+  expect(error.code).toBe('upload_quota_exceeded');expect(error.status).toBe(429);expect(error.retryable).toBe(false);
+  expect(requests).toBe(1);expect(await page.evaluate(()=> (window as any).sends)).toBe(0);
+  expect(await page.locator('#prompt-textarea').textContent()).toBe('original message');
+ },()=>{requests++;return new Response('{}',{status:429,headers:{'content-type':'application/json'}});},
+ phase==='creation'?html.replace('/backend-api/files/process_upload_stream','/backend-api/files'):html);
+},10000);
+
+test.skipIf(!executable)('file creation alone cannot complete an upload and unrelated creation failures are ignored',async()=>{
+ await fixture(async(browser,base)=>{
+  const page=await browser.newPage();await page.goto(base);
+  const observer=await observeChatGptAttachmentUploads(page,['wanted.png']);
+  try{
+   let ready=false;void observer.wait().then(()=>{ready=true;},()=>{});
+   await page.evaluate(async()=>{
+    for(const file_name of ['other.png','wanted.png'])await fetch('/backend-api/files',{method:'POST',body:JSON.stringify({file_name})});
+   });
+   await Bun.sleep(50);observer.throwIfFailed();expect(ready).toBe(false);
+   await page.evaluate(async()=>{await fetch('/backend-api/files/process_upload_stream',{method:'POST',body:JSON.stringify({file_name:'wanted.png'})});});
+   await observer.wait(AbortSignal.timeout(3000));expect(ready).toBe(true);
+  }finally{await observer.dispose();}
+ },async r=>{
+  const b=await r.json() as any;
+  if(new URL(r.url).pathname==='/backend-api/files')return new Response('{}',{status:b.file_name==='other.png'?429:200});
+  return new Response(JSON.stringify({event:'file.processing.completed'})+'\n',{headers:{'content-type':'application/x-ndjson'}});
+ });
+},10000);
 
 test.skipIf(!executable)('an enabled send button cannot bypass delayed processing or an HTTP 503',async()=>{
  await fixture(async(browser,base)=>{

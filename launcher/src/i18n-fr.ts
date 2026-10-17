@@ -1,4 +1,6 @@
 export const fr = {
+  composerPredictions: "Suggestions de messages",
+  composerPredictionsBody: "Utiliser GPT-6 Sol Medium uniquement lorsque le contexte complet tient.",
   pluginName: "Nom du plugin",
   pluginNameBody: "Codex reste fixe. Modifiez le reste du nom.",
   pluginNameChange: "Changer le nom",

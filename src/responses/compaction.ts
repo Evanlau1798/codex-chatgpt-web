@@ -1,3 +1,5 @@
+import { isNativeAgentsMdContext } from "./native-context";
+
 /**
  * Remote compaction v2 support for ROUTED providers.
  *
@@ -160,6 +162,9 @@ export function extractCompactUserMessages(input: unknown): CompactMessageItem[]
     const rec = item as CompactMessageItem & { type?: string; role?: string; content?: unknown };
     if (rec.type !== undefined && rec.type !== "message") continue;
     if (rec.role !== "user") continue;
+    // Native compaction rebuilds AGENTS context instead of retaining an instruction refresh
+    // as a human task. Its source revision must match that installed representation too.
+    if (isNativeAgentsMdContext(rec)) continue;
     // Codex removes InternalModelContextFragment during process_annotated_compacted_history.
     // In particular, a goal continuation is runtime steering, not a retained human message.
     // Exclude it before computing the v1 checkpoint source, or the next request authenticates

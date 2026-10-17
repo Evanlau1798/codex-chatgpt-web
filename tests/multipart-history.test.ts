@@ -111,3 +111,55 @@ test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("multipart history does not a
     }
   } finally { await browser.close(); }
 }, 30_000);
+
+test.skipIf(!process.env.CHATGPT_DOM_TEST_BROWSER)("rekeyed multipart stages verify the full message behind a collapsed middle preview", async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHATGPT_DOM_TEST_BROWSER, headless: true });
+  try {
+    const worker = Object.create(ChatGptBrowserWorker.prototype) as any;
+    for (const scenario of ["complete", "changed-hidden-tail", "still-truncated", "wrong-ack", "duplicate-on-expand"]) {
+      const page = await browser.newPage();
+      try {
+        const stage = {
+          ...formatChatGptWebMultipartStage(JSON.stringify({ context: "line of history\n".repeat(3_000), tail: "keep this" }), `ctx_${"d".repeat(32)}`, 1, 2),
+          identities: ["group:assistant:stage"],
+        };
+        await page.setContent(`<main>${group("stage", undefined, stage.acknowledgement)}</main>`);
+        const baseline = await worker.captureSubmissionBaseline(page, "Final request", [stage]);
+        const preview = stage.text.slice(12_000, 22_000);
+        expect(preview).not.toContain("transaction_id");
+        const ack = scenario === "wrong-ack" ? stage.acknowledgement + " changed" : stage.acknowledgement;
+        await page.locator("main").evaluate((node, html) => { node.innerHTML = html; }, group("persisted", preview, ack));
+        await page.locator("[data-user-message-bubble]").evaluate((bubble, data) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.setAttribute("aria-expanded", "false");
+          button.setAttribute("data-thread-find-skip", "true");
+          button.setAttribute("data-markdown-copy", "exclude");
+          button.textContent = "Показать ещё";
+          button.onclick = () => {
+            bubble.querySelector("[data-search-result-target]")!.textContent = data.text;
+            button.setAttribute("aria-expanded", "true");
+            if (data.duplicate) {
+              const duplicate = bubble.closest("[data-turn-key]")!.cloneNode(true) as Element;
+              duplicate.setAttribute("data-turn-key", "duplicate");
+              document.querySelector("main")!.append(duplicate);
+            }
+          };
+          bubble.append(button);
+        }, {
+          text: scenario === "still-truncated" ? preview : scenario === "changed-hidden-tail"
+            ? stage.text.replace("keep this", "changed value") : stage.text,
+          duplicate: scenario === "duplicate-on-expand",
+        });
+        const result = await worker.currentSubmissionEvidence(page, baseline).then(
+          (value: unknown) => ({ value }), (error: Error) => ({ error }),
+        );
+        if (scenario === "complete") {
+          expect(result).toEqual({ value: undefined });
+          expect(baseline.acknowledgedStages[0].identities).toContain("group:assistant:persisted");
+          expect(await page.locator('[aria-expanded="true"]').count()).toBe(1);
+        } else expect(result.error).toBeInstanceOf(Error);
+      } finally { await page.close(); }
+    }
+  } finally { await browser.close(); }
+}, 30_000);

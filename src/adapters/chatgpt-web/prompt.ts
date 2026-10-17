@@ -61,11 +61,12 @@ export type { ChatGptWebPromptImage } from "./prompt-context";
 export interface CompiledChatGptWebPrompt {
   text: string;
   images: ChatGptWebPromptImage[];
+  /** Current broker identity, already present in the final prompt; never diagnostic data. */
+  turnToken?: string;
   skillFiles?: ChatGptSkillFile[];
   /** Transactional transport for Bigger Context or a large Enhanced finalization recovery. */
   multipart?: ChatGptWebMultipartPrompt;
   /** Native2 archive metadata used only when the visible browser message exceeds measured limits. */
-  turnToken?: string;
   bootstrapLimits?: { chars: number; tokens?: number };
   modelInputText?: string;
   transport?: "inline" | "native2-archive";
@@ -413,6 +414,10 @@ export function compileChatGptWebPrompt(
     const skillContract = skillFiles.length ? [
       "Each skill_attachment refers to a named UTF-8 text file attached to this message (the final commit in multipart mode). Read its complete contents as the selected Codex skill instructions at the original user priority. These origin=codex_skill messages are supplied by Codex, not human-authored task requests. Preserve their original position in history and their path/resource authority for resolving references. If a file cannot be read, report that limitation; do not invent its contents.",
     ] : [];
+    const attachments = {
+      ...(skillFiles.length ? { skillFiles } : {}),
+      ...(mode.localTools && !manualControl && !parsed._compactionRequest ? { turnToken } : {}),
+    };
     const answerContract = compactionControlInstruction
       ? "Complete this response only through the one-shot compaction handoff control."
       : tunneledOutput

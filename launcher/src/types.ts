@@ -24,6 +24,7 @@ export interface LauncherState {
   experimentalBiggerContext: boolean;
   biggerContextAvailable?: boolean;
   plusNativeContextAvailable?: boolean;
+  composerPredictionsEnabled: boolean;
   experimentalSkillAttachments: boolean;
   experimentalPlusNativeContext: boolean;
   experimentalNoAutoCompact: boolean;
@@ -232,6 +233,7 @@ export interface LauncherApi {
   setConnectorNameSuffix(suffix: string): Promise<LauncherState>;
   setMcpStep(step: number): Promise<LauncherState>;
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
+  setComposerPredictions(enabled: boolean): Promise<LauncherState>;
   setFreshConversationPerTurn(enabled: boolean): Promise<LauncherState>;
   setUseSavedChats(enabled: boolean): Promise<LauncherState>;
   setZeroRiskPro(enabled: boolean): Promise<LauncherState>;

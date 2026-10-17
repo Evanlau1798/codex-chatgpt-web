@@ -6,6 +6,22 @@ const path = require("node:path");
 const { RuntimeHost } = require("../electron/runtime.cjs");
 const { hostFor, devHostFor } = require("./support/runtime-host-fixture.cjs");
 
+test("prediction preference uses the owned setup flow and preserves approvals without refreshing models", async () => {
+  for (const factory of [hostFor, devHostFor]) {
+    const fixture = factory({ mode: "full", appName: "Codex Native2", autoApproveToolCalls: true });
+    for (const enabled of [false, true]) {
+      assert.equal((await fixture.host.setComposerPredictions(enabled)).enabled, enabled);
+      const args = fixture.invocation().args;
+      assert.equal(args.includes(enabled ? "--composer-predictions" : "--no-composer-predictions"), true);
+      assert.equal(args.includes("--full"), true);
+      assert.equal(args.includes("--auto-approve-tool-calls"), factory === hostFor);
+      assert.equal(args.includes("--refresh-account-capabilities"), false);
+      assert.equal(args.includes("--bigger-context"), false);
+    }
+    await assert.rejects(() => fixture.host.setComposerPredictions("false"), /must be a boolean/);
+  }
+});
+
 test("core setup preserves an existing full-harness installation", async () => {
   const fixture = hostFor({ mode: "full", appName: "Codex Native2" });
   const result = await fixture.host.setupCore();

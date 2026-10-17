@@ -1,4 +1,6 @@
 export const zhTW = {
+  composerPredictions: "下一則訊息建議",
+  composerPredictionsBody: "完整上下文容得下時，使用 GPT-6 Sol Medium 建議下一則訊息。",
   pluginName: "外掛程式名稱",
   pluginNameBody: "Codex 保持不變，可以修改後面的名稱。",
   pluginNameChange: "變更名稱",

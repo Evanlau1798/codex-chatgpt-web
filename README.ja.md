@@ -19,9 +19,11 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **バージョン：`6.1.8-Enhanced.1`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。
+> **バージョン：`6.1.10-Enhanced.1`。** ダウンロードボタンは常に最新の公開済み Enhanced リリースを開きます。
 
-上流 v6.1.8 を統合し、Enhanced セッション、Native2 ツール、Fast startup を維持しています。
+次のメッセージ予測は分離された GPT-6 Sol Medium のブラウザー専用ターンで実行され、設定で無効にできます。折りたたまれたメッセージの復元、コードブロックの保持、レンダラ―の復旧、システムプロキシにも対応を改善しました。
+
+上流 v6.1.10 を統合し、Enhanced セッション、Native2 ツール、Fast startup を維持しています。
 
 **Plus native context（実験的）** は Settings の既定で無効なオプションで、検証済み Plus と Enhanced 自動モードのみ有効です。
 GPT-6／GPT-5.6 Sol の推論ルートは 256,000-token ウィンドウ、230,400 tokens で自動 compaction を宣言します。

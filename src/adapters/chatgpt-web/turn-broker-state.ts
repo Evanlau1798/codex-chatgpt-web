@@ -9,6 +9,8 @@ export interface PendingTurn extends ChatGptTurnEnvironment {
 }
 
 export interface PendingInvocation {
+  queuedAt: number;
+  deliveredAt?: number;
   request: BrokerToolRequest;
   resolve: (result: BrokerToolResult) => void;
   reject: (error: Error) => void;

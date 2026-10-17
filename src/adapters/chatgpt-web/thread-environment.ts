@@ -395,10 +395,12 @@ function sameAuthority(
     return actual.length === expected.size && actual.every(path => expected.has(pathIdentity(path)));
   };
   return pathIdentity(left.cwd) === pathIdentity(right.cwd)
-    && samePaths(left.roots, right.roots)
+    && right.roots.filter(path => !isVisualizationRoot(path)).every(path => left.roots.some(root => pathIdentity(root) === pathIdentity(path)))
+    && left.roots.filter(path => !isVisualizationRoot(path)).every(path =>
+      [...right.roots, ...right.writableRoots].some(root => pathIdentity(root) === pathIdentity(path)))
     // Filesystem envelopes can omit Codex's extra output directories. The current
     // native rollout remains the authority returned to the caller, never the claim.
-    && (allowAdditionalWritableRoots
+    && (allowAdditionalWritableRoots || right.writableRoots.some(root => !right.roots.some(path => pathIdentity(path) === pathIdentity(root)))
       ? left.writableRoots.filter(path => !isVisualizationRoot(path))
         .every(path => right.writableRoots.some(root => pathIdentity(root) === pathIdentity(path)))
       : samePaths(left.writableRoots, right.writableRoots))

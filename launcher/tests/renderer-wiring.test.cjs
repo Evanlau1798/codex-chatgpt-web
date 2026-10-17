@@ -421,6 +421,7 @@ test("catalog verification reports a failed request instead of requesting anothe
 test("browser preference IPC commits only after setup succeeds and refuses active browser work", async () => {
   const vm = require("node:vm");
   for (const [property, method, channel, nextChannel] of [
+    ["composerPredictionsEnabled", "setComposerPredictions", "launcher:composer-predictions", "launcher:fresh-conversation-per-turn"],
     ["experimentalFreshConversationPerTurn", "setFreshConversationPerTurn", "launcher:fresh-conversation-per-turn", "launcher:use-saved-chats"],
     ["useSavedChats", "setUseSavedChats", "launcher:use-saved-chats", "launcher:auto-approve-tool-calls"],
     ["autoApproveToolCalls", "setAutoApproveToolCalls", "launcher:auto-approve-tool-calls", "launcher:set-preference"],
@@ -429,8 +430,8 @@ test("browser preference IPC commits only after setup succeeds and refuses activ
       electronMain.indexOf(`handle("${channel}",`),
       electronMain.indexOf(`handle("${nextChannel}",`),
     );
-    const state = { experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
-    const config = { experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
+    const state = { composerPredictionsEnabled: false, experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
+    const config = { composerPredictionsEnabled: false, experimentalFreshConversationPerTurn: false, useSavedChats: false, autoApproveToolCalls: false };
     const events = [];
     let handler, finishSetup, setupFailure, calls = 0;
     const browserHost = { activeTraceId: "running-turn", currentOperation: () => null, turnTabs: new Map() };

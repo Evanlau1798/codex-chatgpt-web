@@ -228,6 +228,12 @@ export function SettingsSurface({
       setBusy(false);
     }
   };
+  const setComposerPredictions = async (enabled: boolean) => {
+    setBusy(true); setError(null);
+    try { updateState(await api!.setComposerPredictions(enabled)); }
+    catch (cause) { setError(messageOf(cause)); }
+    finally { setBusy(false); }
+  };
   const setSkillAttachments = async (enabled: boolean) => {
     setBusy(true);
     setError(null);
@@ -698,6 +704,11 @@ export function SettingsSurface({
             disabled={biggerContextState.disabled}
             onChange={(enabled) => void setBiggerContext(enabled)}
           />
+        </SettingRow>
+        <SettingRow body={copy.composerPredictionsBody} label={copy.composerPredictions}>
+          <Switch checked={snapshot.state.composerPredictionsEnabled}
+            disabled={busy || activeWebTurn || snapshot.state.coreSetupComplete !== true}
+            onChange={(enabled) => void setComposerPredictions(enabled)} />
         </SettingRow>
         <SettingRow body={snapshot.state.browserInteractionMode === "manual"
           ? copy.manualSkillAttachmentsUnavailable : copy.skillAttachmentsBody} label={copy.skillAttachments}>

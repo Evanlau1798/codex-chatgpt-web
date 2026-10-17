@@ -180,6 +180,10 @@ async function setupCommand(args: string[]): Promise<void> {
   if (runtimeKeyFile) options.runtimeKeyFile = runtimeKeyFile;
   options.forceLogin = takeFlag(args, "--login");
   options.autoApproveToolCalls = takeFlag(args, "--auto-approve-tool-calls");
+  const predictions = takeFlag(args, "--composer-predictions");
+  const noPredictions = takeFlag(args, "--no-composer-predictions");
+  if (predictions && noPredictions) throw new Error("Choose --composer-predictions or --no-composer-predictions");
+  if (predictions || noPredictions) options.composerPredictionsEnabled = predictions;
   const skillAttachments = takeFlag(args, "--skill-attachments");
   const inlineSkills = takeFlag(args, "--inline-skills");
   if (skillAttachments && inlineSkills) throw new Error("Choose --skill-attachments or --inline-skills");

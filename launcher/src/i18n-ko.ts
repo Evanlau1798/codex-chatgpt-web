@@ -1,4 +1,6 @@
 export const ko = {
+  composerPredictions: "다음 메시지 제안",
+  composerPredictionsBody: "전체 문맥이 맞을 때 GPT-6 Sol Medium으로 다음 메시지를 제안합니다.",
   pluginName: "플러그인 이름",
   pluginNameBody: "Codex는 고정입니다. 뒤에 오는 이름을 변경하세요.",
   pluginNameChange: "이름 변경",

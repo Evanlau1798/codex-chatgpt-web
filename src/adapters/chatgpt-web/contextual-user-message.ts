@@ -36,7 +36,7 @@ export function isContextualCodexUserText(text: string): boolean {
   const trimmed = text.trim();
   return marked(trimmed, "# agents.md instructions", "</instructions>")
     || marked(trimmed, "<environment_context>", "</environment_context>")
-    || /^<external_([^>]+)>[\s\S]*<\/external_\1>$/.test(trimmed)
+    || (!trimmed.startsWith("<external_codex_apps_open_page>") && /^<external_([^>]+)>[\s\S]*<\/external_\1>$/.test(trimmed))
     || marked(trimmed, "<skill>", "</skill>")
     || marked(trimmed, "<user_shell_command>", "</user_shell_command>")
     || marked(trimmed, "<turn_aborted>", "</turn_aborted>")

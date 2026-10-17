@@ -30,6 +30,17 @@ test("recognizes both Codex v1 and transparent v2 readable compaction summaries"
   expect(isReadableCompactionSummaryText(`${SUMMARY_PREFIX}not a summary boundary`)).toBe(false);
 });
 
+test("v1 compaction drops native AGENTS refreshes but retains literal and mixed human instructions", () => {
+  const refresh = { type: "message", role: "user", id: "msg_agents_refresh",
+    content: [{ type: "input_text", text: "# AGENTS.md instructions\n<INSTRUCTIONS>Use repository rules.</INSTRUCTIONS>" }],
+    internal_chat_message_metadata_passthrough: { turn_id: "turn_refresh", content_item_kinds: ["agents_md.instructions"] } };
+  const literal = { ...refresh, id: "msg_human_literal",
+    internal_chat_message_metadata_passthrough: { turn_id: "turn_human", content_item_kinds: ["user.text"] } };
+  const mixed = { ...refresh, id: "msg_mixed",
+    internal_chat_message_metadata_passthrough: { turn_id: "turn_mixed", content_item_kinds: ["agents_md.instructions", "user.text"] } };
+  expect(extractCompactUserMessages([refresh, literal, mixed])).toEqual([literal, mixed]);
+});
+
 test("v1 compaction keeps only the newest ten structured images without copying them into text", () => {
   const input = Array.from({ length: 12 }, (_, index) => ({
     type: "message",

@@ -1,5 +1,6 @@
 import type { Locator } from "playwright-core";
 import { ChatGptWebAdapterError } from "./adapter-error";
+import { withAbort } from "./runtime-lifecycle";
 import {
   chatGptAssistantTurnSelector,
   isTemporaryChatGptTurnUrl,
@@ -44,7 +45,7 @@ export async function activateChatGptSendControl(
 
 export async function submitChatGptSendControl<T>(
   sendButton: Pick<Locator, "press">,
-  observe: (signal: AbortSignal) => Promise<T>,
+  observe: (signal: AbortSignal, retireActivation: () => Promise<void>) => Promise<T>,
   signal?: AbortSignal,
   onActivate?: () => void,
 ): Promise<T> {
@@ -52,8 +53,20 @@ export async function submitChatGptSendControl<T>(
   const ownedSignal = signal ? AbortSignal.any([signal, pending.signal]) : pending.signal;
   ownedSignal.throwIfAborted();
   // Renderer key handling may remain blocked after MCP has already accepted this exact Send.
-  const activation = activateChatGptSendControl(sendButton, ownedSignal, onActivate);
-  const accepted = observe(ownedSignal);
+  const activationAbort = new AbortController();
+  const activationSignal = AbortSignal.any([ownedSignal, activationAbort.signal]);
+  let retiredForRecovery = false;
+  const activation = withAbort(activateChatGptSendControl(sendButton, activationSignal, onActivate), activationSignal)
+    .catch(error => {
+      if (!retiredForRecovery || ownedSignal.aborted || !(error instanceof DOMException)
+        || error.name !== "AbortError") throw error;
+    });
+  const accepted = observe(ownedSignal, async () => {
+    // Retire only the obsolete command receipt before reconnect disconnects its transport.
+    retiredForRecovery = true;
+    activationAbort.abort();
+    await activation;
+  });
   try {
     return await Promise.race([accepted, activation.then(() => accepted)]);
   } finally {

@@ -98,3 +98,20 @@ export function opaqueId(prefix: string): string {
 export function errorOf(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value));
 }
+
+export interface BrokerRetirementDiagnostics {
+  traceId: string;
+  pendingTools: number;
+  queuedTools: number;
+  deliveredTools: number;
+  activeMcpRequests: number;
+  completionCommitted: boolean;
+  pendingCalls: Array<{
+    callRef: string;
+    tool: string;
+    state: "queued" | "delivered";
+    queuedMs: number;
+    awaitingResultMs?: number;
+  }>;
+  omittedPendingCalls: number;
+}

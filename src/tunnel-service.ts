@@ -69,6 +69,8 @@ ${args.map(arg => `    <string>${xml(arg)}</string>`).join("\n")}
     <string>${xml(getConfigDir())}</string>
     <key>MCP_CONNECTION_MAX_TTL</key>
     <string>${TUNNEL_MCP_CONNECTION_MAX_TTL}</string>
+    <key>MCP_STDIO_SEND_INITIALIZED_NOTIFICATION</key>
+    <string>true</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>

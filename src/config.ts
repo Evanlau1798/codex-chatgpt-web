@@ -110,6 +110,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     proAvailable: false,
     experimentalBiggerContext: false,
     experimentalPlusNativeContext: false,
+    composerPredictionsEnabled: true,
     experimentalSkillAttachments: false,
     experimentalNoAutoCompact: false,
     experimentalFreshConversationPerTurn: false,
@@ -443,6 +444,10 @@ function parseConfig(value: unknown, path: string): AppConfig {
   if (browserInteractionMode === "manual" && requestedBiggerContext) {
     throw new Error(`Zero Risk does not support Bigger Context in ${path}`);
   }
+  if (parsed.composerPredictionsEnabled !== undefined && typeof parsed.composerPredictionsEnabled !== "boolean") {
+    throw new Error(`Invalid composerPredictionsEnabled in ${path}`);
+  }
+  const composerPredictionsEnabled = parsed.composerPredictionsEnabled !== false;
   if (parsed.experimentalFreshConversationPerTurn !== undefined
     && typeof parsed.experimentalFreshConversationPerTurn !== "boolean") {
     throw new Error(`Invalid experimentalFreshConversationPerTurn in ${path}`);
@@ -477,6 +482,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     proAvailable,
     modelCapabilities: parseChatGptWebModelCapabilities(parsed.modelCapabilities),
     experimentalBiggerContext,
+    composerPredictionsEnabled,
     experimentalSkillAttachments,
     experimentalPlusNativeContext: parsed.experimentalPlusNativeContext === true,
     experimentalNoAutoCompact: parsed.experimentalNoAutoCompact === true,

@@ -19,9 +19,11 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a> · <a href="README.ja.md">日本語</a> · <a href="README.ko.md">한국어</a>
 </p>
 
-> **Version: `6.1.8-Enhanced.1`.** Download buttons always open the latest published Enhanced release.
+> **Version: `6.1.10-Enhanced.1`.** Download buttons always open the latest published Enhanced release.
 
-Integrates upstream v6.1.8 while preserving Enhanced sessions, Native2 tools, and Fast startup.
+Optional next-message predictions now run in an isolated GPT-6 Sol Medium Browser-only turn, with a Settings opt-out. This update also improves collapsed-message recovery, code-block fidelity, renderer recovery and system-proxy support.
+
+Integrates upstream v6.1.10 while preserving Enhanced sessions, Native2 tools, and Fast startup.
 
 **Plus native context (experimental)** is an opt-in Settings switch for Enhanced Automatic sessions
 on a verified Plus account. GPT-6 and GPT-5.6 Sol reasoning routes advertise a 256,000-token window
@@ -274,6 +276,9 @@ only controls the corresponding Web surface retention and safe continuation.
 Full mode connects ChatGPT's tool calls back to the current Codex task through the official
 [OpenAI tunnel-client](https://github.com/openai/tunnel-client). The tunnel is outbound: it does
 not expose a public IP, open an inbound port, or require router forwarding.
+
+The launcher uses your system proxy for the tunnel. Explicitly configured proxy
+environment variables take priority; local connections stay local.
 
 The launcher's **MCP** page guides the complete setup. For the exact clicks, see the
 [video walkthroughs](TROUBLESHOOTING.md).

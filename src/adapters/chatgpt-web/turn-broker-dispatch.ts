@@ -39,7 +39,7 @@ interface DispatchState {
   pending: Map<string, TurnChannel>;
   registerExternal: TurnBrokerOwner["register"];
   registerExternalSafe: TurnBrokerOwner["registerSafe"];
-  retiredBindings: Map<string, string>;
+  retiredBindings: Map<string, import("./turn-broker-protocol").BrokerRetirementDiagnostics>;
   retiredTokens: Map<string, string>;
   startSafeTurn(requestId: string): { started: true; duplicate: boolean };
   completeSafeTurn(requestId: string, finalAnswer: string): { completed: true; duplicate: boolean };
@@ -213,10 +213,13 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
   const binding = state.bindings.get(bindingId);
   if (!binding) {
     const retiredTurn = state.retiredBindings.get(bindingId);
-    if (request.method === "release" && retiredTurn !== undefined) return { released: true, duplicate: true };
+    if (request.method === "release" && retiredTurn !== undefined) {
+      if (request.failure !== undefined) assertRetirementFailure(request.failure);
+      return { released: true, duplicate: true, ...(request.failure === undefined ? {} : { diagnostics: retiredTurn }) };
+    }
     console.error(`[chatgpt-web] broker rejected ${request.method} (binding=${bindingId.slice(0, 17)}, retiredTurn=${retiredTurn ?? "unknown"})`);
     throw new Error(retiredTurn !== undefined
-      ? `${retiredTurnLabel(retiredTurn)} has already finished; this Codex Native action can no longer run.`
+      ? `${retiredTurnLabel(retiredTurn.traceId)} has already finished; this Codex Native action can no longer run.`
       : "internal Codex turn binding is invalid or expired");
   }
   if (request.method === "release") {
@@ -226,7 +229,7 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
     } else {
       state.owner.revoke(binding.token);
     }
-    return { released: true };
+    return { released: true, ...(request.failure === undefined ? {} : { diagnostics: state.retiredBindings.get(bindingId)! }) };
   }
   if (request.method === "resolve") return { environment: binding.channel.environment };
   assertSafeHarnessRunning(binding.channel);
@@ -268,7 +271,7 @@ function invoke(request: BrokerRequest, state: DispatchState): unknown {
     ...(request.freeform === true ? { input: request.input ?? "" } : { arguments: request.arguments ?? {} }),
   };
   return new Promise<BrokerToolResult>((resolve, reject) => {
-    binding.channel.invocations.set(callId, { request: toolRequest, resolve, reject });
+    binding.channel.invocations.set(callId, { request: toolRequest, queuedAt: performance.now(), resolve, reject });
     binding.channel.queuedCallIds.push(callId);
     console.info(`[chatgpt-web] broker trace=${binding.channel.traceId} queued call=${callId.slice(0, 17)} tool=${wireName} waiters=${binding.channel.waiters.size}`);
     const modelObservation = !toolRequest.freeform && subagentModelObservation(wireName, toolRequest.arguments);

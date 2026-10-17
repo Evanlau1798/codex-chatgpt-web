@@ -12,7 +12,7 @@ function request(attributed = true) {
   if (attributed) for (const item of body.input) item.internal_chat_message_metadata_passthrough = ownership;
   body.input.splice(1, 0,
     { type: "message", role: "developer", id: "msg_hook", content: [{type:"input_text",text:"Native hook context"}], ...(attributed ? {internal_chat_message_metadata_passthrough:ownership} : {}) },
-    { type: "message", role: "user", id: "msg_page", content: [{type:"input_text",text:page}], ...(attributed ? {internal_chat_message_metadata_passthrough:ownership} : {}) },
+    { type: "message", role: "user", id: "msg_page", content: [{type:"input_text",text:page}], internal_chat_message_metadata_passthrough: { ...ownership, content_item_kinds: ["additional_content.codex_apps_open_page"] } },
     { type: "message", role: "developer", id: "msg_page_instructions", content: [{type:"input_text",text:"Page context describes the currently visible Page."}], ...(attributed ? {internal_chat_message_metadata_passthrough:ownership} : {}) },
   );
   return {parsed, body};
