@@ -1,0 +1,106 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_recorded_ready","object":"response","created_at":0,"status":"in_progress","model":"chatgpt-web/gpt-6-pro","output":[],"usage":null}}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.heartbeat
+data: {"type":"response.heartbeat"}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"message","id":"msg_recorded_ready","status":"in_progress","role":"assistant","content":[],"phase":"final_answer"}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","sequence_number":2,"item_id":"msg_recorded_ready","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":3,"item_id":"msg_recorded_ready","output_index":0,"content_index":0,"delta":"READY"}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":4,"item_id":"msg_recorded_ready","output_index":0,"content_index":0,"text":"READY"}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","sequence_number":5,"item_id":"msg_recorded_ready","output_index":0,"content_index":0,"part":{"type":"output_text","text":"READY","annotations":[]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":6,"output_index":0,"item":{"type":"message","id":"msg_recorded_ready","status":"completed","role":"assistant","content":[{"type":"output_text","text":"READY","annotations":[]}],"phase":"final_answer"}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":7,"response":{"id":"resp_recorded_ready","object":"response","created_at":0,"status":"completed","model":"chatgpt-web/gpt-6-pro","output":[{"type":"message","id":"msg_recorded_ready","status":"completed","role":"assistant","content":[{"type":"output_text","text":"READY","annotations":[]}],"phase":"final_answer"}],"usage":{"input_tokens":14497,"output_tokens":9,"total_tokens":14506},"end_turn":true}}
+
+data: [DONE]

@@ -50,7 +50,7 @@ test.each(["before-sent", "before-start", "completed"])("owner compaction reject
       });
       expect(claim.bindingId).toBeString();
       await callTurnBroker(broker.socketPath, { method: "activity_complete", token: request, activityId: claim.activityId });
-      await expect(remote.requestCompaction(request, result)).resolves.toBe(0);
+      expect(await remote.requestCompaction(request, result)).toBe(0);
     }
   } finally {
     await broker.close();
