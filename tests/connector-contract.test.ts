@@ -149,7 +149,11 @@ test("a failed browser turn cannot leave its fallback armed", async () => {
 test("retry uses the fresh reference supplied for each attempt", async () => {
   const references = ["turn_first_probe", "turn_second_probe"];
   await expect(verifyCurrentConnectorContract("Codex Native2", "native", async probe => {
-    for (const reference of references) expect(probe.prompt).not.toContain(reference);
+    const args = JSON.parse(/\{[^}]*"query"[^}]*\}/.exec(probe.prompt)![0]);
+    expect(args.turn_token).toBe(references[probe.attempt - 1]);
+    expect(args.include_schema).toBeFalse();
+    expect(args.query).toBe(probe.query);
+    if (probe.attempt === 2) expect(probe.prompt).not.toContain(references[0]!);
     if (probe.attempt === 2) {
       expect(recordConnectorContractProbeFallback(references[0]!, "native")).toBeFalse();
       expect(recordConnectorContractProbeFallback(references[1]!, "native")).toBeTrue();

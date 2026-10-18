@@ -40,11 +40,10 @@ test.each([true, false])("launcher retry renews and revokes both broker leases (
       selectConnector: async () => {},
       runBrowserTurn: async (turn: any) => {
         const prompt = (await turn.prepare()).text;
-        const args = JSON.parse(/\{"query"[^}]+\}/.exec(prompt)![0]);
+        const args = JSON.parse(/\{[^}]*"query"[^}]*\}/.exec(prompt)![0]);
         const token = registered.at(-1)!;
         expect(token).toBeDefined();
-        expect(prompt).toContain("current turn_token from codex_native_turn_binding");
-        expect(prompt).not.toContain(token);
+        expect(args.turn_token).toBe(token);
         tokens.push(token);
         traces.push(turn.traceId);
         if (tokens.length === 2) {
@@ -54,7 +53,7 @@ test.each([true, false])("launcher retry renews and revokes both broker leases (
           if (success) recordConnectorContractProbeQuery(args.query, "native");
         }
         const claimed = await callTurnBroker<{ environment: { tools: unknown[]; writableRoots: string[] } }>(
-          socket, { method: "claim", token, contract: "native" },
+          socket, { method: "claim", token: args.turn_token, contract: "native" },
         );
         expect(claimed.environment.tools).toEqual([]);
         expect(claimed.environment.writableRoots).toEqual([]);

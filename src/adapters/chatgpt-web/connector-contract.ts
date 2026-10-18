@@ -197,7 +197,13 @@ export async function verifyCurrentConnectorContract(
           JSON.stringify({ request_id: currentReference, query }),
           "Do not claim either call in prose and do not answer before the inventory tool result is returned. Do not call any other tool. After the inventory call succeeds, reply briefly.",
         ].join(" ")
-      : [
+      : currentReference ? [
+          "Do not send progress updates for this connector verification.",
+          "Call codex_tool_inventory exactly once with",
+          JSON.stringify({ turn_token: currentReference, query, include_schema: false }),
+          retryInstruction,
+          "Do not call any other work tool. After the inventory call succeeds, complete the brief final response through the bound output control if the transport requires it; otherwise reply briefly.",
+        ].filter(Boolean).join(" ") : [
           "Do not send progress updates for this connector verification.",
           "Call codex_tool_inventory exactly once using the current turn_token from codex_native_turn_binding, with",
           JSON.stringify({ query, include_schema: false }),
