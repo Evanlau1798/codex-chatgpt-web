@@ -2,9 +2,9 @@
   {
     "path": "src/adapters/chatgpt-web/browser-worker.ts",
     "baseCommit": "8e2833d3b7ccbf42ba9cda6d8f71d8c173493d20", "baselineSha256": "4b81813ad11f845241b51456c9bbb1583dcb341f8b947b22de7261a68d3e8a83",
-    "currentSha256": "e1d693cf2925ce91e967bc781e418fd100a049b9b47a8f65e7e83ba2404fdde2",
-    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions. Apply existing owned successful response-stream liveness to Native tunnel observation and all recovery guards; retain hard deadline, CAS, atomic final and bounded network diagnostics. Add bounded monotonic worker heartbeat timing and duration-only warnings without modifying output, deadlines or recovery. Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior.",
-    "evidence": {"path":".github/upstream-audit/evidence/bb8dd4e45e144b76a530469e1c73c18cc1b39559f23777ef1df9c12ec62986f2.tar.gz","sha256":"bb8dd4e45e144b76a530469e1c73c18cc1b39559f23777ef1df9c12ec62986f2","bytes":127125}
+    "currentSha256": "65190cce0886b9ddd686f4d2b9d457f05d5754f6c9e22256f69b8d462a2f3423",
+    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions. Apply existing owned successful response-stream liveness to Native tunnel observation and all recovery guards; retain hard deadline, CAS, atomic final and bounded network diagnostics. Add bounded monotonic worker heartbeat timing and duration-only warnings without modifying output, deadlines or recovery. Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior. After guarded recovery Send, reopen unfinished Native work through the existing exact-revision cancellation fence; do not force an early final.",
+    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
   },
   {
     "path": "tests/browser-diagnostics.test.ts",
@@ -16,9 +16,9 @@
   {
     "path": "tests/browser-tunneled-fallback.test.ts",
     "baseCommit": "8e2833d3b7ccbf42ba9cda6d8f71d8c173493d20", "baselineSha256": "04a815cead07adad6b53943949e07920dc60ab7fc2e6a2b8de108984465e20da",
-    "currentSha256": "e10b53f6f9912e4998d9e985a43744b22899ebe1c631da3dcd40c0447f35a4c9",
-    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions. Apply existing owned successful response-stream liveness to Native tunnel observation and all recovery guards; retain hard deadline, CAS, atomic final and bounded network diagnostics. Add bounded monotonic worker heartbeat timing and duration-only warnings without modifying output, deadlines or recovery.",
-    "evidence": {"path":".github/upstream-audit/evidence/4cc293cdf7cfc75a2029020b47314432b6b0caf844ac65cc85f54968826b0f9a.tar.gz","sha256":"4cc293cdf7cfc75a2029020b47314432b6b0caf844ac65cc85f54968826b0f9a","bytes":56015}
+    "currentSha256": "770df0ec77f2efdd5b33ef5ca08efc5977bf56899d9d5df42feee81673cc6732",
+    "reason": "Independent review P2: restore successful worker completion status and cover real-worker retention; fixtures now terminate captures and retain privacy assertions. Apply existing owned successful response-stream liveness to Native tunnel observation and all recovery guards; retain hard deadline, CAS, atomic final and bounded network diagnostics. Add bounded monotonic worker heartbeat timing and duration-only warnings without modifying output, deadlines or recovery. Exercise unfinished work after recovery and preserve late-final, steering, draft and completion-fence rejection coverage.",
+    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
   },
   {
     "path": "src/adapters/chatgpt-web/compaction-continuation.ts",
@@ -37,9 +37,9 @@
   {
     "path": "scripts/lifecycle-sim/manifest.ts",
     "baseCommit": "2d022f0b6f0d3bbae9952bbb0e344314c5d0edb1", "baselineSha256": "ebe6d90161e5bfad2afc0520ffe31a659eb179008d2996527579853094c72923",
-    "currentSha256": "83b6037d12b830e6bbc1e2f05cbc661f8c972c398462728009dae538ede785c4",
-    "reason": "Register real Responses HTTP compaction-continuation regressions in the canonical offline lifecycle gate. Preserve current Native work identity in correction/steering retries and exercise production factory/worker from offline lifecycle. Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior.",
-    "evidence": {"path":".github/upstream-audit/evidence/bb8dd4e45e144b76a530469e1c73c18cc1b39559f23777ef1df9c12ec62986f2.tar.gz","sha256":"bb8dd4e45e144b76a530469e1c73c18cc1b39559f23777ef1df9c12ec62986f2","bytes":127125}
+    "currentSha256": "cde043c38c7e3ca3b5e2055ff18b90d64909386905e59fa78c5ac4cd6fbd3706",
+    "reason": "Register real Responses HTTP compaction-continuation regressions in the canonical offline lifecycle gate. Preserve current Native work identity in correction/steering retries and exercise production factory/worker from offline lifecycle. Support observed semantic add-context/plugin navigation UI without focus-dismissal; preserve exact connector identity, duplicates and mention keyboard behavior. Include real production recovery-budget and bounded nonintrusive MCP diagnostic regressions in the offline lifecycle gate.",
+    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
   },
   {
     "path": "tests/compaction-continuation-registry.test.ts",
@@ -247,9 +247,9 @@
   {
     "path": "src/adapters/chatgpt-web/turn-broker-dispatch.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "43a8ccc5a9d77dcf4a012f214c86a52174af356478a919944806aae5bccd3fc1",
-    "currentSha256": "c50c6dbc2dcbfd7886bd0daabd4688786b4a711abc61b125b9847053fd863c85",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "fd9f93fee0715ce6a361c81d066dc18372e570e6aa9f587c33234f8a6d08dde2",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Bound reference digests and isolate diagnostic sink failures without changing claim, accepted final acknowledgement or original rejection.",
+    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
   },
   {
     "path": "src/adapters/chatgpt-web/turn-broker-output.ts",
@@ -317,9 +317,9 @@
   {
     "path": "tests/enhanced-output-broker.test.ts",
     "baseCommit": "e0ae12300ff7cf7494e3c69498d804faa277c631", "baselineSha256": "c75e25cc6b1230bce719ce4c15a4e9941df5df920594e3dd469fe3361e8a6768",
-    "currentSha256": "9fa3188b25c51ae0db7b8ab423c4b0452d36964af728732d09735c88bbafaf49",
-    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain.",
-    "evidence": {"path":".github/upstream-audit/evidence/3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48.tar.gz","sha256":"3aca19f1040c2765929d3bc0d6919caf9941d6879ad7e407d7c1b3739603df48","bytes":88478}
+    "currentSha256": "5be5f2f0baa3ad136d87c9b45b3df7087c15e9134b40e4b1ae7659fc5f2fda80",
+    "reason": "Default-off Enhanced same-final prediction/cache, or terminal completion replay fix; prior evidence retained inside the supplemental chain. Cover delivered-work recovery epochs and diagnostic metadata while retaining exactly-once atomic final and revision-fence assertions.",
+    "evidence": {"path":".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz","sha256":"3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d","bytes":113486}
   },
   {
     "path": "tests/enhanced-output-tunnel.test.ts",
@@ -460,5 +460,17 @@
     "currentSha256": "4baab3a177c5eccf8969d78d9c1dbe45c9bc7584a6b8ab16db34c8b7eed28ba2",
     "reason": "Require actual grandchild completion after controlled provider latency before child finalization, preserving pending-wait and exact lifecycle evidence under the unchanged overall deadline.",
     "evidence": {"path":".github/upstream-audit/evidence/69ee77741dfe83f9c650041d19246d2f89ba0b2c684a785b3627eb9636d63a9e.tar.gz","sha256":"69ee77741dfe83f9c650041d19246d2f89ba0b2c684a785b3627eb9636d63a9e","bytes":11889}
+  },
+  {
+    "path": "tests/browser-turn-binding.test.ts",
+    "baseCommit": "1c96c3c9c7d70f7895632c841c45b6351248e468",
+    "baselineSha256": "8c116642011702acb563d16df9cf919cad7b6586bde1903f8ab6ec71bf187919",
+    "currentSha256": "66ede6850385328ac036c4c415b11ac8e91ace8e5a0b914a92d761772ad72a97",
+    "reason": "Await the two rejected Promises before synchronous Error/message assertions to avoid Bun/Chromium async-matcher stalls; retain every scenario, timeout and rejection condition.",
+    "evidence": {
+      "path": ".github/upstream-audit/evidence/3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d.tar.gz",
+      "sha256": "3dcbbe8adc80fdb54a8ffbcd1d574ab3e19baf38413e9dcad352cd2fec2e603d",
+      "bytes": 113486
+    }
   }
 ]
